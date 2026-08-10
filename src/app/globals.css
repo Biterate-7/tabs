@@ -174,3 +174,11 @@
     background: transparent;
   }
 }
+
+/* Unlayered on purpose: guarantees a visible focus indicator on every
+   interactive element even where a component's own focus-visible ring
+   utility fails to resolve (observed on the generated Button primitive). */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
