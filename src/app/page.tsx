@@ -1,7 +1,6 @@
 import { Header } from "@/components/header"
 import { HeroBackground } from "@/components/hero-background"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { TabInput } from "@/components/tab-input"
 
 export default function Home() {
   return (
@@ -20,20 +19,7 @@ export default function Home() {
         </p>
 
         <div className="mt-10 w-full">
-          <Textarea
-            aria-label="Paste your tabs"
-            placeholder={
-              "Paste your tabs here...\n\nhttps://github.com/...\nhttps://arxiv.org/...\nhttps://amazon.in/..."
-            }
-            rows={8}
-            className="w-full resize-none text-left text-sm sm:text-base"
-          />
-          <p className="mt-2 text-xs text-tertiary">
-            Paste 20, 50, or even 100 tabs at once.
-          </p>
-          <Button size="lg" className="mt-6 w-full sm:w-auto">
-            Dump my tabs →
-          </Button>
+          <TabInput />
         </div>
       </main>
     </div>
