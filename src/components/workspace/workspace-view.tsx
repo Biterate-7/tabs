@@ -37,9 +37,20 @@ export function WorkspaceView({
     [tabs, query, categoryFilter, sortKey]
   )
 
-  useEffect(() => {
+  function handleSearch(value: string) {
+    setQuery(value)
     setHighlightedIndex(0)
-  }, [query, categoryFilter, sortKey])
+  }
+
+  function handleCategoryFilter(value: CategoryId | "all") {
+    setCategoryFilter(value)
+    setHighlightedIndex(0)
+  }
+
+  function handleSort(value: SortKey) {
+    setSortKey(value)
+    setHighlightedIndex(0)
+  }
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -70,7 +81,7 @@ export function WorkspaceView({
       <WorkspaceHeader
         tabCount={tabs.length}
         searchValue={query}
-        onSearch={setQuery}
+        onSearch={handleSearch}
         onSearchArrowDown={() =>
           setHighlightedIndex((i) => Math.min(i + 1, resultTabs.length - 1))
         }
@@ -87,8 +98,8 @@ export function WorkspaceView({
         <WorkspaceOverview tabs={tabs} />
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-          <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={setCategoryFilter} />
-          <SortControl value={sortKey} onChange={setSortKey} />
+          <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={handleCategoryFilter} />
+          <SortControl value={sortKey} onChange={handleSort} />
         </div>
 
         <div className="mt-6">

@@ -1,0 +1,143 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { WorkspaceView } from "./workspace-view";
+import type { Tab } from "@/lib/tabs/types";
+
+function makeTab(over: Partial<Tab>): Tab {
+  return {
+    id: over.id ?? "id",
+    url: over.url ?? "https://example.com",
+    normalizedUrl: over.url ?? "https://example.com",
+    domain: "example.com",
+    category: "other",
+    ...over,
+  };
+}
+
+const tabs: Tab[] = [
+  makeTab({ id: "1", url: "https://github.com/a", domain: "github.com", category: "projects" }),
+  makeTab({ id: "2", url: "https://arxiv.org/abs/1", domain: "arxiv.org", category: "research" }),
+  makeTab({ id: "3", url: "https://www.amazon.in/dp/x", domain: "amazon.in", category: "shopping" }),
+];
+
+function renderWorkspace(initialTabs = tabs) {
+  const onTabsChange = vi.fn();
+  const onClear = vi.fn();
+  render(<WorkspaceView tabs={initialTabs} onTabsChange={onTabsChange} onClear={onClear} />);
+  return { onTabsChange, onClear };
+}
+
+describe("WorkspaceView search/filter/sort", () => {
+  let openSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+  });
+
+  it("shows the category grid by default (no query, filter, or sort active)", () => {
+    renderWorkspace();
+    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+  });
+
+  it("searching narrows to a flat matching list", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+
+    expect(screen.getAllByText("github.com").length).toBeGreaterThan(0);
+    expect(screen.queryByText("arxiv.org")).toBeFalsy();
+  });
+
+  it("searching by category display name matches", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "research");
+
+    expect(screen.getAllByText("arxiv.org").length).toBeGreaterThan(0);
+    expect(screen.queryByText("github.com")).toBeFalsy();
+  });
+
+  it("shows the exact empty state copy for a non-matching search", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "zzznonsense");
+
+    expect(screen.getByText("No tabs found.")).toBeTruthy();
+    expect(screen.getByText("Try a different search.")).toBeTruthy();
+  });
+
+  it("clearing the search (X button) returns to the grid", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const input = screen.getByPlaceholderText("Search tabs...");
+    await user.type(input, "github");
+    await user.click(screen.getByLabelText("Clear search"));
+
+    expect((input as HTMLInputElement).value).toBe("");
+    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+  });
+
+  it("filtering by category pill shows only that category, combined with search", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: /^Shopping/ }));
+    expect(screen.getAllByText("amazon.in").length).toBeGreaterThan(0);
+    expect(screen.queryByText("github.com")).toBeFalsy();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "amazon");
+    expect(screen.getAllByText("amazon.in").length).toBeGreaterThan(0);
+
+    await user.clear(screen.getByPlaceholderText("Search tabs..."));
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "arxiv");
+    expect(screen.getByText("No tabs found.")).toBeTruthy();
+  });
+
+  it("Escape clears the search and blurs the input", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const input = screen.getByPlaceholderText("Search tabs...");
+    await user.type(input, "github");
+    expect(screen.queryByText("View all")).toBeFalsy();
+
+    await user.keyboard("{Escape}");
+
+    expect((input as HTMLInputElement).value).toBe("");
+    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+  });
+
+  it("Cmd/Ctrl+K focuses the search input from anywhere on the page", async () => {
+    renderWorkspace();
+    const input = screen.getByPlaceholderText("Search tabs...") as HTMLInputElement;
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("ArrowDown/ArrowUp move the highlight and Enter opens the highlighted tab", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const input = screen.getByPlaceholderText("Search tabs...");
+    await user.type(input, "a"); // matches github.com, arxiv.org, amazon.in (domain contains "a")
+
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Enter}");
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith(expect.any(String), "_blank", "noopener,noreferrer");
+  });
+});

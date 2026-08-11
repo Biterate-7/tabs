@@ -1,7 +1,7 @@
 "use client"
 
 import { ArrowUpDown } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,10 +30,13 @@ export function SortControl({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" size="sm">
+          <button
+            type="button"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
             <ArrowUpDown className="size-3.5" />
             {LABELS[value]}
-          </Button>
+          </button>
         }
       />
       <DropdownMenuContent align="end">
