@@ -4,6 +4,7 @@ export type Tab = {
   normalizedUrl: string;
   domain: string;
   category?: string;
+  confidence?: number;
   title?: string;
   favicon?: string;
   isDuplicate?: boolean;
