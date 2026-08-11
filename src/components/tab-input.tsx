@@ -4,8 +4,9 @@ import { useDeferredValue, useMemo, useState } from "react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { parseTabInput } from "@/lib/tabs"
+import type { Tab } from "@/lib/tabs/types"
 
-export function TabInput() {
+export function TabInput({ onDump }: { onDump?: (tabs: Tab[]) => void }) {
   const [raw, setRaw] = useState("")
   const deferredRaw = useDeferredValue(raw)
 
@@ -56,6 +57,7 @@ export function TabInput() {
         size="lg"
         className="mt-6 w-full sm:w-auto"
         disabled={validCount === 0}
+        onClick={() => onDump?.(tabs)}
       >
         {ctaLabel}
       </Button>
