@@ -141,3 +141,41 @@ describe("WorkspaceView search/filter/sort", () => {
     expect(openSpy).toHaveBeenCalledWith(expect.any(String), "_blank", "noopener,noreferrer");
   });
 });
+
+describe("WorkspaceView cleanup (Phase 6)", () => {
+  const withDuplicate: Tab[] = [
+    ...tabs,
+    makeTab({ id: "4", url: "https://github.com/a", domain: "github.com", category: "projects", isDuplicate: true }),
+  ];
+
+  it("Cleanup opens the review dialog and does NOT delete anything on click", async () => {
+    const user = userEvent.setup();
+    const onTabsChange = vi.fn();
+    render(
+      <WorkspaceView tabs={withDuplicate} onTabsChange={onTabsChange} onClear={vi.fn()} />
+    );
+
+    await user.click(screen.getByRole("button", { name: /Cleanup/ }));
+
+    expect(await screen.findByText("Your workspace can be cleaned up.")).toBeTruthy();
+    expect(onTabsChange).not.toHaveBeenCalled();
+  });
+
+  it("removes duplicates only after review and confirmation", async () => {
+    const user = userEvent.setup();
+    const onTabsChange = vi.fn();
+    render(
+      <WorkspaceView tabs={withDuplicate} onTabsChange={onTabsChange} onClear={vi.fn()} />
+    );
+
+    await user.click(screen.getByRole("button", { name: /Cleanup/ }));
+    await user.click(await screen.findByRole("button", { name: "Review manually" }));
+    await user.click(screen.getByRole("button", { name: "Remove selected (1)" }));
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+    expect(onTabsChange).toHaveBeenCalledTimes(1);
+    const remaining = onTabsChange.mock.calls[0][0] as Tab[];
+    expect(remaining.map((t) => t.id)).toEqual(["1", "2", "3"]);
+    expect(remaining.every((t) => !t.isDuplicate)).toBe(true);
+  });
+});
