@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react"
 import { WorkspaceHeader } from "@/components/workspace/workspace-header"
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview"
-import { TabCard } from "@/components/workspace/tab-card"
+import { CategoryGrid } from "@/components/workspace/category-grid"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 
@@ -52,10 +52,8 @@ export function WorkspaceView({
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
         <WorkspaceOverview tabs={tabs} />
-        <div className="mt-8 space-y-2">
-          {visibleTabs.map((tab) => (
-            <TabCard key={tab.id} tab={tab} onCategoryChange={handleCategoryChange} />
-          ))}
+        <div className="mt-8">
+          <CategoryGrid tabs={visibleTabs} onCategoryChange={handleCategoryChange} />
         </div>
       </main>
     </div>
