@@ -45,6 +45,7 @@ export function WorkspaceView({
     <div className="min-h-screen">
       <WorkspaceHeader
         tabCount={tabs.length}
+        searchValue={query}
         onSearch={setQuery}
         onCleanup={handleCleanup}
         onExport={handleExport}

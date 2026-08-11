@@ -1,26 +1,33 @@
 "use client"
 
 import { useState } from "react"
-import { Search, Sparkles, Download, Trash2 } from "lucide-react"
+import { Sparkles, Download, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { SearchBar } from "@/components/workspace/search-bar"
 import { ClearWorkspaceDialog } from "@/components/workspace/clear-workspace-dialog"
 
 export function WorkspaceHeader({
   tabCount,
+  searchValue,
   onSearch,
+  onSearchArrowDown,
+  onSearchArrowUp,
+  onSearchEnter,
   onCleanup,
   onExport,
   onClear,
 }: {
   tabCount: number
+  searchValue: string
   onSearch: (query: string) => void
+  onSearchArrowDown?: () => void
+  onSearchArrowUp?: () => void
+  onSearchEnter?: () => void
   onCleanup: () => void
   onExport: () => void
   onClear: () => void
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
 
   return (
     <header className="border-b border-subtle">
@@ -32,24 +39,13 @@ export function WorkspaceHeader({
           </p>
         </div>
 
-        {searchOpen && (
-          <Input
-            autoFocus
-            placeholder="Search tabs..."
-            className="h-8 w-40 sm:w-56"
-            onChange={(e) => onSearch(e.target.value)}
-            onBlur={(e) => {
-              if (!e.target.value) setSearchOpen(false)
-            }}
-          />
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setSearchOpen((v) => !v)}
-        >
-          <Search /> Search
-        </Button>
+        <SearchBar
+          value={searchValue}
+          onChange={onSearch}
+          onArrowDown={onSearchArrowDown}
+          onArrowUp={onSearchArrowUp}
+          onEnter={onSearchEnter}
+        />
         <Button variant="ghost" size="sm" onClick={onCleanup}>
           <Sparkles /> Cleanup
         </Button>
