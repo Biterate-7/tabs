@@ -124,6 +124,15 @@
   --success-foreground: #ffffff;
   --warning: #a66a1f;
   --warning-foreground: #ffffff;
+  /* category accents (Phase 3) */
+  --category-research: #8b7cf6;
+  --category-school: #f5a623;
+  --category-projects: #4361ff;
+  --category-shopping: #22c55e;
+  --category-creative: #ec4899;
+  --category-news: #38bdf8;
+  --category-read-later: #a1a1aa;
+  --category-other: #71717a;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
