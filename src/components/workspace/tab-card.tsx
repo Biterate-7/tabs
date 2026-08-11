@@ -39,6 +39,7 @@ export function TabCard({
 
       <DropdownMenu>
         <DropdownMenuTrigger
+          nativeButton={false}
           render={
             <Badge
               variant="outline"
