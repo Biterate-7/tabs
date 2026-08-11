@@ -102,4 +102,22 @@ describe("classifyUrl", () => {
     const result = classifyUrl("https://github.com/foo/bar");
     expect(result.confidence).toBeLessThanOrEqual(1);
   });
+
+  it("classifies 250 mixed URLs quickly", () => {
+    const domains = [
+      "github.com/a",
+      "arxiv.org/abs/1",
+      "amazon.in/dp/x",
+      "totally-unknown-xyz.com/",
+      "canva.com/design/1",
+    ];
+    const urls = Array.from(
+      { length: 250 },
+      (_, i) => `https://${domains[i % domains.length]}?n=${i}`
+    );
+    const start = performance.now();
+    for (const url of urls) classifyUrl(url);
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(200);
+  });
 });
