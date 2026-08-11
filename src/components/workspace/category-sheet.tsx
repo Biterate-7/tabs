@@ -27,7 +27,7 @@ export function CategorySheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md">
+      <SheetContent className="data-[side=right]:w-full sm:data-[side=right]:max-w-md">
         <SheetHeader>
           <SheetTitle>
             {def?.name} · {tabs.length} tab{tabs.length === 1 ? "" : "s"}
