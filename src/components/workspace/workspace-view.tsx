@@ -1,7 +1,10 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import { WorkspaceHeader } from "@/components/workspace/workspace-header"
+import { CleanupDialog } from "@/components/workspace/cleanup-dialog"
+import { removeTabs } from "@/lib/workspace/cleanup"
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview"
 import { CategoryGrid } from "@/components/workspace/category-grid"
 import { CategoryFilterBar } from "@/components/workspace/category-filter-bar"
@@ -29,6 +32,7 @@ export function WorkspaceView({
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
   const [sortKey, setSortKey] = useState<SortKey>("recent")
   const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [cleanupOpen, setCleanupOpen] = useState(false)
 
   const isBrowsing = query.trim() === "" && categoryFilter === "all" && sortKey === "recent"
 
@@ -67,8 +71,16 @@ export function WorkspaceView({
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, category } : t)))
   }
 
-  function handleCleanup() {
-    onTabsChange(tabs.filter((t) => !t.isDuplicate))
+  function handleRemoveDuplicates(ids: string[]) {
+    if (ids.length === 0) return
+    const remaining = removeTabs(tabs, ids)
+    onTabsChange(remaining)
+    toast.success(
+      `Removed ${ids.length} duplicate tab${ids.length === 1 ? "" : "s"}.`,
+      {
+        description: `${remaining.length} tab${remaining.length === 1 ? "" : "s"} remain.`,
+      }
+    )
   }
 
   function handleExport() {
@@ -90,7 +102,7 @@ export function WorkspaceView({
           const target = resultTabs[highlightedIndex]
           if (target) openTab(target.url)
         }}
-        onCleanup={handleCleanup}
+        onCleanup={() => setCleanupOpen(true)}
         onExport={handleExport}
         onClear={onClear}
       />
@@ -114,6 +126,13 @@ export function WorkspaceView({
           )}
         </div>
       </main>
+
+      <CleanupDialog
+        open={cleanupOpen}
+        onOpenChange={setCleanupOpen}
+        tabs={tabs}
+        onRemove={handleRemoveDuplicates}
+      />
     </div>
   )
 }
