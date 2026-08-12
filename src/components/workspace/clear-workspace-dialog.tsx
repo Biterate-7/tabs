@@ -24,8 +24,8 @@ export function ClearWorkspaceDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Clear workspace?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes every tab from this workspace. Your original paste
-            isn&apos;t saved anywhere, so this can&apos;t be undone.
+            This removes every tab from this workspace, including
+            what&apos;s saved locally. This can&apos;t be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
