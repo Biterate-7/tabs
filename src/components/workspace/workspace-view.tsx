@@ -83,15 +83,10 @@ export function WorkspaceView({
     )
   }
 
-  function handleExport() {
-    const text = tabs.map((t) => t.url).join("\n")
-    navigator.clipboard?.writeText(text)
-  }
-
   return (
     <div className="min-h-screen">
       <WorkspaceHeader
-        tabCount={tabs.length}
+        tabs={tabs}
         searchValue={query}
         onSearch={handleSearch}
         onSearchArrowDown={() =>
@@ -103,7 +98,6 @@ export function WorkspaceView({
           if (target) openTab(target.url)
         }}
         onCleanup={() => setCleanupOpen(true)}
-        onExport={handleExport}
         onClear={onClear}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
