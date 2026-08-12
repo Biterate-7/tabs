@@ -48,7 +48,9 @@ describe("AppShell persistence", () => {
       await screen.findByPlaceholderText("Search tabs..."),
       "github"
     );
-    await user.click(screen.getByRole("button", { name: "Projects" }));
+    await user.click(
+      screen.getByRole("button", { name: /Change category for github\.com/ })
+    );
     await user.click(await screen.findByText("School"));
 
     unmount();

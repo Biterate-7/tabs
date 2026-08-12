@@ -43,6 +43,7 @@ export function TabCard({
           render={
             <Badge
               variant="outline"
+              aria-label={`Category: ${CATEGORIES[category].name}. Change category for ${tab.domain}`}
               className="hidden shrink-0 cursor-pointer sm:inline-flex"
             >
               {CATEGORIES[category].name}
@@ -68,7 +69,7 @@ export function TabCard({
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <IconButton aria-label="More actions">
+            <IconButton aria-label={`More actions for ${tab.domain}`}>
               <MoreHorizontal />
             </IconButton>
           }

@@ -17,10 +17,11 @@ function Pill({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
         active
-          ? "border-primary/30 bg-primary/15 text-primary"
+          ? "border-primary/30 bg-primary/15 text-accent-text"
           : "border-subtle bg-card text-muted-foreground hover:border-border hover:text-foreground"
       )}
     >

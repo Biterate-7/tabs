@@ -50,7 +50,8 @@ export function CategoryCard({
         <button
           type="button"
           onClick={onViewAll}
-          className="mt-auto flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          aria-label={`View all ${tabs.length} ${def.name} tab${tabs.length === 1 ? "" : "s"}`}
+          className="mt-auto flex items-center gap-1 text-xs font-medium text-accent-text hover:underline"
         >
           View all <ArrowRight className="size-3" />
         </button>

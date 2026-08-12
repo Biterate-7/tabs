@@ -158,7 +158,7 @@ function CleanupBody({
                             className={
                               "shrink-0 rounded-md border px-1.5 py-0.5 text-[0.65rem] font-medium transition-colors disabled:cursor-not-allowed " +
                               (keeping
-                                ? "border-primary/30 bg-primary/15 text-primary"
+                                ? "border-primary/30 bg-primary/15 text-accent-text"
                                 : "border-subtle text-tertiary hover:text-foreground")
                             }
                           >
