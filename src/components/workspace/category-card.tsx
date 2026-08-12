@@ -51,7 +51,7 @@ export function CategoryCard({
           type="button"
           onClick={onViewAll}
           aria-label={`View all ${tabs.length} ${def.name} tab${tabs.length === 1 ? "" : "s"}`}
-          className="mt-auto flex items-center gap-1 text-xs font-medium text-accent-text hover:underline"
+          className="mt-auto flex min-h-6 w-fit items-center gap-1 py-1 text-xs font-medium text-accent-text hover:underline"
         >
           View all <ArrowRight className="size-3" />
         </button>
