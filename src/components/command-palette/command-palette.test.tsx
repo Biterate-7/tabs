@@ -43,6 +43,26 @@ describe("CommandPalette", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it("runs the selected command on Enter after filtering to a single match", async () => {
+    const user = userEvent.setup()
+    const onSelectClear = vi.fn()
+    const onOpenChange = vi.fn()
+    render(
+      <CommandPalette
+        open
+        onOpenChange={onOpenChange}
+        commands={makeCommands(vi.fn(), onSelectClear)}
+      />
+    )
+
+    const input = screen.getByPlaceholderText(/type a command/i)
+    await user.type(input, "clear")
+    await user.keyboard("{Enter}")
+
+    expect(onSelectClear).toHaveBeenCalledOnce()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it("groups commands under their group heading", () => {
     render(
       <CommandPalette
