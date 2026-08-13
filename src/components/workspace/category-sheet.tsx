@@ -1,3 +1,4 @@
+import { Bookmark } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -5,6 +6,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { EmptyState } from "@/components/ui/empty-state"
 import { TabCard } from "@/components/workspace/tab-card"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
@@ -29,17 +31,25 @@ export function CategorySheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="data-[side=right]:w-full sm:data-[side=right]:max-w-md">
         <SheetHeader>
-          <SheetTitle>
-            {def?.name} · {tabs.length} tab{tabs.length === 1 ? "" : "s"}
+          <SheetTitle className="text-h1">
+            {def?.name} <span className="text-tertiary">· {tabs.length} tab{tabs.length === 1 ? "" : "s"}</span>
           </SheetTitle>
         </SheetHeader>
-        <ScrollArea className="h-[calc(100vh-6rem)] px-4">
-          <div className="space-y-2 pb-6">
-            {tabs.map((tab) => (
-              <TabCard key={tab.id} tab={tab} onCategoryChange={onCategoryChange} />
-            ))}
-          </div>
-        </ScrollArea>
+        {tabs.length === 0 ? (
+          <EmptyState
+            icon={Bookmark}
+            title={`No tabs in ${def?.name ?? "this category"} anymore.`}
+            description="They were recategorized or removed elsewhere in this session."
+          />
+        ) : (
+          <ScrollArea className="h-[calc(100vh-6rem)] px-4">
+            <div className="rounded-lg border border-subtle bg-card px-2 pb-6">
+              {tabs.map((tab) => (
+                <TabCard key={tab.id} tab={tab} onCategoryChange={onCategoryChange} />
+              ))}
+            </div>
+          </ScrollArea>
+        )}
       </SheetContent>
     </Sheet>
   )
