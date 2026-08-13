@@ -124,15 +124,13 @@ describe("WorkspaceView search/filter/sort", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("Cmd/Ctrl+K focuses the search input from anywhere on the page", async () => {
+  it("Cmd/Ctrl+K opens the command palette from anywhere on the page", async () => {
     renderWorkspace();
-    const input = screen.getByPlaceholderText("Search tabs...") as HTMLInputElement;
-    input.blur();
-    expect(document.activeElement).not.toBe(input);
+    expect(screen.queryByPlaceholderText(/type a command/i)).toBeFalsy();
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
 
-    expect(document.activeElement).toBe(input);
+    expect(await screen.findByPlaceholderText(/type a command/i)).toBeTruthy();
   });
 
   it("ArrowDown/ArrowUp move the highlight and Enter opens the highlighted tab", async () => {

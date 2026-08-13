@@ -1,12 +1,10 @@
 "use client"
 
-import { useState } from "react"
 import { Sparkles, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { SearchBar } from "@/components/workspace/search-bar"
 import { ExportMenu } from "@/components/workspace/export-menu"
-import { ClearWorkspaceDialog } from "@/components/workspace/clear-workspace-dialog"
 import type { Tab } from "@/lib/tabs/types"
 
 export function WorkspaceHeader({
@@ -17,7 +15,7 @@ export function WorkspaceHeader({
   onSearchArrowUp,
   onSearchEnter,
   onCleanup,
-  onClear,
+  onRequestClear,
   onOpenPalette,
 }: {
   tabs: Tab[]
@@ -27,10 +25,9 @@ export function WorkspaceHeader({
   onSearchArrowUp?: () => void
   onSearchEnter?: () => void
   onCleanup: () => void
-  onClear: () => void
+  onRequestClear: () => void
   onOpenPalette?: () => void
 }) {
-  const [confirmOpen, setConfirmOpen] = useState(false)
   const tabCount = tabs.length
 
   return (
@@ -67,19 +64,10 @@ export function WorkspaceHeader({
           <Sparkles /> Cleanup
         </Button>
         <ExportMenu tabs={tabs} />
-        <Button variant="ghost" size="sm" onClick={() => setConfirmOpen(true)}>
+        <Button variant="ghost" size="sm" onClick={onRequestClear}>
           <Trash2 /> Clear
         </Button>
       </div>
-
-      <ClearWorkspaceDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        onConfirm={() => {
-          setConfirmOpen(false)
-          onClear()
-        }}
-      />
     </header>
   )
 }

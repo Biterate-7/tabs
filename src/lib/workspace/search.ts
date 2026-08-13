@@ -26,12 +26,13 @@ export function matchesQuery(tab: Tab, query: string): boolean {
 
 export function filterTabs(
   tabs: Tab[],
-  opts: { query: string; categoryId: CategoryId | "all" }
+  opts: { query: string; categoryId: CategoryId | "all"; duplicatesOnly?: boolean }
 ): Tab[] {
   return tabs.filter(
     (tab) =>
       matchesQuery(tab, opts.query) &&
-      (opts.categoryId === "all" || categoryOf(tab) === opts.categoryId)
+      (opts.categoryId === "all" || categoryOf(tab) === opts.categoryId) &&
+      (!opts.duplicatesOnly || Boolean(tab.isDuplicate))
   );
 }
 

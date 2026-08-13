@@ -78,6 +78,27 @@ describe("filterTabs", () => {
   });
 });
 
+describe("filterTabs duplicatesOnly", () => {
+  it("returns only duplicate-flagged tabs when duplicatesOnly is set", () => {
+    const tabs = [
+      makeTab({ id: "1", domain: "a.com", isDuplicate: false }),
+      makeTab({ id: "2", domain: "b.com", isDuplicate: true }),
+    ];
+    const result = filterTabs(tabs, { query: "", categoryId: "all", duplicatesOnly: true });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("2");
+  });
+
+  it("combines with query and category filters", () => {
+    const tabs = [
+      makeTab({ id: "1", domain: "a.com", isDuplicate: true, category: "research" }),
+      makeTab({ id: "2", domain: "b.com", isDuplicate: true, category: "news" }),
+    ];
+    const result = filterTabs(tabs, { query: "", categoryId: "research", duplicatesOnly: true });
+    expect(result.map((t) => t.id)).toEqual(["1"]);
+  });
+});
+
 describe("sortTabs", () => {
   const tabs = [
     makeTab({ id: "1", domain: "zebra.com", title: "Zeta", category: "shopping" }),
