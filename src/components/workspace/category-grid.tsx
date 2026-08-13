@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { CategoryCard } from "@/components/workspace/category-card"
 import { CategorySheet } from "@/components/workspace/category-sheet"
 import { orderCategoriesByPresence } from "@/lib/workspace/hierarchy"
@@ -15,6 +15,11 @@ export function CategoryGrid({
   onCategoryChange: (id: string, category: CategoryId) => void
 }) {
   const [openCategory, setOpenCategory] = useState<CategoryId | null>(null)
+  const hasAnimated = useRef(false)
+  useEffect(() => {
+    hasAnimated.current = true
+  }, [])
+
   const entries = orderCategoriesByPresence(tabs)
   const groupsById = Object.fromEntries(entries.map((e) => [e.id, e.tabs])) as Record<
     CategoryId,
@@ -24,14 +29,32 @@ export function CategoryGrid({
   return (
     <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {entries.map((entry) => (
-          <CategoryCard
+        {/* A state-based mount flag would trigger a re-render that strips the
+           animation mid-flight, cutting the stagger short for items whose
+           delay hasn't elapsed yet. This ref read is a one-time snapshot for
+           the current render pass, only ever mutated inside the mount effect
+           below — it never changes mid-render. */}
+        {/* eslint-disable-next-line react-hooks/refs */}
+        {entries.map((entry, index) => (
+          <div
             key={entry.id}
-            categoryId={entry.id}
-            tabs={entry.tabs}
-            presence={entry.presence}
-            onViewAll={() => setOpenCategory(entry.id)}
-          />
+            style={
+              hasAnimated.current
+                ? undefined
+                : {
+                    animation:
+                      "category-card-in var(--duration-slow) var(--ease-standard) both",
+                    animationDelay: `${Math.min(index, 6) * 40}ms`,
+                  }
+            }
+          >
+            <CategoryCard
+              categoryId={entry.id}
+              tabs={entry.tabs}
+              presence={entry.presence}
+              onViewAll={() => setOpenCategory(entry.id)}
+            />
+          </div>
         ))}
       </div>
 
