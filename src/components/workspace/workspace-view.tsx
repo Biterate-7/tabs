@@ -127,6 +127,11 @@ export function WorkspaceView({
               tabs={resultTabs}
               highlightedIndex={highlightedIndex}
               onCategoryChange={handleCategoryChange}
+              onClearFilters={() => {
+                setQuery("")
+                setCategoryFilter("all")
+                setSortKey("recent")
+              }}
             />
           )}
         </div>

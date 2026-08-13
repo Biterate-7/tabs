@@ -72,8 +72,10 @@ describe("WorkspaceView search/filter/sort", () => {
 
     await user.type(screen.getByPlaceholderText("Search tabs..."), "zzznonsense");
 
-    expect(screen.getByText("No tabs found.")).toBeTruthy();
-    expect(screen.getByText("Try a different search.")).toBeTruthy();
+    expect(screen.getByText("Nothing matches.")).toBeTruthy();
+    expect(
+      screen.getByText("Try a different search, or clear your filters.")
+    ).toBeTruthy();
   });
 
   it("clearing the search (X button) returns to the grid", async () => {
@@ -103,7 +105,7 @@ describe("WorkspaceView search/filter/sort", () => {
 
     await user.clear(screen.getByPlaceholderText("Search tabs..."));
     await user.type(screen.getByPlaceholderText("Search tabs..."), "arxiv");
-    expect(screen.getByText("No tabs found.")).toBeTruthy();
+    expect(screen.getByText("Nothing matches.")).toBeTruthy();
   });
 
   it("Escape clears the search and blurs the input", async () => {

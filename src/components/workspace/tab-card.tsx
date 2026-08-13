@@ -29,12 +29,12 @@ export function TabCard({
   const primaryLine = tab.title?.trim() || tab.domain
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg border border-subtle bg-card px-3 py-2 transition-colors hover:border-border">
+    <div className="group flex items-center gap-3 border-b border-subtle px-1 py-2.5 last:border-b-0">
       <TabFavicon domain={tab.domain} />
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{primaryLine}</p>
-        <p className="truncate text-xs text-tertiary">{tab.domain}</p>
+        <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
+        <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
       </div>
 
       <DropdownMenu>
@@ -62,30 +62,32 @@ export function TabCard({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <IconButton aria-label={`Open ${tab.domain}`} onClick={() => openTab(tab.url)}>
-        <ExternalLink />
-      </IconButton>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-(--duration-fast) group-hover:opacity-100 group-focus-within:opacity-100 has-data-open:opacity-100">
+        <IconButton aria-label={`Open ${tab.domain}`} onClick={() => openTab(tab.url)}>
+          <ExternalLink />
+        </IconButton>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <IconButton aria-label={`More actions for ${tab.domain}`}>
-              <MoreHorizontal />
-            </IconButton>
-          }
-        />
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
-          {CATEGORY_ORDER.map((id) => (
-            <DropdownMenuItem
-              key={id}
-              onClick={() => onCategoryChange(tab.id, id)}
-            >
-              Move to {CATEGORIES[id].name}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <IconButton aria-label={`More actions for ${tab.domain}`}>
+                <MoreHorizontal />
+              </IconButton>
+            }
+          />
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
+            {CATEGORY_ORDER.map((id) => (
+              <DropdownMenuItem
+                key={id}
+                onClick={() => onCategoryChange(tab.id, id)}
+              >
+                Move to {CATEGORIES[id].name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   )
 }
