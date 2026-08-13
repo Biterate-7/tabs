@@ -5,6 +5,8 @@ import { toast } from "sonner"
 import { WorkspaceHeader } from "@/components/workspace/workspace-header"
 import { CleanupDialog } from "@/components/workspace/cleanup-dialog"
 import { removeTabs } from "@/lib/workspace/cleanup"
+import { AttentionStrip } from "@/components/workspace/attention-strip"
+import { computeAttention } from "@/lib/workspace/attention"
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview"
 import { CategoryGrid } from "@/components/workspace/category-grid"
 import { CategoryFilterBar } from "@/components/workspace/category-filter-bar"
@@ -40,6 +42,8 @@ export function WorkspaceView({
     () => sortTabs(filterTabs(tabs, { query, categoryId: categoryFilter }), sortKey),
     [tabs, query, categoryFilter, sortKey]
   )
+
+  const attention = useMemo(() => computeAttention(tabs), [tabs])
 
   function handleSearch(value: string) {
     setQuery(value)
@@ -101,7 +105,14 @@ export function WorkspaceView({
         onClear={onClear}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
-        <WorkspaceOverview tabs={tabs} />
+        <AttentionStrip
+          attention={attention}
+          onCleanup={() => setCleanupOpen(true)}
+          onViewOther={() => handleCategoryFilter("other")}
+        />
+        <div className={attention ? "mt-6" : undefined}>
+          <WorkspaceOverview tabs={tabs} />
+        </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
           <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={handleCategoryFilter} />
