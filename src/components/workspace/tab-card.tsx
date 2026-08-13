@@ -77,15 +77,22 @@ export function TabCard({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-(--duration-fast) group-hover:opacity-100 group-focus-within:opacity-100 has-data-open:opacity-100">
-        <IconButton aria-label={`Open ${tab.domain}`} onClick={() => openTab(tab.url)}>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:duration-(--duration-fast) sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-data-open:opacity-100">
+        <IconButton
+          aria-label={`Open ${tab.domain}`}
+          onClick={() => openTab(tab.url)}
+          className="size-11 sm:size-8"
+        >
           <ExternalLink />
         </IconButton>
 
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <IconButton aria-label={`More actions for ${tab.domain}`}>
+              <IconButton
+                aria-label={`More actions for ${tab.domain}`}
+                className="size-11 sm:size-8"
+              >
                 <MoreHorizontal />
               </IconButton>
             }
