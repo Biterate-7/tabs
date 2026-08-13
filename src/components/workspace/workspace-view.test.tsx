@@ -41,7 +41,9 @@ describe("WorkspaceView search/filter/sort", () => {
 
   it("shows the category grid by default (no query, filter, or sort active)", () => {
     renderWorkspace();
-    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("button", { name: /^View all/ }).length
+    ).toBeGreaterThan(0);
   });
 
   it("searching narrows to a flat matching list", async () => {
@@ -83,7 +85,9 @@ describe("WorkspaceView search/filter/sort", () => {
     await user.click(screen.getByLabelText("Clear search"));
 
     expect((input as HTMLInputElement).value).toBe("");
-    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("button", { name: /^View all/ }).length
+    ).toBeGreaterThan(0);
   });
 
   it("filtering by category pill shows only that category, combined with search", async () => {
@@ -113,7 +117,9 @@ describe("WorkspaceView search/filter/sort", () => {
     await user.keyboard("{Escape}");
 
     expect((input as HTMLInputElement).value).toBe("");
-    expect(screen.getAllByText("View all").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("button", { name: /^View all/ }).length
+    ).toBeGreaterThan(0);
   });
 
   it("Cmd/Ctrl+K focuses the search input from anywhere on the page", async () => {

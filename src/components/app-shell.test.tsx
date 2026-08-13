@@ -26,12 +26,20 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
-    expect(await screen.findByText("github.com")).toBeTruthy();
+    await user.type(
+      await screen.findByPlaceholderText("Search tabs..."),
+      "github"
+    );
+    expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
 
     unmount();
     render(<AppShell />);
 
-    expect(await screen.findByText("github.com")).toBeTruthy();
+    await user.type(
+      await screen.findByPlaceholderText("Search tabs..."),
+      "github"
+    );
+    expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
 
   it("persists a category reassignment", async () => {
@@ -72,7 +80,11 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
-    expect(await screen.findByText("github.com")).toBeTruthy();
+    await user.type(
+      await screen.findByPlaceholderText("Search tabs..."),
+      "github"
+    );
+    expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     await user.click(await screen.findByRole("button", { name: "Clear workspace" }));
@@ -101,6 +113,10 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
-    expect(await screen.findByText("github.com")).toBeTruthy();
+    await user.type(
+      await screen.findByPlaceholderText("Search tabs..."),
+      "github"
+    );
+    expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
 });

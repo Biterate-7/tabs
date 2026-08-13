@@ -3,10 +3,9 @@
 import { useState } from "react"
 import { CategoryCard } from "@/components/workspace/category-card"
 import { CategorySheet } from "@/components/workspace/category-sheet"
-import { CATEGORY_ORDER } from "@/lib/categories"
+import { orderCategoriesByPresence } from "@/lib/workspace/hierarchy"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
-import { groupByCategory } from "@/lib/workspace/stats"
 
 export function CategoryGrid({
   tabs,
@@ -16,24 +15,29 @@ export function CategoryGrid({
   onCategoryChange: (id: string, category: CategoryId) => void
 }) {
   const [openCategory, setOpenCategory] = useState<CategoryId | null>(null)
-  const groups = groupByCategory(tabs)
+  const entries = orderCategoriesByPresence(tabs)
+  const groupsById = Object.fromEntries(entries.map((e) => [e.id, e.tabs])) as Record<
+    CategoryId,
+    Tab[]
+  >
 
   return (
     <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {CATEGORY_ORDER.map((id) => (
+        {entries.map((entry) => (
           <CategoryCard
-            key={id}
-            categoryId={id}
-            tabs={groups[id]}
-            onViewAll={() => setOpenCategory(id)}
+            key={entry.id}
+            categoryId={entry.id}
+            tabs={entry.tabs}
+            presence={entry.presence}
+            onViewAll={() => setOpenCategory(entry.id)}
           />
         ))}
       </div>
 
       <CategorySheet
         categoryId={openCategory}
-        tabs={openCategory ? groups[openCategory] : []}
+        tabs={openCategory ? groupsById[openCategory] : []}
         open={openCategory !== null}
         onOpenChange={(open) => !open && setOpenCategory(null)}
         onCategoryChange={onCategoryChange}
