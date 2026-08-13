@@ -156,7 +156,7 @@ function CleanupBody({
                             aria-label={`Keep this copy of ${group.domain}`}
                             onClick={() => keepCopy(group.key, tab.id)}
                             className={
-                              "shrink-0 rounded-md border px-1.5 py-0.5 text-[0.65rem] font-medium transition-colors disabled:cursor-not-allowed " +
+                              "shrink-0 rounded-md border px-2 py-1 text-label transition-colors disabled:cursor-not-allowed " +
                               (keeping
                                 ? "border-primary/30 bg-primary/15 text-accent-text"
                                 : "border-subtle text-tertiary hover:text-foreground")

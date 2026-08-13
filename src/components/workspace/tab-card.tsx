@@ -29,7 +29,7 @@ export function TabCard({
   const primaryLine = tab.title?.trim() || tab.domain
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg border border-subtle bg-card px-3 py-2.5 transition-colors hover:border-border">
+    <div className="group flex items-center gap-3 rounded-lg border border-subtle bg-card px-3 py-2 transition-colors hover:border-border">
       <TabFavicon domain={tab.domain} />
 
       <div className="min-w-0 flex-1">
