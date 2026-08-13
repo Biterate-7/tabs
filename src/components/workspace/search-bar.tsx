@@ -1,6 +1,7 @@
 "use client"
 
 import { Search, X } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { IconButton } from "@/components/ui/icon-button"
 
@@ -10,15 +11,17 @@ export function SearchBar({
   onArrowDown,
   onArrowUp,
   onEnter,
+  className,
 }: {
   value: string
   onChange: (value: string) => void
   onArrowDown?: () => void
   onArrowUp?: () => void
   onEnter?: () => void
+  className?: string
 }) {
   return (
-    <div className="relative w-40 sm:w-64">
+    <div className={cn("relative w-40 sm:w-64", className)}>
       <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-tertiary" />
       <Input
         id="workspace-search-input"
