@@ -11,11 +11,25 @@ import {
   Trash2,
   ArrowUpDown,
   Keyboard,
+  CheckSquare,
+  X,
 } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import { WorkspaceHeader } from "@/components/workspace/workspace-header"
 import { CleanupDialog } from "@/components/workspace/cleanup-dialog"
 import { ClearWorkspaceDialog } from "@/components/workspace/clear-workspace-dialog"
 import { ShortcutsDialog } from "@/components/workspace/shortcuts-dialog"
+import { SelectionToolbar } from "@/components/workspace/selection-toolbar"
 import { removeTabs } from "@/lib/workspace/cleanup"
 import { AttentionStrip } from "@/components/workspace/attention-strip"
 import { computeAttention } from "@/lib/workspace/attention"
@@ -63,6 +77,9 @@ export function WorkspaceView({
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [openSelectedConfirmOpen, setOpenSelectedConfirmOpen] = useState(false)
 
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
@@ -99,6 +116,58 @@ export function WorkspaceView({
 
   function handleCategoryChange(id: string, category: CategoryId) {
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, category } : t)))
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function exitSelectionMode() {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const OPEN_SELECTED_CONFIRM_THRESHOLD = 10
+
+  function handleRecategorizeSelected(category: CategoryId) {
+    const ids = selectedIds
+    onTabsChange(tabs.map((t) => (ids.has(t.id) ? { ...t, category } : t)))
+    toast.success(
+      `Recategorized ${ids.size} tab${ids.size === 1 ? "" : "s"} to ${CATEGORIES[category].name}`
+    )
+    exitSelectionMode()
+  }
+
+  async function handleExportSelected() {
+    const selected = tabs.filter((t) => selectedIds.has(t.id))
+    const ok = await copyText(urlsText(selected))
+    if (ok) toast.success(`Copied ${selected.length} URL${selected.length === 1 ? "" : "s"}`)
+    else toast.error("Couldn't copy to clipboard")
+  }
+
+  function openSelectedTabs() {
+    const selected = tabs.filter((t) => selectedIds.has(t.id))
+    selected.forEach((t) => window.open(t.url, "_blank", "noopener,noreferrer"))
+  }
+
+  function handleOpenSelected() {
+    if (selectedIds.size > OPEN_SELECTED_CONFIRM_THRESHOLD) {
+      setOpenSelectedConfirmOpen(true)
+      return
+    }
+    openSelectedTabs()
+  }
+
+  function handleRemoveSelected() {
+    const remaining = removeTabs(tabs, Array.from(selectedIds))
+    onTabsChange(remaining)
+    toast.success(`Removed ${selectedIds.size} tab${selectedIds.size === 1 ? "" : "s"}.`)
+    exitSelectionMode()
   }
 
   function handleRemoveDuplicates(ids: string[]) {
@@ -170,6 +239,24 @@ export function WorkspaceView({
     ),
   ]
 
+  const selectionCommands: Command[] = [
+    {
+      id: "selection-toggle",
+      label: selectionMode ? "Exit selection mode" : "Select tabs",
+      group: "Selection",
+      icon: CheckSquare,
+      onSelect: () => (selectionMode ? exitSelectionMode() : setSelectionMode(true)),
+    },
+    {
+      id: "selection-select-all",
+      label: "Select all visible",
+      group: "Selection",
+      icon: CheckSquare,
+      disabled: !selectionMode,
+      onSelect: () => setSelectedIds(new Set(resultTabs.map((t) => t.id))),
+    },
+  ]
+
   const counts = categoryCounts(tabs)
 
   const actionCommands: Command[] = [
@@ -227,7 +314,13 @@ export function WorkspaceView({
     },
   ]
 
-  const allCommands = [...navigationCommands, ...actionCommands, ...sortCommands, ...helpCommands]
+  const allCommands = [
+    ...navigationCommands,
+    ...selectionCommands,
+    ...actionCommands,
+    ...sortCommands,
+    ...helpCommands,
+  ]
 
   useWorkspaceShortcuts({
     onOpenPalette: () => setCommandPaletteOpen(true),
@@ -237,8 +330,13 @@ export function WorkspaceView({
       if (shortcutsOpen) return setShortcutsOpen(false)
       if (cleanupOpen) return setCleanupOpen(false)
       if (clearConfirmOpen) return setClearConfirmOpen(false)
+      if (openSelectedConfirmOpen) return setOpenSelectedConfirmOpen(false)
+      if (selectionMode) return exitSelectionMode()
       if (query) return setQuery("")
     },
+    onSelectAll: selectionMode
+      ? () => setSelectedIds(new Set(resultTabs.map((t) => t.id)))
+      : undefined,
   })
 
   return (
@@ -271,8 +369,33 @@ export function WorkspaceView({
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
           <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={handleCategoryFilter} />
-          <SortControl value={sortKey} onChange={handleSort} />
+          <div className="flex items-center gap-2">
+            {!isBrowsing &&
+              (selectionMode ? (
+                <Button variant="ghost" size="sm" onClick={exitSelectionMode}>
+                  <X /> Cancel
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={() => setSelectionMode(true)}>
+                  <CheckSquare /> Select
+                </Button>
+              ))}
+            <SortControl value={sortKey} onChange={handleSort} />
+          </div>
         </div>
+
+        {selectionMode && selectedIds.size > 0 && (
+          <div className="mt-4">
+            <SelectionToolbar
+              count={selectedIds.size}
+              onRecategorize={handleRecategorizeSelected}
+              onExportSelected={handleExportSelected}
+              onOpenSelected={handleOpenSelected}
+              onRemoveSelected={handleRemoveSelected}
+              onClear={exitSelectionMode}
+            />
+          </div>
+        )}
 
         <div className="mt-6">
           {isBrowsing ? (
@@ -283,6 +406,9 @@ export function WorkspaceView({
               highlightedIndex={highlightedIndex}
               onCategoryChange={handleCategoryChange}
               onClearFilters={resetFilters}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              onToggleSelected={toggleSelected}
             />
           )}
         </div>
@@ -305,6 +431,28 @@ export function WorkspaceView({
       />
 
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
+      <AlertDialog open={openSelectedConfirmOpen} onOpenChange={setOpenSelectedConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Open {selectedIds.size} tabs?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your browser may block or slow down opening this many tabs at once.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setOpenSelectedConfirmOpen(false)
+                openSelectedTabs()
+              }}
+            >
+              Open tabs
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <CommandPalette
         open={commandPaletteOpen}

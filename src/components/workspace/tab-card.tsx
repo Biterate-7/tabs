@@ -2,6 +2,7 @@
 
 import { ExternalLink, MoreHorizontal } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
 import {
   DropdownMenu,
@@ -21,15 +22,29 @@ function openTab(url: string) {
 export function TabCard({
   tab,
   onCategoryChange,
+  selectable = false,
+  selected = false,
+  onToggleSelected,
 }: {
   tab: Tab
   onCategoryChange: (id: string, category: CategoryId) => void
+  selectable?: boolean
+  selected?: boolean
+  onToggleSelected?: () => void
 }) {
   const category = (tab.category as CategoryId | undefined) ?? "other"
   const primaryLine = tab.title?.trim() || tab.domain
 
   return (
     <div className="group flex items-center gap-3 border-b border-subtle px-1 py-2.5 last:border-b-0">
+      {selectable && (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelected?.()}
+          aria-label={`Select ${tab.domain}`}
+        />
+      )}
+
       <TabFavicon domain={tab.domain} />
 
       <div className="min-w-0 flex-1">

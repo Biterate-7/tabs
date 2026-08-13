@@ -10,11 +10,17 @@ export function FilteredTabList({
   highlightedIndex,
   onCategoryChange,
   onClearFilters,
+  selectionMode = false,
+  selectedIds,
+  onToggleSelected,
 }: {
   tabs: Tab[]
   highlightedIndex: number
   onCategoryChange: (id: string, category: CategoryId) => void
   onClearFilters?: () => void
+  selectionMode?: boolean
+  selectedIds?: Set<string>
+  onToggleSelected?: (id: string) => void
 }) {
   if (tabs.length === 0) {
     return (
@@ -34,7 +40,13 @@ export function FilteredTabList({
           key={tab.id}
           className={cn(index === highlightedIndex && "rounded-md ring-2 ring-primary/50")}
         >
-          <TabCard tab={tab} onCategoryChange={onCategoryChange} />
+          <TabCard
+            tab={tab}
+            onCategoryChange={onCategoryChange}
+            selectable={selectionMode}
+            selected={selectedIds?.has(tab.id) ?? false}
+            onToggleSelected={() => onToggleSelected?.(tab.id)}
+          />
         </div>
       ))}
     </div>

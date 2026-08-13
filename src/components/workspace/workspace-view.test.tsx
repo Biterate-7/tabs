@@ -185,3 +185,71 @@ describe("WorkspaceView cleanup (Phase 6)", () => {
     expect(remaining.every((t) => !t.isDuplicate)).toBe(true);
   });
 });
+
+describe("WorkspaceView bulk selection", () => {
+  it("enters selection mode from a filtered view, selects a row, and shows the toolbar", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByLabelText("Select github.com"));
+
+    expect(screen.getByText("1 selected")).toBeTruthy();
+  });
+
+  it("recategorizes the selection and exits selection mode", async () => {
+    const user = userEvent.setup();
+    const { onTabsChange } = renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByLabelText("Select github.com"));
+    await user.click(screen.getByRole("button", { name: "Recategorize" }));
+    await user.click(await screen.findByRole("menuitem", { name: "News" }));
+
+    expect(onTabsChange).toHaveBeenCalledOnce();
+    const updated = onTabsChange.mock.calls[0][0] as Tab[];
+    expect(updated.find((t) => t.id === "1")?.category).toBe("news");
+    expect(screen.queryByText("1 selected")).toBeFalsy();
+  });
+
+  it("removes the selection", async () => {
+    const user = userEvent.setup();
+    const { onTabsChange } = renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByLabelText("Select github.com"));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(onTabsChange).toHaveBeenCalledOnce();
+    const remaining = onTabsChange.mock.calls[0][0] as Tab[];
+    expect(remaining.map((t) => t.id)).toEqual(["2", "3"]);
+  });
+
+  it("clears the selection without changing any tabs", async () => {
+    const user = userEvent.setup();
+    const { onTabsChange } = renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByLabelText("Select github.com"));
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+
+    expect(screen.queryByText("1 selected")).toBeFalsy();
+    expect(onTabsChange).not.toHaveBeenCalled();
+  });
+
+  it("can exit selection mode via Cancel with nothing selected", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Select" })).toBeTruthy();
+  });
+});
