@@ -36,6 +36,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast: "cn-toast",
+          success: "!border-l-2 !border-l-success",
+          error: "!border-l-2 !border-l-danger",
+          warning: "!border-l-2 !border-l-warning",
         },
       }}
       {...props}
