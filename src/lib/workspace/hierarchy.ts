@@ -18,9 +18,8 @@ export function orderCategoriesByPresence(tabs: Tab[]): CategoryHierarchyEntry[]
   const groups = groupByCategory(tabs)
   const total = tabs.length
 
-  const ordered = CATEGORY_ORDER.filter((id) => id !== "other").sort(
-    (a, b) => groups[b].length - groups[a].length
-  )
+  const ordered: CategoryId[] = CATEGORY_ORDER.filter((id) => id !== "other")
+  ordered.sort((a, b) => groups[b].length - groups[a].length)
   ordered.push("other")
 
   return ordered.map((id): CategoryHierarchyEntry => {
