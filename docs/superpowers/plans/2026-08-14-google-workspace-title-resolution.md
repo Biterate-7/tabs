@@ -1020,11 +1020,11 @@ export async function POST(request: Request) {
   // carries accessToken, to keep it out of the public /api/auth/session
   // response that useSession() polls client-side.
   // secureCookie must match how the cookie was actually set. Auth.js
-  // decides the `__Secure-` cookie prefix from the *request's own*
-  // protocol (`url.protocol === "https:"` — see @auth/core/lib/init.js),
-  // not from NODE_ENV, so we mirror that exact check here rather than
-  // approximating it with an env var (which would drift from reality
-  // behind a reverse proxy, or on non-production HTTPS previews).
+  // decides the `__Secure-` cookie prefix from the protocol it resolves
+  // for the request — normally the request's own protocol, though
+  // AUTH_URL/NEXTAUTH_URL can override it on some self-hosted deployments
+  // (see @auth/core/lib/init.js) — so we mirror that check here rather
+  // than approximating it with an env var like NODE_ENV.
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
