@@ -57,7 +57,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       };
     },
     async session({ session, token }) {
-      session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
+      // Deliberately do NOT attach accessToken/refreshToken here. Auth.js
+      // reuses this callback's return value for both the server-only
+      // auth() helper AND the public GET /api/auth/session endpoint that
+      // next-auth/react's useSession() polls from the browser — anything
+      // added to `session` here is sent to client-side JS. The Drive
+      // metadata Route Handler (Task 8) reads the access token separately
+      // via getToken() from next-auth/jwt, which decodes the encrypted
+      // session cookie server-side without touching this callback.
       session.error = token.error === "RefreshAccessTokenError" ? "RefreshAccessTokenError" : undefined;
       return session;
     },
