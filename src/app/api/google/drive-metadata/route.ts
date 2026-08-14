@@ -27,15 +27,16 @@ export async function POST(request: Request) {
   // carries accessToken, to keep it out of the public /api/auth/session
   // response that useSession() polls client-side.
   //
-  // secureCookie must match how the cookie was actually set (Auth.js sets
-  // it based on whether the request was HTTPS — see @auth/core/lib/init.js).
-  // Without this, getToken() looks for the unprefixed `authjs.session-token`
-  // cookie while production sets `__Secure-authjs.session-token`, so the
-  // session would never be found in any HTTPS deployment.
+  // secureCookie must match how the cookie was actually set. Auth.js
+  // decides the `__Secure-` cookie prefix from the *request's own*
+  // protocol (`url.protocol === "https:"` — see @auth/core/lib/init.js),
+  // not from NODE_ENV, so we mirror that exact check here rather than
+  // approximating it with an env var (which would drift from reality
+  // behind a reverse proxy, or on non-production HTTPS previews).
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
-    secureCookie: process.env.NODE_ENV === "production",
+    secureCookie: new URL(request.url).protocol === "https:",
   });
   const accessToken = typeof token?.accessToken === "string" ? token.accessToken : undefined;
 
