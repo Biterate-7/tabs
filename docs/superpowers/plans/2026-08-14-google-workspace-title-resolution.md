@@ -14,7 +14,7 @@
 - No database. Session/token storage is a JWT in an encrypted `httpOnly` cookie via Auth.js's default JWT strategy.
 - Only request the `https://www.googleapis.com/auth/drive.metadata.readonly` scope (plus `openid email profile` for basic sign-in) — never broader Drive scopes.
 - Only request Drive fields `id,name,mimeType`. Never fetch file content.
-- Never log or expose `access_token`/`refresh_token` to the client. They live only in the encrypted session cookie and are read server-side inside the Route Handler via `auth()`.
+- Never log or expose `access_token`/`refresh_token` to the client. They live only in the encrypted session cookie. Auth.js's `session` callback output is shared by both `auth()` (server-only) *and* the public `/api/auth/session` HTTP endpoint that `useSession()` polls client-side — so the `session` callback must never attach `accessToken` to the returned object, or it leaks to the browser. The Route Handler that needs the token reads it via `getToken()` from `next-auth/jwt`, which decodes the encrypted session cookie directly server-side without going through the public session endpoint. The client-visible session may carry only the non-sensitive `error` flag.
 - The synchronous `parseTabInput` → `Tab[]` pipeline (`src/lib/tabs/index.ts`) must not become async or block on network calls. Title resolution is a background enrichment pass after tabs are already rendered.
 - Support exactly three URL patterns: `docs.google.com/document/d/<ID>/...`, `/spreadsheets/d/<ID>/...`, `/presentation/d/<ID>/...`. Do not add Drive folders, Forms, or other Google services.
 - Do not change `src/lib/categories/rules.ts` — the existing `hostIs("docs.google.com", ...)` rule (rules.ts:79) already covers all three URL patterns; no categorization changes are needed or in scope.
@@ -645,7 +645,7 @@ git commit -m "feat: add Google OAuth access token refresh helper"
 
 **Interfaces:**
 - Consumes: `refreshGoogleAccessToken` from `src/lib/google/refresh-token.ts` (Task 5).
-- Produces: `auth()` (server-only session getter returning `{ ..., accessToken?: string, error?: "RefreshAccessTokenError" }`), plus `handlers`, `signIn`, `signOut` re-exported from `next-auth`. Consumed by the Drive metadata Route Handler (Task 8) and by `next-auth/react`'s `useSession`/`signIn` on the client (Tasks 10–11).
+- Produces: `auth()` (server-only session getter returning `{ ..., error?: "RefreshAccessTokenError" }` — deliberately **without** `accessToken`, see Step 2), plus `handlers`, `signIn`, `signOut` re-exported from `next-auth`. Consumed by `next-auth/react`'s `useSession`/`signIn` on the client (Tasks 10–11), which only ever read `status`/`error`, never a token. The Drive metadata Route Handler (Task 8) reads the access token separately via `getToken()` from `next-auth/jwt`, which decodes the same encrypted session cookie directly server-side — it does not go through the `session` callback or the public `/api/auth/session` endpoint, so the token is never exposed to client-side code.
 
 - [ ] **Step 1: Add the session/JWT type augmentation**
 
@@ -655,7 +655,8 @@ import type { DefaultSession } from "next-auth";
 
 declare module "next-auth" {
   interface Session extends DefaultSession {
-    accessToken?: string;
+    // No accessToken/refreshToken here on purpose — this type is shared by
+    // the client-visible session (see the `session` callback in Step 2).
     error?: "RefreshAccessTokenError";
   }
 }
@@ -733,13 +734,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       };
     },
     async session({ session, token }) {
-      session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
-      session.error = token.error;
+      // Deliberately do NOT attach accessToken/refreshToken here. Auth.js
+      // reuses this callback's return value for both the server-only
+      // auth() helper AND the public GET /api/auth/session endpoint that
+      // next-auth/react's useSession() polls from the browser — anything
+      // added to `session` here is sent to client-side JS. The Drive
+      // metadata Route Handler (Task 8) reads the access token separately
+      // via getToken() from next-auth/jwt, which decodes the encrypted
+      // session cookie server-side without touching this callback.
+      session.error = token.error === "RefreshAccessTokenError" ? "RefreshAccessTokenError" : undefined;
       return session;
     },
   },
 });
 ```
+
+Note: `token.error` may type as `unknown` against the installed `next-auth` version depending on how its types resolve the `JWT` re-export — if `session.error = token.error;` doesn't type-check, use the explicit ternary above (`token.error === "RefreshAccessTokenError" ? "RefreshAccessTokenError" : undefined`), which is runtime-equivalent since `token.error` is only ever set to that literal or `undefined` elsewhere in this file.
 
 - [ ] **Step 3: Add the route handler**
 
@@ -851,7 +861,7 @@ git commit -m "feat: wrap app in Auth.js SessionProvider"
 - Test: `src/app/api/google/drive-metadata/route.test.ts`
 
 **Interfaces:**
-- Consumes: `auth()` from `@/auth` (Task 6, mocked in tests), `fetchDriveFileMetadata` from `@/lib/google/drive-metadata` (Task 4, mocked in tests), `mapWithConcurrency` from `@/lib/google/concurrency` (Task 3, real).
+- Consumes: `getToken` from `next-auth/jwt` (decodes the encrypted session cookie set up in Task 6, mocked in tests — **not** `auth()` from `@/auth`, which deliberately no longer carries the access token, see Task 6 Step 2), `fetchDriveFileMetadata` from `@/lib/google/drive-metadata` (Task 4, mocked in tests), `mapWithConcurrency` from `@/lib/google/concurrency` (Task 3, real).
 - Produces: `POST /api/google/drive-metadata` accepting `{ fileIds: string[] }`, returning `{ authenticated: boolean; results: Record<string, { name: string; mimeType: string } | null> }`. Consumed by `resolveGoogleFileTitles` (Task 9).
 
 - [ ] **Step 1: Write the failing tests**
@@ -861,11 +871,11 @@ git commit -m "feat: wrap app in Auth.js SessionProvider"
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { POST } from "./route";
 
-const authMock = vi.fn();
+const getTokenMock = vi.fn();
 const fetchDriveFileMetadataMock = vi.fn();
 
-vi.mock("@/auth", () => ({
-  auth: () => authMock(),
+vi.mock("next-auth/jwt", () => ({
+  getToken: (...args: unknown[]) => getTokenMock(...args),
 }));
 
 vi.mock("@/lib/google/drive-metadata", () => ({
@@ -881,13 +891,13 @@ function postRequest(body: unknown) {
 }
 
 beforeEach(() => {
-  authMock.mockReset();
+  getTokenMock.mockReset();
   fetchDriveFileMetadataMock.mockReset();
 });
 
 describe("POST /api/google/drive-metadata", () => {
   it("returns authenticated:false and no results when there is no session", async () => {
-    authMock.mockResolvedValue(null);
+    getTokenMock.mockResolvedValue(null);
 
     const res = await POST(postRequest({ fileIds: ["a"] }));
     const data = await res.json();
@@ -897,8 +907,8 @@ describe("POST /api/google/drive-metadata", () => {
     expect(fetchDriveFileMetadataMock).not.toHaveBeenCalled();
   });
 
-  it("returns authenticated:false when the session carries a refresh error", async () => {
-    authMock.mockResolvedValue({ accessToken: "stale", error: "RefreshAccessTokenError" });
+  it("returns authenticated:false when the token carries a refresh error", async () => {
+    getTokenMock.mockResolvedValue({ accessToken: "stale", error: "RefreshAccessTokenError" });
 
     const res = await POST(postRequest({ fileIds: ["a"] }));
     const data = await res.json();
@@ -908,7 +918,7 @@ describe("POST /api/google/drive-metadata", () => {
   });
 
   it("resolves metadata for each requested file id when authenticated", async () => {
-    authMock.mockResolvedValue({ accessToken: "token-123" });
+    getTokenMock.mockResolvedValue({ accessToken: "token-123" });
     fetchDriveFileMetadataMock.mockImplementation(async (fileId: string) =>
       fileId === "a" ? { name: "Quarterly Product Strategy", mimeType: "doc" } : null
     );
@@ -926,7 +936,7 @@ describe("POST /api/google/drive-metadata", () => {
   });
 
   it("de-duplicates repeated file ids into a single upstream call", async () => {
-    authMock.mockResolvedValue({ accessToken: "token-123" });
+    getTokenMock.mockResolvedValue({ accessToken: "token-123" });
     fetchDriveFileMetadataMock.mockResolvedValue({ name: "Doc", mimeType: "doc" });
 
     const res = await POST(postRequest({ fileIds: ["dup", "dup", "dup"] }));
@@ -937,7 +947,7 @@ describe("POST /api/google/drive-metadata", () => {
   });
 
   it("returns 400 for a malformed body without crashing", async () => {
-    authMock.mockResolvedValue({ accessToken: "token-123" });
+    getTokenMock.mockResolvedValue({ accessToken: "token-123" });
 
     const res = await POST(postRequest({ fileIds: "not-an-array" }));
     expect(res.status).toBe(400);
@@ -956,7 +966,7 @@ describe("POST /api/google/drive-metadata", () => {
   });
 
   it("one failing file id does not affect the others (partial failure)", async () => {
-    authMock.mockResolvedValue({ accessToken: "token-123" });
+    getTokenMock.mockResolvedValue({ accessToken: "token-123" });
     fetchDriveFileMetadataMock.mockImplementation(async (fileId: string) => {
       if (fileId === "broken") return null;
       return { name: `Title for ${fileId}`, mimeType: "doc" };
@@ -982,7 +992,7 @@ Expected: FAIL — `Cannot find module './route'`
 ```ts
 // src/app/api/google/drive-metadata/route.ts
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getToken } from "next-auth/jwt";
 import { fetchDriveFileMetadata, type DriveFileMetadata } from "@/lib/google/drive-metadata";
 import { mapWithConcurrency } from "@/lib/google/concurrency";
 
@@ -1004,10 +1014,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "fileIds must be an array of strings" }, { status: 400 });
   }
 
-  const session = await auth();
-  const accessToken = session?.accessToken;
+  // getToken() decodes the encrypted session cookie directly, server-side
+  // only. It is deliberately used instead of auth() here — see Task 6 Step
+  // 2 — because the `session` callback (which auth() reads through) never
+  // carries accessToken, to keep it out of the public /api/auth/session
+  // response that useSession() polls client-side.
+  const token = await getToken({ req: request, secret: process.env.AUTH_SECRET });
+  const accessToken = typeof token?.accessToken === "string" ? token.accessToken : undefined;
 
-  if (!accessToken || session?.error) {
+  if (!accessToken || token?.error) {
     return NextResponse.json({ authenticated: false, results: {} as ResultsByFileId });
   }
 
