@@ -32,6 +32,7 @@ import { ShortcutsDialog } from "@/components/workspace/shortcuts-dialog"
 import { SelectionToolbar } from "@/components/workspace/selection-toolbar"
 import { removeTabs } from "@/lib/workspace/cleanup"
 import { AttentionStrip } from "@/components/workspace/attention-strip"
+import { GoogleSignInBanner } from "@/components/workspace/google-signin-banner"
 import { computeAttention } from "@/lib/workspace/attention"
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview"
 import { CategoryGrid } from "@/components/workspace/category-grid"
@@ -63,10 +64,12 @@ export function WorkspaceView({
   tabs,
   onTabsChange,
   onClear,
+  googleSignInPrompt = false,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
   onClear: () => void
+  googleSignInPrompt?: boolean
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -358,6 +361,11 @@ export function WorkspaceView({
         onOpenPalette={() => setCommandPaletteOpen(true)}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
+        {googleSignInPrompt && (
+          <div className="mb-4">
+            <GoogleSignInBanner />
+          </div>
+        )}
         <AttentionStrip
           attention={attention}
           onCleanup={() => setCleanupOpen(true)}

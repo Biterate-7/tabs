@@ -3,6 +3,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "./app-shell";
 
+vi.mock("@/hooks/use-google-title-enrichment", () => ({
+  useGoogleTitleEnrichment: () => ({ needsSignIn: false }),
+}));
+
 beforeEach(() => {
   window.localStorage.clear();
 });

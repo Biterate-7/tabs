@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
+import { useGoogleTitleEnrichment } from "@/hooks/use-google-title-enrichment"
 import {
   clearWorkspaceStorage,
   isStorageAvailable,
@@ -56,6 +57,21 @@ export function AppShell() {
     clearWorkspaceStorage()
   }
 
+  const handleGoogleTitlesResolved = useCallback(
+    (updates: { id: string; title: string }[]) => {
+      setWorkspaceTabs((prev) => {
+        if (!prev) return prev
+        const titleById = new Map(updates.map((u) => [u.id, u.title]))
+        const next = prev.map((t) => (titleById.has(t.id) ? { ...t, title: titleById.get(t.id) } : t))
+        if (canPersist) saveWorkspace(next)
+        return next
+      })
+    },
+    [canPersist]
+  )
+
+  const { needsSignIn } = useGoogleTitleEnrichment(workspaceTabs ?? [], handleGoogleTitlesResolved)
+
   if (!hydrated) return null
 
   if (!workspaceTabs) {
@@ -67,6 +83,7 @@ export function AppShell() {
       tabs={workspaceTabs}
       onTabsChange={handleTabsChange}
       onClear={handleClear}
+      googleSignInPrompt={needsSignIn}
     />
   )
 }
