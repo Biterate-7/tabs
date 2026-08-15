@@ -1842,7 +1842,7 @@ Append to the `describe("useGoogleTitleEnrichment", ...)` block from Task 10:
 - [ ] **Step 2: Run tests to verify they pass**
 
 Run: `npm test -- use-google-title-enrichment`
-Expected: PASS (9 tests total for this file)
+Expected: PASS (11 tests total for this file — the 9 from Task 10, including its 2 fix-round regression tests, plus these 2)
 
 - [ ] **Step 3: Commit**
 
