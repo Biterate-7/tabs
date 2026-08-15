@@ -34,7 +34,7 @@ describe("fetchDriveFileMetadata", () => {
 
     await fetchDriveFileMetadata("file-1", "my-token");
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("/drive/v3/files/file-1");
     expect(url).toContain("fields=id%2Cname%2CmimeType");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer my-token");

@@ -39,7 +39,7 @@ describe("refreshGoogleAccessToken", () => {
 
     await refreshGoogleAccessToken("refresh-1", CREDENTIALS);
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://oauth2.googleapis.com/token");
     const body = new URLSearchParams(init.body as string);
     expect(body.get("grant_type")).toBe("refresh_token");
