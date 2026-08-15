@@ -202,9 +202,10 @@ describe("useGoogleTitleEnrichment", () => {
     await waitFor(() => expect(result.current.needsSignIn).toBe(true));
 
     // Pass 3: re-authenticate. "abc" is already in attemptedFileIds from pass
-    // 1, so `pending` is empty on this run. Without the fix, the effect
-    // returns early and needsSignIn stays stuck at true; with the fix it is
-    // explicitly cleared.
+    // 1, so `pending` is empty and the effect is a no-op on this run — but
+    // needsSignIn is a derived value (hasCandidates && (unauthenticated ||
+    // refreshFailed)), and refreshFailed was never set true, so it resolves
+    // to false immediately on render rather than staying stuck at true.
     useSessionMock.mockReturnValue({ status: "authenticated" });
     rerender();
 
