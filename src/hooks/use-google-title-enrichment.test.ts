@@ -211,4 +211,48 @@ describe("useGoogleTitleEnrichment", () => {
     await waitFor(() => expect(result.current.needsSignIn).toBe(false));
     expect(resolveGoogleFileTitlesMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not block on the resolver: state stays synchronous until the promise settles", async () => {
+    useSessionMock.mockReturnValue({ status: "authenticated" })
+    let resolvePromise!: (value: {
+      authenticated: boolean
+      metadataByFileId: Map<string, { name: string; mimeType: string } | null>
+    }) => void
+    resolveGoogleFileTitlesMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePromise = resolve
+      })
+    )
+    const onResolved = vi.fn()
+    const tabs = [makeTab({ id: "1", url: "https://docs.google.com/document/d/abc/edit" })]
+
+    const { result } = renderHook(() => useGoogleTitleEnrichment(tabs, onResolved))
+
+    // The hook has kicked off the request but nothing has resolved yet —
+    // callers (AppShell) already rendered the fallback-titled tab by this point.
+    expect(onResolved).not.toHaveBeenCalled()
+    expect(result.current.needsSignIn).toBe(false)
+
+    resolvePromise({
+      authenticated: true,
+      metadataByFileId: new Map([["abc", { name: "Resolved Later", mimeType: "doc" }]]),
+    })
+
+    await waitFor(() =>
+      expect(onResolved).toHaveBeenCalledWith([{ id: "1", title: "Resolved Later" }])
+    )
+  })
+
+  it("resolves 50 distinct Google Workspace tabs in a single batched call, not one request per tab", async () => {
+    useSessionMock.mockReturnValue({ status: "authenticated" })
+    resolveGoogleFileTitlesMock.mockResolvedValue({ authenticated: true, metadataByFileId: new Map() })
+    const tabs = Array.from({ length: 50 }, (_, i) =>
+      makeTab({ id: `${i}`, url: `https://docs.google.com/document/d/file-${i}/edit` })
+    )
+
+    renderHook(() => useGoogleTitleEnrichment(tabs, vi.fn()))
+
+    await waitFor(() => expect(resolveGoogleFileTitlesMock).toHaveBeenCalledTimes(1))
+    expect(resolveGoogleFileTitlesMock.mock.calls[0][0]).toHaveLength(50)
+  })
 });
