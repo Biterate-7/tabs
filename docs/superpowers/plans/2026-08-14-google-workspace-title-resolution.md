@@ -1431,13 +1431,23 @@ Expected: FAIL — `Cannot find module './use-google-title-enrichment'`
 // src/hooks/use-google-title-enrichment.ts
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
 import { extractGoogleWorkspaceFile } from "@/lib/google/workspace-url"
 import { resolveGoogleFileTitles } from "@/lib/google/resolve-titles"
 import type { Tab } from "@/lib/tabs/types"
 
 type TitleUpdate = { id: string; title: string }
+
+function findCandidates(tabs: Tab[]) {
+  return tabs
+    .map((tab) => {
+      if (tab.title?.trim()) return null
+      const match = extractGoogleWorkspaceFile(tab.url)
+      return match ? { tab, fileId: match.fileId } : null
+    })
+    .filter((c): c is { tab: Tab; fileId: string } => c !== null)
+}
 
 export function useGoogleTitleEnrichment(
   tabs: Tab[],
@@ -1447,21 +1457,21 @@ export function useGoogleTitleEnrichment(
   const attemptedFileIds = useRef<Set<string>>(new Set())
   const [needsSignIn, setNeedsSignIn] = useState(false)
 
+  // Whether there's anything to sign in *for* is a pure function of `tabs`
+  // alone — no async/external dependency — so it's computed here instead of
+  // via setState in the effect below (which would trip
+  // react-hooks/set-state-in-effect: "you might not need an effect" for a
+  // value derivable during render). ANDing it into the returned value below
+  // also means a stale `needsSignIn: true` is automatically hidden the
+  // moment `tabs` no longer has any candidates, without needing an extra
+  // effect run to explicitly clear it.
+  const hasCandidates = useMemo(() => findCandidates(tabs).length > 0, [tabs])
+
   useEffect(() => {
     if (status === "loading") return
 
-    const candidates = tabs
-      .map((tab) => {
-        if (tab.title?.trim()) return null
-        const match = extractGoogleWorkspaceFile(tab.url)
-        return match ? { tab, fileId: match.fileId } : null
-      })
-      .filter((c): c is { tab: Tab; fileId: string } => c !== null)
-
-    if (candidates.length === 0) {
-      setNeedsSignIn(false)
-      return
-    }
+    const candidates = findCandidates(tabs)
+    if (candidates.length === 0) return
 
     if (status !== "authenticated") {
       setNeedsSignIn(true)
@@ -1523,7 +1533,7 @@ export function useGoogleTitleEnrichment(
     }
   }, [tabs, status, onResolved])
 
-  return { needsSignIn }
+  return { needsSignIn: hasCandidates && needsSignIn }
 }
 ```
 
