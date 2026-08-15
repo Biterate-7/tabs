@@ -47,11 +47,8 @@ import { copyText, urlsText } from "@/lib/workspace/export"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
+import { openOrFocusTab } from "@/lib/tabs/extension-bridge"
 import type { Tab } from "@/lib/tabs/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -155,7 +152,7 @@ export function WorkspaceView({
 
   function openSelectedTabs() {
     const selected = tabs.filter((t) => selectedIds.has(t.id))
-    selected.forEach((t) => window.open(t.url, "_blank", "noopener,noreferrer"))
+    selected.forEach((t) => void openOrFocusTab(t))
   }
 
   function handleOpenSelected() {
@@ -354,7 +351,7 @@ export function WorkspaceView({
         onSearchArrowUp={() => setHighlightedIndex((i) => Math.max(i - 1, 0))}
         onSearchEnter={() => {
           const target = resultTabs[highlightedIndex]
-          if (target) openTab(target.url)
+          if (target) void openOrFocusTab(target)
         }}
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}

@@ -269,9 +269,34 @@ describe("openOrFocusTab", () => {
     const tab = makeTab({});
 
     const promise = openOrFocusTab(tab);
-    await vi.advanceTimersByTimeAsync(5000);
+
+    // Pins the timeout to the ~300ms the implementation actually uses,
+    // rather than merely proving it resolves eventually: a regression that
+    // set it to, say, 5000ms would still pass a test that only checked
+    // "eventually falls back" without checking it hasn't fired too early.
+    await vi.advanceTimersByTimeAsync(299);
+    expect(windowOpenSpy).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(50);
     await promise;
 
+    expect(windowOpenSpy).toHaveBeenCalledWith(tab.url, "_blank", "noopener,noreferrer");
+  });
+
+  it("falls back when the extension responds but sets chrome.runtime.lastError", async () => {
+    const runtime: {
+      sendMessage: (extensionId: string, message: unknown, callback: (response: unknown) => void) => void;
+      lastError?: { message?: string };
+    } = {
+      sendMessage: (_extensionId, _message, callback) => {
+        runtime.lastError = { message: "Could not establish connection." };
+        callback(undefined);
+      },
+    };
+    vi.stubGlobal("chrome", { runtime });
+    const tab = makeTab({});
+
+    await expect(openOrFocusTab(tab)).resolves.toBeUndefined();
     expect(windowOpenSpy).toHaveBeenCalledWith(tab.url, "_blank", "noopener,noreferrer");
   });
 

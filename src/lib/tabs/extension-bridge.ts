@@ -95,13 +95,11 @@ async function findOpenTab(normalizedUrl: string): Promise<ExtensionTabInfo | nu
   const matches: ExtensionTabInfo[] = [];
   for (const info of response) {
     if (!info || typeof info.url !== "string") continue;
-    let parsed: URL;
     try {
-      parsed = new URL(info.url);
+      if (normalizeUrl(new URL(info.url)) === normalizedUrl) matches.push(info);
     } catch {
       continue;
     }
-    if (normalizeUrl(parsed) === normalizedUrl) matches.push(info);
   }
 
   return pickBestMatch(matches);
