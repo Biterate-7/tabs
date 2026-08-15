@@ -13,11 +13,8 @@ import {
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import { openOrFocusTab } from "@/lib/tabs/extension-bridge"
 import type { Tab } from "@/lib/tabs/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
 
 export function TabCard({
   tab,
@@ -80,7 +77,7 @@ export function TabCard({
       <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:duration-(--duration-fast) sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-data-open:opacity-100">
         <IconButton
           aria-label={`Open ${tab.domain}`}
-          onClick={() => openTab(tab.url)}
+          onClick={() => void openOrFocusTab(tab)}
           className="size-11 sm:size-8"
         >
           <ExternalLink />
@@ -98,7 +95,7 @@ export function TabCard({
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void openOrFocusTab(tab)}>Open</DropdownMenuItem>
             {CATEGORY_ORDER.map((id) => (
               <DropdownMenuItem
                 key={id}

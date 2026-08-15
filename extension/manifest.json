@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "TabDump Tab Reuse Bridge",
+  "version": "1.0.0",
+  "description": "Lets the TabDump web app focus an already-open browser tab instead of opening a duplicate. Reads tab URLs live on each request; stores nothing.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["tabs"],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "https://tabsdump.vercel.app/*"
+    ]
+  }
+}
