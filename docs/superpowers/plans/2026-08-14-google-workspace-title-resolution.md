@@ -1481,8 +1481,10 @@ export function useGoogleTitleEnrichment(
 
     pending.forEach((c) => attemptedFileIds.current.add(c.fileId))
     let cancelled = false
+    let settled = false
 
     resolveGoogleFileTitles(pending.map((c) => c.fileId)).then((result) => {
+      settled = true
       if (cancelled) return
 
       if (!result.authenticated) {
@@ -1510,7 +1512,14 @@ export function useGoogleTitleEnrichment(
       // "attempted", so without this cleanup they'd never be retried by a
       // later effect run even though the in-flight request may have
       // succeeded. Un-mark them so the next effect run picks them back up.
-      pending.forEach((c) => attemptedFileIds.current.delete(c.fileId))
+      // Only do this if the fetch genuinely hasn't settled yet — if it
+      // already resolved (e.g. to a permanent null result) before cleanup
+      // ran, leave attemptedFileIds alone so we don't needlessly re-fetch
+      // work that already completed (cleanup also runs after a normal,
+      // successful settle, not just on genuine cancellation).
+      if (!settled) {
+        pending.forEach((c) => attemptedFileIds.current.delete(c.fileId))
+      }
     }
   }, [tabs, status, onResolved])
 
@@ -1521,7 +1530,7 @@ export function useGoogleTitleEnrichment(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm test -- use-google-title-enrichment`
-Expected: PASS (7 tests)
+Expected: PASS (9 tests — 7 from Step 1 plus 2 regression tests added when the `settled`/`needsSignIn` fixes above were applied, covering the cancel-before-settle retry and the stuck-`needsSignIn`-after-re-auth cases)
 
 - [ ] **Step 5: Commit**
 
