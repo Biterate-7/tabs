@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Header } from "@/components/header"
 import { HeroBackground } from "@/components/hero-background"
 import { TabInput } from "@/components/tab-input"
@@ -10,7 +10,13 @@ import { getOnboardingState, dismissOnboarding } from "@/lib/onboarding"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import type { Tab } from "@/lib/tabs/types"
 
-export function LandingView({ onDump }: { onDump: (tabs: Tab[]) => void }) {
+export function LandingView({
+  onDump,
+  workspaceSwitcher,
+}: {
+  onDump: (tabs: Tab[]) => void
+  workspaceSwitcher?: ReactNode
+}) {
   // Lazy initializer only ever runs on a client-side render (AppShell holds
   // this component back behind its own post-mount `hydrated` gate), so
   // reading localStorage here doesn't risk an SSR hydration mismatch the
@@ -31,7 +37,7 @@ export function LandingView({ onDump }: { onDump: (tabs: Tab[]) => void }) {
   return (
     <div className="relative flex min-h-screen flex-1 flex-col">
       <HeroBackground />
-      <Header />
+      <Header workspaceSwitcher={workspaceSwitcher} />
       <main className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col items-center px-6 py-20 text-center sm:py-28">
         {onboarding.extensionConnected ? (
           <>

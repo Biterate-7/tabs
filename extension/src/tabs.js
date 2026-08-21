@@ -34,12 +34,21 @@ export function isPrivilegedUrl(url) {
  * content-script bridge expects. `tabId`/`windowId`/`active` are carried
  * for the extension's own potential future use (e.g. closing tabs after a
  * successful dump) — TabDump's web app only consumes url/title/pinned.
+ *
+ * `excludeUrls`, when given, drops tabs whose exact raw URL is already
+ * known to be in the currently selected workspace (see
+ * background.js's checkImported) — this is what lets "Dump N new tabs"
+ * actually only dump the new ones, through the same payload-building path
+ * every other dump already uses, rather than a second filtering step
+ * bolted on elsewhere.
  */
-export function buildImportPayload(chromeTabs) {
+export function buildImportPayload(chromeTabs, excludeUrls) {
+  const exclude = excludeUrls ? new Set(excludeUrls) : null;
   const tabs = [];
 
   for (const tab of chromeTabs ?? []) {
     if (!tab || !tab.url || isPrivilegedUrl(tab.url)) continue;
+    if (exclude && exclude.has(tab.url)) continue;
 
     tabs.push({
       url: tab.url,

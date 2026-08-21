@@ -100,6 +100,31 @@ describe("buildImportPayload", () => {
     expect(elapsed).toBeLessThan(200);
   });
 
+  it("drops tabs whose exact url is in excludeUrls", () => {
+    const { tabs } = buildImportPayload(
+      [
+        fakeTab({ id: 1, url: "https://a.example" }),
+        fakeTab({ id: 2, url: "https://b.example" }),
+        fakeTab({ id: 3, url: "https://c.example" }),
+      ],
+      ["https://b.example"]
+    );
+    expect(tabs.map((t) => t.tabId)).toEqual([1, 3]);
+  });
+
+  it("ignores excludeUrls when omitted, keeping current no-filter behavior", () => {
+    const { tabs } = buildImportPayload([fakeTab({ url: "https://a.example" })]);
+    expect(tabs).toHaveLength(1);
+  });
+
+  it("excludes every tab when excludeUrls covers the whole batch", () => {
+    const { tabs } = buildImportPayload(
+      [fakeTab({ url: "https://a.example" }), fakeTab({ url: "https://b.example" })],
+      ["https://a.example", "https://b.example"]
+    );
+    expect(tabs).toHaveLength(0);
+  });
+
   it("excludes privileged tabs even within a large mixed batch", () => {
     const chromeTabs = [
       ...Array.from({ length: 50 }, (_, i) => fakeTab({ id: i, url: `https://example.com/${i}` })),

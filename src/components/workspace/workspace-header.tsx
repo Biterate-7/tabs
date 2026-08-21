@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { toast } from "sonner"
 import { Sparkles, Trash2, MoreHorizontal, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,7 @@ import { SearchBar } from "@/components/workspace/search-bar"
 import { ExportMenu } from "@/components/workspace/export-menu"
 import { buildExportText, downloadTextFile } from "@/lib/workspace/export"
 import type { Tab } from "@/lib/tabs/types"
+import type { Workspace } from "@/lib/workspace/types"
 
 export function WorkspaceHeader({
   tabs,
@@ -26,6 +28,9 @@ export function WorkspaceHeader({
   onCleanup,
   onRequestClear,
   onOpenPalette,
+  workspaceSwitcher,
+  currentWorkspace,
+  allWorkspaces,
 }: {
   tabs: Tab[]
   searchValue: string
@@ -36,6 +41,9 @@ export function WorkspaceHeader({
   onCleanup: () => void
   onRequestClear: () => void
   onOpenPalette?: () => void
+  workspaceSwitcher?: ReactNode
+  currentWorkspace?: Workspace
+  allWorkspaces?: Workspace[]
 }) {
   const tabCount = tabs.length
 
@@ -50,7 +58,9 @@ export function WorkspaceHeader({
       <div className="mx-auto max-w-6xl px-6 py-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="mr-auto">
-            <p className="text-body font-semibold tracking-tight text-foreground">TabDump</p>
+            {workspaceSwitcher ?? (
+              <p className="text-body font-semibold tracking-tight text-foreground">TabDump</p>
+            )}
             <p className="text-meta text-tertiary">
               {tabCount} tab{tabCount === 1 ? "" : "s"}
             </p>
@@ -72,7 +82,7 @@ export function WorkspaceHeader({
             <Button variant="ghost" size="sm" onClick={onCleanup}>
               <Sparkles /> Cleanup
             </Button>
-            <ExportMenu tabs={tabs} />
+            <ExportMenu tabs={tabs} currentWorkspace={currentWorkspace} allWorkspaces={allWorkspaces} />
             <Button variant="ghost" size="sm" onClick={onRequestClear}>
               <Trash2 /> Clear
             </Button>

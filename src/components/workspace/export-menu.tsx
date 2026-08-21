@@ -1,12 +1,13 @@
 "use client"
 
 import { toast } from "sonner"
-import { Copy, Download, FileText } from "lucide-react"
+import { Copy, Download, FileText, FileJson } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -16,13 +17,28 @@ import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { categoryCounts } from "@/lib/workspace/search"
 import { buildExportText, copyText, downloadTextFile, urlsText } from "@/lib/workspace/export"
+import { buildWorkspaceExport, downloadJsonFile, serializeWorkspaceExport } from "@/lib/workspace/json-export"
 import type { Tab } from "@/lib/tabs/types"
+import type { Workspace } from "@/lib/workspace/types"
 
 function urlsLabel(n: number) {
   return `${n} URL${n === 1 ? "" : "s"}`
 }
 
-export function ExportMenu({ tabs }: { tabs: Tab[] }) {
+function jsonFilename(label: string) {
+  return `tabdump-${label}-${new Date().toISOString().slice(0, 10)}.json`
+}
+
+export function ExportMenu({
+  tabs,
+  currentWorkspace,
+  allWorkspaces,
+}: {
+  tabs: Tab[]
+  /** Enables the JSON export items. Omitted (e.g. in isolated tab-list contexts) they simply don't render. */
+  currentWorkspace?: Workspace
+  allWorkspaces?: Workspace[]
+}) {
   const counts = categoryCounts(tabs)
 
   async function handleCopyAll() {
@@ -44,6 +60,22 @@ export function ExportMenu({ tabs }: { tabs: Tab[] }) {
     const ok = downloadTextFile("tabdump-export.txt", buildExportText(tabs))
     if (ok) toast.success("Workspace exported")
     else toast.error("Couldn't export workspace")
+  }
+
+  function handleExportWorkspaceJson() {
+    if (!currentWorkspace) return
+    const text = serializeWorkspaceExport(buildWorkspaceExport([currentWorkspace]))
+    const ok = downloadJsonFile(jsonFilename(currentWorkspace.name.toLowerCase().replace(/\s+/g, "-")), text)
+    if (ok) toast.success("Workspace exported as JSON")
+    else toast.error("Couldn't export workspace")
+  }
+
+  function handleExportAllJson() {
+    if (!allWorkspaces) return
+    const text = serializeWorkspaceExport(buildWorkspaceExport(allWorkspaces))
+    const ok = downloadJsonFile(jsonFilename("all-workspaces"), text)
+    if (ok) toast.success("All workspaces exported as JSON")
+    else toast.error("Couldn't export workspaces")
   }
 
   return (
@@ -74,6 +106,19 @@ export function ExportMenu({ tabs }: { tabs: Tab[] }) {
         <DropdownMenuItem onClick={handleExportTxt}>
           <FileText /> Export TXT
         </DropdownMenuItem>
+        {currentWorkspace && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleExportWorkspaceJson}>
+              <FileJson /> Export workspace (JSON)
+            </DropdownMenuItem>
+            {allWorkspaces && allWorkspaces.length > 1 && (
+              <DropdownMenuItem onClick={handleExportAllJson}>
+                <FileJson /> Export all workspaces (JSON)
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import {
   Search as SearchIcon,
@@ -47,6 +47,7 @@ import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import type { Tab } from "@/lib/tabs/types"
+import type { Workspace } from "@/lib/workspace/types"
 
 function openTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer")
@@ -63,10 +64,16 @@ export function WorkspaceView({
   tabs,
   onTabsChange,
   onClear,
+  workspaceSwitcher,
+  currentWorkspace,
+  allWorkspaces,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
   onClear: () => void
+  workspaceSwitcher?: ReactNode
+  currentWorkspace?: Workspace
+  allWorkspaces?: Workspace[]
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -356,6 +363,9 @@ export function WorkspaceView({
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}
         onOpenPalette={() => setCommandPaletteOpen(true)}
+        workspaceSwitcher={workspaceSwitcher}
+        currentWorkspace={currentWorkspace}
+        allWorkspaces={allWorkspaces}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
         <AttentionStrip

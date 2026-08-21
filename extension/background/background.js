@@ -1,4 +1,9 @@
-import { TABDUMP_ORIGIN, MSG_DUMP_TABS, MSG_TABDUMP_IMPORT } from "../src/config.js";
+import {
+  TABDUMP_ORIGIN,
+  MSG_DUMP_TABS,
+  MSG_TABDUMP_IMPORT,
+  MSG_CHECK_IMPORTED,
+} from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 
 // A couple of short retries in case the content script hasn't finished
@@ -81,9 +86,9 @@ async function findOrOpenTabDumpTab() {
   return created.id;
 }
 
-async function dumpTabs() {
+async function dumpTabs(excludeUrls) {
   const chromeTabs = await chrome.tabs.query({ currentWindow: true });
-  const payload = buildImportPayload(chromeTabs);
+  const payload = buildImportPayload(chromeTabs, excludeUrls);
 
   if (payload.tabs.length === 0) {
     return { ok: false, reason: "no-importable-tabs", count: 0 };
@@ -100,12 +105,43 @@ async function dumpTabs() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== MSG_DUMP_TABS) return undefined;
 
-  dumpTabs()
+  dumpTabs(message.payload?.excludeUrls)
     .then(sendResponse)
     .catch((err) => {
       console.error("TabDump: dumpTabs failed", err);
       sendResponse({ ok: false, reason: "unexpected-error", count: 0 });
     });
+
+  return true; // keep the message channel open for the async sendResponse
+});
+
+// Answers "which of these urls are already in the currently selected
+// workspace?" by relaying to an *already open* TabDump tab's content
+// script — deliberately never opens or focuses one just to check, since
+// that would be a surprising side effect of simply opening the popup.
+// Genuinely unknowable without an open tab (or if the page doesn't answer
+// in time), in which case the popup falls back to its plain wording.
+async function checkImported(urls) {
+  const [existing] = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
+  if (!existing) return { ok: false, reason: "no-tabdump-tab" };
+
+  try {
+    const response = await chrome.tabs.sendMessage(existing.id, {
+      type: MSG_CHECK_IMPORTED,
+      payload: { urls },
+    });
+    return response ?? { ok: false, reason: "no-response" };
+  } catch {
+    return { ok: false, reason: "delivery-failed" };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== MSG_CHECK_IMPORTED) return undefined;
+
+  checkImported(message.payload?.urls ?? [])
+    .then(sendResponse)
+    .catch(() => sendResponse({ ok: false, reason: "unexpected-error" }));
 
   return true; // keep the message channel open for the async sendResponse
 });

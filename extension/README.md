@@ -22,6 +22,21 @@ popup click → background.js collects + filters tabs
               parse/categorize/dedupe pipeline
 ```
 
+Opening the popup also runs a second, read-only round trip so it can show
+"31 new · 16 already imported" instead of a raw count, and so "Dump" only
+sends the new ones:
+
+```
+popup opens → background.js asks an *already-open* TabDump tab
+              (never opens one just to check)
+            → content-script.js relays the candidate urls into the page
+            → src/hooks/use-extension-workspace-query.ts compares them
+              against the currently selected workspace (same normalizeUrl
+              the workspace's own duplicate detection uses) and replies
+            → popup falls back to the plain wording if no TabDump tab is
+              open, or it doesn't answer in time
+```
+
 ## Changing the TabDump origin
 
 Edit `TABDUMP_ORIGIN` in `src/config.js`, and update the matching

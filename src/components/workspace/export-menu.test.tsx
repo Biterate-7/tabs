@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { ExportMenu } from "./export-menu";
 import * as exportLib from "@/lib/workspace/export";
+import * as jsonExportLib from "@/lib/workspace/json-export";
 import type { Tab } from "@/lib/tabs/types";
+import type { Workspace } from "@/lib/workspace/types";
 
 /**
  * Mocking `navigator.clipboard` and asserting on it through a rendered React
@@ -26,6 +28,14 @@ vi.mock("@/lib/workspace/export", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/workspace/json-export", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/workspace/json-export")>();
+  return {
+    ...actual,
+    downloadJsonFile: vi.fn(),
+  };
+});
+
 function makeTab(over: Partial<Tab> & { id: string; url: string }): Tab {
   return {
     normalizedUrl: over.url,
@@ -40,10 +50,15 @@ const tabs: Tab[] = [
   makeTab({ id: "2", url: "https://arxiv.org/abs/1", category: "research" }),
 ];
 
+function makeWorkspace(over: Partial<Workspace> & { id: string }): Workspace {
+  return { name: "General", tabs, createdAt: 1, updatedAt: 1, ...over };
+}
+
 describe("ExportMenu", () => {
   beforeEach(() => {
     vi.mocked(exportLib.copyText).mockReset().mockResolvedValue(true);
     vi.mocked(exportLib.downloadTextFile).mockReset().mockReturnValue(true);
+    vi.mocked(jsonExportLib.downloadJsonFile).mockReset().mockReturnValue(true);
   });
 
   it("Copy all URLs copies every tab and shows the exact toast copy", async () => {
@@ -128,6 +143,76 @@ describe("ExportMenu", () => {
     render(<ExportMenu tabs={tabs} />);
     await user.click(screen.getByRole("button", { name: /Export/ }));
     await user.click(await screen.findByText("Export TXT"));
+
+    expect(toastSpy).toHaveBeenCalledWith("Couldn't export workspace");
+  });
+
+  it("does not show JSON export items when no workspace context is given", async () => {
+    const user = userEvent.setup();
+    render(<ExportMenu tabs={tabs} />);
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+
+    expect(screen.queryByText("Export workspace (JSON)")).toBeNull();
+  });
+
+  it("Export workspace (JSON) downloads just the current workspace", async () => {
+    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(true);
+    const toastSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    const workspace = makeWorkspace({ id: "a", name: "General" });
+
+    render(<ExportMenu tabs={tabs} currentWorkspace={workspace} allWorkspaces={[workspace]} />);
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+    await user.click(await screen.findByText("Export workspace (JSON)"));
+
+    expect(jsonExportLib.downloadJsonFile).toHaveBeenCalledTimes(1);
+    const [filename, text] = vi.mocked(jsonExportLib.downloadJsonFile).mock.calls[0];
+    expect(filename).toMatch(/^tabdump-general-\d{4}-\d{2}-\d{2}\.json$/);
+    const parsed = JSON.parse(text);
+    expect(parsed.version).toBe(1);
+    expect(parsed.workspaces).toEqual([workspace]);
+    expect(toastSpy).toHaveBeenCalledWith("Workspace exported as JSON");
+  });
+
+  it("only offers 'Export all workspaces' when there is more than one", async () => {
+    const user = userEvent.setup();
+    const workspace = makeWorkspace({ id: "a" });
+
+    render(<ExportMenu tabs={tabs} currentWorkspace={workspace} allWorkspaces={[workspace]} />);
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+
+    expect(screen.queryByText("Export all workspaces (JSON)")).toBeNull();
+  });
+
+  it("Export all workspaces (JSON) downloads every workspace", async () => {
+    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(true);
+    const toastSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    const workspaceA = makeWorkspace({ id: "a", name: "General" });
+    const workspaceB = makeWorkspace({ id: "b", name: "Research" });
+
+    render(
+      <ExportMenu tabs={tabs} currentWorkspace={workspaceA} allWorkspaces={[workspaceA, workspaceB]} />
+    );
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+    await user.click(await screen.findByText("Export all workspaces (JSON)"));
+
+    expect(jsonExportLib.downloadJsonFile).toHaveBeenCalledTimes(1);
+    const [filename, text] = vi.mocked(jsonExportLib.downloadJsonFile).mock.calls[0];
+    expect(filename).toMatch(/^tabdump-all-workspaces-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(JSON.parse(text).workspaces).toEqual([workspaceA, workspaceB]);
+    expect(toastSpy).toHaveBeenCalledWith("All workspaces exported as JSON");
+  });
+
+  it("shows an error toast when a JSON export fails", async () => {
+    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(false);
+    const toastSpy = vi.spyOn(toast, "error");
+    const user = userEvent.setup();
+    const workspace = makeWorkspace({ id: "a" });
+
+    render(<ExportMenu tabs={tabs} currentWorkspace={workspace} allWorkspaces={[workspace]} />);
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+    await user.click(await screen.findByText("Export workspace (JSON)"));
 
     expect(toastSpy).toHaveBeenCalledWith("Couldn't export workspace");
   });

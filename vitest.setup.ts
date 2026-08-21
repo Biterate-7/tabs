@@ -27,3 +27,14 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
 if (typeof Element !== "undefined" && !Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
+
+// Nor the Pointer Capture APIs — sonner's toast swipe-to-dismiss handling
+// calls `setPointerCapture` on pointerdown. Without a stub, userEvent's
+// realistic pointer-event simulation throws from inside React's event
+// dispatch, which surfaces as an uncaught exception that can bleed into
+// whichever test happens to be running next.
+if (typeof Element !== "undefined" && !Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.hasPointerCapture = () => false;
+}
