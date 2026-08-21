@@ -10,6 +10,7 @@ import {
   loadWorkspace,
   saveWorkspace,
 } from "@/lib/workspace/persistence"
+import { useTitleResolution } from "@/hooks/use-title-resolution"
 import type { Tab } from "@/lib/tabs/types"
 
 export function AppShell() {
@@ -50,6 +51,12 @@ export function AppShell() {
     setWorkspaceTabs(tabs)
     persist(tabs)
   }
+
+  // Resolves titles asynchronously and patches them in via the same path
+  // every other tab mutation already uses — no separate state or
+  // persistence needed, and a tab always shows its domain until (or unless)
+  // this ever succeeds.
+  useTitleResolution(workspaceTabs ?? [], handleTabsChange)
 
   function handleClear() {
     setWorkspaceTabs(null)

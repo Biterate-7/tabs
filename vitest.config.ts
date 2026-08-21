@@ -14,6 +14,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // `server-only` relies on Next's bundler swapping in a no-op for the
+      // server compilation graph; outside of Next's build it always throws,
+      // so tests need their own no-op stand-in to exercise server-side code.
+      "server-only": path.resolve(__dirname, "./src/lib/titles/server/server-only-stub.ts"),
     },
   },
 });
