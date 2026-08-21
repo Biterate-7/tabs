@@ -11,6 +11,9 @@ import {
   saveWorkspace,
 } from "@/lib/workspace/persistence"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
+import { useExtensionImport } from "@/hooks/use-extension-import"
+import { markDuplicates } from "@/lib/tabs"
+import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
 import type { Tab } from "@/lib/tabs/types"
 
 export function AppShell() {
@@ -57,6 +60,25 @@ export function AppShell() {
   // persistence needed, and a tab always shows its domain until (or unless)
   // this ever succeeds.
   useTitleResolution(workspaceTabs ?? [], handleTabsChange)
+
+  // Tabs arriving from the browser extension go through the exact same
+  // parsing/categorization the paste flow uses (buildTabsFromBrowserImport
+  // wraps parseSingleUrl + categorizeTabs), then either become a fresh dump
+  // or get merged into whatever's already open — `markDuplicates` runs over
+  // the combined list either way, so cross-batch duplicates are still
+  // caught, not just duplicates within the incoming batch.
+  function handleBrowserImport(entries: BrowserImportEntry[]) {
+    const incoming = buildTabsFromBrowserImport(entries)
+    if (incoming.length === 0) return
+
+    if (!workspaceTabs) {
+      handleDump(markDuplicates(incoming))
+    } else {
+      handleTabsChange(markDuplicates([...workspaceTabs, ...incoming]))
+    }
+  }
+
+  useExtensionImport(handleBrowserImport)
 
   function handleClear() {
     setWorkspaceTabs(null)

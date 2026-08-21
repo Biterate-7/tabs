@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>TabDump</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="popup">
+      <header class="popup__header">
+        <span class="popup__title">TabDump</span>
+      </header>
+
+      <div id="state-loading" class="popup__state">
+        <p class="popup__muted">Detecting tabs…</p>
+      </div>
+
+      <div id="state-ready" class="popup__state" hidden>
+        <p class="popup__count"><span id="tab-count">0</span> tabs detected</p>
+        <ul id="tab-preview" class="popup__preview"></ul>
+        <button id="dump-button" class="popup__button">Dump Tabs →</button>
+      </div>
+
+      <div id="state-dumping" class="popup__state" hidden>
+        <p class="popup__muted">Dumping tabs…</p>
+      </div>
+
+      <div id="state-success" class="popup__state" hidden>
+        <p class="popup__success">✓ Dumped <span id="success-count">0</span> tabs</p>
+      </div>
+
+      <div id="state-error" class="popup__state" hidden>
+        <p class="popup__error" id="error-message">Something went wrong.</p>
+        <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
+      </div>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

@@ -27,25 +27,36 @@ function toTab(candidateUrl: string, parsed: URL): Tab {
   };
 }
 
+/**
+ * Parses a single URL-shaped token into a `Tab`, or `null` if it isn't one.
+ * Shared by `parseUrls` (splitting a pasted text blob) and by the browser
+ * extension import path (already-structured URLs) so both go through the
+ * exact same validation/normalization instead of duplicating it.
+ */
+export function parseSingleUrl(token: string): Tab | null {
+  const candidate = ensureProtocol(token.trim());
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (!parsed.hostname.includes(".")) return null;
+  return toTab(candidate, parsed);
+}
+
 export function parseUrls(raw: string): ParseResult {
   const tokens = splitInput(raw);
   const tabs: Tab[] = [];
   let invalidCount = 0;
 
   for (const token of tokens) {
-    const candidate = ensureProtocol(token);
-    let parsed: URL;
-    try {
-      parsed = new URL(candidate);
-    } catch {
+    const tab = parseSingleUrl(token);
+    if (!tab) {
       invalidCount += 1;
       continue;
     }
-    if (!parsed.hostname.includes(".")) {
-      invalidCount += 1;
-      continue;
-    }
-    tabs.push(toTab(candidate, parsed));
+    tabs.push(tab);
   }
 
   return { tabs, invalidCount };

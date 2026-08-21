@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# generated from extension/ on every build (see scripts/build-extension-zip.mjs)
+/public/tabdump-extension.zip
+
 # production
 /build
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitInput, parseUrls } from "./parse";
+import { splitInput, parseUrls, parseSingleUrl } from "./parse";
 
 describe("splitInput", () => {
   it("splits on newlines", () => {
@@ -91,5 +91,35 @@ describe("parseUrls", () => {
     expect(tabs).toHaveLength(250);
     expect(invalidCount).toBe(0);
     expect(elapsed).toBeLessThan(200);
+  });
+});
+
+describe("parseSingleUrl", () => {
+  it("parses a well-formed URL into a Tab", () => {
+    const tab = parseSingleUrl("https://github.com/foo/bar");
+    expect(tab).not.toBeNull();
+    expect(tab?.domain).toBe("github.com");
+    expect(tab?.url).toBe("https://github.com/foo/bar");
+  });
+
+  it("adds https:// to a bare domain", () => {
+    expect(parseSingleUrl("example.com")?.url).toBe("https://example.com");
+  });
+
+  it("returns null for a garbage token instead of throwing", () => {
+    expect(() => parseSingleUrl("not a url")).not.toThrow();
+    expect(parseSingleUrl("not a url")).toBeNull();
+    expect(parseSingleUrl("///")).toBeNull();
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(parseSingleUrl("  https://example.com  ")?.url).toBe("https://example.com");
+  });
+
+  it("is what parseUrls uses under the hood (same ids/domains for the same input)", () => {
+    const viaSingle = parseSingleUrl("https://github.com/a");
+    const viaBatch = parseUrls("https://github.com/a").tabs[0];
+    expect(viaSingle?.domain).toBe(viaBatch.domain);
+    expect(viaSingle?.normalizedUrl).toBe(viaBatch.normalizedUrl);
   });
 });

@@ -8,6 +8,8 @@ export type Tab = {
   title?: string;
   favicon?: string;
   isDuplicate?: boolean;
+  /** Set when a tab arrives via the browser extension's pinned-tab state. */
+  pinned?: boolean;
 };
 
 export type ParseResult = {
