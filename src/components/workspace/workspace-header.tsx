@@ -28,6 +28,7 @@ export function WorkspaceHeader({
   onCleanup,
   onRequestClear,
   onOpenPalette,
+  onOpenAsk,
   workspaceSwitcher,
   currentWorkspace,
   allWorkspaces,
@@ -41,6 +42,7 @@ export function WorkspaceHeader({
   onCleanup: () => void
   onRequestClear: () => void
   onOpenPalette?: () => void
+  onOpenAsk: () => void
   workspaceSwitcher?: ReactNode
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
@@ -79,6 +81,9 @@ export function WorkspaceHeader({
           )}
 
           <div className="hidden items-center gap-1.5 sm:flex">
+            <Button variant="secondary" size="sm" onClick={onOpenAsk}>
+              <Sparkles /> Ask TabDump
+            </Button>
             <Button variant="ghost" size="sm" onClick={onCleanup}>
               <Sparkles /> Cleanup
             </Button>
@@ -104,6 +109,9 @@ export function WorkspaceHeader({
               {onOpenPalette && (
                 <DropdownMenuItem onClick={onOpenPalette}>Command menu</DropdownMenuItem>
               )}
+              <DropdownMenuItem onClick={onOpenAsk}>
+                <Sparkles /> Ask TabDump
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={onCleanup}>
                 <Sparkles /> Cleanup
               </DropdownMenuItem>

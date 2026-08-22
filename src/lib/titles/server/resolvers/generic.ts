@@ -14,7 +14,7 @@ const ENTITY_MAP: Record<string, string> = {
   nbsp: " ",
 };
 
-function decodeEntities(text: string): string {
+export function decodeEntities(text: string): string {
   return text
     .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name) => ENTITY_MAP[name] ?? `&${name};`)
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))

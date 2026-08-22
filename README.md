@@ -20,6 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Ask TabDump (AI search) setup
+
+Ask TabDump answers questions about your saved tabs using Gemini, grounded only in what you've dumped. It works without any setup for browsing/organizing tabs — it's only the "Ask" panel and per-category "Understand"/"Find gaps" actions that need a Gemini key.
+
+1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`.
+3. Restart `next dev` if it was already running.
+
+The key is only ever read server-side (in Route Handlers under `src/app/api/ai/`) — it's never sent to the browser. The AI index itself (embeddings for your saved tabs) lives in your browser's IndexedDB, the same place the rest of TabDump keeps its data; nothing is uploaded to a database.
+
+For a Vercel deployment, set `GEMINI_API_KEY` (and any of the optional `GEMINI_*_MODEL` overrides from `.env.example`) under Project Settings → Environment Variables.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

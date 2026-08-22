@@ -10,9 +10,11 @@ import type { Tab } from "@/lib/tabs/types"
 export function CategoryGrid({
   tabs,
   onCategoryChange,
+  workspaceId,
 }: {
   tabs: Tab[]
   onCategoryChange: (id: string, category: CategoryId) => void
+  workspaceId: string
 }) {
   const [openCategory, setOpenCategory] = useState<CategoryId | null>(null)
   const hasAnimated = useRef(false)
@@ -64,6 +66,7 @@ export function CategoryGrid({
         open={openCategory !== null}
         onOpenChange={(open) => !open && setOpenCategory(null)}
         onCategoryChange={onCategoryChange}
+        workspaceId={workspaceId}
       />
     </>
   )
