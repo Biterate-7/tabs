@@ -50,9 +50,18 @@ export function buildImportPayload(chromeTabs, excludeUrls) {
     if (!tab || !tab.url || isPrivilegedUrl(tab.url)) continue;
     if (exclude && exclude.has(tab.url)) continue;
 
+    // A tab still mid-navigation (status "loading") hasn't rendered its real
+    // <title> yet — chrome.tabs.Tab.title at that moment is a placeholder,
+    // not the page's actual title. Omitting it (rather than forwarding the
+    // placeholder) lets TabDump's own title-resolution fallback fetch the
+    // real title server-side instead of getting stuck with a bad value.
+    // `status` is undefined only in tests that don't set it — treated as
+    // trustworthy there, matching prior behavior for existing callers.
+    const titleIsLoaded = tab.status === undefined || tab.status === "complete";
+
     tabs.push({
       url: tab.url,
-      title: tab.title || undefined,
+      title: titleIsLoaded && tab.title ? tab.title : undefined,
       pinned: Boolean(tab.pinned),
       active: Boolean(tab.active),
       tabId: tab.id,

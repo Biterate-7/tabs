@@ -68,6 +68,25 @@ describe("buildImportPayload", () => {
     expect(tabs[0].title).toBeUndefined();
   });
 
+  it("omits the title for a tab that hasn't finished loading yet", () => {
+    const { tabs } = buildImportPayload([
+      fakeTab({ title: "https://example.com/a", status: "loading" }),
+    ]);
+    expect(tabs[0].title).toBeUndefined();
+  });
+
+  it("keeps the title for a tab with status complete", () => {
+    const { tabs } = buildImportPayload([
+      fakeTab({ title: "Example Domain", status: "complete" }),
+    ]);
+    expect(tabs[0].title).toBe("Example Domain");
+  });
+
+  it("keeps the title when status is absent (older Chrome / already-known-good callers)", () => {
+    const { tabs } = buildImportPayload([fakeTab({ title: "Example Domain" })]);
+    expect(tabs[0].title).toBe("Example Domain");
+  });
+
   it("carries pinned/active state through", () => {
     const { tabs } = buildImportPayload([fakeTab({ pinned: true, active: true })]);
     expect(tabs[0].pinned).toBe(true);
