@@ -91,7 +91,7 @@ export function AskTabDumpPanel({
           />
         ) : (
           <>
-            <ScrollArea className="flex-1 px-4">
+            <ScrollArea className="min-h-0 flex-1 px-4">
               {messages.length === 0 ? (
                 <div className="space-y-3 py-4">
                   <p className="text-body-sm text-tertiary">Try asking:</p>
@@ -113,18 +113,18 @@ export function AskTabDumpPanel({
                   {messages.map((message) => (
                     <div key={message.id} className={message.role === "user" ? "flex justify-end" : ""}>
                       {message.role === "user" ? (
-                        <p className="max-w-[85%] rounded-lg bg-primary/10 px-3 py-2 text-body text-foreground">
+                        <p className="max-w-[85%] rounded-lg bg-primary/10 px-3 py-2 text-body text-foreground whitespace-pre-wrap break-words">
                           {message.text}
                         </p>
                       ) : (
-                        <div className="w-full space-y-3">
+                        <div className="w-full min-w-0 space-y-3">
                           {message.pending && message.text === "" ? (
                             <div className="flex items-center gap-2 text-tertiary">
                               <Loader2 className="size-3.5 animate-spin" aria-hidden />
                               <span className="text-body-sm">Thinking…</span>
                             </div>
                           ) : (
-                            <p className="whitespace-pre-wrap text-body text-foreground">{message.text}</p>
+                            <p className="whitespace-pre-wrap break-words text-body text-foreground">{message.text}</p>
                           )}
 
                           {message.sources && message.sources.length > 0 && (
