@@ -90,7 +90,7 @@ describe("generateContent", () => {
     const { generateContent } = await import("./client");
 
     await generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       contents: [{ role: "user", text: "hi" }],
       maxOutputTokens: 100,
       responseSchema: { type: "OBJECT", properties: { a: { type: "STRING" } } },
@@ -108,7 +108,7 @@ describe("generateContent", () => {
     const { generateContent } = await import("./client");
 
     const result = await generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       contents: [{ role: "user", text: "hi" }],
       maxOutputTokens: 100,
     });

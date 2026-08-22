@@ -9,7 +9,7 @@ export function hasGeminiKey(): boolean {
 }
 
 export function chatModel(): string {
-  return process.env.GEMINI_CHAT_MODEL || "gemini-2.5-flash";
+  return process.env.GEMINI_CHAT_MODEL || "gemini-3.6-flash";
 }
 
 export function embeddingModel(): string {
