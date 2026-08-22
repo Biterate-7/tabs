@@ -1,3 +1,5 @@
+import { formatApiError } from "./types";
+
 export type EmbedBatchResult = { ok: true; embeddings: number[][] } | { ok: false; error: string };
 
 const MAX_BATCH = 100;
@@ -15,7 +17,7 @@ export async function embedTexts(texts: string[]): Promise<EmbedBatchResult> {
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
-      return { ok: false, error: (data && data.error) || `Embedding request failed (${response.status}).` };
+      return { ok: false, error: formatApiError(data, response.status) };
     }
     if (!data || !Array.isArray(data.embeddings)) {
       return { ok: false, error: "Malformed embedding response." };

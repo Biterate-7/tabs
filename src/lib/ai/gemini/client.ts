@@ -7,12 +7,44 @@ const EMBED_TIMEOUT_MS = 10000;
 const GENERATE_TIMEOUT_MS = 30000;
 const MAX_EMBED_BATCH = 100;
 
+const MAX_LOGGED_DETAIL_CHARS = 500;
+
 function toGeminiFailure(status: number): "rate-limited" | "gemini-error" {
   return status === 429 ? "rate-limited" : "gemini-error";
 }
 
 function toContents(contents: GeminiContent[]) {
   return contents.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
+}
+
+/**
+ * Extracts Gemini's own error message from a failed response — Google's
+ * standard API error shape is `{"error": {"code", "message", "status"}}`.
+ * Never touches request headers/body, so this can never echo back our own
+ * API key; it only ever relays what Gemini itself said was wrong.
+ */
+async function readErrorDetail(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  try {
+    const parsed = JSON.parse(raw);
+    const message = parsed?.error?.message;
+    if (typeof message === "string" && message) {
+      return message.slice(0, MAX_LOGGED_DETAIL_CHARS);
+    }
+  } catch {
+    // Not JSON — fall through to the raw text below.
+  }
+  return raw.slice(0, MAX_LOGGED_DETAIL_CHARS);
+}
+
+/**
+ * Logs the real failure server-side (Vercel Function Logs) so it's
+ * diagnosable without ever putting Gemini's response — or our key — in
+ * front of the browser. `op` identifies which call failed (embed/generate/
+ * generateStream) since all three share this one log line shape.
+ */
+function logGeminiFailure(op: string, status: number | undefined, detail: string): void {
+  console.error(`[gemini:${op}] request failed${status ? ` (HTTP ${status})` : ""}: ${detail || "(no detail)"}`);
 }
 
 /**
@@ -49,25 +81,31 @@ export async function embedTexts(
       },
       body: JSON.stringify(body),
     });
-  } catch {
-    return { ok: false, reason: "network-error" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "unknown network error";
+    logGeminiFailure("embed", undefined, detail);
+    return { ok: false, reason: "network-error", detail };
   }
 
-  if (!response.ok) return { ok: false, reason: toGeminiFailure(response.status) };
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    logGeminiFailure("embed", response.status, detail);
+    return { ok: false, reason: toGeminiFailure(response.status), detail, status: response.status };
+  }
 
   try {
     const data = await response.json();
     const embeddings = data?.embeddings;
-    if (!Array.isArray(embeddings)) return { ok: false, reason: "malformed-response" };
+    if (!Array.isArray(embeddings)) return { ok: false, reason: "malformed-response", detail: "response had no `embeddings` array" };
     const vectors = embeddings.map((e: { values?: unknown }) =>
       Array.isArray(e?.values) ? (e.values as number[]) : null
     );
     if (vectors.some((v: number[] | null) => v === null)) {
-      return { ok: false, reason: "malformed-response" };
+      return { ok: false, reason: "malformed-response", detail: "an embedding entry was missing `values`" };
     }
     return { ok: true, data: vectors as number[][] };
-  } catch {
-    return { ok: false, reason: "malformed-response" };
+  } catch (err) {
+    return { ok: false, reason: "malformed-response", detail: err instanceof Error ? err.message : "couldn't parse response JSON" };
   }
 }
 
@@ -89,19 +127,27 @@ export async function generateContent(opts: GenerateOptions): Promise<GeminiResu
       },
       body: JSON.stringify(body),
     });
-  } catch {
-    return { ok: false, reason: "network-error" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "unknown network error";
+    logGeminiFailure("generate", undefined, detail);
+    return { ok: false, reason: "network-error", detail };
   }
 
-  if (!response.ok) return { ok: false, reason: toGeminiFailure(response.status) };
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    logGeminiFailure("generate", response.status, detail);
+    return { ok: false, reason: toGeminiFailure(response.status), detail, status: response.status };
+  }
 
   try {
     const data = await response.json();
     const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
-    if (typeof text !== "string") return { ok: false, reason: "malformed-response" };
+    if (typeof text !== "string") {
+      return { ok: false, reason: "malformed-response", detail: "response had no candidate text" };
+    }
     return { ok: true, data: text };
-  } catch {
-    return { ok: false, reason: "malformed-response" };
+  } catch (err) {
+    return { ok: false, reason: "malformed-response", detail: err instanceof Error ? err.message : "couldn't parse response JSON" };
   }
 }
 
@@ -129,11 +175,21 @@ export async function generateContentStream(
       },
       body: JSON.stringify(body),
     });
-  } catch {
-    return { ok: false, reason: "network-error" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "unknown network error";
+    logGeminiFailure("generateStream", undefined, detail);
+    return { ok: false, reason: "network-error", detail };
   }
 
-  if (!response.ok || !response.body) return { ok: false, reason: toGeminiFailure(response.status) };
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    logGeminiFailure("generateStream", response.status, detail);
+    return { ok: false, reason: toGeminiFailure(response.status), detail, status: response.status };
+  }
+  if (!response.body) {
+    logGeminiFailure("generateStream", response.status, "response had no body");
+    return { ok: false, reason: "malformed-response", detail: "response had no body", status: response.status };
+  }
 
   return { ok: true, data: toTextDeltaStream(response.body) };
 }

@@ -45,7 +45,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!result.ok) {
     return Response.json(
-      { error: ERROR_MESSAGE[result.reason] },
+      { error: ERROR_MESSAGE[result.reason], detail: result.detail },
       { status: ERROR_STATUS[result.reason] }
     );
   }

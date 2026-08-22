@@ -1,3 +1,16 @@
+/**
+ * Every /api/ai/* error response is `{ error: string, detail?: string }` —
+ * `error` is the user-facing summary, `detail` (when present) is Gemini's
+ * own error message, safe to show since it never contains our API key.
+ * Folding them into one string keeps the real cause visible in the UI
+ * instead of a bare generic fallback.
+ */
+export function formatApiError(data: unknown, fallbackStatus: number): string {
+  const d = data as { error?: string; detail?: string } | null;
+  const base = d?.error || `Request failed (${fallbackStatus}).`;
+  return d?.detail ? `${base} (${d.detail})` : base;
+}
+
 /** Wire type shared between /api/ai/content and its client caller. */
 export type ContentApiResult =
   | { url: string; ok: true; description?: string; text?: string }

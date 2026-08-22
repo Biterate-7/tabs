@@ -1,5 +1,6 @@
 import type { Tab } from "@/lib/tabs/types";
 import { sampleChunksForTabs } from "./retrieve";
+import { formatApiError } from "./types";
 import type { AskSource, CollectionOverview, CollectionGaps } from "./types";
 
 const MAX_CONTEXT_ITEMS = 40;
@@ -46,7 +47,7 @@ async function callAnalysisApi(
   }
 
   const data = await response.json().catch(() => null);
-  if (!response.ok) return { ok: false, error: (data && data.error) || `Request failed (${response.status}).` };
+  if (!response.ok) return { ok: false, error: formatApiError(data, response.status) };
   if (!data || typeof data.result !== "object") return { ok: false, error: "Malformed response." };
   return { ok: true, data: data.result };
 }

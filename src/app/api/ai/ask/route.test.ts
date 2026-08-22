@@ -65,10 +65,27 @@ describe("POST /api/ai/ask", () => {
     expect(text).toBe("Hello from Gemini");
   });
 
-  it("maps a chat streaming failure to its status code", async () => {
-    generateContentStreamMock.mockResolvedValue({ ok: false, reason: "missing-key" });
+  it("maps a chat streaming failure to its status code and surfaces the detail", async () => {
+    generateContentStreamMock.mockResolvedValue({ ok: false, reason: "gemini-error", detail: "Invalid argument.", status: 400 });
     const response = await POST(postRequest({ question: "hi", context: validContext }));
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.detail).toBe("Invalid argument.");
+  });
+
+  it("sends Gemini's UPPERCASE Type enum in the collection-overview responseSchema", async () => {
+    generateContentMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({ overview: "o", themes: [], importantResourceIndexes: [], keyInsights: [] }),
+    });
+
+    await POST(postRequest({ question: "Summarize", context: validContext, mode: "collection-overview" }));
+
+    const schema = generateContentMock.mock.calls[0][0].responseSchema;
+    expect(schema.type).toBe("OBJECT");
+    expect(schema.properties.overview.type).toBe("STRING");
+    expect(schema.properties.themes.items.type).toBe("STRING");
+    expect(schema.properties.importantResourceIndexes.items.type).toBe("INTEGER");
   });
 
   it("returns structured JSON for collection-overview mode", async () => {

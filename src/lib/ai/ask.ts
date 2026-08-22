@@ -1,6 +1,7 @@
 import type { Tab } from "@/lib/tabs/types";
 import { embedTexts } from "./embed-client";
 import { retrieveRelevantChunks } from "./retrieve";
+import { formatApiError } from "./types";
 import type { AskMessage, AskSource } from "./types";
 
 const MAX_HISTORY_MESSAGES = 6;
@@ -68,7 +69,7 @@ export async function askQuestion(params: {
 
   if (!response.ok) {
     const data = await response.json().catch(() => null);
-    return { ok: false, error: (data && data.error) || `Request failed (${response.status}).` };
+    return { ok: false, error: formatApiError(data, response.status) };
   }
 
   if (!response.body) {

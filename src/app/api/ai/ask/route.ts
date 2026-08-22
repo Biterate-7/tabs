@@ -1,7 +1,7 @@
 import "server-only";
 import { generateContent, generateContentStream } from "@/lib/ai/gemini/client";
 import { chatModel, analysisModel } from "@/lib/ai/config";
-import type { GeminiContent } from "@/lib/ai/gemini/types";
+import type { GeminiContent, GeminiResult } from "@/lib/ai/gemini/types";
 
 export const runtime = "nodejs";
 
@@ -43,22 +43,26 @@ const OVERVIEW_SYSTEM_INSTRUCTION = `You analyze a user's saved TabDump tabs (gi
 
 const GAPS_SYSTEM_INSTRUCTION = `You analyze a user's saved TabDump tabs (given as numbered "Saved context" items) to suggest what topics look well-covered vs. under-researched. This is only a suggestion based on what they happened to save, not an objective judgment of the subject — phrase gaps tentatively ("you may be missing...", "consider looking into...").`;
 
+// Gemini's responseSchema uses its protobuf-derived Type enum, which is
+// UPPERCASE ("OBJECT"/"STRING"/"ARRAY"/"INTEGER") — not JSON Schema's
+// lowercase convention. A lowercase type here is rejected by the API with a
+// 400, which is a real bug this fixes (see commit for the diagnosis).
 const OVERVIEW_SCHEMA = {
-  type: "object",
+  type: "OBJECT",
   properties: {
-    overview: { type: "string" },
-    themes: { type: "array", items: { type: "string" } },
-    importantResourceIndexes: { type: "array", items: { type: "integer" } },
-    keyInsights: { type: "array", items: { type: "string" } },
+    overview: { type: "STRING" },
+    themes: { type: "ARRAY", items: { type: "STRING" } },
+    importantResourceIndexes: { type: "ARRAY", items: { type: "INTEGER" } },
+    keyInsights: { type: "ARRAY", items: { type: "STRING" } },
   },
   required: ["overview", "themes", "importantResourceIndexes", "keyInsights"],
 };
 
 const GAPS_SCHEMA = {
-  type: "object",
+  type: "OBJECT",
   properties: {
-    covered: { type: "array", items: { type: "string" } },
-    gaps: { type: "array", items: { type: "string" } },
+    covered: { type: "ARRAY", items: { type: "STRING" } },
+    gaps: { type: "ARRAY", items: { type: "STRING" } },
   },
   required: ["covered", "gaps"],
 };
@@ -102,8 +106,11 @@ function buildContextBlock(context: ContextItem[]): string {
     .join("\n\n");
 }
 
-function errorResponse(reason: keyof typeof ERROR_STATUS): Response {
-  return Response.json({ error: ERROR_MESSAGE[reason] }, { status: ERROR_STATUS[reason] });
+function errorResponse(failure: Extract<GeminiResult<unknown>, { ok: false }>): Response {
+  return Response.json(
+    { error: ERROR_MESSAGE[failure.reason], detail: failure.detail },
+    { status: ERROR_STATUS[failure.reason] }
+  );
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -149,7 +156,7 @@ export async function POST(request: Request): Promise<Response> {
       maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
     });
 
-    if (!result.ok) return errorResponse(result.reason);
+    if (!result.ok) return errorResponse(result);
 
     return new Response(result.data, {
       headers: {
@@ -168,12 +175,16 @@ export async function POST(request: Request): Promise<Response> {
     responseSchema: isOverview ? OVERVIEW_SCHEMA : GAPS_SCHEMA,
   });
 
-  if (!result.ok) return errorResponse(result.reason);
+  if (!result.ok) return errorResponse(result);
 
   try {
     const parsed = JSON.parse(result.data);
     return Response.json({ result: parsed });
-  } catch {
-    return errorResponse("malformed-response");
+  } catch (err) {
+    return errorResponse({
+      ok: false,
+      reason: "malformed-response",
+      detail: err instanceof Error ? err.message : "model output wasn't valid JSON",
+    });
   }
 }
