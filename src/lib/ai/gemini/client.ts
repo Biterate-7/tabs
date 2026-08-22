@@ -209,6 +209,26 @@ function buildRequestBody(opts: GenerateOptions) {
   };
 }
 
+/** Extracts the text delta from one `data: {...}` SSE line, or "" if there isn't one. */
+function extractLineText(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return "";
+  const payload = trimmed.slice("data:".length).trim();
+  if (!payload || payload === "[DONE]") return "";
+
+  try {
+    const parsed = JSON.parse(payload);
+    return (
+      parsed?.candidates?.[0]?.content?.parts
+        ?.map((p: { text?: string }) => p.text ?? "")
+        .join("") ?? ""
+    );
+  } catch {
+    // A single malformed SSE frame doesn't invalidate the rest of the stream.
+    return "";
+  }
+}
+
 /** Parses `data: {...}` SSE lines from Gemini's stream into plain text chunks. */
 function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   const reader = upstream.getReader();
@@ -218,32 +238,42 @@ function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        controller.close();
-        return;
-      }
+      // A single upstream read() can land on a chunk boundary that completes
+      // no line at all (e.g. mid-frame, or — critically — the very last
+      // frame if the connection closes before its trailing "\n\n" arrives).
+      // Returning from pull() in that case without enqueuing anything and
+      // without closing leaves the consumer's pending read() promise stuck
+      // forever: nothing else ever re-triggers pull(). So keep reading from
+      // upstream within this single pull() call until real progress is
+      // made — something enqueued, or the source is actually exhausted.
+      while (true) {
+        const { done, value } = await reader.read();
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const payload = trimmed.slice("data:".length).trim();
-        if (!payload || payload === "[DONE]") continue;
-
-        try {
-          const parsed = JSON.parse(payload);
-          const text = parsed?.candidates?.[0]?.content?.parts
-            ?.map((p: { text?: string }) => p.text ?? "")
-            .join("");
+        if (done) {
+          const rest = buffer;
+          buffer = "";
+          const text = extractLineText(rest);
           if (text) controller.enqueue(encoder.encode(text));
-        } catch {
-          // Ignore a single malformed SSE frame rather than aborting the
-          // whole stream — the next frame is independent.
+          controller.close();
+          return;
         }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        let enqueuedAny = false;
+        for (const line of lines) {
+          const text = extractLineText(line);
+          if (text) {
+            controller.enqueue(encoder.encode(text));
+            enqueuedAny = true;
+          }
+        }
+        if (enqueuedAny) return;
+        // Nothing extractable yet (blank lines, or the chunk ended mid-line)
+        // — loop back and pull more from upstream instead of returning
+        // empty-handed.
       }
     },
     cancel() {

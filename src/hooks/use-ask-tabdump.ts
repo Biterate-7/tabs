@@ -34,27 +34,43 @@ export function useAskTabDump(workspaceId: string, tabs: Tab[]) {
       const controller = new AbortController()
       abortRef.current = controller
 
-      const result = await askQuestion({
-        workspaceId,
-        tabs,
-        question,
-        history,
-        signal: controller.signal,
-        onDelta: (delta) => {
-          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + delta } : m)))
-        },
-      })
+      // askQuestion() is designed to never reject (every internal failure is
+      // caught and returned as {ok:false}), but this try/finally is a
+      // deliberate backstop: if anything in that chain ever throws instead —
+      // a genuinely unexpected error, not just a handled API failure — this
+      // still guarantees isSending resets and the pending bubble resolves,
+      // instead of leaving the whole conversation permanently stuck.
+      try {
+        const result = await askQuestion({
+          workspaceId,
+          tabs,
+          question,
+          history,
+          signal: controller.signal,
+          onDelta: (delta) => {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + delta } : m)))
+          },
+        })
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? result.ok
-              ? { ...m, text: result.text, sources: result.sources, pending: false }
-              : { ...m, text: `Something went wrong: ${result.error}`, pending: false }
-            : m
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? result.ok
+                ? { ...m, text: result.text, sources: result.sources, pending: false }
+                : { ...m, text: `Something went wrong: ${result.error}`, pending: false }
+              : m
+          )
         )
-      )
-      setIsSending(false)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "an unexpected error occurred.";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, text: `Something went wrong: ${message}`, pending: false } : m
+          )
+        )
+      } finally {
+        setIsSending(false)
+      }
     },
     [workspaceId, tabs]
   )
