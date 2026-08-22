@@ -140,6 +140,65 @@ describe("CleanupDialog — review stage", () => {
     ).toBeTruthy();
   });
 
+  it("bounds the dialog to the viewport and makes only the group list scroll, with header and footer staying fixed", async () => {
+    const user = userEvent.setup();
+    const many: Tab[] = [];
+    for (let g = 0; g < 17; g++) {
+      many.push(
+        makeTab({ id: `${g}-0`, url: `https://site${g}.com/x`, normalizedUrl: `https://site${g}.com/x`, domain: `site${g}.com` }),
+        makeTab({ id: `${g}-1`, url: `https://site${g}.com/x`, normalizedUrl: `https://site${g}.com/x`, domain: `site${g}.com` })
+      );
+    }
+    renderDialog(many);
+
+    await user.click(screen.getByRole("button", { name: "Review manually" }));
+
+    // The dialog itself is height-capped and clips overflow rather than
+    // growing past the viewport — no way for content to escape unreachable.
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toMatch(/max-h-\[85vh\]/);
+    expect(dialog.className).toMatch(/overflow-hidden/);
+    expect(dialog.className).toMatch(/flex-col/);
+
+    // The group list is the scrollable region, given a definite (not
+    // max-height-only, not flex-derived) height — percentage/flex-based
+    // heights don't propagate down to the ScrollArea viewport in this UI
+    // library, so a real `h-*` class is what actually makes it scrollable
+    // (verified against a real browser: max-h-only and flex-1/min-h-0 both
+    // silently fail to constrain the viewport, matching this project's
+    // other working ScrollArea usage in CategorySheet).
+    const scrollArea = document.body.querySelector('[data-slot="scroll-area"]');
+    expect(scrollArea).toBeTruthy();
+    expect(scrollArea!.className).toMatch(/h-\[45vh\]/);
+
+    // Header/footer are marked shrink-0 so they don't get squeezed by the
+    // scrollable middle region.
+    expect(screen.getByText("Your workspace can be cleaned up.").closest('[data-slot="dialog-header"]')?.className).toMatch(/shrink-0/);
+    expect(
+      screen.getByRole("button", { name: "Back" }).closest('[data-slot="dialog-footer"]')?.className
+    ).toMatch(/shrink-0/);
+
+    // All 17 groups are present in the DOM (scrolled, not dropped).
+    expect(screen.getAllByText("2 copies")).toHaveLength(17);
+  });
+
+  it("does not let a long URL force the row wider than the card (min-w-0 + flex-1 truncation)", async () => {
+    const user = userEvent.setup();
+    const longUrl =
+      "https://example.com/a/very/long/path/segment/that/keeps/going/and/going?with=lots&of=query&params=to&make=it&even=longer&than=before";
+    renderDialog([
+      makeTab({ id: "1", url: longUrl, normalizedUrl: longUrl, domain: "example.com" }),
+      makeTab({ id: "2", url: longUrl + "#2", normalizedUrl: longUrl, domain: "example.com" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Review manually" }));
+
+    const urlSpan = screen.getByText(longUrl);
+    expect(urlSpan.className).toMatch(/min-w-0/);
+    expect(urlSpan.className).toMatch(/flex-1/);
+    expect(urlSpan.className).toMatch(/truncate/);
+  });
+
   it("changing which copy is kept flips the Keep/Remove markers", async () => {
     const user = userEvent.setup();
     renderDialog(twoDuplicates);

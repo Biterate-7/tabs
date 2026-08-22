@@ -86,7 +86,7 @@ function CleanupBody({
 
   return (
     <>
-      <DialogHeader>
+      <DialogHeader className="shrink-0">
         <DialogTitle>
           {hasDuplicates
             ? "Your workspace can be cleaned up."
@@ -111,7 +111,7 @@ function CleanupBody({
           ))}
         </div>
       ) : (
-        <ScrollArea className="max-h-[45vh] pr-2">
+        <ScrollArea className="h-[45vh] pr-2">
           <div className="space-y-3">
             {groups.map((group) => {
               const skipped = selection.skippedKeys.includes(group.key)
@@ -149,7 +149,7 @@ function CleanupBody({
                       const kept = selection.keepIds[group.key] === tab.id
                       const keeping = kept || skipped
                       return (
-                        <li key={tab.id} className="flex items-center gap-2">
+                        <li key={tab.id} className="flex min-w-0 items-center gap-2">
                           <button
                             type="button"
                             disabled={skipped}
@@ -164,7 +164,7 @@ function CleanupBody({
                           >
                             {keeping ? "Keep" : "Remove"}
                           </button>
-                          <span className="truncate text-xs text-muted-foreground">
+                          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                             {tab.url}
                           </span>
                         </li>
@@ -178,7 +178,7 @@ function CleanupBody({
         </ScrollArea>
       )}
 
-      <DialogFooter>
+      <DialogFooter className="shrink-0">
         {stage === "summary" ? (
           <>
             <Button variant="ghost" onClick={onKeepAll}>
@@ -222,7 +222,7 @@ export function CleanupDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-full sm:max-w-lg">
+        <DialogContent className="flex max-h-[85vh] w-full flex-col overflow-hidden sm:max-w-lg">
           {open && (
             <CleanupBody
               tabs={tabs}

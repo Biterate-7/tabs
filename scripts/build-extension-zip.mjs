@@ -36,13 +36,25 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // dev` + loading extension/ unpacked keeps working exactly as before.
 //
 // TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. once a custom
-// domain is configured). Otherwise this defaults to Vercel's own
-// auto-provided VERCEL_URL for any deployment (preview or production), so
-// it works out of the box with zero configuration on Vercel. Falls back to
-// localhost:3000 for a plain local build with neither set.
+// domain is configured). Otherwise this prefers Vercel's
+// VERCEL_PROJECT_PRODUCTION_URL — the project's *stable* production domain,
+// unchanged across deployments — over VERCEL_URL, which is a fresh,
+// throwaway per-deployment URL every single build. Baking VERCEL_URL in
+// means every new deployment silently invalidates every previously
+// downloaded extension ZIP: the extension's host_permissions/content_scripts
+// match only that one build's URL, so chrome.tabs.query()/tabs.create() in
+// background.js's findOrOpenTabDumpTab() end up targeting a stale,
+// deployment-specific origin instead of the domain the user is actually
+// looking at — landing imported tabs in a different origin's localStorage
+// than the one being viewed, with no visible error. Falls back to
+// VERCEL_URL for Preview builds (which don't get a production URL), then to
+// localhost:3000 for a plain local build with none of these set.
 const DEV_ORIGIN = "http://localhost:3000";
 const TARGET_ORIGIN =
   process.env.TABDUMP_PRODUCTION_ORIGIN ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : null) ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
   DEV_ORIGIN;
 
