@@ -11,6 +11,7 @@ const ERROR_STATUS: Record<string, number> = {
   "missing-key": 503,
   "rate-limited": 429,
   "network-error": 502,
+  timeout: 504,
   "gemini-error": 502,
   "malformed-response": 502,
 };
@@ -19,6 +20,7 @@ const ERROR_MESSAGE: Record<string, string> = {
   "missing-key": "AI features aren't configured yet.",
   "rate-limited": "Too many requests right now — try again shortly.",
   "network-error": "Couldn't reach the AI service.",
+  timeout: "Gemini took too long to respond — try again.",
   "gemini-error": "The AI service returned an error.",
   "malformed-response": "The AI service returned something we couldn't parse.",
 };

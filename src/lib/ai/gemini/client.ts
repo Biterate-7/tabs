@@ -5,12 +5,33 @@ import type { GeminiContent, GeminiResult, GenerateOptions } from "./types";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const EMBED_TIMEOUT_MS = 10000;
 const GENERATE_TIMEOUT_MS = 30000;
+// Streaming needs two different timeouts, not one: how long we'll wait for
+// Gemini to start responding at all (connect), and — separately — how long
+// we'll tolerate the stream going silent once it HAS started (inactivity).
+// The inactivity timer resets on every chunk received, so a long but
+// healthy response is never killed just because its *total* duration
+// exceeds a fixed ceiling — only a connection that's actually gone quiet
+// for this long is. See generateContentStream()/toTextDeltaStream().
+const STREAM_CONNECT_TIMEOUT_MS = 30000;
+const STREAM_INACTIVITY_TIMEOUT_MS = 30000;
 const MAX_EMBED_BATCH = 100;
 
 const MAX_LOGGED_DETAIL_CHARS = 500;
 
 function toGeminiFailure(status: number): "rate-limited" | "gemini-error" {
   return status === 429 ? "rate-limited" : "gemini-error";
+}
+
+/**
+ * Classifies a caught fetch/read error as a deliberate timeout vs. any
+ * other network failure. Checks `.name` directly rather than requiring
+ * `instanceof Error` — the DOMException our own timers construct (and the
+ * one AbortSignal.timeout() produces) both expose `.name` without
+ * necessarily satisfying `instanceof Error` in every runtime.
+ */
+function classifyFetchError(err: unknown): "timeout" | "network-error" {
+  const name = err && typeof err === "object" && "name" in err ? (err as { name?: unknown }).name : undefined;
+  return name === "TimeoutError" ? "timeout" : "network-error";
 }
 
 function toContents(contents: GeminiContent[]) {
@@ -84,7 +105,7 @@ export async function embedTexts(
   } catch (err) {
     const detail = err instanceof Error ? err.message : "unknown network error";
     logGeminiFailure("embed", undefined, detail);
-    return { ok: false, reason: "network-error", detail };
+    return { ok: false, reason: classifyFetchError(err), detail };
   }
 
   if (!response.ok) {
@@ -130,7 +151,7 @@ export async function generateContent(opts: GenerateOptions): Promise<GeminiResu
   } catch (err) {
     const detail = err instanceof Error ? err.message : "unknown network error";
     logGeminiFailure("generate", undefined, detail);
-    return { ok: false, reason: "network-error", detail };
+    return { ok: false, reason: classifyFetchError(err), detail };
   }
 
   if (!response.ok) {
@@ -155,6 +176,13 @@ export async function generateContent(opts: GenerateOptions): Promise<GeminiResu
  * Streaming generation — used for chat. Returns a ReadableStream of plain
  * UTF-8 text deltas (SSE framing from the upstream response already parsed
  * away), so the Route Handler can pipe it straight through to the browser.
+ *
+ * Uses its own AbortController (not AbortSignal.timeout) so the timeout can
+ * be *reset* once streaming begins — see toTextDeltaStream()'s inactivity
+ * timer. AbortSignal.timeout() is a one-shot timer with no way to intervene,
+ * which was the root cause of a previous bug: a healthy, actively-streaming
+ * response got killed once 30s of *total* elapsed time had passed, even
+ * though data was still arriving.
  */
 export async function generateContentStream(
   opts: GenerateOptions
@@ -163,12 +191,18 @@ export async function generateContentStream(
 
   const url = `${API_BASE}/models/${opts.model}:streamGenerateContent?alt=sse`;
   const body = buildRequestBody(opts);
+  const startedAt = Date.now();
+
+  const controller = new AbortController();
+  const connectTimer = setTimeout(() => {
+    controller.abort(new DOMException("Timed out waiting for Gemini to start responding.", "TimeoutError"));
+  }, STREAM_CONNECT_TIMEOUT_MS);
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      signal: controller.signal,
       headers: {
         "content-type": "application/json",
         "x-goog-api-key": geminiApiKey()!,
@@ -176,10 +210,13 @@ export async function generateContentStream(
       body: JSON.stringify(body),
     });
   } catch (err) {
+    clearTimeout(connectTimer);
     const detail = err instanceof Error ? err.message : "unknown network error";
     logGeminiFailure("generateStream", undefined, detail);
-    return { ok: false, reason: "network-error", detail };
+    return { ok: false, reason: classifyFetchError(err), detail };
   }
+  clearTimeout(connectTimer);
+  console.log(`[gemini:generateStream] response headers received after ${Date.now() - startedAt}ms`);
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
@@ -191,7 +228,7 @@ export async function generateContentStream(
     return { ok: false, reason: "malformed-response", detail: "response had no body", status: response.status };
   }
 
-  return { ok: true, data: toTextDeltaStream(response.body) };
+  return { ok: true, data: toTextDeltaStream(response.body, controller, startedAt) };
 }
 
 function buildRequestBody(opts: GenerateOptions) {
@@ -229,12 +266,45 @@ function extractLineText(line: string): string {
   }
 }
 
-/** Parses `data: {...}` SSE lines from Gemini's stream into plain text chunks. */
-function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+/**
+ * Parses `data: {...}` SSE lines from Gemini's stream into plain text
+ * chunks. `abortController` is the SAME controller generateContentStream()
+ * used for the fetch — this function owns it from here on: it drives an
+ * inactivity timer that resets on every chunk actually received from
+ * upstream, and aborts the underlying fetch only if the connection goes
+ * genuinely silent for STREAM_INACTIVITY_TIMEOUT_MS. Total stream duration
+ * is never itself a reason to abort — only silence is.
+ */
+function toTextDeltaStream(
+  upstream: ReadableStream<Uint8Array>,
+  abortController: AbortController,
+  startedAt: number
+): ReadableStream<Uint8Array> {
   const reader = upstream.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
+  let firstChunkLogged = false;
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearInactivityTimer() {
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+    inactivityTimer = undefined;
+  }
+
+  function resetInactivityTimer() {
+    clearInactivityTimer();
+    inactivityTimer = setTimeout(() => {
+      abortController.abort(
+        new DOMException(
+          `Gemini stopped sending data for ${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s.`,
+          "TimeoutError"
+        )
+      );
+    }, STREAM_INACTIVITY_TIMEOUT_MS);
+  }
+
+  resetInactivityTimer(); // the clock starts as soon as we begin reading the body
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -247,16 +317,33 @@ function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream
       // upstream within this single pull() call until real progress is
       // made — something enqueued, or the source is actually exhausted.
       while (true) {
-        const { done, value } = await reader.read();
+        let done: boolean;
+        let value: Uint8Array | undefined;
+        try {
+          ({ done, value } = await reader.read());
+        } catch (err) {
+          // Most commonly the inactivity/connect abort firing mid-read.
+          // Propagate as a real stream error instead of hanging — the
+          // route handler's Response body errors, and the client's own
+          // reader.read() loop sees this same failure.
+          clearInactivityTimer();
+          logGeminiFailure("generateStream", undefined, err instanceof Error ? err.message : "stream read failed");
+          controller.error(err);
+          return;
+        }
 
         if (done) {
+          clearInactivityTimer();
           const rest = buffer;
           buffer = "";
           const text = extractLineText(rest);
           if (text) controller.enqueue(encoder.encode(text));
+          console.log(`[gemini:generateStream] stream completed after ${Date.now() - startedAt}ms`);
           controller.close();
           return;
         }
+
+        resetInactivityTimer(); // data arrived — push the silence deadline back out
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -266,6 +353,10 @@ function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream
         for (const line of lines) {
           const text = extractLineText(line);
           if (text) {
+            if (!firstChunkLogged) {
+              firstChunkLogged = true;
+              console.log(`[gemini:generateStream] first text chunk after ${Date.now() - startedAt}ms`);
+            }
             controller.enqueue(encoder.encode(text));
             enqueuedAny = true;
           }
@@ -277,6 +368,7 @@ function toTextDeltaStream(upstream: ReadableStream<Uint8Array>): ReadableStream
       }
     },
     cancel() {
+      clearInactivityTimer();
       reader.cancel().catch(() => {});
     },
   });

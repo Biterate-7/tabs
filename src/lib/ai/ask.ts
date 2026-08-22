@@ -63,8 +63,9 @@ export async function askQuestion(params: {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "chat", question, history: trimmedHistory, context }),
     });
-  } catch {
-    return { ok: false, error: "Couldn't reach the AI service." };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : undefined;
+    return { ok: false, error: detail ? `Couldn't reach the AI service. (${detail})` : "Couldn't reach the AI service." };
   }
 
   if (!response.ok) {
@@ -80,12 +81,22 @@ export async function askQuestion(params: {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let text = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const delta = decoder.decode(value, { stream: true });
-    text += delta;
-    onDelta?.(delta);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const delta = decoder.decode(value, { stream: true });
+      text += delta;
+      onDelta?.(delta);
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "the connection was interrupted.";
+    if (text) {
+      // The connection dropped mid-stream, but the model had already said
+      // something — keep it visible rather than throwing it away.
+      return { ok: true, text: `${text}\n\n_(response cut off: ${detail})_`, sources };
+    }
+    return { ok: false, error: `Couldn't reach the AI service. (${detail})` };
   }
 
   return { ok: true, text, sources };

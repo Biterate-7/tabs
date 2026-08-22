@@ -23,6 +23,7 @@ const ERROR_STATUS: Record<string, number> = {
   "missing-key": 503,
   "rate-limited": 429,
   "network-error": 502,
+  timeout: 504,
   "gemini-error": 502,
   "malformed-response": 502,
 };
@@ -31,6 +32,7 @@ const ERROR_MESSAGE: Record<string, string> = {
   "missing-key": "AI features aren't configured yet.",
   "rate-limited": "Too many requests right now — try again shortly.",
   "network-error": "Couldn't reach the AI service.",
+  timeout: "Gemini took too long to respond — try again.",
   "gemini-error": "The AI service returned an error.",
   "malformed-response": "The AI service returned something we couldn't parse.",
 };
@@ -114,6 +116,8 @@ function errorResponse(failure: Extract<GeminiResult<unknown>, { ok: false }>): 
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const requestStartedAt = Date.now();
+
   let body: unknown;
   try {
     body = await request.json();
@@ -149,6 +153,9 @@ export async function POST(request: Request): Promise<Response> {
     .map((h) => ({ role: h.role, text: h.text.slice(0, MAX_HISTORY_CHARS) }));
 
   if (mode === "chat") {
+    console.log(
+      `[ask-route] request received; starting Gemini stream request ${Date.now() - requestStartedAt}ms after body parsed (historyMessages=${historyContents.length}, contextItems=${context.length})`
+    );
     const result = await generateContentStream({
       model: chatModel(),
       systemInstruction: CHAT_SYSTEM_INSTRUCTION,

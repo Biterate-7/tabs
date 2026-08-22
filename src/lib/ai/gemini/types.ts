@@ -2,6 +2,7 @@ export type GeminiFailureReason =
   | "missing-key"
   | "rate-limited"
   | "network-error"
+  | "timeout"
   | "gemini-error"
   | "malformed-response";
 
