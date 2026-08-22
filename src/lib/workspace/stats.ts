@@ -31,7 +31,12 @@ export function groupByCategory(tabs: Tab[]): Record<CategoryId, Tab[]> {
   return groups;
 }
 
-export function representativeDomains(tabs: Tab[], limit = 3): string[] {
+/**
+ * Picks up to `limit` representative tabs (one per distinct domain,
+ * non-duplicates preferred) and returns their display label: the
+ * resolved title when available, falling back to the domain.
+ */
+export function representativeTabLabels(tabs: Tab[], limit = 3): string[] {
   const ordered = [...tabs].sort(
     (a, b) => Number(!!a.isDuplicate) - Number(!!b.isDuplicate)
   );
@@ -40,7 +45,7 @@ export function representativeDomains(tabs: Tab[], limit = 3): string[] {
   for (const tab of ordered) {
     if (seen.has(tab.domain)) continue;
     seen.add(tab.domain);
-    result.push(tab.domain);
+    result.push(tab.title?.trim() || tab.domain);
     if (result.length >= limit) break;
   }
   return result;

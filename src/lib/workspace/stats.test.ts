@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeOverview, groupByCategory, representativeDomains } from "./stats";
+import { computeOverview, groupByCategory, representativeTabLabels } from "./stats";
 import type { Tab } from "@/lib/tabs/types";
 
 function makeTab(over: Partial<Tab>): Tab {
@@ -54,7 +54,7 @@ describe("groupByCategory", () => {
   });
 });
 
-describe("representativeDomains", () => {
+describe("representativeTabLabels", () => {
   it("returns up to `limit` unique domains, duplicates excluded first", () => {
     const tabs = [
       makeTab({ id: "1", domain: "a.com" }),
@@ -63,10 +63,40 @@ describe("representativeDomains", () => {
       makeTab({ id: "4", domain: "c.com" }),
       makeTab({ id: "5", domain: "d.com" }),
     ];
-    expect(representativeDomains(tabs, 3)).toEqual(["a.com", "b.com", "c.com"]);
+    expect(representativeTabLabels(tabs, 3)).toEqual(["a.com", "b.com", "c.com"]);
   });
 
   it("returns an empty array for no tabs", () => {
-    expect(representativeDomains([], 3)).toEqual([]);
+    expect(representativeTabLabels([], 3)).toEqual([]);
+  });
+
+  it("prefers the resolved title over the domain", () => {
+    const tabs = [
+      makeTab({ id: "1", domain: "github.com", title: "GitHub · Change Password" }),
+    ];
+    expect(representativeTabLabels(tabs, 3)).toEqual(["GitHub · Change Password"]);
+  });
+
+  it("falls back to the domain when no title is resolved", () => {
+    const tabs = [makeTab({ id: "1", domain: "github.com", title: undefined })];
+    expect(representativeTabLabels(tabs, 3)).toEqual(["github.com"]);
+  });
+
+  it("falls back to the domain when the title is blank", () => {
+    const tabs = [makeTab({ id: "1", domain: "github.com", title: "   " })];
+    expect(representativeTabLabels(tabs, 3)).toEqual(["github.com"]);
+  });
+
+  it("handles a mix of tabs with and without resolved titles", () => {
+    const tabs = [
+      makeTab({ id: "1", domain: "github.com", title: "GitHub · Change Password" }),
+      makeTab({ id: "2", domain: "vercel.com" }),
+      makeTab({ id: "3", domain: "mail.google.com", title: "Inbox (4) — Gmail" }),
+    ];
+    expect(representativeTabLabels(tabs, 3)).toEqual([
+      "GitHub · Change Password",
+      "vercel.com",
+      "Inbox (4) — Gmail",
+    ]);
   });
 });

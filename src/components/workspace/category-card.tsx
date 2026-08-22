@@ -4,7 +4,7 @@ import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 import type { CategoryPresence } from "@/lib/workspace/hierarchy"
-import { representativeDomains } from "@/lib/workspace/stats"
+import { representativeTabLabels } from "@/lib/workspace/stats"
 
 export function CategoryCard({
   categoryId,
@@ -21,7 +21,7 @@ export function CategoryCard({
   const Icon = def.icon
   const isEmpty = tabs.length === 0
   const domainLimit = presence === "large" ? 5 : presence === "standard" ? 3 : 0
-  const domains = representativeDomains(tabs, domainLimit)
+  const labels = representativeTabLabels(tabs, domainLimit)
 
   if (presence === "compact") {
     return (
@@ -69,11 +69,14 @@ export function CategoryCard({
         </span>
       </div>
 
-      {domains.length > 0 && (
+      {labels.length > 0 && (
         <ul className="space-y-1">
-          {domains.map((domain) => (
-            <li key={domain} className="truncate text-body-sm text-muted-foreground">
-              {domain}
+          {labels.map((label, index) => (
+            <li
+              key={`${label}-${index}`}
+              className="truncate text-body-sm text-muted-foreground"
+            >
+              {label}
             </li>
           ))}
         </ul>
