@@ -1,8 +1,11 @@
 import { getChunksForWorkspace } from "./db";
 import type { IndexedChunkRecord, RetrievedChunk } from "./types";
+import type { SemanticHint } from "@/lib/search/types";
 
 const DEFAULT_TOP_K = 8;
 const DEFAULT_MIN_SIMILARITY = 0.5;
+/** How many workspace-scoped chunk fetches run at once for a global search — plenty for the handful of workspaces a real user has, without firing them all as one giant unbounded Promise.all. */
+const WORKSPACE_FETCH_CONCURRENCY = 6;
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
@@ -31,6 +34,14 @@ function dedupeByTab<T extends { tabId: string; score: number }>(chunks: T[], li
   return result;
 }
 
+/** Shared by both retrieveRelevantChunks and its multi-workspace sibling below — scoring/thresholding/dedup is identical either way, only which chunks feed in differs. */
+function scoreAndDedupe(chunks: IndexedChunkRecord[], queryEmbedding: number[], topK: number, minSimilarity: number): RetrievedChunk[] {
+  const scored = chunks
+    .map((chunk) => ({ ...chunk, score: cosineSimilarity(chunk.embedding, queryEmbedding) }))
+    .filter((c) => c.score >= minSimilarity);
+  return dedupeByTab(scored, topK);
+}
+
 /**
  * In-browser cosine-similarity search over one workspace's indexed chunks.
  * A linear scan is plenty fast at the hundreds-to-low-thousands of tabs a
@@ -41,15 +52,44 @@ export async function retrieveRelevantChunks(
   queryEmbedding: number[],
   opts?: { topK?: number; minSimilarity?: number }
 ): Promise<RetrievedChunk[]> {
+  const chunks = await getChunksForWorkspace(workspaceId);
+  return scoreAndDedupe(chunks, queryEmbedding, opts?.topK ?? DEFAULT_TOP_K, opts?.minSimilarity ?? DEFAULT_MIN_SIMILARITY);
+}
+
+/**
+ * Same idea as retrieveRelevantChunks, but across every given workspace at
+ * once — this is what makes Ask Tabs' global "find anything" search
+ * semantic rather than just keyword: the same per-workspace IndexedDB
+ * index (populated by useAiIndexing as the user visits workspaces) is
+ * simply queried for each workspace id and merged, so a tab only shows up
+ * here if it was actually indexed. No second index or vector store is
+ * introduced — this is a query-time fan-out over the existing one.
+ */
+export async function retrieveRelevantChunksAcrossWorkspaces(
+  workspaceIds: string[],
+  queryEmbedding: number[],
+  opts?: { topK?: number; minSimilarity?: number }
+): Promise<RetrievedChunk[]> {
   const topK = opts?.topK ?? DEFAULT_TOP_K;
   const minSimilarity = opts?.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
 
-  const chunks = await getChunksForWorkspace(workspaceId);
-  const scored = chunks
-    .map((chunk) => ({ ...chunk, score: cosineSimilarity(chunk.embedding, queryEmbedding) }))
-    .filter((c) => c.score >= minSimilarity);
+  const allChunks: IndexedChunkRecord[] = [];
+  for (let i = 0; i < workspaceIds.length; i += WORKSPACE_FETCH_CONCURRENCY) {
+    const batch = workspaceIds.slice(i, i + WORKSPACE_FETCH_CONCURRENCY);
+    const results = await Promise.all(batch.map((id) => getChunksForWorkspace(id)));
+    for (const chunks of results) allChunks.push(...chunks);
+  }
 
-  return dedupeByTab(scored, topK);
+  return scoreAndDedupe(allChunks, queryEmbedding, topK, minSimilarity);
+}
+
+/**
+ * Strips a retrieved chunk down to the only shape that's ever safe to send
+ * onward to the server/Gemini: no embedding vector, no chunk text — just
+ * "this tab is this relevant." See src/lib/search/types.ts.
+ */
+export function toSemanticHints(chunks: RetrievedChunk[]): SemanticHint[] {
+  return chunks.map((c) => ({ tabId: c.tabId, workspaceId: c.workspaceId, score: c.score }));
 }
 
 /**

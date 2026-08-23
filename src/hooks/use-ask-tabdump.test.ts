@@ -511,3 +511,103 @@ it("supports undoing only the latest of several AI operations, leaving earlier o
   // A was never invoked — its entry is exactly as it was, never consumed by undoing B or C.
   expect(result.current.messages.find((m) => m.id === msgA.id)?.undo?.status).toBe("available");
 });
+
+const physicsSearchResults = [
+  { tabId: "t1", title: "Physics IA notes", url: "https://x.com/1", domain: "x.com", workspaceId: WORKSPACE_ID, workspaceName: "Physics", score: 6, matchReason: "title" as const },
+  { tabId: "t2", title: "Physics IA lab", url: "https://github.com/x", domain: "github.com", workspaceId: WORKSPACE_ID, workspaceName: "Physics", score: 4, matchReason: "title" as const },
+];
+
+/** First call ("Find my physics tabs") returns search results; the second call ("Move those...") asserts recentSearchResults was sent, then resolves as an immediate move. */
+function mockSearchThenActFetch() {
+  let call = 0;
+  let capturedSecondBody: Record<string, unknown> | null = null;
+  const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) {
+      call += 1;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({ text: "I found 2 relevant tabs in Physics.", actions: [], searchResults: physicsSearchResults }),
+          { status: 200 }
+        );
+      }
+      capturedSecondBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(
+        JSON.stringify({
+          text: "Done — moved 2 tabs into Physics IA.",
+          actions: [],
+          store: { version: 1, currentId: WORKSPACE_ID, workspaces: allWorkspaces },
+        }),
+        { status: 200 }
+      );
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+  return { fetchMock, getSecondBody: () => capturedSecondBody };
+}
+
+it("attaches searchResults to the assistant message that ran a search", async () => {
+  mockSearchThenActFetch();
+  const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+  act(() => {
+    result.current.send("Find my physics tabs")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  const searchMessage = result.current.messages.find((m) => m.searchResults);
+  expect(searchMessage?.searchResults).toEqual(physicsSearchResults);
+  expect(searchMessage?.text).toBe("I found 2 relevant tabs in Physics.");
+});
+
+it("preserves search results across turns so a follow-up like 'move those' resolves without re-searching or manual tab ids", async () => {
+  const { getSecondBody } = mockSearchThenActFetch();
+  const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+  act(() => {
+    result.current.send("Find my physics tabs")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  act(() => {
+    result.current.send("Move those into Physics IA")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(true));
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  const secondBody = getSecondBody();
+  expect(secondBody?.recentSearchResults).toEqual(physicsSearchResults);
+
+  const followUp = result.current.messages[result.current.messages.length - 1];
+  expect(followUp.text).toBe("Done — moved 2 tabs into Physics IA.");
+  // The conversation kept both turns intact — nothing was dropped or replaced.
+  expect(result.current.messages.map((m) => m.text)).toEqual([
+    "Find my physics tabs",
+    "I found 2 relevant tabs in Physics.",
+    "Move those into Physics IA",
+    "Done — moved 2 tabs into Physics IA.",
+  ]);
+});
+
+it("forgets recent search results once the conversation is cleared", async () => {
+  const { fetchMock } = mockSearchThenActFetch();
+  const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+  act(() => {
+    result.current.send("Find my physics tabs")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  act(() => {
+    result.current.clear()
+  });
+
+  act(() => {
+    result.current.send("Move those into Physics IA")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  const lastCallBody = JSON.parse((fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1] as RequestInit).body as string);
+  expect(lastCallBody.recentSearchResults).toEqual([]);
+});

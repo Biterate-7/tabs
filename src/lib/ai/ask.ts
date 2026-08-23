@@ -1,16 +1,19 @@
 import type { Tab } from "@/lib/tabs/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import { embedTexts } from "./embed-client";
-import { retrieveRelevantChunks } from "./retrieve";
+import { retrieveRelevantChunks, retrieveRelevantChunksAcrossWorkspaces, toSemanticHints } from "./retrieve";
 import { formatApiError } from "./types";
-import type { AskMessage, AskSource, PlannedActionView } from "./types";
+import type { AskMessage, AskSource, PlannedActionView, SearchResult } from "./types";
+import type { SemanticHint } from "@/lib/search/types";
 
 const MAX_HISTORY_MESSAGES = 6;
+/** How many cross-workspace semantic candidates to hand the agent's search_tabs as a hint — generous relative to retrieveRelevantChunks' single-workspace default, since this is auxiliary signal the server's hybrid ranker combines with keyword/metadata matches, not the sole source of results. */
+const SEMANTIC_HINTS_TOP_K = 30;
 export const NOT_ENOUGH_INFO_MESSAGE = "I couldn't find enough information in your saved tabs to answer that.";
 
 export type AskResult =
-  | { ok: true; text: string; sources: AskSource[] }
-  | { ok: true; requiresConfirmation: true; text: string; plan: PlannedActionView[]; summary: string }
+  | { ok: true; text: string; sources: AskSource[]; searchResults?: SearchResult[] }
+  | { ok: true; requiresConfirmation: true; text: string; plan: PlannedActionView[]; summary: string; searchResults?: SearchResult[] }
   | { ok: false; error: string };
 
 export type ApplyPlanResult = { ok: true; text: string } | { ok: false; error: string };
@@ -55,14 +58,21 @@ export async function askQuestion(params: {
    * mutation without re-deriving it.
    */
   onStoreUpdate?: (store: WorkspaceStore, description?: string) => void;
+  /**
+   * The previous turn's search_tabs results, if any — passed straight
+   * through to the agent so it can resolve a follow-up like "move those
+   * into Physics IA" without re-searching. Only meaningful with `store`
+   * set; ignored on the plain "chat" path.
+   */
+  recentSearchResults?: SearchResult[];
 }): Promise<AskResult> {
-  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate } = params;
+  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults } = params;
 
   const embedResult = await embedTexts([question]);
   if (!embedResult.ok) return { ok: false, error: embedResult.error };
 
   const chunks = await retrieveRelevantChunks(workspaceId, embedResult.embeddings[0]);
-  if (chunks.length === 0) {
+  if (chunks.length === 0 && !store) {
     return { ok: true, text: NOT_ENOUGH_INFO_MESSAGE, sources: [] };
   }
 
@@ -79,13 +89,39 @@ export async function askQuestion(params: {
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", text: m.text }));
 
   if (store) {
+    // Semantic hints for search_tabs need to span every workspace (global
+    // search), not just the current one context/sources are grounded in
+    // above — so this is a separate retrieval, reusing the SAME query
+    // embedding (no extra embedding call). Best-effort: IndexedDB being
+    // briefly unavailable shouldn't fail the whole request, just fall back
+    // to keyword/metadata-only search server-side.
+    let semanticHints: SemanticHint[] = [];
+    try {
+      const allChunks = await retrieveRelevantChunksAcrossWorkspaces(
+        store.workspaces.map((w) => w.id),
+        embedResult.embeddings[0],
+        { topK: SEMANTIC_HINTS_TOP_K }
+      );
+      semanticHints = toSemanticHints(allChunks);
+    } catch {
+      semanticHints = [];
+    }
+
     let agentResponse: Response;
     try {
       agentResponse = await fetch("/api/ai/ask", {
         method: "POST",
         signal,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: "agent", question, history: trimmedHistory, context, store }),
+        body: JSON.stringify({
+          mode: "agent",
+          question,
+          history: trimmedHistory,
+          context,
+          store,
+          semanticHints,
+          recentSearchResults: recentSearchResults ?? [],
+        }),
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : undefined;
@@ -103,14 +139,22 @@ export async function askQuestion(params: {
       requiresConfirmation?: boolean;
       plan?: PlannedActionView[];
       summary?: string;
+      searchResults?: SearchResult[];
     };
 
     if (data.requiresConfirmation) {
-      return { ok: true, requiresConfirmation: true, text: data.text, plan: data.plan ?? [], summary: data.summary ?? "" };
+      return {
+        ok: true,
+        requiresConfirmation: true,
+        text: data.text,
+        plan: data.plan ?? [],
+        summary: data.summary ?? "",
+        ...(data.searchResults ? { searchResults: data.searchResults } : {}),
+      };
     }
 
     if (data.store) onStoreUpdate?.(data.store, data.text);
-    return { ok: true, text: data.text, sources };
+    return { ok: true, text: data.text, sources, ...(data.searchResults ? { searchResults: data.searchResults } : {}) };
   }
 
   let response: Response;

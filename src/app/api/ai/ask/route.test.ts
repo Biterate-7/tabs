@@ -222,6 +222,126 @@ describe("POST /api/ai/ask", () => {
       expect(body.store).toBeUndefined();
       expect(body.actions).toBeUndefined();
     });
+
+    describe("global search", () => {
+      const searchResults = [
+        {
+          tabId: "t1",
+          title: "Schwarzschild solution vs Newtonian gravity",
+          url: "https://github.com/x",
+          domain: "github.com",
+          workspaceId: "ws-1",
+          workspaceName: "Physics IA",
+          score: 4,
+          matchReason: "title" as const,
+        },
+      ];
+
+      it("returns 400 for a malformed semanticHints payload", async () => {
+        const response = await POST(
+          postRequest({
+            question: "Find my physics tabs",
+            context: [],
+            mode: "agent",
+            store: validStore,
+            semanticHints: [{ tabId: "t1" }], // missing workspaceId/score
+          })
+        );
+        expect(response.status).toBe(400);
+      });
+
+      it("passes semanticHints through to the agent loop, capped at MAX_SEMANTIC_HINTS", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+        const manyHints = Array.from({ length: 80 }, (_, i) => ({ tabId: `t${i}`, workspaceId: "ws-1", score: 0.6 }));
+
+        await POST(
+          postRequest({ question: "Find my physics tabs", context: [], mode: "agent", store: validStore, semanticHints: manyHints })
+        );
+
+        const passedHints = runAgentLoopMock.mock.calls[0][0].semanticHints;
+        expect(passedHints).toHaveLength(50);
+        expect(passedHints[0]).toEqual({ tabId: "t0", workspaceId: "ws-1", score: 0.6 });
+      });
+
+      it("returns 400 for a malformed recentSearchResults payload", async () => {
+        const response = await POST(
+          postRequest({
+            question: "Move those into Research",
+            context: [],
+            mode: "agent",
+            store: validStore,
+            recentSearchResults: [{ tabId: "t1" }], // missing required fields
+          })
+        );
+        expect(response.status).toBe(400);
+      });
+
+      it("injects recentSearchResults into the prompt sent to the agent loop", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+        await POST(
+          postRequest({
+            question: "Move those into Research",
+            context: [],
+            mode: "agent",
+            store: validStore,
+            recentSearchResults: searchResults,
+          })
+        );
+
+        const contents = runAgentLoopMock.mock.calls[0][0].contents;
+        const userTurn = contents[contents.length - 1];
+        expect(userTurn.parts[0].text).toContain("Recent search results");
+        expect(userTurn.parts[0].text).toContain("Schwarzschild solution vs Newtonian gravity");
+        expect(userTurn.parts[0].text).toContain("t1");
+      });
+
+      it("includes searchResults in a resolved response when the agent loop found some", async () => {
+        runAgentLoopMock.mockResolvedValue({
+          ok: true,
+          kind: "resolved",
+          text: "I found 1 relevant tab.",
+          store: validStore,
+          storeChanged: false,
+          actions: [],
+          searchResults,
+        });
+
+        const response = await POST(
+          postRequest({ question: "Find my physics tabs", context: [], mode: "agent", store: validStore })
+        );
+
+        const body = await response.json();
+        expect(body.searchResults).toEqual(searchResults);
+      });
+
+      it("includes searchResults in a preview response too", async () => {
+        runAgentLoopMock.mockResolvedValue({
+          ok: true,
+          kind: "preview",
+          text: "Here's what I want to change",
+          plan: [{ name: "move_tabs", args: {}, label: "Move 1 tab", affected: 1 }],
+          summary: "This will move 1 tab.",
+          searchResults,
+        });
+
+        const response = await POST(
+          postRequest({ question: "Move those into Research", context: [], mode: "agent", store: validStore })
+        );
+
+        const body = await response.json();
+        expect(body.searchResults).toEqual(searchResults);
+      });
+
+      it("omits searchResults entirely when the agent loop didn't search", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+        const response = await POST(postRequest({ question: "hi", context: [], mode: "agent", store: validStore }));
+
+        const body = await response.json();
+        expect(body.searchResults).toBeUndefined();
+      });
+    });
   });
 
   describe("agent-apply mode", () => {

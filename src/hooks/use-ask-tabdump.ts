@@ -6,7 +6,7 @@ import { askQuestion, applyPlan } from "@/lib/ai/ask"
 import { attemptUndo, findUndoEntry, markUndone, pushUndoEntry } from "@/lib/undo/history"
 import type { UndoEntry } from "@/lib/undo/types"
 import type { Tab } from "@/lib/tabs/types"
-import type { AskMessage } from "@/lib/ai/types"
+import type { AskMessage, SearchResult } from "@/lib/ai/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 const CANCELLED_TEXT = "No changes made."
@@ -49,6 +49,12 @@ export function useAskTabDump(
   // then-write it synchronously inside callbacks without waiting on a
   // state update to commit — same reasoning as messagesRef.
   const undoHistoryRef = useRef<UndoEntry[]>([])
+  // The most recent turn's search_tabs results, so a follow-up like "move
+  // those into Physics IA" can resolve "those" without the user repeating
+  // the search or supplying tab ids — see askQuestion's recentSearchResults
+  // param. A ref (not state) since it's read-then-written inside runAsk,
+  // never rendered directly.
+  const lastSearchResultsRef = useRef<SearchResult[] | undefined>(undefined)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -94,6 +100,7 @@ export function useAskTabDump(
           history,
           signal: controller.signal,
           store,
+          recentSearchResults: lastSearchResultsRef.current,
           onStoreUpdate: (after, description) => {
             if (store) undoEntryId = recordUndoEntry(store, after, description || question).id
             onStoreUpdate?.(after)
@@ -102,6 +109,8 @@ export function useAskTabDump(
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + delta } : m)))
           },
         })
+
+        if (result.ok) lastSearchResultsRef.current = result.searchResults ?? lastSearchResultsRef.current
 
         setMessages((prev) =>
           prev.map((m) => {
@@ -113,6 +122,7 @@ export function useAskTabDump(
                 text: result.text,
                 pending: false,
                 preview: { plan: result.plan, summary: result.summary, status: "awaiting" },
+                ...(result.searchResults ? { searchResults: result.searchResults } : {}),
               }
             }
             return {
@@ -121,6 +131,7 @@ export function useAskTabDump(
               sources: result.sources,
               pending: false,
               ...(undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
+              ...(result.searchResults ? { searchResults: result.searchResults } : {}),
             }
           })
         )
@@ -156,6 +167,7 @@ export function useAskTabDump(
     abortRef.current?.abort()
     setMessages([])
     lastQuestionRef.current = null
+    lastSearchResultsRef.current = undefined
   }, [])
 
   /**

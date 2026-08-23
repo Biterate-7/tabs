@@ -258,4 +258,106 @@ describe("runAgentLoop", () => {
     // Nothing committed to the real store passed in.
     expect(store.workspaces).toHaveLength(1);
   });
+
+  it("chains search_tabs into move_tabs within the same request, using the exact tab ids the search returned", async () => {
+    const physicsTabs = [
+      { id: "t1", url: "https://x.com/1", normalizedUrl: "https://x.com/1", domain: "x.com", title: "Physics IA notes" },
+      { id: "t2", url: "https://x.com/2", normalizedUrl: "https://x.com/2", domain: "x.com", title: "Physics IA lab" },
+      { id: "t3", url: "https://x.com/3", normalizedUrl: "https://x.com/3", domain: "x.com", title: "Physics IA references" },
+      { id: "t4", url: "https://x.com/4", normalizedUrl: "https://x.com/4", domain: "x.com", title: "Physics IA data" },
+      { id: "t5", url: "https://x.com/5", normalizedUrl: "https://x.com/5", domain: "x.com", title: "Shopping list" },
+    ];
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: physicsTabs }), makeWorkspace({ id: "b", name: "MUN Research" })],
+      "a"
+    );
+
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "search_tabs", args: { query: "physics ia" } }] },
+      })
+      .mockImplementationOnce(async (opts: { contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { matches?: { tabId: string }[] } } } }> }> }) => {
+        const functionTurn = opts.contents.find((c) => c.role === "function");
+        const matches = functionTurn?.parts[0]?.functionResponse?.response?.result?.matches ?? [];
+        return {
+          ok: true,
+          data: {
+            text: "",
+            functionCalls: [
+              { name: "move_tabs", args: { tabIds: matches.map((m) => m.tabId), targetWorkspaceId: "b", sourceWorkspaceId: "a" } },
+            ],
+          },
+        };
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result (4 tabs moved > threshold)");
+    expect(result.plan).toHaveLength(1);
+    expect(result.plan[0].name).toBe("move_tabs");
+    expect((result.plan[0].args as { tabIds: string[] }).tabIds.sort()).toEqual(["t1", "t2", "t3", "t4"]);
+    expect(result.searchResults?.map((r) => r.tabId).sort()).toEqual(["t1", "t2", "t3", "t4"]);
+  });
+
+  it("chains search_tabs into create_group in the same request", async () => {
+    const store = makeStore([makeWorkspace({ id: "a", name: "Model UN", tabs: [] })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "search_tabs", args: { query: "MUN" } }] },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "create_group", args: { workspaceId: "a", name: "MUN Resolutions" } }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Created the group.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (single small write) result");
+    expect(result.store.workspaces[0].groups?.[0].name).toBe("MUN Resolutions");
+  });
+
+  it("passes semanticHints through to search_tabs so it can find tabs with no keyword overlap", async () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com", title: "S2 star orbit simulation" }] })],
+      "a"
+    );
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "search_tabs", args: { query: "orbital mechanics" } }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Found it.", functionCalls: [] } });
+
+    const result = await runAgentLoop({
+      ...baseParams(store),
+      semanticHints: [{ tabId: "1", workspaceId: "a", score: 0.85 }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.searchResults).toEqual([expect.objectContaining({ tabId: "1", matchReason: "semantic" })]);
+  });
+
+  it("never lets search_tabs results leak vector/embedding data into the loop's output", async () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com", title: "Physics" }] })],
+      "a"
+    );
+    generateAgentTurnMock
+      .mockResolvedValueOnce({ ok: true, data: { text: "", functionCalls: [{ name: "search_tabs", args: { query: "physics" } }] } })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Found it.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const serialized = JSON.stringify(result.searchResults);
+    expect(serialized).not.toContain("embedding");
+  });
 });

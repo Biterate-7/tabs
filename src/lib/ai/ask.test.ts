@@ -191,6 +191,129 @@ it("applyPlan posts the exact plan and store, and applies the returned store", a
   expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);
 });
 
+it("computes semantic hints across every workspace in the store, not just the current one", async () => {
+  const otherWorkspaceId = "ws-other";
+  await putChunks([
+    {
+      key: `${otherWorkspaceId}:tab-2:summary`,
+      workspaceId: otherWorkspaceId,
+      tabId: "tab-2",
+      kind: "summary",
+      text: "Other workspace summary",
+      embedding: [1, 0, 0],
+      tabSignature: "sig",
+      title: "Other",
+      url: "https://example.com/b",
+      indexedAt: Date.now(),
+    },
+  ]);
+
+  const workspaceStore = {
+    version: 1 as const,
+    currentId: WORKSPACE_ID,
+    workspaces: [
+      { id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 },
+      { id: otherWorkspaceId, name: "Research", tabs: [], createdAt: 0, updatedAt: 0 },
+    ],
+  };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) {
+      return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    }
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Found them.", actions: [] }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  await askQuestion({ workspaceId: WORKSPACE_ID, tabs: [], question: "Find everything about X", history: [], store: workspaceStore });
+
+  const semanticHints = (capturedBody as unknown as { semanticHints: { tabId: string; workspaceId: string }[] }).semanticHints;
+  expect(semanticHints.map((h) => h.workspaceId).sort()).toEqual([WORKSPACE_ID, otherWorkspaceId].sort());
+  // Never a raw vector on the wire.
+  expect(JSON.stringify(semanticHints)).not.toContain("embedding");
+});
+
+it("forwards recentSearchResults so a follow-up like 'move those' can resolve without re-searching", async () => {
+  const workspaceStore = { version: 1 as const, currentId: WORKSPACE_ID, workspaces: [{ id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const priorResults = [
+    { tabId: "t1", title: "Physics IA notes", url: "https://x.com", domain: "x.com", workspaceId: WORKSPACE_ID, workspaceName: "Physics", score: 4, matchReason: "title" as const },
+  ];
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Moved them.", actions: [] }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs: [],
+    question: "Move those into Research",
+    history: [],
+    store: workspaceStore,
+    recentSearchResults: priorResults,
+  });
+
+  expect((capturedBody as unknown as { recentSearchResults: unknown }).recentSearchResults).toEqual(priorResults);
+});
+
+it("surfaces searchResults returned by the agent on the AskResult", async () => {
+  const workspaceStore = { version: 1 as const, currentId: WORKSPACE_ID, workspaces: [{ id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const searchResults = [
+    { tabId: "t1", title: "Physics IA notes", url: "https://x.com", domain: "x.com", workspaceId: WORKSPACE_ID, workspaceName: "Physics", score: 4, matchReason: "title" as const },
+  ];
+
+  vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) {
+      return new Response(JSON.stringify({ text: "I found 1 relevant tab.", actions: [], searchResults }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const result = await askQuestion({ workspaceId: WORKSPACE_ID, tabs: [], question: "Find my physics tabs", history: [], store: workspaceStore });
+
+  expect(result).toEqual({ ok: true, text: "I found 1 relevant tab.", sources: expect.any(Array), searchResults });
+});
+
+it("still reaches the agent for an action request even when the current workspace has nothing indexed yet", async () => {
+  const emptyWorkspaceId = "ws-brand-new";
+  const workspaceStore = { version: 1 as const, currentId: emptyWorkspaceId, workspaces: [{ id: emptyWorkspaceId, name: "New", tabs: [], createdAt: 0, updatedAt: 0 }] };
+
+  let agentCalled = false;
+  vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) {
+      agentCalled = true;
+      return new Response(JSON.stringify({ text: "Renamed it.", actions: [] }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const result = await askQuestion({
+    workspaceId: emptyWorkspaceId,
+    tabs: [],
+    question: "Rename this workspace to Chemistry",
+    history: [],
+    store: workspaceStore,
+  });
+
+  expect(agentCalled).toBe(true);
+  expect(result).toEqual({ ok: true, text: "Renamed it.", sources: [] });
+});
+
 it("applyPlan surfaces a server error without calling onStoreUpdate", async () => {
   vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "Something failed." }), { status: 500 }));
 

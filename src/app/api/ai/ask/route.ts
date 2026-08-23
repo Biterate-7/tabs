@@ -6,6 +6,7 @@ import { runAgentLoop } from "@/lib/actions/agent";
 import { applyPlan, isValidPlanInput } from "@/lib/actions/plan";
 import { isValidWorkspaceStore } from "@/lib/workspace/persistence";
 import type { WorkspaceStore } from "@/lib/workspace/types";
+import type { MatchReason, SearchResult, SemanticHint } from "@/lib/search/types";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,9 @@ const MAX_QUESTION_CHARS = 500;
 const CHAT_MAX_OUTPUT_TOKENS = 1024;
 const ANALYSIS_MAX_OUTPUT_TOKENS = 2048;
 const AGENT_MAX_OUTPUT_TOKENS = 1024;
+const MAX_SEMANTIC_HINTS = 50;
+/** How many of the previous turn's search results get carried into this turn's prompt for follow-ups like "move those" — smaller than what search_tabs itself returns within a turn, to keep cross-turn prompt growth bounded. */
+const RECENT_SEARCH_RESULTS_LIMIT = 12;
 
 type ContextItem = { tabId: string; title: string; url: string; text: string };
 type HistoryItem = { role: "user" | "model"; text: string };
@@ -51,6 +55,10 @@ const AGENT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant for a browse
 Ground every factual answer ONLY in the "Saved context" given below and in what tool results actually return — never use outside knowledge, and never invent a fact, workspace, tab, id, or URL you weren't actually given.
 
 Workspace, tab, and group ids are opaque strings you cannot guess. Call list_workspaces, search_tabs, or list_workspace_tabs first to resolve a name the user mentioned (e.g. "Physics workspace") to its real id before calling an action that needs one. If a tool call fails, read its error and adjust — e.g. create the destination workspace first if a move target doesn't exist yet — rather than giving up immediately.
+
+Use search_tabs whenever the user is asking to find something by topic across their whole library (e.g. "find my Physics IA tabs", "where are my MUN tabs?") — it searches every workspace by keyword AND meaning, not just exact words. Use list_workspace_tabs instead when the user is clearly asking about one specific, already-identified workspace (e.g. "what's in this workspace?"). When you present search_tabs results to the user, organize them — e.g. grouped by workspace — rather than one flat paragraph, and mention the total count and how many workspaces they span. If search_tabs returns nothing, or only very low-scoring matches, say so honestly (e.g. "I couldn't find any strong matches for X") — never present a weak or empty result as a confident answer, and never invent tabs that weren't returned.
+
+If a "Recent search results" list is given below, and the user refers to those results (e.g. "move those", "put the GitHub ones in Development"), reuse those exact tabs — filtering by title/domain/workspace as the user describes — instead of calling search_tabs again, unless they're clearly asking about something new.
 
 Once you're done, reply with a short, natural-language summary of what you found or did (e.g. "Done — I moved 7 Physics tabs into Physics IA."). Never show raw tool-call JSON, ids, or the words "function call" to the user.`;
 
@@ -109,6 +117,57 @@ function isHistoryArray(value: unknown): value is HistoryItem[] {
         typeof (v as HistoryItem).text === "string"
     )
   );
+}
+
+const MATCH_REASONS: MatchReason[] = ["title", "url", "workspace", "group", "semantic", "keyword"];
+
+function isSemanticHintArray(value: unknown): value is SemanticHint[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (v) =>
+        v &&
+        typeof v === "object" &&
+        typeof (v as SemanticHint).tabId === "string" &&
+        typeof (v as SemanticHint).workspaceId === "string" &&
+        typeof (v as SemanticHint).score === "number"
+    )
+  );
+}
+
+function isSearchResultArray(value: unknown): value is SearchResult[] {
+  return (
+    Array.isArray(value) &&
+    value.every((v) => {
+      if (!v || typeof v !== "object") return false;
+      const r = v as SearchResult;
+      return (
+        typeof r.tabId === "string" &&
+        typeof r.title === "string" &&
+        typeof r.url === "string" &&
+        typeof r.domain === "string" &&
+        typeof r.workspaceId === "string" &&
+        typeof r.workspaceName === "string" &&
+        typeof r.score === "number" &&
+        MATCH_REASONS.includes(r.matchReason)
+      );
+    })
+  );
+}
+
+/**
+ * The one place a prior turn's search results re-enter the conversation as
+ * plain text context — never as something Gemini can execute directly.
+ * Acting on any of these ids still goes through the normal validated
+ * action layer (move_tabs, etc.), exactly as if Gemini had just searched
+ * for them itself.
+ */
+function buildRecentSearchResultsBlock(results: SearchResult[]): string {
+  if (results.length === 0) return "";
+  const lines = results
+    .slice(0, RECENT_SEARCH_RESULTS_LIMIT)
+    .map((r) => `- tabId: ${r.tabId} | title: ${r.title} | domain: ${r.domain} | workspace: ${r.workspaceName} (id: ${r.workspaceId})`);
+  return `Recent search results (from your last search_tabs call in this conversation):\n${lines.join("\n")}\n\n`;
 }
 
 function buildContextBlock(context: ContextItem[]): string {
@@ -227,11 +286,24 @@ export async function POST(request: Request): Promise<Response> {
     }
     const store: WorkspaceStore = storeInput;
 
+    const semanticHintsInput = b?.semanticHints;
+    if (semanticHintsInput !== undefined && !isSemanticHintArray(semanticHintsInput)) {
+      return Response.json({ error: "Expected { semanticHints: {tabId,workspaceId,score}[] }." }, { status: 400 });
+    }
+    const semanticHints = (semanticHintsInput as SemanticHint[] | undefined)?.slice(0, MAX_SEMANTIC_HINTS);
+
+    const recentSearchResultsInput = b?.recentSearchResults;
+    if (recentSearchResultsInput !== undefined && !isSearchResultArray(recentSearchResultsInput)) {
+      return Response.json({ error: "Expected { recentSearchResults: SearchResult[] }." }, { status: 400 });
+    }
+    const recentSearchResults = (recentSearchResultsInput as SearchResult[] | undefined) ?? [];
+
     const currentWorkspace = store.workspaces.find((w) => w.id === store.currentId);
     const preamble = currentWorkspace
       ? `Current workspace: "${currentWorkspace.name}" (id: ${currentWorkspace.id}).\n\n`
       : "";
-    const agentPrompt = `${preamble}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
+    const recentSearchBlock = buildRecentSearchResultsBlock(recentSearchResults);
+    const agentPrompt = `${preamble}${recentSearchBlock}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
 
     const contents: AgentContent[] = [
       ...historyContents.map((h): AgentContent => ({ role: h.role, parts: [{ text: h.text }] })),
@@ -244,6 +316,7 @@ export async function POST(request: Request): Promise<Response> {
       contents,
       store,
       maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
+      semanticHints,
     });
 
     if (!agentResult.ok) return errorResponse(agentResult);
@@ -254,6 +327,7 @@ export async function POST(request: Request): Promise<Response> {
         text: agentResult.text,
         plan: agentResult.plan,
         summary: agentResult.summary,
+        ...(agentResult.searchResults ? { searchResults: agentResult.searchResults } : {}),
       });
     }
 
@@ -261,6 +335,7 @@ export async function POST(request: Request): Promise<Response> {
       text: agentResult.text,
       actions: agentResult.actions,
       ...(agentResult.storeChanged ? { store: agentResult.store } : {}),
+      ...(agentResult.searchResults ? { searchResults: agentResult.searchResults } : {}),
     });
   }
 

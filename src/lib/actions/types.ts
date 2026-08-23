@@ -1,4 +1,5 @@
 import type { WorkspaceStore } from "@/lib/workspace/types";
+import type { SemanticHint } from "@/lib/search/types";
 
 /**
  * Gemini's function-calling `parameters` schema uses its protobuf-derived
@@ -14,6 +15,18 @@ export type ActionParameterSchema = {
 };
 
 export type ActionValidation<Args> = { ok: true; args: Args } | { ok: false; message: string };
+
+/**
+ * Trusted, non-Gemini-controlled context handed alongside (store, args) to
+ * an action's run(). Gemini never sees or supplies this — it's populated
+ * server-side from data the browser sent directly (e.g. precomputed
+ * semantic-similarity hints, since embeddings live only in the browser's
+ * IndexedDB — see src/lib/ai/retrieve.ts). Optional and currently consumed
+ * only by search_tabs; every other action's run() ignores it.
+ */
+export type ActionRunContext = {
+  semanticHints?: SemanticHint[];
+};
 
 export type ActionRunResult<Data> =
   | { ok: true; data: Data; store?: WorkspaceStore }
@@ -33,7 +46,7 @@ export type ActionDefinition<Args = unknown, Data = unknown> = {
   readOnly: boolean;
   parameters: ActionParameterSchema;
   validate(args: unknown): ActionValidation<Args>;
-  run(store: WorkspaceStore, args: Args): ActionRunResult<Data>;
+  run(store: WorkspaceStore, args: Args, ctx?: ActionRunContext): ActionRunResult<Data>;
 };
 
 /** Outcome of dispatching one named action through the registry — see run.ts. */

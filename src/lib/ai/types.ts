@@ -1,3 +1,7 @@
+import type { MatchReason, SearchResult } from "@/lib/search/types";
+
+export type { MatchReason, SearchResult };
+
 /**
  * Every /api/ai/* error response is `{ error: string, detail?: string }` —
  * `error` is the user-facing summary, `detail` (when present) is Gemini's
@@ -88,6 +92,8 @@ export type AskMessage = {
   preview?: PendingActionPreview;
   /** Present on an assistant message that made a change the user can undo. */
   undo?: UndoAction;
+  /** Present on an assistant message that ran a global search — see src/lib/search. */
+  searchResults?: SearchResult[];
 };
 
 export type CollectionOverview = {

@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { SourceCard } from "@/components/ai/source-card"
 import { ActionPreviewCard } from "@/components/ai/action-preview-card"
 import { UndoActionButton } from "@/components/ai/undo-action-button"
+import { SearchResultsCard } from "@/components/ai/search-results-card"
 import { useAskTabDump } from "@/hooks/use-ask-tabdump"
 import type { AiIndexState } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
@@ -149,6 +150,10 @@ export function AskTabDumpPanel({
                                 ))}
                               </div>
                             </div>
+                          )}
+
+                          {message.searchResults && message.searchResults.length > 0 && (
+                            <SearchResultsCard results={message.searchResults} />
                           )}
 
                           {message.preview && (

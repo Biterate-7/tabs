@@ -302,4 +302,41 @@ describe("AskTabDumpPanel", () => {
       expect(screen.queryByRole("button", { name: /^undo$/i })).toBeNull();
     });
   });
+
+  describe("search results", () => {
+    it("renders a search results card grouped by workspace for a message that ran a search", () => {
+      mockHook({
+        messages: [
+          { id: "1", role: "user", text: "Find my physics tabs" },
+          {
+            id: "2",
+            role: "assistant",
+            text: "I found 2 relevant tabs across 2 workspaces.",
+            searchResults: [
+              { tabId: "t1", title: "Schwarzschild solution", url: "https://github.com/x", domain: "github.com", workspaceId: "a", workspaceName: "Physics IA", score: 6, matchReason: "title" },
+              { tabId: "t2", title: "Orbital mechanics reference", url: "https://nasa.gov/x", domain: "nasa.gov", workspaceId: "b", workspaceName: "Research", score: 4, matchReason: "semantic" },
+            ],
+          },
+        ],
+      });
+
+      render(
+        <AskTabDumpPanel open workspaceId="ws-1" tabs={[makeTab({ id: "1", url: "https://example.com" })]} indexState={noIndexing} onOpenChange={vi.fn()} />
+      );
+
+      expect(screen.getByText("I found 2 relevant tabs across 2 workspaces.")).toBeTruthy();
+      expect(screen.getByText("Physics IA")).toBeTruthy();
+      expect(screen.getByText("Research")).toBeTruthy();
+      expect(screen.getByText("Schwarzschild solution")).toBeTruthy();
+      expect(screen.getByText("Orbital mechanics reference")).toBeTruthy();
+    });
+
+    it("does not render a search results card for a message with no search results", () => {
+      mockHook({ messages: [{ id: "1", role: "assistant", text: "Just an answer." }] });
+      render(
+        <AskTabDumpPanel open workspaceId="ws-1" tabs={[makeTab({ id: "1", url: "https://example.com" })]} indexState={noIndexing} onOpenChange={vi.fn()} />
+      );
+      expect(screen.queryByText(/result/i)).toBeNull();
+    });
+  });
 });
