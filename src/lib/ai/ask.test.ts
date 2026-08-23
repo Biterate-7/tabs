@@ -95,7 +95,7 @@ it("routes through the agent endpoint and applies a returned store when `store` 
   });
 
   expect(result).toEqual({ ok: true, text: "Renamed it.", sources: expect.any(Array) });
-  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore);
+  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore, "Renamed it.");
   expect((capturedBody as unknown as { mode: string }).mode).toBe("agent");
   expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);
 });
@@ -185,7 +185,7 @@ it("applyPlan posts the exact plan and store, and applies the returned store", a
   const result = await applyPlan({ plan, store: workspaceStore, onStoreUpdate });
 
   expect(result).toEqual({ ok: true, text: "Done — created 1 group." });
-  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore);
+  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore, "Done — created 1 group.");
   expect((capturedBody as unknown as { mode: string }).mode).toBe("agent-apply");
   expect((capturedBody as unknown as { plan: unknown }).plan).toEqual([{ name: "create_group", args: plan[0].args }]);
   expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);

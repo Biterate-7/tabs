@@ -46,8 +46,15 @@ export async function askQuestion(params: {
    * get the original grounded-Q&A-only behavior unchanged.
    */
   store?: WorkspaceStore;
-  /** Called with the action layer's resulting store when a write action actually changed something — the caller is responsible for persisting it (this module never touches localStorage itself). */
-  onStoreUpdate?: (store: WorkspaceStore) => void;
+  /**
+   * Called with the action layer's resulting store when a write action
+   * actually changed something — the caller is responsible for persisting
+   * it (this module never touches localStorage itself). `description` is
+   * the same natural-language text the assistant message shows, handed
+   * back here too so the caller can label an undo entry for this exact
+   * mutation without re-deriving it.
+   */
+  onStoreUpdate?: (store: WorkspaceStore, description?: string) => void;
 }): Promise<AskResult> {
   const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate } = params;
 
@@ -102,7 +109,7 @@ export async function askQuestion(params: {
       return { ok: true, requiresConfirmation: true, text: data.text, plan: data.plan ?? [], summary: data.summary ?? "" };
     }
 
-    if (data.store) onStoreUpdate?.(data.store);
+    if (data.store) onStoreUpdate?.(data.store, data.text);
     return { ok: true, text: data.text, sources };
   }
 
@@ -166,7 +173,8 @@ export async function askQuestion(params: {
 export async function applyPlan(params: {
   plan: PlannedActionView[];
   store: WorkspaceStore;
-  onStoreUpdate?: (store: WorkspaceStore) => void;
+  /** See askQuestion's onStoreUpdate — same shape, same purpose (labeling an undo entry). */
+  onStoreUpdate?: (store: WorkspaceStore, description?: string) => void;
   signal?: AbortSignal;
 }): Promise<ApplyPlanResult> {
   const { plan, store, onStoreUpdate, signal } = params;
@@ -194,6 +202,6 @@ export async function applyPlan(params: {
   }
 
   const data = (await response.json()) as { text: string; store?: WorkspaceStore };
-  if (data.store) onStoreUpdate?.(data.store);
+  if (data.store) onStoreUpdate?.(data.store, data.text);
   return { ok: true, text: data.text };
 }

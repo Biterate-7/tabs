@@ -69,6 +69,14 @@ export type PendingActionPreview = {
   status: PendingActionPreviewStatus;
 };
 
+export type UndoActionStatus = "available" | "undoing" | "undone" | "unavailable";
+
+/** Attached to an assistant message that reported a successful mutation — lets the user immediately revert exactly that change. See src/lib/undo. */
+export type UndoAction = {
+  entryId: string;
+  status: UndoActionStatus;
+};
+
 export type AskMessage = {
   id: string;
   role: AskRole;
@@ -78,6 +86,8 @@ export type AskMessage = {
   pending?: boolean;
   /** Present on an assistant message that proposed a plan awaiting (or resolved from) user approval. */
   preview?: PendingActionPreview;
+  /** Present on an assistant message that made a change the user can undo. */
+  undo?: UndoAction;
 };
 
 export type CollectionOverview = {

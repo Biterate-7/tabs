@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AskTabDumpPanel } from "./ask-tabdump-panel";
 import * as useAskTabDumpModule from "@/hooks/use-ask-tabdump";
 import type { Tab } from "@/lib/tabs/types";
-import type { AskMessage, PendingActionPreviewStatus } from "@/lib/ai/types";
+import type { AskMessage, PendingActionPreviewStatus, UndoActionStatus } from "@/lib/ai/types";
 
 vi.mock("@/hooks/use-ask-tabdump", () => ({
   useAskTabDump: vi.fn(),
@@ -22,6 +22,7 @@ function mockHook(overrides: {
   clear?: () => void;
   applyPreview?: (id: string) => Promise<void>;
   cancelPreview?: (id: string) => void;
+  undoAction?: (id: string) => Promise<void>;
 }) {
   vi.mocked(useAskTabDumpModule.useAskTabDump).mockReturnValue({
     messages: overrides.messages ?? [],
@@ -31,6 +32,7 @@ function mockHook(overrides: {
     clear: overrides.clear ?? vi.fn(),
     applyPreview: overrides.applyPreview ?? vi.fn(async () => {}),
     cancelPreview: overrides.cancelPreview ?? vi.fn(),
+    undoAction: overrides.undoAction ?? vi.fn(async () => {}),
   });
 }
 
@@ -259,6 +261,45 @@ describe("AskTabDumpPanel", () => {
       expect(screen.getByText("Organize this workspace.")).toBeTruthy();
       expect(screen.getByText("Here's what I want to change")).toBeTruthy();
       expect(screen.getByText("Done — created 2 groups and moved 13 tabs.")).toBeTruthy();
+    });
+  });
+
+  describe("undo action", () => {
+    function messageWithUndo(status: UndoActionStatus): AskMessage[] {
+      return [
+        { id: "1", role: "user", text: "Move my Physics tabs." },
+        { id: "2", role: "assistant", text: "Done — moved 8 tabs into Physics IA.", undo: { entryId: "undo-1", status } },
+      ];
+    }
+
+    it("renders an Undo button for a message with an available undo action", () => {
+      mockHook({ messages: messageWithUndo("available") });
+      render(
+        <AskTabDumpPanel open workspaceId="ws-1" tabs={[makeTab({ id: "1", url: "https://example.com" })]} indexState={noIndexing} onOpenChange={vi.fn()} />
+      );
+      expect(screen.getByRole("button", { name: /^undo$/i })).toBeTruthy();
+    });
+
+    it("calls undoAction with the message's undo entryId when clicked", async () => {
+      const undoAction = vi.fn(async () => {});
+      mockHook({ messages: messageWithUndo("available"), undoAction });
+      const user = userEvent.setup();
+
+      render(
+        <AskTabDumpPanel open workspaceId="ws-1" tabs={[makeTab({ id: "1", url: "https://example.com" })]} indexState={noIndexing} onOpenChange={vi.fn()} />
+      );
+
+      await user.click(screen.getByRole("button", { name: /^undo$/i }));
+      expect(undoAction).toHaveBeenCalledWith("undo-1");
+    });
+
+    it("shows 'Undone' instead of a clickable button once undone", () => {
+      mockHook({ messages: messageWithUndo("undone") });
+      render(
+        <AskTabDumpPanel open workspaceId="ws-1" tabs={[makeTab({ id: "1", url: "https://example.com" })]} indexState={noIndexing} onOpenChange={vi.fn()} />
+      );
+      expect(screen.getByText("Undone")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^undo$/i })).toBeNull();
     });
   });
 });

@@ -4,7 +4,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { useAskTabDump } from "./use-ask-tabdump";
 import { putChunks } from "@/lib/ai/db";
 import type { Tab } from "@/lib/tabs/types";
-import type { Workspace } from "@/lib/workspace/types";
+import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 
 const WORKSPACE_ID = "ws-hook-repro";
 
@@ -273,4 +273,241 @@ it("marks the preview as failed (and does not update the store) when applying re
   expect(updated?.preview?.status).toBe("failed");
   const followUp = result.current.messages[result.current.messages.length - 1];
   expect(followUp.text).toContain("Something went wrong");
+  // No coherent resulting state — nothing to make undoable.
+  expect(result.current.messages.some((m) => m.undo)).toBe(false);
+});
+
+it("cancelling a preview never creates an undo entry", async () => {
+  const onStoreUpdate = vi.fn();
+  mockAgentFetch({});
+  const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces, onStoreUpdate));
+
+  act(() => {
+    result.current.send("Organize this workspace")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  const previewMessage = result.current.messages.find((m) => m.preview)!;
+
+  act(() => {
+    result.current.cancelPreview(previewMessage.id)
+  });
+
+  expect(result.current.messages.some((m) => m.undo)).toBe(false);
+});
+
+it("applying a preview creates an undo entry on the follow-up 'Done' message", async () => {
+  const onStoreUpdate = vi.fn();
+  mockAgentFetch({});
+  const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces, onStoreUpdate));
+
+  act(() => {
+    result.current.send("Organize this workspace")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  const previewMessage = result.current.messages.find((m) => m.preview)!;
+
+  await act(async () => {
+    await result.current.applyPreview(previewMessage.id);
+  });
+
+  const followUp = result.current.messages[result.current.messages.length - 1];
+  expect(followUp.text).toBe("Done — created 2 groups.");
+  expect(followUp.undo?.status).toBe("available");
+});
+
+/** Queues one response per successive call to /api/ai/ask (mode "agent"); embed calls always succeed generically. */
+function mockSequentialAgentFetch(responses: Array<{ text: string; actions: unknown[]; store: unknown }>) {
+  let call = 0;
+  return vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) {
+      return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    }
+    if (url.includes("/api/ai/ask")) {
+      const response = responses[call];
+      call += 1;
+      return new Response(JSON.stringify(response), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+}
+
+function storeWith(workspaces: Workspace[]): WorkspaceStore {
+  return { version: 1, currentId: WORKSPACE_ID, workspaces };
+}
+
+it("creates an undo entry for an immediate (non-preview) mutation, and Undo restores the exact previous store", async () => {
+  const before = storeWith(allWorkspaces);
+  const after = storeWith([{ ...allWorkspaces[0], groups: [{ id: "g1", name: "Physics IA", createdAt: 0, updatedAt: 0 }] }]);
+
+  const onStoreUpdate = vi.fn();
+  mockSequentialAgentFetch([{ text: "Done — moved 8 tabs into Physics IA.", actions: [], store: after }]);
+
+  // Mirrors production: AppShell re-renders WorkspaceView/AskTabDumpPanel
+  // with the freshly-persisted `allWorkspaces` once onStoreUpdate fires —
+  // so undoAction's later staleness check sees the post-mutation state,
+  // not the pre-mutation snapshot the hook was first created with.
+  const { result, rerender } = renderHook(
+    ({ ws }: { ws: Workspace[] }) => useAskTabDump(WORKSPACE_ID, tabs, ws, onStoreUpdate),
+    { initialProps: { ws: allWorkspaces } }
+  );
+
+  act(() => {
+    result.current.send("Move my Physics tabs.")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+
+  const msg = result.current.messages.find((m) => m.undo);
+  expect(msg?.text).toBe("Done — moved 8 tabs into Physics IA.");
+  expect(msg?.undo?.status).toBe("available");
+  expect(onStoreUpdate).toHaveBeenCalledTimes(1);
+  expect(onStoreUpdate).toHaveBeenCalledWith(after);
+  rerender({ ws: after.workspaces });
+
+  await act(async () => {
+    await result.current.undoAction(msg!.undo!.entryId);
+  });
+
+  expect(onStoreUpdate).toHaveBeenCalledTimes(2);
+  expect(onStoreUpdate).toHaveBeenLastCalledWith(before);
+
+  const updatedMsg = result.current.messages.find((m) => m.id === msg!.id);
+  expect(updatedMsg?.undo?.status).toBe("undone");
+  const followUp = result.current.messages[result.current.messages.length - 1];
+  expect(followUp.role).toBe("assistant");
+  expect(followUp.text).toBe("↶ Undid that change.");
+
+  // The conversation stays usable: a brand-new AI request works normally afterward.
+  act(() => {
+    result.current.send("Actually, move them into Research instead.")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(true));
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  expect(result.current.messages[result.current.messages.length - 1].role).toBe("assistant");
+});
+
+it("does not allow the same operation to be undone twice, even called back-to-back", async () => {
+  const after = storeWith([{ ...allWorkspaces[0], groups: [{ id: "g1", name: "Physics IA", createdAt: 0, updatedAt: 0 }] }]);
+  const onStoreUpdate = vi.fn();
+  mockSequentialAgentFetch([{ text: "Done — moved 8 tabs into Physics IA.", actions: [], store: after }]);
+
+  const { result, rerender } = renderHook(
+    ({ ws }: { ws: Workspace[] }) => useAskTabDump(WORKSPACE_ID, tabs, ws, onStoreUpdate),
+    { initialProps: { ws: allWorkspaces } }
+  );
+  act(() => {
+    result.current.send("Move my Physics tabs.")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  const msg = result.current.messages.find((m) => m.undo)!;
+  rerender({ ws: after.workspaces });
+
+  const first = result.current.undoAction(msg.undo!.entryId);
+  const second = result.current.undoAction(msg.undo!.entryId);
+  await act(async () => {
+    await Promise.all([first, second]);
+  });
+
+  // One mutation call + exactly one undo call — the repeat/duplicate call was a no-op.
+  expect(onStoreUpdate).toHaveBeenCalledTimes(2);
+});
+
+it("refuses to undo when the workspace has changed since the AI mutation, without discarding the newer state", async () => {
+  const before = storeWith(allWorkspaces);
+  const after = storeWith([{ ...allWorkspaces[0], groups: [{ id: "g1", name: "Physics IA", createdAt: 0, updatedAt: 0 }] }]);
+
+  const onStoreUpdate = vi.fn();
+  mockSequentialAgentFetch([{ text: "Done — moved 8 tabs into Physics IA.", actions: [], store: after }]);
+
+  const { result, rerender } = renderHook(
+    ({ ws }: { ws: Workspace[] }) => useAskTabDump(WORKSPACE_ID, tabs, ws, onStoreUpdate),
+    { initialProps: { ws: allWorkspaces } }
+  );
+
+  act(() => {
+    result.current.send("Move my Physics tabs.")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  const msg = result.current.messages.find((m) => m.undo)!;
+
+  // Simulate the user manually changing the workspace after the AI action
+  // (e.g. renaming it) by re-rendering with a different `allWorkspaces` —
+  // exactly what AppShell handing down a newly-persisted store looks like.
+  const manuallyChanged: Workspace[] = [{ ...after.workspaces[0], name: "Physics (renamed by user)" }];
+  rerender({ ws: manuallyChanged });
+
+  await act(async () => {
+    await result.current.undoAction(msg.undo!.entryId);
+  });
+
+  // Refused: only the original mutation's onStoreUpdate call happened — the
+  // manual rename was never overwritten.
+  expect(onStoreUpdate).toHaveBeenCalledTimes(1);
+  expect(onStoreUpdate).not.toHaveBeenCalledWith(before);
+
+  const updatedMsg = result.current.messages.find((m) => m.id === msg.id);
+  expect(updatedMsg?.undo?.status).toBe("unavailable");
+  const followUp = result.current.messages[result.current.messages.length - 1];
+  expect(followUp.text).toContain("can't safely undo");
+});
+
+it("supports undoing only the latest of several AI operations, leaving earlier ones intact and available (A → B → C)", async () => {
+  const s0 = storeWith(allWorkspaces);
+  const s1 = storeWith([{ ...allWorkspaces[0], name: "Physics (A)" }]);
+  const s2 = storeWith([{ ...s1.workspaces[0], groups: [{ id: "g1", name: "Research", createdAt: 0, updatedAt: 0 }] }]);
+  const s3 = storeWith([{ ...s2.workspaces[0], groups: [...s2.workspaces[0].groups!, { id: "g2", name: "MUN", createdAt: 0, updatedAt: 0 }] }]);
+
+  const onStoreUpdate = vi.fn();
+  mockSequentialAgentFetch([
+    { text: "A done", actions: [], store: s1 },
+    { text: "B done", actions: [], store: s2 },
+    { text: "C done", actions: [], store: s3 },
+  ]);
+
+  const { result, rerender } = renderHook(
+    ({ ws }: { ws: Workspace[] }) => useAskTabDump(WORKSPACE_ID, tabs, ws, onStoreUpdate),
+    { initialProps: { ws: s0.workspaces } }
+  );
+
+  act(() => {
+    result.current.send("A")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  rerender({ ws: s1.workspaces }); // the store really did update to s1, as persist() would reflect
+
+  act(() => {
+    result.current.send("B")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  rerender({ ws: s2.workspaces });
+
+  act(() => {
+    result.current.send("C")
+  });
+  await waitFor(() => expect(result.current.isSending).toBe(false));
+  rerender({ ws: s3.workspaces });
+
+  const undoMessages = result.current.messages.filter((m) => m.undo);
+  expect(undoMessages).toHaveLength(3);
+  const [msgA, msgB, msgC] = undoMessages;
+
+  // Undo C: current store (s3) matches C's afterState, so it succeeds and restores s2.
+  await act(async () => {
+    await result.current.undoAction(msgC.undo!.entryId);
+  });
+  expect(onStoreUpdate).toHaveBeenLastCalledWith(s2);
+  rerender({ ws: s2.workspaces });
+
+  // B is untouched by undoing C, and is still available.
+  expect(result.current.messages.find((m) => m.id === msgB.id)?.undo?.status).toBe("available");
+  expect(result.current.messages.find((m) => m.id === msgA.id)?.undo?.status).toBe("available");
+
+  // B is now safely undoable too: current store (s2) matches B's afterState.
+  await act(async () => {
+    await result.current.undoAction(msgB.undo!.entryId);
+  });
+  expect(onStoreUpdate).toHaveBeenLastCalledWith(s1);
+
+  // A was never invoked — its entry is exactly as it was, never consumed by undoing B or C.
+  expect(result.current.messages.find((m) => m.id === msgA.id)?.undo?.status).toBe("available");
 });

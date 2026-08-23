@@ -3,11 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createId } from "@/lib/id"
 import { askQuestion, applyPlan } from "@/lib/ai/ask"
+import { attemptUndo, findUndoEntry, markUndone, pushUndoEntry } from "@/lib/undo/history"
+import type { UndoEntry } from "@/lib/undo/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { AskMessage } from "@/lib/ai/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 const CANCELLED_TEXT = "No changes made."
+const UNDONE_TEXT = "↶ Undid that change."
+const UNDO_STALE_TEXT = "I can't safely undo that change because the workspace has changed since then."
 
 /**
  * `allWorkspaces`/`onStoreUpdate` are optional so existing callers (and
@@ -36,10 +40,25 @@ export function useAskTabDump(
   // first await yields, and state updates aren't guaranteed to have
   // committed by then. See applyPreview below.
   const applyingIdsRef = useRef<Set<string>>(new Set())
+  // Same idea, for undoAction below.
+  const undoingIdsRef = useRef<Set<string>>(new Set())
+  // The undo history lives only as a ref, never as React state: nothing
+  // renders it directly (the UI reads each message's own `undo.status`,
+  // which IS state — see setMessages below), so there's nothing to
+  // re-render for. Keeping it a ref lets pushUndoEntry/markUndone read-
+  // then-write it synchronously inside callbacks without waiting on a
+  // state update to commit — same reasoning as messagesRef.
+  const undoHistoryRef = useRef<UndoEntry[]>([])
 
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  function recordUndoEntry(beforeState: WorkspaceStore, afterState: WorkspaceStore, description: string): UndoEntry {
+    const { history, entry } = pushUndoEntry(undoHistoryRef.current, { beforeState, afterState, description })
+    undoHistoryRef.current = history
+    return entry
+  }
 
   const runAsk = useCallback(
     async (question: string, history: AskMessage[]) => {
@@ -66,6 +85,8 @@ export function useAskTabDump(
           ? { version: 1, currentId: workspaceId, workspaces: allWorkspaces }
           : undefined
 
+        let undoEntryId: string | undefined
+
         const result = await askQuestion({
           workspaceId,
           tabs,
@@ -73,7 +94,10 @@ export function useAskTabDump(
           history,
           signal: controller.signal,
           store,
-          onStoreUpdate,
+          onStoreUpdate: (after, description) => {
+            if (store) undoEntryId = recordUndoEntry(store, after, description || question).id
+            onStoreUpdate?.(after)
+          },
           onDelta: (delta) => {
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + delta } : m)))
           },
@@ -91,7 +115,13 @@ export function useAskTabDump(
                 preview: { plan: result.plan, summary: result.summary, status: "awaiting" },
               }
             }
-            return { ...m, text: result.text, sources: result.sources, pending: false }
+            return {
+              ...m,
+              text: result.text,
+              sources: result.sources,
+              pending: false,
+              ...(undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
+            }
           })
         )
       } catch (err) {
@@ -150,7 +180,16 @@ export function useAskTabDump(
 
       try {
         const store: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
-        const result = await applyPlan({ plan: message.preview.plan, store, onStoreUpdate })
+        let undoEntryId: string | undefined
+
+        const result = await applyPlan({
+          plan: message.preview.plan,
+          store,
+          onStoreUpdate: (after, description) => {
+            undoEntryId = recordUndoEntry(store, after, description || message.preview!.summary).id
+            onStoreUpdate?.(after)
+          },
+        })
 
         setMessages((prev) => {
           const resolved = prev.map((m) =>
@@ -162,6 +201,7 @@ export function useAskTabDump(
             id: createId("ask"),
             role: "assistant",
             text: result.ok ? result.text : `Something went wrong: ${result.error}`,
+            ...(result.ok && undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
           }
           return [...resolved, followUp]
         })
@@ -191,5 +231,59 @@ export function useAskTabDump(
     })
   }, [])
 
-  return { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview }
+  /**
+   * Reverts exactly the mutation `entryId` recorded — nothing more. This is
+   * plain application logic, not something Gemini is ever asked to do: it
+   * never sees an "undo" tool, and never gets a say in whether or how a
+   * previous change is reverted. Safety comes entirely from attemptUndo()'s
+   * whole-store equality check against the CURRENT store: if anything at
+   * all has changed since this entry's afterState (the AI action again, a
+   * manual edit, or a later AI action), the undo is refused rather than
+   * silently discarding that newer state. Guarded against double-clicks the
+   * same way applyPreview is (sync ref + the entry's own resolved status).
+   */
+  const undoAction = useCallback(
+    async (entryId: string) => {
+      if (undoingIdsRef.current.has(entryId)) return
+      const entry = findUndoEntry(undoHistoryRef.current, entryId)
+      if (!entry || entry.status !== "active") return
+
+      undoingIdsRef.current.add(entryId)
+      setMessages((prev) =>
+        prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "undoing" as const } } : m))
+      )
+
+      try {
+        const currentStore: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
+        const attempt = attemptUndo(entry, currentStore)
+
+        if (!attempt.ok) {
+          setMessages((prev) => [
+            ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "unavailable" as const } } : m)),
+            { id: createId("ask"), role: "assistant", text: UNDO_STALE_TEXT },
+          ])
+          return
+        }
+
+        onStoreUpdate?.(attempt.store)
+        undoHistoryRef.current = markUndone(undoHistoryRef.current, entryId)
+
+        setMessages((prev) => [
+          ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "undone" as const } } : m)),
+          { id: createId("ask"), role: "assistant", text: UNDONE_TEXT },
+        ])
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "an unexpected error occurred."
+        setMessages((prev) => [
+          ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "unavailable" as const } } : m)),
+          { id: createId("ask"), role: "assistant", text: `Something went wrong: ${message}` },
+        ])
+      } finally {
+        undoingIdsRef.current.delete(entryId)
+      }
+    },
+    [workspaceId, allWorkspaces, onStoreUpdate]
+  )
+
+  return { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview, undoAction }
 }

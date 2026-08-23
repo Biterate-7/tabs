@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/empty-state"
 import { SourceCard } from "@/components/ai/source-card"
 import { ActionPreviewCard } from "@/components/ai/action-preview-card"
+import { UndoActionButton } from "@/components/ai/undo-action-button"
 import { useAskTabDump } from "@/hooks/use-ask-tabdump"
 import type { AiIndexState } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
@@ -47,7 +48,7 @@ export function AskTabDumpPanel({
   allWorkspaces?: Workspace[]
   onStoreUpdate?: (store: WorkspaceStore) => void
 }) {
-  const { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview } = useAskTabDump(
+  const { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview, undoAction } = useAskTabDump(
     workspaceId,
     tabs,
     allWorkspaces,
@@ -156,6 +157,10 @@ export function AskTabDumpPanel({
                               onApply={() => applyPreview(message.id)}
                               onCancel={() => cancelPreview(message.id)}
                             />
+                          )}
+
+                          {message.undo && (
+                            <UndoActionButton undo={message.undo} onUndo={() => undoAction(message.undo!.entryId)} />
                           )}
 
                           {!message.pending && message.id === lastAssistant?.id && (
