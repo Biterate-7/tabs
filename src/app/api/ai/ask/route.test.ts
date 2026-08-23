@@ -223,6 +223,41 @@ describe("POST /api/ai/ask", () => {
       expect(body.actions).toBeUndefined();
     });
 
+    it("returns organizePlan (not requiresConfirmation) when the loop resolves to an 'organize' result", async () => {
+      const organizePlan = {
+        summary: "I analyzed 5 tabs and found 1 useful cluster.",
+        workspaces: [{ proposedName: "Physics", reason: "r", tabs: [{ tabId: "t1", reason: "r", confidence: "high" }] }],
+        uncertainTabs: [],
+        duplicates: [],
+        totalTabsConsidered: 5,
+      };
+      runAgentLoopMock.mockResolvedValue({ ok: true, kind: "organize", text: organizePlan.summary, organizePlan });
+
+      const response = await POST(postRequest({ question: "Organize my tabs", context: [], mode: "agent", store: validStore }));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.organizePlan).toEqual(organizePlan);
+      expect(body.text).toBe(organizePlan.summary);
+      expect(body.requiresConfirmation).toBeUndefined();
+    });
+
+    it("returns 400 for a malformed semanticClusters payload", async () => {
+      const response = await POST(
+        postRequest({ question: "Organize my tabs", context: [], mode: "agent", store: validStore, semanticClusters: [{ tabId: "t1" }] })
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("passes semanticClusters through to runAgentLoop", async () => {
+      runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+      const semanticClusters = [{ tabId: "t1", clusterKey: "sem-0" }];
+
+      await POST(postRequest({ question: "Organize my tabs", context: [], mode: "agent", store: validStore, semanticClusters }));
+
+      expect(runAgentLoopMock).toHaveBeenCalledWith(expect.objectContaining({ semanticClusters }));
+    });
+
     describe("global search", () => {
       const searchResults = [
         {
@@ -472,6 +507,62 @@ describe("POST /api/ai/ask", () => {
       expect(body.actions).toEqual([{ name: "move_tab", ok: false, message: expect.any(String) }]);
       expect(body.store).toBeUndefined();
       expect(body.text).not.toMatch(/^Done —/);
+    });
+  });
+
+  describe("agent-organize-apply mode", () => {
+    const storeWithTab = {
+      version: 1,
+      currentId: "ws-1",
+      workspaces: [
+        { id: "ws-1", name: "Inbox", tabs: [{ id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", title: "Physics notes" }], createdAt: 0, updatedAt: 0 },
+      ],
+    };
+    const validPlan = {
+      summary: "s",
+      workspaces: [{ proposedName: "Physics", reason: "r", tabs: [{ tabId: "t1", reason: "r", confidence: "high" }] }],
+      uncertainTabs: [],
+      duplicates: [],
+      totalTabsConsidered: 1,
+    };
+
+    it("returns 400 when store is missing or invalid", async () => {
+      const response = await POST(postRequest({ mode: "agent-organize-apply", organizationPlan: validPlan }));
+      expect(response.status).toBe(400);
+    });
+
+    it("returns 400 when organizationPlan is missing or malformed", async () => {
+      const response = await POST(postRequest({ mode: "agent-organize-apply", store: storeWithTab, organizationPlan: { summary: "s" } }));
+      expect(response.status).toBe(400);
+    });
+
+    it("does not require a question, context, or Gemini call at all", async () => {
+      const response = await POST(postRequest({ mode: "agent-organize-apply", store: storeWithTab, organizationPlan: validPlan }));
+
+      expect(response.status).toBe(200);
+      expect(generateContentMock).not.toHaveBeenCalled();
+      expect(generateContentStreamMock).not.toHaveBeenCalled();
+      expect(runAgentLoopMock).not.toHaveBeenCalled();
+    });
+
+    it("creates the proposed workspace, moves the tab, and returns the mutated store as one operation", async () => {
+      const response = await POST(postRequest({ mode: "agent-organize-apply", store: storeWithTab, organizationPlan: validPlan }));
+
+      const body = await response.json();
+      expect(body.text).toMatch(/^Organized 1 tab/);
+      const physics = body.store.workspaces.find((w: { name: string }) => w.name === "Physics");
+      expect(physics).toBeTruthy();
+      expect(physics.tabs.map((t: { id: string }) => t.id)).toEqual(["t1"]);
+    });
+
+    it("rejects an organization plan whose tab ids no longer exist in the current store", async () => {
+      const stalePlan = {
+        ...validPlan,
+        workspaces: [{ proposedName: "Physics", reason: "r", tabs: [{ tabId: "ghost", reason: "r", confidence: "high" }] }],
+      };
+
+      const response = await POST(postRequest({ mode: "agent-organize-apply", store: storeWithTab, organizationPlan: stalePlan }));
+      expect(response.status).toBe(400);
     });
   });
 });

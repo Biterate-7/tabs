@@ -3,7 +3,8 @@ import type { AgentContent, GeminiResult } from "@/lib/ai/gemini/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { SearchResult, SemanticHint } from "@/lib/search/types";
 import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
-import { ACTION_DECLARATIONS, BROWSER_ACTION_NAMES } from "./registry";
+import type { OrganizationPlan, SemanticClusterHint } from "@/lib/organize/types";
+import { ACTION_DECLARATIONS, AUTO_ORGANIZE_ACTION_NAME, BROWSER_ACTION_NAMES } from "./registry";
 import { runAction } from "./run";
 import { describePlannedAction, isWriteAction, planRequiresConfirmation, summarizePlan } from "./plan";
 import type { PlannedAction } from "./plan";
@@ -25,6 +26,7 @@ export type PerformedAction = { name: string; ok: boolean; message: string; args
 export type AgentLoopResult =
   | { ok: true; kind: "resolved"; text: string; store: WorkspaceStore; storeChanged: boolean; actions: PerformedAction[]; searchResults?: SearchResult[] }
   | { ok: true; kind: "preview"; text: string; plan: PlannedAction[]; summary: string; searchResults?: SearchResult[] }
+  | { ok: true; kind: "organize"; text: string; organizePlan: OrganizationPlan }
   | Extract<GeminiResult<unknown>, { ok: false }>;
 
 function summarizeData(data: unknown): string {
@@ -110,6 +112,8 @@ export async function runAgentLoop(params: {
   semanticHints?: SemanticHint[];
   /** See ActionRunContext.browserContext — undefined means the extension wasn't connected. */
   browserContext?: BrowserContextSnapshot;
+  /** See ActionRunContext.semanticClusters — precomputed tab-to-tab grouping for propose_auto_organize, never a raw vector. */
+  semanticClusters?: SemanticClusterHint[];
 }): Promise<AgentLoopResult> {
   const contents = [...params.contents];
   let store = params.store;
@@ -142,9 +146,24 @@ export async function runAgentLoop(params: {
 
     const responseParts: AgentContent["parts"] = [];
     for (const call of turn.data.functionCalls) {
-      const outcome = runAction(call.name, call.args, store, { semanticHints: params.semanticHints, browserContext: params.browserContext });
+      const outcome = runAction(call.name, call.args, store, {
+        semanticHints: params.semanticHints,
+        browserContext: params.browserContext,
+        semanticClusters: params.semanticClusters,
+      });
       if (outcome.ok) {
         store = outcome.store;
+
+        // propose_auto_organize is read-only and self-contained (AGENTS.md
+        // section 15): it never becomes a create_workspace/move_tabs-style
+        // write plan for Gemini to keep building on. Short-circuit the loop
+        // the moment it succeeds — the deterministic plan.summary IS the
+        // reply text, never Gemini's own phrasing (see describeOrganizationPlan).
+        if (call.name === AUTO_ORGANIZE_ACTION_NAME) {
+          const organizePlan = (outcome.data as { plan: OrganizationPlan }).plan;
+          return { ok: true, kind: "organize", text: organizePlan.summary, organizePlan };
+        }
+
         const isBrowserAction = BROWSER_ACTION_NAMES.has(call.name);
         performed.push({
           name: call.name,

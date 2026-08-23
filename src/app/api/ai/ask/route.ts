@@ -8,6 +8,9 @@ import { isValidWorkspaceStore } from "@/lib/workspace/persistence";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { MatchReason, SearchResult, SemanticHint } from "@/lib/search/types";
 import type { BrowserContextSnapshot, BrowserTabInfo, BrowserWindowInfo } from "@/lib/browser/protocol";
+import type { SemanticClusterHint } from "@/lib/organize/types";
+import { isValidOrganizationPlanInput, validateOrganizationPlan } from "@/lib/organize/validate";
+import { applyOrganizationPlan } from "@/lib/organize/apply";
 
 export const runtime = "nodejs";
 
@@ -20,14 +23,16 @@ const CHAT_MAX_OUTPUT_TOKENS = 1024;
 const ANALYSIS_MAX_OUTPUT_TOKENS = 2048;
 const AGENT_MAX_OUTPUT_TOKENS = 1024;
 const MAX_SEMANTIC_HINTS = 50;
+/** Higher than MAX_SEMANTIC_HINTS since Auto-Organize needs a clustering signal across the whole library, not just top query matches — still just tabId→opaque-cluster-key pairs, never vectors (AGENTS.md section 17). */
+const MAX_SEMANTIC_CLUSTER_HINTS = 1000;
 /** How many of the previous turn's search results get carried into this turn's prompt for follow-ups like "move those" — smaller than what search_tabs itself returns within a turn, to keep cross-turn prompt growth bounded. */
 const RECENT_SEARCH_RESULTS_LIMIT = 12;
 
 type ContextItem = { tabId: string; title: string; url: string; text: string };
 type HistoryItem = { role: "user" | "model"; text: string };
-type Mode = "chat" | "agent" | "agent-apply" | "collection-overview" | "collection-gaps";
+type Mode = "chat" | "agent" | "agent-apply" | "agent-organize-apply" | "collection-overview" | "collection-gaps";
 
-const MODES: Mode[] = ["chat", "agent", "agent-apply", "collection-overview", "collection-gaps"];
+const MODES: Mode[] = ["chat", "agent", "agent-apply", "agent-organize-apply", "collection-overview", "collection-gaps"];
 
 const ERROR_STATUS: Record<string, number> = {
   "missing-key": 503,
@@ -62,6 +67,8 @@ Workspace, tab, and group ids are opaque strings you cannot guess. Call list_wor
 Use search_tabs whenever the user is asking to find something by topic across their whole library (e.g. "find my Physics IA tabs", "where are my MUN tabs?") — it searches every workspace by keyword AND meaning, not just exact words. Use list_workspace_tabs instead when the user is clearly asking about one specific, already-identified workspace (e.g. "what's in this workspace?"). When you present search_tabs results to the user, organize them — e.g. grouped by workspace — rather than one flat paragraph, and mention the total count and how many workspaces they span. If search_tabs returns nothing, or only very low-scoring matches, say so honestly (e.g. "I couldn't find any strong matches for X") — never present a weak or empty result as a confident answer, and never invent tabs that weren't returned.
 
 If a "Recent search results" list is given below, and the user refers to those results (e.g. "move those", "put the GitHub ones in Development"), reuse those exact tabs — filtering by title/domain/workspace as the user describes — instead of calling search_tabs again, unless they're clearly asking about something new.
+
+If the user asks you to organize, clean up, sort, or tidy their tabs or workspaces (e.g. "organize my tabs", "clean up this workspace", "organize everything by subject", "group my research tabs", "sort my tabs into useful workspaces", "clean up my entire TabDump"), call propose_auto_organize instead of trying to work it out yourself with create_workspace/move_tabs calls — it analyzes the whole library and returns an already-validated, ready-to-review plan. Use scope "current" only when the user is clearly talking about just the workspace they're currently in; use "all" (the default) for anything broader. Call it once and stop — do not follow it with your own create_workspace/move_tabs calls.
 
 Once you're done, reply with a short, natural-language summary of what you found or did (e.g. "Done — I moved 7 Physics tabs into Physics IA."). Never show raw tool-call JSON, ids, or the words "function call" to the user.`;
 
@@ -134,6 +141,19 @@ function isSemanticHintArray(value: unknown): value is SemanticHint[] {
         typeof (v as SemanticHint).tabId === "string" &&
         typeof (v as SemanticHint).workspaceId === "string" &&
         typeof (v as SemanticHint).score === "number"
+    )
+  );
+}
+
+function isSemanticClusterHintArray(value: unknown): value is SemanticClusterHint[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (v) =>
+        v &&
+        typeof v === "object" &&
+        typeof (v as SemanticClusterHint).tabId === "string" &&
+        typeof (v as SemanticClusterHint).clusterKey === "string"
     )
   );
 }
@@ -248,6 +268,41 @@ function errorResponse(failure: Extract<GeminiResult<unknown>, { ok: false }>): 
  * mode uses, exactly as if Gemini had just called it — the preview the
  * user saw is never itself treated as authorization to skip that.
  */
+/**
+ * Applies an approved OrganizationPlan for real — the Auto-Organize
+ * counterpart to handleAgentApply above, same "never trust a stale
+ * preview" revalidation pattern (see src/lib/organize/apply.ts). Separate
+ * mode rather than reusing "agent-apply" because an OrganizationPlan isn't
+ * a flat `{name,args}[]` — its target workspace ids often aren't known
+ * until create_workspace actually runs during apply.
+ */
+function handleAgentOrganizeApply(b: Record<string, unknown> | null): Response {
+  const storeInput = b?.store;
+  if (!isValidWorkspaceStore(storeInput)) {
+    return Response.json({ error: "Expected a valid { store: WorkspaceStore }." }, { status: 400 });
+  }
+  const planInput = b?.organizationPlan;
+  if (!isValidOrganizationPlanInput(planInput)) {
+    return Response.json({ error: "Expected a valid { organizationPlan: OrganizationPlan }." }, { status: 400 });
+  }
+  const browserContextInput = b?.browserContext;
+  if (!isValidBrowserContext(browserContextInput)) {
+    return Response.json({ error: "Expected a valid { browserContext } or none at all." }, { status: 400 });
+  }
+
+  const validation = validateOrganizationPlan(planInput, storeInput);
+  if (!validation.ok) {
+    return Response.json({ error: `That organization plan is no longer valid: ${validation.errors[0]}` }, { status: 400 });
+  }
+
+  const result = applyOrganizationPlan(planInput, storeInput, { browserContext: browserContextInput as BrowserContextSnapshot | undefined });
+  return Response.json({
+    text: result.text,
+    actions: result.actions,
+    ...(result.storeChanged ? { store: result.store } : {}),
+  });
+}
+
 function handleAgentApply(b: Record<string, unknown> | null): Response {
   const storeInput = b?.store;
   if (!isValidWorkspaceStore(storeInput)) {
@@ -289,6 +344,9 @@ export async function POST(request: Request): Promise<Response> {
 
   if (mode === "agent-apply") {
     return handleAgentApply(b);
+  }
+  if (mode === "agent-organize-apply") {
+    return handleAgentOrganizeApply(b);
   }
 
   const question = b?.question;
@@ -347,6 +405,12 @@ export async function POST(request: Request): Promise<Response> {
     }
     const semanticHints = (semanticHintsInput as SemanticHint[] | undefined)?.slice(0, MAX_SEMANTIC_HINTS);
 
+    const semanticClustersInput = b?.semanticClusters;
+    if (semanticClustersInput !== undefined && !isSemanticClusterHintArray(semanticClustersInput)) {
+      return Response.json({ error: "Expected { semanticClusters: {tabId,clusterKey}[] }." }, { status: 400 });
+    }
+    const semanticClusters = (semanticClustersInput as SemanticClusterHint[] | undefined)?.slice(0, MAX_SEMANTIC_CLUSTER_HINTS);
+
     const recentSearchResultsInput = b?.recentSearchResults;
     if (recentSearchResultsInput !== undefined && !isSearchResultArray(recentSearchResultsInput)) {
       return Response.json({ error: "Expected { recentSearchResults: SearchResult[] }." }, { status: 400 });
@@ -382,9 +446,17 @@ export async function POST(request: Request): Promise<Response> {
       maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
       semanticHints,
       browserContext,
+      semanticClusters,
     });
 
     if (!agentResult.ok) return errorResponse(agentResult);
+
+    if (agentResult.kind === "organize") {
+      return Response.json({
+        text: agentResult.text,
+        organizePlan: agentResult.organizePlan,
+      });
+    }
 
     if (agentResult.kind === "preview") {
       return Response.json({

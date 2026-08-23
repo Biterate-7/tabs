@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { askQuestion, applyPlan } from "./ask";
+import { askQuestion, applyPlan, applyOrganizationPlan } from "./ask";
+import type { OrganizationPlan } from "@/lib/organize/types";
 import { putChunks } from "./db";
 import type { Tab } from "@/lib/tabs/types";
 
@@ -378,4 +379,58 @@ it("applyPlan surfaces a server error without calling onStoreUpdate", async () =
 
   expect(result).toEqual({ ok: false, error: expect.stringContaining("Something failed.") });
   expect(onStoreUpdate).not.toHaveBeenCalled();
+});
+
+it("askQuestion returns an organizePlan result when the agent endpoint proposes one", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Inbox", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const organizePlan: OrganizationPlan = {
+    summary: "I analyzed 5 tabs and found 1 useful cluster.",
+    workspaces: [{ proposedName: "Physics", reason: "r", tabs: [{ tabId: "t1", reason: "r", confidence: "high" }] }],
+    uncertainTabs: [],
+    duplicates: [],
+    totalTabsConsidered: 5,
+  };
+
+  vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) return new Response(JSON.stringify({ text: organizePlan.summary, organizePlan }), { status: 200 });
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const result = await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs: [],
+    question: "Organize my tabs",
+    history: [],
+    store: workspaceStore,
+  });
+
+  expect(result).toEqual({ ok: true, organizePlan, text: organizePlan.summary });
+});
+
+it("applyOrganizationPlan posts mode 'agent-organize-apply' and applies the returned store", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Inbox", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const mutatedStore = { ...workspaceStore, workspaces: [...workspaceStore.workspaces, { id: "ws-new", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const organizePlan: OrganizationPlan = {
+    summary: "s",
+    workspaces: [{ proposedName: "Physics", reason: "r", tabs: [] }],
+    uncertainTabs: [],
+    duplicates: [],
+    totalTabsConsidered: 0,
+  };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (_input, init) => {
+    capturedBody = JSON.parse((init as RequestInit).body as string);
+    return new Response(JSON.stringify({ text: "Organized 0 tabs into 1 workspace.", actions: [], store: mutatedStore }), { status: 200 });
+  });
+
+  const onStoreUpdate = vi.fn();
+  const result = await applyOrganizationPlan({ organizationPlan: organizePlan, store: workspaceStore, onStoreUpdate });
+
+  expect(result).toEqual({ ok: true, text: "Organized 0 tabs into 1 workspace." });
+  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore, "Organized 0 tabs into 1 workspace.");
+  expect((capturedBody as unknown as { mode: string }).mode).toBe("agent-organize-apply");
+  expect((capturedBody as unknown as { organizationPlan: unknown }).organizationPlan).toEqual(organizePlan);
 });

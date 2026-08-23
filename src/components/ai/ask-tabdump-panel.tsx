@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Sparkles, Send, Copy, RotateCcw, Trash2, Loader2 } from "lucide-react"
 import {
@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/empty-state"
 import { SourceCard } from "@/components/ai/source-card"
 import { ActionPreviewCard } from "@/components/ai/action-preview-card"
+import { AutoOrganizeReview } from "@/components/ai/auto-organize-review"
 import { UndoActionButton } from "@/components/ai/undo-action-button"
 import { SearchResultsCard } from "@/components/ai/search-results-card"
 import { BrowserConnectionIndicator } from "@/components/ai/browser-connection-indicator"
@@ -50,14 +51,29 @@ export function AskTabDumpPanel({
   allWorkspaces?: Workspace[]
   onStoreUpdate?: (store: WorkspaceStore) => void
 }) {
-  const { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview, undoAction } = useAskTabDump(
-    workspaceId,
-    tabs,
-    allWorkspaces,
-    onStoreUpdate
-  )
+  const {
+    messages,
+    isSending,
+    send,
+    regenerate,
+    clear,
+    applyPreview,
+    cancelPreview,
+    applyOrganizePreview,
+    cancelOrganizePreview,
+    undoAction,
+  } = useAskTabDump(workspaceId, tabs, allWorkspaces, onStoreUpdate)
   const [input, setInput] = useState("")
   const scrollEndRef = useRef<HTMLDivElement>(null)
+
+  const tabsById = useMemo(() => {
+    const map = new Map<string, Tab>()
+    for (const workspace of allWorkspaces ?? []) {
+      for (const tab of workspace.tabs) map.set(tab.id, tab)
+    }
+    if (!allWorkspaces) for (const tab of tabs) map.set(tab.id, tab)
+    return map
+  }, [allWorkspaces, tabs])
 
   useEffect(() => {
     scrollEndRef.current?.scrollIntoView({ block: "end" })
@@ -165,6 +181,15 @@ export function AskTabDumpPanel({
                               preview={message.preview}
                               onApply={() => applyPreview(message.id)}
                               onCancel={() => cancelPreview(message.id)}
+                            />
+                          )}
+
+                          {message.organizePreview && (
+                            <AutoOrganizeReview
+                              preview={message.organizePreview}
+                              tabsById={tabsById}
+                              onApply={(editedPlan) => applyOrganizePreview(message.id, editedPlan)}
+                              onCancel={() => cancelOrganizePreview(message.id)}
                             />
                           )}
 

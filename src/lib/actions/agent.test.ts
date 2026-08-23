@@ -340,7 +340,7 @@ describe("runAgentLoop", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
     expect(result.searchResults).toEqual([expect.objectContaining({ tabId: "1", matchReason: "semantic" })]);
   });
 
@@ -426,8 +426,41 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop(baseParams(store));
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
     const serialized = JSON.stringify(result.searchResults);
     expect(serialized).not.toContain("embedding");
+  });
+
+  it("short-circuits to an 'organize' result the moment propose_auto_organize succeeds, without letting Gemini keep building its own plan", async () => {
+    const store = makeStore(
+      [
+        makeWorkspace({
+          id: "a",
+          tabs: [
+            { id: "t1", url: "https://a.example/1", normalizedUrl: "https://a.example/1", domain: "a.example", title: "Physics IA Notes" },
+            { id: "t2", url: "https://b.example/2", normalizedUrl: "https://b.example/2", domain: "b.example", title: "Physics Orbital Mechanics" },
+            { id: "t3", url: "https://c.example/3", normalizedUrl: "https://c.example/3", domain: "c.example", title: "Physics Lab Report" },
+            { id: "t4", url: "https://d.example/4", normalizedUrl: "https://d.example/4", domain: "d.example", title: "Grocery list" },
+            { id: "t5", url: "https://e.example/5", normalizedUrl: "https://e.example/5", domain: "e.example", title: "Recipe idea" },
+          ],
+        }),
+      ],
+      "a"
+    );
+    generateAgentTurnMock.mockResolvedValueOnce({
+      ok: true,
+      data: { text: "", functionCalls: [{ name: "propose_auto_organize", args: { scope: "all" } }] },
+    });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "organize") throw new Error("expected an 'organize' result");
+    expect(result.organizePlan.workspaces.length).toBeGreaterThan(0);
+    expect(result.text).toBe(result.organizePlan.summary);
+    // Only one Gemini call — it never loops back for a second turn to build create_workspace/move_tabs calls itself.
+    expect(generateAgentTurnMock).toHaveBeenCalledTimes(1);
+    // The scratch store used for planning was never mutated (propose_auto_organize is read-only).
+    expect(store.workspaces[0].tabs).toHaveLength(5);
   });
 });

@@ -2,6 +2,7 @@ import { searchTabsAction, getTabAction, listWorkspacesAction, getWorkspaceActio
 import { createWorkspaceAction, renameWorkspaceAction } from "./workspaces";
 import { moveTabAction, moveTabsAction } from "./tabs";
 import { createGroupAction, renameGroupAction } from "./groups";
+import { proposeAutoOrganizeAction } from "./organize";
 import { listBrowserTabsAction, getActiveTabAction, listBrowserWindowsAction } from "./browser-read";
 import {
   openUrlAction,
@@ -29,6 +30,10 @@ export const ACTIONS: Record<string, ActionDefinition> = {
   [moveTabsAction.name]: moveTabsAction,
   [createGroupAction.name]: createGroupAction,
   [renameGroupAction.name]: renameGroupAction,
+  // Auto-Organize (AGENTS.md's Auto-Organize spec) — read-only planning
+  // action; see src/lib/actions/organize.ts and src/lib/actions/agent.ts's
+  // special-casing of it.
+  [proposeAutoOrganizeAction.name]: proposeAutoOrganizeAction,
   // Chrome browser control (Ask Tabs agent actions on top of the existing
   // TabDump actions above) — see AGENTS.md's Chrome Browser Control spec.
   [listBrowserTabsAction.name]: listBrowserTabsAction,
@@ -70,6 +75,9 @@ export const BROWSER_ACTION_NAMES = new Set([
   openWorkspaceInBrowserAction.name,
   importBrowserTabsToWorkspaceAction.name,
 ]);
+
+/** See src/lib/actions/organize.ts and agent.ts's special-casing of this action's success into an "organize" result kind. */
+export const AUTO_ORGANIZE_ACTION_NAME = proposeAutoOrganizeAction.name;
 
 export const ACTION_DECLARATIONS = Object.values(ACTIONS).map((action) => ({
   name: action.name,

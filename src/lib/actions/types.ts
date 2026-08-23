@@ -1,6 +1,7 @@
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { SemanticHint } from "@/lib/search/types";
 import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
+import type { SemanticClusterHint } from "@/lib/organize/types";
 
 /**
  * Gemini's function-calling `parameters` schema uses its protobuf-derived
@@ -37,6 +38,14 @@ export type ActionRunContext = {
    * means the extension wasn't connected when the request was made.
    */
   browserContext?: BrowserContextSnapshot;
+  /**
+   * Precomputed tab-to-tab semantic grouping signal for propose_auto_organize
+   * (src/lib/actions/organize.ts) — see src/lib/organize/types.ts's
+   * SemanticClusterHint. Like `semanticHints`, this never carries a raw
+   * embedding vector; it's an opaque per-request cluster key computed
+   * client-side (src/lib/ai/cluster.ts) from the browser's IndexedDB index.
+   */
+  semanticClusters?: SemanticClusterHint[];
 };
 
 export type ActionRunResult<Data> =

@@ -1,6 +1,7 @@
 import type { MatchReason, SearchResult } from "@/lib/search/types";
+import type { OrganizationPlan } from "@/lib/organize/types";
 
-export type { MatchReason, SearchResult };
+export type { MatchReason, SearchResult, OrganizationPlan };
 
 /**
  * Every /api/ai/* error response is `{ error: string, detail?: string }` —
@@ -98,6 +99,14 @@ export type UndoAction = {
   status: UndoActionStatus;
 };
 
+export type PendingOrganizePreviewStatus = "awaiting" | "applying" | "applied" | "cancelled" | "failed";
+
+/** Attached to an assistant message that proposed an Auto-Organize plan awaiting (or resolved from) user approval — the Auto-Organize counterpart to PendingActionPreview. See src/lib/organize. */
+export type PendingOrganizePreview = {
+  plan: OrganizationPlan;
+  status: PendingOrganizePreviewStatus;
+};
+
 export type AskMessage = {
   id: string;
   role: AskRole;
@@ -107,6 +116,8 @@ export type AskMessage = {
   pending?: boolean;
   /** Present on an assistant message that proposed a plan awaiting (or resolved from) user approval. */
   preview?: PendingActionPreview;
+  /** Present on an assistant message that proposed an Auto-Organize plan — see AutoOrganizeReview. */
+  organizePreview?: PendingOrganizePreview;
   /** Present on an assistant message that made a change the user can undo. */
   undo?: UndoAction;
   /** Present on an assistant message that ran a global search — see src/lib/search. */

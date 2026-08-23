@@ -838,3 +838,119 @@ describe("browser control", () => {
     expect(body.browserContext).toBeUndefined();
   });
 });
+
+describe("Auto-Organize", () => {
+  const organizePlan = {
+    summary: "I analyzed 1 tab and found 1 useful cluster.",
+    workspaces: [{ proposedName: "Physics", reason: "r", tabs: [{ tabId: "tab-1", reason: "r", confidence: "high" as const }] }],
+    uncertainTabs: [],
+    duplicates: [],
+    totalTabsConsidered: 1,
+  };
+
+  function mockOrganizeFetch(opts: { onApply?: () => Response | Promise<Response> }) {
+    return vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) {
+        return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+      }
+      if (url.includes("/api/ai/ask")) {
+        const body = JSON.parse((init as RequestInit).body as string);
+        if (body.mode === "agent-organize-apply") {
+          return opts.onApply
+            ? await opts.onApply()
+            : new Response(
+                JSON.stringify({
+                  text: "Organized 1 tab into 1 workspace.",
+                  actions: [],
+                  store: { version: 1, currentId: WORKSPACE_ID, workspaces: [{ ...allWorkspaces[0], tabs: [] }, { id: "ws-physics", name: "Physics", tabs, createdAt: 0, updatedAt: 0 }] },
+                }),
+                { status: 200 }
+              );
+        }
+        return new Response(JSON.stringify({ text: organizePlan.summary, organizePlan }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+  }
+
+  it("shows an Auto-Organize review, applies it as one operation, and offers a single Undo", async () => {
+    const onStoreUpdate = vi.fn();
+    mockOrganizeFetch({});
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces, onStoreUpdate));
+
+    act(() => {
+      result.current.send("Organize my tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const previewMessage = result.current.messages.find((m) => m.organizePreview);
+    expect(previewMessage?.organizePreview?.status).toBe("awaiting");
+    expect(previewMessage?.organizePreview?.plan).toEqual(organizePlan);
+
+    await act(async () => {
+      await result.current.applyOrganizePreview(previewMessage!.id);
+    });
+
+    expect(onStoreUpdate).toHaveBeenCalledTimes(1);
+    const updatedMessage = result.current.messages.find((m) => m.id === previewMessage!.id);
+    expect(updatedMessage?.organizePreview?.status).toBe("applied");
+
+    const followUp = result.current.messages[result.current.messages.length - 1];
+    expect(followUp.text).toBe("Organized 1 tab into 1 workspace.");
+    expect(followUp.undo?.status).toBe("available");
+  });
+
+  it("cancelOrganizePreview executes nothing and appends a cancellation message", async () => {
+    const fetchMock = mockOrganizeFetch({});
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+    act(() => {
+      result.current.send("Organize my tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const previewMessage = result.current.messages.find((m) => m.organizePreview);
+    act(() => {
+      result.current.cancelOrganizePreview(previewMessage!.id);
+    });
+
+    expect(result.current.messages.find((m) => m.id === previewMessage!.id)?.organizePreview?.status).toBe("cancelled");
+    expect(result.current.messages[result.current.messages.length - 1].text).toMatch(/no changes made/i);
+    expect(fetchMock.mock.calls.some((c) => JSON.parse((c[1] as RequestInit).body as string).mode === "agent-organize-apply")).toBe(false);
+  });
+
+  it("applies local uncertain-tab edits (the edited plan), not the original proposed plan", async () => {
+    let capturedApplyBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+      if (url.includes("/api/ai/ask")) {
+        const body = JSON.parse((init as RequestInit).body as string);
+        if (body.mode === "agent-organize-apply") {
+          capturedApplyBody = body;
+          return new Response(JSON.stringify({ text: "Organized.", actions: [] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ text: organizePlan.summary, organizePlan }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+    act(() => {
+      result.current.send("Organize my tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const previewMessage = result.current.messages.find((m) => m.organizePreview)!;
+    const editedPlan = { ...organizePlan, workspaces: [{ ...organizePlan.workspaces[0], proposedName: "Physics IA" }] };
+
+    await act(async () => {
+      await result.current.applyOrganizePreview(previewMessage.id, editedPlan);
+    });
+
+    expect((capturedApplyBody as unknown as { organizationPlan: { workspaces: { proposedName: string }[] } }).organizationPlan.workspaces[0].proposedName).toBe("Physics IA");
+    expect(fetchMock).toHaveBeenCalled();
+  });
+});

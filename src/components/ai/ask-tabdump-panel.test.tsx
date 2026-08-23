@@ -22,6 +22,8 @@ function mockHook(overrides: {
   clear?: () => void;
   applyPreview?: (id: string) => Promise<void>;
   cancelPreview?: (id: string) => void;
+  applyOrganizePreview?: (id: string, editedPlan?: unknown) => Promise<void>;
+  cancelOrganizePreview?: (id: string) => void;
   undoAction?: (id: string) => Promise<void>;
 }) {
   vi.mocked(useAskTabDumpModule.useAskTabDump).mockReturnValue({
@@ -32,6 +34,8 @@ function mockHook(overrides: {
     clear: overrides.clear ?? vi.fn(),
     applyPreview: overrides.applyPreview ?? vi.fn(async () => {}),
     cancelPreview: overrides.cancelPreview ?? vi.fn(),
+    applyOrganizePreview: overrides.applyOrganizePreview ?? vi.fn(async () => {}),
+    cancelOrganizePreview: overrides.cancelOrganizePreview ?? vi.fn(),
     undoAction: overrides.undoAction ?? vi.fn(async () => {}),
   });
 }

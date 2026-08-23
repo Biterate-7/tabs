@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createId } from "@/lib/id"
-import { askQuestion, applyPlan } from "@/lib/ai/ask"
+import { askQuestion, applyPlan, applyOrganizationPlan } from "@/lib/ai/ask"
 import { attemptUndo, findUndoEntry, markUndone, pushUndoEntry } from "@/lib/undo/history"
 import { useBrowserConnection } from "@/hooks/use-browser-connection"
 import { fetchBrowserContext } from "@/lib/browser/context"
 import { executeBrowserAction, executeBrowserReverts, needsBrowserExecution } from "@/lib/browser/execute"
 import { findBrowserUndoEntry, markBrowserUndone, pushBrowserUndoEntry } from "@/lib/browser/undo"
+import { computeSemanticClusterHints } from "@/lib/ai/cluster"
+import { looksLikeAutoOrganizeIntent } from "@/lib/organize/intent"
 import type { UndoEntry } from "@/lib/undo/types"
 import type { BrowserRevertStep, BrowserUndoEntry } from "@/lib/browser/undo"
 import type { Tab } from "@/lib/tabs/types"
-import type { AskMessage, PerformedActionView, SearchResult } from "@/lib/ai/types"
+import type { AskMessage, OrganizationPlan, PerformedActionView, SearchResult } from "@/lib/ai/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 const CANCELLED_TEXT = "No changes made."
@@ -135,6 +137,16 @@ export function useAskTabDump(
         // installed would be a real regression, not just a missed feature.
         const browserContext = browserConnected ? (await fetchBrowserContext()) ?? undefined : undefined
 
+        // Only pay for the IndexedDB clustering scan when the question
+        // plausibly needs it — a cheap, deterministic pre-check (see
+        // AGENTS.md section 17). A false negative here just means
+        // propose_auto_organize falls back to domain/keyword clustering,
+        // not that the feature stops working.
+        const semanticClusters =
+          store && looksLikeAutoOrganizeIntent(question)
+            ? await computeSemanticClusterHints(store.workspaces.map((w) => w.id)).catch(() => [])
+            : undefined
+
         const result = await askQuestion({
           workspaceId,
           tabs,
@@ -143,6 +155,7 @@ export function useAskTabDump(
           signal: controller.signal,
           store,
           browserContext,
+          semanticClusters,
           recentSearchResults: lastSearchResultsRef.current,
           onStoreUpdate: (after, description) => {
             if (store) undoEntryId = recordUndoEntry(store, after, description || question).id
@@ -153,14 +166,17 @@ export function useAskTabDump(
           },
         })
 
-        if (result.ok) lastSearchResultsRef.current = result.searchResults ?? lastSearchResultsRef.current
+        if (result.ok && !("organizePlan" in result)) lastSearchResultsRef.current = result.searchResults ?? lastSearchResultsRef.current
 
         // Any browser action the server validated hasn't actually happened
         // yet (it can't have — the server never touches chrome.*). Run it
         // for real now, and let the truth of what happened — not Gemini's
         // guess — decide the final wording. See AGENTS.md section 15.
-        let finalText = result.ok && !("requiresConfirmation" in result) ? result.text : undefined
-        if (result.ok && !("requiresConfirmation" in result)) {
+        // propose_auto_organize is read-only (no store mutation, no browser
+        // actions) — an organizePlan result skips this entirely.
+        const isImmediate = result.ok && !("requiresConfirmation" in result) && !("organizePlan" in result)
+        let finalText = isImmediate ? result.text : undefined
+        if (isImmediate) {
           const executed = await runBrowserExecutions(result.actions)
           if (executed) {
             finalText = executed.text || result.text
@@ -174,6 +190,14 @@ export function useAskTabDump(
           prev.map((m) => {
             if (m.id !== assistantId) return m
             if (!result.ok) return { ...m, text: `Something went wrong: ${result.error}`, pending: false }
+            if ("organizePlan" in result) {
+              return {
+                ...m,
+                text: result.text,
+                pending: false,
+                organizePreview: { plan: result.organizePlan, status: "awaiting" },
+              }
+            }
             if ("requiresConfirmation" in result) {
               return {
                 ...m,
@@ -321,6 +345,90 @@ export function useAskTabDump(
   }, [])
 
   /**
+   * Applies an approved Auto-Organize plan — the Auto-Organize counterpart
+   * to applyPreview above, sharing its double-invocation guards
+   * (applyingIdsRef) since a message can only ever carry one of `preview`/
+   * `organizePreview`, never both. The whole operation — however many
+   * workspaces/groups/moves it resolves into server-side (see
+   * src/lib/organize/apply.ts) — becomes exactly ONE recordUndoEntry call
+   * here, so it's one logical AI operation with one Undo button, per
+   * AGENTS.md section 10.
+   */
+  const applyOrganizePreview = useCallback(
+    /**
+     * `editedPlan`, when given, overrides message.organizePreview.plan —
+     * lets the review UI apply local edits (e.g. resolveUncertainTab quick
+     * decisions) without round-tripping them back into message state first.
+     * It still goes through the exact same validate → apply path
+     * server-side regardless.
+     */
+    async (messageId: string, editedPlan?: OrganizationPlan) => {
+      if (applyingIdsRef.current.has(messageId)) return
+      const message = messagesRef.current.find((m) => m.id === messageId)
+      if (!message?.organizePreview || message.organizePreview.status !== "awaiting") return
+
+      applyingIdsRef.current.add(messageId)
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId && m.organizePreview ? { ...m, organizePreview: { ...m.organizePreview, status: "applying" } } : m))
+      )
+
+      try {
+        const store: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
+        let undoEntryId: string | undefined
+
+        const browserContext = browserConnected ? (await fetchBrowserContext()) ?? undefined : undefined
+
+        const result = await applyOrganizationPlan({
+          organizationPlan: editedPlan ?? message.organizePreview.plan,
+          store,
+          browserContext,
+          onStoreUpdate: (after, description) => {
+            undoEntryId = recordUndoEntry(store, after, description || message.organizePreview!.plan.summary).id
+            onStoreUpdate?.(after)
+          },
+        })
+
+        setMessages((prev) => {
+          const resolved = prev.map((m) =>
+            m.id === messageId && m.organizePreview
+              ? { ...m, organizePreview: { ...m.organizePreview, status: result.ok ? ("applied" as const) : ("failed" as const) } }
+              : m
+          )
+          const followUp: AskMessage = {
+            id: createId("ask"),
+            role: "assistant",
+            text: result.ok ? result.text : `Something went wrong: ${result.error}`,
+            ...(result.ok && undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
+          }
+          return [...resolved, followUp]
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "an unexpected error occurred."
+        setMessages((prev) => [
+          ...prev.map((m) => (m.id === messageId && m.organizePreview ? { ...m, organizePreview: { ...m.organizePreview, status: "failed" as const } } : m)),
+          { id: createId("ask"), role: "assistant", text: `Something went wrong: ${message}` },
+        ])
+      } finally {
+        applyingIdsRef.current.delete(messageId)
+      }
+    },
+    [workspaceId, allWorkspaces, onStoreUpdate, browserConnected]
+  )
+
+  const cancelOrganizePreview = useCallback((messageId: string) => {
+    setMessages((prev) => {
+      const target = prev.find((m) => m.id === messageId)
+      if (!target?.organizePreview || target.organizePreview.status !== "awaiting") return prev
+
+      const updated = prev.map((m) =>
+        m.id === messageId && m.organizePreview ? { ...m, organizePreview: { ...m.organizePreview, status: "cancelled" as const } } : m
+      )
+      const followUp: AskMessage = { id: createId("ask"), role: "assistant", text: CANCELLED_TEXT }
+      return [...updated, followUp]
+    })
+  }, [])
+
+  /**
    * Reverts a browser mutation by actually re-invoking the extension with
    * the exact revert steps recorded at execution time (see
    * src/lib/browser/execute.ts) — there's no "before/after" store snapshot
@@ -411,5 +519,16 @@ export function useAskTabDump(
     [workspaceId, allWorkspaces, onStoreUpdate]
   )
 
-  return { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview, undoAction }
+  return {
+    messages,
+    isSending,
+    send,
+    regenerate,
+    clear,
+    applyPreview,
+    cancelPreview,
+    applyOrganizePreview,
+    cancelOrganizePreview,
+    undoAction,
+  }
 }

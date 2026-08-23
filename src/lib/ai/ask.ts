@@ -3,8 +3,9 @@ import type { WorkspaceStore } from "@/lib/workspace/types";
 import { embedTexts } from "./embed-client";
 import { retrieveRelevantChunks, retrieveRelevantChunksAcrossWorkspaces, toSemanticHints } from "./retrieve";
 import { formatApiError } from "./types";
-import type { AskMessage, AskSource, PerformedActionView, PlannedActionView, SearchResult } from "./types";
+import type { AskMessage, AskSource, OrganizationPlan, PerformedActionView, PlannedActionView, SearchResult } from "./types";
 import type { SemanticHint } from "@/lib/search/types";
+import type { SemanticClusterHint } from "@/lib/organize/types";
 import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
 
 const MAX_HISTORY_MESSAGES = 6;
@@ -15,6 +16,7 @@ export const NOT_ENOUGH_INFO_MESSAGE = "I couldn't find enough information in yo
 export type AskResult =
   | { ok: true; text: string; sources: AskSource[]; searchResults?: SearchResult[]; actions?: PerformedActionView[] }
   | { ok: true; requiresConfirmation: true; text: string; plan: PlannedActionView[]; summary: string; searchResults?: SearchResult[] }
+  | { ok: true; organizePlan: OrganizationPlan; text: string }
   | { ok: false; error: string };
 
 export type ApplyPlanResult = { ok: true; text: string; actions?: PerformedActionView[] } | { ok: false; error: string };
@@ -68,8 +70,10 @@ export async function askQuestion(params: {
   recentSearchResults?: SearchResult[];
   /** Live browser tabs/windows snapshot (see src/lib/browser/context.ts) — omitted when the extension isn't connected. Only meaningful with `store` set. */
   browserContext?: BrowserContextSnapshot;
+  /** Precomputed tab-to-tab semantic grouping for propose_auto_organize (see src/lib/ai/cluster.ts) — only meaningful with `store` set. Omit when the caller didn't bother computing it (e.g. the question doesn't look like an Auto-Organize request — see src/lib/organize/intent.ts). */
+  semanticClusters?: SemanticClusterHint[];
 }): Promise<AskResult> {
-  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults, browserContext } = params;
+  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults, browserContext, semanticClusters } = params;
 
   const embedResult = await embedTexts([question]);
   if (!embedResult.ok) return { ok: false, error: embedResult.error };
@@ -125,6 +129,7 @@ export async function askQuestion(params: {
           semanticHints,
           recentSearchResults: recentSearchResults ?? [],
           ...(browserContext ? { browserContext } : {}),
+          ...(semanticClusters && semanticClusters.length > 0 ? { semanticClusters } : {}),
         }),
       });
     } catch (err) {
@@ -145,7 +150,12 @@ export async function askQuestion(params: {
       summary?: string;
       searchResults?: SearchResult[];
       actions?: PerformedActionView[];
+      organizePlan?: OrganizationPlan;
     };
+
+    if (data.organizePlan) {
+      return { ok: true, organizePlan: data.organizePlan, text: data.text };
+    }
 
     if (data.requiresConfirmation) {
       return {
@@ -245,6 +255,53 @@ export async function applyPlan(params: {
       body: JSON.stringify({
         mode: "agent-apply",
         plan: plan.map(({ name, args }) => ({ name, args })),
+        store,
+        ...(browserContext ? { browserContext } : {}),
+      }),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : undefined;
+    return { ok: false, error: detail ? `Couldn't reach the AI service. (${detail})` : "Couldn't reach the AI service." };
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    return { ok: false, error: formatApiError(data, response.status) };
+  }
+
+  const data = (await response.json()) as { text: string; store?: WorkspaceStore; actions?: PerformedActionView[] };
+  if (data.store) onStoreUpdate?.(data.store, data.text);
+  return { ok: true, text: data.text, ...(data.actions && data.actions.length > 0 ? { actions: data.actions } : {}) };
+}
+
+/**
+ * Executes an approved OrganizationPlan (see AskResult's `organizePlan`
+ * variant above) — the Auto-Organize counterpart to applyPlan(). Same
+ * "never trust a stale preview" contract: the server revalidates the whole
+ * plan against the current store before touching anything (see
+ * src/lib/organize/apply.ts). Separate from applyPlan() because an
+ * OrganizationPlan isn't a flat `{name,args}[]` — see the "agent-organize-apply"
+ * mode's own doc in the route handler.
+ */
+export async function applyOrganizationPlan(params: {
+  organizationPlan: OrganizationPlan;
+  store: WorkspaceStore;
+  /** See askQuestion's onStoreUpdate — same shape, same purpose (labeling an undo entry). */
+  onStoreUpdate?: (store: WorkspaceStore, description?: string) => void;
+  signal?: AbortSignal;
+  browserContext?: BrowserContextSnapshot;
+}): Promise<ApplyPlanResult> {
+  const { organizationPlan, store, onStoreUpdate, signal, browserContext } = params;
+
+  let response: Response;
+  try {
+    response = await fetch("/api/ai/ask", {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "agent-organize-apply",
+        organizationPlan,
         store,
         ...(browserContext ? { browserContext } : {}),
       }),
