@@ -64,3 +64,66 @@ it("askQuestion resolves (does not hang) for two consecutive calls, no React inv
   ]);
   expect((r2 as { ok: boolean }).ok).toBe(true);
 });
+
+it("routes through the agent endpoint and applies a returned store when `store` is given", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const mutatedStore = { ...workspaceStore, workspaces: [{ ...workspaceStore.workspaces[0], name: "Physics IA" }] };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) {
+      return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    }
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Renamed it.", actions: [], store: mutatedStore }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const tabs: Tab[] = [];
+  const onStoreUpdate = vi.fn();
+
+  const result = await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs,
+    question: "Rename this workspace to Physics IA",
+    history: [],
+    store: workspaceStore,
+    onStoreUpdate,
+  });
+
+  expect(result).toEqual({ ok: true, text: "Renamed it.", sources: expect.any(Array) });
+  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore);
+  expect((capturedBody as unknown as { mode: string }).mode).toBe("agent");
+  expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);
+});
+
+it("does not call onStoreUpdate when the agent response has no store (read-only turn)", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+
+  vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) {
+      return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    }
+    if (url.includes("/api/ai/ask")) {
+      return new Response(JSON.stringify({ text: "You have one workspace.", actions: [] }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const onStoreUpdate = vi.fn();
+  const result = await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs: [],
+    question: "How many workspaces do I have?",
+    history: [],
+    store: workspaceStore,
+    onStoreUpdate,
+  });
+
+  expect(result).toEqual({ ok: true, text: "You have one workspace.", sources: expect.any(Array) });
+  expect(onStoreUpdate).not.toHaveBeenCalled();
+});

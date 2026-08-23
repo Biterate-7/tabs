@@ -49,7 +49,7 @@ import type { CategoryId } from "@/lib/categories"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useAiIndexing } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
-import type { Workspace } from "@/lib/workspace/types"
+import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 function openTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer")
@@ -69,6 +69,7 @@ export function WorkspaceView({
   workspaceSwitcher,
   currentWorkspace,
   allWorkspaces,
+  onStoreUpdate,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
@@ -76,6 +77,8 @@ export function WorkspaceView({
   workspaceSwitcher?: ReactNode
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
+  /** Lets Ask TabDump's agent mode write back a store mutated by an action (create/rename workspace, move tabs, etc). */
+  onStoreUpdate?: (store: WorkspaceStore) => void
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -495,6 +498,8 @@ export function WorkspaceView({
         workspaceId={workspaceId}
         tabs={tabs}
         indexState={indexState}
+        allWorkspaces={allWorkspaces}
+        onStoreUpdate={onStoreUpdate}
       />
     </div>
   )

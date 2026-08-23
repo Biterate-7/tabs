@@ -1,7 +1,8 @@
 import { createId } from "@/lib/id";
 import { createDefaultWorkspace } from "./migration";
+import { markDuplicates } from "@/lib/tabs";
 import type { Tab } from "@/lib/tabs/types";
-import type { Workspace, WorkspaceStore } from "./types";
+import type { Group, Workspace, WorkspaceStore } from "./types";
 
 export function getCurrentWorkspace(store: WorkspaceStore): Workspace {
   const current = store.workspaces.find((w) => w.id === store.currentId);
@@ -76,4 +77,78 @@ export function updateWorkspaceTabs(store: WorkspaceStore, id: string, tabs: Tab
 export function addWorkspaces(store: WorkspaceStore, workspaces: Workspace[]): WorkspaceStore {
   if (workspaces.length === 0) return store;
   return { ...store, workspaces: [...store.workspaces, ...workspaces] };
+}
+
+export type MoveTabsResult = {
+  store: WorkspaceStore;
+  moved: Tab[];
+  notFound: string[];
+};
+
+/**
+ * Moves the tabs matching `tabIds` out of `sourceWorkspaceId` (or, when
+ * omitted, wherever each tab is found) and into `targetWorkspaceId`. Ids not
+ * found in the expected source are reported in `notFound` rather than
+ * throwing — callers (the action layer) decide how to surface a partial
+ * move. `markDuplicates` re-runs on the destination so a moved tab's
+ * duplicate flag reflects its new neighborhood, not its old one.
+ */
+export function moveTabsBetweenWorkspaces(
+  store: WorkspaceStore,
+  tabIds: string[],
+  targetWorkspaceId: string,
+  sourceWorkspaceId?: string
+): MoveTabsResult {
+  const wanted = new Set(tabIds);
+  const moved: Tab[] = [];
+  const foundIds = new Set<string>();
+
+  const withoutMoved = store.workspaces.map((w) => {
+    if (sourceWorkspaceId && w.id !== sourceWorkspaceId) return w;
+    const keep: Tab[] = [];
+    for (const tab of w.tabs) {
+      if (wanted.has(tab.id) && !foundIds.has(tab.id)) {
+        foundIds.add(tab.id);
+        moved.push(tab);
+      } else {
+        keep.push(tab);
+      }
+    }
+    if (keep.length === w.tabs.length) return w;
+    return { ...w, tabs: keep, updatedAt: Date.now() };
+  });
+
+  const notFound = tabIds.filter((id) => !foundIds.has(id));
+
+  if (moved.length === 0) {
+    return { store, moved: [], notFound };
+  }
+
+  const now = Date.now();
+  const withTarget = withoutMoved.map((w) =>
+    w.id === targetWorkspaceId
+      ? { ...w, tabs: markDuplicates([...w.tabs, ...moved]), updatedAt: now }
+      : w
+  );
+
+  return { store: { ...store, workspaces: withTarget }, moved, notFound };
+}
+
+export function createGroup(store: WorkspaceStore, workspaceId: string, name: string): { store: WorkspaceStore; group: Group } {
+  const now = Date.now();
+  const group: Group = { id: createId("group"), name, createdAt: now, updatedAt: now };
+  const workspaces = store.workspaces.map((w) =>
+    w.id === workspaceId ? { ...w, groups: [...(w.groups ?? []), group], updatedAt: now } : w
+  );
+  return { store: { ...store, workspaces }, group };
+}
+
+export function renameGroup(store: WorkspaceStore, workspaceId: string, groupId: string, name: string): WorkspaceStore {
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => {
+    if (w.id !== workspaceId) return w;
+    const groups = (w.groups ?? []).map((g) => (g.id === groupId ? { ...g, name, updatedAt: now } : g));
+    return { ...w, groups, updatedAt: now };
+  });
+  return { ...store, workspaces };
 }

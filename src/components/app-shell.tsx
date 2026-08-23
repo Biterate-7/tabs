@@ -226,6 +226,7 @@ export function AppShell() {
       workspaceSwitcher={switcher}
       currentWorkspace={currentWorkspace}
       allWorkspaces={store.workspaces}
+      onStoreUpdate={persist}
     />
   )
 }

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   addWorkspaces,
+  createGroup,
   createWorkspace,
   deleteWorkspace,
   getCurrentWorkspace,
+  moveTabsBetweenWorkspaces,
+  renameGroup,
   renameWorkspace,
   switchWorkspace,
   updateWorkspaceTabs,
@@ -157,5 +160,90 @@ describe("addWorkspaces", () => {
   it("is a no-op for an empty list", () => {
     const store = makeStore([makeWorkspace({ id: "a" })], "a");
     expect(addWorkspaces(store, [])).toBe(store);
+  });
+});
+
+describe("moveTabsBetweenWorkspaces", () => {
+  it("moves matching tabs from the source into the target workspace", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({ id: "a", tabs: [makeTab("1"), makeTab("2")] }),
+        makeWorkspace({ id: "b", tabs: [] }),
+      ],
+      "a"
+    );
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b", "a");
+
+    expect(result.moved.map((t) => t.id)).toEqual(["1"]);
+    expect(result.notFound).toEqual([]);
+    expect(result.store.workspaces[0].tabs.map((t) => t.id)).toEqual(["2"]);
+    expect(result.store.workspaces[1].tabs.map((t) => t.id)).toEqual(["1"]);
+  });
+
+  it("reports ids that don't exist in the given source workspace as notFound", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [makeTab("1")] }), makeWorkspace({ id: "b", tabs: [] })],
+      "a"
+    );
+    const result = moveTabsBetweenWorkspaces(store, ["ghost"], "b", "a");
+
+    expect(result.moved).toEqual([]);
+    expect(result.notFound).toEqual(["ghost"]);
+    expect(result.store).toBe(store);
+  });
+
+  it("does not find a tab that belongs to a different workspace than the given source", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({ id: "a", tabs: [makeTab("1")] }),
+        makeWorkspace({ id: "b", tabs: [] }),
+        makeWorkspace({ id: "c", tabs: [] }),
+      ],
+      "a"
+    );
+    // "1" lives in workspace a, but the caller claims source workspace c.
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b", "c");
+
+    expect(result.moved).toEqual([]);
+    expect(result.notFound).toEqual(["1"]);
+  });
+
+  it("searches every workspace when sourceWorkspaceId is omitted", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [makeTab("1")] }), makeWorkspace({ id: "b", tabs: [] })],
+      "a"
+    );
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b");
+    expect(result.moved.map((t) => t.id)).toEqual(["1"]);
+    expect(result.store.workspaces[0].tabs).toEqual([]);
+  });
+
+  it("re-flags duplicates in the destination after the move", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({ id: "a", tabs: [makeTab("1")] }),
+        makeWorkspace({ id: "b", tabs: [{ ...makeTab("2"), normalizedUrl: "https://example.com/1" }] }),
+      ],
+      "a"
+    );
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b", "a");
+    const destTabs = result.store.workspaces[1].tabs;
+    expect(destTabs.find((t) => t.id === "1")?.isDuplicate || destTabs.find((t) => t.id === "2")?.isDuplicate).toBe(true);
+  });
+});
+
+describe("createGroup / renameGroup", () => {
+  it("adds a new group to the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const { store: next, group } = createGroup(store, "a", "Physics");
+    expect(next.workspaces[0].groups).toEqual([group]);
+    expect(group.name).toBe("Physics");
+  });
+
+  it("renames an existing group", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const { store: withGroup, group } = createGroup(store, "a", "Old name");
+    const next = renameGroup(withGroup, "a", group.id, "New name");
+    expect(next.workspaces[0].groups?.[0].name).toBe("New name");
   });
 });

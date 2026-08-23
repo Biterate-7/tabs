@@ -1,6 +1,6 @@
 import "server-only";
 import { geminiApiKey, hasGeminiKey } from "@/lib/ai/config";
-import type { GeminiContent, GeminiResult, GenerateOptions } from "./types";
+import type { AgentTurnOptions, AgentTurnResult, FunctionCall, GeminiContent, GeminiResult, GenerateOptions } from "./types";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const EMBED_TIMEOUT_MS = 10000;
@@ -229,6 +229,76 @@ export async function generateContentStream(
   }
 
   return { ok: true, data: toTextDeltaStream(response.body, controller, startedAt) };
+}
+
+/**
+ * One non-streaming turn of a tool-calling conversation — used by the
+ * action-layer agent loop (see src/lib/actions and the "agent" mode in
+ * /api/ai/ask). Deliberately separate from generateContent/generateContentStream
+ * above rather than reusing their `contents`/GeminiContent plumbing: those are
+ * plain-text-only and used by the already-battle-tested chat/analysis paths,
+ * which this must not risk regressing. `tools` follows Gemini's
+ * functionDeclarations shape; the model decides (AUTO mode) whether to
+ * answer directly or call one or more of them.
+ */
+export async function generateAgentTurn(opts: AgentTurnOptions): Promise<GeminiResult<AgentTurnResult>> {
+  if (!hasGeminiKey()) return { ok: false, reason: "missing-key" };
+
+  const url = `${API_BASE}/models/${opts.model}:generateContent`;
+  const body = {
+    contents: opts.contents.map((c) => ({ role: c.role, parts: c.parts })),
+    ...(opts.systemInstruction ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } } : {}),
+    tools: [{ functionDeclarations: opts.tools }],
+    toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+    generationConfig: { maxOutputTokens: opts.maxOutputTokens },
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": geminiApiKey()!,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "unknown network error";
+    logGeminiFailure("generateAgentTurn", undefined, detail);
+    return { ok: false, reason: classifyFetchError(err), detail };
+  }
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    logGeminiFailure("generateAgentTurn", response.status, detail);
+    return { ok: false, reason: toGeminiFailure(response.status), detail, status: response.status };
+  }
+
+  try {
+    const data = await response.json();
+    const parts = data?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) {
+      return { ok: false, reason: "malformed-response", detail: "response had no candidate parts" };
+    }
+
+    let text = "";
+    const functionCalls: FunctionCall[] = [];
+    for (const part of parts) {
+      if (typeof part?.text === "string") text += part.text;
+      if (part?.functionCall && typeof part.functionCall.name === "string") {
+        functionCalls.push({
+          name: part.functionCall.name,
+          args: (part.functionCall.args as Record<string, unknown> | undefined) ?? {},
+        });
+      }
+    }
+
+    return { ok: true, data: { text, functionCalls } };
+  } catch (err) {
+    return { ok: false, reason: "malformed-response", detail: err instanceof Error ? err.message : "couldn't parse response JSON" };
+  }
 }
 
 function buildRequestBody(opts: GenerateOptions) {

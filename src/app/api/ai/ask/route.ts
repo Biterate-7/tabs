@@ -1,7 +1,10 @@
 import "server-only";
 import { generateContent, generateContentStream } from "@/lib/ai/gemini/client";
 import { chatModel, analysisModel } from "@/lib/ai/config";
-import type { GeminiContent, GeminiResult } from "@/lib/ai/gemini/types";
+import type { AgentContent, GeminiContent, GeminiResult } from "@/lib/ai/gemini/types";
+import { runAgentLoop } from "@/lib/actions/agent";
+import { isValidWorkspaceStore } from "@/lib/workspace/persistence";
+import type { WorkspaceStore } from "@/lib/workspace/types";
 
 export const runtime = "nodejs";
 
@@ -12,12 +15,13 @@ const MAX_HISTORY_CHARS = 800;
 const MAX_QUESTION_CHARS = 500;
 const CHAT_MAX_OUTPUT_TOKENS = 1024;
 const ANALYSIS_MAX_OUTPUT_TOKENS = 2048;
+const AGENT_MAX_OUTPUT_TOKENS = 1024;
 
 type ContextItem = { tabId: string; title: string; url: string; text: string };
 type HistoryItem = { role: "user" | "model"; text: string };
-type Mode = "chat" | "collection-overview" | "collection-gaps";
+type Mode = "chat" | "agent" | "collection-overview" | "collection-gaps";
 
-const MODES: Mode[] = ["chat", "collection-overview", "collection-gaps"];
+const MODES: Mode[] = ["chat", "agent", "collection-overview", "collection-gaps"];
 
 const ERROR_STATUS: Record<string, number> = {
   "missing-key": 503,
@@ -40,6 +44,14 @@ const ERROR_MESSAGE: Record<string, string> = {
 const CHAT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant that answers questions using ONLY the "Saved context" the user provides below — their own saved browser tabs. Never use outside knowledge, and never invent a fact, URL, or title that isn't in the given context.
 
 If the context doesn't contain enough information to answer, reply with exactly: "I couldn't find enough information in your saved tabs to answer that." Otherwise answer concisely and naturally, referring to the saved items in plain language (e.g. "your saved article on X says..."). Do not output the [N] index markers themselves in your reply — they're only for your own reference.`;
+
+const AGENT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant for a browser tab manager called TabDump. You can answer questions about the user's saved tabs, and you can also perform actions on their TabDump data — creating or renaming workspaces and groups, and moving tabs between workspaces — using the tools available to you.
+
+Ground every factual answer ONLY in the "Saved context" given below and in what tool results actually return — never use outside knowledge, and never invent a fact, workspace, tab, id, or URL you weren't actually given.
+
+Workspace, tab, and group ids are opaque strings you cannot guess. Call list_workspaces, search_tabs, or list_workspace_tabs first to resolve a name the user mentioned (e.g. "Physics workspace") to its real id before calling an action that needs one. If a tool call fails, read its error and adjust — e.g. create the destination workspace first if a move target doesn't exist yet — rather than giving up immediately.
+
+Once you're done, reply with a short, natural-language summary of what you found or did (e.g. "Done — I moved 7 Physics tabs into Physics IA."). Never show raw tool-call JSON, ids, or the words "function call" to the user.`;
 
 const OVERVIEW_SYSTEM_INSTRUCTION = `You analyze a user's saved TabDump tabs (given as numbered "Saved context" items) and summarize them. Base everything strictly on the given items — never invent tabs, themes, or facts not supported by them. "importantResourceIndexes" must only contain the [N] numbers of items you found genuinely useful/representative.`;
 
@@ -170,6 +182,41 @@ export async function POST(request: Request): Promise<Response> {
         "content-type": "text/plain; charset=utf-8",
         "x-content-type-options": "nosniff",
       },
+    });
+  }
+
+  if (mode === "agent") {
+    const storeInput = b?.store;
+    if (!isValidWorkspaceStore(storeInput)) {
+      return Response.json({ error: "Expected a valid { store: WorkspaceStore }." }, { status: 400 });
+    }
+    const store: WorkspaceStore = storeInput;
+
+    const currentWorkspace = store.workspaces.find((w) => w.id === store.currentId);
+    const preamble = currentWorkspace
+      ? `Current workspace: "${currentWorkspace.name}" (id: ${currentWorkspace.id}).\n\n`
+      : "";
+    const agentPrompt = `${preamble}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
+
+    const contents: AgentContent[] = [
+      ...historyContents.map((h): AgentContent => ({ role: h.role, parts: [{ text: h.text }] })),
+      { role: "user", parts: [{ text: agentPrompt }] },
+    ];
+
+    const agentResult = await runAgentLoop({
+      model: chatModel(),
+      systemInstruction: AGENT_SYSTEM_INSTRUCTION,
+      contents,
+      store,
+      maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
+    });
+
+    if (!agentResult.ok) return errorResponse(agentResult);
+
+    return Response.json({
+      text: agentResult.text,
+      actions: agentResult.actions,
+      ...(agentResult.storeChanged ? { store: agentResult.store } : {}),
     });
   }
 

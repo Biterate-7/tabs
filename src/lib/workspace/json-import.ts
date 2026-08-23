@@ -1,7 +1,7 @@
 import { createId } from "@/lib/id";
 import { EXPORT_VERSION } from "./json-export";
 import type { Tab } from "@/lib/tabs/types";
-import type { Workspace } from "./types";
+import type { Group, Workspace } from "./types";
 
 export type ImportResult =
   | { ok: true; workspaces: Workspace[]; skippedWorkspaces: number; skippedTabs: number }
@@ -47,26 +47,69 @@ function sanitizeTabs(raw: unknown[]): { tabs: Tab[]; skipped: number } {
   return { tabs, skipped };
 }
 
+function isValidRawGroup(value: unknown): value is Record<string, unknown> {
+  return isPlainObject(value) && typeof value.name === "string" && value.name.trim().length > 0;
+}
+
+/**
+ * Sanitizes one workspace's `groups`, mirroring sanitizeTabs: drops entries
+ * that aren't at least shaped like a `Group`, and regenerates any id that's
+ * missing or collides with one already seen in this same workspace.
+ * `groups` itself is optional on Workspace (older exports never had it), so
+ * a missing or wrong-typed field here isn't an error — it just means "no
+ * groups," not "malformed workspace."
+ */
+function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: number } {
+  if (!Array.isArray(raw)) return { groups: undefined, skipped: 0 };
+
+  const groups: Group[] = [];
+  const seenIds = new Set<string>();
+  let skipped = 0;
+  const now = Date.now();
+
+  for (const entry of raw) {
+    if (!isValidRawGroup(entry)) {
+      skipped += 1;
+      continue;
+    }
+
+    const rawId = typeof entry.id === "string" ? entry.id : undefined;
+    const id = !rawId || seenIds.has(rawId) ? createId("group") : rawId;
+    seenIds.add(id);
+
+    groups.push({
+      id,
+      name: typeof entry.name === "string" ? entry.name.trim() : "",
+      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
+      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+    });
+  }
+
+  return { groups, skipped };
+}
+
 /**
  * Always mints a fresh workspace id, regardless of what the export carried —
  * this is what guarantees an import can never collide with (and so can
  * never overwrite) a workspace already in the store.
  */
-function sanitizeWorkspace(raw: unknown): { workspace: Workspace; skippedTabs: number } | null {
+function sanitizeWorkspace(raw: unknown): { workspace: Workspace; skippedTabs: number; skippedGroups: number } | null {
   if (!isPlainObject(raw) || !Array.isArray(raw.tabs)) return null;
 
   const { tabs, skipped } = sanitizeTabs(raw.tabs);
+  const { groups, skipped: skippedGroups } = sanitizeGroups(raw.groups);
   const now = Date.now();
 
   const workspace: Workspace = {
     id: createId("workspace"),
     name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "Untitled",
     tabs,
+    ...(groups !== undefined ? { groups } : {}),
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };
 
-  return { workspace, skippedTabs: skipped };
+  return { workspace, skippedTabs: skipped, skippedGroups };
 }
 
 export function parseWorkspaceExport(raw: string): ImportResult {

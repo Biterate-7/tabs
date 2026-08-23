@@ -5,8 +5,22 @@ import { createId } from "@/lib/id"
 import { askQuestion } from "@/lib/ai/ask"
 import type { Tab } from "@/lib/tabs/types"
 import type { AskMessage } from "@/lib/ai/types"
+import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
-export function useAskTabDump(workspaceId: string, tabs: Tab[]) {
+/**
+ * `allWorkspaces`/`onStoreUpdate` are optional so existing callers (and
+ * tests) that only pass (workspaceId, tabs) keep working unchanged — without
+ * them, this falls back to the original grounded-Q&A-only "chat" endpoint.
+ * Passing both is what turns on Ask TabDump's action-performing "agent"
+ * capability: they let a write action's resulting store make it back out
+ * to the caller to persist.
+ */
+export function useAskTabDump(
+  workspaceId: string,
+  tabs: Tab[],
+  allWorkspaces?: Workspace[],
+  onStoreUpdate?: (store: WorkspaceStore) => void
+) {
   const [messages, setMessages] = useState<AskMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   // Latest-ref idiom (see use-workspace-shortcuts.ts): lets runAsk/regenerate
@@ -41,12 +55,18 @@ export function useAskTabDump(workspaceId: string, tabs: Tab[]) {
       // still guarantees isSending resets and the pending bubble resolves,
       // instead of leaving the whole conversation permanently stuck.
       try {
+        const store: WorkspaceStore | undefined = allWorkspaces
+          ? { version: 1, currentId: workspaceId, workspaces: allWorkspaces }
+          : undefined
+
         const result = await askQuestion({
           workspaceId,
           tabs,
           question,
           history,
           signal: controller.signal,
+          store,
+          onStoreUpdate,
           onDelta: (delta) => {
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + delta } : m)))
           },
@@ -72,7 +92,7 @@ export function useAskTabDump(workspaceId: string, tabs: Tab[]) {
         setIsSending(false)
       }
     },
-    [workspaceId, tabs]
+    [workspaceId, tabs, allWorkspaces, onStoreUpdate]
   )
 
   const send = useCallback(

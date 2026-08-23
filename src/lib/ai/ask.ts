@@ -1,4 +1,5 @@
 import type { Tab } from "@/lib/tabs/types";
+import type { WorkspaceStore } from "@/lib/workspace/types";
 import { embedTexts } from "./embed-client";
 import { retrieveRelevantChunks } from "./retrieve";
 import { formatApiError } from "./types";
@@ -32,8 +33,18 @@ export async function askQuestion(params: {
   history: AskMessage[];
   onDelta?: (deltaText: string) => void;
   signal?: AbortSignal;
+  /**
+   * When given, the request goes through the tool-calling "agent" endpoint
+   * instead of the plain streaming "chat" one — Gemini can then act on
+   * TabDump (create/rename workspaces and groups, move tabs) via the
+   * server-side action layer, scoped to exactly this snapshot. Omit this to
+   * get the original grounded-Q&A-only behavior unchanged.
+   */
+  store?: WorkspaceStore;
+  /** Called with the action layer's resulting store when a write action actually changed something — the caller is responsible for persisting it (this module never touches localStorage itself). */
+  onStoreUpdate?: (store: WorkspaceStore) => void;
 }): Promise<AskResult> {
-  const { workspaceId, tabs, question, history, onDelta, signal } = params;
+  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate } = params;
 
   const embedResult = await embedTexts([question]);
   if (!embedResult.ok) return { ok: false, error: embedResult.error };
@@ -54,6 +65,30 @@ export async function askQuestion(params: {
     .filter((m) => !m.pending)
     .slice(-MAX_HISTORY_MESSAGES)
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", text: m.text }));
+
+  if (store) {
+    let agentResponse: Response;
+    try {
+      agentResponse = await fetch("/api/ai/ask", {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "agent", question, history: trimmedHistory, context, store }),
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : undefined;
+      return { ok: false, error: detail ? `Couldn't reach the AI service. (${detail})` : "Couldn't reach the AI service." };
+    }
+
+    if (!agentResponse.ok) {
+      const data = await agentResponse.json().catch(() => null);
+      return { ok: false, error: formatApiError(data, agentResponse.status) };
+    }
+
+    const data = (await agentResponse.json()) as { text: string; store?: WorkspaceStore };
+    if (data.store) onStoreUpdate?.(data.store);
+    return { ok: true, text: data.text, sources };
+  }
 
   let response: Response;
   try {

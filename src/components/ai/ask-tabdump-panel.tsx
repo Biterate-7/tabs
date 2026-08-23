@@ -19,6 +19,7 @@ import { SourceCard } from "@/components/ai/source-card"
 import { useAskTabDump } from "@/hooks/use-ask-tabdump"
 import type { AiIndexState } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
+import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 const SUGGESTED_QUESTIONS = [
   "What did I save recently?",
@@ -33,14 +34,19 @@ export function AskTabDumpPanel({
   workspaceId,
   tabs,
   indexState,
+  allWorkspaces,
+  onStoreUpdate,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   workspaceId: string
   tabs: Tab[]
   indexState: AiIndexState
+  /** Passing this (with onStoreUpdate) turns on Ask TabDump's action capability — see useAskTabDump. */
+  allWorkspaces?: Workspace[]
+  onStoreUpdate?: (store: WorkspaceStore) => void
 }) {
-  const { messages, isSending, send, regenerate, clear } = useAskTabDump(workspaceId, tabs)
+  const { messages, isSending, send, regenerate, clear } = useAskTabDump(workspaceId, tabs, allWorkspaces, onStoreUpdate)
   const [input, setInput] = useState("")
   const scrollEndRef = useRef<HTMLDivElement>(null)
 

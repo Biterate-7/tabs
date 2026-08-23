@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const generateContentMock = vi.hoisted(() => vi.fn());
 const generateContentStreamMock = vi.hoisted(() => vi.fn());
+const runAgentLoopMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/ai/gemini/client", () => ({
   generateContent: generateContentMock,
   generateContentStream: generateContentStreamMock,
+}));
+
+vi.mock("@/lib/actions/agent", () => ({
+  runAgentLoop: runAgentLoopMock,
 }));
 
 const { POST } = await import("./route");
@@ -30,9 +35,18 @@ function textStream(text: string): ReadableStream<Uint8Array> {
 
 const validContext = [{ tabId: "t1", title: "Title", url: "https://example.com", text: "some text" }];
 
+const validStore = {
+  version: 1,
+  currentId: "ws-1",
+  workspaces: [
+    { id: "ws-1", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 },
+  ],
+};
+
 afterEach(() => {
   generateContentMock.mockReset();
   generateContentStreamMock.mockReset();
+  runAgentLoopMock.mockReset();
 });
 
 describe("POST /api/ai/ask", () => {
@@ -109,5 +123,77 @@ describe("POST /api/ai/ask", () => {
       postRequest({ question: "Summarize", context: validContext, mode: "collection-gaps" })
     );
     expect(response.status).toBe(502);
+  });
+
+  describe("agent mode", () => {
+    it("returns 400 when store is missing or invalid", async () => {
+      const response = await POST(
+        postRequest({ question: "Move my tabs", context: validContext, mode: "agent" })
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("returns the agent's final text and reports actions performed", async () => {
+      runAgentLoopMock.mockResolvedValue({
+        ok: true,
+        text: "Done — I moved 3 tabs into Physics.",
+        store: validStore,
+        storeChanged: false,
+        actions: [{ name: "search_tabs", ok: true, message: "found 3" }],
+      });
+
+      const response = await POST(
+        postRequest({ question: "Find my physics tabs", context: validContext, mode: "agent", store: validStore })
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.text).toBe("Done — I moved 3 tabs into Physics.");
+      expect(body.actions).toEqual([{ name: "search_tabs", ok: true, message: "found 3" }]);
+      expect(body.store).toBeUndefined();
+    });
+
+    it("includes the mutated store in the response only when a write action changed it", async () => {
+      const mutatedStore = { ...validStore, workspaces: [...validStore.workspaces, { id: "ws-2", name: "New", tabs: [], createdAt: 0, updatedAt: 0 }] };
+      runAgentLoopMock.mockResolvedValue({
+        ok: true,
+        text: "Created the New workspace.",
+        store: mutatedStore,
+        storeChanged: true,
+        actions: [{ name: "create_workspace", ok: true, message: "created" }],
+      });
+
+      const response = await POST(
+        postRequest({ question: "Create a workspace called New", context: [], mode: "agent", store: validStore })
+      );
+
+      const body = await response.json();
+      expect(body.store).toEqual(mutatedStore);
+    });
+
+    it("passes the tool declarations through to Gemini so it can select the right one", async () => {
+      runAgentLoopMock.mockResolvedValue({ ok: true, text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+      await POST(postRequest({ question: "List my workspaces", context: [], mode: "agent", store: validStore }));
+
+      expect(runAgentLoopMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          store: validStore,
+          contents: expect.arrayContaining([
+            expect.objectContaining({ role: "user", parts: [expect.objectContaining({ text: expect.stringContaining("List my workspaces") })] }),
+          ]),
+        })
+      );
+    });
+
+    it("maps a Gemini failure from the agent loop to its status code", async () => {
+      runAgentLoopMock.mockResolvedValue({ ok: false, reason: "rate-limited", detail: "slow down" });
+
+      const response = await POST(
+        postRequest({ question: "hi", context: [], mode: "agent", store: validStore })
+      );
+
+      expect(response.status).toBe(429);
+    });
   });
 });

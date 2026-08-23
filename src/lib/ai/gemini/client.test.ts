@@ -116,3 +116,103 @@ describe("generateContent", () => {
     expect(result).toEqual({ ok: false, reason: "gemini-error", detail: "Internal error.", status: 500 });
   });
 });
+
+describe("generateAgentTurn", () => {
+  const tools = [{ name: "list_workspaces", description: "List workspaces.", parameters: { type: "OBJECT", properties: {} } }];
+
+  it("sends tools/toolConfig and parses a plain-text response with no function call", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { candidates: [{ content: { parts: [{ text: "Hello there" }] } }] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({ ok: true, data: { text: "Hello there", functionCalls: [] } });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.tools).toEqual([{ functionDeclarations: tools }]);
+    expect(body.toolConfig).toEqual({ functionCallingConfig: { mode: "AUTO" } });
+  });
+
+  it("parses a functionCall part into a structured function call", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        candidates: [
+          { content: { parts: [{ functionCall: { name: "list_workspaces", args: {} } }] } },
+        ],
+      })
+    ) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "list my workspaces" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({ ok: true, data: { text: "", functionCalls: [{ name: "list_workspaces", args: {} }] } });
+  });
+
+  it("serializes functionResponse parts sent back to the model", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { candidates: [{ content: { parts: [{ text: "Done." }] } }] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [
+        { role: "user", parts: [{ text: "list my workspaces" }] },
+        { role: "model", parts: [{ functionCall: { name: "list_workspaces", args: {} } }] },
+        { role: "function", parts: [{ functionResponse: { name: "list_workspaces", response: { result: { workspaces: [] } } } }] },
+      ],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.contents[2]).toEqual({
+      role: "function",
+      parts: [{ functionResponse: { name: "list_workspaces", response: { result: { workspaces: [] } } } }],
+    });
+  });
+
+  it("returns missing-key without calling fetch when no API key is configured", async () => {
+    vi.unstubAllEnvs();
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "missing-key" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns malformed-response when the candidate has no parts", async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse(200, { candidates: [{}] })) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "malformed-response", detail: "response had no candidate parts" });
+  });
+});
