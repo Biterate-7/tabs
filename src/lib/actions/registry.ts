@@ -1,7 +1,8 @@
 import { searchTabsAction, getTabAction, listWorkspacesAction, getWorkspaceAction, listWorkspaceTabsAction } from "./read";
 import { createWorkspaceAction, renameWorkspaceAction } from "./workspaces";
 import { moveTabAction, moveTabsAction } from "./tabs";
-import { createGroupAction, renameGroupAction } from "./groups";
+import { createGroupAction, renameGroupAction, listGroupsAction, getGroupAction, listGroupTabsAction } from "./groups";
+import { assignTabsToGroupAction, removeTabsFromGroupAction } from "./group-membership";
 import { proposeAutoOrganizeAction } from "./organize";
 import { listBrowserTabsAction, getActiveTabAction, listBrowserWindowsAction } from "./browser-read";
 import {
@@ -30,6 +31,11 @@ export const ACTIONS: Record<string, ActionDefinition> = {
   [moveTabsAction.name]: moveTabsAction,
   [createGroupAction.name]: createGroupAction,
   [renameGroupAction.name]: renameGroupAction,
+  [listGroupsAction.name]: listGroupsAction,
+  [getGroupAction.name]: getGroupAction,
+  [listGroupTabsAction.name]: listGroupTabsAction,
+  [assignTabsToGroupAction.name]: assignTabsToGroupAction,
+  [removeTabsFromGroupAction.name]: removeTabsFromGroupAction,
   // Auto-Organize (AGENTS.md's Auto-Organize spec) — read-only planning
   // action; see src/lib/actions/organize.ts and src/lib/actions/agent.ts's
   // special-casing of it.

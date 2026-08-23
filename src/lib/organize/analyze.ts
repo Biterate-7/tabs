@@ -11,7 +11,7 @@ import type {
 import { buildRawClusters } from "./cluster";
 import type { JoinReason, RawCluster } from "./cluster";
 import { deriveClusterName, tabTokens, tokenOverlap } from "./keywords";
-import { findBestWorkspaceMatch } from "./match";
+import { findBestGroupMatch, findBestWorkspaceMatch } from "./match";
 import { describeOrganizationPlan } from "./summarize";
 
 /** A library this small essentially never benefits from being split into workspaces — AGENTS.md section 18. */
@@ -23,10 +23,11 @@ const FIT_THRESHOLD = 0.12;
 /** Below this, a handful of leftover small-cluster tabs isn't worth a "Miscellaneous" bucket — they go to uncertainTabs individually instead. */
 const MISC_MIN_SIZE = 2;
 const MISCELLANEOUS_NAME = "Miscellaneous";
-/** A workspace cluster needs to be at least this big before its domains are even considered for a group sub-split. */
+/** A workspace cluster needs to be at least this big before it's even considered for a group sub-split. */
 const MIN_PARENT_SIZE_FOR_GROUPS = 6;
-const MIN_GROUP_DOMAIN_SIZE = 3;
-const MAX_GROUPS_PER_WORKSPACE = 2;
+/** A sub-cluster needs at least this many tabs to justify its own (new or reused) group — same spirit as MIN_CLUSTER_SIZE at the workspace level, so a couple of stray shared-domain tabs don't become their own tiny group. */
+const MIN_GROUP_SIZE = 3;
+const MAX_GROUPS_PER_WORKSPACE = 3;
 /** Keep, up to two ranked cluster suggestions, and a guaranteed Miscellaneous fallback — AGENTS.md's [Keep] [Physics] [MUN] [Misc] example. */
 const MAX_SUGGESTIONS = 4;
 const NO_USEFUL_ORGANIZATION = "I couldn't find a useful organization that would improve your current setup.";
@@ -42,6 +43,12 @@ function joinReasonToConfidence(reason: JoinReason): "high" | "medium" | "low" {
   return "low";
 }
 
+/** Domain-derived display name for a sub-cluster that's entirely one domain — kept distinct from deriveClusterName, whose token-frequency approach would otherwise be dominated by DEV_TOOL_DOMAINS's synthetic "development" boost token and name every dev-tool-domain group "Development." */
+function normalizedGroupName(domain: string): string {
+  const label = domain.replace(/^www\./, "").split(".")[0];
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 function reasonText(reason: JoinReason, name: string): string {
   switch (reason) {
     case "semantic":
@@ -55,37 +62,63 @@ function reasonText(reason: JoinReason, name: string): string {
   }
 }
 
-function normalizedGroupName(domain: string): string {
-  const label = domain.replace(/^www\./, "").split(".")[0];
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-/** Lightweight, deterministic group sub-split: within a large workspace proposal, any single domain with enough tabs becomes its own group — see analyze.ts's module doc for why this stays conservative (no tab→group assignment action exists yet in TabDump). */
-function proposeGroups(workspace: Workspace | null, clusterTabs: ScopedTab[]): OrganizeWorkspaceProposal["groups"] {
+/**
+ * Deterministic group sub-split: re-clusters a workspace-level cluster's own
+ * tabs by domain/keyword (deliberately WITHOUT semantic hints — those
+ * already did their job merging this cluster together at the workspace
+ * level; re-applying them here would just re-merge everything into one
+ * cluster again and never find internal sub-structure) via the same
+ * union-find buildRawClusters used at the workspace level, one level down.
+ * Each sub-cluster that clears MIN_GROUP_SIZE either reuses a matching
+ * existing group in `workspace` (AGENTS.md section 8: prefer "Physics /
+ * General Relativity" over "Physics / General Relativity 2") or gets a
+ * freshly derived name — bounded at MAX_GROUPS_PER_WORKSPACE so a large
+ * workspace doesn't get fragmented into a group per minor topic (section 9).
+ */
+function proposeGroups(workspace: Workspace | null, clusterTabs: ScopedTab[]): NonNullable<OrganizeWorkspaceProposal["groups"]> {
   if (clusterTabs.length < MIN_PARENT_SIZE_FOR_GROUPS) return [];
 
-  const byDomain = new Map<string, ScopedTab[]>();
-  for (const st of clusterTabs) {
-    const domain = st.tab.domain.toLowerCase();
-    const bucket = byDomain.get(domain);
-    if (bucket) bucket.push(st);
-    else byDomain.set(domain, [st]);
-  }
+  const tabsById = new Map(clusterTabs.map((st) => [st.tab.id, st]));
+  const subClusters = buildRawClusters(clusterTabs, [])
+    .filter((c) => c.tabIds.length >= MIN_GROUP_SIZE && c.tabIds.length < clusterTabs.length)
+    .sort((a, b) => b.tabIds.length - a.tabIds.length);
 
-  const existingGroupNames = new Set((workspace?.groups ?? []).map((g) => g.name.toLowerCase()));
   const groups: NonNullable<OrganizeWorkspaceProposal["groups"]> = [];
-  const sortedDomains = [...byDomain.entries()].sort((a, b) => b[1].length - a[1].length);
+  const usedTabIds = new Set<string>();
+  const proposedNames = new Set<string>();
 
-  for (const [domain, tabs] of sortedDomains) {
+  for (const cluster of subClusters) {
     if (groups.length >= MAX_GROUPS_PER_WORKSPACE) break;
-    if (tabs.length < MIN_GROUP_DOMAIN_SIZE || tabs.length === clusterTabs.length) continue;
-    const name = normalizedGroupName(domain);
-    if (existingGroupNames.has(name.toLowerCase())) continue;
+    const availableIds = cluster.tabIds.filter((id) => !usedTabIds.has(id));
+    if (availableIds.length < MIN_GROUP_SIZE) continue;
+
+    const match = workspace ? findBestGroupMatch(availableIds, tabsById, workspace) : null;
+    const availableTabs = availableIds.map((id) => tabsById.get(id)!.tab);
+    const domains = new Set(availableTabs.map((t) => t.domain.toLowerCase()));
+    const derivedName = domains.size === 1 ? normalizedGroupName([...domains][0]) : deriveClusterName(availableTabs);
+    const exactNameGroup = !match
+      ? workspace?.groups?.find((g) => g.name.trim().toLowerCase() === derivedName.trim().toLowerCase())
+      : undefined;
+    const existingGroupId = match?.groupId ?? exactNameGroup?.id;
+    const name = match?.groupName ?? exactNameGroup?.name ?? derivedName;
+
+    if (!existingGroupId && proposedNames.has(name.toLowerCase())) continue; // avoid "X" / "X 2" duplicate proposals in one run
+
+    const tabIds = existingGroupId
+      ? availableIds.filter((id) => tabsById.get(id)!.tab.groupId !== existingGroupId)
+      : availableIds;
+    if (tabIds.length === 0) continue; // whole sub-cluster already correctly grouped — nothing to propose
+
     groups.push({
+      existingGroupId,
       proposedName: name,
-      reason: `${tabs.length} tabs from ${domain} form a distinct subset.`,
-      tabIds: tabs.map((t) => t.tab.id),
+      reason: existingGroupId
+        ? `${tabIds.length} tabs closely match your existing "${name}" group.`
+        : `${tabIds.length} tabs share a distinct sub-topic.`,
+      tabIds,
     });
+    proposedNames.add(name.toLowerCase());
+    for (const id of availableIds) usedTabIds.add(id);
   }
   return groups;
 }
@@ -173,7 +206,13 @@ export function analyzeForOrganization(
       assignedTabIds.add(id);
     }
 
-    if (tabs.length === 0) return; // whole cluster already correctly placed — nothing to propose
+    // A cluster whose tabs already all live in the matching workspace can
+    // still be worth proposing if it splits cleanly into groups (AGENTS.md
+    // section 7's "Physics: 14 tabs" → "General Relativity" / "IA" /
+    // "References" example never moves a single tab BETWEEN workspaces) —
+    // only skip entirely when there's neither a tab move nor a group to show.
+    const groups = proposeGroups(targetWorkspace ?? null, clusterTabs);
+    if (tabs.length === 0 && groups.length === 0) return;
 
     proposals.push({
       existingWorkspaceId,
@@ -182,7 +221,7 @@ export function analyzeForOrganization(
         ? `${clusterTabIds.length} tabs closely match your existing "${proposedName}" workspace.`
         : `${clusterTabIds.length} tabs share a clear common topic.`,
       tabs,
-      groups: proposeGroups(targetWorkspace ?? null, clusterTabs),
+      groups,
     });
     proposalTokensById.set(index, clusterTokens);
   });

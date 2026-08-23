@@ -99,10 +99,23 @@ export function AutoOrganizeReview({
                 )}
               </ul>
               {workspace.groups && workspace.groups.length > 0 && (
-                <ul className="mt-1 space-y-0.5 border-l border-subtle pl-2">
+                <ul className="mt-1 space-y-1 border-l border-subtle pl-2">
                   {workspace.groups.map((group, gi) => (
-                    <li key={gi} className="min-w-0 break-words text-meta text-tertiary">
-                      {group.proposedName} · {group.tabIds.length} tab{group.tabIds.length === 1 ? "" : "s"}
+                    <li key={gi} className="min-w-0">
+                      <div className="break-words text-meta font-medium text-foreground">
+                        {group.proposedName} · {group.tabIds.length} tab{group.tabIds.length === 1 ? "" : "s"}
+                        {group.existingGroupId ? " (existing)" : ""}
+                      </div>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {group.tabIds.slice(0, MAX_SAMPLE_TABS).map((tabId) => (
+                          <li key={tabId} className="min-w-0 truncate text-meta text-tertiary">
+                            · {tabLabel(tabsById.get(tabId), tabId)}
+                          </li>
+                        ))}
+                        {group.tabIds.length > MAX_SAMPLE_TABS && (
+                          <li className="text-meta text-tertiary">· +{group.tabIds.length - MAX_SAMPLE_TABS} more</li>
+                        )}
+                      </ul>
                     </li>
                   ))}
                 </ul>

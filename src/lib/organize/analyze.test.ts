@@ -201,6 +201,71 @@ describe("analyzeForOrganization", () => {
     expect(plan.noopReason).toBe("I couldn't find a useful organization that would improve your current setup.");
   });
 
+  it("proposes groups for a workspace's own tabs even when none of them need to move (no-op at the workspace level)", () => {
+    const tabs = [
+      ...Array.from({ length: 4 }, (_, i) => tab(`gh${i}`, `Development repo ${i}`, "github.com")),
+      ...Array.from({ length: 4 }, (_, i) => tab(`so${i}`, `Development question ${i}`, "stackoverflow.com")),
+    ];
+    // All 8 tabs already live in "Development" — a real Auto-Organize run
+    // should still be able to propose splitting them into groups without
+    // moving a single tab between workspaces (AGENTS.md section 7's
+    // "Physics: 14 tabs" → groups example).
+    const dev = workspace({ id: "ws-dev", name: "Development", tabs });
+    const semanticHints = tabs.map((t) => ({ tabId: t.id, clusterKey: "sem-dev" }));
+
+    const plan = analyzeForOrganization([dev], [dev], semanticHints);
+
+    expect(plan.workspaces).toHaveLength(1);
+    expect(plan.workspaces[0].existingWorkspaceId).toBe("ws-dev");
+    expect(plan.workspaces[0].tabs).toEqual([]);
+    expect(plan.workspaces[0].groups?.length).toBe(2);
+    const groupNames = plan.workspaces[0].groups!.map((g) => g.proposedName).sort();
+    expect(groupNames).toEqual(["Github", "Stackoverflow"]);
+  });
+
+  it("reuses an existing group instead of proposing a duplicate-named new one", () => {
+    const tabs = [
+      tab("existing", "General Relativity overview", "arxiv.org"),
+      ...Array.from({ length: 4 }, (_, i) => tab(`gh${i}`, `Development repo ${i}`, "github.com")),
+      ...Array.from({ length: 4 }, (_, i) => tab(`so${i}`, `Development question ${i}`, "stackoverflow.com")),
+    ];
+    const dev = workspace({
+      id: "ws-dev",
+      name: "Development",
+      groups: [{ id: "g-github", name: "Github", createdAt: 0, updatedAt: 0 }],
+      tabs,
+    });
+    const semanticHints = tabs.map((t) => ({ tabId: t.id, clusterKey: "sem-dev" }));
+
+    const plan = analyzeForOrganization([dev], [dev], semanticHints);
+
+    const githubGroup = plan.workspaces[0].groups!.find((g) => g.proposedName === "Github")!;
+    expect(githubGroup.existingGroupId).toBe("g-github");
+    const stackoverflowGroup = plan.workspaces[0].groups!.find((g) => g.proposedName === "Stackoverflow")!;
+    expect(stackoverflowGroup.existingGroupId).toBeUndefined();
+  });
+
+  it("excludes tabs already correctly in the matched existing group from that group's proposal", () => {
+    const tabs = [
+      ...Array.from({ length: 4 }, (_, i) => tab(`gh${i}`, `Development repo ${i}`, "github.com")),
+      ...Array.from({ length: 4 }, (_, i) => tab(`so${i}`, `Development question ${i}`, "stackoverflow.com")),
+    ];
+    const dev = workspace({
+      id: "ws-dev",
+      name: "Development",
+      groups: [{ id: "g-github", name: "Github", createdAt: 0, updatedAt: 0 }],
+      // gh0 is already in the Github group — it shouldn't be re-listed.
+      tabs: tabs.map((t) => (t.id === "gh0" ? { ...t, groupId: "g-github" } : t)),
+    });
+    const semanticHints = tabs.map((t) => ({ tabId: t.id, clusterKey: "sem-dev" }));
+
+    const plan = analyzeForOrganization([dev], [dev], semanticHints);
+
+    const githubGroup = plan.workspaces[0].groups!.find((g) => g.existingGroupId === "g-github")!;
+    expect(githubGroup.tabIds).not.toContain("gh0");
+    expect(githubGroup.tabIds).toHaveLength(3);
+  });
+
   it("proposes sub-groups for a large cluster that splits cleanly by domain", () => {
     const tabs = [
       ...Array.from({ length: 4 }, (_, i) => tab(`gh${i}`, `Development repo ${i}`, "github.com")),

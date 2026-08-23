@@ -124,14 +124,27 @@ export function moveTabsBetweenWorkspaces(
     return { store, moved: [], notFound };
   }
 
+  // A moved tab's groupId (if any) belonged to a group in its OLD workspace
+  // — carrying it across would violate the "a tab's group must live in the
+  // tab's own workspace" invariant (a stray groupId string that happens to
+  // collide with nothing, or worse, with an unrelated group of the same id
+  // shape, in the destination). Moving workspaces always drops group
+  // membership; the caller can re-assign a group in the destination
+  // afterward via assignTabsToGroup.
   const now = Date.now();
+  const ungrouped = moved.map((t) => {
+    if (t.groupId === undefined) return t;
+    const copy = { ...t };
+    delete copy.groupId;
+    return copy;
+  });
   const withTarget = withoutMoved.map((w) =>
     w.id === targetWorkspaceId
-      ? { ...w, tabs: markDuplicates([...w.tabs, ...moved]), updatedAt: now }
+      ? { ...w, tabs: markDuplicates([...w.tabs, ...ungrouped]), updatedAt: now }
       : w
   );
 
-  return { store: { ...store, workspaces: withTarget }, moved, notFound };
+  return { store: { ...store, workspaces: withTarget }, moved: ungrouped, notFound };
 }
 
 export function createGroup(store: WorkspaceStore, workspaceId: string, name: string): { store: WorkspaceStore; group: Group } {
@@ -151,4 +164,54 @@ export function renameGroup(store: WorkspaceStore, workspaceId: string, groupId:
     return { ...w, groups, updatedAt: now };
   });
   return { ...store, workspaces };
+}
+
+/**
+ * Sets `groupId` on every tab in `workspaceId` matching `tabIds` — the pure
+ * mutation behind the assign_tabs_to_group action (src/lib/actions/
+ * group-membership.ts), which is the only place that validates the group
+ * and tabs actually exist/belong to this workspace before calling this.
+ * Also doubles as "move a tab from one group to another": passing a
+ * different `groupId` for an already-grouped tab simply overwrites it,
+ * there is no separate move function. Ids outside `workspaceId`, or not
+ * present in it, are silently ignored (not an error at this layer — see the
+ * action's own `notFoundTabIds` reporting). Returns the exact same
+ * workspace/tab references when nothing actually changed, so unrelated
+ * workspaces and untouched tabs stay referentially unchanged.
+ */
+export function assignTabsToGroup(store: WorkspaceStore, workspaceId: string, tabIds: string[], groupId: string): WorkspaceStore {
+  const wanted = new Set(tabIds);
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => {
+    if (w.id !== workspaceId) return w;
+    let changed = false;
+    const tabs = w.tabs.map((t) => {
+      if (!wanted.has(t.id) || t.groupId === groupId) return t;
+      changed = true;
+      return { ...t, groupId };
+    });
+    return changed ? { ...w, tabs, updatedAt: now } : w;
+  });
+  return workspaces === store.workspaces || workspaces.every((w, i) => w === store.workspaces[i])
+    ? store
+    : { ...store, workspaces };
+}
+
+/** Clears `groupId` on every tab in `workspaceId` matching `tabIds`, leaving them ungrouped but otherwise untouched. See assignTabsToGroup's doc for the shared contract (silently ignores unmatched ids, referentially stable when nothing changes). */
+export function removeTabsFromGroup(store: WorkspaceStore, workspaceId: string, tabIds: string[]): WorkspaceStore {
+  const wanted = new Set(tabIds);
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => {
+    if (w.id !== workspaceId) return w;
+    let changed = false;
+    const tabs = w.tabs.map((t) => {
+      if (!wanted.has(t.id) || t.groupId === undefined) return t;
+      changed = true;
+      const copy = { ...t };
+      delete copy.groupId;
+      return copy;
+    });
+    return changed ? { ...w, tabs, updatedAt: now } : w;
+  });
+  return workspaces.every((w, i) => w === store.workspaces[i]) ? store : { ...store, workspaces };
 }

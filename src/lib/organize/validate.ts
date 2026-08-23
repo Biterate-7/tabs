@@ -35,13 +35,13 @@ export function isValidOrganizationPlanInput(value: unknown): value is Organizat
     if (!tabsValid) return false;
     if (rec.groups === undefined) return true;
     if (!Array.isArray(rec.groups)) return false;
-    return rec.groups.every(
-      (g) =>
-        g &&
-        typeof g === "object" &&
-        typeof (g as Record<string, unknown>).proposedName === "string" &&
-        isStringArray((g as Record<string, unknown>).tabIds)
-    );
+    return rec.groups.every((g) => {
+      if (!g || typeof g !== "object") return false;
+      const gRec = g as Record<string, unknown>;
+      if (typeof gRec.proposedName !== "string" || !isStringArray(gRec.tabIds)) return false;
+      if (gRec.existingGroupId !== undefined && typeof gRec.existingGroupId !== "string") return false;
+      return true;
+    });
   });
   if (!workspacesValid) return false;
 
@@ -69,7 +69,14 @@ export function validateOrganizationPlan(plan: OrganizationPlan, store: Workspac
   const errors: string[] = [];
   const knownTabIds = new Set(store.workspaces.flatMap((w) => w.tabs.map((t) => t.id)));
   const knownWorkspaceIds = new Set(store.workspaces.map((w) => w.id));
+  const currentWorkspaceIdByTab = new Map(store.workspaces.flatMap((w) => w.tabs.map((t): [string, string] => [t.id, w.id])));
   const seenTabIds = new Set<string>();
+  // Separate from seenTabIds: a tab legitimately appears both in a
+  // workspace proposal's `tabs` (being moved in) AND in one of its
+  // `groups[].tabIds` (being grouped once there) — that's not a duplicate.
+  // It's only ever a problem if the SAME tab shows up in two different
+  // groups.
+  const seenGroupTabIds = new Set<string>();
 
   function checkTabId(tabId: string, where: string) {
     if (!knownTabIds.has(tabId)) {
@@ -94,13 +101,41 @@ export function validateOrganizationPlan(plan: OrganizationPlan, store: Workspac
       errors.push(`Workspace proposal #${i + 1} ("${proposal.proposedName}") has no tabs or groups.`);
     }
     for (const t of proposal.tabs) checkTabId(t.tabId, `workspace proposal "${proposal.proposedName}"`);
+
+    const targetWorkspace = proposal.existingWorkspaceId ? store.workspaces.find((w) => w.id === proposal.existingWorkspaceId) : undefined;
+    const knownExistingGroupIds = new Set((targetWorkspace?.groups ?? []).map((g) => g.id));
+    const movedTabIds = new Set(proposal.tabs.map((t) => t.tabId));
+
     for (const group of proposal.groups ?? []) {
       if (!group.proposedName || !group.proposedName.trim()) {
         errors.push(`A group under "${proposal.proposedName}" has an empty name.`);
       }
+      if (group.existingGroupId) {
+        if (!proposal.existingWorkspaceId) {
+          errors.push(`Group "${group.proposedName}" references an existing group id, but workspace proposal "${proposal.proposedName}" is for a brand-new workspace.`);
+        } else if (!knownExistingGroupIds.has(group.existingGroupId)) {
+          errors.push(`Unknown group id "${group.existingGroupId}" referenced by group "${group.proposedName}" in workspace proposal "${proposal.proposedName}".`);
+        }
+      }
       for (const tabId of group.tabIds) {
         if (!knownTabIds.has(tabId)) {
           errors.push(`Unknown tab id "${tabId}" referenced in group "${group.proposedName}".`);
+          continue;
+        }
+        if (seenGroupTabIds.has(tabId)) {
+          errors.push(`Tab id "${tabId}" is assigned to more than one group.`);
+          continue;
+        }
+        seenGroupTabIds.add(tabId);
+
+        // The tab must actually end up in this proposal's target workspace
+        // — either it's already resident there, or it's one of the tabs
+        // this same proposal is moving in. A brand-new workspace has no
+        // residents yet, so its group tabs must all be among the ones
+        // being moved in.
+        const alreadyResident = proposal.existingWorkspaceId && currentWorkspaceIdByTab.get(tabId) === proposal.existingWorkspaceId;
+        if (!alreadyResident && !movedTabIds.has(tabId)) {
+          errors.push(`Tab id "${tabId}" in group "${group.proposedName}" isn't in workspace proposal "${proposal.proposedName}".`);
         }
       }
     }

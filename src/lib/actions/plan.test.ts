@@ -107,6 +107,17 @@ describe("describePlannedAction", () => {
       affected: 1,
     });
   });
+
+  it("describes assign_tabs_to_group and remove_tabs_from_group", () => {
+    expect(describePlannedAction("assign_tabs_to_group", { assignedCount: 6, groupName: "General Relativity" })).toEqual({
+      label: 'Assign 6 tabs → group "General Relativity"',
+      affected: 6,
+    });
+    expect(describePlannedAction("remove_tabs_from_group", { removedCount: 1 })).toEqual({
+      label: "Remove 1 tab from their group",
+      affected: 1,
+    });
+  });
 });
 
 describe("summarizePlan", () => {
@@ -126,6 +137,11 @@ describe("summarizePlan", () => {
 
   it("returns a no-op message for an empty plan", () => {
     expect(summarizePlan([])).toBe("This makes no changes.");
+  });
+
+  it("summarizes group assignment and removal", () => {
+    const plan = [plannedAction({ name: "assign_tabs_to_group", affected: 6 }), plannedAction({ name: "remove_tabs_from_group", affected: 2 })];
+    expect(summarizePlan(plan)).toBe("This will group 6 tabs and ungroup 2 tabs.");
   });
 });
 
@@ -212,6 +228,23 @@ describe("applyPlan", () => {
     const store = makeStore([makeWorkspace({ id: "a" })], "a");
     const result = applyPlan([{ name: "open_tabs", args: { urls: ["https://a.com"] } }], store);
     expect(result.actions).toEqual([{ name: "open_tabs", ok: false, message: expect.stringContaining("isn't connected") }]);
+  });
+
+  it("creates a group and assigns tabs to it across two plan steps", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com" }] })],
+      "a"
+    );
+    const created = applyPlan([{ name: "create_group", args: { workspaceId: "a", name: "Physics" } }], store);
+    const groupId = created.actions[0].message.includes("groupId")
+      ? (JSON.parse(created.actions[0].message).group.groupId as string)
+      : "";
+    expect(groupId).toBeTruthy();
+
+    const result = applyPlan([{ name: "assign_tabs_to_group", args: { workspaceId: "a", tabIds: ["1"], groupId } }], created.store);
+    expect(result.storeChanged).toBe(true);
+    expect(result.store.workspaces[0].tabs[0].groupId).toBe(groupId);
+    expect(result.text).toMatch(/^Done —/);
   });
 
   it("rejects a plan action whose scope no longer matches (workspace it was validated against has since changed)", () => {

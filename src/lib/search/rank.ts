@@ -15,6 +15,8 @@ import type { MatchReason, SearchResult, SemanticHint } from "./types";
 export const SEARCH_WEIGHTS = {
   titleExact: 6,
   titleSubstring: 4,
+  groupExact: 3.75,
+  groupSubstring: 3.25,
   urlOrDomain: 3,
   workspaceName: 2.5,
   /** Multiplied by the semantic hint's cosine similarity (already thresholded upstream — see retrieveRelevantChunksAcrossWorkspaces). */
@@ -24,15 +26,29 @@ export const SEARCH_WEIGHTS = {
 /** How many candidates rankTabs() returns by default — "retrieve top 20." Callers (search_tabs) may pass their own limit. */
 export const DEFAULT_SEARCH_LIMIT = 20;
 
+function resolveGroup(tab: Tab, workspace: Workspace) {
+  if (!tab.groupId) return undefined;
+  return (workspace.groups ?? []).find((g) => g.id === tab.groupId);
+}
+
+/**
+ * Ranking priority (AGENTS.md section 17): exact title > title substring >
+ * exact group name > group substring > domain/URL > workspace name >
+ * semantic similarity. `matchReason` follows the same priority via the
+ * `??=` chain below — the first (most literal/certain) signal that actually
+ * matched wins, even though `score` itself is additive across every signal
+ * that matched.
+ */
 function scoreTab(
   tab: Tab,
   workspace: Workspace,
   query: string,
   semanticScore: number
-): { score: number; matchReason: MatchReason } {
+): { score: number; matchReason: MatchReason; group?: { groupId: string; groupName: string } } {
   const q = query.trim().toLowerCase();
   let score = 0;
   let matchReason: MatchReason | null = null;
+  const group = resolveGroup(tab, workspace);
 
   if (q) {
     const title = (tab.title?.trim() || tab.domain).toLowerCase();
@@ -44,6 +60,17 @@ function scoreTab(
       matchReason = "title";
     }
 
+    if (group) {
+      const groupName = group.name.trim().toLowerCase();
+      if (groupName === q) {
+        score += SEARCH_WEIGHTS.groupExact;
+        matchReason ??= "group";
+      } else if (groupName.includes(q)) {
+        score += SEARCH_WEIGHTS.groupSubstring;
+        matchReason ??= "group";
+      }
+    }
+
     if (tab.domain.toLowerCase().includes(q) || tab.url.toLowerCase().includes(q)) {
       score += SEARCH_WEIGHTS.urlOrDomain;
       matchReason ??= "url";
@@ -53,12 +80,6 @@ function scoreTab(
       score += SEARCH_WEIGHTS.workspaceName;
       matchReason ??= "workspace";
     }
-
-    // Tabs have no group assignment in this version of TabDump (groups are
-    // workspace-level containers created via create_group, but no action
-    // yet puts a tab *in* one) — so there's no per-tab group name to match
-    // against, and SearchResult.groupId/groupName below stay unset rather
-    // than faking a value. Wire this up once tab→group assignment exists.
   }
 
   if (semanticScore > 0) {
@@ -66,7 +87,7 @@ function scoreTab(
     matchReason ??= "semantic";
   }
 
-  return { score, matchReason: matchReason ?? "keyword" };
+  return { score, matchReason: matchReason ?? "keyword", ...(group ? { group: { groupId: group.id, groupName: group.name } } : {}) };
 }
 
 /**
@@ -91,7 +112,7 @@ export function rankTabs(params: {
   for (const workspace of params.workspaces) {
     for (const tab of workspace.tabs) {
       const semanticScore = hintByTab.get(tab.id) ?? 0;
-      const { score, matchReason } = scoreTab(tab, workspace, params.query, semanticScore);
+      const { score, matchReason, group } = scoreTab(tab, workspace, params.query, semanticScore);
       if (score <= 0) continue;
 
       results.push({
@@ -101,6 +122,7 @@ export function rankTabs(params: {
         domain: tab.domain,
         workspaceId: workspace.id,
         workspaceName: workspace.name,
+        ...(group ? { groupId: group.groupId, groupName: group.groupName } : {}),
         score,
         matchReason,
       });

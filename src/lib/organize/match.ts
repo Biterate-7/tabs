@@ -1,4 +1,4 @@
-import type { Workspace } from "@/lib/workspace/types";
+import type { Group, Workspace } from "@/lib/workspace/types";
 import type { ScopedTab } from "./types";
 import { tabTokens, tokenize } from "./keywords";
 
@@ -67,6 +67,64 @@ export function findBestWorkspaceMatch(
     const score = scoreWorkspaceMatch(clusterTabIds, clusterTabsById, workspace);
     if (score >= REUSE_THRESHOLD && (!best || score > best.score)) {
       best = { workspaceId: workspace.id, workspaceName: workspace.name, score };
+    }
+  }
+  return best;
+}
+
+/** How much reuse evidence a group-level sub-cluster needs before preferring an existing group over proposing a new one — the group-level counterpart to REUSE_THRESHOLD above, per AGENTS.md's "prefer Physics / General Relativity over Physics / General Relativity 2" example. */
+const GROUP_REUSE_THRESHOLD = 1.2;
+
+export type GroupMatch = { groupId: string; groupName: string; score: number };
+
+/**
+ * Scores how well a group-level sub-cluster fits an existing group within
+ * `workspace`, mirroring scoreWorkspaceMatch's shape one level down: how
+ * much of the sub-cluster is already IN that group, how well the group's
+ * own name overlaps the sub-cluster's keywords, and how well the
+ * sub-cluster overlaps the group's OTHER existing tabs. Unlike the
+ * workspace version there's no "entirely-one-source" tautology guard needed
+ * — a sub-cluster being carved out of one workspace's tabs and matched
+ * against that SAME workspace's own groups is exactly the intended use.
+ */
+export function scoreGroupMatch(
+  clusterTabIds: string[],
+  clusterTabsById: Map<string, ScopedTab>,
+  workspace: Workspace,
+  group: Group
+): number {
+  const clusterSet = new Set(clusterTabIds);
+
+  const memberCount = clusterTabIds.filter((id) => clusterTabsById.get(id)?.tab.groupId === group.id).length;
+  const membershipFraction = memberCount / clusterTabIds.length;
+
+  const clusterTokens = clusterTabIds.flatMap((id) => {
+    const st = clusterTabsById.get(id);
+    return st ? tabTokens(st.tab) : [];
+  });
+
+  const nameTokens = tokenize(group.name);
+  const nameOverlap = containment(nameTokens, clusterTokens);
+
+  const otherGroupTabTokens = workspace.tabs
+    .filter((t) => t.groupId === group.id && !clusterSet.has(t.id))
+    .flatMap((t) => tabTokens(t));
+  const contentOverlap = otherGroupTabTokens.length > 0 ? containment(clusterTokens, otherGroupTabTokens) : 0;
+
+  return membershipFraction * 3 + nameOverlap * 2 + contentOverlap * 1.5;
+}
+
+/** Picks the best-fitting existing group in `workspace` for a sub-cluster, or `null` if nothing clears GROUP_REUSE_THRESHOLD. */
+export function findBestGroupMatch(
+  clusterTabIds: string[],
+  clusterTabsById: Map<string, ScopedTab>,
+  workspace: Workspace
+): GroupMatch | null {
+  let best: GroupMatch | null = null;
+  for (const group of workspace.groups ?? []) {
+    const score = scoreGroupMatch(clusterTabIds, clusterTabsById, workspace, group);
+    if (score >= GROUP_REUSE_THRESHOLD && (!best || score > best.score)) {
+      best = { groupId: group.id, groupName: group.name, score };
     }
   }
   return best;

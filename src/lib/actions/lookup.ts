@@ -35,13 +35,18 @@ export function workspaceSummary(w: Workspace) {
     workspaceId: w.id,
     name: w.name,
     tabCount: w.tabs.length,
-    groups: (w.groups ?? []).map((g) => ({ groupId: g.id, name: g.name })),
+    groups: (w.groups ?? []).map((g) => ({
+      groupId: g.id,
+      name: g.name,
+      tabCount: w.tabs.filter((t) => t.groupId === g.id).length,
+    })),
     createdAt: w.createdAt,
     updatedAt: w.updatedAt,
   };
 }
 
 export function tabSummary(tab: Tab, workspace: Workspace) {
+  const group = tab.groupId ? findGroup(workspace, tab.groupId) : null;
   return {
     tabId: tab.id,
     title: tab.title?.trim() || tab.domain,
@@ -51,5 +56,6 @@ export function tabSummary(tab: Tab, workspace: Workspace) {
     isDuplicate: Boolean(tab.isDuplicate),
     workspaceId: workspace.id,
     workspaceName: workspace.name,
+    ...(group ? { groupId: group.id, groupName: group.name } : {}),
   };
 }

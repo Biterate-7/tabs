@@ -138,8 +138,58 @@ describe("rankTabs", () => {
     expect(results.map((r) => r.tabId).sort()).toEqual(["dup-1", "dup-2"]);
   });
 
-  it("leaves groupId/groupName unset — tabs have no group assignment in this version of TabDump", () => {
+  it("leaves groupId/groupName unset for an ungrouped tab", () => {
     const workspaces = [makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics" })] })];
+    const results = rankTabs({ workspaces, query: "physics" });
+    expect(results[0].groupId).toBeUndefined();
+    expect(results[0].groupName).toBeUndefined();
+  });
+
+  it("surfaces groupId/groupName for a grouped tab that matched on something else", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "a",
+        groups: [{ id: "g1", name: "General Relativity", createdAt: 0, updatedAt: 0 }],
+        tabs: [makeTab("1", { title: "Physics notes", groupId: "g1" })],
+      }),
+    ];
+    const results = rankTabs({ workspaces, query: "physics" });
+    expect(results[0].groupId).toBe("g1");
+    expect(results[0].groupName).toBe("General Relativity");
+  });
+
+  it("matches on an exact group name, ranked above a mere domain/URL match", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "a",
+        groups: [{ id: "g1", name: "Relativity", createdAt: 0, updatedAt: 0 }],
+        tabs: [
+          makeTab("group-match", { title: "Untitled", domain: "arxiv.org", groupId: "g1" }),
+          makeTab("url-match", { title: "Untitled", domain: "relativity.example" }),
+        ],
+      }),
+    ];
+    const results = rankTabs({ workspaces, query: "relativity" });
+    expect(results.map((r) => r.tabId)).toEqual(["group-match", "url-match"]);
+    expect(results[0].matchReason).toBe("group");
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  it("matches on a group name substring", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "a",
+        groups: [{ id: "g1", name: "General Relativity Notes", createdAt: 0, updatedAt: 0 }],
+        tabs: [makeTab("1", { title: "Untitled", groupId: "g1" })],
+      }),
+    ];
+    const results = rankTabs({ workspaces, query: "relativity" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchReason).toBe("group");
+  });
+
+  it("ignores a groupId that doesn't resolve to any group in the workspace", () => {
+    const workspaces = [makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics", groupId: "ghost" })] })];
     const results = rankTabs({ workspaces, query: "physics" });
     expect(results[0].groupId).toBeUndefined();
     expect(results[0].groupName).toBeUndefined();

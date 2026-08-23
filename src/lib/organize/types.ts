@@ -22,9 +22,11 @@ export type OrganizeTabAssignment = {
 };
 
 export type OrganizeGroupProposal = {
+  /** Set when this sub-cluster is being reused into an existing group rather than creating a new one — see match.ts's findBestGroupMatch, the group-level counterpart to OrganizeWorkspaceProposal's existingWorkspaceId. */
+  existingGroupId?: string;
   proposedName: string;
   reason: string;
-  /** Tabs that would conceptually belong in this group — descriptive only; see AGENTS.md section 13's scope note in apply.ts, since TabDump has no tab→group assignment action yet. */
+  /** Tabs to actually assign to this group via assign_tabs_to_group at Apply time — see apply.ts. A tab already correctly in this exact group is left out, same no-op-exclusion convention as OrganizeWorkspaceProposal.tabs. */
   tabIds: string[];
 };
 

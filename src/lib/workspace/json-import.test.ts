@@ -272,6 +272,134 @@ describe("parseWorkspaceExport", () => {
     expect(groups.map((g) => g.name)).toEqual(["First", "Second", "No id at all"]);
   });
 
+  it("round-trips a tab's groupId through export and import", () => {
+    const workspace = makeWorkspace({
+      id: "a",
+      groups: [{ id: "g1", name: "Midterms", createdAt: 10, updatedAt: 20 }],
+      tabs: [
+        { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", groupId: "g1" },
+        { id: "t2", url: "https://b.example", normalizedUrl: "https://b.example", domain: "b.example" },
+      ],
+    });
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace]));
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const [t1, t2] = result.workspaces[0].tabs;
+    expect(t1.groupId).toBe("g1");
+    expect(t2.groupId).toBeUndefined();
+  });
+
+  it("remaps a tab's groupId when the group's id is regenerated on import due to a collision", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Dup groups",
+          createdAt: 1,
+          updatedAt: 1,
+          groups: [
+            { id: "dup", name: "First", createdAt: 1, updatedAt: 1 },
+            { id: "dup", name: "Second", createdAt: 1, updatedAt: 1 },
+          ],
+          tabs: [
+            { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", groupId: "dup" },
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const groups = result.workspaces[0].groups!;
+    const first = groups.find((g) => g.name === "First")!;
+    // The raw export had t1.groupId reference the FIRST "dup" id (which
+    // keeps it); the second "First"-named group is the one that collided
+    // and got a freshly minted id instead.
+    expect(result.workspaces[0].tabs[0].groupId).toBe(first.id);
+  });
+
+  it("drops a tab's groupId that doesn't reference any group in the workspace, without failing the import", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Dangling ref",
+          createdAt: 1,
+          updatedAt: 1,
+          groups: [{ id: "g1", name: "Real group", createdAt: 1, updatedAt: 1 }],
+          tabs: [
+            { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", groupId: "ghost" },
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].tabs).toHaveLength(1);
+    expect(result.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("drops a tab's groupId when the workspace has no groups array at all", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "No groups",
+          createdAt: 1,
+          updatedAt: 1,
+          tabs: [
+            { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", groupId: "g1" },
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("drops a malformed (non-string) tab.groupId without failing the tab", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Malformed groupId",
+          createdAt: 1,
+          updatedAt: 1,
+          groups: [{ id: "g1", name: "Real group", createdAt: 1, updatedAt: 1 }],
+          tabs: [
+            { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", groupId: 42 },
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
   it("handles duplicate workspace ids across the imported payload without crashing", () => {
     const text = serializeWorkspaceExport(
       buildWorkspaceExport([makeWorkspace({ id: "dup" }), makeWorkspace({ id: "dup", name: "Second" })])

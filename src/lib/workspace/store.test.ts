@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   addWorkspaces,
+  assignTabsToGroup,
   createGroup,
   createWorkspace,
   deleteWorkspace,
   getCurrentWorkspace,
   moveTabsBetweenWorkspaces,
+  removeTabsFromGroup,
   renameGroup,
   renameWorkspace,
   switchWorkspace,
@@ -218,6 +220,19 @@ describe("moveTabsBetweenWorkspaces", () => {
     expect(result.store.workspaces[0].tabs).toEqual([]);
   });
 
+  it("clears a moved tab's groupId — a group only ever belongs to the workspace it was created in", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g-in-a" }] }),
+        makeWorkspace({ id: "b", tabs: [] }),
+      ],
+      "a"
+    );
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b", "a");
+    expect(result.moved[0].groupId).toBeUndefined();
+    expect(result.store.workspaces[1].tabs[0].groupId).toBeUndefined();
+  });
+
   it("re-flags duplicates in the destination after the move", () => {
     const store = makeStore(
       [
@@ -245,5 +260,98 @@ describe("createGroup / renameGroup", () => {
     const { store: withGroup, group } = createGroup(store, "a", "Old name");
     const next = renameGroup(withGroup, "a", group.id, "New name");
     expect(next.workspaces[0].groups?.[0].name).toBe("New name");
+  });
+});
+
+describe("assignTabsToGroup", () => {
+  it("assigns one tab to a group", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = assignTabsToGroup(store, "a", ["1"], "g1");
+    expect(next.workspaces[0].tabs[0].groupId).toBe("g1");
+  });
+
+  it("assigns multiple tabs to a group", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1"), makeTab("2"), makeTab("3")] })], "a");
+    const next = assignTabsToGroup(store, "a", ["1", "2"], "g1");
+    expect(next.workspaces[0].tabs.map((t) => t.groupId)).toEqual(["g1", "g1", undefined]);
+  });
+
+  it("reassigns an already-grouped tab to a different group (move between groups)", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
+    const next = assignTabsToGroup(store, "a", ["1"], "g2");
+    expect(next.workspaces[0].tabs[0].groupId).toBe("g2");
+  });
+
+  it("does not mutate the original store", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    assignTabsToGroup(store, "a", ["1"], "g1");
+    expect(store.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("silently ignores tab ids that don't exist in the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = assignTabsToGroup(store, "a", ["ghost"], "g1");
+    expect(next.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("leaves other workspaces and their tabs untouched", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [makeTab("1")] }), makeWorkspace({ id: "b", tabs: [makeTab("2")] })],
+      "a"
+    );
+    const next = assignTabsToGroup(store, "a", ["1"], "g1");
+    expect(next.workspaces[1]).toBe(store.workspaces[1]);
+  });
+
+  it("does not assign a tab into a group id belonging to a different workspace", () => {
+    // assignTabsToGroup is scoped by workspaceId — a tab in workspace "b"
+    // is simply not touched even if groupId "g1" happens to exist in "a".
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [] }), makeWorkspace({ id: "b", tabs: [makeTab("1")] })],
+      "a"
+    );
+    const next = assignTabsToGroup(store, "a", ["1"], "g1");
+    expect(next.workspaces[1].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("is referentially stable when nothing actually changes", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
+    const next = assignTabsToGroup(store, "a", ["1"], "g1");
+    expect(next).toBe(store);
+  });
+});
+
+describe("removeTabsFromGroup", () => {
+  it("removes one tab from its group", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
+    const next = removeTabsFromGroup(store, "a", ["1"]);
+    expect(next.workspaces[0].tabs[0].groupId).toBeUndefined();
+  });
+
+  it("removes multiple tabs from their groups", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }, { ...makeTab("2"), groupId: "g2" }] })],
+      "a"
+    );
+    const next = removeTabsFromGroup(store, "a", ["1", "2"]);
+    expect(next.workspaces[0].tabs.every((t) => t.groupId === undefined)).toBe(true);
+  });
+
+  it("leaves an already-ungrouped tab untouched (and referentially stable)", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = removeTabsFromGroup(store, "a", ["1"]);
+    expect(next).toBe(store);
+  });
+
+  it("does not mutate the original store", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
+    removeTabsFromGroup(store, "a", ["1"]);
+    expect(store.workspaces[0].tabs[0].groupId).toBe("g1");
+  });
+
+  it("clearing a group leaves the tab valid and simply ungrouped", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
+    const next = removeTabsFromGroup(store, "a", ["1"]);
+    expect(next.workspaces[0].tabs[0]).toEqual(makeTab("1"));
   });
 });

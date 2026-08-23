@@ -23,11 +23,11 @@ import { describeOrganizationApplied } from "./summarize";
  * rule every other Apply path in this codebase follows). A failed
  * validation applies nothing.
  *
- * Group proposals only ever create the group itself (create_group) — there
- * is no tab→group assignment action anywhere in TabDump yet, so a group's
- * `tabIds` stay descriptive (surfaced to the user, not enacted) until that
- * capability exists. This is a deliberate, conservative scope choice, not
- * an oversight — see AGENTS.md section 13.
+ * A group proposal creates the group (create_group) when it isn't reusing
+ * an existing one (OrganizeGroupProposal.existingGroupId), then actually
+ * assigns its tabIds via assign_tabs_to_group — same "resolve the real id
+ * before the next call" sequencing as a brand-new workspace's id above,
+ * since a freshly created group's id isn't known until create_group runs.
  */
 export function applyOrganizationPlan(plan: OrganizationPlan, store: WorkspaceStore, ctx?: ActionRunContext): ApplyPlanResult {
   const validation = validateOrganizationPlan(plan, store);
@@ -69,12 +69,27 @@ export function applyOrganizationPlan(plan: OrganizationPlan, store: WorkspaceSt
     }
 
     for (const group of proposal.groups ?? []) {
-      const outcome = runAction("create_group", { workspaceId: targetWorkspaceId, name: group.proposedName }, current, ctx);
-      if (outcome.ok) {
+      let targetGroupId = group.existingGroupId;
+
+      if (!targetGroupId) {
+        const outcome = runAction("create_group", { workspaceId: targetWorkspaceId, name: group.proposedName }, current, ctx);
+        if (!outcome.ok) {
+          actions.push({ name: "create_group", ok: false, message: outcome.message });
+          continue;
+        }
         current = outcome.store;
+        targetGroupId = (outcome.data as { group: { groupId: string } }).group.groupId;
         actions.push({ name: "create_group", ok: true, message: JSON.stringify(outcome.data) });
-      } else {
-        actions.push({ name: "create_group", ok: false, message: outcome.message });
+      }
+
+      if (group.tabIds.length > 0) {
+        const outcome = runAction("assign_tabs_to_group", { workspaceId: targetWorkspaceId, tabIds: group.tabIds, groupId: targetGroupId }, current, ctx);
+        if (outcome.ok) {
+          current = outcome.store;
+          actions.push({ name: "assign_tabs_to_group", ok: true, message: JSON.stringify(outcome.data) });
+        } else {
+          actions.push({ name: "assign_tabs_to_group", ok: false, message: outcome.message });
+        }
       }
     }
   }

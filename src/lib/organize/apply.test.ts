@@ -96,6 +96,79 @@ describe("applyOrganizationPlan", () => {
     expect(physics.groups?.map((g) => g.name)).toEqual(["IA"]);
   });
 
+  it("creates a group and actually assigns its tabs to it", () => {
+    const plan: OrganizationPlan = {
+      summary: "s",
+      workspaces: [
+        {
+          existingWorkspaceId: "ws-2",
+          proposedName: "Physics",
+          reason: "r",
+          tabs: [{ tabId: "t1", reason: "r", confidence: "high" }, { tabId: "t2", reason: "r", confidence: "high" }],
+          groups: [{ proposedName: "IA", reason: "r", tabIds: ["t1", "t2"] }],
+        },
+      ],
+      uncertainTabs: [],
+      duplicates: [],
+      totalTabsConsidered: 2,
+    };
+
+    const result = applyOrganizationPlan(plan, store());
+    const physics = result.store.workspaces.find((w) => w.id === "ws-2")!;
+    const iaGroup = physics.groups!.find((g) => g.name === "IA")!;
+    expect(physics.tabs.every((t) => t.groupId === iaGroup.id)).toBe(true);
+  });
+
+  it("assigns tabs into an existing group via existingGroupId without creating a new one", () => {
+    const s = store();
+    s.workspaces[1].groups = [{ id: "existing-group", name: "IA", createdAt: 0, updatedAt: 0 }];
+
+    const plan: OrganizationPlan = {
+      summary: "s",
+      workspaces: [
+        {
+          existingWorkspaceId: "ws-2",
+          proposedName: "Physics",
+          reason: "r",
+          tabs: [{ tabId: "t1", reason: "r", confidence: "high" }],
+          groups: [{ existingGroupId: "existing-group", proposedName: "IA", reason: "r", tabIds: ["t1"] }],
+        },
+      ],
+      uncertainTabs: [],
+      duplicates: [],
+      totalTabsConsidered: 1,
+    };
+
+    const result = applyOrganizationPlan(plan, s);
+    const physics = result.store.workspaces.find((w) => w.id === "ws-2")!;
+    expect(physics.groups).toHaveLength(1); // no second group created
+    expect(physics.groups![0].id).toBe("existing-group");
+    expect(physics.tabs.find((t) => t.id === "t1")!.groupId).toBe("existing-group");
+  });
+
+  it("applies a full workspace-move + group-creation + tab-assignment plan as one operation", () => {
+    const plan: OrganizationPlan = {
+      summary: "s",
+      workspaces: [
+        {
+          proposedName: "MUN",
+          reason: "r",
+          tabs: [{ tabId: "t3", reason: "r", confidence: "high" }],
+          groups: [{ proposedName: "Research", reason: "r", tabIds: ["t3"] }],
+        },
+      ],
+      uncertainTabs: [],
+      duplicates: [],
+      totalTabsConsidered: 1,
+    };
+
+    const result = applyOrganizationPlan(plan, store());
+    const mun = result.store.workspaces.find((w) => w.name === "MUN")!;
+    const researchGroup = mun.groups!.find((g) => g.name === "Research")!;
+    expect(mun.tabs[0].id).toBe("t3");
+    expect(mun.tabs[0].groupId).toBe(researchGroup.id);
+  });
+
   it("applies a combined multi-workspace plan as one operation", () => {
     const plan: OrganizationPlan = {
       summary: "s",

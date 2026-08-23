@@ -99,6 +99,16 @@ export function describePlannedAction(name: string, data: unknown): { label: str
       const d = data as { group: { name: string } };
       return { label: `Rename group → "${d.group.name}"`, affected: 1 };
     }
+    case "assign_tabs_to_group": {
+      const d = data as { assignedCount: number; groupName: string };
+      const count = d.assignedCount;
+      return { label: `Assign ${count} tab${count === 1 ? "" : "s"} → group "${d.groupName}"`, affected: count };
+    }
+    case "remove_tabs_from_group": {
+      const d = data as { removedCount: number };
+      const count = d.removedCount;
+      return { label: `Remove ${count} tab${count === 1 ? "" : "s"} from their group`, affected: count };
+    }
     case "open_url": {
       const d = data as { url: string };
       return { label: `Open tab → ${d.url}`, affected: 1 };
@@ -160,6 +170,8 @@ export function summarizePlan(actions: PlannedAction[]): string {
     .filter((a) => a.name === "move_tab" || a.name === "move_tabs")
     .reduce((sum, a) => sum + a.affected, 0);
   const renames = actions.filter((a) => a.name === "rename_workspace" || a.name === "rename_group").length;
+  const tabsGrouped = actions.filter((a) => a.name === "assign_tabs_to_group").reduce((sum, a) => sum + a.affected, 0);
+  const tabsUngrouped = actions.filter((a) => a.name === "remove_tabs_from_group").reduce((sum, a) => sum + a.affected, 0);
   const tabsOpened = actions
     .filter((a) => a.name === "open_url" || a.name === "open_tabs" || a.name === "open_workspace_in_browser")
     .reduce((sum, a) => sum + a.affected, 0);
@@ -169,6 +181,8 @@ export function summarizePlan(actions: PlannedAction[]): string {
   if (workspacesCreated > 0) parts.push(`create ${workspacesCreated} workspace${workspacesCreated === 1 ? "" : "s"}`);
   if (groupsCreated > 0) parts.push(`create ${groupsCreated} group${groupsCreated === 1 ? "" : "s"}`);
   if (tabsMoved > 0) parts.push(`move ${tabsMoved} tab${tabsMoved === 1 ? "" : "s"}`);
+  if (tabsGrouped > 0) parts.push(`group ${tabsGrouped} tab${tabsGrouped === 1 ? "" : "s"}`);
+  if (tabsUngrouped > 0) parts.push(`ungroup ${tabsUngrouped} tab${tabsUngrouped === 1 ? "" : "s"}`);
   if (renames > 0) parts.push(`rename ${renames} item${renames === 1 ? "" : "s"}`);
   if (tabsOpened > 0) parts.push(`open ${tabsOpened} browser tab${tabsOpened === 1 ? "" : "s"}`);
   if (tabsClosed > 0) parts.push(`close ${tabsClosed} browser tab${tabsClosed === 1 ? "" : "s"}`);
@@ -228,10 +242,14 @@ function summarizeApplyText(actions: AppliedAction[]): string {
   const groupsCreated = byName.get("create_group") ?? 0;
   const moves = (byName.get("move_tab") ?? 0) + (byName.get("move_tabs") ?? 0);
   const renames = (byName.get("rename_workspace") ?? 0) + (byName.get("rename_group") ?? 0);
+  const groupAssigns = byName.get("assign_tabs_to_group") ?? 0;
+  const groupRemovals = byName.get("remove_tabs_from_group") ?? 0;
 
   if (workspacesCreated > 0) parts.push(`created ${workspacesCreated} workspace${workspacesCreated === 1 ? "" : "s"}`);
   if (groupsCreated > 0) parts.push(`created ${groupsCreated} group${groupsCreated === 1 ? "" : "s"}`);
   if (moves > 0) parts.push(`moved tabs (${moves} move${moves === 1 ? "" : "s"})`);
+  if (groupAssigns > 0) parts.push(`assigned tabs to groups (${groupAssigns} call${groupAssigns === 1 ? "" : "s"})`);
+  if (groupRemovals > 0) parts.push(`removed tabs from groups (${groupRemovals} call${groupRemovals === 1 ? "" : "s"})`);
   if (renames > 0) parts.push(`renamed ${renames} item${renames === 1 ? "" : "s"}`);
 
   const done = parts.length > 0 ? joinWithAnd(parts) : `completed ${succeeded.length} change${succeeded.length === 1 ? "" : "s"}`;
