@@ -1,6 +1,6 @@
 import { sendBrowserCommand } from "./bridge"
 import type { BrowserRevertStep } from "./undo"
-import type { BrowserTabInfo, BrowserWindowInfo } from "./protocol"
+import type { BrowserCommandResult, BrowserTabInfo, BrowserWindowInfo } from "./protocol"
 
 /**
  * The one place a browser action Gemini decided on actually reaches Chrome.
@@ -17,7 +17,8 @@ export type BrowserActionExecution = {
   name: string
   ok: boolean
   message: string
-  revert?: BrowserRevertStep
+  /** A single step for most actions; an array only for a bulk action (bulk_pin_tabs/bulk_unpin_tabs) that reverts per-tab — see runBrowserExecutions' flattening below. */
+  revert?: BrowserRevertStep | BrowserRevertStep[]
 }
 
 /** Names that need a real post-hoc extension call — read actions and import_browser_tabs_to_workspace (a pure store mutation) don't. */
@@ -29,6 +30,8 @@ const EXECUTABLE_BROWSER_ACTIONS = new Set([
   "close_tabs",
   "pin_tab",
   "unpin_tab",
+  "bulk_pin_tabs",
+  "bulk_unpin_tabs",
   "move_tabs_to_window",
   "create_browser_window",
 ])
@@ -128,6 +131,41 @@ export async function executeBrowserAction(name: string, args: unknown, data: un
         ok: true,
         message: pinned ? "Pinned the tab." : "Unpinned the tab.",
         revert: { kind: "restore_pinned", tabId: a.tabId, pinned: res.result.previousPinned },
+      }
+    }
+
+    case "bulk_pin_tabs":
+    case "bulk_unpin_tabs": {
+      const a = args as { tabIds: number[] }
+      const pinned = name === "bulk_pin_tabs"
+      // No dedicated bulk extension command exists for pin/unpin (unlike
+      // close_tabs) — fan out to the same single-tab "pin_tab"/"unpin_tab"
+      // extension command per id, exactly as if the agent had called
+      // pin_tab/unpin_tab that many times, just without the extra Gemini
+      // round-trips. One BrowserRevertStep per successfully-pinned tab, so
+      // Undo restores each tab's own previous pinned state individually.
+      const results = await Promise.all(
+        a.tabIds.map((tabId) =>
+          sendBrowserCommand<{ tabId: number; pinned: boolean }, { previousPinned: boolean }>(pinned ? "pin_tab" : "unpin_tab", { tabId, pinned })
+        )
+      )
+      const succeeded = a.tabIds
+        .map((tabId, i) => ({ tabId, res: results[i] }))
+        .filter((x): x is { tabId: number; res: Extract<BrowserCommandResult<{ previousPinned: boolean }>, { ok: true }> } => x.res.ok)
+      const failedCount = a.tabIds.length - succeeded.length
+      const revert: BrowserRevertStep[] = succeeded.map((s) => ({ kind: "restore_pinned", tabId: s.tabId, pinned: s.res.result.previousPinned }))
+
+      if (succeeded.length === 0) {
+        return { name, ok: false, message: `Couldn't ${pinned ? "pin" : "unpin"} any of those tabs.` }
+      }
+      return {
+        name,
+        ok: true,
+        message:
+          failedCount > 0
+            ? `${pinned ? "Pinned" : "Unpinned"} ${succeeded.length} of ${a.tabIds.length} tabs — ${failedCount} couldn't be ${pinned ? "pinned" : "unpinned"}.`
+            : `${pinned ? "Pinned" : "Unpinned"} ${succeeded.length} tab${succeeded.length === 1 ? "" : "s"}.`,
+        revert,
       }
     }
 

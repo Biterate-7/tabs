@@ -1,6 +1,7 @@
 import { asRecord, optionalInteger, optionalString } from "./validate";
 import type { ActionDefinition } from "./types";
 import type { BrowserTabInfo, BrowserWindowInfo } from "@/lib/browser/protocol";
+import { normalizeUrl } from "@/lib/tabs/normalize";
 
 const LIST_TABS_DEFAULT_LIMIT = 50;
 const LIST_TABS_MAX_LIMIT = 200;
@@ -82,5 +83,50 @@ export const listBrowserWindowsAction: ActionDefinition<Record<string, never>, L
   run(_store, _args, ctx) {
     if (!ctx?.browserContext) return { ok: false, message: NOT_CONNECTED_MESSAGE };
     return { ok: true, data: { windows: ctx.browserContext.windows } };
+  },
+};
+
+type FindUnsavedBrowserTabsData = { total: number; tabs: BrowserTabInfo[]; truncated: boolean };
+
+/**
+ * Browser → TabDump sync (Step 10): diffs the user's actual open tabs
+ * against every saved tab's normalizedUrl across the whole store, so
+ * "what tabs do I have open that aren't saved in TabDump?" / "which open
+ * tabs are already saved?" can be answered without the agent trying (and
+ * failing) to reconstruct this from list_browser_tabs + list_workspace_tabs
+ * output by hand. Read-only; import_browser_tabs_to_workspace (optionally
+ * scoped to just these tabIds) is the natural follow-up to actually save
+ * them.
+ */
+export const findUnsavedBrowserTabsAction: ActionDefinition<{ limit?: number }, FindUnsavedBrowserTabsData> = {
+  name: "find_unsaved_browser_tabs",
+  description:
+    "List the user's currently-open browser tabs that aren't saved anywhere in TabDump yet (by URL) — e.g. \"what tabs do I have open that aren't saved?\", \"which of my open tabs are already saved?\" (that's just the complement of this list). Requires the TabDump browser extension to be connected.",
+  readOnly: true,
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      limit: { type: "INTEGER", description: `Max tabs to return (default ${LIST_TABS_DEFAULT_LIMIT}, capped at ${LIST_TABS_MAX_LIMIT}).` },
+    },
+    required: [],
+  },
+  validate(raw) {
+    const record = asRecord(raw) ?? {};
+    return { ok: true, args: { limit: optionalInteger(record, "limit") } };
+  },
+  run(store, args, ctx) {
+    if (!ctx?.browserContext) return { ok: false, message: NOT_CONNECTED_MESSAGE };
+
+    const savedUrls = new Set(store.workspaces.flatMap((w) => w.tabs.map((t) => t.normalizedUrl)));
+    const unsaved = ctx.browserContext.tabs.filter((tab) => {
+      try {
+        return !savedUrls.has(normalizeUrl(new URL(tab.url)));
+      } catch {
+        return true; // an unparseable URL (e.g. a browser-internal page) can't be saved anyway, so it's honestly "unsaved."
+      }
+    });
+
+    const limit = Math.min(Math.max(args.limit ?? LIST_TABS_DEFAULT_LIMIT, 1), LIST_TABS_MAX_LIMIT);
+    return { ok: true, data: { total: unsaved.length, tabs: unsaved.slice(0, limit), truncated: unsaved.length > limit } };
   },
 };

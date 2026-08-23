@@ -1,7 +1,7 @@
 import { matchesQuery } from "@/lib/workspace/search";
-import { DEFAULT_SEARCH_LIMIT, rankTabs } from "@/lib/search/rank";
+import { DEFAULT_SEARCH_LIMIT, rankBrowserTabs, rankTabs } from "@/lib/search/rank";
 import type { SearchResult } from "@/lib/search/types";
-import { asRecord, optionalInteger, optionalString, requiredString } from "./validate";
+import { asRecord, optionalBoolean, optionalInteger, optionalString, requiredString } from "./validate";
 import { findTab, findWorkspace, tabSummary, workspaceSummary } from "./lookup";
 import type { ActionDefinition } from "./types";
 
@@ -11,16 +11,17 @@ const SAMPLE_TABS_CAP = 20;
 
 type SearchTabsData = { matchCount: number; matches: SearchResult[]; truncated: boolean };
 
-export const searchTabsAction: ActionDefinition<{ query: string; workspaceId?: string }, SearchTabsData> = {
+export const searchTabsAction: ActionDefinition<{ query: string; workspaceId?: string; includeBrowser?: boolean }, SearchTabsData> = {
   name: "search_tabs",
   description:
-    "Search saved tabs across the user's entire TabDump library by natural-language query — a hybrid of keyword matching (title, URL, domain, workspace name) and semantic similarity to what was actually saved on the page. Searches across every workspace unless workspaceId is given. Use this to find tabs the user refers to by topic (e.g. \"Physics IA tabs\", \"my MUN research\") before acting on them — the returned tabId values can be passed directly to move_tabs or other actions without asking the user for ids.",
+    "Search across the user's saved TabDump tabs AND, when the browser extension is connected, their actual currently-open browser tabs — a hybrid of keyword matching (title, URL, domain, workspace name) and semantic similarity for saved tabs. Searches across every workspace unless workspaceId is given. Use this to find tabs the user refers to by topic (e.g. \"Physics IA tabs\", \"my MUN research\", \"find anything about South Ossetia\") before acting on them — the returned tabId values can be passed directly to move_tabs/open_tabs or other actions without asking the user for ids. Each result's `source` is \"tabdump\" (a saved tab — has workspaceId/workspaceName) or \"browser\" (a live open tab — has browserTabId/browserWindowId instead, usable with close_tab(s)/pin_tab/import_browser_tabs_to_workspace). Set includeBrowser to false to search only saved tabs.",
   readOnly: true,
   parameters: {
     type: "OBJECT",
     properties: {
       query: { type: "STRING", description: "A natural-language description of what to find, e.g. \"Physics IA\" or \"tabs about orbital mechanics\"." },
-      workspaceId: { type: "STRING", description: "Optional — limit the search to one workspace. Omit to search everywhere." },
+      workspaceId: { type: "STRING", description: "Optional — limit the saved-tab search to one workspace. Omit to search everywhere. Doesn't affect browser-tab results." },
+      includeBrowser: { type: "BOOLEAN", description: "Whether to also search live open browser tabs when the extension is connected. Defaults to true." },
     },
     required: ["query"],
   },
@@ -29,7 +30,10 @@ export const searchTabsAction: ActionDefinition<{ query: string; workspaceId?: s
     if (!record) return { ok: false, message: "Expected an object with a `query` string." };
     const query = requiredString(record, "query");
     if (!query) return { ok: false, message: "`query` is required and must be a non-empty string." };
-    return { ok: true, args: { query, workspaceId: optionalString(record, "workspaceId") } };
+    return {
+      ok: true,
+      args: { query, workspaceId: optionalString(record, "workspaceId"), includeBrowser: optionalBoolean(record, "includeBrowser") },
+    };
   },
   run(store, args, ctx) {
     if (args.workspaceId && !findWorkspace(store, args.workspaceId)) {
@@ -41,12 +45,20 @@ export const searchTabsAction: ActionDefinition<{ query: string; workspaceId?: s
 
     // Overfetch (topK) so `truncated` reflects the true candidate count,
     // then cap what's actually returned to Gemini at DEFAULT_SEARCH_LIMIT.
-    const allMatches = rankTabs({
+    const tabdumpMatches = rankTabs({
       workspaces: scope,
       query: args.query,
       semanticHints: ctx?.semanticHints,
       limit: DEFAULT_SEARCH_LIMIT * 4,
     });
+
+    const includeBrowser = args.includeBrowser ?? true;
+    const browserMatches =
+      includeBrowser && ctx?.browserContext
+        ? rankBrowserTabs({ tabs: ctx.browserContext.tabs, query: args.query, limit: DEFAULT_SEARCH_LIMIT * 4 })
+        : [];
+
+    const allMatches = [...tabdumpMatches, ...browserMatches].sort((a, b) => b.score - a.score);
 
     return {
       ok: true,

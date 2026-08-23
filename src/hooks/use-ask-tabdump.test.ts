@@ -824,6 +824,60 @@ describe("browser control", () => {
     expect(last.text).toMatch(/isn't connected/i);
   });
 
+  it("undoes both halves of a combined store-and-browser turn under one Undo button", async () => {
+    const disconnect = connectFakeExtension((action) => {
+      if (action === "list_browser_tabs") return { tabs: [] }
+      if (action === "list_browser_windows") return { windows: [] }
+      if (action === "open_tabs") return { opened: [{ tabId: 31 }], failed: [] }
+      if (action === "close_tabs") return { closed: [31] }
+      throw new Error(`Unexpected action ${action}`)
+    })
+
+    const before = storeWith(allWorkspaces)
+    const after = storeWith([
+      { id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 },
+      { id: "ws-mun", name: "MUN", tabs, createdAt: 0, updatedAt: 0 },
+    ])
+
+    mockSequentialAgentFetch([
+      {
+        text: "Moved it and opened it.",
+        store: after,
+        actions: [{ name: "open_tabs", ok: true, message: "opened", args: { urls: ["https://example.com/a"] }, data: { urlCount: 1, urls: ["https://example.com/a"] } }],
+      },
+    ])
+
+    const onStoreUpdate = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ ws }: { ws: Workspace[] }) => useAskTabDump(WORKSPACE_ID, tabs, ws, onStoreUpdate),
+      { initialProps: { ws: allWorkspaces } }
+    )
+    await act(() => sleep(50))
+
+    act(() => {
+      result.current.send("Move this tab to MUN and open it")
+    })
+    await waitFor(() => expect(result.current.isSending).toBe(false))
+
+    const last = result.current.messages[result.current.messages.length - 1]
+    expect(last.undo?.status).toBe("available")
+    expect(last.undo?.secondaryEntryId).toBeDefined()
+    expect(onStoreUpdate).toHaveBeenCalledWith(after)
+
+    // Mirrors how the real app persists onStoreUpdate's result back into props before a later undo can safely apply.
+    rerender({ ws: after.workspaces })
+
+    await act(async () => {
+      await result.current.undoAction(last.undo!.entryId)
+    })
+
+    const afterUndo = result.current.messages[result.current.messages.length - 1]
+    expect(afterUndo.text).toBe("↶ Undid that change.")
+    expect(onStoreUpdate).toHaveBeenLastCalledWith(before)
+
+    disconnect()
+  })
+
   it("keeps working normally (no browserContext fetch attempted) when the extension was never connected", async () => {
     const fetchMock = mockAgentFetchReturning([], "Just an answer.");
     const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getActiveTabAction, listBrowserTabsAction, listBrowserWindowsAction } from "./browser-read";
+import { getActiveTabAction, listBrowserTabsAction, listBrowserWindowsAction, findUnsavedBrowserTabsAction } from "./browser-read";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
 
@@ -89,5 +89,45 @@ describe("listBrowserWindowsAction", () => {
   it("returns the windows from the snapshot", () => {
     const result = listBrowserWindowsAction.run(store, {}, { browserContext: makeSnapshot() });
     expect(result.ok && result.data.windows).toHaveLength(1);
+  });
+});
+
+describe("findUnsavedBrowserTabsAction", () => {
+  it("fails when not connected", () => {
+    expect(findUnsavedBrowserTabsAction.run(store, {}, {})).toEqual({ ok: false, message: expect.stringContaining("isn't connected") });
+  });
+
+  it("lists open tabs whose url isn't saved anywhere in the store", () => {
+    const savedStore = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ id: "t1", url: "https://a.com", normalizedUrl: "https://a.com", domain: "a.com" }] })],
+      "a"
+    );
+    const result = findUnsavedBrowserTabsAction.run(savedStore, {}, { browserContext: makeSnapshot() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.tabs.map((t) => t.tabId)).toEqual([2]);
+    expect(result.data.total).toBe(1);
+  });
+
+  it("treats every open tab as unsaved when nothing is saved", () => {
+    const result = findUnsavedBrowserTabsAction.run(store, {}, { browserContext: makeSnapshot() });
+    expect(result.ok && result.data.tabs.map((t) => t.tabId)).toEqual([1, 2]);
+  });
+
+  it("returns nothing when every open tab is already saved", () => {
+    const savedStore = makeStore(
+      [
+        makeWorkspace({
+          id: "a",
+          tabs: [
+            { id: "t1", url: "https://a.com", normalizedUrl: "https://a.com", domain: "a.com" },
+            { id: "t2", url: "https://b.com", normalizedUrl: "https://b.com", domain: "b.com" },
+          ],
+        }),
+      ],
+      "a"
+    );
+    const result = findUnsavedBrowserTabsAction.run(savedStore, {}, { browserContext: makeSnapshot() });
+    expect(result.ok && result.data.total).toBe(0);
   });
 });

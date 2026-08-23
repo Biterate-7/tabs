@@ -11,7 +11,19 @@ afterEach(() => {
 
 describe("needsBrowserExecution", () => {
   it("is true for every action that has a real chrome-side effect", () => {
-    for (const name of ["open_url", "open_tabs", "open_workspace_in_browser", "close_tab", "close_tabs", "pin_tab", "unpin_tab", "move_tabs_to_window", "create_browser_window"]) {
+    for (const name of [
+      "open_url",
+      "open_tabs",
+      "open_workspace_in_browser",
+      "close_tab",
+      "close_tabs",
+      "pin_tab",
+      "unpin_tab",
+      "bulk_pin_tabs",
+      "bulk_unpin_tabs",
+      "move_tabs_to_window",
+      "create_browser_window",
+    ]) {
       expect(needsBrowserExecution(name)).toBe(true)
     }
   })
@@ -89,6 +101,38 @@ describe("executeBrowserAction", () => {
     const result = await executeBrowserAction("unpin_tab", { tabId: 7 }, undefined)
     expect(sendBrowserCommandMock).toHaveBeenCalledWith("unpin_tab", { tabId: 7, pinned: false })
     expect(result.revert).toEqual({ kind: "restore_pinned", tabId: 7, pinned: true })
+  })
+
+  it("bulk_pin_tabs pins every tab and records one restore_pinned revert per tab", async () => {
+    sendBrowserCommandMock
+      .mockResolvedValueOnce({ id: "1", ok: true, result: { previousPinned: false } })
+      .mockResolvedValueOnce({ id: "2", ok: true, result: { previousPinned: false } })
+    const result = await executeBrowserAction("bulk_pin_tabs", { tabIds: [1, 2] }, undefined)
+    expect(sendBrowserCommandMock).toHaveBeenCalledWith("pin_tab", { tabId: 1, pinned: true })
+    expect(sendBrowserCommandMock).toHaveBeenCalledWith("pin_tab", { tabId: 2, pinned: true })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain("Pinned 2")
+    expect(result.revert).toEqual([
+      { kind: "restore_pinned", tabId: 1, pinned: false },
+      { kind: "restore_pinned", tabId: 2, pinned: false },
+    ])
+  })
+
+  it("bulk_unpin_tabs reports partial failure honestly", async () => {
+    sendBrowserCommandMock
+      .mockResolvedValueOnce({ id: "1", ok: true, result: { previousPinned: true } })
+      .mockResolvedValueOnce({ id: "2", ok: false, error: "gone" })
+    const result = await executeBrowserAction("bulk_unpin_tabs", { tabIds: [1, 2] }, undefined)
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain("1 of 2")
+    expect(result.revert).toEqual([{ kind: "restore_pinned", tabId: 1, pinned: true }])
+  })
+
+  it("bulk_pin_tabs reports full failure when nothing succeeded", async () => {
+    sendBrowserCommandMock.mockResolvedValue({ id: "1", ok: false, error: "gone" })
+    const result = await executeBrowserAction("bulk_pin_tabs", { tabIds: [1] }, undefined)
+    expect(result.ok).toBe(false)
+    expect(result.revert).toBeUndefined()
   })
 
   it("move_tabs_to_window never produces a revert", async () => {

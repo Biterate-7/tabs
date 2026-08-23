@@ -9,6 +9,8 @@ import {
   openWorkspaceInBrowserAction,
   pinTabAction,
   unpinTabAction,
+  bulkPinTabsAction,
+  bulkUnpinTabsAction,
   moveTabsToWindowAction,
 } from "./browser-write";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
@@ -111,6 +113,40 @@ describe("pinTabAction / unpinTabAction", () => {
   });
 });
 
+describe("bulkPinTabsAction / bulkUnpinTabsAction", () => {
+  const store = makeStore([makeWorkspace({ id: "a" })], "a");
+
+  it("pins/unpins every currently-open tab id given", () => {
+    expect(bulkPinTabsAction.run(store, { tabIds: [1, 2] }, { browserContext: makeSnapshot() })).toEqual({
+      ok: true,
+      data: { tabIds: [1, 2], pinned: true, count: 2 },
+      store,
+    });
+    expect(bulkUnpinTabsAction.run(store, { tabIds: [1, 2] }, { browserContext: makeSnapshot() })).toEqual({
+      ok: true,
+      data: { tabIds: [1, 2], pinned: false, count: 2 },
+      store,
+    });
+  });
+
+  it("drops ids that aren't currently open, failing only if none are", () => {
+    const result = bulkPinTabsAction.run(store, { tabIds: [1, 999] }, { browserContext: makeSnapshot() });
+    expect(result).toEqual({ ok: true, data: { tabIds: [1], pinned: true, count: 1 }, store });
+
+    const allMissing = bulkPinTabsAction.run(store, { tabIds: [998, 999] }, { browserContext: makeSnapshot() });
+    expect(allMissing.ok).toBe(false);
+  });
+
+  it("requires the extension to be connected", () => {
+    expect(bulkPinTabsAction.run(store, { tabIds: [1] }, {}).ok).toBe(false);
+  });
+
+  it("validate rejects malformed tabIds", () => {
+    expect(bulkPinTabsAction.validate({ tabIds: [] }).ok).toBe(false);
+    expect(bulkPinTabsAction.validate({ tabIds: ["1"] }).ok).toBe(false);
+  });
+});
+
 describe("moveTabsToWindowAction", () => {
   it("fails for a window id that isn't open", () => {
     const store = makeStore([makeWorkspace({ id: "a" })], "a");
@@ -205,5 +241,24 @@ describe("importBrowserTabsToWorkspaceAction", () => {
     const matching = result.store!.workspaces[0].tabs.filter((t) => t.url === "https://a.com");
     expect(matching).toHaveLength(2);
     expect(matching.some((t) => t.isDuplicate)).toBe(true);
+  });
+
+  it("imports only the given tabIds when a filter is provided", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const result = importBrowserTabsToWorkspaceAction.run(store, { workspaceId: "a", tabIds: [2] }, { browserContext: makeSnapshot() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.importedCount).toBe(1);
+    expect(result.store!.workspaces[0].tabs.map((t) => t.url)).toEqual(["https://b.com"]);
+  });
+
+  it("fails when the given tabIds filter matches no open tab", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const result = importBrowserTabsToWorkspaceAction.run(store, { workspaceId: "a", tabIds: [999] }, { browserContext: makeSnapshot() });
+    expect(result.ok).toBe(false);
+  });
+
+  it("validate rejects an oversized tabIds filter", () => {
+    expect(importBrowserTabsToWorkspaceAction.validate({ tabIds: Array.from({ length: 201 }, (_, i) => i) }).ok).toBe(false);
   });
 });

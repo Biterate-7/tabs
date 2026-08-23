@@ -94,6 +94,58 @@ describe("search_tabs action", () => {
     if (!result.ok) return;
     expect(result.data.matches).toEqual([]);
   });
+
+  describe("browser tab search", () => {
+    const browserContext = {
+      tabs: [{ tabId: 7, windowId: 1, url: "https://x.com", title: "Physics research", pinned: false, active: true, index: 0 }],
+      windows: [],
+      activeTabId: 7,
+    };
+
+    it("merges live browser tab matches in alongside saved tabs, tagged by source", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics IA" })] })], "a");
+      const validated = searchTabsAction.validate({ query: "physics" });
+      if (!validated.ok) throw new Error("expected validation to pass");
+
+      const result = searchTabsAction.run(store, validated.args, { browserContext });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const sources = result.data.matches.map((m) => m.source).sort();
+      expect(sources).toEqual(["browser", "tabdump"]);
+      const browserMatch = result.data.matches.find((m) => m.source === "browser")!;
+      expect(browserMatch).toMatchObject({ tabId: "browser:7", browserTabId: 7 });
+    });
+
+    it("does not include browser tabs when the extension isn't connected", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics IA" })] })], "a");
+      const validated = searchTabsAction.validate({ query: "physics" });
+      if (!validated.ok) throw new Error("expected validation to pass");
+
+      const result = searchTabsAction.run(store, validated.args);
+      expect(result.ok && result.data.matches.every((m) => m.source !== "browser")).toBe(true);
+    });
+
+    it("excludes browser tabs when includeBrowser is explicitly false", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics IA" })] })], "a");
+      const validated = searchTabsAction.validate({ query: "physics", includeBrowser: false });
+      if (!validated.ok) throw new Error("expected validation to pass");
+
+      const result = searchTabsAction.run(store, validated.args, { browserContext });
+      expect(result.ok && result.data.matches.every((m) => m.source !== "browser")).toBe(true);
+    });
+
+    it("can return a browser-only match with no saved-tab equivalent", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [] })], "a");
+      const validated = searchTabsAction.validate({ query: "physics" });
+      if (!validated.ok) throw new Error("expected validation to pass");
+
+      const result = searchTabsAction.run(store, validated.args, { browserContext });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.matches).toHaveLength(1);
+      expect(result.data.matches[0].source).toBe("browser");
+    });
+  });
 });
 
 describe("get_tab action", () => {

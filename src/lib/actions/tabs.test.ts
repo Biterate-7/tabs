@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveTabAction, moveTabsAction } from "./tabs";
+import { moveTabAction, moveTabsAction, deleteTabsAction } from "./tabs";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 
@@ -100,5 +100,63 @@ describe("move_tabs action", () => {
   it("rejects an empty tabIds array at validation time", () => {
     const validated = moveTabsAction.validate({ tabIds: [], targetWorkspaceId: "ia" });
     expect(validated.ok).toBe(false);
+  });
+});
+
+describe("delete_tabs action", () => {
+  it("permanently removes the given tabs from the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1"), makeTab("2"), makeTab("3")] })], "a");
+    const validated = deleteTabsAction.validate({ workspaceId: "a", tabIds: ["1", "2"] });
+    if (!validated.ok) throw new Error("expected validation to pass");
+
+    const result = deleteTabsAction.run(store, validated.args);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.deletedCount).toBe(2);
+    expect(result.store?.workspaces.find((w) => w.id === "a")?.tabs.map((t) => t.id)).toEqual(["3"]);
+  });
+
+  it("reports ids that weren't found without failing the whole call", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const validated = deleteTabsAction.validate({ workspaceId: "a", tabIds: ["1", "ghost"] });
+    if (!validated.ok) throw new Error("expected validation to pass");
+
+    const result = deleteTabsAction.run(store, validated.args);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.deletedCount).toBe(1);
+    expect(result.data.notFoundTabIds).toEqual(["ghost"]);
+  });
+
+  it("fails when none of the given tab ids exist in the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [] })], "a");
+    const validated = deleteTabsAction.validate({ workspaceId: "a", tabIds: ["ghost"] });
+    if (!validated.ok) throw new Error("expected validation to pass");
+    expect(deleteTabsAction.run(store, validated.args).ok).toBe(false);
+  });
+
+  it("fails for an unknown workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const validated = deleteTabsAction.validate({ workspaceId: "ghost", tabIds: ["1"] });
+    if (!validated.ok) throw new Error("expected validation to pass");
+    expect(deleteTabsAction.run(store, validated.args).ok).toBe(false);
+  });
+
+  it("does not touch other workspaces", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [makeTab("1")] }), makeWorkspace({ id: "b", tabs: [makeTab("2")] })],
+      "a"
+    );
+    const validated = deleteTabsAction.validate({ workspaceId: "a", tabIds: ["1"] });
+    if (!validated.ok) throw new Error("expected validation to pass");
+    const result = deleteTabsAction.run(store, validated.args);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.store?.workspaces.find((w) => w.id === "b")?.tabs.map((t) => t.id)).toEqual(["2"]);
+  });
+
+  it("deduplicates repeated tab ids at validation time", () => {
+    const validated = deleteTabsAction.validate({ workspaceId: "a", tabIds: ["1", "1", "2"] });
+    expect(validated).toEqual({ ok: true, args: { workspaceId: "a", tabIds: ["1", "2"] } });
   });
 });

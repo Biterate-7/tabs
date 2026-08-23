@@ -16,6 +16,22 @@ import type { Tab } from "@/lib/tabs/types"
 import type { AskMessage, OrganizationPlan, PerformedActionView, SearchResult } from "@/lib/ai/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
+/**
+ * Composes the one UndoAction a message carries out of whichever undo
+ * entries this turn actually produced — a turn can produce a store entry, a
+ * browser entry, both (e.g. "move these tabs to MUN and open them" —
+ * see UndoAction.secondaryEntryId's doc), or neither. `storeId` is always
+ * treated as primary when present, purely because it's recorded first
+ * chronologically in both runAsk and applyPreview below; the two are
+ * otherwise reverted independently and order has no functional effect.
+ */
+function combineUndo(storeId: string | undefined, browserId: string | undefined): { entryId: string; secondaryEntryId?: string; status: "available" } | undefined {
+  if (storeId && browserId) return { entryId: storeId, secondaryEntryId: browserId, status: "available" }
+  if (storeId) return { entryId: storeId, status: "available" }
+  if (browserId) return { entryId: browserId, status: "available" }
+  return undefined
+}
+
 const CANCELLED_TEXT = "No changes made."
 const UNDONE_TEXT = "↶ Undid that change."
 const UNDO_STALE_TEXT = "I can't safely undo that change because the workspace has changed since then."
@@ -36,7 +52,7 @@ async function runBrowserExecutions(actions: PerformedActionView[] | undefined):
 
   const executions = await Promise.all(toRun.map((a) => executeBrowserAction(a.name, a.args, a.data)));
   const text = executions.map((e) => e.message).filter(Boolean).join(" ");
-  const revert = executions.flatMap((e) => (e.revert ? [e.revert] : []));
+  const revert = executions.flatMap((e) => (e.revert ? (Array.isArray(e.revert) ? e.revert : [e.revert]) : []));
   return { text, revert };
 }
 
@@ -131,6 +147,7 @@ export function useAskTabDump(
           : undefined
 
         let undoEntryId: string | undefined
+        let browserUndoEntryId: string | undefined
 
         // Only bother the extension when it's actually there — a fixed
         // multi-second wait on every single question for users without it
@@ -181,7 +198,7 @@ export function useAskTabDump(
           if (executed) {
             finalText = executed.text || result.text
             if (executed.revert.length > 0) {
-              undoEntryId = recordBrowserUndoEntry(executed.text || question, executed.revert).id
+              browserUndoEntryId = recordBrowserUndoEntry(executed.text || question, executed.revert).id
             }
           }
         }
@@ -207,12 +224,13 @@ export function useAskTabDump(
                 ...(result.searchResults ? { searchResults: result.searchResults } : {}),
               }
             }
+            const undo = combineUndo(undoEntryId, browserUndoEntryId)
             return {
               ...m,
               text: finalText ?? result.text,
               sources: result.sources,
               pending: false,
-              ...(undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
+              ...(undo ? { undo } : {}),
               ...(result.searchResults ? { searchResults: result.searchResults } : {}),
             }
           })
@@ -275,6 +293,7 @@ export function useAskTabDump(
       try {
         const store: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
         let undoEntryId: string | undefined
+        let browserUndoEntryId: string | undefined
 
         const browserContext = browserConnected ? (await fetchBrowserContext()) ?? undefined : undefined
 
@@ -291,15 +310,17 @@ export function useAskTabDump(
         // As in runAsk: a browser action in the plan was only validated by
         // the server, never actually carried out — do that now, and fold
         // the real outcome into the text the user sees (see AGENTS.md
-        // section 15). If nothing else in the plan changed the store, this
-        // browser undo becomes the message's Undo button instead.
+        // section 15). Recorded as its own undo entry regardless of whether
+        // the plan also changed the store — see UndoAction.secondaryEntryId
+        // and combineUndo, which is what lets Undo revert both halves of a
+        // plan like "move these tabs to MUN and open them."
         let finalText = result.ok ? result.text : undefined
         if (result.ok) {
           const executed = await runBrowserExecutions(result.actions)
           if (executed) {
             finalText = executed.text ? `${result.text} ${executed.text}`.trim() : result.text
-            if (!undoEntryId && executed.revert.length > 0) {
-              undoEntryId = recordBrowserUndoEntry(executed.text || message.preview!.summary, executed.revert).id
+            if (executed.revert.length > 0) {
+              browserUndoEntryId = recordBrowserUndoEntry(executed.text || message.preview!.summary, executed.revert).id
             }
           }
         }
@@ -310,11 +331,12 @@ export function useAskTabDump(
               ? { ...m, preview: { ...m.preview, status: result.ok ? ("applied" as const) : ("failed" as const) } }
               : m
           )
+          const undo = result.ok ? combineUndo(undoEntryId, browserUndoEntryId) : undefined
           const followUp: AskMessage = {
             id: createId("ask"),
             role: "assistant",
             text: result.ok ? (finalText ?? result.text) : `Something went wrong: ${result.error}`,
-            ...(result.ok && undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
+            ...(undo ? { undo } : {}),
           }
           return [...resolved, followUp]
         })
@@ -429,53 +451,60 @@ export function useAskTabDump(
   }, [])
 
   /**
-   * Reverts a browser mutation by actually re-invoking the extension with
-   * the exact revert steps recorded at execution time (see
-   * src/lib/browser/execute.ts) — there's no "before/after" store snapshot
-   * to fall back to, so a step that fails here (extension disconnected
-   * since, or the tab was already closed) is reported honestly rather than
-   * silently marked done.
+   * Reverts exactly one undo entry — a browser mutation (re-invoking the
+   * extension with the exact revert steps recorded at execution time; see
+   * src/lib/browser/execute.ts) or a store mutation (attemptUndo()'s
+   * whole-store equality check against the CURRENT store — if anything at
+   * all has changed since this entry's afterState, the undo is refused
+   * rather than silently discarding that newer state). Pure with respect to
+   * message state — it never calls setMessages itself — so undoAction below
+   * can revert a message's primary and secondary entries independently and
+   * compose ONE honest combined result, instead of two separate follow-up
+   * messages that could arrive out of order.
    */
-  async function undoBrowserAction(entryId: string, entry: BrowserUndoEntry) {
-    const result = await executeBrowserReverts(entry.revert)
-    browserUndoHistoryRef.current = markBrowserUndone(browserUndoHistoryRef.current, entryId)
-
-    if (!result.ok) {
-      setMessages((prev) => [
-        ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "unavailable" as const } } : m)),
-        { id: createId("ask"), role: "assistant", text: `${BROWSER_UNDO_FAILED_TEXT} (${result.errors.join("; ")})` },
-      ])
-      return
+  async function revertOneEntry(id: string): Promise<{ ok: boolean; message?: string }> {
+    const browserEntry = findBrowserUndoEntry(browserUndoHistoryRef.current, id)
+    if (browserEntry) {
+      if (browserEntry.status !== "active") return { ok: false, message: UNDO_STALE_TEXT }
+      const result = await executeBrowserReverts(browserEntry.revert)
+      browserUndoHistoryRef.current = markBrowserUndone(browserUndoHistoryRef.current, id)
+      return result.ok ? { ok: true } : { ok: false, message: `${BROWSER_UNDO_FAILED_TEXT} (${result.errors.join("; ")})` }
     }
 
-    setMessages((prev) => [
-      ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "undone" as const } } : m)),
-      { id: createId("ask"), role: "assistant", text: UNDONE_TEXT },
-    ])
+    const entry = findUndoEntry(undoHistoryRef.current, id)
+    if (!entry) return { ok: false, message: UNDO_STALE_TEXT }
+    const currentStore: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
+    const attempt = attemptUndo(entry, currentStore)
+    if (!attempt.ok) return { ok: false, message: UNDO_STALE_TEXT }
+
+    onStoreUpdate?.(attempt.store)
+    undoHistoryRef.current = markUndone(undoHistoryRef.current, id)
+    return { ok: true }
   }
 
   /**
-   * Reverts exactly the mutation `entryId` recorded — nothing more. This is
-   * plain application logic, not something Gemini is ever asked to do: it
+   * Reverts the mutation(s) `entryId` (and, when set, the message's own
+   * `secondaryEntryId` — see UndoAction's doc) recorded — nothing more. This
+   * is plain application logic, not something Gemini is ever asked to do: it
    * never sees an "undo" tool, and never gets a say in whether or how a
-   * previous change is reverted. A store mutation's safety comes entirely
-   * from attemptUndo()'s whole-store equality check against the CURRENT
-   * store: if anything at all has changed since this entry's afterState
-   * (the AI action again, a manual edit, or a later AI action), the undo is
-   * refused rather than silently discarding that newer state. `entryId` may
-   * belong to either undo history (store or browser — see
-   * src/lib/browser/undo.ts); this checks the store one first since that's
-   * the original, more common case. Guarded against double-clicks the same
-   * way applyPreview is (sync ref + the entry's own resolved status).
+   * previous change is reverted. Guarded against double-clicks the same way
+   * applyPreview is (sync ref + the entry's own resolved status). When both
+   * halves of a combined entry are present, they're reverted independently
+   * and in parallel (neither depends on the other's outcome) and the result
+   * is composed into one honest message — e.g. "TabDump changes were undone.
+   * The 2 tabs I opened couldn't be restored." — rather than ever claiming
+   * full success when only part of it actually reverted.
    */
   const undoAction = useCallback(
     async (entryId: string) => {
       if (undoingIdsRef.current.has(entryId)) return
 
-      const browserEntry = findBrowserUndoEntry(browserUndoHistoryRef.current, entryId)
-      const entry = browserEntry ? undefined : findUndoEntry(undoHistoryRef.current, entryId)
-      if (!entry && !browserEntry) return
-      if ((entry ?? browserEntry)!.status !== "active") return
+      const message = messagesRef.current.find((m) => m.undo?.entryId === entryId)
+      const secondaryId = message?.undo?.secondaryEntryId
+
+      const primaryEntry = findBrowserUndoEntry(browserUndoHistoryRef.current, entryId) ?? findUndoEntry(undoHistoryRef.current, entryId)
+      if (!primaryEntry) return
+      if (primaryEntry.status !== "active") return
 
       undoingIdsRef.current.add(entryId)
       setMessages((prev) =>
@@ -483,28 +512,25 @@ export function useAskTabDump(
       )
 
       try {
-        if (browserEntry) {
-          await undoBrowserAction(entryId, browserEntry)
-          return
+        const [primaryResult, secondaryResult] = await Promise.all([
+          revertOneEntry(entryId),
+          secondaryId ? revertOneEntry(secondaryId) : Promise.resolve(null),
+        ])
+
+        const secondaryFailed = secondaryResult !== null && !secondaryResult.ok
+        let text: string
+        if (primaryResult.ok && !secondaryFailed) {
+          text = UNDONE_TEXT
+        } else if (primaryResult.ok && secondaryFailed) {
+          text = `${UNDONE_TEXT} ${secondaryResult!.message ?? "The rest of that change couldn't be undone."}`
+        } else {
+          text = primaryResult.message ?? UNDO_STALE_TEXT
         }
 
-        const currentStore: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
-        const attempt = attemptUndo(entry, currentStore)
-
-        if (!attempt.ok) {
-          setMessages((prev) => [
-            ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "unavailable" as const } } : m)),
-            { id: createId("ask"), role: "assistant", text: UNDO_STALE_TEXT },
-          ])
-          return
-        }
-
-        onStoreUpdate?.(attempt.store)
-        undoHistoryRef.current = markUndone(undoHistoryRef.current, entryId)
-
+        const resolvedStatus: "undone" | "unavailable" = primaryResult.ok ? "undone" : "unavailable"
         setMessages((prev) => [
-          ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "undone" as const } } : m)),
-          { id: createId("ask"), role: "assistant", text: UNDONE_TEXT },
+          ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: resolvedStatus } } : m)),
+          { id: createId("ask"), role: "assistant", text },
         ])
       } catch (err) {
         const message = err instanceof Error ? err.message : "an unexpected error occurred."
@@ -516,6 +542,7 @@ export function useAskTabDump(
         undoingIdsRef.current.delete(entryId)
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- revertOneEntry closes over exactly these same deps and is redefined every render, so it's intentionally omitted rather than listed (it would never be referentially stable either way).
     [workspaceId, allWorkspaces, onStoreUpdate]
   )
 

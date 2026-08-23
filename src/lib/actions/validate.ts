@@ -38,6 +38,13 @@ export function requiredIntegerArray(record: Record<string, unknown>, key: strin
   return ints.length === v.length ? ints : null;
 }
 
+/** Like requiredIntegerArray, but an absent key is a valid "not given" rather than an error — the empty-array case is still rejected as malformed input, matching requiredIntegerArray's own convention. */
+export function optionalIntegerArray(record: Record<string, unknown>, key: string, max: number = Infinity): number[] | undefined | null {
+  const v = record[key];
+  if (v === undefined) return undefined;
+  return requiredIntegerArray(record, key, max);
+}
+
 export function optionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   const v = record[key];
   return typeof v === "boolean" ? v : undefined;

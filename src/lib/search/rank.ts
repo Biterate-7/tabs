@@ -1,5 +1,6 @@
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
+import type { BrowserTabInfo } from "@/lib/browser/protocol";
 import type { MatchReason, SearchResult, SemanticHint } from "./types";
 
 /**
@@ -116,6 +117,7 @@ export function rankTabs(params: {
       if (score <= 0) continue;
 
       results.push({
+        source: "tabdump",
         tabId: tab.id,
         title: tab.title?.trim() || tab.domain,
         url: tab.url,
@@ -127,6 +129,76 @@ export function rankTabs(params: {
         matchReason,
       });
     }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results.slice(0, limit);
+}
+
+/**
+ * Keyword-only scoring for one live browser tab — the browser-tab
+ * counterpart to scoreTab() above, deliberately reusing the same
+ * SEARCH_WEIGHTS constants (Step 3: "do NOT duplicate ranking logic") but
+ * dropping the signals that don't apply to a tab that was never saved: no
+ * workspace/group name to match, and no semantic hint (embeddings only ever
+ * exist for indexed TabDump chunks — see src/lib/ai/retrieve.ts).
+ */
+function scoreBrowserTab(tab: BrowserTabInfo, query: string): { score: number; matchReason: MatchReason } | null {
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+
+  const title = (tab.title?.trim() || tab.url).toLowerCase();
+  if (title === q) return { score: SEARCH_WEIGHTS.titleExact, matchReason: "title" };
+  if (title.includes(q)) return { score: SEARCH_WEIGHTS.titleSubstring, matchReason: "title" };
+
+  let domain = "";
+  try {
+    domain = new URL(tab.url).hostname.toLowerCase();
+  } catch {
+    // A browser tab can legitimately have a non-http URL (chrome://, about:)
+    // that new URL() may or may not parse cleanly — fall back to the raw URL.
+  }
+  if ((domain && domain.includes(q)) || tab.url.toLowerCase().includes(q)) {
+    return { score: SEARCH_WEIGHTS.urlOrDomain, matchReason: "url" };
+  }
+
+  return null;
+}
+
+/**
+ * Ranks the user's actual open browser tabs (see
+ * src/lib/browser/protocol.ts's BrowserContextSnapshot) against a query,
+ * mirroring rankTabs' shape exactly so callers (search_tabs) can merge and
+ * re-sort both lists together. Every result carries `source: "browser"` —
+ * see SearchResultSource — and never a workspaceId/workspaceName, since a
+ * live browser tab isn't necessarily saved anywhere in TabDump.
+ */
+export function rankBrowserTabs(params: { tabs: BrowserTabInfo[]; query: string; limit?: number }): SearchResult[] {
+  const limit = params.limit ?? DEFAULT_SEARCH_LIMIT;
+  const results: SearchResult[] = [];
+
+  for (const tab of params.tabs) {
+    const scored = scoreBrowserTab(tab, params.query);
+    if (!scored || scored.score <= 0) continue;
+
+    let domain = tab.url;
+    try {
+      domain = new URL(tab.url).hostname;
+    } catch {
+      // Same non-http fallback as scoreBrowserTab above.
+    }
+
+    results.push({
+      source: "browser",
+      tabId: `browser:${tab.tabId}`,
+      title: tab.title?.trim() || domain,
+      url: tab.url,
+      domain,
+      browserTabId: tab.tabId,
+      browserWindowId: tab.windowId,
+      score: scored.score,
+      matchReason: scored.matchReason,
+    });
   }
 
   results.sort((a, b) => b.score - a.score);

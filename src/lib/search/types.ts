@@ -8,19 +8,37 @@
 export type MatchReason = "title" | "url" | "workspace" | "group" | "semantic" | "keyword";
 
 /**
- * One saved tab's relevance to a search query. Never carries embedding
- * vectors — this is the only shape of search data that ever reaches
- * Gemini or the UI.
+ * Where one SearchResult came from — a saved TabDump tab, or the user's
+ * actual currently-open browser tab (see rankBrowserTabs in rank.ts, and
+ * ActionRunContext.browserContext). Optional (rather than required) on
+ * SearchResult itself specifically so every pre-existing literal/fixture in
+ * this codebase (tests, recentSearchResults round-trips) keeps typechecking
+ * unchanged — an absent `source` has always meant, and still means,
+ * "tabdump." New results (rankTabs/rankBrowserTabs) always set it explicitly.
+ */
+export type SearchResultSource = "tabdump" | "browser";
+
+/**
+ * One tab's relevance to a search query — either a saved TabDump tab or a
+ * live open browser tab (see `source`). Never carries embedding vectors —
+ * this is the only shape of search data that ever reaches Gemini or the UI.
+ * `workspaceId`/`workspaceName` only ever apply to `source: "tabdump"`;
+ * `browserTabId`/`browserWindowId` only ever apply to `source: "browser"`.
  */
 export type SearchResult = {
+  source?: SearchResultSource;
   tabId: string;
   title: string;
   url: string;
   domain: string;
-  workspaceId: string;
-  workspaceName: string;
+  workspaceId?: string;
+  workspaceName?: string;
   groupId?: string;
   groupName?: string;
+  /** The browser's own numeric tab id — only set for `source: "browser"`. */
+  browserTabId?: number;
+  /** The browser window this tab lives in — only set for `source: "browser"`. */
+  browserWindowId?: number;
   score: number;
   matchReason: MatchReason;
 };

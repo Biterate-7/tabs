@@ -6,7 +6,8 @@ import type { ParseResult } from "./types";
 export * from "./types";
 export { parseUrls, parseSingleUrl, splitInput } from "./parse";
 export { normalizeUrl, TRACKING_PARAMS } from "./normalize";
-export { markDuplicates } from "./duplicates";
+export { markDuplicates, findDuplicateGroups } from "./duplicates";
+export type { DuplicateConfidence, DuplicateGroup } from "./duplicates";
 export { buildTabsFromBrowserImport } from "./browser-import";
 export type { BrowserImportEntry } from "./browser-import";
 

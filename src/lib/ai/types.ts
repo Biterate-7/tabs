@@ -1,7 +1,7 @@
-import type { MatchReason, SearchResult } from "@/lib/search/types";
+import type { MatchReason, SearchResult, SearchResultSource } from "@/lib/search/types";
 import type { OrganizationPlan } from "@/lib/organize/types";
 
-export type { MatchReason, SearchResult, OrganizationPlan };
+export type { MatchReason, SearchResult, SearchResultSource, OrganizationPlan };
 
 /**
  * Every /api/ai/* error response is `{ error: string, detail?: string }` —
@@ -93,9 +93,20 @@ export type PendingActionPreview = {
 
 export type UndoActionStatus = "available" | "undoing" | "undone" | "unavailable";
 
-/** Attached to an assistant message that reported a successful mutation — lets the user immediately revert exactly that change. See src/lib/undo. */
+/**
+ * Attached to an assistant message that reported a successful mutation —
+ * lets the user immediately revert exactly that change. See src/lib/undo.
+ * `secondaryEntryId` is set only when one turn produced BOTH a TabDump store
+ * mutation AND a revertible browser mutation (e.g. "move these tabs to MUN
+ * and open them") — undoing then reverts both under the one button, rather
+ * than silently only restoring the store half and leaving the opened tabs
+ * behind. `entryId`/`secondaryEntryId` may each independently belong to
+ * either undo history (store or browser — see src/lib/undo/history.ts and
+ * src/lib/browser/undo.ts); useAskTabDump's undoAction checks both.
+ */
 export type UndoAction = {
   entryId: string;
+  secondaryEntryId?: string;
   status: UndoActionStatus;
 };
 

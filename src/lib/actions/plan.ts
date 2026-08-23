@@ -49,7 +49,7 @@ const EXEMPT_FROM_AFFECTED_THRESHOLD = new Set(["open_url", "open_tabs", "open_w
  * "close this one tab" (close_tab) stays immediate like any other
  * single-resource write, but "close all my tabs except Physics" never is.
  */
-const ALWAYS_CONFIRM_IF_BULK = new Set(["close_tabs"]);
+const ALWAYS_CONFIRM_IF_BULK = new Set(["close_tabs", "delete_tabs"]);
 
 /** Read-only actions never appear in a plan — see runAgentLoop, which only records writes. */
 export function isWriteAction(name: string): boolean {
@@ -90,6 +90,11 @@ export function describePlannedAction(name: string, data: unknown): { label: str
       const d = data as { targetWorkspaceName: string; movedCount: number };
       const count = d.movedCount;
       return { label: `Move ${count} tab${count === 1 ? "" : "s"} → "${d.targetWorkspaceName}"`, affected: count };
+    }
+    case "delete_tabs": {
+      const d = data as { deletedCount: number };
+      const count = d.deletedCount;
+      return { label: `Delete ${count} saved tab${count === 1 ? "" : "s"}`, affected: count };
     }
     case "create_group": {
       const d = data as { group: { name: string } };
@@ -137,6 +142,14 @@ export function describePlannedAction(name: string, data: unknown): { label: str
       const d = data as { tabId: number };
       return { label: `Unpin browser tab (id ${d.tabId})`, affected: 1 };
     }
+    case "bulk_pin_tabs": {
+      const d = data as { count: number };
+      return { label: `Pin ${d.count} browser tab${d.count === 1 ? "" : "s"}`, affected: d.count };
+    }
+    case "bulk_unpin_tabs": {
+      const d = data as { count: number };
+      return { label: `Unpin ${d.count} browser tab${d.count === 1 ? "" : "s"}`, affected: d.count };
+    }
     case "move_tabs_to_window": {
       const d = data as { tabIds: number[]; windowId: number };
       return { label: `Move ${d.tabIds.length} browser tab${d.tabIds.length === 1 ? "" : "s"} → window ${d.windowId}`, affected: d.tabIds.length };
@@ -169,6 +182,7 @@ export function summarizePlan(actions: PlannedAction[]): string {
   const tabsMoved = actions
     .filter((a) => a.name === "move_tab" || a.name === "move_tabs")
     .reduce((sum, a) => sum + a.affected, 0);
+  const tabsDeleted = actions.filter((a) => a.name === "delete_tabs").reduce((sum, a) => sum + a.affected, 0);
   const renames = actions.filter((a) => a.name === "rename_workspace" || a.name === "rename_group").length;
   const tabsGrouped = actions.filter((a) => a.name === "assign_tabs_to_group").reduce((sum, a) => sum + a.affected, 0);
   const tabsUngrouped = actions.filter((a) => a.name === "remove_tabs_from_group").reduce((sum, a) => sum + a.affected, 0);
@@ -181,6 +195,7 @@ export function summarizePlan(actions: PlannedAction[]): string {
   if (workspacesCreated > 0) parts.push(`create ${workspacesCreated} workspace${workspacesCreated === 1 ? "" : "s"}`);
   if (groupsCreated > 0) parts.push(`create ${groupsCreated} group${groupsCreated === 1 ? "" : "s"}`);
   if (tabsMoved > 0) parts.push(`move ${tabsMoved} tab${tabsMoved === 1 ? "" : "s"}`);
+  if (tabsDeleted > 0) parts.push(`delete ${tabsDeleted} tab${tabsDeleted === 1 ? "" : "s"}`);
   if (tabsGrouped > 0) parts.push(`group ${tabsGrouped} tab${tabsGrouped === 1 ? "" : "s"}`);
   if (tabsUngrouped > 0) parts.push(`ungroup ${tabsUngrouped} tab${tabsUngrouped === 1 ? "" : "s"}`);
   if (renames > 0) parts.push(`rename ${renames} item${renames === 1 ? "" : "s"}`);
@@ -241,6 +256,7 @@ function summarizeApplyText(actions: AppliedAction[]): string {
   const workspacesCreated = byName.get("create_workspace") ?? 0;
   const groupsCreated = byName.get("create_group") ?? 0;
   const moves = (byName.get("move_tab") ?? 0) + (byName.get("move_tabs") ?? 0);
+  const deletes = byName.get("delete_tabs") ?? 0;
   const renames = (byName.get("rename_workspace") ?? 0) + (byName.get("rename_group") ?? 0);
   const groupAssigns = byName.get("assign_tabs_to_group") ?? 0;
   const groupRemovals = byName.get("remove_tabs_from_group") ?? 0;
@@ -248,6 +264,7 @@ function summarizeApplyText(actions: AppliedAction[]): string {
   if (workspacesCreated > 0) parts.push(`created ${workspacesCreated} workspace${workspacesCreated === 1 ? "" : "s"}`);
   if (groupsCreated > 0) parts.push(`created ${groupsCreated} group${groupsCreated === 1 ? "" : "s"}`);
   if (moves > 0) parts.push(`moved tabs (${moves} move${moves === 1 ? "" : "s"})`);
+  if (deletes > 0) parts.push(`deleted saved tabs (${deletes} call${deletes === 1 ? "" : "s"})`);
   if (groupAssigns > 0) parts.push(`assigned tabs to groups (${groupAssigns} call${groupAssigns === 1 ? "" : "s"})`);
   if (groupRemovals > 0) parts.push(`removed tabs from groups (${groupRemovals} call${groupRemovals === 1 ? "" : "s"})`);
   if (renames > 0) parts.push(`renamed ${renames} item${renames === 1 ? "" : "s"}`);

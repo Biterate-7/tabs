@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SEARCH_LIMIT, rankTabs } from "./rank";
+import { DEFAULT_SEARCH_LIMIT, rankBrowserTabs, rankTabs } from "./rank";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
+import type { BrowserTabInfo } from "@/lib/browser/protocol";
 
 function makeTab(id: string, over: Partial<Tab> = {}): Tab {
   return { id, url: `https://example.com/${id}`, normalizedUrl: `https://example.com/${id}`, domain: "example.com", ...over };
@@ -207,5 +208,62 @@ describe("rankTabs", () => {
     const included = makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics" })] });
     const results = rankTabs({ workspaces: [included], query: "physics" });
     expect(results.every((r) => r.workspaceId === "a")).toBe(true);
+  });
+
+  it("stamps source: 'tabdump' on every result", () => {
+    const workspaces = [makeWorkspace({ id: "a", tabs: [makeTab("1", { title: "Physics" })] })];
+    const results = rankTabs({ workspaces, query: "physics" });
+    expect(results[0].source).toBe("tabdump");
+  });
+});
+
+function makeBrowserTab(tabId: number, over: Partial<BrowserTabInfo> = {}): BrowserTabInfo {
+  return { tabId, windowId: 1, url: `https://example.com/${tabId}`, title: "Untitled", pinned: false, active: false, index: 0, ...over };
+}
+
+describe("rankBrowserTabs", () => {
+  it("matches on an exact title", () => {
+    const tabs = [makeBrowserTab(1, { title: "Physics" })];
+    const results = rankBrowserTabs({ tabs, query: "physics" });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ source: "browser", tabId: "browser:1", browserTabId: 1, browserWindowId: 1, matchReason: "title" });
+  });
+
+  it("matches on a title substring", () => {
+    const tabs = [makeBrowserTab(1, { title: "Intro to Physics IA" })];
+    const results = rankBrowserTabs({ tabs, query: "physics" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchReason).toBe("title");
+  });
+
+  it("matches on domain/url when the title doesn't contain the query", () => {
+    const tabs = [makeBrowserTab(1, { title: "Untitled", url: "https://github.com/foo/bar" })];
+    const results = rankBrowserTabs({ tabs, query: "github" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchReason).toBe("url");
+    expect(results[0].domain).toBe("github.com");
+  });
+
+  it("scores an exact title match higher than a substring match", () => {
+    const tabs = [makeBrowserTab(1, { title: "physics" }), makeBrowserTab(2, { title: "Intro to Physics" })];
+    const results = rankBrowserTabs({ tabs, query: "physics" });
+    expect(results.map((r) => r.browserTabId)).toEqual([1, 2]);
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  it("returns nothing when there's no keyword match at all", () => {
+    const tabs = [makeBrowserTab(1, { title: "Shopping list" })];
+    expect(rankBrowserTabs({ tabs, query: "quantum computing" })).toEqual([]);
+  });
+
+  it("never crashes on a non-http browser url (e.g. chrome://)", () => {
+    const tabs = [makeBrowserTab(1, { title: "Settings", url: "chrome://settings" })];
+    expect(() => rankBrowserTabs({ tabs, query: "settings" })).not.toThrow();
+    expect(rankBrowserTabs({ tabs, query: "settings" })[0].matchReason).toBe("title");
+  });
+
+  it("respects the given limit", () => {
+    const tabs = Array.from({ length: 5 }, (_, i) => makeBrowserTab(i, { title: `Physics ${i}` }));
+    expect(rankBrowserTabs({ tabs, query: "physics", limit: 2 })).toHaveLength(2);
   });
 });

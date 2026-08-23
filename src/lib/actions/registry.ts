@@ -1,10 +1,11 @@
 import { searchTabsAction, getTabAction, listWorkspacesAction, getWorkspaceAction, listWorkspaceTabsAction } from "./read";
 import { createWorkspaceAction, renameWorkspaceAction } from "./workspaces";
-import { moveTabAction, moveTabsAction } from "./tabs";
+import { moveTabAction, moveTabsAction, deleteTabsAction } from "./tabs";
 import { createGroupAction, renameGroupAction, listGroupsAction, getGroupAction, listGroupTabsAction } from "./groups";
 import { assignTabsToGroupAction, removeTabsFromGroupAction } from "./group-membership";
 import { proposeAutoOrganizeAction } from "./organize";
-import { listBrowserTabsAction, getActiveTabAction, listBrowserWindowsAction } from "./browser-read";
+import { findDuplicatesAction } from "./duplicates";
+import { listBrowserTabsAction, getActiveTabAction, listBrowserWindowsAction, findUnsavedBrowserTabsAction } from "./browser-read";
 import {
   openUrlAction,
   openTabsAction,
@@ -12,6 +13,8 @@ import {
   closeTabsAction,
   pinTabAction,
   unpinTabAction,
+  bulkPinTabsAction,
+  bulkUnpinTabsAction,
   moveTabsToWindowAction,
   createBrowserWindowAction,
   openWorkspaceInBrowserAction,
@@ -29,6 +32,8 @@ export const ACTIONS: Record<string, ActionDefinition> = {
   [renameWorkspaceAction.name]: renameWorkspaceAction,
   [moveTabAction.name]: moveTabAction,
   [moveTabsAction.name]: moveTabsAction,
+  [deleteTabsAction.name]: deleteTabsAction,
+  [findDuplicatesAction.name]: findDuplicatesAction,
   [createGroupAction.name]: createGroupAction,
   [renameGroupAction.name]: renameGroupAction,
   [listGroupsAction.name]: listGroupsAction,
@@ -45,12 +50,15 @@ export const ACTIONS: Record<string, ActionDefinition> = {
   [listBrowserTabsAction.name]: listBrowserTabsAction,
   [getActiveTabAction.name]: getActiveTabAction,
   [listBrowserWindowsAction.name]: listBrowserWindowsAction,
+  [findUnsavedBrowserTabsAction.name]: findUnsavedBrowserTabsAction,
   [openUrlAction.name]: openUrlAction,
   [openTabsAction.name]: openTabsAction,
   [closeTabAction.name]: closeTabAction,
   [closeTabsAction.name]: closeTabsAction,
   [pinTabAction.name]: pinTabAction,
   [unpinTabAction.name]: unpinTabAction,
+  [bulkPinTabsAction.name]: bulkPinTabsAction,
+  [bulkUnpinTabsAction.name]: bulkUnpinTabsAction,
   [moveTabsToWindowAction.name]: moveTabsToWindowAction,
   [createBrowserWindowAction.name]: createBrowserWindowAction,
   [openWorkspaceInBrowserAction.name]: openWorkspaceInBrowserAction,
@@ -76,6 +84,8 @@ export const BROWSER_ACTION_NAMES = new Set([
   closeTabsAction.name,
   pinTabAction.name,
   unpinTabAction.name,
+  bulkPinTabsAction.name,
+  bulkUnpinTabsAction.name,
   moveTabsToWindowAction.name,
   createBrowserWindowAction.name,
   openWorkspaceInBrowserAction.name,

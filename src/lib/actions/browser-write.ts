@@ -5,6 +5,7 @@ import { isSafeOpenUrl } from "@/lib/browser/protocol";
 import {
   asRecord,
   optionalBoolean,
+  optionalIntegerArray,
   optionalString,
   requiredInteger,
   requiredIntegerArray,
@@ -186,6 +187,48 @@ function pinAction(name: "pin_tab" | "unpin_tab", pinned: boolean): ActionDefini
 export const pinTabAction = pinAction("pin_tab", true);
 export const unpinTabAction = pinAction("unpin_tab", false);
 
+type BulkPinTabsData = { tabIds: number[]; pinned: boolean; count: number };
+
+/**
+ * Pins/unpins several browser tabs in one call (Step 5's batch-actions ask —
+ * pin_tab/unpin_tab above only ever take one tab id, so without this,
+ * "pin all my Physics tabs" would cost one Gemini tool call per tab). Like
+ * close_tabs, ids that aren't currently open are silently dropped rather
+ * than failing the whole call, since a stale id here is a userland state
+ * question, not a validation error.
+ */
+function bulkPinAction(name: "bulk_pin_tabs" | "bulk_unpin_tabs", pinned: boolean): ActionDefinition<{ tabIds: number[] }, BulkPinTabsData> {
+  return {
+    name,
+    description: `${pinned ? "Pin" : "Unpin"} several currently-open browser tabs by their browser tab ids in one call. Requires the TabDump browser extension to be connected.`,
+    readOnly: false,
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        tabIds: { type: "ARRAY", items: { type: "INTEGER" }, description: `Up to ${MAX_TAB_IDS_PER_CALL} browser tab ids.` },
+      },
+      required: ["tabIds"],
+    },
+    validate(raw) {
+      const record = asRecord(raw);
+      if (!record) return { ok: false, message: "Expected an object with a `tabIds` array." };
+      const tabIds = requiredIntegerArray(record, "tabIds", MAX_TAB_IDS_PER_CALL);
+      if (!tabIds) return { ok: false, message: `\`tabIds\` must be a non-empty array of up to ${MAX_TAB_IDS_PER_CALL} integers.` };
+      return { ok: true, args: { tabIds } };
+    },
+    run(store, args, ctx) {
+      if (!ctx?.browserContext) return { ok: false, message: NOT_CONNECTED_MESSAGE };
+      const openIds = new Set(ctx.browserContext.tabs.map((t) => t.tabId));
+      const found = args.tabIds.filter((id) => openIds.has(id));
+      if (found.length === 0) return { ok: false, message: "None of the given browser tab ids are currently open." };
+      return { ok: true, data: { tabIds: found, pinned, count: found.length }, store };
+    },
+  };
+}
+
+export const bulkPinTabsAction = bulkPinAction("bulk_pin_tabs", true);
+export const bulkUnpinTabsAction = bulkPinAction("bulk_unpin_tabs", false);
+
 type MoveTabsToWindowData = { tabIds: number[]; windowId: number };
 
 export const moveTabsToWindowAction: ActionDefinition<{ tabIds: number[]; windowId: number }, MoveTabsToWindowData> = {
@@ -288,19 +331,28 @@ export const openWorkspaceInBrowserAction: ActionDefinition<{ workspaceId: strin
 
 type ImportBrowserTabsData = { workspaceId: string; workspaceName: string; importedCount: number };
 
-export const importBrowserTabsToWorkspaceAction: ActionDefinition<{ workspaceId?: string }, ImportBrowserTabsData> = {
+export const importBrowserTabsToWorkspaceAction: ActionDefinition<{ workspaceId?: string; tabIds?: number[] }, ImportBrowserTabsData> = {
   name: "import_browser_tabs_to_workspace",
   description:
-    "Save the user's currently-open real browser tabs into a TabDump workspace (defaults to the current workspace if none is given) — e.g. \"save my current browser tabs to my Physics workspace.\" Requires the TabDump browser extension to be connected. Unlike other browser actions, this one directly updates TabDump data (like move_tabs does), not the live browser.",
+    "Save the user's currently-open real browser tabs into a TabDump workspace (defaults to the current workspace if none is given) — e.g. \"save my current browser tabs to my Physics workspace.\" By default this saves every open tab; pass `tabIds` (from list_browser_tabs or a browser-sourced search_tabs result) to save only a specific subset instead — e.g. \"import only the MUN-related browser tabs\" (search or list first, then pass just those ids). Requires the TabDump browser extension to be connected. Unlike other browser actions, this one directly updates TabDump data (like move_tabs does), not the live browser.",
   readOnly: false,
   parameters: {
     type: "OBJECT",
-    properties: { workspaceId: { type: "STRING", description: "Optional — defaults to the current workspace." } },
+    properties: {
+      workspaceId: { type: "STRING", description: "Optional — defaults to the current workspace." },
+      tabIds: {
+        type: "ARRAY",
+        items: { type: "INTEGER" },
+        description: `Optional — only import browser tabs with these ids, up to ${MAX_TAB_IDS_PER_CALL}. Omit to import every currently-open tab.`,
+      },
+    },
     required: [],
   },
   validate(raw) {
     const record = asRecord(raw) ?? {};
-    return { ok: true, args: { workspaceId: optionalString(record, "workspaceId") } };
+    const tabIds = optionalIntegerArray(record, "tabIds", MAX_TAB_IDS_PER_CALL);
+    if (tabIds === null) return { ok: false, message: `\`tabIds\`, if given, must be a non-empty array of up to ${MAX_TAB_IDS_PER_CALL} integers.` };
+    return { ok: true, args: { workspaceId: optionalString(record, "workspaceId"), tabIds } };
   },
   run(store, args, ctx) {
     if (!ctx?.browserContext) return { ok: false, message: NOT_CONNECTED_MESSAGE };
@@ -309,7 +361,13 @@ export const importBrowserTabsToWorkspaceAction: ActionDefinition<{ workspaceId?
     const workspace = findWorkspace(store, targetId);
     if (!workspace) return { ok: false, message: `No workspace found with id "${targetId}".` };
 
-    const entries = ctx.browserContext.tabs
+    const wantedIds = args.tabIds ? new Set(args.tabIds) : null;
+    const sourceTabs = wantedIds ? ctx.browserContext.tabs.filter((t) => wantedIds.has(t.tabId)) : ctx.browserContext.tabs;
+    if (wantedIds && sourceTabs.length === 0) {
+      return { ok: false, message: "None of the given browser tab ids are currently open." };
+    }
+
+    const entries = sourceTabs
       .slice(0, MAX_IMPORTED_TABS)
       .map((t) => ({ url: t.url, title: t.title, pinned: t.pinned, favicon: t.favIconUrl }));
     const incoming = buildTabsFromBrowserImport(entries);

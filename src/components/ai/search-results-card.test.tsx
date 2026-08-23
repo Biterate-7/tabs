@@ -6,6 +6,7 @@ import type { SearchResult } from "@/lib/ai/types";
 
 function makeResult(over: Partial<SearchResult> & { tabId: string }): SearchResult {
   return {
+    source: "tabdump",
     title: "Untitled",
     url: "https://example.com",
     domain: "example.com",
@@ -97,5 +98,26 @@ describe("SearchResultsCard", () => {
 
     render(<SearchResultsCard results={[makeResult({ tabId: "2", domain: "x.com", groupName: "References" })]} />);
     expect(screen.getByText(/References/)).toBeTruthy();
+  });
+
+  it("groups browser-sourced results into a separate 'Currently open in browser' bucket", () => {
+    const results = [
+      makeResult({ tabId: "1", workspaceId: "a", workspaceName: "Physics IA", title: "Saved tab" }),
+      { source: "browser" as const, tabId: "browser:7", title: "Open tab", url: "https://x.com", domain: "x.com", browserTabId: 7, browserWindowId: 1, score: 4, matchReason: "title" as const },
+    ];
+    render(<SearchResultsCard results={results} />);
+    expect(screen.getByText("Physics IA")).toBeTruthy();
+    expect(screen.getByText("Currently open in browser")).toBeTruthy();
+    expect(screen.getByText("Saved tab")).toBeTruthy();
+    expect(screen.getByText("Open tab")).toBeTruthy();
+  });
+
+  it("shows only the browser bucket when every result is browser-sourced", () => {
+    const results = [
+      { source: "browser" as const, tabId: "browser:7", title: "Open tab", url: "https://x.com", domain: "x.com", browserTabId: 7, browserWindowId: 1, score: 4, matchReason: "title" as const },
+    ];
+    render(<SearchResultsCard results={results} />);
+    expect(screen.getByText("Currently open in browser")).toBeTruthy();
+    expect(screen.getByText(/1 result\b/)).toBeTruthy();
   });
 });

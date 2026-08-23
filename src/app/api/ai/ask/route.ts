@@ -60,7 +60,11 @@ const AGENT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant for a browse
 
 A workspace can contain groups, and a tab can belong to at most one group within its own workspace. Use assign_tabs_to_group for requests like "put these tabs into General Relativity," "group my Physics tabs," or "move these tabs into the MUN research group" — create the group first with create_group if it doesn't exist yet, and move the tabs into the right workspace first with move_tabs if they aren't there yet (assign_tabs_to_group requires every tab to already be in the same workspace as the group). Use remove_tabs_from_group for "remove these tabs from the group" or "ungroup these tabs." Use list_groups, get_group, or list_group_tabs to answer read-only questions like "what groups do I have?", "what's in General Relativity?", or "show me my Physics groups."
 
-You can also control the user's real, currently-open Chrome tabs and windows — listing them, opening URLs (including a whole saved workspace's tabs), closing tabs, pinning/unpinning, moving tabs between windows, creating a new window, and saving currently-open tabs into a TabDump workspace. These are ordinary tools alongside the TabDump ones above, not a separate assistant — choose whichever tool (or combination) actually answers the request, e.g. search_tabs then open_tabs for "find my Physics IA tabs and open them," or search_tabs then move_tabs then open_tabs for "find my Physics IA tabs, put them into Physics IA, and open them." Every browser tool requires the extension to be connected — if a browser tool call fails because it isn't, tell the user plainly (e.g. "Your TabDump browser extension isn't connected, so I can't do that") rather than guessing or silently doing nothing. Closing more than one browser tab in the same call always needs the user's confirmation before anything is actually closed — that's handled automatically, you don't need to ask separately.
+You can also control the user's real, currently-open Chrome tabs and windows — listing them, opening URLs (including a whole saved workspace's tabs), closing tabs, pinning/unpinning (bulk_pin_tabs/bulk_unpin_tabs for more than one tab at once), moving tabs between windows, creating a new window, and saving currently-open tabs into a TabDump workspace (import_browser_tabs_to_workspace — pass tabIds to import only a specific subset, e.g. after finding them with search_tabs or list_browser_tabs, rather than every open tab). Use find_unsaved_browser_tabs for "what tabs do I have open that aren't saved in TabDump?" or "which open tabs are already saved?". These are ordinary tools alongside the TabDump ones above, not a separate assistant — choose whichever tool (or combination) actually answers the request, e.g. search_tabs then open_tabs for "find my Physics IA tabs and open them," or search_tabs then move_tabs then open_tabs for "find my Physics IA tabs, put them into Physics IA, and open them." Every browser tool requires the extension to be connected — if a browser tool call fails because it isn't, tell the user plainly (e.g. "Your TabDump browser extension isn't connected, so I can't do that") rather than guessing or silently doing nothing. Closing more than one browser tab, or deleting more than one saved tab (delete_tabs), in the same call always needs the user's confirmation before anything is actually closed/deleted — that's handled automatically, you don't need to ask separately.
+
+Use find_duplicates for "find duplicate tabs", "which tabs are duplicates?", or "close/clean up the duplicate tabs" — it covers both saved TabDump tabs (across every workspace) and, when connected, the user's actual open browser tabs, each grouped separately with a reason and confidence ("high" for an identical URL, "medium" for a likely equivalent one like a www/non-www variant). It's read-only: once the user's confirmed which copies to remove, follow up with delete_tabs for saved-tab duplicates or close_tabs for open-tab duplicates.
+
+search_tabs also searches the user's actual open browser tabs (tagged source "browser" in its results, alongside saved tabs tagged source "tabdump") whenever the extension is connected — this is what makes a broad request like "find anything about South Ossetia" or "open everything related to my research" span both at once. Pass includeBrowser: false to search only saved tabs.
 
 Ground every factual answer ONLY in the "Saved context" given below and in what tool results actually return — never use outside knowledge, and never invent a fact, workspace, tab, id, or URL you weren't actually given.
 
@@ -208,22 +212,28 @@ function isValidBrowserContext(value: unknown): value is BrowserContextSnapshot 
   );
 }
 
+/**
+ * `source: "browser"` results (see rankBrowserTabs) never carry a
+ * workspaceId/workspaceName — they're a live open tab, not necessarily
+ * saved anywhere — so this only requires those two for the (default,
+ * absent-source-means-tabdump — see SearchResult's doc) tabdump case.
+ */
 function isSearchResultArray(value: unknown): value is SearchResult[] {
   return (
     Array.isArray(value) &&
     value.every((v) => {
       if (!v || typeof v !== "object") return false;
       const r = v as SearchResult;
-      return (
+      const baseValid =
         typeof r.tabId === "string" &&
         typeof r.title === "string" &&
         typeof r.url === "string" &&
         typeof r.domain === "string" &&
-        typeof r.workspaceId === "string" &&
-        typeof r.workspaceName === "string" &&
         typeof r.score === "number" &&
-        MATCH_REASONS.includes(r.matchReason)
-      );
+        MATCH_REASONS.includes(r.matchReason);
+      if (!baseValid) return false;
+      if (r.source === "browser") return true;
+      return typeof r.workspaceId === "string" && typeof r.workspaceName === "string";
     })
   );
 }
@@ -237,9 +247,11 @@ function isSearchResultArray(value: unknown): value is SearchResult[] {
  */
 function buildRecentSearchResultsBlock(results: SearchResult[]): string {
   if (results.length === 0) return "";
-  const lines = results
-    .slice(0, RECENT_SEARCH_RESULTS_LIMIT)
-    .map((r) => `- tabId: ${r.tabId} | title: ${r.title} | domain: ${r.domain} | workspace: ${r.workspaceName} (id: ${r.workspaceId})`);
+  const lines = results.slice(0, RECENT_SEARCH_RESULTS_LIMIT).map((r) =>
+    r.source === "browser"
+      ? `- tabId: ${r.tabId} | title: ${r.title} | domain: ${r.domain} | source: open browser tab (browserTabId: ${r.browserTabId})`
+      : `- tabId: ${r.tabId} | title: ${r.title} | domain: ${r.domain} | source: saved tab | workspace: ${r.workspaceName} (id: ${r.workspaceId})`
+  );
   return `Recent search results (from your last search_tabs call in this conversation):\n${lines.join("\n")}\n\n`;
 }
 
