@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AskTabDumpPanel } from "./ask-tabdump-panel";
 import * as useAskTabDumpModule from "@/hooks/use-ask-tabdump";
 import type { Tab } from "@/lib/tabs/types";
-import type { AskMessage } from "@/lib/ai/types";
+import type { AskMessage, PendingActionPreviewStatus } from "@/lib/ai/types";
 
 vi.mock("@/hooks/use-ask-tabdump", () => ({
   useAskTabDump: vi.fn(),
@@ -20,6 +20,8 @@ function mockHook(overrides: {
   send?: (q: string) => void;
   regenerate?: () => void;
   clear?: () => void;
+  applyPreview?: (id: string) => Promise<void>;
+  cancelPreview?: (id: string) => void;
 }) {
   vi.mocked(useAskTabDumpModule.useAskTabDump).mockReturnValue({
     messages: overrides.messages ?? [],
@@ -27,6 +29,8 @@ function mockHook(overrides: {
     send: overrides.send ?? vi.fn(),
     regenerate: overrides.regenerate ?? vi.fn(),
     clear: overrides.clear ?? vi.fn(),
+    applyPreview: overrides.applyPreview ?? vi.fn(async () => {}),
+    cancelPreview: overrides.cancelPreview ?? vi.fn(),
   });
 }
 
@@ -123,5 +127,138 @@ describe("AskTabDumpPanel", () => {
       />
     );
     expect(screen.getByText(/Indexing your tabs… 3\/10/)).toBeTruthy();
+  });
+
+  describe("action preview", () => {
+    function messagesWithPreview(status: PendingActionPreviewStatus): AskMessage[] {
+      return [
+        { id: "1", role: "user" as const, text: "Organize this workspace." },
+        {
+          id: "2",
+          role: "assistant" as const,
+          text: "Here's what I want to change",
+          preview: {
+            status,
+            summary: "This will create 2 groups and move 13 tabs.",
+            plan: [
+              { name: "create_group", args: {}, label: 'Create group → "Physics IA"', affected: 1 },
+              { name: "move_tabs", args: {}, label: 'Move 13 tabs → "Research"', affected: 13 },
+            ],
+          },
+        },
+      ];
+    }
+
+    it("renders every proposed action plus the summary, with Apply/Cancel buttons, while awaiting approval", () => {
+      mockHook({ messages: messagesWithPreview("awaiting") });
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Create group → "Physics IA"')).toBeTruthy();
+      expect(screen.getByText('Move 13 tabs → "Research"')).toBeTruthy();
+      expect(screen.getByText("This will create 2 groups and move 13 tabs.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /apply changes/i })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /cancel/i })).toBeTruthy();
+    });
+
+    it("calls applyPreview with the message id when Apply changes is clicked", async () => {
+      const applyPreview = vi.fn(async () => {});
+      mockHook({ messages: messagesWithPreview("awaiting"), applyPreview });
+      const user = userEvent.setup();
+
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: /apply changes/i }));
+      expect(applyPreview).toHaveBeenCalledWith("2");
+    });
+
+    it("calls cancelPreview with the message id when Cancel is clicked", async () => {
+      const cancelPreview = vi.fn();
+      mockHook({ messages: messagesWithPreview("awaiting"), cancelPreview });
+      const user = userEvent.setup();
+
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+      expect(cancelPreview).toHaveBeenCalledWith("2");
+    });
+
+    it("disables Apply while an apply is in flight", () => {
+      mockHook({ messages: messagesWithPreview("applying") });
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      expect((screen.getByRole("button", { name: /apply changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("hides the Apply/Cancel buttons once the preview has been resolved (applied)", () => {
+      mockHook({ messages: messagesWithPreview("applied") });
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByRole("button", { name: /apply changes/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
+      // The proposed list itself stays visible as a record of what was proposed.
+      expect(screen.getByText('Create group → "Physics IA"')).toBeTruthy();
+    });
+
+    it("shows a follow-up message after apply/cancel without losing the original conversation", () => {
+      mockHook({
+        messages: [
+          ...messagesWithPreview("applied"),
+          { id: "3", role: "assistant", text: "Done — created 2 groups and moved 13 tabs." },
+        ],
+      });
+      render(
+        <AskTabDumpPanel
+          open
+          workspaceId="ws-1"
+          tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+          indexState={noIndexing}
+          onOpenChange={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText("Organize this workspace.")).toBeTruthy();
+      expect(screen.getByText("Here's what I want to change")).toBeTruthy();
+      expect(screen.getByText("Done — created 2 groups and moved 13 tabs.")).toBeTruthy();
+    });
   });
 });

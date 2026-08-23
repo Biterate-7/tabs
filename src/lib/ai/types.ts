@@ -52,6 +52,23 @@ export type AskSource = {
 
 export type AskRole = "user" | "assistant";
 
+/** One write action proposed by the agent — mirrors src/lib/actions/plan.ts's PlannedAction (kept as a separate, minimal type here so the UI layer doesn't need to import the server-only action layer). */
+export type PlannedActionView = {
+  name: string;
+  args: unknown;
+  label: string;
+  affected: number;
+};
+
+export type PendingActionPreviewStatus = "awaiting" | "applying" | "applied" | "cancelled" | "failed";
+
+/** Attached to an assistant message when the agent proposed changes that need explicit approval before anything is applied. */
+export type PendingActionPreview = {
+  plan: PlannedActionView[];
+  summary: string;
+  status: PendingActionPreviewStatus;
+};
+
 export type AskMessage = {
   id: string;
   role: AskRole;
@@ -59,6 +76,8 @@ export type AskMessage = {
   sources?: AskSource[];
   /** True while an assistant message's text is still streaming in. */
   pending?: boolean;
+  /** Present on an assistant message that proposed a plan awaiting (or resolved from) user approval. */
+  preview?: PendingActionPreview;
 };
 
 export type CollectionOverview = {

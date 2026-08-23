@@ -3,6 +3,7 @@ import { generateContent, generateContentStream } from "@/lib/ai/gemini/client";
 import { chatModel, analysisModel } from "@/lib/ai/config";
 import type { AgentContent, GeminiContent, GeminiResult } from "@/lib/ai/gemini/types";
 import { runAgentLoop } from "@/lib/actions/agent";
+import { applyPlan, isValidPlanInput } from "@/lib/actions/plan";
 import { isValidWorkspaceStore } from "@/lib/workspace/persistence";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 
@@ -19,9 +20,9 @@ const AGENT_MAX_OUTPUT_TOKENS = 1024;
 
 type ContextItem = { tabId: string; title: string; url: string; text: string };
 type HistoryItem = { role: "user" | "model"; text: string };
-type Mode = "chat" | "agent" | "collection-overview" | "collection-gaps";
+type Mode = "chat" | "agent" | "agent-apply" | "collection-overview" | "collection-gaps";
 
-const MODES: Mode[] = ["chat", "agent", "collection-overview", "collection-gaps"];
+const MODES: Mode[] = ["chat", "agent", "agent-apply", "collection-overview", "collection-gaps"];
 
 const ERROR_STATUS: Record<string, number> = {
   "missing-key": 503,
@@ -127,6 +128,34 @@ function errorResponse(failure: Extract<GeminiResult<unknown>, { ok: false }>): 
   );
 }
 
+/**
+ * Applying an approved plan needs no Gemini call and no question/context —
+ * it's pure, deterministic execution of an already-decided list of
+ * actions — so it's handled entirely separately from the question-driven
+ * modes below. `plan` is untrusted client input (it round-tripped through
+ * the browser after the user clicked Apply): applyPlan() revalidates every
+ * step from scratch against `store` via the same runAction() every other
+ * mode uses, exactly as if Gemini had just called it — the preview the
+ * user saw is never itself treated as authorization to skip that.
+ */
+function handleAgentApply(b: Record<string, unknown> | null): Response {
+  const storeInput = b?.store;
+  if (!isValidWorkspaceStore(storeInput)) {
+    return Response.json({ error: "Expected a valid { store: WorkspaceStore }." }, { status: 400 });
+  }
+  const planInput = b?.plan;
+  if (!isValidPlanInput(planInput)) {
+    return Response.json({ error: "Expected a non-empty { plan: {name, args}[] }." }, { status: 400 });
+  }
+
+  const result = applyPlan(planInput, storeInput);
+  return Response.json({
+    text: result.text,
+    actions: result.actions,
+    ...(result.storeChanged ? { store: result.store } : {}),
+  });
+}
+
 export async function POST(request: Request): Promise<Response> {
   const requestStartedAt = Date.now();
 
@@ -139,13 +168,19 @@ export async function POST(request: Request): Promise<Response> {
 
   const b = body as Record<string, unknown> | null;
   const mode = (b?.mode as Mode | undefined) ?? "chat";
-  const question = b?.question;
-  const context = b?.context;
-  const history = b?.history ?? [];
 
   if (!MODES.includes(mode)) {
     return Response.json({ error: "Invalid mode." }, { status: 400 });
   }
+
+  if (mode === "agent-apply") {
+    return handleAgentApply(b);
+  }
+
+  const question = b?.question;
+  const context = b?.context;
+  const history = b?.history ?? [];
+
   if (typeof question !== "string" || question.trim().length === 0) {
     return Response.json({ error: "Expected a non-empty { question: string }." }, { status: 400 });
   }
@@ -212,6 +247,15 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     if (!agentResult.ok) return errorResponse(agentResult);
+
+    if (agentResult.kind === "preview") {
+      return Response.json({
+        requiresConfirmation: true,
+        text: agentResult.text,
+        plan: agentResult.plan,
+        summary: agentResult.summary,
+      });
+    }
 
     return Response.json({
       text: agentResult.text,

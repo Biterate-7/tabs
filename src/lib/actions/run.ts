@@ -24,5 +24,5 @@ export function runAction(name: string, rawArgs: unknown, store: WorkspaceStore)
     return { ok: false, name, message: result.message };
   }
 
-  return { ok: true, name, data: result.data, store: result.store ?? store };
+  return { ok: true, name, args: validated.args, data: result.data, store: result.store ?? store };
 }

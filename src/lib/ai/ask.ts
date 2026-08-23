@@ -3,12 +3,17 @@ import type { WorkspaceStore } from "@/lib/workspace/types";
 import { embedTexts } from "./embed-client";
 import { retrieveRelevantChunks } from "./retrieve";
 import { formatApiError } from "./types";
-import type { AskMessage, AskSource } from "./types";
+import type { AskMessage, AskSource, PlannedActionView } from "./types";
 
 const MAX_HISTORY_MESSAGES = 6;
 export const NOT_ENOUGH_INFO_MESSAGE = "I couldn't find enough information in your saved tabs to answer that.";
 
-export type AskResult = { ok: true; text: string; sources: AskSource[] } | { ok: false; error: string };
+export type AskResult =
+  | { ok: true; text: string; sources: AskSource[] }
+  | { ok: true; requiresConfirmation: true; text: string; plan: PlannedActionView[]; summary: string }
+  | { ok: false; error: string };
+
+export type ApplyPlanResult = { ok: true; text: string } | { ok: false; error: string };
 
 function toSource(tab: Tab | undefined, fallback: { tabId: string; title: string; url: string }): AskSource {
   return {
@@ -85,7 +90,18 @@ export async function askQuestion(params: {
       return { ok: false, error: formatApiError(data, agentResponse.status) };
     }
 
-    const data = (await agentResponse.json()) as { text: string; store?: WorkspaceStore };
+    const data = (await agentResponse.json()) as {
+      text: string;
+      store?: WorkspaceStore;
+      requiresConfirmation?: boolean;
+      plan?: PlannedActionView[];
+      summary?: string;
+    };
+
+    if (data.requiresConfirmation) {
+      return { ok: true, requiresConfirmation: true, text: data.text, plan: data.plan ?? [], summary: data.summary ?? "" };
+    }
+
     if (data.store) onStoreUpdate?.(data.store);
     return { ok: true, text: data.text, sources };
   }
@@ -135,4 +151,49 @@ export async function askQuestion(params: {
   }
 
   return { ok: true, text, sources };
+}
+
+/**
+ * Executes a plan the user has approved (see AskResult's requiresConfirmation
+ * variant above). `plan` here is only ever the exact steps the agent
+ * proposed and the user saw rendered — never edited client-side — but the
+ * server treats it as untrusted input regardless and revalidates every step
+ * from scratch against `store` before touching anything. Deliberately
+ * separate from askQuestion(): applying needs no embeddings retrieval, no
+ * Gemini call, and no conversation history — it's just "run these specific
+ * actions for real now."
+ */
+export async function applyPlan(params: {
+  plan: PlannedActionView[];
+  store: WorkspaceStore;
+  onStoreUpdate?: (store: WorkspaceStore) => void;
+  signal?: AbortSignal;
+}): Promise<ApplyPlanResult> {
+  const { plan, store, onStoreUpdate, signal } = params;
+
+  let response: Response;
+  try {
+    response = await fetch("/api/ai/ask", {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "agent-apply",
+        plan: plan.map(({ name, args }) => ({ name, args })),
+        store,
+      }),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : undefined;
+    return { ok: false, error: detail ? `Couldn't reach the AI service. (${detail})` : "Couldn't reach the AI service." };
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    return { ok: false, error: formatApiError(data, response.status) };
+  }
+
+  const data = (await response.json()) as { text: string; store?: WorkspaceStore };
+  if (data.store) onStoreUpdate?.(data.store);
+  return { ok: true, text: data.text };
 }

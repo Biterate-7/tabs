@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { askQuestion } from "./ask";
+import { askQuestion, applyPlan } from "./ask";
 import { putChunks } from "./db";
 import type { Tab } from "@/lib/tabs/types";
 
@@ -125,5 +125,82 @@ it("does not call onStoreUpdate when the agent response has no store (read-only 
   });
 
   expect(result).toEqual({ ok: true, text: "You have one workspace.", sources: expect.any(Array) });
+  expect(onStoreUpdate).not.toHaveBeenCalled();
+});
+
+it("returns a preview result (no store update) when the agent asks for confirmation", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const plan = [{ name: "move_tabs", args: { tabIds: ["1"], targetWorkspaceId: "ws-repro" }, label: 'Move 1 tab → "Physics"', affected: 1 }];
+
+  vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) {
+      return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    }
+    if (url.includes("/api/ai/ask")) {
+      return new Response(
+        JSON.stringify({ requiresConfirmation: true, text: "Here's what I want to change", plan, summary: "This will move 1 tab." }),
+        { status: 200 }
+      );
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const onStoreUpdate = vi.fn();
+  const result = await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs: [],
+    question: "Organize this workspace",
+    history: [],
+    store: workspaceStore,
+    onStoreUpdate,
+  });
+
+  expect(result).toEqual({
+    ok: true,
+    requiresConfirmation: true,
+    text: "Here's what I want to change",
+    plan,
+    summary: "This will move 1 tab.",
+  });
+  expect(onStoreUpdate).not.toHaveBeenCalled();
+});
+
+it("applyPlan posts the exact plan and store, and applies the returned store", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const mutatedStore = { ...workspaceStore, workspaces: [{ ...workspaceStore.workspaces[0], groups: [{ id: "g1", name: "Midterms", createdAt: 0, updatedAt: 0 }] }] };
+  const plan = [{ name: "create_group", args: { workspaceId: "ws-repro", name: "Midterms" }, label: 'Create group → "Midterms"', affected: 1 }];
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Done — created 1 group.", actions: [], store: mutatedStore }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const onStoreUpdate = vi.fn();
+  const result = await applyPlan({ plan, store: workspaceStore, onStoreUpdate });
+
+  expect(result).toEqual({ ok: true, text: "Done — created 1 group." });
+  expect(onStoreUpdate).toHaveBeenCalledWith(mutatedStore);
+  expect((capturedBody as unknown as { mode: string }).mode).toBe("agent-apply");
+  expect((capturedBody as unknown as { plan: unknown }).plan).toEqual([{ name: "create_group", args: plan[0].args }]);
+  expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);
+});
+
+it("applyPlan surfaces a server error without calling onStoreUpdate", async () => {
+  vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "Something failed." }), { status: 500 }));
+
+  const onStoreUpdate = vi.fn();
+  const result = await applyPlan({
+    plan: [{ name: "create_group", args: {}, label: "x", affected: 1 }],
+    store: { version: 1, currentId: "a", workspaces: [{ id: "a", name: "A", tabs: [], createdAt: 0, updatedAt: 0 }] },
+    onStoreUpdate,
+  });
+
+  expect(result).toEqual({ ok: false, error: expect.stringContaining("Something failed.") });
   expect(onStoreUpdate).not.toHaveBeenCalled();
 });

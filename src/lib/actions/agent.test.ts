@@ -35,7 +35,7 @@ describe("runAgentLoop", () => {
 
     const result = await runAgentLoop(baseParams(store));
 
-    expect(result).toEqual({ ok: true, text: "Just an answer.", store, storeChanged: false, actions: [] });
+    expect(result).toEqual({ ok: true, kind: "resolved", text: "Just an answer.", store, storeChanged: false, actions: [] });
     expect(generateAgentTurnMock).toHaveBeenCalledTimes(1);
   });
 
@@ -52,6 +52,7 @@ describe("runAgentLoop", () => {
 
     expect(result).toEqual({
       ok: true,
+      kind: "resolved",
       text: "You have one workspace: Physics.",
       store,
       storeChanged: false,
@@ -85,7 +86,7 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop(baseParams(store));
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
     expect(result.actions).toHaveLength(2);
     expect(result.actions.map((a) => a.ok)).toEqual([true, true]);
 
@@ -106,7 +107,7 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop(baseParams(store));
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
     expect(result.storeChanged).toBe(true);
     expect(result.store.workspaces.map((w) => w.name)).toEqual(["Untitled", "College Research"]);
     expect(store.workspaces).toHaveLength(1);
@@ -124,7 +125,7 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop(baseParams(store));
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
     expect(result.actions).toEqual([{ name: "move_tab", ok: false, message: expect.any(String) }]);
 
     const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents;
@@ -154,5 +155,107 @@ describe("runAgentLoop", () => {
 
     expect(result).toEqual({ ok: false, reason: "rate-limited", detail: "slow down" });
     expect(generateAgentTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("executes a single small write action immediately (no confirmation) — move_tab", async () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com" }] }), makeWorkspace({ id: "b", name: "Research" })],
+      "a"
+    );
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "move_tab", args: { tabId: "1", targetWorkspaceId: "b", sourceWorkspaceId: "a" } }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Moved it.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("resolved");
+  });
+
+  it("requires confirmation for a single move_tabs call that exceeds the affected-resource threshold", async () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, url: `https://x.com/${i}`, normalizedUrl: `https://x.com/${i}`, domain: "x.com" }));
+    const store = makeStore([makeWorkspace({ id: "a", tabs: many }), makeWorkspace({ id: "b", name: "Research" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          text: "",
+          functionCalls: [{ name: "move_tabs", args: { tabIds: many.map((t) => t.id), targetWorkspaceId: "b", sourceWorkspaceId: "a" } }],
+        },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result");
+    expect(result.plan).toHaveLength(1);
+    expect(result.plan[0]).toMatchObject({ name: "move_tabs", label: expect.stringContaining("5 tabs"), affected: 5 });
+    expect(result.summary).toContain("move 5 tabs");
+    // Nothing was actually moved — the original store passed in is untouched.
+    expect(store.workspaces[0].tabs).toHaveLength(5);
+  });
+
+  it("requires confirmation for multiple write actions in one request, even if each is individually small", async () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          text: "",
+          functionCalls: [
+            { name: "create_group", args: { workspaceId: "a", name: "Physics IA" } },
+            { name: "create_group", args: { workspaceId: "a", name: "Research" } },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result");
+    expect(result.plan).toHaveLength(2);
+    expect(result.plan.map((p) => p.label)).toEqual([
+      'Create group → "Physics IA"',
+      'Create group → "Research"',
+    ]);
+    expect(result.summary).toContain("create 2 groups");
+  });
+
+  it("keeps a multi-step plan coherent during planning (a later step referencing an earlier not-yet-real workspace) without touching the real store", async () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com" }] })], "a");
+
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "create_workspace", args: { name: "College Research" } }] },
+      })
+      .mockImplementationOnce(async (opts: { contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { workspace?: { workspaceId: string } } } } }> }> }) => {
+        // The staged create_workspace's real-shaped id must be visible here so the next call can target it.
+        const functionTurn = opts.contents.find((c) => c.role === "function");
+        const stagedId = functionTurn?.parts[0]?.functionResponse?.response?.result?.workspace?.workspaceId;
+        return {
+          ok: true,
+          data: { text: "", functionCalls: [{ name: "move_tab", args: { tabId: "1", targetWorkspaceId: stagedId, sourceWorkspaceId: "a" } }] },
+        };
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result (2 write actions)");
+    expect(result.plan).toHaveLength(2);
+    expect(result.plan[0].name).toBe("create_workspace");
+    expect(result.plan[1].name).toBe("move_tab");
+    // The move step targeted the staged workspace by its (staged) id, and its own dry-run resolved that id's name.
+    expect(result.plan[1].label).toContain("College Research");
+    // Nothing committed to the real store passed in.
+    expect(store.workspaces).toHaveLength(1);
   });
 });

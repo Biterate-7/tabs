@@ -16,6 +16,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/empty-state"
 import { SourceCard } from "@/components/ai/source-card"
+import { ActionPreviewCard } from "@/components/ai/action-preview-card"
 import { useAskTabDump } from "@/hooks/use-ask-tabdump"
 import type { AiIndexState } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
@@ -46,7 +47,12 @@ export function AskTabDumpPanel({
   allWorkspaces?: Workspace[]
   onStoreUpdate?: (store: WorkspaceStore) => void
 }) {
-  const { messages, isSending, send, regenerate, clear } = useAskTabDump(workspaceId, tabs, allWorkspaces, onStoreUpdate)
+  const { messages, isSending, send, regenerate, clear, applyPreview, cancelPreview } = useAskTabDump(
+    workspaceId,
+    tabs,
+    allWorkspaces,
+    onStoreUpdate
+  )
   const [input, setInput] = useState("")
   const scrollEndRef = useRef<HTMLDivElement>(null)
 
@@ -142,6 +148,14 @@ export function AskTabDumpPanel({
                                 ))}
                               </div>
                             </div>
+                          )}
+
+                          {message.preview && (
+                            <ActionPreviewCard
+                              preview={message.preview}
+                              onApply={() => applyPreview(message.id)}
+                              onCancel={() => cancelPreview(message.id)}
+                            />
                           )}
 
                           {!message.pending && message.id === lastAssistant?.id && (

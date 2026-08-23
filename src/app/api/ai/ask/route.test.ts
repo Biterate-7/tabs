@@ -136,6 +136,7 @@ describe("POST /api/ai/ask", () => {
     it("returns the agent's final text and reports actions performed", async () => {
       runAgentLoopMock.mockResolvedValue({
         ok: true,
+        kind: "resolved",
         text: "Done — I moved 3 tabs into Physics.",
         store: validStore,
         storeChanged: false,
@@ -157,6 +158,7 @@ describe("POST /api/ai/ask", () => {
       const mutatedStore = { ...validStore, workspaces: [...validStore.workspaces, { id: "ws-2", name: "New", tabs: [], createdAt: 0, updatedAt: 0 }] };
       runAgentLoopMock.mockResolvedValue({
         ok: true,
+        kind: "resolved",
         text: "Created the New workspace.",
         store: mutatedStore,
         storeChanged: true,
@@ -172,7 +174,7 @@ describe("POST /api/ai/ask", () => {
     });
 
     it("passes the tool declarations through to Gemini so it can select the right one", async () => {
-      runAgentLoopMock.mockResolvedValue({ ok: true, text: "ok", store: validStore, storeChanged: false, actions: [] });
+      runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
 
       await POST(postRequest({ question: "List my workspaces", context: [], mode: "agent", store: validStore }));
 
@@ -194,6 +196,90 @@ describe("POST /api/ai/ask", () => {
       );
 
       expect(response.status).toBe(429);
+    });
+
+    it("returns a structured preview instead of executing anything when the loop resolves to a preview", async () => {
+      const plan = [
+        { name: "create_group", args: { workspaceId: "ws-1", name: "References" }, label: 'Create group → "References"', affected: 1 },
+      ];
+      runAgentLoopMock.mockResolvedValue({
+        ok: true,
+        kind: "preview",
+        text: "Here's what I want to change",
+        plan,
+        summary: "This will create 1 group.",
+      });
+
+      const response = await POST(
+        postRequest({ question: "Organize this workspace", context: [], mode: "agent", store: validStore })
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.requiresConfirmation).toBe(true);
+      expect(body.plan).toEqual(plan);
+      expect(body.summary).toBe("This will create 1 group.");
+      expect(body.store).toBeUndefined();
+      expect(body.actions).toBeUndefined();
+    });
+  });
+
+  describe("agent-apply mode", () => {
+    it("returns 400 when store is missing or invalid", async () => {
+      const response = await POST(
+        postRequest({ mode: "agent-apply", plan: [{ name: "create_group", args: {} }] })
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("returns 400 when plan is missing or invalid", async () => {
+      const response = await POST(postRequest({ mode: "agent-apply", store: validStore, plan: [] }));
+      expect(response.status).toBe(400);
+    });
+
+    it("does not require a question, context, or Gemini call at all", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "create_group", args: { workspaceId: "ws-1", name: "References" } }],
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(generateContentMock).not.toHaveBeenCalled();
+      expect(generateContentStreamMock).not.toHaveBeenCalled();
+      expect(runAgentLoopMock).not.toHaveBeenCalled();
+    });
+
+    it("executes the plan for real and returns the mutated store plus a done message", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "create_group", args: { workspaceId: "ws-1", name: "References" } }],
+        })
+      );
+
+      const body = await response.json();
+      expect(body.text).toMatch(/^Done —/);
+      expect(body.store.workspaces[0].groups[0].name).toBe("References");
+      expect(body.actions).toEqual([{ name: "create_group", ok: true, message: expect.any(String) }]);
+    });
+
+    it("revalidates and fails a step whose resource no longer exists, without pretending success", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "move_tab", args: { tabId: "ghost", targetWorkspaceId: "ws-1" } }],
+        })
+      );
+
+      const body = await response.json();
+      expect(body.actions).toEqual([{ name: "move_tab", ok: false, message: expect.any(String) }]);
+      expect(body.store).toBeUndefined();
+      expect(body.text).not.toMatch(/^Done —/);
     });
   });
 });

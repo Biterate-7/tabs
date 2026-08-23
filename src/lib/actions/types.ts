@@ -38,5 +38,5 @@ export type ActionDefinition<Args = unknown, Data = unknown> = {
 
 /** Outcome of dispatching one named action through the registry — see run.ts. */
 export type ActionDispatchResult =
-  | { ok: true; name: string; data: unknown; store: WorkspaceStore }
+  | { ok: true; name: string; args: unknown; data: unknown; store: WorkspaceStore }
   | { ok: false; name: string; message: string };
