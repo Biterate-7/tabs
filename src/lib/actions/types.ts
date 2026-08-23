@@ -1,5 +1,6 @@
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { SemanticHint } from "@/lib/search/types";
+import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
 
 /**
  * Gemini's function-calling `parameters` schema uses its protobuf-derived
@@ -26,6 +27,16 @@ export type ActionValidation<Args> = { ok: true; args: Args } | { ok: false; mes
  */
 export type ActionRunContext = {
   semanticHints?: SemanticHint[];
+  /**
+   * A live snapshot of the user's actual browser tabs/windows, gathered
+   * client-side through the extension bridge (see src/lib/browser/context.ts)
+   * and sent up alongside the question exactly like `semanticHints` — this
+   * server-side action layer never talks to chrome.* itself (it can't; see
+   * AGENTS.md's architectural constraint), so the browser read actions in
+   * src/lib/actions/browser-read.ts answer entirely from this. `undefined`
+   * means the extension wasn't connected when the request was made.
+   */
+  browserContext?: BrowserContextSnapshot;
 };
 
 export type ActionRunResult<Data> =

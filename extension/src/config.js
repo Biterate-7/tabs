@@ -17,3 +17,24 @@ export const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
 // checkImported for the fallback when one isn't.
 export const MSG_CHECK_IMPORTED = "TABDUMP_CHECK_IMPORTED";
 export const MSG_CHECK_IMPORTED_RESULT = "TABDUMP_CHECK_IMPORTED_RESULT";
+
+// Generic typed command bridge for Ask Tabs browser control (see
+// src/lib/browser/protocol.ts on the web app side, and browser-commands.js /
+// browser-actions.js here for the extension side of this same round trip).
+// The page posts a MSG_BROWSER_COMMAND with a unique id + an allowlisted
+// action name + typed args; content-script.js relays it to background.js,
+// which validates the action/args again (a content script is a transport,
+// never a trust boundary) before touching any chrome.* API, then the result
+// (or error) comes back tagged with the same id via MSG_BROWSER_COMMAND_RESULT.
+export const MSG_BROWSER_COMMAND = "TABDUMP_BROWSER_COMMAND";
+export const MSG_BROWSER_COMMAND_RESULT = "TABDUMP_BROWSER_COMMAND_RESULT";
+
+// Connection-liveness ping: the page posts this (once on mount, then on a
+// short interval while disconnected) and content-script.js answers
+// immediately and entirely on its own — no background/chrome.* round trip
+// needed, since the content script only ever runs at all when the extension
+// is installed and enabled. That makes the pong itself the "extension is
+// present" signal the UI's connection indicator relies on (see
+// src/hooks/use-browser-connection.ts).
+export const MSG_EXTENSION_PING = "TABDUMP_EXTENSION_PING";
+export const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";

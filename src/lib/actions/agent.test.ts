@@ -344,6 +344,76 @@ describe("runAgentLoop", () => {
     expect(result.searchResults).toEqual([expect.objectContaining({ tabId: "1", matchReason: "semantic" })]);
   });
 
+  it("executes a single open_tabs call immediately and attaches args/data for client-side execution", async () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "open_tabs", args: { urls: ["https://a.com", "https://b.com"] } }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Opened them.", functionCalls: [] } });
+
+    const result = await runAgentLoop({
+      ...baseParams(store),
+      browserContext: { tabs: [], windows: [], activeTabId: null },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
+    expect(result.actions).toEqual([
+      {
+        name: "open_tabs",
+        ok: true,
+        message: expect.any(String),
+        args: { urls: ["https://a.com", "https://b.com"], newWindow: undefined },
+        data: { urlCount: 2, urls: ["https://a.com", "https://b.com"] },
+      },
+    ]);
+  });
+
+  it("requires confirmation for a bulk close_tabs call even though it's a single tool call", async () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "close_tabs", args: { tabIds: [1, 2, 3] } }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+    const result = await runAgentLoop({
+      ...baseParams(store),
+      browserContext: {
+        tabs: [
+          { tabId: 1, windowId: 1, url: "https://a.com", title: "A", pinned: false, active: false, index: 0 },
+          { tabId: 2, windowId: 1, url: "https://b.com", title: "B", pinned: false, active: false, index: 1 },
+          { tabId: 3, windowId: 1, url: "https://c.com", title: "C", pinned: false, active: false, index: 2 },
+        ],
+        windows: [],
+        activeTabId: null,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result");
+    expect(result.plan[0]).toMatchObject({ name: "close_tabs", affected: 3 });
+  });
+
+  it("reports a clear error when a browser action is called without a connected extension", async () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "list_browser_tabs", args: {} }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "I can't see your browser tabs right now.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved result");
+    expect(result.actions).toEqual([{ name: "list_browser_tabs", ok: false, message: expect.stringContaining("isn't connected") }]);
+  });
+
   it("never lets search_tabs results leak vector/embedding data into the loop's output", async () => {
     const store = makeStore(
       [makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com", title: "Physics" }] })],

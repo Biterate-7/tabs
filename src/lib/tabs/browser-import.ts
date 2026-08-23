@@ -13,6 +13,8 @@ export type BrowserImportEntry = {
   url: string;
   title?: string;
   pinned?: boolean;
+  /** From chrome.tabs.Tab.favIconUrl, when the caller has it (see src/lib/actions/browser-write.ts's import_browser_tabs_to_workspace) — the original popup-based dump flow doesn't collect this today, so it's commonly absent. */
+  favicon?: string;
 };
 
 /**
@@ -39,6 +41,7 @@ export function buildTabsFromBrowserImport(entries: BrowserImportEntry[]): Tab[]
       ...tab,
       ...(title ? { title } : {}),
       ...(entry.pinned !== undefined ? { pinned: entry.pinned } : {}),
+      ...(entry.favicon ? { favicon: entry.favicon } : {}),
     });
   }
 

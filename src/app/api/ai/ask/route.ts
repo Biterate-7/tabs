@@ -7,6 +7,7 @@ import { applyPlan, isValidPlanInput } from "@/lib/actions/plan";
 import { isValidWorkspaceStore } from "@/lib/workspace/persistence";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { MatchReason, SearchResult, SemanticHint } from "@/lib/search/types";
+import type { BrowserContextSnapshot, BrowserTabInfo, BrowserWindowInfo } from "@/lib/browser/protocol";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,8 @@ const CHAT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant that answers 
 If the context doesn't contain enough information to answer, reply with exactly: "I couldn't find enough information in your saved tabs to answer that." Otherwise answer concisely and naturally, referring to the saved items in plain language (e.g. "your saved article on X says..."). Do not output the [N] index markers themselves in your reply — they're only for your own reference.`;
 
 const AGENT_SYSTEM_INSTRUCTION = `You are Ask TabDump, an assistant for a browser tab manager called TabDump. You can answer questions about the user's saved tabs, and you can also perform actions on their TabDump data — creating or renaming workspaces and groups, and moving tabs between workspaces — using the tools available to you.
+
+You can also control the user's real, currently-open Chrome tabs and windows — listing them, opening URLs (including a whole saved workspace's tabs), closing tabs, pinning/unpinning, moving tabs between windows, creating a new window, and saving currently-open tabs into a TabDump workspace. These are ordinary tools alongside the TabDump ones above, not a separate assistant — choose whichever tool (or combination) actually answers the request, e.g. search_tabs then open_tabs for "find my Physics IA tabs and open them," or search_tabs then move_tabs then open_tabs for "find my Physics IA tabs, put them into Physics IA, and open them." Every browser tool requires the extension to be connected — if a browser tool call fails because it isn't, tell the user plainly (e.g. "Your TabDump browser extension isn't connected, so I can't do that") rather than guessing or silently doing nothing. Closing more than one browser tab in the same call always needs the user's confirmation before anything is actually closed — that's handled automatically, you don't need to ask separately.
 
 Ground every factual answer ONLY in the "Saved context" given below and in what tool results actually return — never use outside knowledge, and never invent a fact, workspace, tab, id, or URL you weren't actually given.
 
@@ -135,6 +138,54 @@ function isSemanticHintArray(value: unknown): value is SemanticHint[] {
   );
 }
 
+function isBrowserTabInfoArray(value: unknown): value is BrowserTabInfo[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (v) =>
+        v &&
+        typeof v === "object" &&
+        typeof (v as BrowserTabInfo).tabId === "number" &&
+        typeof (v as BrowserTabInfo).windowId === "number" &&
+        typeof (v as BrowserTabInfo).url === "string" &&
+        typeof (v as BrowserTabInfo).title === "string"
+    )
+  );
+}
+
+function isBrowserWindowInfoArray(value: unknown): value is BrowserWindowInfo[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (v) =>
+        v &&
+        typeof v === "object" &&
+        typeof (v as BrowserWindowInfo).windowId === "number" &&
+        Array.isArray((v as BrowserWindowInfo).tabIds)
+    )
+  );
+}
+
+/**
+ * `browserContext` is optional client-supplied data (see
+ * src/lib/browser/context.ts) — `undefined` legitimately means "the
+ * extension wasn't connected when this request was made," which the
+ * browser read actions turn into a clear, honest error rather than ever
+ * guessing at live browser state. A malformed (present but wrong-shaped)
+ * value is rejected as a 400, same as every other typed input this route
+ * accepts.
+ */
+function isValidBrowserContext(value: unknown): value is BrowserContextSnapshot {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    isBrowserTabInfoArray(v.tabs) &&
+    isBrowserWindowInfoArray(v.windows) &&
+    (v.activeTabId === null || typeof v.activeTabId === "number")
+  );
+}
+
 function isSearchResultArray(value: unknown): value is SearchResult[] {
   return (
     Array.isArray(value) &&
@@ -206,8 +257,12 @@ function handleAgentApply(b: Record<string, unknown> | null): Response {
   if (!isValidPlanInput(planInput)) {
     return Response.json({ error: "Expected a non-empty { plan: {name, args}[] }." }, { status: 400 });
   }
+  const browserContextInput = b?.browserContext;
+  if (!isValidBrowserContext(browserContextInput)) {
+    return Response.json({ error: "Expected a valid { browserContext } or none at all." }, { status: 400 });
+  }
 
-  const result = applyPlan(planInput, storeInput);
+  const result = applyPlan(planInput, storeInput, { browserContext: browserContextInput as BrowserContextSnapshot | undefined });
   return Response.json({
     text: result.text,
     actions: result.actions,
@@ -298,12 +353,21 @@ export async function POST(request: Request): Promise<Response> {
     }
     const recentSearchResults = (recentSearchResultsInput as SearchResult[] | undefined) ?? [];
 
+    const browserContextInput = b?.browserContext;
+    if (!isValidBrowserContext(browserContextInput)) {
+      return Response.json({ error: "Expected a valid { browserContext } or none at all." }, { status: 400 });
+    }
+    const browserContext = browserContextInput as BrowserContextSnapshot | undefined;
+
     const currentWorkspace = store.workspaces.find((w) => w.id === store.currentId);
     const preamble = currentWorkspace
       ? `Current workspace: "${currentWorkspace.name}" (id: ${currentWorkspace.id}).\n\n`
       : "";
     const recentSearchBlock = buildRecentSearchResultsBlock(recentSearchResults);
-    const agentPrompt = `${preamble}${recentSearchBlock}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
+    const browserPreamble = browserContext
+      ? "The TabDump browser extension is connected — browser control actions (list_browser_tabs, open_tabs, close_tabs, etc.) are available.\n\n"
+      : "The TabDump browser extension is NOT connected right now — do not call any browser control action; if the user asks to see, open, close, or otherwise control their actual browser tabs, tell them plainly that the extension isn't connected instead.\n\n";
+    const agentPrompt = `${preamble}${browserPreamble}${recentSearchBlock}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
 
     const contents: AgentContent[] = [
       ...historyContents.map((h): AgentContent => ({ role: h.role, parts: [{ text: h.text }] })),
@@ -317,6 +381,7 @@ export async function POST(request: Request): Promise<Response> {
       store,
       maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
       semanticHints,
+      browserContext,
     });
 
     if (!agentResult.ok) return errorResponse(agentResult);

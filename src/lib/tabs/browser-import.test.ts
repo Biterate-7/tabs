@@ -36,6 +36,15 @@ describe("buildTabsFromBrowserImport", () => {
     expect(tabs[2].pinned).toBeUndefined();
   });
 
+  it("carries a favicon through when provided, omitting it otherwise", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "https://a.example", favicon: "https://a.example/favicon.ico" },
+      { url: "https://b.example" },
+    ]);
+    expect(tabs[0].favicon).toBe("https://a.example/favicon.ico");
+    expect(tabs[1].favicon).toBeUndefined();
+  });
+
   it("skips malformed URLs instead of throwing", () => {
     const tabs = buildTabsFromBrowserImport([
       { url: "not a url" },

@@ -38,6 +38,31 @@ describe("planRequiresConfirmation", () => {
     const plan = [plannedAction({ name: "create_group", affected: 1 }), plannedAction({ name: "create_group", affected: 1 })];
     expect(planRequiresConfirmation(plan)).toBe(true);
   });
+
+  it("is false for a single open_tabs action no matter how many tabs it opens", () => {
+    expect(planRequiresConfirmation([plannedAction({ name: "open_tabs", affected: 12 })])).toBe(false);
+  });
+
+  it("is false for a single open_workspace_in_browser action opening many tabs", () => {
+    expect(planRequiresConfirmation([plannedAction({ name: "open_workspace_in_browser", affected: 20 })])).toBe(false);
+  });
+
+  it("is false for a single close_tab (one specific tab)", () => {
+    expect(planRequiresConfirmation([plannedAction({ name: "close_tab", affected: 1 })])).toBe(false);
+  });
+
+  it("is true for a bulk close_tabs even when under the generic affected threshold", () => {
+    expect(planRequiresConfirmation([plannedAction({ name: "close_tabs", affected: 2 })])).toBe(true);
+  });
+
+  it("is true for a large bulk close_tabs", () => {
+    expect(planRequiresConfirmation([plannedAction({ name: "close_tabs", affected: 27 })])).toBe(true);
+  });
+
+  it("still requires confirmation when an open action is combined with another write action", () => {
+    const plan = [plannedAction({ name: "open_tabs", affected: 3 }), plannedAction({ name: "pin_tab", affected: 1 })];
+    expect(planRequiresConfirmation(plan)).toBe(true);
+  });
 });
 
 describe("describePlannedAction", () => {
@@ -58,6 +83,16 @@ describe("describePlannedAction", () => {
   it("singularizes a one-tab move", () => {
     expect(describePlannedAction("move_tab", { targetWorkspaceName: "Research", movedCount: 1 })).toEqual({
       label: 'Move 1 tab → "Research"',
+      affected: 1,
+    });
+  });
+
+  it("describes open_tabs, close_tabs, pin_tab, and create_browser_window", () => {
+    expect(describePlannedAction("open_tabs", { urlCount: 5 })).toEqual({ label: "Open 5 tabs", affected: 5 });
+    expect(describePlannedAction("close_tabs", { count: 27 })).toEqual({ label: "Close 27 browser tabs", affected: 27 });
+    expect(describePlannedAction("pin_tab", { tabId: 7 })).toEqual({ label: "Pin browser tab (id 7)", affected: 1 });
+    expect(describePlannedAction("create_browser_window", { urls: ["https://a.com"] })).toEqual({
+      label: "Create a new browser window with 1 tab",
       affected: 1,
     });
   });
@@ -158,6 +193,25 @@ describe("applyPlan", () => {
     expect(result.actions.map((a) => a.ok)).toEqual([true, false]);
     expect(result.text).toContain("Done —");
     expect(result.text).toContain("failed");
+  });
+
+  it("attaches args/data to a browser action's applied result, but not to an ordinary TabDump action's", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const plan = [
+      { name: "create_workspace", args: { name: "Research" } },
+      { name: "open_tabs", args: { urls: ["https://a.com"] } },
+    ];
+
+    const result = applyPlan(plan, store, { browserContext: { tabs: [], windows: [], activeTabId: null } });
+
+    expect(result.actions[0]).toEqual({ name: "create_workspace", ok: true, message: expect.any(String) });
+    expect(result.actions[1]).toMatchObject({ name: "open_tabs", ok: true, args: { urls: ["https://a.com"] }, data: { urlCount: 1, urls: ["https://a.com"] } });
+  });
+
+  it("fails a browser write action when no browserContext is given (extension not connected at apply time)", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const result = applyPlan([{ name: "open_tabs", args: { urls: ["https://a.com"] } }], store);
+    expect(result.actions).toEqual([{ name: "open_tabs", ok: false, message: expect.stringContaining("isn't connected") }]);
   });
 
   it("rejects a plan action whose scope no longer matches (workspace it was validated against has since changed)", () => {

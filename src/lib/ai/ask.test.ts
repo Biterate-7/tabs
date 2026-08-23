@@ -191,6 +191,58 @@ it("applyPlan posts the exact plan and store, and applies the returned store", a
   expect((capturedBody as unknown as { store: unknown }).store).toEqual(workspaceStore);
 });
 
+it("askQuestion includes browserContext in the request body and surfaces returned actions", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const browserContext = { tabs: [], windows: [], activeTabId: null };
+  const actions = [{ name: "open_tabs", ok: true, message: "opened", args: { urls: ["https://a.com"] }, data: { urlCount: 1, urls: ["https://a.com"] } }];
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Opened it.", actions }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const result = await askQuestion({
+    workspaceId: WORKSPACE_ID,
+    tabs: [],
+    question: "Open my Physics tab",
+    history: [],
+    store: workspaceStore,
+    browserContext,
+  });
+
+  expect((capturedBody as unknown as { browserContext: unknown }).browserContext).toEqual(browserContext);
+  expect(result.ok && (result as { text: string }).text).toBe("Opened it.");
+  expect(result.ok && (result as { actions?: unknown }).actions).toEqual(actions);
+});
+
+it("applyPlan includes browserContext in the request body and surfaces returned actions", async () => {
+  const workspaceStore = { version: 1 as const, currentId: "ws-repro", workspaces: [{ id: "ws-repro", name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+  const plan = [{ name: "open_tabs", args: { urls: ["https://a.com"] }, label: "Open 1 tab", affected: 1 }];
+  const browserContext = { tabs: [], windows: [], activeTabId: null };
+  const actions = [{ name: "open_tabs", ok: true, message: "opened", args: { urls: ["https://a.com"] }, data: { urlCount: 1, urls: ["https://a.com"] } }];
+
+  let capturedBody: Record<string, unknown> | null = null;
+  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/ask")) {
+      capturedBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ text: "Done — opened 1 tab.", actions }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  const result = await applyPlan({ plan, store: workspaceStore, browserContext });
+
+  expect((capturedBody as unknown as { browserContext: unknown }).browserContext).toEqual(browserContext);
+  expect(result).toEqual({ ok: true, text: "Done — opened 1 tab.", actions });
+});
+
 it("computes semantic hints across every workspace in the store, not just the current one", async () => {
   const otherWorkspaceId = "ws-other";
   await putChunks([

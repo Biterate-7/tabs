@@ -3,8 +3,9 @@ import type { WorkspaceStore } from "@/lib/workspace/types";
 import { embedTexts } from "./embed-client";
 import { retrieveRelevantChunks, retrieveRelevantChunksAcrossWorkspaces, toSemanticHints } from "./retrieve";
 import { formatApiError } from "./types";
-import type { AskMessage, AskSource, PlannedActionView, SearchResult } from "./types";
+import type { AskMessage, AskSource, PerformedActionView, PlannedActionView, SearchResult } from "./types";
 import type { SemanticHint } from "@/lib/search/types";
+import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
 
 const MAX_HISTORY_MESSAGES = 6;
 /** How many cross-workspace semantic candidates to hand the agent's search_tabs as a hint — generous relative to retrieveRelevantChunks' single-workspace default, since this is auxiliary signal the server's hybrid ranker combines with keyword/metadata matches, not the sole source of results. */
@@ -12,11 +13,11 @@ const SEMANTIC_HINTS_TOP_K = 30;
 export const NOT_ENOUGH_INFO_MESSAGE = "I couldn't find enough information in your saved tabs to answer that.";
 
 export type AskResult =
-  | { ok: true; text: string; sources: AskSource[]; searchResults?: SearchResult[] }
+  | { ok: true; text: string; sources: AskSource[]; searchResults?: SearchResult[]; actions?: PerformedActionView[] }
   | { ok: true; requiresConfirmation: true; text: string; plan: PlannedActionView[]; summary: string; searchResults?: SearchResult[] }
   | { ok: false; error: string };
 
-export type ApplyPlanResult = { ok: true; text: string } | { ok: false; error: string };
+export type ApplyPlanResult = { ok: true; text: string; actions?: PerformedActionView[] } | { ok: false; error: string };
 
 function toSource(tab: Tab | undefined, fallback: { tabId: string; title: string; url: string }): AskSource {
   return {
@@ -65,8 +66,10 @@ export async function askQuestion(params: {
    * set; ignored on the plain "chat" path.
    */
   recentSearchResults?: SearchResult[];
+  /** Live browser tabs/windows snapshot (see src/lib/browser/context.ts) — omitted when the extension isn't connected. Only meaningful with `store` set. */
+  browserContext?: BrowserContextSnapshot;
 }): Promise<AskResult> {
-  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults } = params;
+  const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults, browserContext } = params;
 
   const embedResult = await embedTexts([question]);
   if (!embedResult.ok) return { ok: false, error: embedResult.error };
@@ -121,6 +124,7 @@ export async function askQuestion(params: {
           store,
           semanticHints,
           recentSearchResults: recentSearchResults ?? [],
+          ...(browserContext ? { browserContext } : {}),
         }),
       });
     } catch (err) {
@@ -140,6 +144,7 @@ export async function askQuestion(params: {
       plan?: PlannedActionView[];
       summary?: string;
       searchResults?: SearchResult[];
+      actions?: PerformedActionView[];
     };
 
     if (data.requiresConfirmation) {
@@ -154,7 +159,13 @@ export async function askQuestion(params: {
     }
 
     if (data.store) onStoreUpdate?.(data.store, data.text);
-    return { ok: true, text: data.text, sources, ...(data.searchResults ? { searchResults: data.searchResults } : {}) };
+    return {
+      ok: true,
+      text: data.text,
+      sources,
+      ...(data.searchResults ? { searchResults: data.searchResults } : {}),
+      ...(data.actions && data.actions.length > 0 ? { actions: data.actions } : {}),
+    };
   }
 
   let response: Response;
@@ -220,8 +231,10 @@ export async function applyPlan(params: {
   /** See askQuestion's onStoreUpdate — same shape, same purpose (labeling an undo entry). */
   onStoreUpdate?: (store: WorkspaceStore, description?: string) => void;
   signal?: AbortSignal;
+  /** Refetched fresh right before applying (see askQuestion's) — a browser write action re-checks the extension/tab state at apply time too, not just at preview time. */
+  browserContext?: BrowserContextSnapshot;
 }): Promise<ApplyPlanResult> {
-  const { plan, store, onStoreUpdate, signal } = params;
+  const { plan, store, onStoreUpdate, signal, browserContext } = params;
 
   let response: Response;
   try {
@@ -233,6 +246,7 @@ export async function applyPlan(params: {
         mode: "agent-apply",
         plan: plan.map(({ name, args }) => ({ name, args })),
         store,
+        ...(browserContext ? { browserContext } : {}),
       }),
     });
   } catch (err) {
@@ -245,7 +259,7 @@ export async function applyPlan(params: {
     return { ok: false, error: formatApiError(data, response.status) };
   }
 
-  const data = (await response.json()) as { text: string; store?: WorkspaceStore };
+  const data = (await response.json()) as { text: string; store?: WorkspaceStore; actions?: PerformedActionView[] };
   if (data.store) onStoreUpdate?.(data.store, data.text);
-  return { ok: true, text: data.text };
+  return { ok: true, text: data.text, ...(data.actions && data.actions.length > 0 ? { actions: data.actions } : {}) };
 }

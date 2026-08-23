@@ -2,7 +2,8 @@ import { generateAgentTurn } from "@/lib/ai/gemini/client";
 import type { AgentContent, GeminiResult } from "@/lib/ai/gemini/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 import type { SearchResult, SemanticHint } from "@/lib/search/types";
-import { ACTION_DECLARATIONS } from "./registry";
+import type { BrowserContextSnapshot } from "@/lib/browser/protocol";
+import { ACTION_DECLARATIONS, BROWSER_ACTION_NAMES } from "./registry";
 import { runAction } from "./run";
 import { describePlannedAction, isWriteAction, planRequiresConfirmation, summarizePlan } from "./plan";
 import type { PlannedAction } from "./plan";
@@ -11,7 +12,15 @@ const MAX_TOOL_ITERATIONS = 6;
 const FALLBACK_TEXT = "I ran into trouble finishing that — could you try rephrasing your request?";
 const DEFAULT_PREVIEW_INTRO = "Here's what I want to change:";
 
-export type PerformedAction = { name: string; ok: boolean; message: string };
+/**
+ * `args`/`data` are only ever present for browser actions (see
+ * BROWSER_ACTION_NAMES) — every other action keeps the exact `{name, ok,
+ * message}` shape this had before, so existing exact-equality assertions in
+ * agent.test.ts for ordinary TabDump actions are unaffected. The client
+ * needs these two fields to actually execute a browser action for real
+ * afterward — see src/lib/browser/execute.ts.
+ */
+export type PerformedAction = { name: string; ok: boolean; message: string; args?: unknown; data?: unknown };
 
 export type AgentLoopResult =
   | { ok: true; kind: "resolved"; text: string; store: WorkspaceStore; storeChanged: boolean; actions: PerformedAction[]; searchResults?: SearchResult[] }
@@ -99,6 +108,8 @@ export async function runAgentLoop(params: {
   store: WorkspaceStore;
   maxOutputTokens: number;
   semanticHints?: SemanticHint[];
+  /** See ActionRunContext.browserContext — undefined means the extension wasn't connected. */
+  browserContext?: BrowserContextSnapshot;
 }): Promise<AgentLoopResult> {
   const contents = [...params.contents];
   let store = params.store;
@@ -131,10 +142,16 @@ export async function runAgentLoop(params: {
 
     const responseParts: AgentContent["parts"] = [];
     for (const call of turn.data.functionCalls) {
-      const outcome = runAction(call.name, call.args, store, { semanticHints: params.semanticHints });
+      const outcome = runAction(call.name, call.args, store, { semanticHints: params.semanticHints, browserContext: params.browserContext });
       if (outcome.ok) {
         store = outcome.store;
-        performed.push({ name: call.name, ok: true, message: summarizeData(outcome.data) });
+        const isBrowserAction = BROWSER_ACTION_NAMES.has(call.name);
+        performed.push({
+          name: call.name,
+          ok: true,
+          message: summarizeData(outcome.data),
+          ...(isBrowserAction ? { args: outcome.args, data: outcome.data } : {}),
+        });
         responseParts.push({ functionResponse: { name: call.name, response: { result: outcome.data } } });
 
         if (call.name === "search_tabs") {

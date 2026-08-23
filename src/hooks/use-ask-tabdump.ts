@@ -4,14 +4,39 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { createId } from "@/lib/id"
 import { askQuestion, applyPlan } from "@/lib/ai/ask"
 import { attemptUndo, findUndoEntry, markUndone, pushUndoEntry } from "@/lib/undo/history"
+import { useBrowserConnection } from "@/hooks/use-browser-connection"
+import { fetchBrowserContext } from "@/lib/browser/context"
+import { executeBrowserAction, executeBrowserReverts, needsBrowserExecution } from "@/lib/browser/execute"
+import { findBrowserUndoEntry, markBrowserUndone, pushBrowserUndoEntry } from "@/lib/browser/undo"
 import type { UndoEntry } from "@/lib/undo/types"
+import type { BrowserRevertStep, BrowserUndoEntry } from "@/lib/browser/undo"
 import type { Tab } from "@/lib/tabs/types"
-import type { AskMessage, SearchResult } from "@/lib/ai/types"
+import type { AskMessage, PerformedActionView, SearchResult } from "@/lib/ai/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 const CANCELLED_TEXT = "No changes made."
 const UNDONE_TEXT = "↶ Undid that change."
 const UNDO_STALE_TEXT = "I can't safely undo that change because the workspace has changed since then."
+const BROWSER_UNDO_FAILED_TEXT = "I couldn't fully undo that browser change."
+
+/**
+ * Actually carries out every browser action the server validated but could
+ * never itself execute (see AGENTS.md's architectural constraint) — the
+ * server only ever returns `{ok, args, data}` for these; nothing has
+ * touched Chrome yet. Runs them all, then composes an honest result: if
+ * anything partially or fully failed, that's what gets shown — never the
+ * model's own (now possibly wrong) optimistic phrasing. Returns `null` when
+ * there was nothing to execute, so the caller keeps the server's text as-is.
+ */
+async function runBrowserExecutions(actions: PerformedActionView[] | undefined): Promise<{ text: string; revert: BrowserRevertStep[] } | null> {
+  const toRun = (actions ?? []).filter((a) => a.ok && needsBrowserExecution(a.name));
+  if (toRun.length === 0) return null;
+
+  const executions = await Promise.all(toRun.map((a) => executeBrowserAction(a.name, a.args, a.data)));
+  const text = executions.map((e) => e.message).filter(Boolean).join(" ");
+  const revert = executions.flatMap((e) => (e.revert ? [e.revert] : []));
+  return { text, revert };
+}
 
 /**
  * `allWorkspaces`/`onStoreUpdate` are optional so existing callers (and
@@ -49,12 +74,18 @@ export function useAskTabDump(
   // then-write it synchronously inside callbacks without waiting on a
   // state update to commit — same reasoning as messagesRef.
   const undoHistoryRef = useRef<UndoEntry[]>([])
+  // Parallel to undoHistoryRef, for browser mutations — see
+  // src/lib/browser/undo.ts for why this can't reuse the store-diff system
+  // above. A message's `undo.entryId` may point into either history;
+  // undoAction (below) checks both.
+  const browserUndoHistoryRef = useRef<BrowserUndoEntry[]>([])
   // The most recent turn's search_tabs results, so a follow-up like "move
   // those into Physics IA" can resolve "those" without the user repeating
   // the search or supplying tab ids — see askQuestion's recentSearchResults
   // param. A ref (not state) since it's read-then-written inside runAsk,
   // never rendered directly.
   const lastSearchResultsRef = useRef<SearchResult[] | undefined>(undefined)
+  const browserConnected = useBrowserConnection()
 
   useEffect(() => {
     messagesRef.current = messages
@@ -63,6 +94,12 @@ export function useAskTabDump(
   function recordUndoEntry(beforeState: WorkspaceStore, afterState: WorkspaceStore, description: string): UndoEntry {
     const { history, entry } = pushUndoEntry(undoHistoryRef.current, { beforeState, afterState, description })
     undoHistoryRef.current = history
+    return entry
+  }
+
+  function recordBrowserUndoEntry(description: string, revert: BrowserRevertStep[]): BrowserUndoEntry {
+    const { history, entry } = pushBrowserUndoEntry(browserUndoHistoryRef.current, { description, revert })
+    browserUndoHistoryRef.current = history
     return entry
   }
 
@@ -93,6 +130,11 @@ export function useAskTabDump(
 
         let undoEntryId: string | undefined
 
+        // Only bother the extension when it's actually there — a fixed
+        // multi-second wait on every single question for users without it
+        // installed would be a real regression, not just a missed feature.
+        const browserContext = browserConnected ? (await fetchBrowserContext()) ?? undefined : undefined
+
         const result = await askQuestion({
           workspaceId,
           tabs,
@@ -100,6 +142,7 @@ export function useAskTabDump(
           history,
           signal: controller.signal,
           store,
+          browserContext,
           recentSearchResults: lastSearchResultsRef.current,
           onStoreUpdate: (after, description) => {
             if (store) undoEntryId = recordUndoEntry(store, after, description || question).id
@@ -111,6 +154,21 @@ export function useAskTabDump(
         })
 
         if (result.ok) lastSearchResultsRef.current = result.searchResults ?? lastSearchResultsRef.current
+
+        // Any browser action the server validated hasn't actually happened
+        // yet (it can't have — the server never touches chrome.*). Run it
+        // for real now, and let the truth of what happened — not Gemini's
+        // guess — decide the final wording. See AGENTS.md section 15.
+        let finalText = result.ok && !("requiresConfirmation" in result) ? result.text : undefined
+        if (result.ok && !("requiresConfirmation" in result)) {
+          const executed = await runBrowserExecutions(result.actions)
+          if (executed) {
+            finalText = executed.text || result.text
+            if (executed.revert.length > 0) {
+              undoEntryId = recordBrowserUndoEntry(executed.text || question, executed.revert).id
+            }
+          }
+        }
 
         setMessages((prev) =>
           prev.map((m) => {
@@ -127,7 +185,7 @@ export function useAskTabDump(
             }
             return {
               ...m,
-              text: result.text,
+              text: finalText ?? result.text,
               sources: result.sources,
               pending: false,
               ...(undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
@@ -146,7 +204,7 @@ export function useAskTabDump(
         setIsSending(false)
       }
     },
-    [workspaceId, tabs, allWorkspaces, onStoreUpdate]
+    [workspaceId, tabs, allWorkspaces, onStoreUpdate, browserConnected]
   )
 
   const send = useCallback(
@@ -194,14 +252,33 @@ export function useAskTabDump(
         const store: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
         let undoEntryId: string | undefined
 
+        const browserContext = browserConnected ? (await fetchBrowserContext()) ?? undefined : undefined
+
         const result = await applyPlan({
           plan: message.preview.plan,
           store,
+          browserContext,
           onStoreUpdate: (after, description) => {
             undoEntryId = recordUndoEntry(store, after, description || message.preview!.summary).id
             onStoreUpdate?.(after)
           },
         })
+
+        // As in runAsk: a browser action in the plan was only validated by
+        // the server, never actually carried out — do that now, and fold
+        // the real outcome into the text the user sees (see AGENTS.md
+        // section 15). If nothing else in the plan changed the store, this
+        // browser undo becomes the message's Undo button instead.
+        let finalText = result.ok ? result.text : undefined
+        if (result.ok) {
+          const executed = await runBrowserExecutions(result.actions)
+          if (executed) {
+            finalText = executed.text ? `${result.text} ${executed.text}`.trim() : result.text
+            if (!undoEntryId && executed.revert.length > 0) {
+              undoEntryId = recordBrowserUndoEntry(executed.text || message.preview!.summary, executed.revert).id
+            }
+          }
+        }
 
         setMessages((prev) => {
           const resolved = prev.map((m) =>
@@ -212,7 +289,7 @@ export function useAskTabDump(
           const followUp: AskMessage = {
             id: createId("ask"),
             role: "assistant",
-            text: result.ok ? result.text : `Something went wrong: ${result.error}`,
+            text: result.ok ? (finalText ?? result.text) : `Something went wrong: ${result.error}`,
             ...(result.ok && undoEntryId ? { undo: { entryId: undoEntryId, status: "available" as const } } : {}),
           }
           return [...resolved, followUp]
@@ -227,7 +304,7 @@ export function useAskTabDump(
         applyingIdsRef.current.delete(messageId)
       }
     },
-    [workspaceId, allWorkspaces, onStoreUpdate]
+    [workspaceId, allWorkspaces, onStoreUpdate, browserConnected]
   )
 
   const cancelPreview = useCallback((messageId: string) => {
@@ -244,21 +321,53 @@ export function useAskTabDump(
   }, [])
 
   /**
+   * Reverts a browser mutation by actually re-invoking the extension with
+   * the exact revert steps recorded at execution time (see
+   * src/lib/browser/execute.ts) — there's no "before/after" store snapshot
+   * to fall back to, so a step that fails here (extension disconnected
+   * since, or the tab was already closed) is reported honestly rather than
+   * silently marked done.
+   */
+  async function undoBrowserAction(entryId: string, entry: BrowserUndoEntry) {
+    const result = await executeBrowserReverts(entry.revert)
+    browserUndoHistoryRef.current = markBrowserUndone(browserUndoHistoryRef.current, entryId)
+
+    if (!result.ok) {
+      setMessages((prev) => [
+        ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "unavailable" as const } } : m)),
+        { id: createId("ask"), role: "assistant", text: `${BROWSER_UNDO_FAILED_TEXT} (${result.errors.join("; ")})` },
+      ])
+      return
+    }
+
+    setMessages((prev) => [
+      ...prev.map((m) => (m.undo?.entryId === entryId ? { ...m, undo: { ...m.undo, status: "undone" as const } } : m)),
+      { id: createId("ask"), role: "assistant", text: UNDONE_TEXT },
+    ])
+  }
+
+  /**
    * Reverts exactly the mutation `entryId` recorded — nothing more. This is
    * plain application logic, not something Gemini is ever asked to do: it
    * never sees an "undo" tool, and never gets a say in whether or how a
-   * previous change is reverted. Safety comes entirely from attemptUndo()'s
-   * whole-store equality check against the CURRENT store: if anything at
-   * all has changed since this entry's afterState (the AI action again, a
-   * manual edit, or a later AI action), the undo is refused rather than
-   * silently discarding that newer state. Guarded against double-clicks the
-   * same way applyPreview is (sync ref + the entry's own resolved status).
+   * previous change is reverted. A store mutation's safety comes entirely
+   * from attemptUndo()'s whole-store equality check against the CURRENT
+   * store: if anything at all has changed since this entry's afterState
+   * (the AI action again, a manual edit, or a later AI action), the undo is
+   * refused rather than silently discarding that newer state. `entryId` may
+   * belong to either undo history (store or browser — see
+   * src/lib/browser/undo.ts); this checks the store one first since that's
+   * the original, more common case. Guarded against double-clicks the same
+   * way applyPreview is (sync ref + the entry's own resolved status).
    */
   const undoAction = useCallback(
     async (entryId: string) => {
       if (undoingIdsRef.current.has(entryId)) return
-      const entry = findUndoEntry(undoHistoryRef.current, entryId)
-      if (!entry || entry.status !== "active") return
+
+      const browserEntry = findBrowserUndoEntry(browserUndoHistoryRef.current, entryId)
+      const entry = browserEntry ? undefined : findUndoEntry(undoHistoryRef.current, entryId)
+      if (!entry && !browserEntry) return
+      if ((entry ?? browserEntry)!.status !== "active") return
 
       undoingIdsRef.current.add(entryId)
       setMessages((prev) =>
@@ -266,6 +375,11 @@ export function useAskTabDump(
       )
 
       try {
+        if (browserEntry) {
+          await undoBrowserAction(entryId, browserEntry)
+          return
+        }
+
         const currentStore: WorkspaceStore = { version: 1, currentId: workspaceId, workspaces: allWorkspaces ?? [] }
         const attempt = attemptUndo(entry, currentStore)
 

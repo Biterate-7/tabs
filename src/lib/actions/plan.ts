@@ -1,5 +1,6 @@
-import { ACTIONS } from "./registry";
+import { ACTIONS, BROWSER_ACTION_NAMES } from "./registry";
 import { runAction } from "./run";
+import type { ActionRunContext } from "./types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 
 /**
@@ -30,6 +31,26 @@ export const CONFIRMATION_POLICY = {
   maxImmediateAffectedResources: 3,
 };
 
+/**
+ * Opening tabs is a safe, easily-undoable operation (see
+ * src/lib/browser/execute.ts's close_tabs revert), so — per AGENTS.md
+ * section 7 — it stays immediate no matter how many tabs a single explicit
+ * "open X" request opens (e.g. "open my Physics workspace" opening 12
+ * tabs). It's still subject to CONFIRMATION_POLICY.maxImmediateActions like
+ * everything else: chaining an open onto other writes in the same plan
+ * still requires confirmation.
+ */
+const EXEMPT_FROM_AFFECTED_THRESHOLD = new Set(["open_url", "open_tabs", "open_workspace_in_browser", "import_browser_tabs_to_workspace"]);
+
+/**
+ * Closing tabs can't be safely undone (see AGENTS.md section 9), so a bulk
+ * close (more than one tab in a single close_tabs call) always requires
+ * confirmation regardless of the generic affected-resource threshold —
+ * "close this one tab" (close_tab) stays immediate like any other
+ * single-resource write, but "close all my tabs except Physics" never is.
+ */
+const ALWAYS_CONFIRM_IF_BULK = new Set(["close_tabs"]);
+
 /** Read-only actions never appear in a plan — see runAgentLoop, which only records writes. */
 export function isWriteAction(name: string): boolean {
   const action = ACTIONS[name];
@@ -39,7 +60,10 @@ export function isWriteAction(name: string): boolean {
 export function planRequiresConfirmation(actions: PlannedAction[]): boolean {
   if (actions.length === 0) return false;
   if (actions.length > CONFIRMATION_POLICY.maxImmediateActions) return true;
-  const totalAffected = actions.reduce((sum, a) => sum + a.affected, 0);
+  if (actions.some((a) => ALWAYS_CONFIRM_IF_BULK.has(a.name) && a.affected > 1)) return true;
+
+  const countable = actions.filter((a) => !EXEMPT_FROM_AFFECTED_THRESHOLD.has(a.name));
+  const totalAffected = countable.reduce((sum, a) => sum + a.affected, 0);
   return totalAffected > CONFIRMATION_POLICY.maxImmediateAffectedResources;
 }
 
@@ -75,6 +99,46 @@ export function describePlannedAction(name: string, data: unknown): { label: str
       const d = data as { group: { name: string } };
       return { label: `Rename group → "${d.group.name}"`, affected: 1 };
     }
+    case "open_url": {
+      const d = data as { url: string };
+      return { label: `Open tab → ${d.url}`, affected: 1 };
+    }
+    case "open_tabs": {
+      const d = data as { urlCount: number };
+      return { label: `Open ${d.urlCount} tab${d.urlCount === 1 ? "" : "s"}`, affected: d.urlCount };
+    }
+    case "open_workspace_in_browser": {
+      const d = data as { workspaceName: string; tabCount: number };
+      return { label: `Open ${d.tabCount} tab${d.tabCount === 1 ? "" : "s"} from "${d.workspaceName}"`, affected: d.tabCount };
+    }
+    case "close_tab": {
+      const d = data as { tabId: number };
+      return { label: `Close 1 browser tab (id ${d.tabId})`, affected: 1 };
+    }
+    case "close_tabs": {
+      const d = data as { count: number };
+      return { label: `Close ${d.count} browser tab${d.count === 1 ? "" : "s"}`, affected: d.count };
+    }
+    case "pin_tab": {
+      const d = data as { tabId: number };
+      return { label: `Pin browser tab (id ${d.tabId})`, affected: 1 };
+    }
+    case "unpin_tab": {
+      const d = data as { tabId: number };
+      return { label: `Unpin browser tab (id ${d.tabId})`, affected: 1 };
+    }
+    case "move_tabs_to_window": {
+      const d = data as { tabIds: number[]; windowId: number };
+      return { label: `Move ${d.tabIds.length} browser tab${d.tabIds.length === 1 ? "" : "s"} → window ${d.windowId}`, affected: d.tabIds.length };
+    }
+    case "create_browser_window": {
+      const d = data as { urls: string[] };
+      return { label: d.urls.length > 0 ? `Create a new browser window with ${d.urls.length} tab${d.urls.length === 1 ? "" : "s"}` : "Create a new blank browser window", affected: 1 };
+    }
+    case "import_browser_tabs_to_workspace": {
+      const d = data as { workspaceName: string; importedCount: number };
+      return { label: `Save ${d.importedCount} browser tab${d.importedCount === 1 ? "" : "s"} → "${d.workspaceName}"`, affected: d.importedCount };
+    }
     default:
       return { label: name, affected: 1 };
   }
@@ -96,12 +160,18 @@ export function summarizePlan(actions: PlannedAction[]): string {
     .filter((a) => a.name === "move_tab" || a.name === "move_tabs")
     .reduce((sum, a) => sum + a.affected, 0);
   const renames = actions.filter((a) => a.name === "rename_workspace" || a.name === "rename_group").length;
+  const tabsOpened = actions
+    .filter((a) => a.name === "open_url" || a.name === "open_tabs" || a.name === "open_workspace_in_browser")
+    .reduce((sum, a) => sum + a.affected, 0);
+  const tabsClosed = actions.filter((a) => a.name === "close_tab" || a.name === "close_tabs").reduce((sum, a) => sum + a.affected, 0);
 
   const parts: string[] = [];
   if (workspacesCreated > 0) parts.push(`create ${workspacesCreated} workspace${workspacesCreated === 1 ? "" : "s"}`);
   if (groupsCreated > 0) parts.push(`create ${groupsCreated} group${groupsCreated === 1 ? "" : "s"}`);
   if (tabsMoved > 0) parts.push(`move ${tabsMoved} tab${tabsMoved === 1 ? "" : "s"}`);
   if (renames > 0) parts.push(`rename ${renames} item${renames === 1 ? "" : "s"}`);
+  if (tabsOpened > 0) parts.push(`open ${tabsOpened} browser tab${tabsOpened === 1 ? "" : "s"}`);
+  if (tabsClosed > 0) parts.push(`close ${tabsClosed} browser tab${tabsClosed === 1 ? "" : "s"}`);
 
   if (parts.length === 0) return `This will make ${actions.length} change${actions.length === 1 ? "" : "s"}.`;
   return `This will ${joinWithAnd(parts)}.`;
@@ -122,7 +192,16 @@ export function isValidPlanInput(value: unknown): value is { name: string; args:
   return Array.isArray(value) && value.length > 0 && value.length <= MAX_PLAN_LENGTH && value.every(isPlannedActionInput);
 }
 
-export type AppliedAction = { name: string; ok: boolean; message: string };
+/**
+ * `args`/`data` are only ever present for browser actions (see
+ * BROWSER_ACTION_NAMES) — every other action's wire shape is exactly
+ * `{name, ok, message}`, unchanged, so this stays a purely additive change
+ * that doesn't disturb the exact-equality assertions in plan.test.ts/
+ * agent.test.ts for existing TabDump actions. The client (useAskTabDump)
+ * needs these two fields to actually execute a browser action for real
+ * afterward — see src/lib/browser/execute.ts.
+ */
+export type AppliedAction = { name: string; ok: boolean; message: string; args?: unknown; data?: unknown };
 
 export type ApplyPlanResult = {
   text: string;
@@ -170,16 +249,28 @@ function summarizeApplyText(actions: AppliedAction[]): string {
  * plan the client sends back is treated as untrusted input, not as a
  * pre-approved certificate. A failed step doesn't stop the rest, and is
  * never folded into "success" in the summary text.
+ *
+ * `ctx` is threaded through to every step exactly like runAgentLoop does —
+ * a browser write action's own run() re-checks `ctx.browserContext` at
+ * apply time too (the extension could have disconnected, or a tab could
+ * have closed, between preview and Apply), never trusting that planning
+ * having succeeded once still holds true now.
  */
-export function applyPlan(plan: { name: string; args: unknown }[], store: WorkspaceStore): ApplyPlanResult {
+export function applyPlan(plan: { name: string; args: unknown }[], store: WorkspaceStore, ctx?: ActionRunContext): ApplyPlanResult {
   let current = store;
   const actions: AppliedAction[] = [];
 
   for (const step of plan) {
-    const outcome = runAction(step.name, step.args, current);
+    const outcome = runAction(step.name, step.args, current, ctx);
+    const isBrowserAction = BROWSER_ACTION_NAMES.has(step.name);
     if (outcome.ok) {
       current = outcome.store;
-      actions.push({ name: step.name, ok: true, message: JSON.stringify(outcome.data) });
+      actions.push({
+        name: step.name,
+        ok: true,
+        message: JSON.stringify(outcome.data),
+        ...(isBrowserAction ? { args: outcome.args, data: outcome.data } : {}),
+      });
     } else {
       actions.push({ name: step.name, ok: false, message: outcome.message });
     }

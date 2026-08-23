@@ -3,8 +3,11 @@ import {
   MSG_DUMP_TABS,
   MSG_TABDUMP_IMPORT,
   MSG_CHECK_IMPORTED,
+  MSG_BROWSER_COMMAND,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
+import { validateBrowserCommand } from "../src/browser-commands.js";
+import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 
 // A couple of short retries in case the content script hasn't finished
 // attaching its listener yet — see waitForTabComplete's comment for why
@@ -142,6 +145,53 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   checkImported(message.payload?.urls ?? [])
     .then(sendResponse)
     .catch(() => sendResponse({ ok: false, reason: "unexpected-error" }));
+
+  return true; // keep the message channel open for the async sendResponse
+});
+
+/**
+ * Ask Tabs browser control: the single dispatch point for every
+ * TABDUMP_BROWSER_COMMAND relayed up from content-script.js. Two checks
+ * happen before any chrome.* API is touched, in order: (1) is `action` one
+ * of the allowlisted names in BROWSER_ACTION_HANDLERS at all, and (2) does
+ * `args` pass that action's own validator. A content script (or, further
+ * back, the web page) is never trusted just because the message arrived
+ * through the expected channel — see AGENTS.md section 14.
+ */
+async function handleBrowserCommand({ id, action, args }) {
+  const validated = validateBrowserCommand(action, args);
+  if (!validated.ok) {
+    return { id, ok: false, error: validated.error };
+  }
+
+  const handler = BROWSER_ACTION_HANDLERS[action];
+  if (!handler) {
+    // Unreachable in practice (validateBrowserCommand's allowlist and this
+    // handler map are drawn from the same action names), but a defensive
+    // fallback beats ever assuming a validated name is dispatchable.
+    return { id, ok: false, error: `No handler registered for "${action}".` };
+  }
+
+  try {
+    const result = await handler(validated.args);
+    return { id, ok: true, result };
+  } catch (err) {
+    return { id, ok: false, error: err instanceof Error ? err.message : "Browser command failed." };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== MSG_BROWSER_COMMAND) return undefined;
+
+  const payload = message.payload ?? {};
+  if (typeof payload.id !== "string" || typeof payload.action !== "string") {
+    sendResponse({ id: typeof payload.id === "string" ? payload.id : "", ok: false, error: "Malformed browser command." });
+    return undefined;
+  }
+
+  handleBrowserCommand(payload)
+    .then(sendResponse)
+    .catch(() => sendResponse({ id: payload.id, ok: false, error: "Unexpected error running browser command." }));
 
   return true; // keep the message channel open for the async sendResponse
 });

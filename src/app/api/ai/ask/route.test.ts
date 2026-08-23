@@ -263,6 +263,40 @@ describe("POST /api/ai/ask", () => {
         expect(passedHints[0]).toEqual({ tabId: "t0", workspaceId: "ws-1", score: 0.6 });
       });
 
+      it("returns 400 for a malformed browserContext payload", async () => {
+        const response = await POST(
+          postRequest({
+            question: "What tabs do I have open?",
+            context: [],
+            mode: "agent",
+            store: validStore,
+            browserContext: { tabs: "not an array", windows: [], activeTabId: null },
+          })
+        );
+        expect(response.status).toBe(400);
+      });
+
+      it("passes a well-formed browserContext through to the agent loop", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+        const browserContext = {
+          tabs: [{ tabId: 1, windowId: 1, url: "https://a.com", title: "A", pinned: false, active: true, index: 0 }],
+          windows: [{ windowId: 1, focused: true, incognito: false, type: "normal", tabIds: [1] }],
+          activeTabId: 1,
+        };
+
+        await POST(postRequest({ question: "What tabs do I have open?", context: [], mode: "agent", store: validStore, browserContext }));
+
+        expect(runAgentLoopMock.mock.calls[0][0].browserContext).toEqual(browserContext);
+      });
+
+      it("omits browserContext from the agent loop call when the extension wasn't connected", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+        await POST(postRequest({ question: "hi", context: [], mode: "agent", store: validStore }));
+
+        expect(runAgentLoopMock.mock.calls[0][0].browserContext).toBeUndefined();
+      });
+
       it("returns 400 for a malformed recentSearchResults payload", async () => {
         const response = await POST(
           postRequest({
@@ -385,6 +419,44 @@ describe("POST /api/ai/ask", () => {
       expect(body.text).toMatch(/^Done —/);
       expect(body.store.workspaces[0].groups[0].name).toBe("References");
       expect(body.actions).toEqual([{ name: "create_group", ok: true, message: expect.any(String) }]);
+    });
+
+    it("returns 400 for a malformed browserContext payload", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "open_tabs", args: { urls: ["https://a.com"] } }],
+          browserContext: { tabs: [], windows: "nope", activeTabId: null },
+        })
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("fails a browser write action when browserContext is omitted (extension not connected)", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "open_tabs", args: { urls: ["https://a.com"] } }],
+        })
+      );
+      const body = await response.json();
+      expect(body.actions).toEqual([{ name: "open_tabs", ok: false, message: expect.stringContaining("isn't connected") }]);
+    });
+
+    it("succeeds a browser write action when a valid browserContext is given", async () => {
+      const response = await POST(
+        postRequest({
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "open_tabs", args: { urls: ["https://a.com"] } }],
+          browserContext: { tabs: [], windows: [], activeTabId: null },
+        })
+      );
+      const body = await response.json();
+      expect(body.actions).toHaveLength(1);
+      expect(body.actions[0]).toMatchObject({ name: "open_tabs", ok: true, args: { urls: ["https://a.com"] } });
     });
 
     it("revalidates and fails a step whose resource no longer exists, without pretending success", async () => {

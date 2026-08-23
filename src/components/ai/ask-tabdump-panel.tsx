@@ -19,6 +19,7 @@ import { SourceCard } from "@/components/ai/source-card"
 import { ActionPreviewCard } from "@/components/ai/action-preview-card"
 import { UndoActionButton } from "@/components/ai/undo-action-button"
 import { SearchResultsCard } from "@/components/ai/search-results-card"
+import { BrowserConnectionIndicator } from "@/components/ai/browser-connection-indicator"
 import { useAskTabDump } from "@/hooks/use-ask-tabdump"
 import type { AiIndexState } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
@@ -90,9 +91,12 @@ export function AskTabDumpPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex flex-col data-[side=right]:w-full sm:data-[side=right]:max-w-lg">
         <SheetHeader>
-          <SheetTitle className="flex items-center gap-1.5 text-h1">
-            <Sparkles className="size-4 text-accent-text" aria-hidden />
-            Ask TabDump
+          <SheetTitle className="flex items-center justify-between gap-1.5 text-h1">
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="size-4 text-accent-text" aria-hidden />
+              Ask TabDump
+            </span>
+            <BrowserConnectionIndicator />
           </SheetTitle>
           <SheetDescription>Ask questions about your saved tabs — answers are grounded in what you&rsquo;ve dumped.</SheetDescription>
         </SheetHeader>

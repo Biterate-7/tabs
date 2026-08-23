@@ -64,6 +64,23 @@ export type PlannedActionView = {
   affected: number;
 };
 
+/**
+ * One action the server actually ran (or tried to) — mirrors
+ * src/lib/actions/agent.ts's PerformedAction / plan.ts's AppliedAction.
+ * `args`/`data` are only ever present for browser actions (see
+ * BROWSER_ACTION_NAMES) — this is what src/lib/browser/execute.ts needs to
+ * actually carry out a browser action for real once the server's response
+ * comes back (see AGENTS.md's architectural constraint: the server can
+ * validate but never itself call chrome.*).
+ */
+export type PerformedActionView = {
+  name: string;
+  ok: boolean;
+  message: string;
+  args?: unknown;
+  data?: unknown;
+};
+
 export type PendingActionPreviewStatus = "awaiting" | "applying" | "applied" | "cancelled" | "failed";
 
 /** Attached to an assistant message when the agent proposed changes that need explicit approval before anything is applied. */

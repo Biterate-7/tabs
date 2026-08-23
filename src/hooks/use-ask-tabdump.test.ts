@@ -1,10 +1,61 @@
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useAskTabDump } from "./use-ask-tabdump";
 import { putChunks } from "@/lib/ai/db";
+import { __resetBrowserBridgeForTests } from "@/lib/browser/bridge";
+import { BROWSER_MESSAGE_SOURCE, MSG_BROWSER_COMMAND, MSG_BROWSER_COMMAND_RESULT, MSG_EXTENSION_PING, MSG_EXTENSION_PONG } from "@/lib/browser/protocol";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
+
+/**
+ * Same jsdom-postMessage limitation as bridge.test.ts's installFakeExtension
+ * (see its comment): jsdom's real `window.postMessage` doesn't set
+ * `event.origin`/`event.source` correctly, but it does still deliver
+ * `event.data` — so this listens for the bridge's real outgoing postMessage
+ * calls (data-only, no origin check) and answers back via `dispatchEvent`
+ * (which lets the test set origin/source correctly), exactly what the
+ * bridge's own listener requires to accept a response.
+ */
+let activeExtensionListeners: (() => void)[] = [];
+
+function connectFakeExtension(handler: (action: string, args: unknown) => unknown) {
+  function respond(payload: { id: string; ok: true; result: unknown }) {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { source: BROWSER_MESSAGE_SOURCE, type: MSG_BROWSER_COMMAND_RESULT, payload },
+        origin: window.location.origin,
+        source: window,
+      })
+    );
+  }
+
+  function onMessage(event: MessageEvent) {
+    const data = event.data as { source?: string; type?: string; payload?: { id?: string; action?: string; args?: unknown; requestId?: string } } | null;
+    if (!data || data.source !== BROWSER_MESSAGE_SOURCE) return;
+
+    if (data.type === MSG_EXTENSION_PING) {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: BROWSER_MESSAGE_SOURCE, type: MSG_EXTENSION_PONG, payload: { requestId: data.payload?.requestId ?? null } },
+          origin: window.location.origin,
+          source: window,
+        })
+      );
+      return;
+    }
+
+    if (data.type === MSG_BROWSER_COMMAND) {
+      const { id, action, args } = data.payload as { id: string; action: string; args: unknown };
+      respond({ id, ok: true, result: handler(action, args) });
+    }
+  }
+  window.addEventListener("message", onMessage);
+
+  const cleanup = () => window.removeEventListener("message", onMessage);
+  activeExtensionListeners.push(cleanup);
+  return cleanup;
+}
 
 const WORKSPACE_ID = "ws-hook-repro";
 
@@ -42,6 +93,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  for (const cleanup of activeExtensionListeners) cleanup();
+  activeExtensionListeners = [];
 });
 
 it("isSending returns to false after the first response, via the real hook", async () => {
@@ -610,4 +663,178 @@ it("forgets recent search results once the conversation is cleared", async () =>
 
   const lastCallBody = JSON.parse((fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1] as RequestInit).body as string);
   expect(lastCallBody.recentSearchResults).toEqual([]);
+});
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mockAgentFetchReturning(actions: unknown[], text: string) {
+  return vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+    if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+    if (url.includes("/api/ai/ask")) return new Response(JSON.stringify({ text, actions }), { status: 200 });
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+}
+
+describe("browser control", () => {
+  afterEach(() => {
+    __resetBrowserBridgeForTests();
+  });
+
+  it("executes a resolved open_tabs action for real, reports the true outcome, and offers an Undo that closes the opened tabs", async () => {
+    const disconnect = connectFakeExtension((action) => {
+      if (action === "list_browser_tabs") return { tabs: [] };
+      if (action === "list_browser_windows") return { windows: [] };
+      if (action === "open_tabs") return { opened: [{ tabId: 11 }, { tabId: 12 }], failed: [] };
+      if (action === "close_tabs") return { closed: [11, 12] };
+      throw new Error(`Unexpected action ${action}`);
+    });
+
+    mockAgentFetchReturning(
+      [{ name: "open_tabs", ok: true, message: "opened", args: { urls: ["https://a.com", "https://b.com"] }, data: { urlCount: 2, urls: ["https://a.com", "https://b.com"] } }],
+      "Opened them."
+    );
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces, vi.fn()));
+    await act(() => sleep(50)); // let the connection ping/pong settle
+
+    act(() => {
+      result.current.send("Open my Physics tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const last = result.current.messages[result.current.messages.length - 1];
+    expect(last.text).toBe("Opened 2 tabs."); // the real execution's honest wording, not Gemini's guess
+    expect(last.undo?.status).toBe("available");
+
+    await act(async () => {
+      await result.current.undoAction(last.undo!.entryId);
+    });
+
+    const afterUndo = result.current.messages[result.current.messages.length - 1];
+    expect(afterUndo.text).toBe("↶ Undid that change.");
+
+    disconnect();
+  });
+
+  it("reports a partial open_tabs failure honestly rather than the model's optimistic text", async () => {
+    connectFakeExtension((action) => {
+      if (action === "list_browser_tabs") return { tabs: [] };
+      if (action === "list_browser_windows") return { windows: [] };
+      if (action === "open_tabs") return { opened: [{ tabId: 21 }], failed: [{ url: "https://b.com", error: "blocked" }] };
+      throw new Error(`Unexpected action ${action}`);
+    });
+
+    mockAgentFetchReturning(
+      [{ name: "open_tabs", ok: true, message: "opened", args: { urls: ["https://a.com", "https://b.com"] }, data: { urlCount: 2, urls: ["https://a.com", "https://b.com"] } }],
+      "Opened them."
+    );
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+    await act(() => sleep(50));
+
+    act(() => {
+      result.current.send("Open two tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const last = result.current.messages[result.current.messages.length - 1];
+    expect(last.text).toContain("1 of 2");
+    expect(last.text).toContain("couldn't be opened");
+  });
+
+  it("restores the previous pinned state on undo for a pin_tab action", async () => {
+    connectFakeExtension((action, args) => {
+      if (action === "list_browser_tabs") return { tabs: [] };
+      if (action === "list_browser_windows") return { windows: [] };
+      if (action === "pin_tab") return { previousPinned: false };
+      if (action === "unpin_tab") {
+        expect((args as { tabId: number; pinned: boolean }).pinned).toBe(false);
+        return {};
+      }
+      throw new Error(`Unexpected action ${action}`);
+    });
+
+    mockAgentFetchReturning(
+      [{ name: "pin_tab", ok: true, message: "pinned", args: { tabId: 5 }, data: { tabId: 5, pinned: true } }],
+      "Pinned it."
+    );
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+    await act(() => sleep(50));
+
+    act(() => {
+      result.current.send("Pin this tab");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const last = result.current.messages[result.current.messages.length - 1];
+    expect(last.text).toBe("Pinned the tab.");
+    expect(last.undo?.status).toBe("available");
+
+    await act(async () => {
+      await result.current.undoAction(last.undo!.entryId);
+    });
+    expect(result.current.messages[result.current.messages.length - 1].text).toBe("↶ Undid that change.");
+  });
+
+  it("does not show a false Undo button for a non-undoable close_tabs action", async () => {
+    connectFakeExtension((action) => {
+      if (action === "list_browser_tabs") return { tabs: [{ tabId: 1, windowId: 1, url: "https://a.com", title: "A", pinned: false, active: false, index: 0 }, { tabId: 2, windowId: 1, url: "https://b.com", title: "B", pinned: false, active: false, index: 1 }] };
+      if (action === "list_browser_windows") return { windows: [] };
+      if (action === "close_tabs") return { closed: [1, 2], failed: [] };
+      throw new Error(`Unexpected action ${action}`);
+    });
+
+    mockAgentFetchReturning(
+      [{ name: "close_tabs", ok: true, message: "closed", args: { tabIds: [1, 2] }, data: { tabIds: [1, 2], count: 2 } }],
+      "Closed them."
+    );
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+    await act(() => sleep(50));
+
+    act(() => {
+      result.current.send("Close those two tabs");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const last = result.current.messages[result.current.messages.length - 1];
+    expect(last.text).toBe("Closed 2 tabs.");
+    expect(last.undo).toBeUndefined();
+  });
+
+  it("tells the user plainly the extension isn't connected rather than silently failing", async () => {
+    // No connectFakeExtension() call — stays disconnected all test.
+    mockAgentFetchReturning(
+      [{ name: "list_browser_tabs", ok: false, message: "The TabDump browser extension isn't connected, so I can't see your open browser tabs right now." }],
+      "Your TabDump browser extension isn't connected, so I can't do that."
+    );
+
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+    act(() => {
+      result.current.send("What tabs do I have open?");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const last = result.current.messages[result.current.messages.length - 1];
+    expect(last.text).toMatch(/isn't connected/i);
+  });
+
+  it("keeps working normally (no browserContext fetch attempted) when the extension was never connected", async () => {
+    const fetchMock = mockAgentFetchReturning([], "Just an answer.");
+    const { result } = renderHook(() => useAskTabDump(WORKSPACE_ID, tabs, allWorkspaces));
+
+    act(() => {
+      result.current.send("Hello");
+    });
+    await waitFor(() => expect(result.current.isSending).toBe(false));
+
+    const askCall = fetchMock.mock.calls.find((c) => (typeof c[0] === "string" ? c[0] : (c[0] as Request).url).includes("/api/ai/ask"));
+    const body = JSON.parse((askCall![1] as RequestInit).body as string);
+    expect(body.browserContext).toBeUndefined();
+  });
 });

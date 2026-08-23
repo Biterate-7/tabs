@@ -25,3 +25,20 @@ export function optionalInteger(record: Record<string, unknown>, key: string): n
   const v = record[key];
   return typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) ? v : undefined;
 }
+
+export function requiredInteger(record: Record<string, unknown>, key: string): number | null {
+  const v = record[key];
+  return typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) ? v : null;
+}
+
+export function requiredIntegerArray(record: Record<string, unknown>, key: string, max: number = Infinity): number[] | null {
+  const v = record[key];
+  if (!Array.isArray(v) || v.length === 0 || v.length > max) return null;
+  const ints = v.filter((x): x is number => typeof x === "number" && Number.isFinite(x) && Number.isInteger(x));
+  return ints.length === v.length ? ints : null;
+}
+
+export function optionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+  const v = record[key];
+  return typeof v === "boolean" ? v : undefined;
+}
