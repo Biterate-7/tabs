@@ -160,6 +160,82 @@ describe("generateAgentTurn", () => {
     expect(result).toEqual({ ok: true, data: { text: "", functionCalls: [{ name: "list_workspaces", args: {} }] } });
   });
 
+  /**
+   * Regression test for the production error: "Function call is missing a
+   * thought_signature in functionCall parts... function call
+   * default_api:list_workspaces". Gemini 3 attaches `thoughtSignature` as a
+   * SIBLING of `functionCall` on the Part object (confirmed against
+   * Google's Gemini 3 / thought-signatures docs), not as a property inside
+   * `functionCall` itself — this asserts the parser actually reads it from
+   * there rather than silently dropping it.
+   */
+  it("parses a functionCall part's sibling thoughtSignature field", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { name: "list_workspaces", args: {} }, thoughtSignature: "SIG_LIST_WORKSPACES" }],
+            },
+          },
+        ],
+      })
+    ) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "list my workspaces" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      data: { text: "", functionCalls: [{ name: "list_workspaces", args: {}, thoughtSignature: "SIG_LIST_WORKSPACES" }] },
+    });
+  });
+
+  /** Parallel calls: Gemini generally only signs the first Part in a batch — the parser must not invent one for the second. */
+  it("parses parallel functionCall parts where only the first carries a thoughtSignature", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { functionCall: { name: "list_workspaces", args: {} }, thoughtSignature: "SIG_A" },
+                { functionCall: { name: "search_tabs", args: { query: "MUN" } } },
+              ],
+            },
+          },
+        ],
+      })
+    ) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "list workspaces and find MUN tabs" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        text: "",
+        functionCalls: [
+          { name: "list_workspaces", args: {}, thoughtSignature: "SIG_A" },
+          { name: "search_tabs", args: { query: "MUN" } },
+        ],
+      },
+    });
+    // Not just "equal" (which treats an explicit `undefined` the same as absent) — the
+    // second call must never even carry the key, since we never invent one.
+    expect(Object.prototype.hasOwnProperty.call(result.ok ? result.data.functionCalls[1] : {}, "thoughtSignature")).toBe(false);
+  });
+
   it("serializes a functionResponse part sent back to the model under role: 'user' — Gemini's contents schema has no 'function' role", async () => {
     const fetchMock = vi
       .fn()

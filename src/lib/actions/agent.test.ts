@@ -559,4 +559,126 @@ describe("runAgentLoop", () => {
     const onlyCallContents = generateAgentTurnMock.mock.calls[0][0].contents as Array<{ role: string }>;
     expect(onlyCallContents).toEqual([{ role: "user", parts: [{ text: "hi" }] }]);
   });
+
+  describe("thoughtSignature preservation (Gemini 3)", () => {
+    /**
+     * Regression test for the production error: "Function call is missing a
+     * thought_signature in functionCall parts... function call
+     * default_api:list_workspaces" — reproduces the EXACT failing call name
+     * from production. Gemini requires a thoughtSignature it returned on a
+     * functionCall Part to be replayed back byte-for-byte, attached to that
+     * same Part, on the very next request that includes this model turn in
+     * its history. This drives the real runAgentLoop end to end and
+     * inspects the second request's `contents` — the actual payload the
+     * next generateAgentTurn call would send to Gemini.
+     */
+    it("replays a single tool call's thoughtSignature back on its model turn, unmodified and not moved elsewhere", async () => {
+      const store = makeStore([makeWorkspace({ id: "a", name: "Physics" })], "a");
+      generateAgentTurnMock
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { text: "", functionCalls: [{ name: "list_workspaces", args: {}, thoughtSignature: "SIG_LIST_WORKSPACES" }] },
+        })
+        .mockResolvedValueOnce({ ok: true, data: { text: "You have one workspace: Physics.", functionCalls: [] } });
+
+      const result = await runAgentLoop(baseParams(store));
+      expect(result.ok).toBe(true);
+      if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved result");
+
+      const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents as Array<{
+        role: string;
+        parts: Array<{ functionCall?: { name: string; args: unknown }; functionResponse?: unknown; thoughtSignature?: string }>;
+      }>;
+
+      const modelTurn = secondCallContents.find((c) => c.role === "model");
+      if (!modelTurn) throw new Error("expected a model turn carrying the functionCall");
+      // EXACT shape Gemini requires: thoughtSignature is a SIBLING of
+      // functionCall on the Part, not nested inside functionCall itself,
+      // and not renamed/re-encoded/truncated.
+      expect(modelTurn.parts).toEqual([
+        { functionCall: { name: "list_workspaces", args: {} }, thoughtSignature: "SIG_LIST_WORKSPACES" },
+      ]);
+
+      // Never leaked into the functionResponse turn, never into the user's
+      // own message, never dropped.
+      const responseTurn = findFunctionResponseTurn(secondCallContents);
+      expect(JSON.stringify(responseTurn)).not.toContain("SIG_LIST_WORKSPACES");
+      const userQuestionTurn = secondCallContents[0];
+      expect(JSON.stringify(userQuestionTurn)).not.toContain("SIG_LIST_WORKSPACES");
+    });
+
+    it("preserves a parallel batch's thoughtSignature only on the part Gemini actually signed, never inventing one for the rest", async () => {
+      const store = makeStore(
+        [makeWorkspace({ id: "a", name: "A" }), makeWorkspace({ id: "b", name: "Model UN", tabs: [] })],
+        "a"
+      );
+      generateAgentTurnMock
+        .mockResolvedValueOnce({
+          ok: true,
+          data: {
+            text: "",
+            functionCalls: [
+              { name: "list_workspaces", args: {}, thoughtSignature: "SIG_A" },
+              { name: "search_tabs", args: { query: "MUN" } }, // no signature — must not gain one
+            ],
+          },
+        })
+        .mockResolvedValueOnce({ ok: true, data: { text: "Here you go.", functionCalls: [] } });
+
+      const result = await runAgentLoop(baseParams(store));
+      expect(result.ok).toBe(true);
+      if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved result");
+
+      const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents as Array<{
+        role: string;
+        parts: Array<{ functionCall?: { name: string }; thoughtSignature?: string }>;
+      }>;
+      const modelTurn = secondCallContents.find((c) => c.role === "model");
+      if (!modelTurn) throw new Error("expected a model turn");
+      expect(modelTurn.parts).toHaveLength(2);
+      expect(modelTurn.parts[0]).toEqual({ functionCall: { name: "list_workspaces", args: {} }, thoughtSignature: "SIG_A" });
+      expect(modelTurn.parts[1]).toEqual({ functionCall: { name: "search_tabs", args: { query: "MUN" } } });
+      // Strict "never invented" check — an explicit `undefined` would still
+      // pass a plain toEqual, so assert the key itself is genuinely absent.
+      expect(Object.prototype.hasOwnProperty.call(modelTurn.parts[1], "thoughtSignature")).toBe(false);
+    });
+
+    it("preserves each sequential step's own thoughtSignature in its own model turn across a multi-step plan", async () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [{ id: "1", url: "https://x.com", normalizedUrl: "https://x.com", domain: "x.com" }] })], "a");
+
+      generateAgentTurnMock
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { text: "", functionCalls: [{ name: "create_workspace", args: { name: "College Research" }, thoughtSignature: "SIG_A" }] },
+        })
+        .mockImplementationOnce(
+          async (opts: {
+            contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { workspace?: { workspaceId: string } } } } }> }>;
+          }) => {
+            const functionTurn = opts.contents.find((c) => c.parts.some((p) => p.functionResponse));
+            const stagedId = functionTurn?.parts[0]?.functionResponse?.response?.result?.workspace?.workspaceId;
+            return {
+              ok: true,
+              data: { text: "", functionCalls: [{ name: "move_tab", args: { tabId: "1", targetWorkspaceId: stagedId, sourceWorkspaceId: "a" }, thoughtSignature: "SIG_B" }] },
+            };
+          }
+        )
+        .mockResolvedValueOnce({ ok: true, data: { text: "Here's what I want to change", functionCalls: [] } });
+
+      const result = await runAgentLoop(baseParams(store));
+      expect(result.ok).toBe(true);
+      if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result (2 write actions)");
+
+      // The THIRD call's contents carry BOTH prior model turns — each must
+      // still hold its own original signature, unmodified and un-swapped.
+      const thirdCallContents = generateAgentTurnMock.mock.calls[2][0].contents as Array<{
+        role: string;
+        parts: Array<{ functionCall?: { name: string }; thoughtSignature?: string }>;
+      }>;
+      const modelTurns = thirdCallContents.filter((c) => c.role === "model");
+      expect(modelTurns).toHaveLength(2);
+      expect(modelTurns[0].parts[0]).toMatchObject({ functionCall: { name: "create_workspace" }, thoughtSignature: "SIG_A" });
+      expect(modelTurns[1].parts[0]).toMatchObject({ functionCall: { name: "move_tab" }, thoughtSignature: "SIG_B" });
+    });
+  });
 });

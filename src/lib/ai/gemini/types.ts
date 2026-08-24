@@ -38,14 +38,33 @@ export type FunctionDeclaration = {
   parameters: unknown;
 };
 
+/**
+ * One function call the model made, as PARSED out of a Gemini response —
+ * see generateAgentTurn(). `thoughtSignature`, when Gemini 3 returns one, is
+ * carried here purely so runAgentLoop can re-attach it to the right
+ * functionCall Part when replaying this call back into the next request's
+ * history (see AgentContentPart below) — nothing else should read it. It is
+ * NOT a property of the wire `functionCall` object itself; on the actual
+ * Gemini Part it's a SIBLING field (confirmed against Google's Gemini 3 /
+ * thought-signatures docs), which is why AgentContentPart models it
+ * separately rather than by reusing this type verbatim for `functionCall`.
+ *
+ * MUST be replayed back to Gemini byte-for-byte exactly as received — never
+ * invented, decoded, hashed, truncated, or dropped — or Gemini 3 rejects the
+ * next request with "Function call is missing a thought_signature...". For
+ * a parallel batch of calls in one turn, Gemini generally signs only the
+ * first Part; later ones in the same batch are commonly absent, and MUST
+ * stay absent (never backfilled) when replayed.
+ */
 export type FunctionCall = {
   name: string;
   args: Record<string, unknown>;
+  thoughtSignature?: string;
 };
 
 export type AgentContentPart =
   | { text: string }
-  | { functionCall: FunctionCall }
+  | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 /**

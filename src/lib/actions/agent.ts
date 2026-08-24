@@ -141,7 +141,17 @@ export async function runAgentLoop(params: {
 
     contents.push({
       role: "model",
-      parts: turn.data.functionCalls.map((call) => ({ functionCall: call })),
+      parts: turn.data.functionCalls.map((call) => {
+        // Gemini 3 requires a thoughtSignature it returned on a functionCall
+        // to be replayed back EXACTLY as a sibling of `functionCall` on the
+        // same Part — never nested inside `functionCall` itself (which is
+        // why this is destructured out, not spread in), never invented when
+        // Gemini didn't return one (a parallel batch commonly signs only
+        // the first call), and never dropped. See FunctionCall's doc in
+        // src/lib/ai/gemini/types.ts.
+        const { thoughtSignature, ...functionCall } = call;
+        return thoughtSignature !== undefined ? { functionCall, thoughtSignature } : { functionCall };
+      }),
     });
 
     const responseParts: AgentContent["parts"] = [];

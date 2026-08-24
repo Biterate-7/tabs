@@ -288,9 +288,14 @@ export async function generateAgentTurn(opts: AgentTurnOptions): Promise<GeminiR
     for (const part of parts) {
       if (typeof part?.text === "string") text += part.text;
       if (part?.functionCall && typeof part.functionCall.name === "string") {
+        // Gemini 3's thoughtSignature is a SIBLING of `functionCall` on the
+        // Part (not a property of functionCall itself) — read it from
+        // `part`, not `part.functionCall`. See FunctionCall's doc.
+        const thoughtSignature = typeof part.thoughtSignature === "string" ? part.thoughtSignature : undefined;
         functionCalls.push({
           name: part.functionCall.name,
           args: (part.functionCall.args as Record<string, unknown> | undefined) ?? {},
+          ...(thoughtSignature !== undefined ? { thoughtSignature } : {}),
         });
       }
     }
