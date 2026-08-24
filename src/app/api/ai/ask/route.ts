@@ -18,7 +18,16 @@ const MAX_CONTEXT_ITEMS = 12;
 const MAX_CONTEXT_CHARS = 600;
 const MAX_HISTORY_MESSAGES = 6;
 const MAX_HISTORY_CHARS = 800;
-const MAX_QUESTION_CHARS = 500;
+// Silently slicing the user's own question is a real correctness bug, not
+// just a size cap: a question longer than this got cut off mid-sentence
+// before ever reaching the model, and Gemini then — correctly — told the
+// user their query "was cut off," which read as a hallucination but was
+// actually an honest description of what this route had already done to
+// their input. 500 chars is well under a couple of ordinary sentences (the
+// bug report's own reproduction was cut off by it); 4000 comfortably covers
+// realistic questions, including a detailed multi-topic one, while still
+// bounding worst-case prompt size against something pathological.
+const MAX_QUESTION_CHARS = 4000;
 const CHAT_MAX_OUTPUT_TOKENS = 1024;
 const ANALYSIS_MAX_OUTPUT_TOKENS = 2048;
 // A tool-calling turn's final answer can be a full markdown summary of a
@@ -445,9 +454,18 @@ export async function POST(request: Request): Promise<Response> {
     }
     const browserContext = browserContextInput as BrowserContextSnapshot | undefined;
 
+    // Measured directly against the real agent loop (see AGENT_SYSTEM_INSTRUCTION's
+    // "resolve a name... before calling an action that needs one" guidance):
+    // without the second sentence here, the model reliably called
+    // list_workspaces FIRST anyway, purely to re-derive the id already given
+    // on the line above it — a whole extra ~15-25s non-streaming round trip
+    // for something already answered. Spelling out "you already have it"
+    // stops that specific redundant call without discouraging list_workspaces
+    // for what it's actually for: resolving a DIFFERENT workspace the user
+    // named, or discovering ones that aren't the current one.
     const currentWorkspace = store.workspaces.find((w) => w.id === store.currentId);
     const preamble = currentWorkspace
-      ? `Current workspace: "${currentWorkspace.name}" (id: ${currentWorkspace.id}).\n\n`
+      ? `Current workspace: "${currentWorkspace.name}" (id: ${currentWorkspace.id}) — you already have its id, no need to call list_workspaces just to look it up again.\n\n`
       : "";
     const recentSearchBlock = buildRecentSearchResultsBlock(recentSearchResults);
     const browserPreamble = browserContext
@@ -460,6 +478,7 @@ export async function POST(request: Request): Promise<Response> {
       { role: "user", parts: [{ text: agentPrompt }] },
     ];
 
+    console.log(`[ask-route] agent request started ${Date.now() - requestStartedAt}ms after body parsed (question length=${cappedQuestion.length}, historyMessages=${historyContents.length})`);
     const agentResult = await runAgentLoop({
       model: chatModel(),
       systemInstruction: AGENT_SYSTEM_INSTRUCTION,
@@ -470,6 +489,7 @@ export async function POST(request: Request): Promise<Response> {
       browserContext,
       semanticClusters,
     });
+    console.log(`[ask-route] agent request total: ${Date.now() - requestStartedAt}ms`);
 
     if (!agentResult.ok) return errorResponse(agentResult);
 

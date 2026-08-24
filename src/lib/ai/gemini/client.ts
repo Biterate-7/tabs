@@ -5,6 +5,18 @@ import type { AgentTurnOptions, AgentTurnResult, FunctionCall, GeminiContent, Ge
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const EMBED_TIMEOUT_MS = 10000;
 const GENERATE_TIMEOUT_MS = 30000;
+// generateAgentTurn's non-streaming calls carry the full ~30-function tool
+// schema on every turn (including the final text-only turn) and — measured
+// directly against the real Gemini 3 model this app uses, via the actual
+// runAgentLoop code path — regularly take 20-30s+ per turn on their own, with
+// a tool-selection turn alone observed at ~23s. The shared 30s
+// GENERATE_TIMEOUT_MS (tuned for the simpler collection-overview/gaps calls)
+// was observed aborting a genuinely-in-progress, otherwise-successful final
+// turn outright (GeminiResult reason: "timeout") rather than a hung request —
+// that's a real correctness bug, not just slowness: the user got an error
+// instead of the summary they were about to receive. This gives agent turns
+// real headroom instead.
+const AGENT_TURN_TIMEOUT_MS = 60000;
 // Streaming needs two different timeouts, not one: how long we'll wait for
 // Gemini to start responding at all (connect), and — separately — how long
 // we'll tolerate the stream going silent once it HAS started (inactivity).
@@ -250,14 +262,25 @@ export async function generateAgentTurn(opts: AgentTurnOptions): Promise<GeminiR
     ...(opts.systemInstruction ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } } : {}),
     tools: [{ functionDeclarations: opts.tools }],
     toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-    generationConfig: { maxOutputTokens: opts.maxOutputTokens },
+    // Gemini 3 spends a real, non-trivial share of every non-streaming
+    // agent-turn call's wall-clock time on internal "thinking" tokens the
+    // user never sees (confirmed via usageMetadata.thoughtsTokenCount against
+    // the real API) — thinkingBudget: 0 is rejected outright for this model
+    // (Gemini 3 can't fully disable thinking, unlike Gemini 2.5), so LOW is
+    // the least reasoning this call can ask for. Deciding which of ~30
+    // declared tools (if any) to call, and writing a factual summary already
+    // grounded in their results, are exactly the kind of task Google's own
+    // thinkingLevel guidance says doesn't need deep reasoning — unlike a
+    // maxOutputTokens change this can't itself cause an incomplete answer,
+    // only a less deliberated one.
+    generationConfig: { maxOutputTokens: opts.maxOutputTokens, thinkingConfig: { thinkingLevel: "LOW" } },
   };
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
-      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(AGENT_TURN_TIMEOUT_MS),
       headers: {
         "content-type": "application/json",
         "x-goog-api-key": geminiApiKey()!,

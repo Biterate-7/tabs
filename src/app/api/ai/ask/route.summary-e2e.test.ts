@@ -357,6 +357,60 @@ describe("Ask TabDump workspace-summary flow — real end-to-end (network bounda
   });
 
   /**
+   * Latency regression: a workspace under the 100-tab default page size
+   * needs exactly ONE list_workspace_tabs call to see everything, and (per
+   * the preamble fix in route.ts) shouldn't need a list_workspaces call at
+   * all — the current workspace's id is already given directly. Verifies
+   * both facts against the real agent loop with a real 60-tab store (the
+   * exact tab count from the reported latency bug), not just that the mocked
+   * model's own choices happen to look right.
+   */
+  it("a 60-tab workspace summary needs exactly one list_workspace_tabs call and no list_workspaces call", async () => {
+    const tabs: Tab[] = [];
+    for (let i = 1; i <= 60; i++) {
+      const url = `https://example.com/article-${i}`;
+      tabs.push({ id: `tab-${i}`, url, normalizedUrl: url, domain: "example.com", title: `Article ${i}` });
+    }
+    const workspace: Workspace = { id: "ws-60", name: "Main", tabs, createdAt: 0, updatedAt: 0 };
+    const store: WorkspaceStore = { version: 1, currentId: workspace.id, workspaces: [workspace] };
+
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      geminiResponse({
+        candidates: [
+          { content: { parts: [{ functionCall: { name: "list_workspace_tabs", args: { workspaceId: workspace.id } } }] }, finishReason: "STOP" },
+        ],
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      geminiResponse({
+        candidates: [{ content: { parts: [{ text: "Summarized all 60 tabs." }] }, finishReason: "STOP" }],
+      })
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { POST } = await import("./route");
+    const response = await POST(postRequest({ mode: "agent", question: "Summarize this workspace", history: [], context: [], store }));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { text: string };
+    expect(body.text).toBe("Summarized all 60 tabs.");
+
+    // Exactly two model round trips: one tool call, one final answer — no
+    // extra list_workspaces lookup, no second list_workspace_tabs page.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstRequestBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const preambleText = firstRequestBody.contents[firstRequestBody.contents.length - 1].parts[0].text as string;
+    expect(preambleText).toMatch(/already have its id.*no need to call list_workspaces/i);
+
+    const secondRequestBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    const toolTurn = secondRequestBody.contents.find((c: { parts: Array<{ functionResponse?: unknown }> }) => c.parts.some((p) => "functionResponse" in p));
+    const pageResult = toolTurn.parts[0].functionResponse.response.result;
+    expect(pageResult.tabs).toHaveLength(60);
+    expect(pageResult.truncated).toBe(false);
+  });
+
+  /**
    * Regression coverage for the follow-up fix to list_workspace_tabs's
    * 50-tab default (see src/lib/actions/read.ts). A raised default alone
    * only helps workspaces that fit under it — this proves a workspace

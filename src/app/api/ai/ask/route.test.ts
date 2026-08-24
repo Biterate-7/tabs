@@ -87,6 +87,30 @@ describe("POST /api/ai/ask", () => {
     expect(body.detail).toBe("Invalid argument.");
   });
 
+  /**
+   * Regression test for a real bug: a question longer than the old 500-char
+   * MAX_QUESTION_CHARS got silently sliced before ever reaching Gemini, and
+   * Gemini then correctly (if confusingly) told the user their own query
+   * "was cut off" — which read like a hallucination but was actually an
+   * honest description of what this route had already done to their input.
+   * Long, with a distinctive marker at the very end so any truncation
+   * (accidental re-introduction of a low cap, an off-by-one, etc.) is
+   * unmistakable rather than silently passing on a coincidentally-short slice.
+   */
+  it("sends the full user question to Gemini uncut, even a long one", async () => {
+    generateContentStreamMock.mockResolvedValue({ ok: true, data: textStream("ok") });
+    const endMarker = "END-OF-QUERY-MARKER-7f3a9c";
+    const longQuestion = `Summarize what I've saved about ${"astrophysics, orbital mechanics, and general relativity ".repeat(15)}${endMarker}`;
+    expect(longQuestion.length).toBeGreaterThan(500);
+
+    await POST(postRequest({ question: longQuestion, context: validContext }));
+
+    const contents = generateContentStreamMock.mock.calls[0][0].contents;
+    const userTurn = contents[contents.length - 1];
+    expect(userTurn.text).toContain(longQuestion);
+    expect(userTurn.text.trim().endsWith(endMarker)).toBe(true);
+  });
+
   it("sends Gemini's UPPERCASE Type enum in the collection-overview responseSchema", async () => {
     generateContentMock.mockResolvedValue({
       ok: true,
@@ -154,6 +178,29 @@ describe("POST /api/ai/ask", () => {
       expect(body.store).toBeUndefined();
     });
 
+    /**
+     * Latency regression: measured directly against the real agent loop, the
+     * model reliably called list_workspaces FIRST purely to re-derive the
+     * current workspace's id — even though the preamble already states it —
+     * costing a whole extra ~15-25s non-streaming round trip on ordinary
+     * workspace-scoped questions. The preamble must say outright that the id
+     * is already known, so the model doesn't spend a call looking it up
+     * again (it can still call list_workspaces for a workspace the user
+     * refers to by a DIFFERENT name — this only removes the pointless
+     * self-lookup of the one it's already been given).
+     */
+    it("tells the model it already has the current workspace's id, to avoid a redundant list_workspaces round trip", async () => {
+      runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+      await POST(postRequest({ question: "Summarize this workspace", context: [], mode: "agent", store: validStore }));
+
+      const contents = runAgentLoopMock.mock.calls[0][0].contents;
+      const userTurn = contents[contents.length - 1];
+      const text = userTurn.parts[0].text as string;
+      expect(text).toContain(`Current workspace: "Physics" (id: ws-1)`);
+      expect(text).toMatch(/already have its id.*no need to call list_workspaces/i);
+    });
+
     it("includes the mutated store in the response only when a write action changed it", async () => {
       const mutatedStore = { ...validStore, workspaces: [...validStore.workspaces, { id: "ws-2", name: "New", tabs: [], createdAt: 0, updatedAt: 0 }] };
       runAgentLoopMock.mockResolvedValue({
@@ -186,6 +233,22 @@ describe("POST /api/ai/ask", () => {
           ]),
         })
       );
+    });
+
+    /** Same query-integrity regression as the chat-mode test above, for the agent path. */
+    it("sends the full user question to the agent loop uncut, even a long one", async () => {
+      runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+      const endMarker = "END-OF-QUERY-MARKER-9b21e5";
+      const longQuestion = `Summarize what I've saved about ${"TabDump development, my academics, and my projects ".repeat(15)}${endMarker}`;
+      expect(longQuestion.length).toBeGreaterThan(500);
+
+      await POST(postRequest({ question: longQuestion, context: [], mode: "agent", store: validStore }));
+
+      const contents = runAgentLoopMock.mock.calls[0][0].contents;
+      const userTurn = contents[contents.length - 1];
+      const text = userTurn.parts[0].text as string;
+      expect(text).toContain(longQuestion);
+      expect(text.trim().endsWith(endMarker)).toBe(true);
     });
 
     it("maps a Gemini failure from the agent loop to its status code", async () => {

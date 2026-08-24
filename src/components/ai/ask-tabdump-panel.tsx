@@ -16,6 +16,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/empty-state"
 import { SourceCard } from "@/components/ai/source-card"
+import { MarkdownMessage } from "@/components/ai/markdown-message"
 import { ActionPreviewCard } from "@/components/ai/action-preview-card"
 import { AutoOrganizeReview } from "@/components/ai/auto-organize-review"
 import { UndoActionButton } from "@/components/ai/undo-action-button"
@@ -143,7 +144,7 @@ export function AskTabDumpPanel({
                   </div>
                 </div>
               ) : (
-                <div className="space-y-4 py-4">
+                <div className="space-y-4 py-4" data-testid="ask-messages">
                   {messages.map((message) => (
                     <div key={message.id} className={message.role === "user" ? "flex justify-end" : ""}>
                       {message.role === "user" ? (
@@ -158,7 +159,7 @@ export function AskTabDumpPanel({
                               <span className="text-body-sm">Thinking…</span>
                             </div>
                           ) : (
-                            <p className="whitespace-pre-wrap break-words text-body text-foreground">{message.text}</p>
+                            <MarkdownMessage text={message.text} />
                           )}
 
                           {message.sources && message.sources.length > 0 && (

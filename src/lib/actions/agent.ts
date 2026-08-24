@@ -127,8 +127,10 @@ export async function runAgentLoop(params: {
   const performed: PerformedAction[] = [];
   const plan: PlannedAction[] = [];
   let searchResults: SearchResult[] | undefined;
+  const loopStartedAt = Date.now();
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    const iterationStartedAt = Date.now();
     const turn = await generateAgentTurn({
       model: params.model,
       systemInstruction: params.systemInstruction,
@@ -136,11 +138,20 @@ export async function runAgentLoop(params: {
       tools: ACTION_DECLARATIONS,
       maxOutputTokens: params.maxOutputTokens,
     });
+    const modelCallMs = Date.now() - iterationStartedAt;
 
-    if (!turn.ok) return turn;
+    if (!turn.ok) {
+      console.log(`[agent-loop] iteration ${iteration + 1} model call failed after ${modelCallMs}ms (reason=${turn.reason})`);
+      return turn;
+    }
+
+    console.log(
+      `[agent-loop] iteration ${iteration + 1} model call: ${modelCallMs}ms (functionCalls=${turn.data.functionCalls.length}${turn.data.truncated ? ", truncated=true" : ""})`
+    );
 
     if (turn.data.functionCalls.length === 0) {
       const text = withTruncationNotice(turn.data.text, turn.data.truncated);
+      console.log(`[agent-loop] total: ${Date.now() - loopStartedAt}ms (${iteration + 1} iteration(s), final turn had no tool calls)`);
       if (plan.length === 0) return resolved(text, store, params.store, performed, searchResults);
       return planRequiresConfirmation(plan)
         ? preview(text, plan, searchResults)
@@ -164,11 +175,13 @@ export async function runAgentLoop(params: {
 
     const responseParts: AgentContent["parts"] = [];
     for (const call of turn.data.functionCalls) {
+      const toolStartedAt = Date.now();
       const outcome = runAction(call.name, call.args, store, {
         semanticHints: params.semanticHints,
         browserContext: params.browserContext,
         semanticClusters: params.semanticClusters,
       });
+      console.log(`[agent-loop] iteration ${iteration + 1} tool call ${call.name}: ${Date.now() - toolStartedAt}ms (ok=${outcome.ok}) args=${summarizeData(call.args)}`);
       if (outcome.ok) {
         store = outcome.store;
 
@@ -179,6 +192,7 @@ export async function runAgentLoop(params: {
         // reply text, never Gemini's own phrasing (see describeOrganizationPlan).
         if (call.name === AUTO_ORGANIZE_ACTION_NAME) {
           const organizePlan = (outcome.data as { plan: OrganizationPlan }).plan;
+          console.log(`[agent-loop] total: ${Date.now() - loopStartedAt}ms (${iteration + 1} iteration(s), short-circuited on ${AUTO_ORGANIZE_ACTION_NAME})`);
           return { ok: true, kind: "organize", text: organizePlan.summary, organizePlan };
         }
 
@@ -210,6 +224,7 @@ export async function runAgentLoop(params: {
     contents.push({ role: "user", parts: responseParts });
   }
 
+  console.log(`[agent-loop] total: ${Date.now() - loopStartedAt}ms (hit MAX_TOOL_ITERATIONS=${MAX_TOOL_ITERATIONS})`);
   if (plan.length > 0 && planRequiresConfirmation(plan)) return preview(DEFAULT_PREVIEW_INTRO, plan, searchResults);
   return resolved(FALLBACK_TEXT, store, params.store, performed, searchResults);
 }

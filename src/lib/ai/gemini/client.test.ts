@@ -140,6 +140,34 @@ describe("generateAgentTurn", () => {
     expect(body.toolConfig).toEqual({ functionCallingConfig: { mode: "AUTO" } });
   });
 
+  /**
+   * Latency fix regression: measured directly against the real API, Gemini 3
+   * spends a real, non-trivial share of every non-streaming agent-turn
+   * call's wall-clock time on internal "thinking" tokens the user never sees
+   * (a single call was observed spending ~980 of ~1000 total tokens on
+   * thinking alone). Deciding which tool to call, or writing a factual
+   * summary already grounded in tool results, doesn't need deep reasoning —
+   * thinkingLevel: "LOW" is the least this model allows (thinkingBudget: 0 is
+   * rejected outright for Gemini 3, unlike Gemini 2.5).
+   */
+  it("requests the lowest available thinking level, to cut avoidable latency", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { candidates: [{ content: { parts: [{ text: "Hello there" }] } }] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+  });
+
   it("parses a functionCall part into a structured function call", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       jsonResponse(200, {

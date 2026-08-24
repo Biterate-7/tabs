@@ -283,14 +283,27 @@ describe("AskTabDumpPanel — agent-mode workspace summary (real hook, mocked fe
     // in the actual DOM — not just present in some intermediate state.
     await waitFor(() => expect(screen.getByText(/Overall, this workspace leans/)).toBeTruthy());
     for (const cat of CATEGORIES) {
-      expect(screen.getByText(new RegExp(`### ${cat.name}`))).toBeTruthy();
+      // Real Markdown rendering: `### Physics` becomes an actual <h3>
+      // heading whose text is "Physics" — the literal "### " prefix is
+      // consumed as heading syntax, never shown to the user (this is the
+      // Markdown-rendering fix itself, not an incidental detail).
+      expect(screen.getByRole("heading", { name: cat.name })).toBeTruthy();
       for (const title of cat.titles) {
         expect(screen.getByText(new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))).toBeTruthy();
       }
     }
 
-    const rendered = screen.getByText(/Here's a summary of your 53 saved tabs/).textContent ?? "";
+    // Rendered Markdown splits one logical answer across many DOM nodes
+    // (headings, paragraphs, list items) — assert against the whole
+    // message-list container's aggregate text, not one particular element
+    // (and not the whole panel, which also renders unrelated chrome like
+    // the "Clear conversation" button after the messages).
+    const rendered = screen.getByTestId("ask-messages").textContent ?? "";
+    expect(rendered).toContain("Here's a summary of your 53 saved tabs");
     expect(rendered).not.toMatch(/cut off/i);
+    // No literal Markdown syntax leaked through unrendered.
+    expect(rendered).not.toContain("###");
+    expect(rendered).not.toContain("**");
     // Ends on the real closing sentence, not a dangling Markdown token.
     expect(rendered.trim().endsWith("research.")).toBe(true);
   });
@@ -321,10 +334,19 @@ describe("AskTabDumpPanel — agent-mode workspace summary (real hook, mocked fe
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(screen.getByText(/cut off/i)).toBeTruthy());
-    const rendered = screen.getByText(/cut off/i).textContent ?? "";
+    // Markdown rendering splits the cut-off answer across several DOM nodes
+    // (heading/paragraph/list boundaries) — check the aggregate message-list
+    // text, not one particular element's textContent.
+    const rendered = screen.getByTestId("ask-messages").textContent ?? "";
     // The user sees an honest notice, not the raw cut-off Markdown presented
-    // as if it were a complete, successful answer.
-    expect(rendered).toContain(cutOff);
+    // as if it were a complete, successful answer. Compare the cut-off
+    // source's own visible text (Markdown syntax chars stripped) since
+    // rendering turns e.g. "### Physics" into a heading whose text is
+    // "Physics", not the literal source string.
+    const cutOffVisibleText = cutOff.replace(/^#{1,6}\s+/gm, "").replace(/^-\s+/gm, "").replace(/\*\*/g, "");
+    for (const chunk of cutOffVisibleText.split("\n").map((s) => s.trim()).filter(Boolean)) {
+      expect(rendered).toContain(chunk);
+    }
     expect(rendered).toMatch(/cut off/i);
   });
 
