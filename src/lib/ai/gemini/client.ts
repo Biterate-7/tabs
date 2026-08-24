@@ -300,7 +300,13 @@ export async function generateAgentTurn(opts: AgentTurnOptions): Promise<GeminiR
       }
     }
 
-    return { ok: true, data: { text, functionCalls } };
+    // A non-streaming generateContent response is always valid, complete
+    // JSON — MAX_TOKENS never corrupts the envelope, only cuts `text` off
+    // mid-thought inside it. Without this check that truncation is
+    // indistinguishable from a genuinely finished short answer, and gets
+    // relayed to the user as if it were complete. See AgentTurnResult's doc.
+    const finishReason = data?.candidates?.[0]?.finishReason;
+    return { ok: true, data: { text, functionCalls, ...(finishReason === "MAX_TOKENS" ? { truncated: true } : {}) } };
   } catch (err) {
     return { ok: false, reason: "malformed-response", detail: err instanceof Error ? err.message : "couldn't parse response JSON" };
   }

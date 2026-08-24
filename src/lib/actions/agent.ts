@@ -12,6 +12,13 @@ import type { PlannedAction } from "./plan";
 const MAX_TOOL_ITERATIONS = 6;
 const FALLBACK_TEXT = "I ran into trouble finishing that — could you try rephrasing your request?";
 const DEFAULT_PREVIEW_INTRO = "Here's what I want to change:";
+/** Appended when Gemini's own `finishReason` was MAX_TOKENS (see AgentTurnResult.truncated) — same "honest about a cut-off answer" convention as ask.ts's stream-disconnect handling. */
+const TRUNCATION_NOTICE = "\n\n_(That answer got cut off — it reached the model's response limit. Try asking about a narrower group of tabs.)_";
+
+/** A truncated final turn's text is still shown (never discarded — see ask.ts's disconnect handling for the same convention), just never presented as complete. */
+function withTruncationNotice(text: string, truncated: boolean | undefined): string {
+  return truncated ? `${text}${TRUNCATION_NOTICE}` : text;
+}
 
 /**
  * `args`/`data` are only ever present for browser actions (see
@@ -133,10 +140,11 @@ export async function runAgentLoop(params: {
     if (!turn.ok) return turn;
 
     if (turn.data.functionCalls.length === 0) {
-      if (plan.length === 0) return resolved(turn.data.text, store, params.store, performed, searchResults);
+      const text = withTruncationNotice(turn.data.text, turn.data.truncated);
+      if (plan.length === 0) return resolved(text, store, params.store, performed, searchResults);
       return planRequiresConfirmation(plan)
-        ? preview(turn.data.text, plan, searchResults)
-        : resolved(turn.data.text, store, params.store, performed, searchResults);
+        ? preview(text, plan, searchResults)
+        : resolved(text, store, params.store, performed, searchResults);
     }
 
     contents.push({

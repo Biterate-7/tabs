@@ -5,7 +5,21 @@ import { asRecord, optionalBoolean, optionalInteger, optionalString, requiredStr
 import { findTab, findWorkspace, tabSummary, workspaceSummary } from "./lookup";
 import type { ActionDefinition } from "./types";
 
-const LIST_TABS_DEFAULT_LIMIT = 50;
+// Raised from 50: the old default was smaller than plenty of real
+// workspaces (the landing page's own copy advertises pasting "20, 50, or
+// even 100 tabs at once"), so an agent turn that never bothered to pass an
+// explicit `limit` silently saw only part of the workspace. 100 still keeps
+// a single tool response bounded — same JSON shape, same per-tab cost as
+// before, just enough of them to cover a normal-sized workspace in one call
+// without the model needing to think about pagination at all. Anything
+// bigger still gets everything via `offset`/`nextOffset` below — this is a
+// convenience default, not the safety limit (that's LIST_TABS_MAX_LIMIT).
+const LIST_TABS_DEFAULT_LIMIT = 100;
+// The hard per-call cap, unchanged — never returns more than this many tabs
+// in one response no matter what `limit` is requested, so a single
+// tool-calling turn's prompt size stays bounded regardless of workspace
+// size. A workspace larger than this is paged through via `offset`, not by
+// raising this further.
 const LIST_TABS_MAX_LIMIT = 200;
 const SAMPLE_TABS_CAP = 20;
 
@@ -148,11 +162,37 @@ export const getWorkspaceAction: ActionDefinition<{ workspaceId: string }, GetWo
   },
 };
 
-type ListWorkspaceTabsData = { workspaceId: string; total: number; tabs: ReturnType<typeof tabSummary>[]; truncated: boolean };
+type ListWorkspaceTabsData = {
+  workspaceId: string;
+  /** Count of tabs matching the filter across the WHOLE workspace, not just this page. */
+  total: number;
+  /** The zero-based index this page started at — echoes the request (0 when `offset` was omitted). */
+  offset: number;
+  tabs: ReturnType<typeof tabSummary>[];
+  /** True iff tabs remain beyond this page — i.e. this response is NOT the complete workspace. */
+  truncated: boolean;
+  /**
+   * Present only when `truncated` is true — pass this straight back as
+   * `offset` to get the next page. Its absence (rather than some sentinel
+   * like -1) is itself the "there is no next page" signal, so a caller can't
+   * mistake a stale/copied value for "keep going."
+   */
+  nextOffset?: number;
+  /**
+   * Present only when `truncated` is true — a plain-language, impossible-to-
+   * miss restatement of the same fact `truncated`/`nextOffset` encode
+   * structurally. A lone boolean buried in a JSON tool result is easy for a
+   * model to skim past (this is exactly how the original bug happened —
+   * see AGENTS.md/agent.ts's system instruction for how this gets used);
+   * spelling out the exact next call to make is what actually gets acted on.
+   */
+  note?: string;
+};
 
-export const listWorkspaceTabsAction: ActionDefinition<{ workspaceId: string; query?: string; limit?: number }, ListWorkspaceTabsData> = {
+export const listWorkspaceTabsAction: ActionDefinition<{ workspaceId: string; query?: string; limit?: number; offset?: number }, ListWorkspaceTabsData> = {
   name: "list_workspace_tabs",
-  description: "List the tabs saved in one workspace, optionally filtered by keyword. Use this to enumerate tabs before a bulk move.",
+  description:
+    `List the tabs saved in one workspace, optionally filtered by keyword. Use this to enumerate tabs before a bulk move, or to gather a workspace's full contents before summarizing it. Returns up to ${LIST_TABS_DEFAULT_LIMIT} tabs by default (${LIST_TABS_MAX_LIMIT} max per call) in a stable order, plus \`total\`/\`truncated\`/\`nextOffset\`. When \`truncated\` is true, the workspace has more tabs than this one call returned — call this again with \`offset\` set to the returned \`nextOffset\` (and the same \`query\`, if any) to keep paging until \`truncated\` is false, before treating the result as the whole workspace.`,
   readOnly: true,
   parameters: {
     type: "OBJECT",
@@ -160,6 +200,7 @@ export const listWorkspaceTabsAction: ActionDefinition<{ workspaceId: string; qu
       workspaceId: { type: "STRING" },
       query: { type: "STRING", description: "Optional keyword filter." },
       limit: { type: "INTEGER", description: `Max tabs to return (default ${LIST_TABS_DEFAULT_LIMIT}, capped at ${LIST_TABS_MAX_LIMIT}).` },
+      offset: { type: "INTEGER", description: "Zero-based index to start listing from, for paging through a workspace larger than one call's limit. Pass the previous call's `nextOffset` to continue. Defaults to 0." },
     },
     required: ["workspaceId"],
   },
@@ -168,22 +209,47 @@ export const listWorkspaceTabsAction: ActionDefinition<{ workspaceId: string; qu
     if (!record) return { ok: false, message: "Expected an object with a `workspaceId` string." };
     const workspaceId = requiredString(record, "workspaceId");
     if (!workspaceId) return { ok: false, message: "`workspaceId` is required and must be a non-empty string." };
-    return { ok: true, args: { workspaceId, query: optionalString(record, "query"), limit: optionalInteger(record, "limit") } };
+    return {
+      ok: true,
+      args: {
+        workspaceId,
+        query: optionalString(record, "query"),
+        limit: optionalInteger(record, "limit"),
+        offset: optionalInteger(record, "offset"),
+      },
+    };
   },
   run(store, args) {
     const workspace = findWorkspace(store, args.workspaceId);
     if (!workspace) return { ok: false, message: `No workspace found with id "${args.workspaceId}".` };
 
     const limit = Math.min(Math.max(args.limit ?? LIST_TABS_DEFAULT_LIMIT, 1), LIST_TABS_MAX_LIMIT);
+    // Negative/absent offsets are just "start from the top" — never an
+    // error, so a model that omits `offset` on its first call (the common
+    // case) behaves exactly as before this field existed.
+    const offset = Math.max(args.offset ?? 0, 0);
+    // `workspace.tabs` is a plain array in stable insertion order, and this
+    // action never mutates it — the same (query, offset, limit) always
+    // slices the same window, so sequential pages neither skip nor repeat a
+    // tab even across separate calls within one agent turn.
     const filtered = args.query ? workspace.tabs.filter((t) => matchesQuery(t, args.query!)) : workspace.tabs;
+    const page = filtered.slice(offset, offset + limit);
+    const truncated = offset + page.length < filtered.length;
 
     return {
       ok: true,
       data: {
         workspaceId: workspace.id,
         total: filtered.length,
-        tabs: filtered.slice(0, limit).map((t) => tabSummary(t, workspace)),
-        truncated: filtered.length > limit,
+        offset,
+        tabs: page.map((t) => tabSummary(t, workspace)),
+        truncated,
+        ...(truncated
+          ? {
+              nextOffset: offset + page.length,
+              note: `Returned ${page.length} of ${filtered.length} matching tabs (offset ${offset}–${offset + page.length - 1}). ${filtered.length - offset - page.length} more remain — call list_workspace_tabs again with offset: ${offset + page.length}${args.query ? ` and the same query: "${args.query}"` : ""} to get the rest before treating this as the complete workspace.`,
+            }
+          : {}),
       },
     };
   },

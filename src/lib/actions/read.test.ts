@@ -210,4 +210,139 @@ describe("list_workspace_tabs action", () => {
     if (!result.ok) return;
     expect(result.data.tabs.map((t) => t.tabId)).toEqual(["1"]);
   });
+
+  function makeTabs(n: number, prefix = "t"): Tab[] {
+    return Array.from({ length: n }, (_, i) => makeTab(`${prefix}${i + 1}`, { title: `Tab ${i + 1}` }));
+  }
+
+  function run(store: WorkspaceStore, args: Record<string, unknown>) {
+    const validated = listWorkspaceTabsAction.validate(args);
+    if (!validated.ok) throw new Error(`expected validation to pass: ${validated.message}`);
+    const result = listWorkspaceTabsAction.run(store, validated.args);
+    if (!result.ok) throw new Error(`expected run to succeed: ${result.message}`);
+    return result.data;
+  }
+
+  describe("pagination", () => {
+    it("returns every tab uncut and marks it complete for a workspace under the default limit (regression: pre-fix default was 50)", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(40) })], "a");
+      const data = run(store, { workspaceId: "a" });
+
+      expect(data.tabs).toHaveLength(40);
+      expect(data.total).toBe(40);
+      expect(data.offset).toBe(0);
+      expect(data.truncated).toBe(false);
+      expect(data.nextOffset).toBeUndefined();
+      expect(data.note).toBeUndefined();
+    });
+
+    it("returns all 53 tabs in a single default call — the exact workspace size from the original bug report", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(53) })], "a");
+      // No `limit`/`offset` at all — this is what a model does by default
+      // when it doesn't specifically reason about page size.
+      const data = run(store, { workspaceId: "a" });
+
+      expect(data.tabs).toHaveLength(53);
+      expect(data.tabs.map((t) => t.tabId)).toEqual(makeTabs(53).map((t) => t.id));
+      expect(data.total).toBe(53);
+      expect(data.truncated).toBe(false);
+    });
+
+    it("truncates a workspace larger than the default page size, and the returned nextOffset/note lead to the rest", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(130) })], "a");
+
+      const first = run(store, { workspaceId: "a" });
+      expect(first.tabs).toHaveLength(100);
+      expect(first.total).toBe(130);
+      expect(first.offset).toBe(0);
+      expect(first.truncated).toBe(true);
+      expect(first.nextOffset).toBe(100);
+      expect(first.note).toMatch(/30 more/);
+      expect(first.note).toContain("offset: 100");
+
+      const second = run(store, { workspaceId: "a", offset: first.nextOffset });
+      expect(second.tabs).toHaveLength(30);
+      expect(second.offset).toBe(100);
+      expect(second.truncated).toBe(false);
+      expect(second.nextOffset).toBeUndefined();
+      expect(second.note).toBeUndefined();
+
+      // The two pages together are exactly the whole workspace, in order.
+      expect([...first.tabs, ...second.tabs].map((t) => t.tabId)).toEqual(makeTabs(130).map((t) => t.id));
+    });
+
+    it("walks a workspace larger than even the max per-call limit across multiple pages with no duplicate or skipped tabs", () => {
+      const total = 250; // > LIST_TABS_MAX_LIMIT (200) and not a multiple of the 100 default page size
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(total) })], "a");
+
+      const collected: string[] = [];
+      let offset: number | undefined = undefined;
+      let pages = 0;
+      for (;;) {
+        pages += 1;
+        if (pages > 10) throw new Error("pagination did not terminate");
+        const data: ReturnType<typeof run> = run(store, offset === undefined ? { workspaceId: "a" } : { workspaceId: "a", offset });
+        collected.push(...data.tabs.map((t) => t.tabId));
+        if (!data.truncated) break;
+        expect(data.nextOffset).toBeDefined();
+        offset = data.nextOffset;
+      }
+
+      expect(pages).toBe(3); // 100 + 100 + 50
+      expect(collected).toEqual(makeTabs(total).map((t) => t.id)); // exact order, no dupes, no gaps
+      expect(new Set(collected).size).toBe(total);
+    });
+
+    it("preserves existing behavior for a caller-provided `limit` — it still governs page size, combined with `offset`", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(53) })], "a");
+
+      const first = run(store, { workspaceId: "a", limit: 10 });
+      expect(first.tabs.map((t) => t.tabId)).toEqual(["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"]);
+      expect(first.truncated).toBe(true);
+      expect(first.nextOffset).toBe(10);
+
+      const second = run(store, { workspaceId: "a", limit: 10, offset: 10 });
+      expect(second.tabs.map((t) => t.tabId)).toEqual(["t11", "t12", "t13", "t14", "t15", "t16", "t17", "t18", "t19", "t20"]);
+      expect(second.truncated).toBe(true);
+      expect(second.nextOffset).toBe(20);
+    });
+
+    it("clamps a limit above the max and an offset past the end without erroring", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(10) })], "a");
+
+      const overLimit = run(store, { workspaceId: "a", limit: 100000 });
+      expect(overLimit.tabs).toHaveLength(10);
+      expect(overLimit.truncated).toBe(false);
+
+      const pastEnd = run(store, { workspaceId: "a", offset: 500 });
+      expect(pastEnd.tabs).toEqual([]);
+      expect(pastEnd.total).toBe(10);
+      expect(pastEnd.truncated).toBe(false);
+    });
+
+    it("carries a query filter across pages consistently — total/truncation reflect the FILTERED count, not the whole workspace", () => {
+      const matching = makeTabs(130, "keep").map((t) => ({ ...t, title: `keep ${t.title}` }));
+      const nonMatching = makeTabs(10, "skip").map((t) => ({ ...t, title: `skip ${t.title}` }));
+      const store = makeStore([makeWorkspace({ id: "a", tabs: [...matching, ...nonMatching] })], "a");
+
+      const first = run(store, { workspaceId: "a", query: "keep" });
+      expect(first.tabs).toHaveLength(100);
+      expect(first.total).toBe(130); // matches "keep" only, not all 140
+      expect(first.truncated).toBe(true);
+      expect(first.note).toContain('query: "keep"');
+
+      const second = run(store, { workspaceId: "a", query: "keep", offset: first.nextOffset });
+      expect(second.tabs).toHaveLength(30);
+      expect(second.truncated).toBe(false);
+      // Never leaks a non-matching tab in across pages.
+      expect([...first.tabs, ...second.tabs].every((t) => t.tabId.startsWith("keep"))).toBe(true);
+    });
+
+    it("returns identical pages for identical (query, offset, limit) arguments — deterministic, not just non-overlapping", () => {
+      const store = makeStore([makeWorkspace({ id: "a", tabs: makeTabs(130) })], "a");
+      const first = run(store, { workspaceId: "a", offset: 40, limit: 25 });
+      const second = run(store, { workspaceId: "a", offset: 40, limit: 25 });
+      expect(second.tabs.map((t) => t.tabId)).toEqual(first.tabs.map((t) => t.tabId));
+    });
+  });
 });

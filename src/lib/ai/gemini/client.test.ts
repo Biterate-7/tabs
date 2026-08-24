@@ -294,4 +294,62 @@ describe("generateAgentTurn", () => {
 
     expect(result).toEqual({ ok: false, reason: "malformed-response", detail: "response had no candidate parts" });
   });
+
+  /**
+   * Regression test for a workspace-summary response that stopped partway
+   * through with stray Markdown (e.g. an unclosed "**" or a dangling "###"
+   * heading). A non-streaming generateContent call always returns a
+   * complete, valid HTTP JSON envelope — MAX_TOKENS never corrupts that
+   * envelope, it only cuts the `text` field off mid-thought inside it. This
+   * is the exact wire shape Gemini returns in that case: candidate text
+   * ending mid-sentence plus `finishReason: "MAX_TOKENS"`.
+   */
+  it("flags `truncated: true` when finishReason is MAX_TOKENS, without altering the (cut-off) text itself", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        candidates: [
+          {
+            content: { parts: [{ text: "### 1. Research\n\n- Paper on orbital mechanics\n- Notes on general rel" }] },
+            finishReason: "MAX_TOKENS",
+          },
+        ],
+      })
+    ) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "summarize this workspace" }] }],
+      tools,
+      maxOutputTokens: 1024,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        text: "### 1. Research\n\n- Paper on orbital mechanics\n- Notes on general rel",
+        functionCalls: [],
+        truncated: true,
+      },
+    });
+  });
+
+  it("omits `truncated` entirely (never `false`) when finishReason is a normal STOP", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        candidates: [{ content: { parts: [{ text: "All done." }] }, finishReason: "STOP" }],
+      })
+    ) as unknown as typeof fetch;
+    const { generateAgentTurn } = await import("./client");
+
+    const result = await generateAgentTurn({
+      model: "gemini-3.6-flash",
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      tools,
+      maxOutputTokens: 100,
+    });
+
+    expect(result).toEqual({ ok: true, data: { text: "All done.", functionCalls: [] } });
+    expect(Object.prototype.hasOwnProperty.call(result.ok ? result.data : {}, "truncated")).toBe(false);
+  });
 });

@@ -89,6 +89,16 @@ export type AgentTurnResult = {
   /** Concatenation of every text part in the response — usually empty when the model instead chose to call a function. */
   text: string;
   functionCalls: FunctionCall[];
+  /**
+   * Set (to `true`) only when Gemini's own `finishReason` for this turn was
+   * `MAX_TOKENS` — i.e. `text` is a genuine, mid-thought truncation, not a
+   * complete answer that just happens to be short. Omitted entirely (never
+   * `false`) when the turn finished normally, so existing exact-shape
+   * assertions on a normal turn's result are unaffected. See
+   * runAgentLoop's use of this in src/lib/actions/agent.ts — a truncated
+   * final answer must never be presented to the user as if it were complete.
+   */
+  truncated?: boolean;
 };
 
 export type AgentTurnOptions = {

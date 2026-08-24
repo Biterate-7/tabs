@@ -168,6 +168,136 @@ describe("runAgentLoop", () => {
     expect(result.text).toMatch(/trouble/i);
   });
 
+  /**
+   * Regression test for the reported bug: an AI-generated workspace summary
+   * (long, Markdown-heavy — one of many tabs) stopped partway through with
+   * stray Markdown, and was still shown as if it were a complete, successful
+   * answer. Root cause traced to generateAgentTurn's final text turn hitting
+   * Gemini's MAX_TOKENS output cap with no detection anywhere in the chain —
+   * see AgentTurnResult.truncated in src/lib/ai/gemini/types.ts. This drives
+   * the real runAgentLoop (not a mock of it) to prove the loop itself now
+   * appends an honest notice rather than silently returning the cut-off text.
+   */
+  it("appends a truncation notice instead of silently returning a cut-off workspace summary", async () => {
+    const store = makeStore([makeWorkspace({ id: "a", name: "General" })], "a");
+    const cutOffSummary =
+      "### 1. Research\n\n- Paper on orbital mechanics\n- Notes on general rel";
+    generateAgentTurnMock.mockResolvedValueOnce({
+      ok: true,
+      data: { text: cutOffSummary, functionCalls: [], truncated: true },
+    });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved result");
+    expect(result.text.startsWith(cutOffSummary)).toBe(true);
+    expect(result.text).toMatch(/cut off/i);
+    // The truncated text itself is preserved verbatim, not discarded —
+    // same "keep what we got" convention as ask.ts's stream-disconnect path.
+    expect(result.text).toContain(cutOffSummary);
+  });
+
+  it("requires confirmation with the truncation notice attached to a truncated preview's intro text too", async () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, url: `https://x.com/${i}`, normalizedUrl: `https://x.com/${i}`, domain: "x.com" }));
+    const store = makeStore([makeWorkspace({ id: "a", tabs: many }), makeWorkspace({ id: "b", name: "Research" })], "a");
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          text: "",
+          functionCalls: [{ name: "move_tabs", args: { tabIds: many.map((t) => t.id), targetWorkspaceId: "b", sourceWorkspaceId: "a" } }],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "Here's what I want to change, but the reasoning got c", functionCalls: [], truncated: true },
+      });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "preview") throw new Error("expected a preview result");
+    expect(result.text).toMatch(/cut off/i);
+  });
+
+  it("does NOT append a truncation notice for an ordinary, complete answer", async () => {
+    generateAgentTurnMock.mockResolvedValueOnce({ ok: true, data: { text: "Just an answer.", functionCalls: [] } });
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result).toEqual({ ok: true, kind: "resolved", text: "Just an answer.", store, storeChanged: false, actions: [] });
+  });
+
+  /**
+   * Regression test for list_workspace_tabs's raised default/pagination
+   * (see src/lib/actions/read.ts) — proves runAgentLoop's plain iterate-
+   * until-no-more-tool-calls loop is sufficient for a model to page through
+   * a workspace larger than one call's default page size using nothing but
+   * the tool's own `truncated`/`nextOffset` fields; no special-casing in
+   * the loop itself was needed (requirement 6: "Gemini can naturally
+   * request the next page rather than requiring client-side special
+   * handling"). Only generateAgentTurn is mocked — list_workspace_tabs runs
+   * for real against a real 120-tab store.
+   */
+  it("lets a model page through a workspace larger than the default page size via list_workspace_tabs's own truncated/nextOffset — no client-side pagination logic involved", async () => {
+    const tabs = Array.from({ length: 120 }, (_, i) => ({
+      id: `t${i + 1}`,
+      url: `https://example.com/${i + 1}`,
+      normalizedUrl: `https://example.com/${i + 1}`,
+      domain: "example.com",
+      title: `Tab ${i + 1}`,
+    }));
+    const store = makeStore([makeWorkspace({ id: "a", name: "General", tabs })], "a");
+
+    generateAgentTurnMock
+      // Turn 1: page 1 — no offset yet.
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "list_workspace_tabs", args: { workspaceId: "a" } }] },
+      })
+      // Turn 2: reads page 1's real tool result off `contents` and pages again — proves the
+      // loop hands the REAL action-layer result back to the "model" each turn, not a stub.
+      .mockImplementationOnce(async (opts: { contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { truncated?: boolean; nextOffset?: number } } } }> }> }) => {
+        const toolTurn = opts.contents.find((c) => c.parts.some((p) => p.functionResponse));
+        const page1 = toolTurn?.parts[0]?.functionResponse?.response?.result;
+        expect(page1?.truncated).toBe(true);
+        expect(page1?.nextOffset).toBe(100);
+        return {
+          ok: true,
+          data: { text: "", functionCalls: [{ name: "list_workspace_tabs", args: { workspaceId: "a", offset: page1?.nextOffset } }] },
+        };
+      })
+      // Turn 3: final answer, only after both pages were collected.
+      .mockResolvedValueOnce({ ok: true, data: { text: "You have 120 tabs saved in General.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved result");
+    expect(result.text).toBe("You have 120 tabs saved in General.");
+    expect(generateAgentTurnMock).toHaveBeenCalledTimes(3);
+
+    // Confirm the two tool results together really do cover all 120 tabs,
+    // not just that the mocked final turn claims so.
+    const thirdCallContents = generateAgentTurnMock.mock.calls[2][0].contents as Array<{
+      role: string;
+      parts: Array<{ functionResponse?: { response?: { result?: { tabs?: { tabId: string }[]; truncated?: boolean } } } }>;
+    }>;
+    const toolResults = thirdCallContents
+      .flatMap((c) => c.parts)
+      .map((p) => p.functionResponse?.response?.result)
+      .filter((r): r is { tabs: { tabId: string }[]; truncated: boolean } => Boolean(r));
+    expect(toolResults).toHaveLength(2);
+    expect(toolResults[0].tabs).toHaveLength(100);
+    expect(toolResults[1].tabs).toHaveLength(20);
+    expect(toolResults[1].truncated).toBe(false);
+    const allIds = toolResults.flatMap((r) => r.tabs.map((t) => t.tabId));
+    expect(allIds).toEqual(tabs.map((t) => t.id));
+    expect(new Set(allIds).size).toBe(120);
+  });
+
   it("propagates a Gemini call failure without retrying", async () => {
     generateAgentTurnMock.mockResolvedValueOnce({ ok: false, reason: "rate-limited", detail: "slow down" });
     const store = makeStore([makeWorkspace({ id: "a" })], "a");

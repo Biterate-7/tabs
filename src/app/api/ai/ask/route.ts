@@ -21,7 +21,13 @@ const MAX_HISTORY_CHARS = 800;
 const MAX_QUESTION_CHARS = 500;
 const CHAT_MAX_OUTPUT_TOKENS = 1024;
 const ANALYSIS_MAX_OUTPUT_TOKENS = 2048;
-const AGENT_MAX_OUTPUT_TOKENS = 1024;
+// A tool-calling turn's final answer can be a full markdown summary of a
+// whole workspace (headings + a bullet per tab) — 1024 was tuned for short
+// action confirmations ("Moved 7 tabs to Physics IA") and silently truncated
+// anything longer, e.g. summarizing a workspace with 50+ tabs (see
+// AgentTurnResult.truncated in src/lib/ai/gemini/client.ts for the other
+// half of this fix — always detect and flag it when it does still happen).
+const AGENT_MAX_OUTPUT_TOKENS = 4096;
 const MAX_SEMANTIC_HINTS = 50;
 /** Higher than MAX_SEMANTIC_HINTS since Auto-Organize needs a clustering signal across the whole library, not just top query matches — still just tabId→opaque-cluster-key pairs, never vectors (AGENTS.md section 17). */
 const MAX_SEMANTIC_CLUSTER_HINTS = 1000;
@@ -71,6 +77,8 @@ Ground every factual answer ONLY in the "Saved context" given below and in what 
 Workspace, tab, and group ids are opaque strings you cannot guess. Call list_workspaces, search_tabs, or list_workspace_tabs first to resolve a name the user mentioned (e.g. "Physics workspace") to its real id before calling an action that needs one. If a tool call fails, read its error and adjust — e.g. create the destination workspace first if a move target doesn't exist yet — rather than giving up immediately.
 
 Use search_tabs whenever the user is asking to find something by topic across their whole library (e.g. "find my Physics IA tabs", "where are my MUN tabs?") — it searches every workspace by keyword AND meaning, not just exact words. Use list_workspace_tabs instead when the user is clearly asking about one specific, already-identified workspace (e.g. "what's in this workspace?"). When you present search_tabs results to the user, organize them — e.g. grouped by workspace — rather than one flat paragraph, and mention the total count and how many workspaces they span. If search_tabs returns nothing, or only very low-scoring matches, say so honestly (e.g. "I couldn't find any strong matches for X") — never present a weak or empty result as a confident answer, and never invent tabs that weren't returned.
+
+list_workspace_tabs returns at most one page at a time. Before summarizing, describing, or otherwise answering about a workspace's ENTIRE contents (e.g. "summarize this workspace," "summarize all my saved tabs"), check its result's "truncated" field — if true, you only have part of the workspace so far. Keep calling list_workspace_tabs again with "offset" set to the previous result's "nextOffset" (same "query", if any) until "truncated" is false, and only then write your answer from everything you collected. Never summarize or describe a workspace as complete from a result you know was truncated.
 
 If a "Recent search results" list is given below, and the user refers to those results (e.g. "move those", "put the GitHub ones in Development"), reuse those exact tabs — filtering by title/domain/workspace as the user describes — instead of calling search_tabs again, unless they're clearly asking about something new.
 
