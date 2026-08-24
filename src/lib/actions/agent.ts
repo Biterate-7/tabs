@@ -185,7 +185,11 @@ export async function runAgentLoop(params: {
         responseParts.push({ functionResponse: { name: call.name, response: { error: outcome.message } } });
       }
     }
-    contents.push({ role: "function", parts: responseParts });
+    // Gemini's contents schema has no "function" role (see AgentContent's
+    // doc in src/lib/ai/gemini/types.ts) — a tool result is reported back as
+    // a role: "user" turn whose parts carry functionResponse, exactly like
+    // the "model" turn above carries functionCall.
+    contents.push({ role: "user", parts: responseParts });
   }
 
   if (plan.length > 0 && planRequiresConfirmation(plan)) return preview(DEFAULT_PREVIEW_INTRO, plan, searchResults);

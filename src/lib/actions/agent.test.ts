@@ -24,6 +24,24 @@ function baseParams(store: WorkspaceStore) {
   };
 }
 
+/**
+ * Locates the turn runAgentLoop pushes to report a tool's result back to
+ * Gemini. That turn is `role: "user"` (Gemini's contents schema has no
+ * "function" role — see AgentContent's doc in src/lib/ai/gemini/types.ts),
+ * so — unlike before this was fixed — it can no longer be found by role
+ * alone: `contents` also always carries the ORIGINAL role: "user" question
+ * turn from baseParams. Identifying it by its distinctive part shape
+ * (functionResponse) instead is what actually proves the fix: it only ever
+ * matches the tool-result turn, never the plain-text user turn, even though
+ * both now share the same role.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only helper over Gemini's loosely-typed wire contents; matches this file's prior convention of not modeling the full response shape here.
+function findFunctionResponseTurn(contents: Array<{ role: string; parts: Array<{ functionResponse?: unknown }> }>): any {
+  const turn = contents.find((c) => c.parts.some((p) => "functionResponse" in p));
+  if (!turn) throw new Error("expected a functionResponse turn in contents");
+  return turn;
+}
+
 afterEach(() => {
   generateAgentTurnMock.mockReset();
 });
@@ -60,7 +78,8 @@ describe("runAgentLoop", () => {
     });
 
     const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents;
-    const functionTurn = secondCallContents.find((c: { role: string }) => c.role === "function");
+    const functionTurn = findFunctionResponseTurn(secondCallContents);
+    expect(functionTurn.role).toBe("user"); // Gemini has no "function" role — a tool result is reported as role: "user"
     expect(functionTurn.parts[0].functionResponse.name).toBe("list_workspaces");
     expect(functionTurn.parts[0].functionResponse.response.result.workspaces).toHaveLength(1);
   });
@@ -91,7 +110,8 @@ describe("runAgentLoop", () => {
     expect(result.actions.map((a) => a.ok)).toEqual([true, true]);
 
     const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents;
-    const functionTurn = secondCallContents.find((c: { role: string }) => c.role === "function");
+    const functionTurn = findFunctionResponseTurn(secondCallContents);
+    expect(functionTurn.role).toBe("user");
     expect(functionTurn.parts).toHaveLength(2);
   });
 
@@ -129,7 +149,8 @@ describe("runAgentLoop", () => {
     expect(result.actions).toEqual([{ name: "move_tab", ok: false, message: expect.any(String) }]);
 
     const secondCallContents = generateAgentTurnMock.mock.calls[1][0].contents;
-    const functionTurn = secondCallContents.find((c: { role: string }) => c.role === "function");
+    const functionTurn = findFunctionResponseTurn(secondCallContents);
+    expect(functionTurn.role).toBe("user");
     expect(functionTurn.parts[0].functionResponse.response.error).toBeDefined();
   });
 
@@ -237,7 +258,8 @@ describe("runAgentLoop", () => {
       })
       .mockImplementationOnce(async (opts: { contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { workspace?: { workspaceId: string } } } } }> }> }) => {
         // The staged create_workspace's real-shaped id must be visible here so the next call can target it.
-        const functionTurn = opts.contents.find((c) => c.role === "function");
+        expect(opts.contents.every((c) => c.role === "user" || c.role === "model")).toBe(true); // never "function"
+        const functionTurn = opts.contents.find((c) => c.parts.some((p) => p.functionResponse));
         const stagedId = functionTurn?.parts[0]?.functionResponse?.response?.result?.workspace?.workspaceId;
         return {
           ok: true,
@@ -278,7 +300,8 @@ describe("runAgentLoop", () => {
         data: { text: "", functionCalls: [{ name: "search_tabs", args: { query: "physics ia" } }] },
       })
       .mockImplementationOnce(async (opts: { contents: Array<{ role: string; parts: Array<{ functionResponse?: { response?: { result?: { matches?: { tabId: string }[] } } } }> }> }) => {
-        const functionTurn = opts.contents.find((c) => c.role === "function");
+        expect(opts.contents.every((c) => c.role === "user" || c.role === "model")).toBe(true); // never "function"
+        const functionTurn = opts.contents.find((c) => c.parts.some((p) => p.functionResponse));
         const matches = functionTurn?.parts[0]?.functionResponse?.response?.result?.matches ?? [];
         return {
           ok: true,
@@ -462,5 +485,78 @@ describe("runAgentLoop", () => {
     expect(generateAgentTurnMock).toHaveBeenCalledTimes(1);
     // The scratch store used for planning was never mutated (propose_auto_organize is read-only).
     expect(store.workspaces[0].tabs).toHaveLength(5);
+  });
+
+  /**
+   * Regression test for the production bug where a tool result was reported
+   * back with `role: "function"` — a role Gemini's contents schema doesn't
+   * support ("Role 'function' is not supported. Please use a valid role:
+   * ... MODEL, USER."), which broke every tool-calling turn, including
+   * ordinary requests that only happened to route through the agent loop.
+   * This reproduces a multi-turn, multiple-tool-calls-per-turn conversation
+   * (the exact shape that produces a functionResponse turn) using the real
+   * runAgentLoop, and inspects every request `generateAgentTurn` was
+   * actually called with — not just one hand-picked turn — so a role:
+   * "function" leaking in from anywhere in the loop would fail this.
+   */
+  it("never sends a Gemini-unsupported role: 'function' content — every request role is 'user' or 'model'", async () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", name: "A" }), makeWorkspace({ id: "b", name: "B" })],
+      "a"
+    );
+    generateAgentTurnMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          text: "",
+          functionCalls: [
+            { name: "get_workspace", args: { workspaceId: "a" } },
+            { name: "get_workspace", args: { workspaceId: "b" } },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { text: "", functionCalls: [{ name: "list_workspaces", args: {} }] },
+      })
+      .mockResolvedValueOnce({ ok: true, data: { text: "Here's a summary of both workspaces.", functionCalls: [] } });
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.kind !== "resolved") throw new Error("expected a resolved (immediate) result");
+    expect(result.text).toBe("Here's a summary of both workspaces.");
+
+    // Inspect the `contents` array of EVERY call made to generateAgentTurn —
+    // this is the exact payload generateAgentTurn hands to
+    // `body.contents = opts.contents.map((c) => ({ role: c.role, parts: c.parts }))`
+    // in src/lib/ai/gemini/client.ts, i.e. what Gemini actually receives.
+    expect(generateAgentTurnMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    for (const call of generateAgentTurnMock.mock.calls) {
+      const contents = call[0].contents as Array<{ role: string }>;
+      expect(contents.some((c) => c.role === "function")).toBe(false);
+      expect(contents.every((c) => c.role === "user" || c.role === "model")).toBe(true);
+      const serialized = JSON.stringify(contents);
+      expect(serialized).not.toContain('"role":"function"');
+    }
+
+    // And the two functionResponse turns (one per intermediate tool-calling
+    // turn) are specifically role: "user" — this is the part of the fix
+    // that actually matters, not just "not function".
+    const secondCallFunctionTurn = findFunctionResponseTurn(generateAgentTurnMock.mock.calls[1][0].contents);
+    expect(secondCallFunctionTurn.role).toBe("user");
+    const thirdCallFunctionTurn = findFunctionResponseTurn(generateAgentTurnMock.mock.calls[2][0].contents);
+    expect(thirdCallFunctionTurn.role).toBe("user");
+  });
+
+  it("keeps the plain (no-tool) chat path unaffected — no functionResponse turn is ever added when the model never calls a tool", async () => {
+    generateAgentTurnMock.mockResolvedValueOnce({ ok: true, data: { text: "Just an answer, no tools needed.", functionCalls: [] } });
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+
+    const result = await runAgentLoop(baseParams(store));
+
+    expect(result).toEqual({ ok: true, kind: "resolved", text: "Just an answer, no tools needed.", store, storeChanged: false, actions: [] });
+    const onlyCallContents = generateAgentTurnMock.mock.calls[0][0].contents as Array<{ role: string }>;
+    expect(onlyCallContents).toEqual([{ role: "user", parts: [{ text: "hi" }] }]);
   });
 });

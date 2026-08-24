@@ -160,7 +160,7 @@ describe("generateAgentTurn", () => {
     expect(result).toEqual({ ok: true, data: { text: "", functionCalls: [{ name: "list_workspaces", args: {} }] } });
   });
 
-  it("serializes functionResponse parts sent back to the model", async () => {
+  it("serializes a functionResponse part sent back to the model under role: 'user' — Gemini's contents schema has no 'function' role", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(jsonResponse(200, { candidates: [{ content: { parts: [{ text: "Done." }] } }] }));
@@ -172,7 +172,7 @@ describe("generateAgentTurn", () => {
       contents: [
         { role: "user", parts: [{ text: "list my workspaces" }] },
         { role: "model", parts: [{ functionCall: { name: "list_workspaces", args: {} } }] },
-        { role: "function", parts: [{ functionResponse: { name: "list_workspaces", response: { result: { workspaces: [] } } } }] },
+        { role: "user", parts: [{ functionResponse: { name: "list_workspaces", response: { result: { workspaces: [] } } } }] },
       ],
       tools,
       maxOutputTokens: 100,
@@ -180,9 +180,12 @@ describe("generateAgentTurn", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.contents[2]).toEqual({
-      role: "function",
+      role: "user",
       parts: [{ functionResponse: { name: "list_workspaces", response: { result: { workspaces: [] } } } }],
     });
+    // Regression: nothing in this request's contents ever carries the
+    // Gemini-unsupported "function" role (see AgentContent's doc).
+    expect(JSON.stringify(body.contents)).not.toContain('"role":"function"');
   });
 
   it("returns missing-key without calling fetch when no API key is configured", async () => {

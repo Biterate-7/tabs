@@ -48,9 +48,21 @@ export type AgentContentPart =
   | { functionCall: FunctionCall }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
-/** Unlike GeminiContent, this also carries the "function" role needed to report a tool's result back to the model. */
+/**
+ * Gemini's `generateContent`/`streamGenerateContent` REST API only ever
+ * accepts `role: "user"` or `role: "model"` on a Content entry — there is no
+ * "function" role (that's an OpenAI-ism this API doesn't share; sending it
+ * fails with "Role 'function' is not supported..."). A tool/function CALL
+ * (the model deciding to invoke a tool) is a `role: "model"` turn whose
+ * parts contain `functionCall`; a tool/function RESULT being reported back
+ * is a `role: "user"` turn whose parts contain `functionResponse` — from the
+ * API's point of view, that result is just more information supplied to the
+ * model, exactly like a follow-up user message, distinguished only by its
+ * part shape. See runAgentLoop in src/lib/actions/agent.ts, the only place
+ * that constructs a functionResponse turn.
+ */
 export type AgentContent = {
-  role: "user" | "model" | "function";
+  role: "user" | "model";
   parts: AgentContentPart[];
 };
 
