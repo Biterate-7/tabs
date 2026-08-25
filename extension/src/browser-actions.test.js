@@ -31,6 +31,7 @@ beforeEach(() => {
       getAll: vi.fn(),
       create: vi.fn(),
       get: vi.fn(),
+      update: vi.fn(),
     },
   };
 });
@@ -82,11 +83,65 @@ describe("listBrowserWindows", () => {
 });
 
 describe("openUrl", () => {
-  it("creates a tab with the given url and active flag", async () => {
+  it("creates a tab with the given url and active flag when it isn't already open", async () => {
+    chrome.tabs.query.mockResolvedValue([]);
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 9, url: "https://a.com" }));
     const result = await openUrl({ url: "https://a.com", active: true });
     expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com", active: true });
-    expect(result.tab.tabId).toBe(9);
+    expect(result).toEqual({ tab: expect.objectContaining({ tabId: 9 }), alreadyOpen: false });
+  });
+
+  it("activates the existing tab instead of creating a duplicate when the url is already open", async () => {
+    chrome.tabs.query.mockResolvedValue([fakeTab({ id: 5, windowId: 2, url: "https://a.com" })]);
+    chrome.tabs.update.mockResolvedValue(fakeTab({ id: 5, windowId: 2, url: "https://a.com" }));
+    const result = await openUrl({ url: "https://a.com", active: true });
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    expect(chrome.tabs.update).toHaveBeenCalledWith(5, { active: true });
+    expect(chrome.windows.update).toHaveBeenCalledWith(2, { focused: true });
+    expect(result).toEqual({ tab: expect.objectContaining({ tabId: 5 }), alreadyOpen: true });
+  });
+
+  it("matches a url that only differs by normalization (trailing slash)", async () => {
+    chrome.tabs.query.mockResolvedValue([fakeTab({ id: 5, windowId: 2, url: "https://a.com/page" })]);
+    chrome.tabs.update.mockResolvedValue(fakeTab({ id: 5, windowId: 2, url: "https://a.com/page" }));
+    const result = await openUrl({ url: "https://a.com/page/", active: true });
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    expect(result.alreadyOpen).toBe(true);
+  });
+
+  it("activates the active tab when multiple open tabs match", async () => {
+    chrome.tabs.query.mockResolvedValue([
+      fakeTab({ id: 1, windowId: 1, url: "https://a.com", active: false }),
+      fakeTab({ id: 2, windowId: 3, url: "https://a.com", active: true }),
+    ]);
+    chrome.tabs.update.mockResolvedValue(fakeTab({ id: 2, windowId: 3, url: "https://a.com", active: true }));
+    const result = await openUrl({ url: "https://a.com", active: true });
+    expect(chrome.tabs.update).toHaveBeenCalledWith(2, { active: true });
+    expect(chrome.windows.update).toHaveBeenCalledWith(3, { focused: true });
+    expect(result.tab.tabId).toBe(2);
+  });
+
+  it("focuses the matching tab's own window, even when it's a different window than the active one", async () => {
+    chrome.tabs.query.mockResolvedValue([fakeTab({ id: 5, windowId: 42, url: "https://a.com" })]);
+    chrome.tabs.update.mockResolvedValue(fakeTab({ id: 5, windowId: 42, url: "https://a.com" }));
+    await openUrl({ url: "https://a.com", active: true });
+    expect(chrome.windows.update).toHaveBeenCalledWith(42, { focused: true });
+  });
+
+  it("falls back to creating a new tab when the tab lookup itself fails", async () => {
+    chrome.tabs.query.mockRejectedValue(new Error("query failed"));
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 9, url: "https://a.com" }));
+    const result = await openUrl({ url: "https://a.com", active: true });
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com", active: true });
+    expect(result.alreadyOpen).toBe(false);
+  });
+
+  it("does not treat a different page on the same site as already open", async () => {
+    chrome.tabs.query.mockResolvedValue([fakeTab({ id: 1, url: "https://a.com/other-page" })]);
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 9, url: "https://a.com/page" }));
+    const result = await openUrl({ url: "https://a.com/page", active: true });
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com/page", active: true });
+    expect(result.alreadyOpen).toBe(false);
   });
 });
 

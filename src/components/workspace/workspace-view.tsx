@@ -50,10 +50,7 @@ import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useAiIndexing } from "@/hooks/use-ai-indexing"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
+import { openTab } from "@/lib/browser/open-tab"
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -168,7 +165,7 @@ export function WorkspaceView({
 
   function openSelectedTabs() {
     const selected = tabs.filter((t) => selectedIds.has(t.id))
-    selected.forEach((t) => window.open(t.url, "_blank", "noopener,noreferrer"))
+    selected.forEach((t) => openTab(t.url))
   }
 
   function handleOpenSelected() {

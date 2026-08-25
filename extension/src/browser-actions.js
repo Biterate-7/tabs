@@ -8,6 +8,8 @@
 // no reading page content). See AGENTS.md's Chrome Browser Control spec,
 // section 2/14.
 
+import { findMatchingTab } from "./tab-matching.js";
+
 function toTabSummary(tab) {
   return {
     tabId: tab.id,
@@ -47,9 +49,33 @@ export async function listBrowserWindows() {
   return { windows: windows.map(toWindowSummary) };
 }
 
+/**
+ * Looks for a tab already showing `url` (see tab-matching.js for the
+ * matching rules — normalized, not exact-string) so openUrl can activate it
+ * instead of creating a duplicate. A failed lookup is treated the same as
+ * "not found": openUrl falls through to its normal create-a-new-tab
+ * behavior rather than failing the whole command over a lookup that isn't
+ * essential to it.
+ */
+async function findExistingOpenTab(url) {
+  try {
+    const tabs = await chrome.tabs.query({});
+    return findMatchingTab(tabs, url);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function openUrl(args) {
+  const existing = await findExistingOpenTab(args.url);
+  if (existing) {
+    const updated = await chrome.tabs.update(existing.id, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return { tab: toTabSummary(updated ?? existing), alreadyOpen: true };
+  }
+
   const tab = await chrome.tabs.create({ url: args.url, active: args.active });
-  return { tab: toTabSummary(tab) };
+  return { tab: toTabSummary(tab), alreadyOpen: false };
 }
 
 /**

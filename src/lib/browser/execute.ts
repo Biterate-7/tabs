@@ -75,8 +75,12 @@ export async function executeBrowserAction(name: string, args: unknown, data: un
   switch (name) {
     case "open_url": {
       const a = args as { url: string }
-      const res = await sendBrowserCommand<{ url: string }, { tab: BrowserTabInfo }>("open_url", { url: a.url })
+      const res = await sendBrowserCommand<{ url: string }, { tab: BrowserTabInfo; alreadyOpen: boolean }>("open_url", { url: a.url })
       if (!res.ok) return { name, ok: false, message: `Couldn't open ${a.url}: ${res.error}` }
+      if (res.result.alreadyOpen) {
+        // No new tab was created, so there's nothing for Undo to close.
+        return { name, ok: true, message: `${a.url} was already open — switched to that tab.` }
+      }
       return { name, ok: true, message: `Opened ${a.url}.`, revert: { kind: "close_tabs", tabIds: [res.result.tab.tabId] } }
     }
 

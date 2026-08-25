@@ -14,10 +14,7 @@ import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
+import { openTab } from "@/lib/browser/open-tab"
 
 export function TabCard({
   tab,

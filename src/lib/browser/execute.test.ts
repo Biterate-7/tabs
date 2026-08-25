@@ -37,10 +37,18 @@ describe("needsBrowserExecution", () => {
 
 describe("executeBrowserAction", () => {
   it("open_url opens the tab and records a close_tabs revert", async () => {
-    sendBrowserCommandMock.mockResolvedValue({ id: "1", ok: true, result: { tab: { tabId: 42 } } })
+    sendBrowserCommandMock.mockResolvedValue({ id: "1", ok: true, result: { tab: { tabId: 42 }, alreadyOpen: false } })
     const result = await executeBrowserAction("open_url", { url: "https://example.com" }, undefined)
     expect(sendBrowserCommandMock).toHaveBeenCalledWith("open_url", { url: "https://example.com" })
     expect(result).toEqual({ name: "open_url", ok: true, message: "Opened https://example.com.", revert: { kind: "close_tabs", tabIds: [42] } })
+  })
+
+  it("open_url switches to the existing tab without a revert when the url is already open", async () => {
+    sendBrowserCommandMock.mockResolvedValue({ id: "1", ok: true, result: { tab: { tabId: 42 }, alreadyOpen: true } })
+    const result = await executeBrowserAction("open_url", { url: "https://example.com" }, undefined)
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain("already open")
+    expect(result.revert).toBeUndefined()
   })
 
   it("open_url reports failure without a revert when the extension errors", async () => {
