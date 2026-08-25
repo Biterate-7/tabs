@@ -36,6 +36,16 @@ function toSource(tab: Tab | undefined, fallback: { tabId: string; title: string
  * happens first and entirely client-side; if nothing relevant is indexed,
  * this returns the fixed "not enough information" message without ever
  * calling Gemini (spec Step 14, and a free cost-control win).
+ *
+ * That retrieval starts from a query embedding, which needs its own network
+ * round trip (see embed-client.ts) and can itself fail. Plain grounded Q&A
+ * (`store` unset) has no other way to work, so that failure is fatal there,
+ * same as always. But most of what agent mode (`store` set) does — listing/
+ * renaming/moving workspaces, browser control, etc. — needs no embedding at
+ * all; only search_tabs' semantic ranking benefits from one. So there, a
+ * failed embedding degrades retrieval to keyword/metadata-only (via
+ * `semanticSearchDegraded` in the request to /api/ai/ask, which the agent is
+ * told about explicitly) instead of blocking the request outright.
  */
 export async function askQuestion(params: {
   workspaceId: string;
@@ -76,9 +86,20 @@ export async function askQuestion(params: {
   const { workspaceId, tabs, question, history, onDelta, signal, store, onStoreUpdate, recentSearchResults, browserContext, semanticClusters } = params;
 
   const embedResult = await embedTexts([question]);
-  if (!embedResult.ok) return { ok: false, error: embedResult.error };
+  // Plain grounded Q&A (`store` unset) has no fallback path — semantic
+  // retrieval against the query embedding IS the entire feature there, so an
+  // embedding failure is a hard failure, same as before this change. Agent
+  // mode (`store` set) is different: most of what it does — list/rename/move/
+  // browser-control actions — needs no embedding at all, only search_tabs'
+  // semantic ranking benefits from one. So there, a failed embedding degrades
+  // retrieval/semanticHints to empty rather than blocking the request; the
+  // agent is told explicitly (see semanticSearchDegraded below) so it stays
+  // honest about the degradation instead of silently presenting keyword-only
+  // matches as complete semantic results.
+  if (!embedResult.ok && !store) return { ok: false, error: embedResult.error };
+  const queryEmbedding = embedResult.ok ? embedResult.embeddings[0] : null;
 
-  const chunks = await retrieveRelevantChunks(workspaceId, embedResult.embeddings[0]);
+  const chunks = queryEmbedding ? await retrieveRelevantChunks(workspaceId, queryEmbedding) : [];
   if (chunks.length === 0 && !store) {
     return { ok: true, text: NOT_ENOUGH_INFO_MESSAGE, sources: [] };
   }
@@ -101,18 +122,28 @@ export async function askQuestion(params: {
     // above — so this is a separate retrieval, reusing the SAME query
     // embedding (no extra embedding call). Best-effort: IndexedDB being
     // briefly unavailable shouldn't fail the whole request, just fall back
-    // to keyword/metadata-only search server-side.
+    // to keyword/metadata-only search server-side. When queryEmbedding is
+    // null (the embed call itself failed — see above), there's nothing to
+    // rank with, so this is skipped entirely rather than attempted.
     let semanticHints: SemanticHint[] = [];
-    try {
-      const allChunks = await retrieveRelevantChunksAcrossWorkspaces(
-        store.workspaces.map((w) => w.id),
-        embedResult.embeddings[0],
-        { topK: SEMANTIC_HINTS_TOP_K }
-      );
-      semanticHints = toSemanticHints(allChunks);
-    } catch {
-      semanticHints = [];
+    if (queryEmbedding) {
+      try {
+        const allChunks = await retrieveRelevantChunksAcrossWorkspaces(
+          store.workspaces.map((w) => w.id),
+          queryEmbedding,
+          { topK: SEMANTIC_HINTS_TOP_K }
+        );
+        semanticHints = toSemanticHints(allChunks);
+      } catch {
+        semanticHints = [];
+      }
     }
+    // Told to the agent (see AGENT_SYSTEM_INSTRUCTION's semantic-degradation
+    // preamble in the route handler) so it stays honest about search_tabs
+    // only matching by keyword/metadata right now, instead of silently
+    // presenting a keyword-only result as if it were a full semantic match —
+    // requirement 3 of the fix: never fabricate a semantic result.
+    const semanticSearchDegraded = !embedResult.ok;
 
     let agentResponse: Response;
     try {
@@ -130,6 +161,7 @@ export async function askQuestion(params: {
           recentSearchResults: recentSearchResults ?? [],
           ...(browserContext ? { browserContext } : {}),
           ...(semanticClusters && semanticClusters.length > 0 ? { semanticClusters } : {}),
+          ...(semanticSearchDegraded ? { semanticSearchDegraded: true } : {}),
         }),
       });
     } catch (err) {

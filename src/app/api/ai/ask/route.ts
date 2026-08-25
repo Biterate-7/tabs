@@ -454,6 +454,12 @@ export async function POST(request: Request): Promise<Response> {
     }
     const browserContext = browserContextInput as BrowserContextSnapshot | undefined;
 
+    const semanticSearchDegradedInput = b?.semanticSearchDegraded;
+    if (semanticSearchDegradedInput !== undefined && typeof semanticSearchDegradedInput !== "boolean") {
+      return Response.json({ error: "Expected { semanticSearchDegraded: boolean } or none at all." }, { status: 400 });
+    }
+    const semanticSearchDegraded = semanticSearchDegradedInput === true;
+
     // Measured directly against the real agent loop (see AGENT_SYSTEM_INSTRUCTION's
     // "resolve a name... before calling an action that needs one" guidance):
     // without the second sentence here, the model reliably called
@@ -471,7 +477,18 @@ export async function POST(request: Request): Promise<Response> {
     const browserPreamble = browserContext
       ? "The TabDump browser extension is connected — browser control actions (list_browser_tabs, open_tabs, close_tabs, etc.) are available.\n\n"
       : "The TabDump browser extension is NOT connected right now — do not call any browser control action; if the user asks to see, open, close, or otherwise control their actual browser tabs, tell them plainly that the extension isn't connected instead.\n\n";
-    const agentPrompt = `${preamble}${browserPreamble}${recentSearchBlock}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
+    // The client couldn't get a query embedding this turn (e.g. the embedding
+    // service was briefly unreachable) — search_tabs and the "Saved context"
+    // below still work, but only via keyword/metadata matching, not meaning.
+    // Most requests (list_workspaces, move_tabs, browser control, etc.) don't
+    // need semantic matching at all and are unaffected; this note only matters
+    // for a request that actually depends on finding tabs by topic/meaning,
+    // and tells the model to say so plainly rather than presenting a
+    // keyword-only result as if it were a complete semantic match.
+    const semanticPreamble = semanticSearchDegraded
+      ? 'Semantic (meaning-based) search is temporarily unavailable — search_tabs and the "Saved context" below only reflect keyword/metadata matching right now, not similarity in meaning. If the user\'s request depends on finding tabs by topic or meaning rather than exact words, say so plainly (e.g. "semantic search is temporarily unavailable, so I could only match by keyword") instead of presenting keyword-only results as a complete answer.\n\n'
+      : "";
+    const agentPrompt = `${preamble}${browserPreamble}${semanticPreamble}${recentSearchBlock}Saved context:\n${contextBlock || "(no saved tabs matched this question)"}\n\nUser question: ${cappedQuestion}`;
 
     const contents: AgentContent[] = [
       ...historyContents.map((h): AgentContent => ({ role: h.role, parts: [{ text: h.text }] })),

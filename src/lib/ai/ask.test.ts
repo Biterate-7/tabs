@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { askQuestion, applyPlan, applyOrganizationPlan } from "./ask";
 import type { OrganizationPlan } from "@/lib/organize/types";
 import { putChunks } from "./db";
@@ -365,6 +365,108 @@ it("still reaches the agent for an action request even when the current workspac
 
   expect(agentCalled).toBe(true);
   expect(result).toEqual({ ok: true, text: "Renamed it.", sources: [] });
+});
+
+describe("embedding-service unavailability (regression: agent actions must not be blocked by it)", () => {
+  it("still reaches the agent — and list_workspaces still executes — when the embedding fetch rejects outright", async () => {
+    const workspaceStore = { version: 1 as const, currentId: WORKSPACE_ID, workspaces: [{ id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+
+    let capturedBody: Record<string, unknown> | null = null;
+    let agentCalled = false;
+    vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) throw new TypeError("Failed to fetch");
+      if (url.includes("/api/ai/ask")) {
+        agentCalled = true;
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return new Response(JSON.stringify({ text: "You have 1 workspace: Physics.", actions: [] }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+
+    const result = await askQuestion({
+      workspaceId: WORKSPACE_ID,
+      tabs: [],
+      question: "list my workspaces",
+      history: [],
+      store: workspaceStore,
+    });
+
+    expect(agentCalled).toBe(true);
+    expect(result).toEqual({ ok: true, text: "You have 1 workspace: Physics.", sources: [] });
+    // Nothing was fabricated in place of the failed embedding — retrieval and
+    // hint-computation were skipped outright rather than run against a fake vector.
+    expect((capturedBody as unknown as { context: unknown[] }).context).toEqual([]);
+    expect((capturedBody as unknown as { semanticHints: unknown[] }).semanticHints).toEqual([]);
+    expect((capturedBody as unknown as { semanticSearchDegraded: boolean }).semanticSearchDegraded).toBe(true);
+  });
+
+  it("does not fabricate semantic results for a semantic-search request when the embedding fetch rejects — degradation is passed through honestly instead", async () => {
+    const workspaceStore = { version: 1 as const, currentId: WORKSPACE_ID, workspaces: [{ id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) throw new TypeError("Failed to fetch");
+      if (url.includes("/api/ai/ask")) {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return new Response(
+          JSON.stringify({ text: "Semantic search is temporarily unavailable, so I could only match by keyword.", actions: [] }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+
+    const result = await askQuestion({
+      workspaceId: WORKSPACE_ID,
+      tabs: [],
+      question: "find tabs about machine learning",
+      history: [],
+      store: workspaceStore,
+    });
+
+    expect(result.ok).toBe(true);
+    // The one seeded chunk (see beforeEach) has a real embedding and would
+    // normally score against the query — but with no query embedding to score
+    // against, retrieval must come back empty, never populated with a
+    // fabricated or best-guess match.
+    expect(result.ok && !("organizePlan" in result) && !("requiresConfirmation" in result) && result.sources).toEqual([]);
+    expect((capturedBody as unknown as { semanticHints: unknown[] }).semanticHints).toEqual([]);
+    expect((capturedBody as unknown as { semanticSearchDegraded: boolean }).semanticSearchDegraded).toBe(true);
+  });
+
+  it("plain grounded Q&A (no store) still fails honestly, with the underlying error, when the embedding fetch rejects", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) throw new TypeError("Failed to fetch");
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+
+    const result = await askQuestion({ workspaceId: WORKSPACE_ID, tabs: [], question: "What did I save about X?", history: [] });
+
+    expect(result).toEqual({ ok: false, error: "Couldn't reach the embedding service. (Failed to fetch)" });
+  });
+
+  it("agent mode is unaffected — semantic hints/context are computed normally — when the embedding fetch succeeds", async () => {
+    const workspaceStore = { version: 1 as const, currentId: WORKSPACE_ID, workspaces: [{ id: WORKSPACE_ID, name: "Physics", tabs: [], createdAt: 0, updatedAt: 0 }] };
+
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.includes("/api/ai/embed")) return new Response(JSON.stringify({ embeddings: [[1, 0, 0]] }), { status: 200 });
+      if (url.includes("/api/ai/ask")) {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return new Response(JSON.stringify({ text: "Found it.", actions: [] }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+
+    await askQuestion({ workspaceId: WORKSPACE_ID, tabs: [], question: "find tabs about machine learning", history: [], store: workspaceStore });
+
+    expect((capturedBody as unknown as { semanticSearchDegraded?: boolean }).semanticSearchDegraded).toBeUndefined();
+    expect((capturedBody as unknown as { context: unknown[] }).context.length).toBeGreaterThan(0);
+  });
 });
 
 it("applyPlan surfaces a server error without calling onStoreUpdate", async () => {

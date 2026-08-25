@@ -474,6 +474,50 @@ describe("POST /api/ai/ask", () => {
         expect(body.searchResults).toBeUndefined();
       });
     });
+
+    describe("semanticSearchDegraded", () => {
+      it("returns 400 when semanticSearchDegraded isn't a boolean", async () => {
+        const response = await POST(
+          postRequest({ question: "hi", context: [], mode: "agent", store: validStore, semanticSearchDegraded: "yes" })
+        );
+        expect(response.status).toBe(400);
+      });
+
+      it("reaches the agent loop for a pure action request even when semanticSearchDegraded is true", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "You have 1 workspace.", store: validStore, storeChanged: false, actions: [] });
+
+        const response = await POST(
+          postRequest({ question: "list my workspaces", context: [], mode: "agent", store: validStore, semanticSearchDegraded: true })
+        );
+
+        expect(response.status).toBe(200);
+        expect(runAgentLoopMock).toHaveBeenCalled();
+        const body = await response.json();
+        expect(body.text).toBe("You have 1 workspace.");
+      });
+
+      it("adds a degradation note to the agent prompt when semanticSearchDegraded is true", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+        await POST(
+          postRequest({ question: "find tabs about machine learning", context: [], mode: "agent", store: validStore, semanticSearchDegraded: true })
+        );
+
+        const contents = runAgentLoopMock.mock.calls[0][0].contents;
+        const userTurn = contents[contents.length - 1];
+        expect(userTurn.parts[0].text).toContain("Semantic (meaning-based) search is temporarily unavailable");
+      });
+
+      it("omits the degradation note from the agent prompt when semanticSearchDegraded is absent", async () => {
+        runAgentLoopMock.mockResolvedValue({ ok: true, kind: "resolved", text: "ok", store: validStore, storeChanged: false, actions: [] });
+
+        await POST(postRequest({ question: "find tabs about machine learning", context: [], mode: "agent", store: validStore }));
+
+        const contents = runAgentLoopMock.mock.calls[0][0].contents;
+        const userTurn = contents[contents.length - 1];
+        expect(userTurn.parts[0].text).not.toContain("Semantic (meaning-based) search is temporarily unavailable");
+      });
+    });
   });
 
   describe("agent-apply mode", () => {

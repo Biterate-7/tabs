@@ -23,7 +23,14 @@ export async function embedTexts(texts: string[]): Promise<EmbedBatchResult> {
       return { ok: false, error: "Malformed embedding response." };
     }
     return { ok: true, embeddings: data.embeddings };
-  } catch {
-    return { ok: false, error: "Couldn't reach the embedding service." };
+  } catch (err) {
+    // A rejected fetch() here is always a network-level failure (DNS, connection
+    // refused, the tab briefly losing its origin during a server restart, etc.)
+    // — never an HTTP error, which is handled by the !response.ok branch above
+    // via formatApiError. err.message on a browser fetch TypeError (e.g. "Failed
+    // to fetch") is safe to surface as-is: it's a generic browser-generated
+    // string, never request data, headers, or a stack trace.
+    const detail = err instanceof Error ? err.message : undefined;
+    return { ok: false, error: detail ? `Couldn't reach the embedding service. (${detail})` : "Couldn't reach the embedding service." };
   }
 }
