@@ -81,7 +81,17 @@ export function AskTabDumpPanel({
   }, [messages])
 
   function handleSend() {
-    if (!input.trim() || isSending) return
+    // Indexing is now lazy (only starts once this panel opens — see
+    // use-ai-indexing.ts), which removed the head start eager indexing used
+    // to give a question typed right after opening. Without this guard, a
+    // question sent while the FIRST-ever index build for this workspace is
+    // still in flight would retrieve against a partial/empty IndexedDB
+    // index and could wrongly report "I couldn't find enough information"
+    // even though the tabs exist — a real regression the lazy-indexing
+    // change would otherwise introduce. Blocking send only matters for that
+    // first, uncached build; every subsequent open is effectively instant
+    // (indexWorkspace no-ops when nothing's changed since it last ran).
+    if (!input.trim() || isSending || indexState.isIndexing) return
     send(input)
     setInput("")
   }
@@ -228,11 +238,16 @@ export function AskTabDumpPanel({
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask anything about your saved tabs…"
+                  placeholder={indexState.isIndexing ? "Indexing your tabs — one moment…" : "Ask anything about your saved tabs…"}
                   className="min-h-10"
                   rows={1}
                 />
-                <Button size="icon" onClick={handleSend} disabled={isSending || !input.trim()} aria-label="Send">
+                <Button
+                  size="icon"
+                  onClick={handleSend}
+                  disabled={isSending || !input.trim() || indexState.isIndexing}
+                  aria-label="Send"
+                >
                   <Send />
                 </Button>
               </div>

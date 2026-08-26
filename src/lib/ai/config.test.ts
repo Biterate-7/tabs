@@ -18,10 +18,16 @@ describe("ai/config", () => {
     expect(chatModel()).toBe("gemini-custom-model");
   });
 
-  it("defaults the analysis model to the chat model when GEMINI_ANALYSIS_MODEL is unset", async () => {
+  it("defaults the analysis model to a cheaper flash-lite tier (its own free-tier quota bucket) when GEMINI_ANALYSIS_MODEL is unset", async () => {
     vi.stubEnv("GEMINI_ANALYSIS_MODEL", "");
     vi.stubEnv("GEMINI_CHAT_MODEL", "");
     const { analysisModel } = await import("./config");
-    expect(analysisModel()).toBe("gemini-3.6-flash");
+    expect(analysisModel()).toBe("gemini-3.1-flash-lite");
+  });
+
+  it("respects GEMINI_ANALYSIS_MODEL when set", async () => {
+    vi.stubEnv("GEMINI_ANALYSIS_MODEL", "gemini-custom-analysis-model");
+    const { analysisModel } = await import("./config");
+    expect(analysisModel()).toBe("gemini-custom-analysis-model");
   });
 });

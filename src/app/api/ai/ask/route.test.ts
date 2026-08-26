@@ -14,6 +14,8 @@ vi.mock("@/lib/actions/agent", () => ({
 }));
 
 const { POST } = await import("./route");
+const { __clearServerCacheForTests } = await import("@/lib/ai/server/cache");
+const { __clearRateLimitsForTests } = await import("@/lib/ai/server/rate-limit");
 
 function postRequest(body: unknown): Request {
   return new Request("https://tabdump.example/api/ai/ask", {
@@ -47,6 +49,15 @@ afterEach(() => {
   generateContentMock.mockReset();
   generateContentStreamMock.mockReset();
   runAgentLoopMock.mockReset();
+  // The analysis-result cache and per-IP rate limiter are process-wide
+  // singletons (see src/lib/ai/server) — without resetting them: (1) an
+  // earlier collection-overview/gaps test's cached result would silently
+  // short-circuit a later test reusing the same question+context instead of
+  // exercising its own mock, and (2) this file's many sequential requests
+  // (all from the same "unknown" test-request IP) would trip the rate
+  // limiter partway through and start failing unrelated later tests.
+  __clearServerCacheForTests();
+  __clearRateLimitsForTests();
 });
 
 describe("POST /api/ai/ask", () => {
@@ -147,6 +158,80 @@ describe("POST /api/ai/ask", () => {
       postRequest({ question: "Summarize", context: validContext, mode: "collection-gaps" })
     );
     expect(response.status).toBe(502);
+  });
+
+  it("maps a 429 from Gemini to a graceful 429 response, not a crash", async () => {
+    generateContentMock.mockResolvedValue({ ok: false, reason: "rate-limited", status: 429 });
+    const response = await POST(postRequest({ question: "Summarize", context: validContext, mode: "collection-overview" }));
+    expect(response.status).toBe(429);
+    expect((await response.json()).error).toBe("Too many requests right now — try again shortly.");
+  });
+
+  it("maps a Gemini timeout to a graceful 504 response", async () => {
+    generateContentMock.mockResolvedValue({ ok: false, reason: "timeout" });
+    const response = await POST(postRequest({ question: "Summarize", context: validContext, mode: "collection-gaps" }));
+    expect(response.status).toBe(504);
+  });
+
+  it("maps a raw network failure to a graceful 502, not a crash", async () => {
+    generateContentMock.mockResolvedValue({ ok: false, reason: "network-error", detail: "fetch failed" });
+    const response = await POST(postRequest({ question: "Summarize", context: validContext, mode: "collection-overview" }));
+    expect(response.status).toBe(502);
+  });
+
+  it("maps an unavailable/unknown model response from Gemini to a graceful 502 carrying Gemini's own detail", async () => {
+    generateContentMock.mockResolvedValue({ ok: false, reason: "gemini-error", detail: "model not found", status: 404 });
+    const response = await POST(postRequest({ question: "Summarize", context: validContext, mode: "collection-gaps" }));
+    expect(response.status).toBe(502);
+    expect((await response.json()).detail).toBe("model not found");
+  });
+
+  describe("collection analysis caching", () => {
+    it("cached AI result reuse: re-running the same analysis on an unchanged tab set never calls Gemini twice", async () => {
+      generateContentMock.mockResolvedValue({
+        ok: true,
+        data: JSON.stringify({ overview: "o", themes: [], importantResourceIndexes: [], keyInsights: [] }),
+      });
+
+      const first = await POST(postRequest({ question: "Summarize this collection", context: validContext, mode: "collection-overview" }));
+      expect(first.status).toBe(200);
+      expect(generateContentMock).toHaveBeenCalledTimes(1);
+
+      generateContentMock.mockClear();
+      const second = await POST(postRequest({ question: "Summarize this collection", context: validContext, mode: "collection-overview" }));
+
+      expect(second.status).toBe(200);
+      expect(await second.json()).toEqual(await first.json());
+      expect(generateContentMock).not.toHaveBeenCalled();
+    });
+
+    it("concurrent identical collection-analysis requests are coalesced into one Gemini call", async () => {
+      let resolveGenerate!: (v: { ok: true; data: string }) => void;
+      generateContentMock.mockReturnValue(new Promise((resolve) => { resolveGenerate = resolve; }));
+
+      const p1 = POST(postRequest({ question: "Summarize this collection", context: validContext, mode: "collection-overview" }));
+      const p2 = POST(postRequest({ question: "Summarize this collection", context: validContext, mode: "collection-overview" }));
+      await vi.waitFor(() => expect(generateContentMock).toHaveBeenCalledTimes(1));
+
+      resolveGenerate({ ok: true, data: JSON.stringify({ overview: "shared", themes: [], importantResourceIndexes: [], keyInsights: [] }) });
+      const [r1, r2] = await Promise.all([p1, p2]);
+
+      expect((await r1.json()).result.overview).toBe("shared");
+      expect((await r2.json()).result.overview).toBe("shared");
+    });
+
+    it("a changed tab set (different context) is a cache miss, not a stale reuse", async () => {
+      generateContentMock
+        .mockResolvedValueOnce({ ok: true, data: JSON.stringify({ overview: "first", themes: [], importantResourceIndexes: [], keyInsights: [] }) })
+        .mockResolvedValueOnce({ ok: true, data: JSON.stringify({ overview: "second", themes: [], importantResourceIndexes: [], keyInsights: [] }) });
+
+      await POST(postRequest({ question: "Summarize this collection", context: validContext, mode: "collection-overview" }));
+      const changedContext = [...validContext, { tabId: "t2", title: "Another", url: "https://example.com/2", text: "more text" }];
+      const response = await POST(postRequest({ question: "Summarize this collection", context: changedContext, mode: "collection-overview" }));
+
+      expect(generateContentMock).toHaveBeenCalledTimes(2);
+      expect((await response.json()).result.overview).toBe("second");
+    });
   });
 
   describe("agent mode", () => {
@@ -670,6 +755,42 @@ describe("POST /api/ai/ask", () => {
 
       const response = await POST(postRequest({ mode: "agent-organize-apply", store: storeWithTab, organizationPlan: stalePlan }));
       expect(response.status).toBe(400);
+    });
+  });
+
+  describe("per-IP rate limiting", () => {
+    function postFrom(ip: string, body: unknown): Request {
+      return new Request("https://tabdump.example/api/ai/ask", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      });
+    }
+
+    it("blocks further AI questions from one IP once its limit is hit, without calling Gemini for the blocked one — but never blocks Gemini-free modes", async () => {
+      generateContentStreamMock.mockResolvedValue({ ok: true, data: textStream("ok") });
+
+      for (let i = 0; i < 20; i++) {
+        const response = await POST(postFrom("198.51.100.7", { question: `q${i}`, context: [] }));
+        expect(response.status).toBe(200);
+      }
+
+      generateContentStreamMock.mockClear();
+      const blocked = await POST(postFrom("198.51.100.7", { question: "one more", context: [] }));
+      expect(blocked.status).toBe(429);
+      expect(generateContentStreamMock).not.toHaveBeenCalled();
+
+      // A user who's hit their AI-question limit can still do ordinary,
+      // non-AI TabDump actions (applying an already-decided plan needs no
+      // Gemini call at all) — the AI limit never blocks core functionality.
+      const applyResponse = await POST(
+        postFrom("198.51.100.7", {
+          mode: "agent-apply",
+          store: validStore,
+          plan: [{ name: "create_group", args: { workspaceId: "ws-1", name: "References" } }],
+        })
+      );
+      expect(applyResponse.status).toBe(200);
     });
   });
 });

@@ -1,6 +1,8 @@
 import "server-only";
 import { generateContent, generateContentStream } from "@/lib/ai/gemini/client";
 import { chatModel, analysisModel } from "@/lib/ai/config";
+import { withCache, hashText } from "@/lib/ai/server/cache";
+import { checkAiRateLimit } from "@/lib/ai/server/rate-limit";
 import type { AgentContent, GeminiContent, GeminiResult } from "@/lib/ai/gemini/types";
 import { runAgentLoop } from "@/lib/actions/agent";
 import { applyPlan, isValidPlanInput } from "@/lib/actions/plan";
@@ -42,6 +44,14 @@ const MAX_SEMANTIC_HINTS = 50;
 const MAX_SEMANTIC_CLUSTER_HINTS = 1000;
 /** How many of the previous turn's search results get carried into this turn's prompt for follow-ups like "move those" — smaller than what search_tabs itself returns within a turn, to keep cross-turn prompt growth bounded. */
 const RECENT_SEARCH_RESULTS_LIMIT = 12;
+// One Ask TabDump question can itself fan out into several Gemini calls
+// (agent mode chains up to MAX_TOOL_ITERATIONS tool-calling turns — see
+// agent.ts) — so the limit here is per *question asked*, not per raw
+// Gemini request, and is deliberately generous for real single-user usage
+// while still capping a runaway/abusive caller sharing the same free key.
+const ASK_RATE_LIMIT = { limit: 20, windowMs: 10 * 60 * 1000 };
+/** Re-clicking "Understand this collection" / "Find gaps" on an unchanged tab set is a cache hit, not a new Gemini call — the tab set (and its titles/text) is baked into the cache key, so it naturally invalidates once anything actually changes. */
+const COLLECTION_ANALYSIS_TTL_MS = 60 * 60 * 1000;
 
 type ContextItem = { tabId: string; title: string; url: string; text: string };
 type HistoryItem = { role: "user" | "model"; text: string };
@@ -380,6 +390,18 @@ export async function POST(request: Request): Promise<Response> {
     return handleAgentOrganizeApply(b);
   }
 
+  // Every remaining mode (chat/agent/collection-*) calls Gemini at least
+  // once — agent-apply/agent-organize-apply above never do, so they're
+  // exempt: rate-limiting them would only make ordinary TabDump actions
+  // (which need no AI at all) fail once a user hit their AI-question limit.
+  const rate = checkAiRateLimit(request, "ask", ASK_RATE_LIMIT);
+  if (!rate.allowed) {
+    return Response.json(
+      { error: ERROR_MESSAGE["rate-limited"], detail: "Per-IP AI rate limit reached — try again shortly." },
+      { status: 429, headers: { "retry-after": String(Math.ceil(rate.retryAfterMs / 1000)) } }
+    );
+  }
+
   const question = b?.question;
   const context = b?.context;
   const history = b?.history ?? [];
@@ -536,13 +558,24 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const isOverview = mode === "collection-overview";
-  const result = await generateContent({
-    model: analysisModel(),
-    systemInstruction: isOverview ? OVERVIEW_SYSTEM_INSTRUCTION : GAPS_SYSTEM_INSTRUCTION,
-    contents: [{ role: "user", text: prompt }],
-    maxOutputTokens: ANALYSIS_MAX_OUTPUT_TOKENS,
-    responseSchema: isOverview ? OVERVIEW_SCHEMA : GAPS_SCHEMA,
-  });
+  const model = analysisModel();
+  // Keyed on the exact question + context sent (which already encodes the
+  // category name, the tab set, and each tab's title/text) — re-running the
+  // same analysis over an unchanged collection is a cache hit; any tab
+  // added/removed/re-titled changes the context and naturally misses.
+  const cacheKey = `analysis:${mode}:${model}:${hashText(`${cappedQuestion}\n${JSON.stringify(context)}`)}`;
+  const result = await withCache(
+    cacheKey,
+    () =>
+      generateContent({
+        model,
+        systemInstruction: isOverview ? OVERVIEW_SYSTEM_INSTRUCTION : GAPS_SYSTEM_INSTRUCTION,
+        contents: [{ role: "user", text: prompt }],
+        maxOutputTokens: ANALYSIS_MAX_OUTPUT_TOKENS,
+        responseSchema: isOverview ? OVERVIEW_SCHEMA : GAPS_SCHEMA,
+      }),
+    { successTtlMs: COLLECTION_ANALYSIS_TTL_MS }
+  );
 
   if (!result.ok) return errorResponse(result);
 

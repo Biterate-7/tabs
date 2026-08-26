@@ -74,4 +74,15 @@ describe("resolveTitle", () => {
       permanent: false,
     });
   });
+
+  it("resolves a title from ordinary page metadata without ever calling Gemini", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(htmlResponse(`<meta property="og:title" content="Ordinary Page">`));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await resolveTitle("https://example.com/post/1");
+
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).not.toContain("generativelanguage.googleapis.com");
+    }
+  });
 });

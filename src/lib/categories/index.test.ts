@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { categorizeTabs } from "./index";
 import type { Tab } from "@/lib/tabs/types";
 
@@ -38,4 +38,25 @@ describe("categorizeTabs", () => {
     expect(result[0].isDuplicate).toBe(true);
     expect(result[0].id).toBe(input[0].id);
   });
+
+  it("never touches the network — categorization is fully local/deterministic, no Gemini call involved", () => {
+    const fetchSpy = vi.fn();
+    const originalFetch = global.fetch;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      categorizeTabs([
+        makeTab("https://github.com/a", "https://github.com/a"),
+        makeTab("https://totally-unknown-domain-xyz.com/", "https://totally-unknown-domain-xyz.com/"),
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });

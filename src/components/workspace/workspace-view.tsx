@@ -90,9 +90,15 @@ export function WorkspaceView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [openSelectedConfirmOpen, setOpenSelectedConfirmOpen] = useState(false)
   const [askOpen, setAskOpen] = useState(false)
+  const [categorySheetOpen, setCategorySheetOpen] = useState(false)
 
   const workspaceId = currentWorkspace?.id ?? ""
-  const indexState = useAiIndexing(workspaceId, tabs)
+  // AI indexing (Gemini embeddings) only needs to run once something that
+  // actually reads the resulting index has been opened — the Ask TabDump
+  // panel, or a category sheet whose "Understand this collection"/"Find
+  // gaps" buttons are now reachable. Never on every workspace view, whether
+  // or not the user ever touches an AI feature — see use-ai-indexing.ts.
+  const indexState = useAiIndexing(workspaceId, tabs, askOpen || categorySheetOpen)
 
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
@@ -428,7 +434,12 @@ export function WorkspaceView({
 
         <div className="mt-6">
           {isBrowsing ? (
-            <CategoryGrid tabs={tabs} onCategoryChange={handleCategoryChange} workspaceId={workspaceId} />
+            <CategoryGrid
+              tabs={tabs}
+              onCategoryChange={handleCategoryChange}
+              workspaceId={workspaceId}
+              onSheetOpenChange={setCategorySheetOpen}
+            />
           ) : (
             <FilteredTabList
               tabs={resultTabs}

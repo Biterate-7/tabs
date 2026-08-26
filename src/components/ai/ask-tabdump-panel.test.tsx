@@ -135,6 +135,64 @@ describe("AskTabDumpPanel", () => {
     expect(screen.getByText(/Indexing your tabs… 3\/10/)).toBeTruthy();
   });
 
+  /**
+   * Regression test: indexing is now lazy (only starts once this panel
+   * opens — see use-ai-indexing.ts), which removed the head start eager
+   * indexing used to give a question typed immediately after opening.
+   * Without this guard, a question sent while the first-ever index build is
+   * still running would retrieve against a partial/empty index and could
+   * wrongly claim "I couldn't find enough information" even though the
+   * tabs exist. Both the button and Enter-to-send must be blocked while
+   * indexState.isIndexing is true.
+   */
+  it("blocks sending (button and Enter) while the index is still being built", async () => {
+    const send = vi.fn();
+    mockHook({ send });
+    const user = userEvent.setup();
+
+    render(
+      <AskTabDumpPanel
+        open
+        workspaceId="ws-1"
+        tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+        indexState={{ isIndexing: true, indexed: 3, total: 10 }}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    const input = screen.getByPlaceholderText(/indexing your tabs/i);
+    await user.type(input, "What did I save about SAT?");
+    await user.keyboard("{Enter}");
+    expect(send).not.toHaveBeenCalled();
+
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    expect((sendButton as HTMLButtonElement).disabled).toBe(true);
+    await user.click(sendButton);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("allows sending again once indexing finishes", async () => {
+    const send = vi.fn();
+    mockHook({ send });
+    const user = userEvent.setup();
+
+    render(
+      <AskTabDumpPanel
+        open
+        workspaceId="ws-1"
+        tabs={[makeTab({ id: "1", url: "https://example.com" })]}
+        indexState={noIndexing}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    const input = screen.getByPlaceholderText(/ask anything/i);
+    await user.type(input, "What did I save about SAT?");
+    await user.keyboard("{Enter}");
+
+    expect(send).toHaveBeenCalledWith("What did I save about SAT?");
+  });
+
   describe("action preview", () => {
     function messagesWithPreview(status: PendingActionPreviewStatus): AskMessage[] {
       return [
