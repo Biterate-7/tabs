@@ -71,7 +71,7 @@ export const BROWSER_COMMAND_VALIDATORS = {
 
   open_url(args) {
     if (!isSafeOpenUrl(args?.url)) return fail("`url` must be an http(s) URL.");
-    return ok({ url: args.url, active: args?.active !== false });
+    return ok({ url: args.url, active: args?.active !== false, reuseCurrentTab: Boolean(args?.reuseCurrentTab) });
   },
 
   open_tabs(args) {

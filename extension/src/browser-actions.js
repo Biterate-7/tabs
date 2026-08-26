@@ -66,12 +66,27 @@ async function findExistingOpenTab(url) {
   }
 }
 
-export async function openUrl(args) {
+/**
+ * `reuseCurrentTab` (set only by TabDump's own "click a saved tab" flow —
+ * see src/lib/browser/open-tab.ts — never by an AI-originated open_url call)
+ * means "navigate the TabDump tab that sent this command to `url`, instead
+ * of creating a new one" — but only once findExistingOpenTab has ruled out a
+ * duplicate, so we never leave two tabs open on the same url. `ctx.senderTabId`
+ * comes from background.js's onMessage sender and is undefined when the
+ * command didn't arrive from a real tab (defensive; shouldn't happen given
+ * how content-script.js relays this).
+ */
+export async function openUrl(args, ctx) {
   const existing = await findExistingOpenTab(args.url);
   if (existing) {
     const updated = await chrome.tabs.update(existing.id, { active: true });
     await chrome.windows.update(existing.windowId, { focused: true });
     return { tab: toTabSummary(updated ?? existing), alreadyOpen: true };
+  }
+
+  if (args.reuseCurrentTab && ctx?.senderTabId !== undefined) {
+    const updated = await chrome.tabs.update(ctx.senderTabId, { url: args.url });
+    return { tab: toTabSummary(updated), alreadyOpen: false };
   }
 
   const tab = await chrome.tabs.create({ url: args.url, active: args.active });

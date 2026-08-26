@@ -30,13 +30,26 @@ function renderWorkspace(initialTabs = tabs) {
 
 describe("WorkspaceView search/filter/sort", () => {
   let openSpy: ReturnType<typeof vi.spyOn>;
+  let locationAssignMock: ReturnType<typeof vi.fn>;
+  let originalLocation: Location;
 
   beforeEach(() => {
     openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    // openTab's default (no extension connected) navigates the current tab
+    // via window.location.assign — jsdom's real assign attempts an
+    // unimplemented navigation, so it needs stubbing just like window.open.
+    originalLocation = window.location;
+    locationAssignMock = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, assign: locationAssignMock },
+    });
   });
 
   afterEach(() => {
     openSpy.mockRestore();
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   });
 
   it("shows the category grid by default (no query, filter, or sort active)", () => {
@@ -143,8 +156,12 @@ describe("WorkspaceView search/filter/sort", () => {
     await user.keyboard("{ArrowDown}");
     await user.keyboard("{Enter}");
 
-    expect(openSpy).toHaveBeenCalledTimes(1);
-    expect(openSpy).toHaveBeenCalledWith(expect.any(String), "_blank", "noopener,noreferrer");
+    // Enter on a highlighted result reuses the current tab (same as clicking
+    // a saved tab card), so it navigates in place rather than opening a new
+    // browser tab.
+    expect(locationAssignMock).toHaveBeenCalledTimes(1);
+    expect(locationAssignMock).toHaveBeenCalledWith(expect.any(String));
+    expect(openSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { SearchResultsCard } from "./search-results-card";
 import type { SearchResult } from "@/lib/ai/types";
 
+const openTabMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/browser/open-tab", () => ({ openTab: openTabMock }));
+
 function makeResult(over: Partial<SearchResult> & { tabId: string }): SearchResult {
   return {
     source: "tabdump",
@@ -81,15 +84,13 @@ describe("SearchResultsCard", () => {
     expect(screen.getAllByRole("button")).toHaveLength(20);
   });
 
-  it("opens the tab's URL in a new tab when a result is clicked", async () => {
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  it("routes the click through the extension-aware openTab, not a raw window.open", async () => {
     const user = userEvent.setup();
     render(<SearchResultsCard results={[makeResult({ tabId: "1", url: "https://example.com/page", title: "Some page" })]} />);
 
     await user.click(screen.getByRole("button", { name: /some page/i }));
 
-    expect(openSpy).toHaveBeenCalledWith("https://example.com/page", "_blank", "noopener,noreferrer");
-    openSpy.mockRestore();
+    expect(openTabMock).toHaveBeenCalledWith("https://example.com/page");
   });
 
   it("shows the group name only when present, without fabricating one", () => {

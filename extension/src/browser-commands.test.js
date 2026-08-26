@@ -61,10 +61,21 @@ describe("validateBrowserCommand", () => {
     expect(validateBrowserCommand("open_url", { url: "javascript:alert(1)" }).ok).toBe(false);
   });
 
-  it("accepts open_url with a safe url and defaults active to true", () => {
+  it("accepts open_url with a safe url and defaults active to true and reuseCurrentTab to false", () => {
     expect(validateBrowserCommand("open_url", { url: "https://example.com" })).toEqual({
       ok: true,
-      args: { url: "https://example.com", active: true },
+      args: { url: "https://example.com", active: true, reuseCurrentTab: false },
+    });
+  });
+
+  it("passes reuseCurrentTab through as a strict boolean", () => {
+    expect(validateBrowserCommand("open_url", { url: "https://example.com", reuseCurrentTab: true })).toEqual({
+      ok: true,
+      args: { url: "https://example.com", active: true, reuseCurrentTab: true },
+    });
+    expect(validateBrowserCommand("open_url", { url: "https://example.com", reuseCurrentTab: "yes" })).toEqual({
+      ok: true,
+      args: { url: "https://example.com", active: true, reuseCurrentTab: true },
     });
   });
 

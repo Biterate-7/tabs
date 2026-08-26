@@ -171,7 +171,7 @@ export function WorkspaceView({
 
   function openSelectedTabs() {
     const selected = tabs.filter((t) => selectedIds.has(t.id))
-    selected.forEach((t) => openTab(t.url))
+    selected.forEach((t) => openTab(t.url, { newTab: true }))
   }
 
   function handleOpenSelected() {

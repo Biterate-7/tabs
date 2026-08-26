@@ -143,6 +143,44 @@ describe("openUrl", () => {
     expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com/page", active: true });
     expect(result.alreadyOpen).toBe(false);
   });
+
+  describe("reuseCurrentTab (TabDump's own 'click a saved tab' flow)", () => {
+    it("navigates the caller's own tab in place instead of creating a new one", async () => {
+      chrome.tabs.query.mockResolvedValue([]);
+      chrome.tabs.update.mockResolvedValue(fakeTab({ id: 7, url: "https://a.com" }));
+      const result = await openUrl({ url: "https://a.com", active: true, reuseCurrentTab: true }, { senderTabId: 7 });
+      expect(chrome.tabs.create).not.toHaveBeenCalled();
+      expect(chrome.tabs.update).toHaveBeenCalledWith(7, { url: "https://a.com" });
+      expect(result).toEqual({ tab: expect.objectContaining({ tabId: 7 }), alreadyOpen: false });
+    });
+
+    it("still activates an existing duplicate elsewhere rather than navigating the caller's tab onto it", async () => {
+      chrome.tabs.query.mockResolvedValue([fakeTab({ id: 5, windowId: 2, url: "https://a.com" })]);
+      chrome.tabs.update.mockResolvedValue(fakeTab({ id: 5, windowId: 2, url: "https://a.com" }));
+      const result = await openUrl({ url: "https://a.com", active: true, reuseCurrentTab: true }, { senderTabId: 7 });
+      expect(chrome.tabs.create).not.toHaveBeenCalled();
+      expect(chrome.tabs.update).toHaveBeenCalledWith(5, { active: true });
+      expect(chrome.tabs.update).not.toHaveBeenCalledWith(7, expect.anything());
+      expect(result.alreadyOpen).toBe(true);
+    });
+
+    it("falls back to creating a new tab when reuseCurrentTab is true but no sender tab id is known", async () => {
+      chrome.tabs.query.mockResolvedValue([]);
+      chrome.tabs.create.mockResolvedValue(fakeTab({ id: 9, url: "https://a.com" }));
+      const result = await openUrl({ url: "https://a.com", active: true, reuseCurrentTab: true }, {});
+      expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com", active: true });
+      expect(result.alreadyOpen).toBe(false);
+    });
+
+    it("creates a new tab as before when reuseCurrentTab is false, even with a sender tab id", async () => {
+      chrome.tabs.query.mockResolvedValue([]);
+      chrome.tabs.create.mockResolvedValue(fakeTab({ id: 9, url: "https://a.com" }));
+      const result = await openUrl({ url: "https://a.com", active: true, reuseCurrentTab: false }, { senderTabId: 7 });
+      expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com", active: true });
+      expect(chrome.tabs.update).not.toHaveBeenCalled();
+      expect(result.alreadyOpen).toBe(false);
+    });
+  });
 });
 
 describe("openTabs", () => {

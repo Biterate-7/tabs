@@ -3,12 +3,9 @@
 import { ExternalLink } from "lucide-react"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
+import { openTab } from "@/lib/browser/open-tab"
 import type { CategoryId } from "@/lib/categories"
 import type { AskSource } from "@/lib/ai/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
 
 export function SourceCard({ source }: { source: AskSource }) {
   const category = (source.category as CategoryId | undefined) ?? "other"

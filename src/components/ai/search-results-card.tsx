@@ -2,11 +2,8 @@
 
 import { ExternalLink, Globe, Search } from "lucide-react"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { openTab } from "@/lib/browser/open-tab"
 import type { MatchReason, SearchResult } from "@/lib/ai/types"
-
-function openTab(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer")
-}
 
 const MATCH_REASON_LABELS: Record<MatchReason, string> = {
   title: "Title match",

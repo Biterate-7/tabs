@@ -158,7 +158,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
  * back, the web page) is never trusted just because the message arrived
  * through the expected channel — see AGENTS.md section 14.
  */
-async function handleBrowserCommand({ id, action, args }) {
+async function handleBrowserCommand({ id, action, args }, senderTabId) {
   const validated = validateBrowserCommand(action, args);
   if (!validated.ok) {
     return { id, ok: false, error: validated.error };
@@ -173,14 +173,16 @@ async function handleBrowserCommand({ id, action, args }) {
   }
 
   try {
-    const result = await handler(validated.args);
+    // senderTabId is only meaningful to openUrl's reuseCurrentTab handling
+    // (see browser-actions.js) — every other handler ignores this second arg.
+    const result = await handler(validated.args, { senderTabId });
     return { id, ok: true, result };
   } catch (err) {
     return { id, ok: false, error: err instanceof Error ? err.message : "Browser command failed." };
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== MSG_BROWSER_COMMAND) return undefined;
 
   const payload = message.payload ?? {};
@@ -189,7 +191,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return undefined;
   }
 
-  handleBrowserCommand(payload)
+  handleBrowserCommand(payload, sender.tab?.id)
     .then(sendResponse)
     .catch(() => sendResponse({ id: payload.id, ok: false, error: "Unexpected error running browser command." }));
 
