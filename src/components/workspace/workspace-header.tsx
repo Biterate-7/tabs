@@ -17,6 +17,7 @@ import { ExportMenu } from "@/components/workspace/export-menu"
 import { buildExportText, downloadTextFile } from "@/lib/workspace/export"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
+import type { TabDependency } from "@/lib/dependencies/types"
 
 export function WorkspaceHeader({
   tabs,
@@ -33,6 +34,7 @@ export function WorkspaceHeader({
   workspaceSwitcher,
   currentWorkspace,
   allWorkspaces,
+  dependencies,
 }: {
   tabs: Tab[]
   searchValue: string
@@ -48,6 +50,7 @@ export function WorkspaceHeader({
   workspaceSwitcher?: ReactNode
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
+  dependencies?: TabDependency[]
 }) {
   const tabCount = tabs.length
 
@@ -94,7 +97,7 @@ export function WorkspaceHeader({
             <Button variant="ghost" size="sm" onClick={onCleanup}>
               <Sparkles /> Cleanup
             </Button>
-            <ExportMenu tabs={tabs} currentWorkspace={currentWorkspace} allWorkspaces={allWorkspaces} />
+            <ExportMenu tabs={tabs} currentWorkspace={currentWorkspace} allWorkspaces={allWorkspaces} dependencies={dependencies} />
             <Button variant="ghost" size="sm" onClick={onRequestClear}>
               <Trash2 /> Clear
             </Button>

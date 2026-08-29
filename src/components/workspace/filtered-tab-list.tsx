@@ -2,6 +2,7 @@ import { Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TabCard } from "@/components/workspace/tab-card"
+import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 
@@ -13,6 +14,10 @@ export function FilteredTabList({
   selectionMode = false,
   selectedIds,
   onToggleSelected,
+  onAddDependency,
+  dependencyIndicators,
+  onSelectDependencyTab,
+  onOpenDependencyTab,
 }: {
   tabs: Tab[]
   highlightedIndex: number
@@ -21,6 +26,11 @@ export function FilteredTabList({
   selectionMode?: boolean
   selectedIds?: Set<string>
   onToggleSelected?: (id: string) => void
+  onAddDependency?: (id: string) => void
+  /** Keyed by tab id — only present for tabs that actually have a dependency/used-by relationship. Omitted entirely in contexts that don't compute it (e.g. no dependency store wired up). */
+  dependencyIndicators?: Map<string, DependencyIndicatorData>
+  onSelectDependencyTab?: (id: string) => void
+  onOpenDependencyTab?: (id: string) => void
 }) {
   if (tabs.length === 0) {
     return (
@@ -46,6 +56,10 @@ export function FilteredTabList({
             selectable={selectionMode}
             selected={selectedIds?.has(tab.id) ?? false}
             onToggleSelected={() => onToggleSelected?.(tab.id)}
+            onAddDependency={onAddDependency}
+            dependencyIndicator={dependencyIndicators?.get(tab.id)}
+            onSelectDependencyTab={onSelectDependencyTab}
+            onOpenDependencyTab={onOpenDependencyTab}
           />
         </div>
       ))}

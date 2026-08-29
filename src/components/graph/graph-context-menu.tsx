@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { Copy, ExternalLink, FolderInput, Link2, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, FolderInput, GitBranchPlus, Link2, ListTree, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { GraphNode } from "@/lib/graph/types"
 
@@ -19,23 +19,30 @@ const ITEM_CLASS =
 export function GraphContextMenu({
   state,
   otherWorkspaces,
+  dependencyCount,
   onOpenTab,
   onOpenNewTab,
   onCopyUrl,
   onCopyCleanUrl,
   onMoveToWorkspace,
   onLinkTo,
+  onAddDependency,
+  onViewDependencies,
   onRemove,
   onClose,
 }: {
   state: GraphContextMenuState | null
   otherWorkspaces: { id: string; name: string }[]
+  /** Count of dependencies + used-by relationships for the right-clicked node — drives the "View dependencies (N)" label (AGENTS.md section 10). */
+  dependencyCount: number
   onOpenTab: () => void
   onOpenNewTab: () => void
   onCopyUrl: () => void
   onCopyCleanUrl: () => void
   onMoveToWorkspace: (workspaceId: string) => void
   onLinkTo: () => void
+  onAddDependency: () => void
+  onViewDependencies: () => void
   onRemove: () => void
   onClose: () => void
 }) {
@@ -131,6 +138,17 @@ export function GraphContextMenu({
       <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onLinkTo}>
         <Link2 /> Link to…
       </button>
+
+      <div className="-mx-1 my-1 h-px bg-border" />
+
+      <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onAddDependency}>
+        <GitBranchPlus /> Add dependency…
+      </button>
+      {dependencyCount > 0 && (
+        <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onViewDependencies}>
+          <ListTree /> Dependencies ({dependencyCount})
+        </button>
+      )}
 
       <div className="-mx-1 my-1 h-px bg-border" />
 

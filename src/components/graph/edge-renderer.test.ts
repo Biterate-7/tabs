@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawEdge } from "./edge-renderer";
+import { drawDependencyEdge, drawEdge } from "./edge-renderer";
 import type { GraphPalette } from "@/lib/graph/palette";
 
 function makeCtx() {
@@ -7,12 +7,15 @@ function makeCtx() {
   return {
     calls,
     strokeStyle: "",
+    fillStyle: "",
     lineWidth: 1,
     globalAlpha: 1,
     beginPath: () => calls.push("beginPath"),
     moveTo: () => calls.push("moveTo"),
     lineTo: () => calls.push("lineTo"),
+    closePath: () => calls.push("closePath"),
     stroke: () => calls.push("stroke"),
+    fill: () => calls.push("fill"),
   };
 }
 
@@ -26,6 +29,8 @@ const palette: GraphPalette = {
   edge: { domain: "#d", workspace: "#w", category: "#c", group: "#g", manual: "#m" },
   edgeHighlighted: "#h",
   edgeDim: "#dim",
+  edgeDependency: "#dep",
+  edgeDependencyHighlighted: "#deph",
   category: {
     research: "#a",
     school: "#b",
@@ -70,5 +75,53 @@ describe("drawEdge", () => {
     const ctx = makeCtx();
     drawEdge(ctx, palette, { x1: 0, y1: 0, x2: 1, y2: 1, reasons: ["domain"], isHighlighted: false, isDimmed: false });
     expect(ctx.calls.filter((c) => c === "stroke")).toHaveLength(1);
+  });
+});
+
+describe("drawDependencyEdge", () => {
+  function baseEdge() {
+    return { x1: 0, y1: 0, x2: 100, y2: 0, targetRadius: 10, isHighlighted: false, isDimmed: false };
+  }
+
+  it("uses the dependency color by default", () => {
+    const ctx = makeCtx();
+    drawDependencyEdge(ctx, palette, baseEdge());
+    expect(ctx.strokeStyle).toBe(palette.edgeDependency);
+    expect(ctx.fillStyle).toBe(palette.edgeDependency);
+  });
+
+  it("uses the highlighted dependency color when isHighlighted is true", () => {
+    const ctx = makeCtx();
+    drawDependencyEdge(ctx, palette, { ...baseEdge(), isHighlighted: true });
+    expect(ctx.strokeStyle).toBe(palette.edgeDependencyHighlighted);
+  });
+
+  it("uses the dimmed color when isDimmed is true", () => {
+    const ctx = makeCtx();
+    drawDependencyEdge(ctx, palette, { ...baseEdge(), isDimmed: true });
+    expect(ctx.strokeStyle).toBe(palette.edgeDim);
+  });
+
+  it("draws exactly one line stroke and one filled arrowhead", () => {
+    const ctx = makeCtx();
+    drawDependencyEdge(ctx, palette, baseEdge());
+    expect(ctx.calls.filter((c) => c === "stroke")).toHaveLength(1);
+    expect(ctx.calls.filter((c) => c === "fill")).toHaveLength(1);
+  });
+
+  it("stops the line short of the target node's radius instead of drawing under it", () => {
+    let lastLineTo: [number, number] | null = null;
+    const ctx = {
+      ...makeCtx(),
+      lineTo: (x: number, y: number) => {
+        lastLineTo = [x, y];
+      },
+    };
+    drawDependencyEdge(ctx, palette, baseEdge());
+    expect(lastLineTo).not.toBeNull();
+    const [x] = lastLineTo!;
+    // Target is at x=100 with radius 10 — the line's endpoint must land
+    // meaningfully before that, leaving room for the arrowhead.
+    expect(x).toBeLessThan(90);
   });
 });

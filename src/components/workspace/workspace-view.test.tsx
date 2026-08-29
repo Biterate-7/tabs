@@ -282,3 +282,134 @@ describe("WorkspaceView bulk selection", () => {
     expect(screen.getByRole("button", { name: "Select" })).toBeTruthy();
   });
 });
+
+describe("WorkspaceView dependency indicator in search results", () => {
+  let openSpy: ReturnType<typeof vi.spyOn>;
+  let locationAssignMock: ReturnType<typeof vi.fn>;
+  let originalLocation: Location;
+
+  function seedDependency(parentTabId: string, childTabId: string) {
+    window.localStorage.setItem(
+      "tabdump:dependencies:v1",
+      JSON.stringify({
+        version: 1,
+        dependencies: [{ id: `dep-${parentTabId}::${childTabId}`, parentTabId, childTabId, createdAt: 1 }],
+      })
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    originalLocation = window.location;
+    locationAssignMock = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, assign: locationAssignMock },
+    });
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+    window.localStorage.clear();
+  });
+
+  it("shows a compact dependency count under a tab that has one, without expanding the item list by default", async () => {
+    seedDependency("1", "2"); // github.com (1) depends on arxiv.org (2)
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+
+    expect(await screen.findByText("↓ 1 dependency")).toBeTruthy();
+    // The expanded per-item list (with the target tab's own label) isn't shown until clicked.
+    expect(screen.queryByText("arxiv.org")).toBeFalsy();
+  });
+
+  it("does not show an indicator for a tab with no dependency relationships", async () => {
+    seedDependency("1", "2");
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "amazon");
+
+    expect(screen.queryByText(/dependenc/)).toBeFalsy();
+    expect(screen.queryByText(/used by/)).toBeFalsy();
+  });
+
+  it("shows the reverse 'used by' count on the depended-upon tab", async () => {
+    seedDependency("1", "2");
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "arxiv");
+
+    expect(await screen.findByText("↑ 1 used by")).toBeTruthy();
+  });
+
+  it("expands to show the individual dependency on click, without triggering search/select", async () => {
+    seedDependency("1", "2");
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(await screen.findByText("↓ 1 dependency"));
+
+    expect(await screen.findByText("arxiv.org")).toBeTruthy();
+    // Expanding is a local toggle, not a navigation — the search box is untouched.
+    expect((screen.getByPlaceholderText("Search tabs...") as HTMLInputElement).value).toBe("github");
+  });
+
+  it("clicking an expanded dependency item selects it via the existing search behavior", async () => {
+    seedDependency("1", "2");
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(await screen.findByText("↓ 1 dependency"));
+    await user.click(await screen.findByText("arxiv.org"));
+
+    // The select action is debounced (to give a following double-click a
+    // chance to cancel it and open instead — see tab-dependency-indicator.tsx),
+    // so it lands slightly after the click itself.
+    await screen.findByDisplayValue("https://arxiv.org/abs/1");
+    expect(screen.getAllByText("arxiv.org").length).toBeGreaterThan(0);
+    expect(screen.queryByText("github.com")).toBeFalsy();
+    expect(locationAssignMock).not.toHaveBeenCalled();
+  });
+
+  it("double-clicking an expanded dependency item opens it via the existing tab-opening behavior", async () => {
+    seedDependency("1", "2");
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(await screen.findByText("↓ 1 dependency"));
+    await user.dblClick(await screen.findByText("arxiv.org"));
+
+    expect(locationAssignMock).toHaveBeenCalledWith("https://arxiv.org/abs/1");
+    expect(openSpy).not.toHaveBeenCalled();
+    // The double-click must cancel the pending debounced select — the search
+    // box should stay untouched, not jump to the dependency's URL.
+    expect((screen.getByPlaceholderText("Search tabs...") as HTMLInputElement).value).toBe("github");
+  });
+
+  it("safely ignores a stale dependency referencing a tab that no longer exists", async () => {
+    window.localStorage.setItem(
+      "tabdump:dependencies:v1",
+      JSON.stringify({
+        version: 1,
+        dependencies: [{ id: "dep-1::ghost", parentTabId: "1", childTabId: "ghost", createdAt: 1 }],
+      })
+    );
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+
+    // No crash, and no indicator for a dependency whose target doesn't exist.
+    expect(screen.queryByText(/dependenc/)).toBeFalsy();
+    expect(screen.getAllByText("github.com").length).toBeGreaterThan(0);
+  });
+});

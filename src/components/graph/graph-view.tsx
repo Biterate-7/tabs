@@ -11,8 +11,8 @@ import { GraphControls } from "./graph-controls"
 import { GraphNodeTooltip } from "./graph-node-tooltip"
 import { GraphContextMenu, type GraphContextMenuState } from "./graph-context-menu"
 import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popover"
-import { GraphLinkDialog } from "./graph-link-dialog"
-import { buildGraphEdges, buildGraphNodes, buildWorkspaceLookup } from "@/lib/graph/relations"
+import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
+import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
 import { searchGraphNodes } from "@/lib/graph/search"
 import {
@@ -35,9 +35,16 @@ import { copyText } from "@/lib/workspace/export"
 import { removeTabs } from "@/lib/workspace/cleanup"
 import { moveTabsBetweenWorkspaces, updateWorkspaceTabs } from "@/lib/workspace/store"
 import type { WorkspaceStore } from "@/lib/workspace/types"
+import { countsFor, dependenciesOf, usedBy } from "@/lib/dependencies/relations"
+import { validateDependency } from "@/lib/dependencies/validation"
+import { buildDependencyTree } from "@/lib/dependencies/tree"
+import { useDependencyStore } from "@/hooks/use-dependency-store"
+import type { DependencyType } from "@/lib/dependencies/types"
 
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
+
+type LinkDialogState = { mode: GraphLinkDialogMode; tabId: string } | null
 
 export function GraphView({
   store,
@@ -58,12 +65,22 @@ export function GraphView({
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState | null>(null)
   const [edgePopover, setEdgePopover] = useState<GraphEdgePopoverState | null>(null)
-  const [linkDialogFor, setLinkDialogFor] = useState<string | null>(null)
+  const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
 
   const pendingCameraRef = useRef<CameraState | null>(null)
   const cameraFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const workspaceLookup = useMemo(() => buildWorkspaceLookup(store.workspaces), [store.workspaces])
+  const validTabIds = useMemo(
+    () => new Set(store.workspaces.flatMap((w) => w.tabs.map((t) => t.id))),
+    [store.workspaces]
+  )
+  const {
+    dependencies,
+    addDependency: storeAddDependency,
+    removeDependency: storeRemoveDependency,
+    updateDependencyType: storeUpdateDependencyType,
+  } = useDependencyStore(validTabIds)
 
   const scopedTabs = useMemo(() => {
     const all = store.workspaces.flatMap((w) => w.tabs)
@@ -74,9 +91,35 @@ export function GraphView({
   const allNodes = useMemo(() => buildGraphNodes(scopedTabs, workspaceLookup), [scopedTabs, workspaceLookup])
   const nodeById = useMemo(() => new Map(allNodes.map((n) => [n.id, n])), [allNodes])
 
+  // Unscoped by the workspace filter — the dependency sidebar needs to
+  // resolve a dependency's title/favicon/domain even when that tab happens
+  // to be filtered out of the currently visible graph.
+  const everyNode = useMemo(
+    () => buildGraphNodes(store.workspaces.flatMap((w) => w.tabs), workspaceLookup),
+    [store.workspaces, workspaceLookup]
+  )
+  const everyNodeById = useMemo(() => new Map(everyNode.map((n) => [n.id, n])), [everyNode])
+
   const allEdges = useMemo(
     () => buildGraphEdges(scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections),
     [scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections]
+  )
+
+  const allDependencyEdges = useMemo(
+    () => (graphState.settings.filters.dependencies ? buildDependencyEdges(scopedTabs, dependencies) : []),
+    [scopedTabs, dependencies, graphState.settings.filters.dependencies]
+  )
+
+  // Dependency edges count toward local-graph reachability alongside every
+  // other relationship — a "local graph" centered on a tab should include
+  // what it depends on (and what depends on it), not just its non-directional
+  // relationships.
+  const bfsEdges = useMemo<GraphEdge[]>(
+    () => [
+      ...allEdges,
+      ...allDependencyEdges.map((e) => ({ id: e.id, source: e.parentTabId, target: e.childTabId, reasons: [] })),
+    ],
+    [allEdges, allDependencyEdges]
   )
 
   const view = graphState.settings.view
@@ -84,18 +127,19 @@ export function GraphView({
   const centerTabId = view === "local" ? selectedTabId : null
   const hasCenter = Boolean(centerTabId && nodeById.has(centerTabId))
 
-  const { visibleNodes, visibleEdges, centerDistances } = useMemo(() => {
+  const { visibleNodes, visibleEdges, visibleDependencyEdges, centerDistances } = useMemo(() => {
     if (hasCenter && centerTabId) {
-      const distances = computeLocalDistances(centerTabId, allEdges, graphState.settings.depth)
+      const distances = computeLocalDistances(centerTabId, bfsEdges, graphState.settings.depth)
       const ids = new Set(distances.keys())
       return {
         visibleNodes: allNodes.filter((n) => ids.has(n.id)),
         visibleEdges: allEdges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+        visibleDependencyEdges: allDependencyEdges.filter((e) => ids.has(e.parentTabId) && ids.has(e.childTabId)),
         centerDistances: distances,
       }
     }
-    return { visibleNodes: allNodes, visibleEdges: allEdges, centerDistances: undefined }
-  }, [hasCenter, centerTabId, allNodes, allEdges, graphState.settings.depth])
+    return { visibleNodes: allNodes, visibleEdges: allEdges, visibleDependencyEdges: allDependencyEdges, centerDistances: undefined }
+  }, [hasCenter, centerTabId, allNodes, allEdges, allDependencyEdges, bfsEdges, graphState.settings.depth])
 
   const searchResults = useMemo(() => searchGraphNodes(allNodes, query), [allNodes, query])
   const searchMatches = useMemo(
@@ -103,17 +147,30 @@ export function GraphView({
     [query, searchResults]
   )
 
+  const selectedNode = selectedTabId ? (everyNodeById.get(selectedTabId) ?? null) : null
+  const dependenciesOfSelected = useMemo(
+    () => (selectedTabId ? dependenciesOf(selectedTabId, dependencies) : []),
+    [selectedTabId, dependencies]
+  )
+  const usedByOfSelected = useMemo(
+    () => (selectedTabId ? usedBy(selectedTabId, dependencies) : []),
+    [selectedTabId, dependencies]
+  )
+  const dependencyTree = useMemo(
+    () => (selectedTabId ? buildDependencyTree(selectedTabId, dependencies, validTabIds) : []),
+    [selectedTabId, dependencies, validTabIds]
+  )
+
   // Debounced localStorage write — state itself always updates immediately
   // so the UI (checkboxes, pills, selection) never feels laggy; only the
   // persistence side-effect is throttled, since a fling-scroll can call
   // this several times per second via camera updates.
   useEffect(() => {
-    const validIds = new Set(store.workspaces.flatMap((w) => w.tabs.map((t) => t.id)))
     const timer = setTimeout(() => {
-      saveGraphState(pruneGraphState(graphState, validIds))
+      saveGraphState(pruneGraphState(graphState, validTabIds))
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [graphState, store.workspaces])
+  }, [graphState, validTabIds])
 
   useEffect(() => {
     return () => {
@@ -222,18 +279,65 @@ export function GraphView({
     toast.success("Manual link removed")
   }
 
+  function handleAddDependency(parentTabId: string, childTabId: string, type: DependencyType | undefined) {
+    const validation = validateDependency(dependencies, parentTabId, childTabId)
+    if (!validation.ok) {
+      toast.info(validation.reason === "self" ? "A tab can't depend on itself" : "Already a dependency")
+      return
+    }
+    storeAddDependency(parentTabId, childTabId, type)
+    toast.success("Dependency added")
+  }
+
+  function handleRemoveDependency(depId: string) {
+    storeRemoveDependency(depId)
+    setEdgePopover((prev) => (prev?.kind === "dependency" && prev.edge.id === depId ? null : prev))
+    toast.success("Dependency removed")
+  }
+
+  function handleChangeDependencyType(depId: string, type: DependencyType | undefined) {
+    storeUpdateDependencyType(depId, type)
+  }
+
+  function handleSelectTab(id: string) {
+    updateSettings({ selectedTabId: id })
+    canvasHandleRef.current?.centerOnNode(id)
+  }
+
+  function handleOpenTabById(id: string) {
+    const node = everyNodeById.get(id)
+    if (node) openTab(node.tab.url)
+  }
+
   const contextNode = contextMenu?.node
   const otherWorkspaces = contextNode
     ? store.workspaces
         .filter((w) => w.id !== workspaceLookup.get(contextNode.id)?.id)
         .map((w) => ({ id: w.id, name: w.name }))
     : []
+  const contextNodeDependencyCount = contextNode
+    ? (() => {
+        const counts = countsFor(contextNode.id, dependencies)
+        return counts.dependencies + counts.usedBy
+      })()
+    : 0
 
-  const linkSourceNode = linkDialogFor ? (nodeById.get(linkDialogFor) ?? null) : null
-  const linkCandidates = useMemo(
-    () => (linkDialogFor ? allNodes.filter((n) => n.id !== linkDialogFor) : []),
-    [allNodes, linkDialogFor]
-  )
+  // Dependency mode deliberately ignores the graph's workspace filter — a
+  // tab can depend on a resource living in a different workspace, so the
+  // picker searches every tab, not just the ones currently on screen.
+  // Manual "link to…" keeps its original scoped-to-visible-nodes behavior.
+  const linkDialogSourceNode = linkDialog
+    ? ((linkDialog.mode === "dependency" ? everyNodeById : nodeById).get(linkDialog.tabId) ?? null)
+    : null
+  const linkDialogCandidates = useMemo(() => {
+    if (!linkDialog) return []
+    const pool = linkDialog.mode === "dependency" ? everyNode : allNodes
+    return pool.filter((n) => n.id !== linkDialog.tabId)
+  }, [linkDialog, allNodes, everyNode])
+  const linkDialogExistingTargetIds = useMemo(() => {
+    if (!linkDialog || linkDialog.mode !== "dependency") return undefined
+    return new Set(dependenciesOf(linkDialog.tabId, dependencies).map((d) => d.childTabId))
+  }, [linkDialog, dependencies])
 
   const totalTabCount = store.workspaces.reduce((sum, w) => sum + w.tabs.length, 0)
 
@@ -258,7 +362,7 @@ export function GraphView({
       title: "This tab isn't connected to anything yet.",
       description: "Try a different depth, or enable more connection types in the sidebar.",
     }
-  } else if (visibleEdges.length === 0) {
+  } else if (visibleEdges.length === 0 && visibleDependencyEdges.length === 0) {
     emptyState = {
       title: "No connections match the current filters.",
       description: "Adjust your graph filters in the sidebar.",
@@ -290,6 +394,7 @@ export function GraphView({
           ref={canvasHandleRef}
           nodes={visibleNodes}
           edges={visibleEdges}
+          dependencyEdges={visibleDependencyEdges}
           positions={graphState.positions}
           initialCamera={graphState.settings.camera}
           display={graphState.settings.display}
@@ -309,7 +414,16 @@ export function GraphView({
             const target = nodeById.get(edge.target)
             if (!source || !target) return
             closeMenus()
-            setEdgePopover({ edge, source, target, x, y })
+            setEdgePopover({ kind: "relation", edge, source, target, x, y })
+          }}
+          onDependencyEdgeClick={(edge, x, y) => {
+            const source = everyNodeById.get(edge.parentTabId)
+            const target = everyNodeById.get(edge.childTabId)
+            if (!source || !target) return
+            const pairKey = edgeKey(edge.parentTabId, edge.childTabId)
+            const otherReasons = allEdges.find((e) => e.id === pairKey)?.reasons ?? []
+            closeMenus()
+            setEdgePopover({ kind: "dependency", edge, source, target, otherReasons, x, y })
           }}
           onNodeMoved={handleNodeMoved}
           onHoverChange={setHover}
@@ -338,11 +452,22 @@ export function GraphView({
         workspaceFilter={graphState.settings.workspaceFilter}
         onWorkspaceFilterChange={handleWorkspaceFilterChange}
         onFit={handleFit}
+        selectedNode={selectedNode}
+        dependenciesOfSelected={dependenciesOfSelected}
+        usedByOfSelected={usedByOfSelected}
+        dependencyTree={dependencyTree}
+        allNodeById={everyNodeById}
+        onSelectTab={handleSelectTab}
+        onOpenTab={handleOpenTabById}
+        onAddDependency={() => selectedTabId && setLinkDialog({ mode: "dependency", tabId: selectedTabId })}
+        onRemoveDependency={handleRemoveDependency}
+        onChangeDependencyType={handleChangeDependencyType}
       />
 
       <GraphContextMenu
         state={contextMenu}
         otherWorkspaces={otherWorkspaces}
+        dependencyCount={contextNodeDependencyCount}
         onOpenTab={() => {
           if (contextNode) openTab(contextNode.tab.url)
           setContextMenu(null)
@@ -364,7 +489,15 @@ export function GraphView({
           setContextMenu(null)
         }}
         onLinkTo={() => {
-          if (contextNode) setLinkDialogFor(contextNode.id)
+          if (contextNode) setLinkDialog({ mode: "link", tabId: contextNode.id })
+          setContextMenu(null)
+        }}
+        onAddDependency={() => {
+          if (contextNode) setLinkDialog({ mode: "dependency", tabId: contextNode.id })
+          setContextMenu(null)
+        }}
+        onViewDependencies={() => {
+          if (contextNode) updateSettings({ selectedTabId: contextNode.id, sidebarOpen: true })
           setContextMenu(null)
         }}
         onRemove={() => {
@@ -378,19 +511,27 @@ export function GraphView({
         state={edgePopover}
         onClose={() => setEdgePopover(null)}
         onRemoveManualLink={() => {
-          if (edgePopover) handleRemoveManualLink(edgePopover.edge)
+          if (edgePopover?.kind === "relation") handleRemoveManualLink(edgePopover.edge)
+        }}
+        onRemoveDependency={() => {
+          if (edgePopover?.kind === "dependency") handleRemoveDependency(edgePopover.edge.id)
         }}
       />
 
       <GraphLinkDialog
-        open={linkDialogFor !== null}
+        open={linkDialog !== null}
         onOpenChange={(open) => {
-          if (!open) setLinkDialogFor(null)
+          if (!open) setLinkDialog(null)
         }}
-        sourceNode={linkSourceNode}
-        candidates={linkCandidates}
+        mode={linkDialog?.mode ?? "link"}
+        sourceNode={linkDialogSourceNode}
+        candidates={linkDialogCandidates}
+        existingDependencyTargetIds={linkDialogExistingTargetIds}
         onLink={(targetId) => {
-          if (linkDialogFor) handleAddManualLink(linkDialogFor, targetId)
+          if (linkDialog) handleAddManualLink(linkDialog.tabId, targetId)
+        }}
+        onAddDependency={(targetId, type) => {
+          if (linkDialog) handleAddDependency(linkDialog.tabId, targetId, type)
         }}
       />
     </div>

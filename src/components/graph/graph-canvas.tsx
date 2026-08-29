@@ -19,11 +19,11 @@ import {
   worldToScreen,
   zoomAroundPoint,
 } from "@/lib/graph/layout"
-import type { CameraState, GraphDisplaySettings, GraphEdge, GraphNode } from "@/lib/graph/types"
+import type { CameraState, GraphDependencyEdge, GraphDisplaySettings, GraphEdge, GraphNode } from "@/lib/graph/types"
 import type { CategoryId } from "@/lib/categories"
 import { faviconUrl } from "@/lib/workspace/favicon"
 import { drawNode } from "./node-renderer"
-import { drawEdge } from "./edge-renderer"
+import { drawEdge, drawDependencyEdge } from "./edge-renderer"
 
 export type GraphCanvasHandle = {
   zoomBy: (factor: number) => void
@@ -44,6 +44,7 @@ const LABEL_MIN_ZOOM = 0.55
 export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  dependencyEdges: GraphDependencyEdge[]
   positions: Record<string, { x: number; y: number }>
   initialCamera: CameraState
   display: GraphDisplaySettings
@@ -56,12 +57,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   onOpenNode: (node: GraphNode) => void
   onContextMenu: (node: GraphNode, screenX: number, screenY: number) => void
   onEdgeClick: (edge: GraphEdge, screenX: number, screenY: number) => void
+  onDependencyEdgeClick: (edge: GraphDependencyEdge, screenX: number, screenY: number) => void
   onNodeMoved: (id: string, x: number, y: number) => void
   onHoverChange: (hover: HoverInfo | null) => void
 }>(function GraphCanvas(
   {
     nodes,
     edges,
+    dependencyEdges,
     positions,
     initialCamera,
     display,
@@ -74,6 +77,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     onOpenNode,
     onContextMenu,
     onEdgeClick,
+    onDependencyEdgeClick,
     onNodeMoved,
     onHoverChange,
   },
@@ -90,6 +94,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const faviconCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const nodesRef = useRef<GraphNode[]>(nodes)
   const edgesRef = useRef<GraphEdge[]>(edges)
+  const dependencyEdgesRef = useRef<GraphDependencyEdge[]>(dependencyEdges)
 
   const hoveredIdRef = useRef<string | null>(null)
   const dragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
@@ -105,6 +110,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
   nodesRef.current = nodes
   edgesRef.current = edges
+  dependencyEdgesRef.current = dependencyEdges
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
@@ -114,21 +120,36 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       map.set(edge.source, (map.get(edge.source) ?? 0) + 1)
       map.set(edge.target, (map.get(edge.target) ?? 0) + 1)
     }
+    for (const edge of dependencyEdges) {
+      map.set(edge.parentTabId, (map.get(edge.parentTabId) ?? 0) + 1)
+      map.set(edge.childTabId, (map.get(edge.childTabId) ?? 0) + 1)
+    }
     return map
-  }, [edges])
+  }, [edges, dependencyEdges])
 
+  // Selecting either end of a dependency counts as "connected" here — a
+  // parent highlights its dependencies, and a child highlights what depends
+  // on it ("used by"), matching how every other edge reason already
+  // highlights symmetrically regardless of which side was clicked.
   const neighborInfo = useMemo(() => {
     if (!selectedTabId) return null
     const neighborIds = new Set<string>()
     const edgeIds = new Set<string>()
+    const dependencyEdgeIds = new Set<string>()
     for (const edge of edges) {
       if (edge.source === selectedTabId || edge.target === selectedTabId) {
         edgeIds.add(edge.id)
         neighborIds.add(edge.source === selectedTabId ? edge.target : edge.source)
       }
     }
-    return { neighborIds, edgeIds }
-  }, [edges, selectedTabId])
+    for (const edge of dependencyEdges) {
+      if (edge.parentTabId === selectedTabId || edge.childTabId === selectedTabId) {
+        dependencyEdgeIds.add(edge.id)
+        neighborIds.add(edge.parentTabId === selectedTabId ? edge.childTabId : edge.parentTabId)
+      }
+    }
+    return { neighborIds, edgeIds, dependencyEdgeIds }
+  }, [edges, dependencyEdges, selectedTabId])
 
   function radiusOf(node: GraphNode): number {
     return computeNodeRadius(display.nodeSize, degreeById.get(node.id) ?? 0, centerDistances?.get(node.id))
@@ -237,6 +258,26 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       })
     }
 
+    for (const edge of dependencyEdgesRef.current) {
+      const source = simulation.findNode(edge.parentTabId)
+      const target = simulation.findNode(edge.childTabId)
+      if (!source || source.x === undefined || source.y === undefined) continue
+      if (!target || target.x === undefined || target.y === undefined) continue
+      const p1 = worldToScreen(camera, { x: source.x, y: source.y }, width, height)
+      const p2 = worldToScreen(camera, { x: target.x, y: target.y }, width, height)
+      const isHighlighted = Boolean(neighborInfo?.dependencyEdgeIds.has(edge.id))
+      const isDimmed = Boolean(selectedTabId) && !isHighlighted
+      drawDependencyEdge(ctx, palette, {
+        x1: p1.x,
+        y1: p1.y,
+        x2: p2.x,
+        y2: p2.y,
+        targetRadius: target.radius * camera.zoom,
+        isHighlighted,
+        isDimmed,
+      })
+    }
+
     for (const node of nodesRef.current) {
       const physicsNode = simulation.findNode(node.id)
       if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
@@ -284,11 +325,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   useEffect(() => {
     const simulation = simulationRef.current!
     simulation.setNodes(nodes, radiusOf, positions)
-    simulation.setEdges(edges, display.edgeStrength)
+    const physicsEdges: GraphEdge[] = [
+      ...edges,
+      ...dependencyEdges.map((e) => ({ id: e.id, source: e.parentTabId, target: e.childTabId, reasons: [] })),
+    ]
+    simulation.setEdges(physicsEdges, display.edgeStrength)
     simulation.reheat(0.5)
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, display.nodeSize, display.edgeStrength, centerDistances])
+  }, [nodes, edges, dependencyEdges, display.nodeSize, display.edgeStrength, centerDistances])
 
   // Selection/search/center-node highlighting only affects what draw()
   // paints, not the physics simulation — once the layout has settled and
@@ -452,6 +497,25 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     return null
   }
 
+  // Checked ahead of hitTestEdge on click — dependency edges are drawn on
+  // top of (and are typically fewer than) the relation edges, so a click
+  // near an overlapping pair should resolve to the more specific,
+  // intentionally-created dependency relationship.
+  function hitTestDependencyEdge(screenX: number, screenY: number): GraphDependencyEdge | null {
+    const simulation = simulationRef.current!
+    const { width, height } = sizeRef.current
+    const camera = cameraRef.current
+    for (const edge of dependencyEdgesRef.current) {
+      const source = simulation.findNode(edge.parentTabId)
+      const target = simulation.findNode(edge.childTabId)
+      if (!source?.x || !source?.y || !target?.x || !target?.y) continue
+      const p1 = worldToScreen(camera, { x: source.x, y: source.y }, width, height)
+      const p2 = worldToScreen(camera, { x: target.x, y: target.y }, width, height)
+      if (distanceToSegment({ x: screenX, y: screenY }, p1, p2) <= EDGE_HIT_PADDING) return edge
+    }
+    return null
+  }
+
   function screenPointFromEvent(e: { clientX: number; clientY: number }) {
     const rect = canvasRef.current!.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
@@ -556,6 +620,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       canvasRef.current?.releasePointerCapture(e.pointerId)
       onCameraChange(cameraRef.current)
       if (!moved) {
+        const dependencyHit = hitTestDependencyEdge(point.x, point.y)
+        if (dependencyHit) {
+          onDependencyEdgeClick(dependencyHit, e.clientX, e.clientY)
+          return
+        }
         const edgeHit = hitTestEdge(point.x, point.y)
         if (edgeHit) onEdgeClick(edgeHit, e.clientX, e.clientY)
         else onSelectNode(null)

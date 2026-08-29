@@ -37,6 +37,8 @@ const palette: GraphPalette = {
   edge: { domain: "#1", workspace: "#2", category: "#3", group: "#4", manual: "#5" },
   edgeHighlighted: "#6",
   edgeDim: "#7",
+  edgeDependency: "#8",
+  edgeDependencyHighlighted: "#9",
   category: {
     research: "#a",
     school: "#b",

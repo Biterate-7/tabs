@@ -1,10 +1,18 @@
 import type { Tab } from "@/lib/tabs/types";
+import type { DependencyType } from "@/lib/dependencies/types";
 
 /** The relationship signals a graph edge can be built from. `manual` is user-created and never auto-generated. */
 export type EdgeReason = "domain" | "workspace" | "category" | "group" | "manual";
 
+/**
+ * `dependencies` gates a separate, directional edge set (see
+ * GraphDependencyEdge) built from the dependency store rather than from
+ * EdgeReason — dependencies aren't a symmetric "these two match" signal like
+ * the others, so they don't fit EdgeReason's undirected-pair model.
+ */
 export type ConnectionFilters = Record<Exclude<EdgeReason, "manual">, boolean> & {
   manual: boolean;
+  dependencies: boolean;
 };
 
 export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
@@ -13,6 +21,7 @@ export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
   category: false,
   group: false,
   manual: true,
+  dependencies: true,
 };
 
 export type GraphNode = {
@@ -34,6 +43,19 @@ export type ManualConnection = {
   a: string;
   b: string;
   createdAt: number;
+};
+
+/**
+ * A directional edge built from one TabDependency, kept separate from
+ * GraphEdge (which canonicalizes source/target into an undirected pair) so
+ * A→B and B→A can coexist as two distinct edges instead of colliding on one
+ * merged undirected key.
+ */
+export type GraphDependencyEdge = {
+  id: string;
+  parentTabId: string;
+  childTabId: string;
+  type?: DependencyType;
 };
 
 export type GraphViewMode = "global" | "local";

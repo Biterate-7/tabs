@@ -42,3 +42,78 @@ export function drawEdge(ctx: EdgeDrawContext, palette: GraphPalette, edge: Edge
 
   ctx.stroke();
 }
+
+export type DependencyEdgeVisual = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** Screen-space radius of the target (child) node — the line and arrowhead stop short of it instead of drawing under the node. */
+  targetRadius: number;
+  isHighlighted: boolean;
+  isDimmed: boolean;
+};
+
+export type DependencyEdgeDrawContext = EdgeDrawContext & {
+  fillStyle: string | CanvasGradient | CanvasPattern;
+  closePath: CanvasRenderingContext2D["closePath"];
+  fill: CanvasRenderingContext2D["fill"];
+};
+
+const ARROW_LENGTH = 7;
+const ARROW_WIDTH = 5;
+const ARROW_GAP = 2;
+
+/**
+ * Draws a directional dependency edge: a line from parent to child plus a
+ * small filled triangular arrowhead pointing at the child, offset outside
+ * the child node's radius so it never overlaps the node itself. Kept as a
+ * separate draw function (rather than a branch inside drawEdge) since
+ * dependency edges are a distinct concept from the undirected EdgeReason
+ * edges — see GraphDependencyEdge's doc comment in lib/graph/types.ts.
+ */
+export function drawDependencyEdge(
+  ctx: DependencyEdgeDrawContext,
+  palette: GraphPalette,
+  edge: DependencyEdgeVisual
+): void {
+  const dx = edge.x2 - edge.x1;
+  const dy = edge.y2 - edge.y1;
+  const distance = Math.hypot(dx, dy) || 1;
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const stopDistance = edge.targetRadius + ARROW_LENGTH + ARROW_GAP;
+  const lineEndX = edge.x2 - ux * stopDistance;
+  const lineEndY = edge.y2 - uy * stopDistance;
+  const tipX = edge.x2 - ux * (edge.targetRadius + ARROW_GAP);
+  const tipY = edge.y2 - uy * (edge.targetRadius + ARROW_GAP);
+
+  const color = edge.isHighlighted
+    ? palette.edgeDependencyHighlighted
+    : edge.isDimmed
+      ? palette.edgeDim
+      : palette.edgeDependency;
+
+  ctx.beginPath();
+  ctx.moveTo(edge.x1, edge.y1);
+  ctx.lineTo(lineEndX, lineEndY);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = edge.isHighlighted ? 1.6 : 1.1;
+  ctx.globalAlpha = edge.isDimmed ? 1 : edge.isHighlighted ? 0.95 : 0.85;
+  ctx.stroke();
+
+  // Arrowhead: a small filled triangle whose tip sits just outside the
+  // target node, base perpendicular to the travel direction.
+  const perpX = -uy;
+  const perpY = ux;
+  const baseX = tipX - ux * ARROW_LENGTH;
+  const baseY = tipY - uy * ARROW_LENGTH;
+
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(baseX + perpX * ARROW_WIDTH, baseY + perpY * ARROW_WIDTH);
+  ctx.lineTo(baseX - perpX * ARROW_WIDTH, baseY - perpY * ARROW_WIDTH);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}

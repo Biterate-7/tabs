@@ -7,6 +7,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Pill } from "@/components/workspace/category-filter-bar"
 import { GraphSearch } from "./graph-search"
 import { GraphSettingsPanel } from "./graph-settings-panel"
+import { GraphDependencyPanel } from "./graph-dependency-panel"
+import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
+import type { DependencyTreeNode } from "@/lib/dependencies/tree"
 import type {
   ConnectionFilters,
   GraphDepth,
@@ -41,6 +44,16 @@ export function GraphSidebar({
   workspaceFilter,
   onWorkspaceFilterChange,
   onFit,
+  selectedNode,
+  dependenciesOfSelected,
+  usedByOfSelected,
+  dependencyTree,
+  allNodeById,
+  onSelectTab,
+  onOpenTab,
+  onAddDependency,
+  onRemoveDependency,
+  onChangeDependencyType,
 }: {
   open: boolean
   onToggle: () => void
@@ -60,6 +73,17 @@ export function GraphSidebar({
   workspaceFilter: string | "all"
   onWorkspaceFilterChange: (value: string | "all") => void
   onFit: () => void
+  /** The currently-selected tab's dependency detail — omitted (undefined) entirely when nothing is selected. */
+  selectedNode?: GraphNode | null
+  dependenciesOfSelected: TabDependency[]
+  usedByOfSelected: TabDependency[]
+  dependencyTree: DependencyTreeNode[]
+  allNodeById: Map<string, GraphNode>
+  onSelectTab: (id: string) => void
+  onOpenTab: (id: string) => void
+  onAddDependency: () => void
+  onRemoveDependency: (depId: string) => void
+  onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
 }) {
   if (!open) {
     return (
@@ -114,6 +138,24 @@ export function GraphSidebar({
               </div>
             )}
           </div>
+
+          {selectedNode && (
+            <>
+              <div className="h-px bg-border" />
+              <GraphDependencyPanel
+                node={selectedNode}
+                dependencies={dependenciesOfSelected}
+                usedByDeps={usedByOfSelected}
+                tree={dependencyTree}
+                nodeById={allNodeById}
+                onSelectTab={onSelectTab}
+                onOpenTab={onOpenTab}
+                onAddDependency={onAddDependency}
+                onRemoveDependency={onRemoveDependency}
+                onChangeDependencyType={onChangeDependencyType}
+              />
+            </>
+          )}
 
           <div className="h-px bg-border" />
 

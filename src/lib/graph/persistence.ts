@@ -48,6 +48,7 @@ function sanitizeFilters(value: unknown): ConnectionFilters {
     category: typeof v.category === "boolean" ? v.category : DEFAULT_CONNECTION_FILTERS.category,
     group: typeof v.group === "boolean" ? v.group : DEFAULT_CONNECTION_FILTERS.group,
     manual: typeof v.manual === "boolean" ? v.manual : DEFAULT_CONNECTION_FILTERS.manual,
+    dependencies: typeof v.dependencies === "boolean" ? v.dependencies : DEFAULT_CONNECTION_FILTERS.dependencies,
   };
 }
 

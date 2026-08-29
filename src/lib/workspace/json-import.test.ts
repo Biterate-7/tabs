@@ -400,6 +400,128 @@ describe("parseWorkspaceExport", () => {
     expect(result.workspaces[0].tabs[0].groupId).toBeUndefined();
   });
 
+  it("round-trips a dependency between two tabs in the same exported workspace", () => {
+    const workspace = makeWorkspace({
+      id: "a",
+      tabs: [
+        { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" },
+        { id: "t2", url: "https://b.example", normalizedUrl: "https://b.example", domain: "b.example" },
+      ],
+    });
+    const dependencies = [{ id: "d1", parentTabId: "t1", childTabId: "t2", type: "research" as const, createdAt: 5 }];
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace], dependencies));
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.dependencies).toHaveLength(1);
+    const [t1, t2] = result.workspaces[0].tabs;
+    expect(result.dependencies[0]).toMatchObject({ parentTabId: t1.id, childTabId: t2.id, type: "research" });
+    expect(result.skippedDependencies).toBe(0);
+  });
+
+  it("remaps a dependency's tab ids when a tab id collision regenerates them on import", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Dup tabs",
+          createdAt: 1,
+          updatedAt: 1,
+          tabs: [
+            { id: "dup", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" },
+            { id: "dup", url: "https://b.example", normalizedUrl: "https://b.example", domain: "b.example" },
+          ],
+        },
+      ],
+      dependencies: [{ id: "d1", parentTabId: "dup", childTabId: "dup", createdAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    // The raw dependency named "dup" -> "dup", which the tab id map resolves
+    // to the FIRST tab that claimed that raw id — since both endpoints
+    // resolve to the same final tab, this is a self-dependency and must be
+    // dropped rather than silently kept.
+    expect(result.dependencies).toEqual([]);
+    expect(result.skippedDependencies).toBe(1);
+  });
+
+  it("ignores a dependency referencing a tab id that doesn't exist in the import, without failing", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "A", createdAt: 1, updatedAt: 1, tabs: [{ id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" }] }],
+      dependencies: [{ id: "d1", parentTabId: "t1", childTabId: "ghost", createdAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.dependencies).toEqual([]);
+    expect(result.skippedDependencies).toBe(1);
+  });
+
+  it("drops a self-dependency in the import file", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "A", createdAt: 1, updatedAt: 1, tabs: [{ id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" }] }],
+      dependencies: [{ id: "d1", parentTabId: "t1", childTabId: "t1", createdAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.dependencies).toEqual([]);
+  });
+
+  it("de-duplicates repeated dependency entries within the same import file", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "A",
+          createdAt: 1,
+          updatedAt: 1,
+          tabs: [
+            { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" },
+            { id: "t2", url: "https://b.example", normalizedUrl: "https://b.example", domain: "b.example" },
+          ],
+        },
+      ],
+      dependencies: [
+        { id: "d1", parentTabId: "t1", childTabId: "t2", createdAt: 1 },
+        { id: "d2", parentTabId: "t1", childTabId: "t2", createdAt: 2 },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.dependencies).toHaveLength(1);
+  });
+
+  it("imports an export with no `dependencies` field at all (pre-dependencies backward compatibility)", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Legacy", tabs: [], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.dependencies).toEqual([]);
+    expect(result.skippedDependencies).toBe(0);
+  });
+
   it("handles duplicate workspace ids across the imported payload without crashing", () => {
     const text = serializeWorkspaceExport(
       buildWorkspaceExport([makeWorkspace({ id: "dup" }), makeWorkspace({ id: "dup", name: "Second" })])

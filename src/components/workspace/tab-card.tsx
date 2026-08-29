@@ -1,6 +1,6 @@
 "use client"
 
-import { ExternalLink, MoreHorizontal } from "lucide-react"
+import { ExternalLink, GitBranchPlus, MoreHorizontal } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
@@ -8,9 +8,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
@@ -22,12 +24,22 @@ export function TabCard({
   selectable = false,
   selected = false,
   onToggleSelected,
+  onAddDependency,
+  dependencyIndicator,
+  onSelectDependencyTab,
+  onOpenDependencyTab,
 }: {
   tab: Tab
   onCategoryChange: (id: string, category: CategoryId) => void
   selectable?: boolean
   selected?: boolean
   onToggleSelected?: () => void
+  /** Omitted entirely in contexts that don't wire up the dependency dialog — the menu item simply doesn't render. */
+  onAddDependency?: (id: string) => void
+  /** This tab's dependency/used-by relationships, pre-resolved to displayable labels. Omitted entirely (not just empty) in contexts that don't compute it — see filtered-tab-list.tsx. */
+  dependencyIndicator?: DependencyIndicatorData
+  onSelectDependencyTab?: (id: string) => void
+  onOpenDependencyTab?: (id: string) => void
 }) {
   const category = (tab.category as CategoryId | undefined) ?? "other"
   const primaryLine = tab.title?.trim() || tab.domain
@@ -47,6 +59,13 @@ export function TabCard({
       <div className="min-w-0 flex-1">
         <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
         <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
+        {dependencyIndicator && (
+          <TabDependencyIndicator
+            data={dependencyIndicator}
+            onSelect={onSelectDependencyTab}
+            onOpen={onOpenDependencyTab}
+          />
+        )}
       </div>
 
       <DropdownMenu>
@@ -96,6 +115,14 @@ export function TabCard({
           />
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
+            {onAddDependency && (
+              <>
+                <DropdownMenuItem onClick={() => onAddDependency(tab.id)}>
+                  <GitBranchPlus /> Add dependency…
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             {CATEGORY_ORDER.map((id) => (
               <DropdownMenuItem
                 key={id}

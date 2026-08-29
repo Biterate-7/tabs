@@ -29,6 +29,23 @@ describe("buildWorkspaceExport", () => {
     expect(buildWorkspaceExport([makeWorkspace("a")]).workspaces).toHaveLength(1);
     expect(buildWorkspaceExport([makeWorkspace("a"), makeWorkspace("b")]).workspaces).toHaveLength(2);
   });
+
+  it("defaults to an empty dependencies array when none are given", () => {
+    expect(buildWorkspaceExport([makeWorkspace("a")]).dependencies).toEqual([]);
+  });
+
+  it("includes a dependency whose tabs are both in the exported workspaces", () => {
+    const dep = { id: "d1", parentTabId: "t1", childTabId: "t1-other", createdAt: 1 };
+    const workspace = { ...makeWorkspace("a"), tabs: [...makeWorkspace("a").tabs, { id: "t1-other", url: "https://x.example", normalizedUrl: "https://x.example", domain: "x.example" }] };
+    const data = buildWorkspaceExport([workspace], [dep]);
+    expect(data.dependencies).toEqual([dep]);
+  });
+
+  it("drops a dependency whose tab isn't in any exported workspace", () => {
+    const dep = { id: "d1", parentTabId: "t1", childTabId: "not-exported", createdAt: 1 };
+    const data = buildWorkspaceExport([makeWorkspace("a")], [dep]);
+    expect(data.dependencies).toEqual([]);
+  });
 });
 
 describe("serializeWorkspaceExport", () => {

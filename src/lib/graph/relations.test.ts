@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
-import { buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "./relations";
+import type { TabDependency } from "@/lib/dependencies/types";
+import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "./relations";
 import { DEFAULT_CONNECTION_FILTERS } from "./types";
 
 function makeTab(overrides: Partial<Tab> & { id: string }): Tab {
@@ -56,7 +57,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: true, workspace: false, category: false, group: false, manual: false },
+      { domain: true, workspace: false, category: false, group: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(0);
@@ -70,7 +71,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: true, workspace: false, category: true, group: false, manual: false },
+      { domain: true, workspace: false, category: true, group: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -84,7 +85,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       [tabA, tabB],
       lookup,
-      { domain: false, workspace: true, category: false, group: false, manual: false },
+      { domain: false, workspace: true, category: false, group: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -100,7 +101,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: true, manual: false },
+      { domain: false, workspace: false, category: false, group: true, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -113,7 +114,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: false, manual: true },
+      { domain: false, workspace: false, category: false, group: false, manual: true, dependencies: false },
       [
         { a: "a", b: "b", createdAt: 1 },
         { a: "a", b: "ghost", createdAt: 2 },
@@ -128,7 +129,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: false, manual: false },
+      { domain: false, workspace: false, category: false, group: false, manual: false, dependencies: false },
       [{ a: "a", b: "b", createdAt: 1 }]
     );
     expect(edges).toHaveLength(0);
@@ -136,5 +137,35 @@ describe("buildGraphEdges", () => {
 
   it("produces a deterministic edge id via edgeKey regardless of argument order", () => {
     expect(edgeKey("a", "b")).toBe(edgeKey("b", "a"));
+  });
+});
+
+describe("buildDependencyEdges", () => {
+  function dep(parentTabId: string, childTabId: string): TabDependency {
+    return { id: `dep-${parentTabId}::${childTabId}`, parentTabId, childTabId, createdAt: 0 };
+  }
+
+  it("builds one directional edge per dependency", () => {
+    const tabs = [makeTab({ id: "a" }), makeTab({ id: "b" })];
+    const edges = buildDependencyEdges(tabs, [dep("a", "b")]);
+    expect(edges).toEqual([{ id: "dep-a::b", parentTabId: "a", childTabId: "b", type: undefined }]);
+  });
+
+  it("keeps both directions as distinct edges when both exist", () => {
+    const tabs = [makeTab({ id: "a" }), makeTab({ id: "b" })];
+    const edges = buildDependencyEdges(tabs, [dep("a", "b"), dep("b", "a")]);
+    expect(edges).toHaveLength(2);
+  });
+
+  it("drops a dependency referencing a tab outside the given set", () => {
+    const tabs = [makeTab({ id: "a" })];
+    const edges = buildDependencyEdges(tabs, [dep("a", "ghost")]);
+    expect(edges).toEqual([]);
+  });
+
+  it("drops a self dependency defensively", () => {
+    const tabs = [makeTab({ id: "a" })];
+    const edges = buildDependencyEdges(tabs, [dep("a", "a")]);
+    expect(edges).toEqual([]);
   });
 });

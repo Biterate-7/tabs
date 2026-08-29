@@ -2,14 +2,15 @@
 
 import { Checkbox } from "@/components/ui/checkbox"
 import { Pill } from "@/components/workspace/category-filter-bar"
-import type { ConnectionFilters, EdgeReason, GraphDisplaySettings, NodeSizeMode } from "@/lib/graph/types"
+import type { ConnectionFilters, GraphDisplaySettings, NodeSizeMode } from "@/lib/graph/types"
 
-const CONNECTION_ROWS: { key: EdgeReason; label: string }[] = [
+const CONNECTION_ROWS: { key: keyof ConnectionFilters; label: string }[] = [
   { key: "domain", label: "Same domain" },
   { key: "workspace", label: "Same workspace" },
   { key: "category", label: "Same category" },
   { key: "group", label: "Same group" },
   { key: "manual", label: "Manual" },
+  { key: "dependencies", label: "Dependencies" },
 ]
 
 const NODE_SIZE_OPTIONS: { key: NodeSizeMode; label: string }[] = [

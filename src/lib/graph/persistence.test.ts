@@ -26,6 +26,28 @@ describe("graph persistence", () => {
     expect(loadGraphState()).toEqual(defaultGraphState());
   });
 
+  it("defaults settings.filters.dependencies to true when the field is absent (pre-dependencies backward compatibility)", () => {
+    window.localStorage.setItem(
+      "tabdump:graph:v1",
+      JSON.stringify({
+        settings: { filters: { domain: true, workspace: true, category: false, group: false, manual: true } },
+      })
+    );
+    expect(loadGraphState().settings.filters.dependencies).toBe(true);
+  });
+
+  it("round-trips settings.filters.dependencies when explicitly set to false", () => {
+    const state = {
+      ...defaultGraphState(),
+      settings: {
+        ...defaultGraphState().settings,
+        filters: { ...defaultGraphState().settings.filters, dependencies: false },
+      },
+    };
+    saveGraphState(state);
+    expect(loadGraphState().settings.filters.dependencies).toBe(false);
+  });
+
   it("sanitizes a malformed persisted blob field-by-field rather than discarding it wholesale", () => {
     window.localStorage.setItem(
       "tabdump:graph:v1",

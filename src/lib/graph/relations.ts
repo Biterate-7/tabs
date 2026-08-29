@@ -1,8 +1,10 @@
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
+import type { TabDependency } from "@/lib/dependencies/types";
 import type {
   ConnectionFilters,
   EdgeReason,
+  GraphDependencyEdge,
   GraphEdge,
   GraphNode,
   ManualConnection,
@@ -145,4 +147,23 @@ export function buildGraphEdges(
   }
 
   return [...merged.values()].sort((x, y) => x.id.localeCompare(y.id));
+}
+
+/**
+ * Builds one directional edge per TabDependency, scoped to `tabs` currently
+ * visible (same convention as buildGraphEdges) — a dependency naming a tab
+ * outside that set (deleted, filtered out by the workspace filter) is
+ * dropped rather than rendered as a dangling edge. Kept separate from
+ * buildGraphEdges's undirected merge so A→B and B→A never collide into one
+ * edge — see GraphDependencyEdge's doc comment.
+ */
+export function buildDependencyEdges(tabs: Tab[], dependencies: TabDependency[]): GraphDependencyEdge[] {
+  const validIds = new Set(tabs.map((t) => t.id));
+  const edges: GraphDependencyEdge[] = [];
+  for (const dep of dependencies) {
+    if (!validIds.has(dep.parentTabId) || !validIds.has(dep.childTabId)) continue;
+    if (dep.parentTabId === dep.childTabId) continue;
+    edges.push({ id: dep.id, parentTabId: dep.parentTabId, childTabId: dep.childTabId, type: dep.type });
+  }
+  return edges.sort((a, b) => a.id.localeCompare(b.id));
 }

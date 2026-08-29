@@ -12,12 +12,14 @@ export function CategoryGrid({
   onCategoryChange,
   workspaceId,
   onSheetOpenChange,
+  onAddDependency,
 }: {
   tabs: Tab[]
   onCategoryChange: (id: string, category: CategoryId) => void
   workspaceId: string
   /** Fires whenever the category detail sheet opens/closes — lets the caller know a CollectionAiActions button just became reachable, e.g. to lazily kick off AI indexing only once it might actually be used. */
   onSheetOpenChange?: (open: boolean) => void
+  onAddDependency?: (id: string) => void
 }) {
   const [openCategory, setOpenCategoryState] = useState<CategoryId | null>(null)
   function setOpenCategory(id: CategoryId | null) {
@@ -95,6 +97,7 @@ export function CategoryGrid({
         onOpenChange={(open) => !open && setOpenCategory(null)}
         onCategoryChange={onCategoryChange}
         workspaceId={workspaceId}
+        onAddDependency={onAddDependency}
       />
     </>
   )

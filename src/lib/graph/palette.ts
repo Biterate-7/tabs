@@ -12,6 +12,9 @@ export type GraphPalette = {
   edge: Record<EdgeReason, string>;
   edgeHighlighted: string;
   edgeDim: string;
+  /** Distinct from `edge.manual` so a directional dependency reads as its own relationship type at a glance, without adding a loud new hue. */
+  edgeDependency: string;
+  edgeDependencyHighlighted: string;
   category: Record<CategoryId, string>;
   /** Canvas `ctx.font` can't resolve CSS variables, so the app's actual resolved font stack is captured once via `getComputedStyle`. */
   fontFamily: string;
@@ -55,6 +58,8 @@ export function resolveGraphPalette(root: HTMLElement = document.documentElement
     },
     edgeHighlighted: v("--accent-text"),
     edgeDim: "rgba(255, 255, 255, 0.04)",
+    edgeDependency: "rgba(45, 212, 191, 0.55)",
+    edgeDependencyHighlighted: "rgba(45, 212, 191, 0.9)",
     category,
     fontFamily: getComputedStyle(document.body).fontFamily || "ui-sans-serif, system-ui, sans-serif",
   };

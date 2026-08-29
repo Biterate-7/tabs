@@ -49,9 +49,16 @@ import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useAiIndexing } from "@/hooks/use-ai-indexing"
+import { useDependencyStore } from "@/hooks/use-dependency-store"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
+import { GraphLinkDialog } from "@/components/graph/graph-link-dialog"
+import { buildGraphNodes, buildWorkspaceLookup } from "@/lib/graph/relations"
+import { dependenciesOf, groupDependenciesByChild, groupDependenciesByParent } from "@/lib/dependencies/relations"
+import { validateDependency } from "@/lib/dependencies/validation"
+import type { DependencyType } from "@/lib/dependencies/types"
+import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -94,8 +101,94 @@ export function WorkspaceView({
   const [openSelectedConfirmOpen, setOpenSelectedConfirmOpen] = useState(false)
   const [askOpen, setAskOpen] = useState(false)
   const [categorySheetOpen, setCategorySheetOpen] = useState(false)
+  const [depDialogFor, setDepDialogFor] = useState<string | null>(null)
 
   const workspaceId = currentWorkspace?.id ?? ""
+
+  // Falls back to just this workspace's own tabs when the caller doesn't
+  // pass allWorkspaces (some embedded/test contexts don't) — dependencies
+  // still work, just scoped to what's actually available rather than every
+  // workspace in the store.
+  const depScopeWorkspaces = useMemo(
+    () => allWorkspaces ?? (currentWorkspace ? [currentWorkspace] : [{ id: workspaceId, name: "", tabs, createdAt: 0, updatedAt: 0 }]),
+    [allWorkspaces, currentWorkspace, workspaceId, tabs]
+  )
+  const depValidTabIds = useMemo(
+    () => new Set(depScopeWorkspaces.flatMap((w) => w.tabs.map((t) => t.id))),
+    [depScopeWorkspaces]
+  )
+  const { dependencies, addDependency: storeAddDependency } = useDependencyStore(depValidTabIds)
+  const depWorkspaceLookup = useMemo(() => buildWorkspaceLookup(depScopeWorkspaces), [depScopeWorkspaces])
+  const depCandidateNodes = useMemo(
+    () => buildGraphNodes(depScopeWorkspaces.flatMap((w) => w.tabs), depWorkspaceLookup),
+    [depScopeWorkspaces, depWorkspaceLookup]
+  )
+  const depSourceNode = depDialogFor ? (depCandidateNodes.find((n) => n.id === depDialogFor) ?? null) : null
+  const depCandidates = useMemo(
+    () => depCandidateNodes.filter((n) => n.id !== depDialogFor),
+    [depCandidateNodes, depDialogFor]
+  )
+  const depExistingTargetIds = useMemo(
+    () => (depDialogFor ? new Set(dependenciesOf(depDialogFor, dependencies).map((d) => d.childTabId)) : undefined),
+    [depDialogFor, dependencies]
+  )
+  const depNodeById = useMemo(() => new Map(depCandidateNodes.map((n) => [n.id, n])), [depCandidateNodes])
+
+  function handleAddDependencyConfirmed(childTabId: string, type: DependencyType | undefined) {
+    if (!depDialogFor) return
+    const validation = validateDependency(dependencies, depDialogFor, childTabId)
+    if (!validation.ok) {
+      toast.info(validation.reason === "self" ? "A tab can't depend on itself" : "Already a dependency")
+      return
+    }
+    storeAddDependency(depDialogFor, childTabId, type)
+    toast.success("Dependency added")
+  }
+
+  // Compact "↓ N dependencies · ↑ M used by" indicator shown under a tab in
+  // search/filter results (FilteredTabList) — see tab-dependency-indicator.tsx.
+  // Reuses the same dependency store/lookup data the dependency dialog above
+  // already computes; nothing here duplicates that state. A dependency whose
+  // other-end tab can't be resolved via depNodeById (a stale reference the
+  // hook hasn't pruned yet, or one outside depScopeWorkspaces) is silently
+  // skipped rather than shown broken.
+  const dependenciesByParent = useMemo(() => groupDependenciesByParent(dependencies), [dependencies])
+  const dependenciesByChild = useMemo(() => groupDependenciesByChild(dependencies), [dependencies])
+  const dependencyIndicators = useMemo(() => {
+    const map = new Map<string, DependencyIndicatorData>()
+    for (const tab of tabs) {
+      const outgoing = dependenciesByParent.get(tab.id) ?? [];
+      const incoming = dependenciesByChild.get(tab.id) ?? [];
+      if (outgoing.length === 0 && incoming.length === 0) continue
+      const toItem = (id: string) => {
+        const node = depNodeById.get(id)
+        return node ? { id, label: node.tab.title?.trim() || node.tab.domain } : null
+      }
+      map.set(tab.id, {
+        dependencies: outgoing.map((d) => toItem(d.childTabId)).filter((item) => item !== null),
+        usedBy: incoming.map((d) => toItem(d.parentTabId)).filter((item) => item !== null),
+      })
+    }
+    return map
+  }, [tabs, dependenciesByParent, dependenciesByChild, depNodeById])
+
+  // "Select" reuses the existing search/filter mechanism (the same behavior
+  // a user gets from typing in the search box) rather than introducing a new
+  // selection concept — searching by the tab's exact URL narrows the list
+  // down to it. A stale id (depNodeById lookup fails) is a safe no-op.
+  function handleSelectDependencyTab(id: string) {
+    const node = depNodeById.get(id)
+    if (!node) return
+    setCategoryFilter("all")
+    setDuplicatesOnly(false)
+    handleSearch(node.tab.url)
+  }
+
+  function handleOpenDependencyTab(id: string) {
+    const node = depNodeById.get(id)
+    if (!node) return
+    openTab(node.tab.url)
+  }
   // AI indexing (Gemini embeddings) only needs to run once something that
   // actually reads the resulting index has been opened — the Ask TabDump
   // panel, or a category sheet whose "Understand this collection"/"Find
@@ -406,6 +499,7 @@ export function WorkspaceView({
         workspaceSwitcher={workspaceSwitcher}
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}
+        dependencies={dependencies}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
         <AttentionStrip
@@ -454,6 +548,7 @@ export function WorkspaceView({
               onCategoryChange={handleCategoryChange}
               workspaceId={workspaceId}
               onSheetOpenChange={setCategorySheetOpen}
+              onAddDependency={setDepDialogFor}
             />
           ) : (
             <FilteredTabList
@@ -464,6 +559,10 @@ export function WorkspaceView({
               selectionMode={selectionMode}
               selectedIds={selectedIds}
               onToggleSelected={toggleSelected}
+              onAddDependency={setDepDialogFor}
+              dependencyIndicators={dependencyIndicators}
+              onSelectDependencyTab={handleSelectDependencyTab}
+              onOpenDependencyTab={handleOpenDependencyTab}
             />
           )}
         </div>
@@ -523,6 +622,18 @@ export function WorkspaceView({
         indexState={indexState}
         allWorkspaces={allWorkspaces}
         onStoreUpdate={onStoreUpdate}
+      />
+
+      <GraphLinkDialog
+        open={depDialogFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setDepDialogFor(null)
+        }}
+        mode="dependency"
+        sourceNode={depSourceNode}
+        candidates={depCandidates}
+        existingDependencyTargetIds={depExistingTargetIds}
+        onAddDependency={handleAddDependencyConfirmed}
       />
     </div>
   )

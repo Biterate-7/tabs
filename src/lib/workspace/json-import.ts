@@ -1,10 +1,20 @@
 import { createId } from "@/lib/id";
+import { dependencyId, mergeDependencies } from "@/lib/dependencies/relations";
+import { DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types";
+import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import { EXPORT_VERSION } from "./json-export";
 import type { Tab } from "@/lib/tabs/types";
 import type { Group, Workspace } from "./types";
 
 export type ImportResult =
-  | { ok: true; workspaces: Workspace[]; skippedWorkspaces: number; skippedTabs: number }
+  | {
+      ok: true;
+      workspaces: Workspace[];
+      skippedWorkspaces: number;
+      skippedTabs: number;
+      dependencies: TabDependency[];
+      skippedDependencies: number;
+    }
   | { ok: false; reason: "invalid-json" | "invalid-schema" | "unsupported-version" };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -33,10 +43,19 @@ function isValidRawTab(value: unknown): value is Record<string, unknown> {
  * that survived sanitizeGroups (missing groups array, malformed group,
  * dangling reference to a group that was never there), is silently dropped
  * rather than failing the whole tab, per AGENTS.md section 16.
+ *
+ * Also returns `idMap`, from each surviving tab's ORIGINAL raw id to
+ * whatever final id it ended up with (mirrors sanitizeGroups's idMap) — used
+ * by parseWorkspaceExport to remap a dependency's parentTabId/childTabId so
+ * a dependency survives an id regeneration intact, same as tab.groupId does.
  */
-function sanitizeTabs(raw: unknown[], groupIdMap: Map<string, string>): { tabs: Tab[]; skipped: number } {
+function sanitizeTabs(
+  raw: unknown[],
+  groupIdMap: Map<string, string>
+): { tabs: Tab[]; skipped: number; idMap: Map<string, string> } {
   const tabs: Tab[] = [];
   const seenIds = new Set<string>();
+  const idMap = new Map<string, string>();
   let skipped = 0;
 
   for (const entry of raw) {
@@ -48,6 +67,7 @@ function sanitizeTabs(raw: unknown[], groupIdMap: Map<string, string>): { tabs: 
     const rawId = typeof entry.id === "string" ? entry.id : undefined;
     const id = !rawId || seenIds.has(rawId) ? createId("tab") : rawId;
     seenIds.add(id);
+    if (rawId && !idMap.has(rawId)) idMap.set(rawId, id);
 
     const rawGroupId = typeof entry.groupId === "string" ? entry.groupId : undefined;
     const groupId = rawGroupId ? groupIdMap.get(rawGroupId) : undefined;
@@ -59,7 +79,7 @@ function sanitizeTabs(raw: unknown[], groupIdMap: Map<string, string>): { tabs: 
     tabs.push(tab);
   }
 
-  return { tabs, skipped };
+  return { tabs, skipped, idMap };
 }
 
 function isValidRawGroup(value: unknown): value is Record<string, unknown> {
@@ -119,11 +139,13 @@ function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: n
  * this is what guarantees an import can never collide with (and so can
  * never overwrite) a workspace already in the store.
  */
-function sanitizeWorkspace(raw: unknown): { workspace: Workspace; skippedTabs: number; skippedGroups: number } | null {
+function sanitizeWorkspace(
+  raw: unknown
+): { workspace: Workspace; skippedTabs: number; skippedGroups: number; tabIdMap: Map<string, string> } | null {
   if (!isPlainObject(raw) || !Array.isArray(raw.tabs)) return null;
 
-  const { groups, skipped: skippedGroups, idMap } = sanitizeGroups(raw.groups);
-  const { tabs, skipped } = sanitizeTabs(raw.tabs, idMap);
+  const { groups, skipped: skippedGroups, idMap: groupIdMap } = sanitizeGroups(raw.groups);
+  const { tabs, skipped, idMap: tabIdMap } = sanitizeTabs(raw.tabs, groupIdMap);
   const now = Date.now();
 
   const workspace: Workspace = {
@@ -135,7 +157,75 @@ function sanitizeWorkspace(raw: unknown): { workspace: Workspace; skippedTabs: n
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };
 
-  return { workspace, skippedTabs: skipped, skippedGroups };
+  return { workspace, skippedTabs: skipped, skippedGroups, tabIdMap };
+}
+
+function isValidRawDependency(
+  value: unknown
+): value is { parentTabId: string; childTabId: string } & Record<string, unknown> {
+  return (
+    isPlainObject(value) &&
+    typeof value.parentTabId === "string" &&
+    typeof value.childTabId === "string"
+  );
+}
+
+function sanitizeType(value: unknown): DependencyType | undefined {
+  return typeof value === "string" && (DEPENDENCY_TYPE_ORDER as string[]).includes(value)
+    ? (value as DependencyType)
+    : undefined;
+}
+
+/**
+ * Resolves each raw dependency's parentTabId/childTabId through `tabIdMap`
+ * (the combined original-id → final-id map across every workspace in this
+ * import) so a dependency survives even when its referenced tab's id was
+ * regenerated on import (a missing id, or a collision — see sanitizeTabs).
+ * A reference to a tab id that isn't in the map at all (the tab was dropped
+ * as malformed, or never existed) is silently skipped rather than failing
+ * the import — same "sanitize, don't fail" contract as everything else
+ * here. Ids are always reminted via dependencyId rather than trusting the
+ * raw id, since a dependency's identity is its (parent, child) pair, not
+ * whatever string happened to be in the file.
+ */
+function sanitizeDependencies(
+  raw: unknown,
+  tabIdMap: Map<string, string>
+): { dependencies: TabDependency[]; skipped: number } {
+  if (!Array.isArray(raw)) return { dependencies: [], skipped: 0 };
+
+  const dependencies: TabDependency[] = [];
+  let skipped = 0;
+  const now = Date.now();
+
+  for (const entry of raw) {
+    if (!isValidRawDependency(entry)) {
+      skipped += 1;
+      continue;
+    }
+    const parentTabId = tabIdMap.get(entry.parentTabId);
+    const childTabId = tabIdMap.get(entry.childTabId);
+    if (!parentTabId || !childTabId || parentTabId === childTabId) {
+      skipped += 1;
+      continue;
+    }
+    const merged = mergeDependencies(dependencies, [
+      {
+        id: dependencyId(parentTabId, childTabId),
+        parentTabId,
+        childTabId,
+        type: sanitizeType(entry.type),
+        createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
+      },
+    ]);
+    if (merged.length === dependencies.length) {
+      skipped += 1; // duplicate within this same import batch
+      continue;
+    }
+    dependencies.push(merged[merged.length - 1]);
+  }
+
+  return { dependencies, skipped };
 }
 
 export function parseWorkspaceExport(raw: string): ImportResult {
@@ -156,6 +246,9 @@ export function parseWorkspaceExport(raw: string): ImportResult {
   const workspaces: Workspace[] = [];
   let skippedWorkspaces = 0;
   let skippedTabs = 0;
+  // Combined across every workspace in this file — a dependency can point
+  // from a tab in one exported workspace to a tab in another.
+  const combinedTabIdMap = new Map<string, string>();
 
   for (const entry of parsed.workspaces) {
     const sanitized = sanitizeWorkspace(entry);
@@ -165,7 +258,15 @@ export function parseWorkspaceExport(raw: string): ImportResult {
     }
     workspaces.push(sanitized.workspace);
     skippedTabs += sanitized.skippedTabs;
+    for (const [rawId, finalId] of sanitized.tabIdMap) {
+      if (!combinedTabIdMap.has(rawId)) combinedTabIdMap.set(rawId, finalId);
+    }
   }
 
-  return { ok: true, workspaces, skippedWorkspaces, skippedTabs };
+  const { dependencies, skipped: skippedDependencies } = sanitizeDependencies(
+    parsed.dependencies,
+    combinedTabIdMap
+  );
+
+  return { ok: true, workspaces, skippedWorkspaces, skippedTabs, dependencies, skippedDependencies };
 }

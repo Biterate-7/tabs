@@ -18,6 +18,8 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
+import { mergeDependencies } from "@/lib/dependencies/relations"
+import { loadDependencyState, pruneDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
@@ -189,9 +191,21 @@ export function AppShell() {
     const withImported = addWorkspaces(store, result.workspaces)
     persist(switchWorkspace(withImported, result.workspaces[0].id))
 
+    // Dependencies live in their own localStorage-backed store (see
+    // hooks/use-dependency-store.ts), not inside WorkspaceStore itself, so
+    // they're merged directly into that persisted state here rather than
+    // through `store`. Switching `currentId` above changes the key on
+    // <WorkspaceView key={currentWorkspace.id}>, which remounts it and
+    // makes it re-read this merge from localStorage on mount.
+    if (result.dependencies.length > 0) {
+      const validIds = new Set(withImported.workspaces.flatMap((w) => w.tabs.map((t) => t.id)));
+      const merged = mergeDependencies(loadDependencyState().dependencies, result.dependencies);
+      saveDependencyState(pruneDependencyState({ version: 1, dependencies: merged }, validIds));
+    }
+
     const skippedNote =
-      result.skippedWorkspaces > 0 || result.skippedTabs > 0
-        ? ` (skipped ${result.skippedWorkspaces} workspace${result.skippedWorkspaces === 1 ? "" : "s"}, ${result.skippedTabs} tab${result.skippedTabs === 1 ? "" : "s"})`
+      result.skippedWorkspaces > 0 || result.skippedTabs > 0 || result.skippedDependencies > 0
+        ? ` (skipped ${result.skippedWorkspaces} workspace${result.skippedWorkspaces === 1 ? "" : "s"}, ${result.skippedTabs} tab${result.skippedTabs === 1 ? "" : "s"}${result.skippedDependencies > 0 ? `, ${result.skippedDependencies} dependenc${result.skippedDependencies === 1 ? "y" : "ies"}` : ""})`
         : ""
     toast.success(
       `Imported ${result.workspaces.length} workspace${result.workspaces.length === 1 ? "" : "s"}${skippedNote}`

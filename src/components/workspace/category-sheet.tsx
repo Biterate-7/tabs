@@ -20,6 +20,7 @@ export function CategorySheet({
   onOpenChange,
   onCategoryChange,
   workspaceId,
+  onAddDependency,
 }: {
   categoryId: CategoryId | null
   tabs: Tab[]
@@ -27,6 +28,7 @@ export function CategorySheet({
   onOpenChange: (open: boolean) => void
   onCategoryChange: (id: string, category: CategoryId) => void
   workspaceId: string
+  onAddDependency?: (id: string) => void
 }) {
   const def = categoryId ? CATEGORIES[categoryId] : null
 
@@ -51,7 +53,12 @@ export function CategorySheet({
           <ScrollArea className="min-h-0 flex-1 px-4">
             <div className="rounded-lg border border-subtle bg-card px-2 pb-6">
               {tabs.map((tab) => (
-                <TabCard key={tab.id} tab={tab} onCategoryChange={onCategoryChange} />
+                <TabCard
+                  key={tab.id}
+                  tab={tab}
+                  onCategoryChange={onCategoryChange}
+                  onAddDependency={onAddDependency}
+                />
               ))}
             </div>
           </ScrollArea>
