@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import { Check } from "lucide-react"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
@@ -45,40 +45,7 @@ export function GraphEdgePopover({
   onRemoveManualLink: () => void
   onRemoveDependency: () => void
 }) {
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [style, setStyle] = useState<{ left: number; top: number } | null>(null)
-
-  // Reset the computed position during render when a different edge is
-  // clicked, rather than in an effect (see graph-context-menu.tsx for why).
-  const [trackedState, setTrackedState] = useState(state)
-  if (state !== trackedState) {
-    setTrackedState(state)
-    setStyle(null)
-  }
-
-  useLayoutEffect(() => {
-    if (!state || !panelRef.current) return
-    const rect = panelRef.current.getBoundingClientRect()
-    const left = Math.min(state.x, window.innerWidth - rect.width - 8)
-    const top = Math.min(state.y, window.innerHeight - rect.height - 8)
-    setStyle({ left: Math.max(8, left), top: Math.max(8, top) })
-  }, [state])
-
-  useEffect(() => {
-    if (!state) return
-    function handlePointerDown(e: PointerEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose()
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
-    }
-    window.addEventListener("pointerdown", handlePointerDown)
-    window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown)
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [state, onClose])
+  const { panelRef, style } = usePointAnchoredPanel(state, onClose)
 
   if (!state) return null
 
@@ -91,7 +58,7 @@ export function GraphEdgePopover({
       role="dialog"
       aria-label="Why are these connected?"
       className="fixed z-50 w-72 rounded-lg bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10"
-      style={{ left: style?.left ?? state.x, top: style?.top ?? state.y, visibility: style ? "visible" : "hidden" }}
+      style={style}
     >
       {state.kind === "dependency" ? (
         <>

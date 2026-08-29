@@ -15,9 +15,11 @@ export function FilteredTabList({
   selectedIds,
   onToggleSelected,
   onAddDependency,
+  onInspect,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
+  recentlyAddedIds,
 }: {
   tabs: Tab[]
   highlightedIndex: number
@@ -27,10 +29,12 @@ export function FilteredTabList({
   selectedIds?: Set<string>
   onToggleSelected?: (id: string) => void
   onAddDependency?: (id: string) => void
+  onInspect?: (id: string) => void
   /** Keyed by tab id — only present for tabs that actually have a dependency/used-by relationship. Omitted entirely in contexts that don't compute it (e.g. no dependency store wired up). */
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
+  recentlyAddedIds?: Set<string>
 }) {
   if (tabs.length === 0) {
     return (
@@ -57,9 +61,11 @@ export function FilteredTabList({
             selected={selectedIds?.has(tab.id) ?? false}
             onToggleSelected={() => onToggleSelected?.(tab.id)}
             onAddDependency={onAddDependency}
+            onInspect={onInspect}
             dependencyIndicator={dependencyIndicators?.get(tab.id)}
             onSelectDependencyTab={onSelectDependencyTab}
             onOpenDependencyTab={onOpenDependencyTab}
+            isRecentlyAdded={recentlyAddedIds?.has(tab.id) ?? false}
           />
         </div>
       ))}

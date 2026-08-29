@@ -41,6 +41,34 @@ const CLICK_DRAG_THRESHOLD = 4
 const EDGE_HIT_PADDING = 6
 const LABEL_MIN_ZOOM = 0.55
 
+// Motion tuning. Ephemeral effects (node arrival/exit, dependency edge
+// create/remove) are duration-based so they have a definite end; continuous
+// state (selection/search/hover dimming, arrival scale/opacity) instead
+// eases exponentially toward a target each frame — see tickVisualStates.
+const VISUAL_EASE = 0.22
+const NODE_EXIT_MS = 260
+const EDGE_CREATE_PULSE_MS = 550
+const EDGE_REMOVE_MS = 280
+const CAMERA_FOCUS_MS = 380
+const ARRIVAL_JITTER_MS = 180
+
+type NodeVisualState = { alpha: number; scale: number; delayUntil: number }
+type LeavingNode = { x: number; y: number; radius: number; start: number }
+type DepEdgeEffect =
+  | { kind: "create"; start: number }
+  | { kind: "remove"; start: number; x1: number; y1: number; x2: number; y2: number; targetRadius: number }
+
+/** Deterministic per-id jitter (0..range) so simultaneous arrivals don't move in lockstep. */
+function jitterFor(id: string, range: number): number {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0
+  return Math.abs(hash) % range
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
+}
+
 export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -95,6 +123,19 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const nodesRef = useRef<GraphNode[]>(nodes)
   const edgesRef = useRef<GraphEdge[]>(edges)
   const dependencyEdgesRef = useRef<GraphDependencyEdge[]>(dependencyEdges)
+  // Mirrors of props read inside tickVisualStates()/draw() — both are called
+  // from a requestAnimationFrame chain that can outlive the render that
+  // scheduled it (the loop keeps re-invoking the exact same closure via
+  // `requestAnimationFrame(loop)` for as long as physics is still settling,
+  // e.g. on a large graph). Without a ref, a selection/search made while
+  // that chain is still running would be invisible until the loop happens
+  // to stop and get restarted from a fresh render — reading `.current`
+  // instead keeps every frame, however old its closure, looking at this
+  // render's actual values. Same pattern as nodesRef/edgesRef above.
+  const selectedTabIdRef = useRef(selectedTabId)
+  const centerTabIdRef = useRef(centerTabId)
+  const searchMatchesRef = useRef(searchMatches)
+  const displayRef = useRef(display)
 
   const hoveredIdRef = useRef<string | null>(null)
   const dragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
@@ -108,9 +149,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const needsDrawRef = useRef(true)
   const unmountedRef = useRef(false)
 
+  // Motion state — all imperative (refs, not React state) so per-frame
+  // easing never triggers a re-render; see the module-level motion comment.
+  const visualRef = useRef<Map<string, NodeVisualState>>(new Map())
+  const prevNodeIdsRef = useRef<Set<string> | null>(null)
+  const leavingNodesRef = useRef<Map<string, LeavingNode>>(new Map())
+  const prevDependencyEdgesRef = useRef<GraphDependencyEdge[]>([])
+  const depEdgeEffectsRef = useRef<Map<string, DepEdgeEffect>>(new Map())
+  const cameraAnimRef = useRef<{ from: CameraState; to: CameraState; start: number; duration: number } | null>(null)
+  const reducedMotionRef = useRef(false)
+  const hoverNeighborsRef = useRef<Set<string> | null>(null)
+
   nodesRef.current = nodes
   edgesRef.current = edges
   dependencyEdgesRef.current = dependencyEdges
+  selectedTabIdRef.current = selectedTabId
+  centerTabIdRef.current = centerTabId
+  searchMatchesRef.current = searchMatches
+  displayRef.current = display
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
@@ -150,9 +206,127 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     }
     return { neighborIds, edgeIds, dependencyEdgeIds }
   }, [edges, dependencyEdges, selectedTabId])
+  const neighborInfoRef = useRef(neighborInfo)
+  neighborInfoRef.current = neighborInfo
 
   function radiusOf(node: GraphNode): number {
     return computeNodeRadius(display.nodeSize, degreeById.get(node.id) ?? 0, centerDistances?.get(node.id))
+  }
+
+  /** Every node directly connected to `id` by either a relation or dependency edge — used to keep a hovered node's neighborhood legible instead of dimming the whole graph indiscriminately. */
+  function computeNeighborIds(id: string): Set<string> {
+    const ids = new Set<string>()
+    for (const edge of edgesRef.current) {
+      if (edge.source === id) ids.add(edge.target)
+      else if (edge.target === id) ids.add(edge.source)
+    }
+    for (const edge of dependencyEdgesRef.current) {
+      if (edge.parentTabId === id) ids.add(edge.childTabId)
+      else if (edge.childTabId === id) ids.add(edge.parentTabId)
+    }
+    return ids
+  }
+
+  /** Smoothly retargets the camera instead of snapping — used for the "focus a node" / "fit to view" moments where a jump would be disorienting. Direct manipulation (drag-pan, wheel-zoom) stays instant. */
+  function animateCameraTo(target: CameraState) {
+    if (reducedMotionRef.current) {
+      cameraAnimRef.current = null
+      cameraRef.current = target
+      onCameraChange(target)
+      requestDraw()
+      return
+    }
+    cameraAnimRef.current = { from: cameraRef.current, to: target, start: performance.now(), duration: CAMERA_FOCUS_MS }
+    requestDraw()
+  }
+
+  /**
+   * Advances every ephemeral/eased visual (camera focus, node arrival/exit
+   * scale+opacity, dependency edge create/remove effects) by one frame.
+   * Returns whether anything is still mid-animation, so the render loop
+   * knows to keep scheduling frames even after the physics simulation has
+   * settled and no pointer interaction is in progress.
+   */
+  function tickVisualStates(): boolean {
+    let animating = false
+    const now = performance.now()
+    const reduced = reducedMotionRef.current
+
+    if (cameraAnimRef.current) {
+      const { from, to, start, duration } = cameraAnimRef.current
+      const t = Math.min(1, (now - start) / duration)
+      const eased = easeOutCubic(t)
+      cameraRef.current = {
+        x: from.x + (to.x - from.x) * eased,
+        y: from.y + (to.y - from.y) * eased,
+        zoom: from.zoom + (to.zoom - from.zoom) * eased,
+      }
+      onCameraChange(cameraRef.current)
+      if (t >= 1) cameraAnimRef.current = null
+      else animating = true
+    }
+
+    const selectedTabId = selectedTabIdRef.current
+    const searchMatches = searchMatchesRef.current
+    const neighborInfo = neighborInfoRef.current
+    const hasSearch = Boolean(searchMatches && searchMatches.size > 0)
+    const hoveredId = hoveredIdRef.current
+    const hoverNeighbors = hoverNeighborsRef.current
+    for (const node of nodesRef.current) {
+      const v = visualRef.current.get(node.id)
+      if (!v) continue
+
+      if (now < v.delayUntil) {
+        animating = true
+        continue
+      }
+
+      const isSelected = node.id === selectedTabId
+      const isSelectionNeighbor = Boolean(neighborInfo?.neighborIds.has(node.id))
+      const isMatch = hasSearch && searchMatches!.has(node.id)
+      const isHovered = node.id === hoveredId
+      const isHoverNeighbor = Boolean(hoveredId && hoverNeighbors?.has(node.id))
+
+      let targetAlpha = 1
+      if (selectedTabId && !isSelected && !isSelectionNeighbor) targetAlpha = 0.22
+      if (hasSearch && !isMatch) targetAlpha = Math.min(targetAlpha, 0.16)
+      if (!selectedTabId && !hasSearch && hoveredId && !isHovered && !isHoverNeighbor) {
+        targetAlpha = Math.min(targetAlpha, 0.35)
+      }
+      const targetScale = 1
+
+      if (reduced) {
+        v.alpha = targetAlpha
+        v.scale = targetScale
+        continue
+      }
+
+      if (Math.abs(v.alpha - targetAlpha) > 0.003) {
+        v.alpha += (targetAlpha - v.alpha) * VISUAL_EASE
+        animating = true
+      } else {
+        v.alpha = targetAlpha
+      }
+      if (Math.abs(v.scale - targetScale) > 0.003) {
+        v.scale += (targetScale - v.scale) * VISUAL_EASE
+        animating = true
+      } else {
+        v.scale = targetScale
+      }
+    }
+
+    for (const [id, ghost] of leavingNodesRef.current) {
+      if (now - ghost.start >= NODE_EXIT_MS) leavingNodesRef.current.delete(id)
+      else animating = true
+    }
+
+    for (const [id, effect] of depEdgeEffectsRef.current) {
+      const duration = effect.kind === "create" ? EDGE_CREATE_PULSE_MS : EDGE_REMOVE_MS
+      if (now - effect.start >= duration) depEdgeEffectsRef.current.delete(id)
+      else animating = true
+    }
+
+    return animating
   }
 
   function requestDraw() {
@@ -199,13 +373,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       needsDrawRef.current = true
     }
 
+    const stillAnimating = tickVisualStates()
+    if (stillAnimating) needsDrawRef.current = true
+
     if (needsDrawRef.current) {
       draw()
       needsDrawRef.current = false
     }
 
     const stillSettling = !simulation.isSettled()
-    if (stillSettling || isInteracting) {
+    if (stillSettling || isInteracting || stillAnimating) {
       rafRef.current = requestAnimationFrame(loop)
     } else {
       runningRef.current = false
@@ -235,6 +412,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.restore()
 
+    const selectedTabId = selectedTabIdRef.current
+    const centerTabId = centerTabIdRef.current
+    const searchMatches = searchMatchesRef.current
+    const neighborInfo = neighborInfoRef.current
+    const display = displayRef.current
     const hasSearch = Boolean(searchMatches && searchMatches.size > 0)
     const showLabels = camera.zoom >= LABEL_MIN_ZOOM
 
@@ -258,6 +440,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       })
     }
 
+    const now = performance.now()
+
     for (const edge of dependencyEdgesRef.current) {
       const source = simulation.findNode(edge.parentTabId)
       const target = simulation.findNode(edge.childTabId)
@@ -276,6 +460,60 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         isHighlighted,
         isDimmed,
       })
+
+      // A freshly-created dependency animates a small pulse traveling from
+      // parent to child, on top of the edge drawn above, instead of just
+      // popping the relationship into existence.
+      const createEffect = depEdgeEffectsRef.current.get(edge.id)
+      if (createEffect?.kind === "create") {
+        const progress = Math.min(1, (now - createEffect.start) / EDGE_CREATE_PULSE_MS)
+        const t = easeOutCubic(progress)
+        const px = p1.x + (p2.x - p1.x) * t
+        const py = p1.y + (p2.y - p1.y) * t
+        ctx.save()
+        ctx.globalAlpha = 0.9 * (1 - progress)
+        ctx.beginPath()
+        ctx.arc(px, py, 3.5, 0, Math.PI * 2)
+        ctx.fillStyle = palette.edgeDependencyHighlighted
+        ctx.fill()
+        ctx.restore()
+      }
+    }
+
+    // Edges/nodes that just left the visible set finish their fade/shrink
+    // here, using the position snapshotted at removal time (see the
+    // physics-setup effect) reprojected through the *current* camera so a
+    // pan/zoom mid-fade still tracks correctly.
+    for (const effect of depEdgeEffectsRef.current.values()) {
+      if (effect.kind !== "remove") continue
+      const progress = Math.min(1, (now - effect.start) / EDGE_REMOVE_MS)
+      const p1 = worldToScreen(camera, { x: effect.x1, y: effect.y1 }, width, height)
+      const p2 = worldToScreen(camera, { x: effect.x2, y: effect.y2 }, width, height)
+      drawDependencyEdge(ctx, palette, {
+        x1: p1.x,
+        y1: p1.y,
+        x2: p2.x,
+        y2: p2.y,
+        targetRadius: effect.targetRadius * camera.zoom,
+        isHighlighted: false,
+        isDimmed: false,
+        opacity: 1 - progress,
+      })
+    }
+
+    for (const ghost of leavingNodesRef.current.values()) {
+      const progress = Math.min(1, (now - ghost.start) / NODE_EXIT_MS)
+      const screen = worldToScreen(camera, { x: ghost.x, y: ghost.y }, width, height)
+      const radius = ghost.radius * camera.zoom * (1 - progress * 0.5)
+      if (radius <= 0.5) continue
+      ctx.save()
+      ctx.globalAlpha = (1 - progress) * 0.85
+      ctx.beginPath()
+      ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2)
+      ctx.lineWidth = 1.5
+      ctx.strokeStyle = palette.nodeStroke
+      ctx.stroke()
+      ctx.restore()
     }
 
     for (const node of nodesRef.current) {
@@ -291,14 +529,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         continue
       }
 
+      const visual = visualRef.current.get(node.id)
+      const visualAlpha = visual ? visual.alpha : 1
+      const visualScale = visual ? visual.scale : 1
+      if (visualAlpha <= 0.01 || visualScale <= 0.01) continue
+
       const category = (node.tab.category as CategoryId | undefined) ?? "other"
       const color = palette.category[category] ?? palette.category.other
 
       const isSelected = node.id === selectedTabId
       const isCenter = node.id === centerTabId
       const isMatch = hasSearch && searchMatches!.has(node.id)
-      const isDimmed = (Boolean(selectedTabId) && !isSelected && !neighborInfo?.neighborIds.has(node.id)) ||
-        (hasSearch && !isMatch)
+      const isHovered = node.id === hoveredIdRef.current
 
       drawNode(ctx, palette, {
         x: screen.x,
@@ -308,12 +550,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         color,
         favicon: getFavicon(node.tab.domain),
         isSelected,
-        isHovered: node.id === hoveredIdRef.current,
+        isHovered,
         isCenter,
-        isDimmed,
+        isDimmed: false,
         isMatch,
-        showLabel: showLabels,
+        showLabel: showLabels || isHovered,
         textSize: display.textSize,
+        visualAlpha,
+        visualScale,
       })
     }
   }
@@ -324,6 +568,61 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   // engine.ts's setNodes), so this never causes a jarring re-layout flash.
   useEffect(() => {
     const simulation = simulationRef.current!
+    const reduced = reducedMotionRef.current
+    const now = performance.now()
+
+    // Diff node arrivals/departures against the *previous* pass, using the
+    // still-live physics positions before setNodes() below replaces them —
+    // this is what lets a removed node leave behind an accurate "ghost" at
+    // its last real position (see leavingNodesRef) and a newly-added one pop
+    // in from nothing (see visualRef) instead of just appearing.
+    const nextNodeIds = new Set(nodes.map((n) => n.id))
+    if (prevNodeIdsRef.current) {
+      for (const id of prevNodeIdsRef.current) {
+        if (nextNodeIds.has(id)) continue
+        const physicsNode = simulation.findNode(id)
+        if (physicsNode?.x !== undefined && physicsNode?.y !== undefined && !reduced) {
+          leavingNodesRef.current.set(id, { x: physicsNode.x, y: physicsNode.y, radius: physicsNode.radius, start: now })
+        }
+        visualRef.current.delete(id)
+      }
+    }
+    for (const id of nextNodeIds) {
+      if (visualRef.current.has(id)) continue
+      visualRef.current.set(
+        id,
+        reduced ? { alpha: 1, scale: 1, delayUntil: 0 } : { alpha: 0, scale: 0, delayUntil: now + jitterFor(id, ARRIVAL_JITTER_MS) }
+      )
+    }
+    prevNodeIdsRef.current = nextNodeIds
+
+    // Same idea for dependency edges: a newly-created one gets a traveling
+    // pulse, a removed one gets a fade using its last known endpoints.
+    if (!reduced) {
+      const prevById = new Map(prevDependencyEdgesRef.current.map((e) => [e.id, e]))
+      for (const edge of dependencyEdges) {
+        if (!prevById.has(edge.id)) depEdgeEffectsRef.current.set(edge.id, { kind: "create", start: now })
+      }
+      const nextById = new Map(dependencyEdges.map((e) => [e.id, e]))
+      for (const edge of prevDependencyEdgesRef.current) {
+        if (nextById.has(edge.id)) continue
+        const source = simulation.findNode(edge.parentTabId)
+        const target = simulation.findNode(edge.childTabId)
+        if (source?.x !== undefined && source.y !== undefined && target?.x !== undefined && target.y !== undefined) {
+          depEdgeEffectsRef.current.set(edge.id, {
+            kind: "remove",
+            start: now,
+            x1: source.x,
+            y1: source.y,
+            x2: target.x,
+            y2: target.y,
+            targetRadius: target.radius,
+          })
+        }
+      }
+    }
+    prevDependencyEdgesRef.current = dependencyEdges
+
     simulation.setNodes(nodes, radiusOf, positions)
     const physicsEdges: GraphEdge[] = [
       ...edges,
@@ -377,6 +676,17 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     paletteRef.current = resolveGraphPalette()
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)")
+    reducedMotionRef.current = query.matches
+    function handleChange(e: MediaQueryListEvent) {
+      reducedMotionRef.current = e.matches
+    }
+    query.addEventListener("change", handleChange)
+    return () => query.removeEventListener("change", handleChange)
   }, [])
 
   useEffect(() => {
@@ -437,18 +747,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
         .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
       const next = computeFitCamera(points, width, height)
-      cameraRef.current = next
-      onCameraChange(next)
-      requestDraw()
+      animateCameraTo(next)
     },
     centerOnNode(id: string) {
       const simulation = simulationRef.current!
       const node = simulation.findNode(id)
       if (!node || node.x === undefined || node.y === undefined) return
       const next: CameraState = { x: node.x, y: node.y, zoom: Math.max(cameraRef.current.zoom, 1) }
-      cameraRef.current = next
-      onCameraChange(next)
-      requestDraw()
+      animateCameraTo(next)
     },
   }))
 
@@ -587,6 +893,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // view (sidebar included) dozens of times a second for no visible gain.
     if (hitId !== hoveredIdRef.current) {
       hoveredIdRef.current = hitId
+      hoverNeighborsRef.current = hitId ? computeNeighborIds(hitId) : null
       requestDraw()
       onHoverChange(hit ? { node: hit, screenX: e.clientX, screenY: e.clientY } : null)
     }
@@ -636,6 +943,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   function handlePointerLeave() {
     if (hoveredIdRef.current === null) return
     hoveredIdRef.current = null
+    hoverNeighborsRef.current = null
     requestDraw()
     onHoverChange(null)
   }

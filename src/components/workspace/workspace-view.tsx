@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
   Search as SearchIcon,
@@ -14,6 +14,7 @@ import {
   CheckSquare,
   X,
   Waypoints,
+  Layers,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -54,9 +55,11 @@ import type { Tab } from "@/lib/tabs/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { GraphLinkDialog } from "@/components/graph/graph-link-dialog"
+import { TabInspector } from "@/components/workspace/tab-inspector"
 import { buildGraphNodes, buildWorkspaceLookup } from "@/lib/graph/relations"
-import { dependenciesOf, groupDependenciesByChild, groupDependenciesByParent } from "@/lib/dependencies/relations"
+import { dependenciesOf, groupDependenciesByChild, groupDependenciesByParent, usedBy } from "@/lib/dependencies/relations"
 import { validateDependency } from "@/lib/dependencies/validation"
+import { buildDependencyTree } from "@/lib/dependencies/tree"
 import type { DependencyType } from "@/lib/dependencies/types"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 
@@ -71,21 +74,28 @@ export function WorkspaceView({
   tabs,
   onTabsChange,
   onClear,
-  workspaceSwitcher,
   currentWorkspace,
   allWorkspaces,
   onStoreUpdate,
   onOpenGraph,
+  onSwitchWorkspace,
+  recentlyAddedIds,
+  onOpenSidebar,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
   onClear: () => void
-  workspaceSwitcher?: ReactNode
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   /** Lets Ask TabDump's agent mode write back a store mutated by an action (create/rename workspace, move tabs, etc). */
   onStoreUpdate?: (store: WorkspaceStore) => void
   onOpenGraph?: () => void
+  /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
+  onSwitchWorkspace?: (id: string) => void
+  /** Ids from the most recently completed dump/import — drives TabCard's "recently added" highlight. Omitted (not just empty) outside AppShell. */
+  recentlyAddedIds?: Set<string>
+  /** Opens the mobile sidebar drawer — omitted in standalone/test contexts that don't render a shell around this view. */
+  onOpenSidebar?: () => void
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -102,6 +112,7 @@ export function WorkspaceView({
   const [askOpen, setAskOpen] = useState(false)
   const [categorySheetOpen, setCategorySheetOpen] = useState(false)
   const [depDialogFor, setDepDialogFor] = useState<string | null>(null)
+  const [inspectTabId, setInspectTabId] = useState<string | null>(null)
 
   const workspaceId = currentWorkspace?.id ?? ""
 
@@ -117,7 +128,12 @@ export function WorkspaceView({
     () => new Set(depScopeWorkspaces.flatMap((w) => w.tabs.map((t) => t.id))),
     [depScopeWorkspaces]
   )
-  const { dependencies, addDependency: storeAddDependency } = useDependencyStore(depValidTabIds)
+  const {
+    dependencies,
+    addDependency: storeAddDependency,
+    removeDependency: storeRemoveDependency,
+    updateDependencyType: storeUpdateDependencyType,
+  } = useDependencyStore(depValidTabIds)
   const depWorkspaceLookup = useMemo(() => buildWorkspaceLookup(depScopeWorkspaces), [depScopeWorkspaces])
   const depCandidateNodes = useMemo(
     () => buildGraphNodes(depScopeWorkspaces.flatMap((w) => w.tabs), depWorkspaceLookup),
@@ -134,6 +150,20 @@ export function WorkspaceView({
   )
   const depNodeById = useMemo(() => new Map(depCandidateNodes.map((n) => [n.id, n])), [depCandidateNodes])
 
+  const inspectNode = inspectTabId ? (depNodeById.get(inspectTabId) ?? null) : null
+  const inspectDependencies = useMemo(
+    () => (inspectTabId ? dependenciesOf(inspectTabId, dependencies) : []),
+    [inspectTabId, dependencies]
+  )
+  const inspectUsedBy = useMemo(
+    () => (inspectTabId ? usedBy(inspectTabId, dependencies) : []),
+    [inspectTabId, dependencies]
+  )
+  const inspectTree = useMemo(
+    () => (inspectTabId ? buildDependencyTree(inspectTabId, dependencies, depValidTabIds) : []),
+    [inspectTabId, dependencies, depValidTabIds]
+  )
+
   function handleAddDependencyConfirmed(childTabId: string, type: DependencyType | undefined) {
     if (!depDialogFor) return
     const validation = validateDependency(dependencies, depDialogFor, childTabId)
@@ -143,6 +173,11 @@ export function WorkspaceView({
     }
     storeAddDependency(depDialogFor, childTabId, type)
     toast.success("Dependency added")
+  }
+
+  function handleRemoveDependency(depId: string) {
+    storeRemoveDependency(depId)
+    toast.success("Dependency removed")
   }
 
   // Compact "↓ N dependencies · ↑ M used by" indicator shown under a tab in
@@ -375,6 +410,21 @@ export function WorkspaceView({
     ),
   ]
 
+  const workspaceCommands: Command[] =
+    onSwitchWorkspace && allWorkspaces
+      ? allWorkspaces
+          .filter((w) => w.id !== workspaceId)
+          .map(
+            (w): Command => ({
+              id: `workspace-switch-${w.id}`,
+              label: `Switch to ${w.name}`,
+              group: "Workspace",
+              icon: Layers,
+              onSelect: () => onSwitchWorkspace(w.id),
+            })
+          )
+      : []
+
   const selectionCommands: Command[] = [
     {
       id: "selection-toggle",
@@ -453,6 +503,7 @@ export function WorkspaceView({
   const allCommands = [
     ...askCommands,
     ...navigationCommands,
+    ...workspaceCommands,
     ...selectionCommands,
     ...actionCommands,
     ...sortCommands,
@@ -478,7 +529,10 @@ export function WorkspaceView({
   })
 
   return (
-    <div className="min-h-screen">
+    <div
+      className="min-h-screen"
+      style={{ animation: "spatial-enter var(--duration-slow) var(--ease-standard) both" }}
+    >
       <WorkspaceHeader
         tabs={tabs}
         searchValue={query}
@@ -496,7 +550,7 @@ export function WorkspaceView({
         onOpenPalette={() => setCommandPaletteOpen(true)}
         onOpenAsk={() => setAskOpen(true)}
         onOpenGraph={onOpenGraph}
-        workspaceSwitcher={workspaceSwitcher}
+        onOpenSidebar={onOpenSidebar}
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}
         dependencies={dependencies}
@@ -549,6 +603,8 @@ export function WorkspaceView({
               workspaceId={workspaceId}
               onSheetOpenChange={setCategorySheetOpen}
               onAddDependency={setDepDialogFor}
+              onInspect={setInspectTabId}
+              recentlyAddedIds={recentlyAddedIds}
             />
           ) : (
             <FilteredTabList
@@ -560,9 +616,11 @@ export function WorkspaceView({
               selectedIds={selectedIds}
               onToggleSelected={toggleSelected}
               onAddDependency={setDepDialogFor}
+              onInspect={setInspectTabId}
               dependencyIndicators={dependencyIndicators}
               onSelectDependencyTab={handleSelectDependencyTab}
               onOpenDependencyTab={handleOpenDependencyTab}
+              recentlyAddedIds={recentlyAddedIds}
             />
           )}
         </div>
@@ -634,6 +692,23 @@ export function WorkspaceView({
         candidates={depCandidates}
         existingDependencyTargetIds={depExistingTargetIds}
         onAddDependency={handleAddDependencyConfirmed}
+      />
+
+      <TabInspector
+        open={inspectTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setInspectTabId(null)
+        }}
+        node={inspectNode}
+        dependencies={inspectDependencies}
+        usedByDeps={inspectUsedBy}
+        tree={inspectTree}
+        nodeById={depNodeById}
+        onSelectTab={setInspectTabId}
+        onOpenTab={handleOpenDependencyTab}
+        onAddDependency={() => inspectTabId && setDepDialogFor(inspectTabId)}
+        onRemoveDependency={handleRemoveDependency}
+        onChangeDependencyType={storeUpdateDependencyType}
       />
     </div>
   )

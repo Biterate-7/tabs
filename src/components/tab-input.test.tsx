@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { TabInput } from "./tab-input"
 
 describe("TabInput", () => {
-  it("shows an Organizing state before calling onDump", async () => {
+  it("shows an Organizing state, then a DumpConfirmation, before calling onDump", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({
       advanceTimers: vi.advanceTimersByTime,
@@ -22,7 +22,11 @@ describe("TabInput", () => {
     expect(onDump).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(600)
-    await waitFor(() => expect(onDump).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByText("2 tabs imported")).toBeTruthy())
+    expect(onDump).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: /View workspace/ }))
+    expect(onDump).toHaveBeenCalledOnce()
     vi.useRealTimers()
   })
 })

@@ -34,9 +34,11 @@ function postExtensionImport(tabs: { url: string; title?: string }[]) {
 async function dumpOneTab(user: ReturnType<typeof userEvent.setup>, url = "https://github.com/a") {
   await user.type(await screen.findByPlaceholderText(/Paste your tabs/), url);
   await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
-  // TabInput's submit has a deliberate "Organizing…" delay before it
-  // actually calls onDump — wait for the workspace view to really be up
-  // rather than returning mid-transition.
+  // TabInput's submit has a deliberate "Organizing…" delay, then shows a
+  // DumpConfirmation ("Dump tabs" / count / "View workspace") in place of
+  // calling onDump immediately — click through it to actually land in the
+  // workspace view rather than returning mid-transition.
+  await user.click(await screen.findByRole("button", { name: /View workspace/ }));
   await screen.findByPlaceholderText("Search tabs...");
 }
 
@@ -72,6 +74,7 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
+    await user.click(await screen.findByRole("button", { name: /View workspace/ }));
     await user.type(
       await screen.findByPlaceholderText("Search tabs..."),
       "github"
@@ -97,6 +100,7 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
+    await user.click(await screen.findByRole("button", { name: /View workspace/ }));
 
     await user.type(
       await screen.findByPlaceholderText("Search tabs..."),
@@ -126,6 +130,7 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
+    await user.click(await screen.findByRole("button", { name: /View workspace/ }));
     await user.type(
       await screen.findByPlaceholderText("Search tabs..."),
       "github"
@@ -159,6 +164,7 @@ describe("AppShell persistence", () => {
       "https://github.com/a"
     );
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
+    await user.click(await screen.findByRole("button", { name: /View workspace/ }));
     await user.type(
       await screen.findByPlaceholderText("Search tabs..."),
       "github"

@@ -30,15 +30,22 @@ export type NodeVisual = {
   isMatch: boolean;
   showLabel: boolean;
   textSize: number;
+  /** Eased 0..1 opacity multiplier driven by the canvas's own animation loop (selection/search/hover fades, arrival pop-in). Falls back to the isDimmed boolean's snapped value when omitted, so fixtures that don't set it keep working unchanged. */
+  visualAlpha?: number;
+  /** Eased 0..1 scale multiplier for arrival pop-in. Defaults to 1 (no scaling) when omitted. */
+  visualScale?: number;
 };
 
 const LABEL_MAX_WIDTH = 96;
 
 export function drawNode(ctx: DrawContext, palette: GraphPalette, node: NodeVisual): void {
-  const { x, y, radius } = node;
+  const { x, y } = node;
+  const scale = node.visualScale ?? 1;
+  const radius = node.radius * scale;
+  const bodyAlpha = node.visualAlpha ?? (node.isDimmed ? 0.22 : 1);
 
   ctx.save();
-  ctx.globalAlpha = node.isDimmed ? 0.22 : 1;
+  ctx.globalAlpha = bodyAlpha;
 
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -78,7 +85,7 @@ export function drawNode(ctx: DrawContext, palette: GraphPalette, node: NodeVisu
     ctx.font = `${fontSize}px ${palette.fontFamily}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.globalAlpha = node.isDimmed ? 0.35 : 0.9;
+    ctx.globalAlpha = node.visualAlpha !== undefined ? bodyAlpha * (node.isSelected || node.isCenter ? 1 : 0.85) : node.isDimmed ? 0.35 : 0.9;
     ctx.fillStyle = node.isSelected || node.isCenter ? palette.textPrimary : palette.textDim;
     const label = truncateToWidth(ctx, node.label, LABEL_MAX_WIDTH);
     ctx.fillText(label, x, y + radius + 4);

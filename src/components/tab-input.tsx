@@ -3,6 +3,7 @@
 import { useDeferredValue, useMemo, useState } from "react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { DumpConfirmation } from "@/components/dump-confirmation"
 import { parseTabInput } from "@/lib/tabs"
 import type { Tab } from "@/lib/tabs/types"
 
@@ -11,6 +12,10 @@ const ORGANIZING_DELAY_MS = 550
 export function TabInput({ onDump }: { onDump?: (tabs: Tab[]) => void }) {
   const [raw, setRaw] = useState("")
   const [organizing, setOrganizing] = useState(false)
+  // Set once the Organizing beat finishes — replaces the form with
+  // DumpConfirmation, and holds the exact tab list onDump will receive so a
+  // fast-typing user editing `raw` afterward can't change what gets dumped.
+  const [readyTabs, setReadyTabs] = useState<Tab[] | null>(null)
   const deferredRaw = useDeferredValue(raw)
 
   const { tabs, invalidCount } = useMemo(
@@ -33,8 +38,13 @@ export function TabInput({ onDump }: { onDump?: (tabs: Tab[]) => void }) {
     if (validCount === 0 || organizing) return
     setOrganizing(true)
     window.setTimeout(() => {
-      onDump?.(tabs)
+      setOrganizing(false)
+      setReadyTabs(tabs)
     }, ORGANIZING_DELAY_MS)
+  }
+
+  if (readyTabs) {
+    return <DumpConfirmation count={readyTabs.length} onView={() => onDump?.(readyTabs)} />
   }
 
   return (

@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { Copy, ExternalLink, FolderInput, GitBranchPlus, Link2, ListTree, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import type { GraphNode } from "@/lib/graph/types"
 
 export type GraphContextMenuState = { node: GraphNode; x: number; y: number }
@@ -13,8 +14,8 @@ const ITEM_CLASS =
 /**
  * A self-contained fixed-position menu (not base-ui's Menu) because there is
  * no real DOM trigger element at the right-click point to anchor to — nodes
- * are canvas pixels, not DOM nodes. Styled to match DropdownMenuContent for
- * visual consistency with the rest of the app.
+ * are canvas pixels, not DOM nodes (see point-anchored-panel.tsx). Styled to
+ * match DropdownMenuContent for visual consistency with the rest of the app.
  */
 export function GraphContextMenu({
   state,
@@ -46,44 +47,19 @@ export function GraphContextMenu({
   onRemove: () => void
   onClose: () => void
 }) {
-  const panelRef = useRef<HTMLDivElement>(null)
   const [moveOpen, setMoveOpen] = useState(false)
-  const [style, setStyle] = useState<{ left: number; top: number } | null>(null)
 
-  // Reset transient UI (submenu open, computed position) whenever a
-  // different menu invocation comes in — done during render, per React's
-  // "adjusting state when a prop changes" pattern, rather than in an effect
-  // (which would cause an extra visible render at the previous position).
+  // Reset the open submenu whenever a different menu invocation comes in —
+  // done during render, per React's "adjusting state when a prop changes"
+  // pattern, rather than in an effect (which would cause an extra visible
+  // render before the reset took effect).
   const [trackedState, setTrackedState] = useState(state)
   if (state !== trackedState) {
     setTrackedState(state)
     setMoveOpen(false)
-    setStyle(null)
   }
 
-  useLayoutEffect(() => {
-    if (!state || !panelRef.current) return
-    const rect = panelRef.current.getBoundingClientRect()
-    const left = Math.min(state.x, window.innerWidth - rect.width - 8)
-    const top = Math.min(state.y, window.innerHeight - rect.height - 8)
-    setStyle({ left: Math.max(8, left), top: Math.max(8, top) })
-  }, [state])
-
-  useEffect(() => {
-    if (!state) return
-    function handlePointerDown(e: PointerEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose()
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
-    }
-    window.addEventListener("pointerdown", handlePointerDown)
-    window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown)
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [state, onClose])
+  const { panelRef, style } = usePointAnchoredPanel(state, onClose)
 
   if (!state) return null
 
@@ -92,7 +68,7 @@ export function GraphContextMenu({
       ref={panelRef}
       role="menu"
       className="fixed z-50 min-w-44 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
-      style={{ left: style?.left ?? state.x, top: style?.top ?? state.y, visibility: style ? "visible" : "hidden" }}
+      style={style}
     >
       <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onOpenTab}>
         <ExternalLink /> Open tab

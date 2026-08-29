@@ -370,7 +370,10 @@ export function GraphView({
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-background">
+    <div
+      className="fixed inset-0 z-40 bg-background"
+      style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
+    >
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
         <IconButton aria-label="Back to workspace" tooltip="Back to workspace" onClick={onClose}>
           <ChevronLeft />

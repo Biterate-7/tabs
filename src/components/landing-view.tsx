@@ -1,21 +1,23 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
-import { Header } from "@/components/header"
+import { useState } from "react"
+import { PanelLeftOpen } from "lucide-react"
 import { HeroBackground } from "@/components/hero-background"
 import { TabInput } from "@/components/tab-input"
 import { ExtensionInstallGuide } from "@/components/extension-install-guide"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { getOnboardingState, dismissOnboarding } from "@/lib/onboarding"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import type { Tab } from "@/lib/tabs/types"
 
 export function LandingView({
   onDump,
-  workspaceSwitcher,
+  onOpenSidebar,
 }: {
   onDump: (tabs: Tab[]) => void
-  workspaceSwitcher?: ReactNode
+  /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. Omitted in standalone/test contexts that don't render a shell around this view. */
+  onOpenSidebar?: () => void
 }) {
   // Lazy initializer only ever runs on a client-side render (AppShell holds
   // this component back behind its own post-mount `hydrated` gate), so
@@ -37,7 +39,13 @@ export function LandingView({
   return (
     <div className="relative flex min-h-screen flex-1 flex-col">
       <HeroBackground />
-      <Header workspaceSwitcher={workspaceSwitcher} />
+      {onOpenSidebar && (
+        <div className="relative p-3 md:hidden">
+          <IconButton aria-label="Open sidebar" tooltip="Spaces" onClick={onOpenSidebar}>
+            <PanelLeftOpen />
+          </IconButton>
+        </div>
+      )}
       <main className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col items-center px-6 py-20 text-center sm:py-28">
         {onboarding.extensionConnected ? (
           <>

@@ -21,6 +21,8 @@ export function CategorySheet({
   onCategoryChange,
   workspaceId,
   onAddDependency,
+  onInspect,
+  recentlyAddedIds,
 }: {
   categoryId: CategoryId | null
   tabs: Tab[]
@@ -29,6 +31,8 @@ export function CategorySheet({
   onCategoryChange: (id: string, category: CategoryId) => void
   workspaceId: string
   onAddDependency?: (id: string) => void
+  onInspect?: (id: string) => void
+  recentlyAddedIds?: Set<string>
 }) {
   const def = categoryId ? CATEGORIES[categoryId] : null
 
@@ -58,6 +62,8 @@ export function CategorySheet({
                   tab={tab}
                   onCategoryChange={onCategoryChange}
                   onAddDependency={onAddDependency}
+                  onInspect={onInspect}
+                  isRecentlyAdded={recentlyAddedIds?.has(tab.id) ?? false}
                 />
               ))}
             </div>

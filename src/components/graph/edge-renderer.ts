@@ -52,6 +52,8 @@ export type DependencyEdgeVisual = {
   targetRadius: number;
   isHighlighted: boolean;
   isDimmed: boolean;
+  /** Extra 0..1 opacity multiplier for ephemeral create/remove effects. Defaults to 1 (no change) so existing callers are unaffected. */
+  opacity?: number;
 };
 
 export type DependencyEdgeDrawContext = EdgeDrawContext & {
@@ -94,12 +96,14 @@ export function drawDependencyEdge(
       ? palette.edgeDim
       : palette.edgeDependency;
 
+  const opacity = edge.opacity ?? 1;
+
   ctx.beginPath();
   ctx.moveTo(edge.x1, edge.y1);
   ctx.lineTo(lineEndX, lineEndY);
   ctx.strokeStyle = color;
   ctx.lineWidth = edge.isHighlighted ? 1.6 : 1.1;
-  ctx.globalAlpha = edge.isDimmed ? 1 : edge.isHighlighted ? 0.95 : 0.85;
+  ctx.globalAlpha = (edge.isDimmed ? 1 : edge.isHighlighted ? 0.95 : 0.85) * opacity;
   ctx.stroke();
 
   // Arrowhead: a small filled triangle whose tip sits just outside the

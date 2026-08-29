@@ -270,6 +270,47 @@
       transform: translateY(0);
     }
   }
+
+  /* A newly-dumped/imported tab settling into the list — translate + a
+     slight scale, never a bounce/overshoot (see AGENTS.md's dump-animation
+     spec: "avoid cartoon bouncing, excessive overshoot"). Per-instance
+     custom properties (--tab-in-y/--tab-in-x, set inline from a per-tab
+     hash) give each card a slightly different trajectory so a batch of 20
+     doesn't read as 20 identical animations. */
+  @keyframes tab-card-in {
+    from {
+      opacity: 0;
+      transform: translate(var(--tab-in-x, 0px), var(--tab-in-y, 8px)) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+  }
+
+  /* A workspace/view swap moving into focus rather than cross-fading — kept
+     short and purely transform/opacity so it stays cheap at any tab count. */
+  @keyframes spatial-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.995);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes view-pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

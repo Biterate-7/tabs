@@ -1,16 +1,21 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 
 export function useCountUp(target: number, options?: { durationMs?: number }): number {
   const durationMs = options?.durationMs ?? 500
   const [value, setValue] = useState(0)
-  const previousTarget = useRef<number | null>(null)
 
+  // Reruns only when `target`/`durationMs` actually change — React's own
+  // dependency comparison already skips re-invocation on an unchanged
+  // target, so no extra "did this already run for this target" guard is
+  // needed. (A previous version tracked that in a ref, but mutating the
+  // ref inside the effect body meant React's dev-mode double-invoke of
+  // effects — mount, cleanup, mount — poisoned the guard: the ref got set
+  // during the first, soon-to-be-cleaned-up invocation, so the second,
+  // real invocation saw a "no change" and skipped scheduling the
+  // animation entirely, leaving the value stuck at 0.)
   useEffect(() => {
-    if (previousTarget.current === target) return
-    previousTarget.current = target
-
     const prefersReducedMotion =
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches

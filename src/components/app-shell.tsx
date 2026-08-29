@@ -1,10 +1,10 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
-import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
+import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { GraphView } from "@/components/graph/graph-view"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
@@ -20,6 +20,7 @@ import {
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { mergeDependencies } from "@/lib/dependencies/relations"
 import { loadDependencyState, pruneDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
+import { countRelationshipsByWorkspace } from "@/lib/workspace/relationships"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
@@ -27,6 +28,25 @@ import { markDuplicates } from "@/lib/tabs"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
 import type { Tab } from "@/lib/tabs/types"
 import type { WorkspaceStore } from "@/lib/workspace/types"
+
+const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
+const RECENTLY_ADDED_DURATION_MS = 6000
+
+function loadSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function saveSidebarCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0")
+  } catch {
+    // Non-critical UI preference — nothing to recover if storage is unavailable.
+  }
+}
 
 const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   "invalid-json": "That file isn't valid JSON.",
@@ -39,6 +59,17 @@ export function AppShell() {
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
   const [view, setView] = useState<"workspace" | "graph">("workspace")
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
+  // default — distinct from `sidebarCollapsed` (the desktop icon-rail
+  // toggle), which has no meaningful effect on mobile.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  // Ids from the most recently completed import batch, for the "recently
+  // added" tab-card treatment — ephemeral UI-only state (never persisted,
+  // no Tab field backs it), cleared automatically after a short window so
+  // it can never survive a reload or linger indefinitely.
+  const [recentlyAddedIds, setRecentlyAddedIds] = useState<Set<string>>(new Set())
+  const recentlyAddedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Snapshot of the store immediately before the most recent import-type
   // mutation (initial paste dump, extension import). A ref rather than
   // state: it's only ever read inside the toast's "Undo" click handler, so
@@ -57,6 +88,7 @@ export function AppShell() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCanPersist(available)
     setStore(migrateToWorkspaceStore())
+    setSidebarCollapsed(loadSidebarCollapsed())
     if (!available) {
       toast.info("Your workspace won't be saved between visits", {
         description: "Local storage isn't available in this browser.",
@@ -65,9 +97,32 @@ export function AppShell() {
     setHydrated(true)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (recentlyAddedTimerRef.current) clearTimeout(recentlyAddedTimerRef.current)
+    }
+  }, [])
+
   function persist(next: WorkspaceStore) {
     setStore(next)
     if (canPersist) saveWorkspaceStore(next)
+  }
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      saveSidebarCollapsed(next)
+      return next
+    })
+  }
+
+  function markRecentlyAdded(ids: string[]) {
+    if (ids.length === 0) return
+    setRecentlyAddedIds(new Set(ids))
+    if (recentlyAddedTimerRef.current) clearTimeout(recentlyAddedTimerRef.current)
+    recentlyAddedTimerRef.current = setTimeout(() => {
+      setRecentlyAddedIds(new Set())
+    }, RECENTLY_ADDED_DURATION_MS)
   }
 
   function notifyImported(count: number) {
@@ -93,6 +148,7 @@ export function AppShell() {
     const current = getCurrentWorkspace(store)
     undoSnapshotRef.current = store
     persist(updateWorkspaceTabs(store, current.id, tabs))
+    markRecentlyAdded(tabs.map((t) => t.id))
     notifyImported(tabs.length)
   }
 
@@ -119,6 +175,22 @@ export function AppShell() {
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
 
+  // Read-only snapshot for the sidebar's per-space metadata line — recomputed
+  // whenever `store` changes identity (dump, switch, clear, import, category
+  // edits all go through `persist`). Deliberately NOT wired to
+  // useDependencyStore: that hook is written to have exactly one live
+  // instance at a time (WorkspaceView or GraphView, never both — see its own
+  // doc comment), and a second reactive instance here would risk two
+  // independent debounced writers racing on the same localStorage key. A
+  // plain read of the persisted state avoids that risk entirely, at the cost
+  // of the sidebar's relationship counts not updating instantly the moment a
+  // dependency is added/removed from within the workspace — they catch up on
+  // the next store-changing action.
+  const relationshipCounts = useMemo(() => {
+    if (!store || typeof window === "undefined") return {}
+    return countRelationshipsByWorkspace(store.workspaces, loadDependencyState().dependencies)
+  }, [store])
+
   useTitleResolution(currentWorkspace?.tabs ?? [], (tabs) => {
     if (currentWorkspace) handleTitlesResolved(currentWorkspace.id, tabs)
   })
@@ -139,6 +211,7 @@ export function AppShell() {
     undoSnapshotRef.current = store
     const merged = markDuplicates([...current.tabs, ...incoming])
     persist(updateWorkspaceTabs(store, current.id, merged))
+    markRecentlyAdded(incoming.map((t) => t.id))
     notifyImported(incoming.length)
   }
 
@@ -218,36 +291,45 @@ export function AppShell() {
     return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
   }
 
-  const switcher = (
-    <WorkspaceSwitcher
-      workspaces={store.workspaces}
-      currentId={store.currentId}
-      onSwitch={handleSwitchWorkspace}
-      onCreate={handleCreateWorkspace}
-      onRename={handleRenameWorkspace}
-      onDelete={handleDeleteWorkspace}
-      onImportFile={handleImportJson}
-    />
-  )
-
-  if (currentWorkspace.tabs.length === 0) {
-    return <LandingView onDump={handleDump} workspaceSwitcher={switcher} />
-  }
-
   return (
-    // Keyed on the workspace id so switching workspaces remounts fresh —
-    // search/filter/sort/selection state from the previous workspace has
-    // no business surviving into a different one.
-    <WorkspaceView
-      key={currentWorkspace.id}
-      tabs={currentWorkspace.tabs}
-      onTabsChange={handleTabsChange}
-      onClear={handleClear}
-      workspaceSwitcher={switcher}
-      currentWorkspace={currentWorkspace}
-      allWorkspaces={store.workspaces}
-      onStoreUpdate={persist}
-      onOpenGraph={() => setView("graph")}
-    />
+    <div className="flex min-h-screen">
+      <AppSidebar
+        workspaces={store.workspaces}
+        currentId={store.currentId}
+        relationshipCounts={relationshipCounts}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+        mobileOpen={mobileSidebarOpen}
+        onMobileOpenChange={setMobileSidebarOpen}
+        onSwitch={handleSwitchWorkspace}
+        onCreate={handleCreateWorkspace}
+        onRename={handleRenameWorkspace}
+        onDelete={handleDeleteWorkspace}
+        onImportFile={handleImportJson}
+        onOpenGraph={() => setView("graph")}
+      />
+      <div className="min-w-0 flex-1">
+        {currentWorkspace.tabs.length === 0 ? (
+          <LandingView onDump={handleDump} onOpenSidebar={() => setMobileSidebarOpen(true)} />
+        ) : (
+          // Keyed on the workspace id so switching workspaces remounts
+          // fresh — search/filter/sort/selection state from the previous
+          // workspace has no business surviving into a different one.
+          <WorkspaceView
+            key={currentWorkspace.id}
+            tabs={currentWorkspace.tabs}
+            onTabsChange={handleTabsChange}
+            onClear={handleClear}
+            currentWorkspace={currentWorkspace}
+            allWorkspaces={store.workspaces}
+            onStoreUpdate={persist}
+            onOpenGraph={() => setView("graph")}
+            onSwitchWorkspace={handleSwitchWorkspace}
+            recentlyAddedIds={recentlyAddedIds}
+            onOpenSidebar={() => setMobileSidebarOpen(true)}
+          />
+        )}
+      </div>
+    </div>
   )
 }

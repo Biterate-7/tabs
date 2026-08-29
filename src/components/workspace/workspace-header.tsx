@@ -1,8 +1,7 @@
 "use client"
 
-import type { ReactNode } from "react"
 import { toast } from "sonner"
-import { Sparkles, Trash2, MoreHorizontal, FileText, Waypoints } from "lucide-react"
+import { Sparkles, Trash2, MoreHorizontal, FileText, Waypoints, PanelLeftOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Kbd } from "@/components/ui/kbd"
@@ -31,7 +30,7 @@ export function WorkspaceHeader({
   onOpenPalette,
   onOpenAsk,
   onOpenGraph,
-  workspaceSwitcher,
+  onOpenSidebar,
   currentWorkspace,
   allWorkspaces,
   dependencies,
@@ -47,7 +46,8 @@ export function WorkspaceHeader({
   onOpenPalette?: () => void
   onOpenAsk: () => void
   onOpenGraph?: () => void
-  workspaceSwitcher?: ReactNode
+  /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. Omitted in standalone/test contexts that don't render a shell around this view. */
+  onOpenSidebar?: () => void
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   dependencies?: TabDependency[]
@@ -64,10 +64,16 @@ export function WorkspaceHeader({
     <header className="border-b border-subtle">
       <div className="mx-auto max-w-6xl px-6 py-4">
         <div className="flex flex-wrap items-center gap-3">
+          {onOpenSidebar && (
+            <IconButton aria-label="Open sidebar" tooltip="Spaces" onClick={onOpenSidebar} className="md:hidden">
+              <PanelLeftOpen />
+            </IconButton>
+          )}
+
           <div className="mr-auto">
-            {workspaceSwitcher ?? (
-              <p className="text-body font-semibold tracking-tight text-foreground">TabDump</p>
-            )}
+            {/* Workspace identity now lives in the persistent sidebar (see
+               AppSidebar) — this header only needs the tab count, not a
+               second copy of the current workspace's name. */}
             <p className="text-meta text-tertiary">
               {tabCount} tab{tabCount === 1 ? "" : "s"}
             </p>
