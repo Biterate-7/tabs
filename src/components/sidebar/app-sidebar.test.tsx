@@ -79,6 +79,20 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
   });
 
+  it("renders the current workspace name in the switcher when expanded", () => {
+    renderSidebar({ collapsed: false });
+
+    expect(screen.getByText("General")).toBeTruthy();
+  });
+
+  it("removes the workspace name from the switcher (not just clips it) when collapsed", () => {
+    renderSidebar({ collapsed: true });
+
+    expect(screen.queryByText("General")).toBeNull();
+    expect(screen.queryByText(/Gen/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeTruthy();
+  });
+
   it("opens Graph View from the sidebar", async () => {
     const user = userEvent.setup();
     const onOpenGraph = vi.fn();

@@ -102,6 +102,7 @@ export function AppSidebar({
           onRename={onRename}
           onDelete={onDelete}
           onImportFile={onImportFile}
+          collapsed={!showLabels}
         />
         {showLabels && current && (
           <p className="mt-0.5 truncate text-meta text-tertiary">

@@ -12,6 +12,7 @@ import {
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
 import { RenameWorkspaceDialog } from "@/components/workspace/rename-workspace-dialog"
 import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-dialog"
+import { avatarFallback } from "@/lib/workspace/favicon"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -23,6 +24,7 @@ export function WorkspaceSwitcher({
   onRename,
   onDelete,
   onImportFile,
+  collapsed = false,
 }: {
   workspaces: Workspace[]
   currentId: string
@@ -32,6 +34,8 @@ export function WorkspaceSwitcher({
   onDelete: (id: string) => void
   /** Reads and hands off the raw text of a user-picked .json file. */
   onImportFile: (text: string) => void
+  /** Renders the trigger as a compact icon badge with no name text, for the icon-rail sidebar. */
+  collapsed?: boolean
 }) {
   const [newOpen, setNewOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -46,22 +50,34 @@ export function WorkspaceSwitcher({
   }
 
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
+  const { letter, colorVar } = avatarFallback(current?.name ?? "")
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <button
-              type="button"
-              className="flex min-w-0 items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-subtle"
-              aria-label="Switch workspace"
-            >
-              <span className="truncate text-body font-semibold tracking-tight text-foreground">
-                {current?.name ?? "Workspace"}
-              </span>
-              <ChevronsUpDown className="size-3.5 shrink-0 text-tertiary" />
-            </button>
+            collapsed ? (
+              <button
+                type="button"
+                className="mx-auto flex size-8 shrink-0 items-center justify-center rounded-md text-[0.65rem] font-semibold text-white transition-transform duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]"
+                style={{ backgroundColor: `var(${colorVar})` }}
+                aria-label="Switch workspace"
+              >
+                {letter}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-subtle"
+                aria-label="Switch workspace"
+              >
+                <span className="truncate text-body font-semibold tracking-tight text-foreground">
+                  {current?.name ?? "Workspace"}
+                </span>
+                <ChevronsUpDown className="size-3.5 shrink-0 text-tertiary" />
+              </button>
+            )
           }
         />
         <DropdownMenuContent align="start" className="w-64">
