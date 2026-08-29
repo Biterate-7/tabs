@@ -20,6 +20,7 @@ export function FilteredTabList({
   onSelectDependencyTab,
   onOpenDependencyTab,
   recentlyAddedIds,
+  collectionNames,
 }: {
   tabs: Tab[]
   highlightedIndex: number
@@ -35,6 +36,8 @@ export function FilteredTabList({
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
   recentlyAddedIds?: Set<string>
+  /** Tab id → collection name — shown as a quiet "Collection: X" line so a tab's grouping is visible without leaving the search results. */
+  collectionNames?: Map<string, string>
 }) {
   if (tabs.length === 0) {
     return (
@@ -66,6 +69,7 @@ export function FilteredTabList({
             onSelectDependencyTab={onSelectDependencyTab}
             onOpenDependencyTab={onOpenDependencyTab}
             isRecentlyAdded={recentlyAddedIds?.has(tab.id) ?? false}
+            collectionName={collectionNames?.get(tab.id)}
           />
         </div>
       ))}

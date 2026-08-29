@@ -15,6 +15,10 @@ export type GraphPalette = {
   /** Distinct from `edge.manual` so a directional dependency reads as its own relationship type at a glance, without adding a loud new hue. */
   edgeDependency: string;
   edgeDependencyHighlighted: string;
+  /** Collection boundary region — quiet by default, brighter when the collection is selected. Opacity is controlled via globalAlpha at draw time, same convention as every other palette color here. */
+  collectionBoundary: string;
+  collectionBoundarySelected: string;
+  collectionLabel: string;
   category: Record<CategoryId, string>;
   /** Canvas `ctx.font` can't resolve CSS variables, so the app's actual resolved font stack is captured once via `getComputedStyle`. */
   fontFamily: string;
@@ -60,6 +64,9 @@ export function resolveGraphPalette(root: HTMLElement = document.documentElement
     edgeDim: "rgba(255, 255, 255, 0.04)",
     edgeDependency: "rgba(45, 212, 191, 0.55)",
     edgeDependencyHighlighted: "rgba(45, 212, 191, 0.9)",
+    collectionBoundary: v("--border"),
+    collectionBoundarySelected: v("--primary"),
+    collectionLabel: v("--text-tertiary"),
     category,
     fontFamily: getComputedStyle(document.body).fontFamily || "ui-sans-serif, system-ui, sans-serif",
   };

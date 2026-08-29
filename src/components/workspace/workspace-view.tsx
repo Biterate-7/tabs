@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   Search as SearchIcon,
@@ -15,6 +15,8 @@ import {
   X,
   Waypoints,
   Layers,
+  Pencil,
+  ExternalLink as OpenAllIcon,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -62,6 +64,13 @@ import { validateDependency } from "@/lib/dependencies/validation"
 import { buildDependencyTree } from "@/lib/dependencies/tree"
 import type { DependencyType } from "@/lib/dependencies/types"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
+import { useCollectionStore } from "@/hooks/use-collection-store"
+import { getCollectionsForWorkspace, getCollectionTabs } from "@/lib/collections/relations"
+import { validateAddTabToCollection } from "@/lib/collections/validation"
+import { CollectionsSection } from "@/components/workspace/collections-section"
+import { GatherDialog } from "@/components/workspace/gather-dialog"
+import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
+import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -113,6 +122,27 @@ export function WorkspaceView({
   const [categorySheetOpen, setCategorySheetOpen] = useState(false)
   const [depDialogFor, setDepDialogFor] = useState<string | null>(null)
   const [inspectTabId, setInspectTabId] = useState<string | null>(null)
+  const [collapsedCollectionIds, setCollapsedCollectionIds] = useState<Set<string>>(new Set())
+  const [gatherDialogTabIds, setGatherDialogTabIds] = useState<string[] | null>(null)
+  const [renameCollectionId, setRenameCollectionId] = useState<string | null>(null)
+  const [deleteCollectionId, setDeleteCollectionId] = useState<string | null>(null)
+  const [addToCollectionId, setAddToCollectionId] = useState<string | null>(null)
+  const [openAllCollectionId, setOpenAllCollectionId] = useState<string | null>(null)
+  const [recentlyGatheredIds, setRecentlyGatheredIds] = useState<Set<string>>(new Set())
+  const recentlyGatheredTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (recentlyGatheredTimerRef.current) clearTimeout(recentlyGatheredTimerRef.current)
+    }
+  }, [])
+
+  function markRecentlyGathered(ids: string[]) {
+    if (ids.length === 0) return
+    setRecentlyGatheredIds(new Set(ids))
+    if (recentlyGatheredTimerRef.current) clearTimeout(recentlyGatheredTimerRef.current)
+    recentlyGatheredTimerRef.current = setTimeout(() => setRecentlyGatheredIds(new Set()), 6000)
+  }
 
   const workspaceId = currentWorkspace?.id ?? ""
 
@@ -134,6 +164,167 @@ export function WorkspaceView({
     removeDependency: storeRemoveDependency,
     updateDependencyType: storeUpdateDependencyType,
   } = useDependencyStore(depValidTabIds)
+
+  const {
+    collections: allCollections,
+    createCollection: createCollectionStore,
+    renameCollection: renameCollectionStore,
+    deleteCollection: deleteCollectionStore,
+    addTabToCollection: addTabToCollectionStore,
+    addTabsToCollection: addTabsToCollectionStore,
+    removeTabFromCollection: removeTabFromCollectionStore,
+    moveTabToCollection: moveTabToCollectionStore,
+  } = useCollectionStore(depScopeWorkspaces)
+  const workspaceCollections = useMemo(
+    () => getCollectionsForWorkspace(allCollections, workspaceId),
+    [allCollections, workspaceId]
+  )
+  const tabsById = useMemo(() => new Map(tabs.map((t) => [t.id, t])), [tabs])
+  // Tab id → collection name, for the "Collection: X" line shown in search
+  // results (progressive disclosure — see tab-card.tsx's collectionName prop).
+  const tabCollectionNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of workspaceCollections) for (const id of c.tabIds) map.set(id, c.name)
+    return map
+  }, [workspaceCollections])
+  const expandedCollectionIds = useMemo(
+    () => new Set(workspaceCollections.map((c) => c.id).filter((id) => !collapsedCollectionIds.has(id))),
+    [workspaceCollections, collapsedCollectionIds]
+  )
+  const renameCollectionTarget = renameCollectionId
+    ? (workspaceCollections.find((c) => c.id === renameCollectionId) ?? null)
+    : null
+  const deleteCollectionTarget = deleteCollectionId
+    ? (workspaceCollections.find((c) => c.id === deleteCollectionId) ?? null)
+    : null
+  const addToCollectionTarget = addToCollectionId
+    ? (workspaceCollections.find((c) => c.id === addToCollectionId) ?? null)
+    : null
+  const openAllCollectionTarget = openAllCollectionId
+    ? (workspaceCollections.find((c) => c.id === openAllCollectionId) ?? null)
+    : null
+
+  function handleToggleCollectionExpanded(id: string) {
+    setCollapsedCollectionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleNewCollection() {
+    setGatherDialogTabIds([])
+  }
+
+  function handleGatherSelected() {
+    setGatherDialogTabIds([...selectedIds])
+  }
+
+  function handleGatherConfirm(name: string) {
+    const gatheredIds = gatherDialogTabIds ?? []
+    const collection = createCollectionStore(workspaceId, name, gatheredIds)
+    setCollapsedCollectionIds((prev) => {
+      if (!prev.has(collection.id)) return prev
+      const next = new Set(prev)
+      next.delete(collection.id)
+      return next
+    })
+    if (gatheredIds.length > 0) {
+      toast.success(`Gathered ${gatheredIds.length} tab${gatheredIds.length === 1 ? "" : "s"} into "${name}"`)
+      markRecentlyGathered(gatheredIds)
+      exitSelectionMode()
+    } else {
+      toast.success(`Created "${name}"`)
+    }
+    setGatherDialogTabIds(null)
+  }
+
+  function handleAddSelectedToCollection(collectionId: string) {
+    const ids = [...selectedIds]
+    addTabsToCollectionStore(collectionId, ids)
+    const name = workspaceCollections.find((c) => c.id === collectionId)?.name ?? "collection"
+    toast.success(`Added ${ids.length} tab${ids.length === 1 ? "" : "s"} to ${name}`)
+    markRecentlyGathered(ids)
+    exitSelectionMode()
+  }
+
+  function handleAddTabsRequest(collectionId: string) {
+    const name = workspaceCollections.find((c) => c.id === collectionId)?.name ?? "this collection"
+    setAddToCollectionId(collectionId)
+    setSelectionMode(true)
+    setSelectedIds(new Set())
+    toast.info(`Select tabs to add to "${name}", then confirm below.`)
+  }
+
+  function handleConfirmAddToCollection() {
+    if (!addToCollectionId) return
+    handleAddSelectedToCollection(addToCollectionId)
+  }
+
+  function handleRenameCollectionConfirm(name: string) {
+    if (renameCollectionId) renameCollectionStore(renameCollectionId, name)
+    setRenameCollectionId(null)
+  }
+
+  function handleDeleteCollectionConfirm() {
+    if (deleteCollectionId) {
+      deleteCollectionStore(deleteCollectionId)
+      toast.success("Collection deleted")
+    }
+    setDeleteCollectionId(null)
+  }
+
+  function handleRemoveTabFromCollection(collectionId: string, tabId: string) {
+    removeTabFromCollectionStore(collectionId, tabId)
+    toast.success("Removed from collection")
+  }
+
+  function handleMoveTabToCollection(tabId: string, collectionId: string) {
+    moveTabToCollectionStore(tabId, collectionId)
+    const name = workspaceCollections.find((c) => c.id === collectionId)?.name ?? "collection"
+    toast.success(`Moved to ${name}`)
+  }
+
+  function handleDropTabOnCollection(collectionId: string, tabId: string) {
+    const collection = workspaceCollections.find((c) => c.id === collectionId)
+    if (!collection) return
+    const tabWorkspaceId = tabsById.has(tabId) ? workspaceId : undefined
+    const validation = validateAddTabToCollection(allCollections, collectionId, tabId, tabWorkspaceId)
+    if (!validation.ok) {
+      if (validation.reason !== "duplicate") toast.error("Couldn't add that tab to the collection")
+      return
+    }
+    addTabToCollectionStore(collectionId, tabId)
+    toast.success(`Added to ${collection.name}`)
+  }
+
+  function openAllInCollection(id: string) {
+    const collection = workspaceCollections.find((c) => c.id === id)
+    if (!collection) return
+    const collectionTabs = getCollectionTabs(collection, tabsById)
+    collectionTabs.forEach((t) => openTab(t.url, { newTab: true }))
+  }
+
+  function handleOpenAllInCollection(id: string) {
+    const collection = workspaceCollections.find((c) => c.id === id)
+    if (!collection) return
+    if (collection.tabIds.length > OPEN_SELECTED_CONFIRM_THRESHOLD) {
+      setOpenAllCollectionId(id)
+      return
+    }
+    openAllInCollection(id)
+  }
+
+  async function handleExportCollection(id: string) {
+    const collection = workspaceCollections.find((c) => c.id === id)
+    if (!collection) return
+    const collectionTabs = getCollectionTabs(collection, tabsById)
+    const ok = await copyText(urlsText(collectionTabs))
+    if (ok) toast.success(`Copied ${collectionTabs.length} URL${collectionTabs.length === 1 ? "" : "s"}`)
+    else toast.error("Couldn't copy to clipboard")
+  }
+
   const depWorkspaceLookup = useMemo(() => buildWorkspaceLookup(depScopeWorkspaces), [depScopeWorkspaces])
   const depCandidateNodes = useMemo(
     () => buildGraphNodes(depScopeWorkspaces.flatMap((w) => w.tabs), depWorkspaceLookup),
@@ -234,11 +425,33 @@ export function WorkspaceView({
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
 
-  const resultTabs = useMemo(
-    () =>
-      sortTabs(filterTabs(tabs, { query, categoryId: categoryFilter, duplicatesOnly }), sortKey),
-    [tabs, query, categoryFilter, sortKey, duplicatesOnly]
-  )
+  // Searching a collection's name also surfaces its member tabs, in addition
+  // to whatever filterTabs already matches on title/domain/url/category —
+  // still gated by the active category filter/duplicates-only toggle so a
+  // collection match never bypasses the rest of the search UI's filters.
+  const collectionQueryMatchIds = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return null
+    const ids = new Set<string>()
+    for (const c of workspaceCollections) {
+      if (c.name.toLowerCase().includes(q)) for (const id of c.tabIds) ids.add(id)
+    }
+    return ids.size > 0 ? ids : null
+  }, [workspaceCollections, query])
+
+  const resultTabs = useMemo(() => {
+    const base = filterTabs(tabs, { query, categoryId: categoryFilter, duplicatesOnly })
+    if (!collectionQueryMatchIds) return sortTabs(base, sortKey)
+    const baseIds = new Set(base.map((t) => t.id))
+    const extra = tabs.filter(
+      (t) =>
+        collectionQueryMatchIds.has(t.id) &&
+        !baseIds.has(t.id) &&
+        (categoryFilter === "all" || ((t.category as CategoryId | undefined) ?? "other") === categoryFilter) &&
+        (!duplicatesOnly || Boolean(t.isDuplicate))
+    )
+    return sortTabs([...base, ...extra], sortKey)
+  }, [tabs, query, categoryFilter, sortKey, duplicatesOnly, collectionQueryMatchIds])
 
   const attention = useMemo(() => computeAttention(tabs), [tabs])
 
@@ -280,6 +493,7 @@ export function WorkspaceView({
   function exitSelectionMode() {
     setSelectionMode(false)
     setSelectedIds(new Set())
+    setAddToCollectionId(null)
   }
 
   const OPEN_SELECTED_CONFIRM_THRESHOLD = 10
@@ -443,6 +657,50 @@ export function WorkspaceView({
     },
   ]
 
+  const collectionCommands: Command[] = [
+    {
+      id: "collection-new",
+      label: "New collection",
+      group: "Collections",
+      icon: Layers,
+      onSelect: handleNewCollection,
+    },
+    {
+      id: "collection-gather-selected",
+      label: "Gather selected tabs",
+      group: "Collections",
+      icon: Layers,
+      disabled: !(selectionMode && selectedIds.size > 0),
+      onSelect: handleGatherSelected,
+    },
+    ...workspaceCollections.flatMap(
+      (c): Command[] => [
+        {
+          id: `collection-rename-${c.id}`,
+          label: `Rename "${c.name}"`,
+          group: "Collections",
+          icon: Pencil,
+          onSelect: () => setRenameCollectionId(c.id),
+        },
+        {
+          id: `collection-open-all-${c.id}`,
+          label: `Open all in "${c.name}"`,
+          group: "Collections",
+          icon: OpenAllIcon,
+          disabled: c.tabIds.length === 0,
+          onSelect: () => handleOpenAllInCollection(c.id),
+        },
+        {
+          id: `collection-delete-${c.id}`,
+          label: `Delete "${c.name}"`,
+          group: "Collections",
+          icon: Trash2,
+          onSelect: () => setDeleteCollectionId(c.id),
+        },
+      ]
+    ),
+  ]
+
   const counts = categoryCounts(tabs)
 
   const actionCommands: Command[] = [
@@ -505,6 +763,7 @@ export function WorkspaceView({
     ...navigationCommands,
     ...workspaceCommands,
     ...selectionCommands,
+    ...collectionCommands,
     ...actionCommands,
     ...sortCommands,
     ...helpCommands,
@@ -519,6 +778,10 @@ export function WorkspaceView({
       if (shortcutsOpen) return setShortcutsOpen(false)
       if (cleanupOpen) return setCleanupOpen(false)
       if (clearConfirmOpen) return setClearConfirmOpen(false)
+      if (gatherDialogTabIds !== null) return setGatherDialogTabIds(null)
+      if (renameCollectionId !== null) return setRenameCollectionId(null)
+      if (deleteCollectionId !== null) return setDeleteCollectionId(null)
+      if (openAllCollectionId !== null) return setOpenAllCollectionId(null)
       if (openSelectedConfirmOpen) return setOpenSelectedConfirmOpen(false)
       if (selectionMode) return exitSelectionMode()
       if (query) return setQuery("")
@@ -554,6 +817,7 @@ export function WorkspaceView({
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}
         dependencies={dependencies}
+        collections={allCollections}
       />
       <main className="mx-auto max-w-6xl px-6 py-8">
         <AttentionStrip
@@ -582,7 +846,7 @@ export function WorkspaceView({
           </div>
         </div>
 
-        {selectionMode && selectedIds.size > 0 && (
+        {selectionMode && (selectedIds.size > 0 || addToCollectionTarget) && (
           <div className="mt-4">
             <SelectionToolbar
               count={selectedIds.size}
@@ -591,11 +855,48 @@ export function WorkspaceView({
               onOpenSelected={handleOpenSelected}
               onRemoveSelected={handleRemoveSelected}
               onClear={exitSelectionMode}
+              collections={workspaceCollections.map((c) => ({ id: c.id, name: c.name }))}
+              onAddToCollection={handleAddSelectedToCollection}
+              onGatherNew={handleGatherSelected}
+              addToCollectionTarget={
+                addToCollectionTarget
+                  ? { name: addToCollectionTarget.name, onConfirm: handleConfirmAddToCollection }
+                  : undefined
+              }
             />
           </div>
         )}
 
-        <div className="mt-6">
+        <div className="mt-6 space-y-6">
+          {/* Rendered regardless of isBrowsing (not just on the default
+             view) so a collection is always a visible drop target — a tab
+             that isn't gathered yet only ever appears as a draggable row
+             inside search/filter results (FilteredTabList) or a category
+             sheet, never inside CategoryGrid's aggregate cards, so dragging
+             one into a collection requires both to be on screen together. */}
+          <CollectionsSection
+            collections={workspaceCollections}
+            tabsById={tabsById}
+            expandedIds={expandedCollectionIds}
+            onToggleExpanded={handleToggleCollectionExpanded}
+            onCategoryChange={handleCategoryChange}
+            onNewCollection={handleNewCollection}
+            onRename={(id) => setRenameCollectionId(id)}
+            onAddTabs={handleAddTabsRequest}
+            onOpenAll={handleOpenAllInCollection}
+            onExport={handleExportCollection}
+            onDelete={(id) => setDeleteCollectionId(id)}
+            onRemoveTab={handleRemoveTabFromCollection}
+            onMoveTab={handleMoveTabToCollection}
+            onDropTab={handleDropTabOnCollection}
+            onAddDependency={setDepDialogFor}
+            onInspect={setInspectTabId}
+            dependencyIndicators={dependencyIndicators}
+            onSelectDependencyTab={handleSelectDependencyTab}
+            onOpenDependencyTab={handleOpenDependencyTab}
+            recentlyAddedIds={recentlyGatheredIds}
+          />
+
           {isBrowsing ? (
             <CategoryGrid
               tabs={tabs}
@@ -618,6 +919,7 @@ export function WorkspaceView({
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
               dependencyIndicators={dependencyIndicators}
+              collectionNames={tabCollectionNames}
               onSelectDependencyTab={handleSelectDependencyTab}
               onOpenDependencyTab={handleOpenDependencyTab}
               recentlyAddedIds={recentlyAddedIds}
@@ -671,6 +973,61 @@ export function WorkspaceView({
         onOpenChange={setCommandPaletteOpen}
         commands={allCommands}
       />
+
+      <GatherDialog
+        open={gatherDialogTabIds !== null}
+        onOpenChange={(open) => {
+          if (!open) setGatherDialogTabIds(null)
+        }}
+        tabCount={gatherDialogTabIds?.length ?? 0}
+        onConfirm={handleGatherConfirm}
+      />
+
+      {renameCollectionTarget && (
+        <RenameCollectionDialog
+          key={renameCollectionTarget.id}
+          open={renameCollectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setRenameCollectionId(null)
+          }}
+          currentName={renameCollectionTarget.name}
+          onRename={handleRenameCollectionConfirm}
+        />
+      )}
+
+      {deleteCollectionTarget && (
+        <DeleteCollectionDialog
+          open={deleteCollectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteCollectionId(null)
+          }}
+          collectionName={deleteCollectionTarget.name}
+          tabCount={deleteCollectionTarget.tabIds.length}
+          onConfirm={handleDeleteCollectionConfirm}
+        />
+      )}
+
+      <AlertDialog open={openAllCollectionId !== null} onOpenChange={(open) => !open && setOpenAllCollectionId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Open {openAllCollectionTarget?.tabIds.length ?? 0} tabs?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your browser may block or slow down opening this many tabs at once.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (openAllCollectionId) openAllInCollection(openAllCollectionId)
+                setOpenAllCollectionId(null)
+              }}
+            >
+              Open tabs
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AskTabDumpPanel
         open={askOpen}

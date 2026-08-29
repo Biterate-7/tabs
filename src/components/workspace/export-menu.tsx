@@ -21,6 +21,7 @@ import { buildWorkspaceExport, downloadJsonFile, serializeWorkspaceExport } from
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import type { TabDependency } from "@/lib/dependencies/types"
+import type { Collection } from "@/lib/collections/types"
 
 function urlsLabel(n: number) {
   return `${n} URL${n === 1 ? "" : "s"}`
@@ -35,12 +36,14 @@ export function ExportMenu({
   currentWorkspace,
   allWorkspaces,
   dependencies = [],
+  collections = [],
 }: {
   tabs: Tab[]
   /** Enables the JSON export items. Omitted (e.g. in isolated tab-list contexts) they simply don't render. */
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   dependencies?: TabDependency[]
+  collections?: Collection[]
 }) {
   const counts = categoryCounts(tabs)
 
@@ -67,7 +70,7 @@ export function ExportMenu({
 
   function handleExportWorkspaceJson() {
     if (!currentWorkspace) return
-    const text = serializeWorkspaceExport(buildWorkspaceExport([currentWorkspace], dependencies))
+    const text = serializeWorkspaceExport(buildWorkspaceExport([currentWorkspace], dependencies, collections))
     const ok = downloadJsonFile(jsonFilename(currentWorkspace.name.toLowerCase().replace(/\s+/g, "-")), text)
     if (ok) toast.success("Workspace exported as JSON")
     else toast.error("Couldn't export workspace")
@@ -75,7 +78,7 @@ export function ExportMenu({
 
   function handleExportAllJson() {
     if (!allWorkspaces) return
-    const text = serializeWorkspaceExport(buildWorkspaceExport(allWorkspaces, dependencies))
+    const text = serializeWorkspaceExport(buildWorkspaceExport(allWorkspaces, dependencies, collections))
     const ok = downloadJsonFile(jsonFilename("all-workspaces"), text)
     if (ok) toast.success("All workspaces exported as JSON")
     else toast.error("Couldn't export workspaces")

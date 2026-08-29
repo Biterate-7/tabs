@@ -8,8 +8,10 @@ import { Pill } from "@/components/workspace/category-filter-bar"
 import { GraphSearch } from "./graph-search"
 import { GraphSettingsPanel } from "./graph-settings-panel"
 import { GraphDependencyPanel } from "./graph-dependency-panel"
+import { GraphCollectionPanel } from "./graph-collection-panel"
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
 import type { DependencyTreeNode } from "@/lib/dependencies/tree"
+import type { Collection } from "@/lib/collections/types"
 import type {
   ConnectionFilters,
   GraphDepth,
@@ -54,6 +56,11 @@ export function GraphSidebar({
   onAddDependency,
   onRemoveDependency,
   onChangeDependencyType,
+  selectedCollection,
+  onFocusCollection,
+  onRenameCollection,
+  onOpenAllInCollection,
+  onDeleteCollection,
 }: {
   open: boolean
   onToggle: () => void
@@ -84,6 +91,12 @@ export function GraphSidebar({
   onAddDependency: () => void
   onRemoveDependency: (depId: string) => void
   onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
+  /** The currently-selected collection region's detail — omitted (undefined) when nothing is selected. Mutually exclusive with selectedNode (see graph-canvas.tsx). */
+  selectedCollection?: Collection | null
+  onFocusCollection: () => void
+  onRenameCollection: () => void
+  onOpenAllInCollection: () => void
+  onDeleteCollection: () => void
 }) {
   if (!open) {
     return (
@@ -153,6 +166,22 @@ export function GraphSidebar({
                 onAddDependency={onAddDependency}
                 onRemoveDependency={onRemoveDependency}
                 onChangeDependencyType={onChangeDependencyType}
+              />
+            </>
+          )}
+
+          {selectedCollection && (
+            <>
+              <div className="h-px bg-border" />
+              <GraphCollectionPanel
+                collection={selectedCollection}
+                nodeById={allNodeById}
+                onSelectTab={onSelectTab}
+                onOpenTab={onOpenTab}
+                onFocus={onFocusCollection}
+                onRename={onRenameCollection}
+                onOpenAll={onOpenAllInCollection}
+                onDelete={onDeleteCollection}
               />
             </>
           )}

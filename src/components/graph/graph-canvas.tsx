@@ -19,16 +19,21 @@ import {
   worldToScreen,
   zoomAroundPoint,
 } from "@/lib/graph/layout"
+import { computeCollectionBoundary, pointInRect, type CollectionBoundaryRect } from "@/lib/graph/collection-layout"
 import type { CameraState, GraphDependencyEdge, GraphDisplaySettings, GraphEdge, GraphNode } from "@/lib/graph/types"
 import type { CategoryId } from "@/lib/categories"
 import { faviconUrl } from "@/lib/workspace/favicon"
 import { drawNode } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
+import { drawCollectionBoundary } from "./collection-renderer"
+
+export type GraphCollection = { id: string; name: string; tabIds: string[] }
 
 export type GraphCanvasHandle = {
   zoomBy: (factor: number) => void
   fitToView: () => void
   centerOnNode: (id: string) => void
+  focusCollection: (id: string) => void
 }
 
 export type HoverInfo = {
@@ -80,8 +85,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   centerTabId: string | null
   centerDistances?: Map<string, number>
   searchMatches: Set<string> | null
+  /** Collections visible in the current scope — drawn as soft boundary regions behind their member nodes (never as edges; see collection-renderer.ts). */
+  collections: GraphCollection[]
+  selectedCollectionId: string | null
   onCameraChange: (camera: CameraState) => void
   onSelectNode: (id: string | null) => void
+  onSelectCollection: (id: string | null) => void
   onOpenNode: (node: GraphNode) => void
   onContextMenu: (node: GraphNode, screenX: number, screenY: number) => void
   onEdgeClick: (edge: GraphEdge, screenX: number, screenY: number) => void
@@ -100,8 +109,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     centerTabId,
     centerDistances,
     searchMatches,
+    collections,
+    selectedCollectionId,
     onCameraChange,
     onSelectNode,
+    onSelectCollection,
     onOpenNode,
     onContextMenu,
     onEdgeClick,
@@ -159,6 +171,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const cameraAnimRef = useRef<{ from: CameraState; to: CameraState; start: number; duration: number } | null>(null)
   const reducedMotionRef = useRef(false)
   const hoverNeighborsRef = useRef<Set<string> | null>(null)
+  const collectionsRef = useRef<GraphCollection[]>(collections)
+  const selectedCollectionIdRef = useRef(selectedCollectionId)
+  // Populated during draw() with each currently-drawn collection's screen-space
+  // rect, reused for hit-testing on click instead of recomputing it there —
+  // draw() already walked every collection's visible members this frame.
+  const collectionRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
 
   nodesRef.current = nodes
   edgesRef.current = edges
@@ -167,8 +185,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   centerTabIdRef.current = centerTabId
   searchMatchesRef.current = searchMatches
   displayRef.current = display
+  collectionsRef.current = collections
+  selectedCollectionIdRef.current = selectedCollectionId
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
+
+  const selectedCollectionMemberIds = useMemo(() => {
+    if (!selectedCollectionId) return null
+    const collection = collections.find((c) => c.id === selectedCollectionId)
+    return collection ? new Set(collection.tabIds) : null
+  }, [collections, selectedCollectionId])
+  const selectedCollectionMemberIdsRef = useRef(selectedCollectionMemberIds)
+  selectedCollectionMemberIdsRef.current = selectedCollectionMemberIds
 
   const degreeById = useMemo(() => {
     const map = new Map<string, number>()
@@ -287,8 +315,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const isHovered = node.id === hoveredId
       const isHoverNeighbor = Boolean(hoveredId && hoverNeighbors?.has(node.id))
 
+      const selectedCollectionMemberIds = selectedCollectionMemberIdsRef.current
+      const isCollectionMember = Boolean(selectedCollectionMemberIds?.has(node.id))
+
       let targetAlpha = 1
       if (selectedTabId && !isSelected && !isSelectionNeighbor) targetAlpha = 0.22
+      if (selectedCollectionMemberIds && !isCollectionMember) targetAlpha = Math.min(targetAlpha, 0.22)
       if (hasSearch && !isMatch) targetAlpha = Math.min(targetAlpha, 0.16)
       if (!selectedTabId && !hasSearch && hoveredId && !isHovered && !isHoverNeighbor) {
         targetAlpha = Math.min(targetAlpha, 0.35)
@@ -419,6 +451,35 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const display = displayRef.current
     const hasSearch = Boolean(searchMatches && searchMatches.size > 0)
     const showLabels = camera.zoom >= LABEL_MIN_ZOOM
+    const selectedCollectionId = selectedCollectionIdRef.current
+
+    // Collection boundaries first, so every edge/node paints on top of them —
+    // a soft region behind the members, never an edge fanned out to each one
+    // (see collection-renderer.ts's doc comment).
+    collectionRectsRef.current.clear()
+    for (const collection of collectionsRef.current) {
+      const isSelected = collection.id === selectedCollectionId
+      const points: { x: number; y: number; radius: number }[] = []
+      for (const tabId of collection.tabIds) {
+        const physicsNode = simulation.findNode(tabId)
+        if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
+        const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
+        points.push({ x: screen.x, y: screen.y, radius: physicsNode.radius * camera.zoom })
+      }
+      // A lone visible member only gets drawn while explicitly selected —
+      // otherwise every single-tab collection would paint a box around it at
+      // all times, which is exactly the ambient clutter the spec warns against.
+      if (points.length === 0 || (points.length === 1 && !isSelected)) continue
+      const rect = computeCollectionBoundary(points)
+      if (!rect) continue
+      collectionRectsRef.current.set(collection.id, rect)
+      drawCollectionBoundary(ctx, palette, rect, {
+        name: collection.name,
+        isSelected,
+        showLabel: showLabels,
+        textSize: display.textSize,
+      })
+    }
 
     for (const edge of edgesRef.current) {
       const source = simulation.findNode(edge.source)
@@ -629,20 +690,21 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       ...dependencyEdges.map((e) => ({ id: e.id, source: e.parentTabId, target: e.childTabId, reasons: [] })),
     ]
     simulation.setEdges(physicsEdges, display.edgeStrength)
+    simulation.setCollections(collections)
     simulation.reheat(0.5)
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, dependencyEdges, display.nodeSize, display.edgeStrength, centerDistances])
+  }, [nodes, edges, dependencyEdges, collections, display.nodeSize, display.edgeStrength, centerDistances])
 
-  // Selection/search/center-node highlighting only affects what draw()
-  // paints, not the physics simulation — once the layout has settled and
-  // the render loop has stopped, changing these alone would otherwise leave
-  // the canvas showing a stale frame until something else (a drag, a pan)
-  // happens to wake the loop back up.
+  // Selection/search/center-node/collection highlighting only affects what
+  // draw() paints, not the physics simulation — once the layout has settled
+  // and the render loop has stopped, changing these alone would otherwise
+  // leave the canvas showing a stale frame until something else (a drag, a
+  // pan) happens to wake the loop back up.
   useEffect(() => {
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTabId, centerTabId, searchMatches])
+  }, [selectedTabId, centerTabId, searchMatches, selectedCollectionId])
 
   // Resize handling.
   useEffect(() => {
@@ -756,7 +818,28 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const next: CameraState = { x: node.x, y: node.y, zoom: Math.max(cameraRef.current.zoom, 1) }
       animateCameraTo(next)
     },
+    focusCollection(id: string) {
+      const simulation = simulationRef.current!
+      const { width, height } = sizeRef.current
+      const collection = collectionsRef.current.find((c) => c.id === id)
+      if (!collection) return
+      const points = collection.tabIds
+        .map((tabId) => simulation.findNode(tabId))
+        .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
+        .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
+      if (points.length === 0) return
+      const next = computeFitCamera(points, width, height)
+      animateCameraTo(next)
+    },
   }))
+
+  /** Hit-tests the collection boundary rects computed by the most recent draw() call — cheap reuse instead of recomputing every member's screen position on click. */
+  function hitTestCollection(screenX: number, screenY: number): string | null {
+    for (const [id, rect] of collectionRectsRef.current) {
+      if (pointInRect(screenX, screenY, rect)) return id
+    }
+    return null
+  }
 
   function hitTestNode(screenX: number, screenY: number): GraphNode | null {
     const simulation = simulationRef.current!
@@ -915,7 +998,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         onNodeMoved(id, physicsNode.x, physicsNode.y)
       } else {
         const node = nodeById.get(id)
-        if (node) onSelectNode(node.id === selectedTabId ? null : node.id)
+        if (node) {
+          // Clicking a node always wins over any collection selection —
+          // node and collection selection are mutually exclusive states.
+          onSelectCollection(null)
+          onSelectNode(node.id === selectedTabId ? null : node.id)
+        }
       }
       return
     }
@@ -933,8 +1021,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
           return
         }
         const edgeHit = hitTestEdge(point.x, point.y)
-        if (edgeHit) onEdgeClick(edgeHit, e.clientX, e.clientY)
-        else onSelectNode(null)
+        if (edgeHit) {
+          onEdgeClick(edgeHit, e.clientX, e.clientY)
+          return
+        }
+        const collectionHit = hitTestCollection(point.x, point.y)
+        if (collectionHit) {
+          onSelectNode(null)
+          onSelectCollection(collectionHit === selectedCollectionIdRef.current ? null : collectionHit)
+        } else {
+          onSelectNode(null)
+          onSelectCollection(null)
+        }
       }
       return
     }

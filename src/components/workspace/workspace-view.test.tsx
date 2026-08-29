@@ -413,3 +413,157 @@ describe("WorkspaceView dependency indicator in search results", () => {
     expect(screen.getAllByText("github.com").length).toBeGreaterThan(0);
   });
 });
+
+describe("WorkspaceView collections", () => {
+  // renderWorkspace() doesn't pass a `currentWorkspace` prop, so
+  // WorkspaceView falls back to a synthetic workspace with id "" (see its
+  // depScopeWorkspaces fallback) — a seeded collection must use that same
+  // empty-string workspaceId to be visible under this test harness.
+  function seedCollection(id: string, name: string, tabIds: string[]) {
+    window.localStorage.setItem(
+      "tabdump:collections:v1",
+      JSON.stringify({
+        version: 1,
+        collections: [{ id, workspaceId: "", name, tabIds, createdAt: 1, updatedAt: 1 }],
+      })
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("renders a seeded collection above the category grid, expanded by default", async () => {
+    seedCollection("c1", "Physics IA", ["1", "2"]);
+    renderWorkspace();
+
+    expect(await screen.findByText("Physics IA")).toBeTruthy();
+    expect(screen.getByText("2 tabs")).toBeTruthy();
+    const toggle = screen.getByRole("button", { name: /^Physics IA/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("collapses and re-expands via the header toggle", async () => {
+    seedCollection("c1", "Physics IA", ["1"]);
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const toggle = await screen.findByRole("button", { name: /^Physics IA/ });
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("does not force an empty workspace into having a collection", () => {
+    renderWorkspace();
+    expect(screen.queryByText("COLLECTIONS")).toBeFalsy();
+  });
+
+  it("shows an empty collection's call-to-action instead of a tab list", async () => {
+    seedCollection("c1", "Physics IA", []);
+    renderWorkspace();
+
+    expect(await screen.findByText("Physics IA")).toBeTruthy();
+    expect(screen.getByText("0 tabs")).toBeTruthy();
+    expect(screen.getByText(/No tabs yet\. Drag tabs here/)).toBeTruthy();
+  });
+
+  it("renames a collection", async () => {
+    seedCollection("c1", "Old Name", []);
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for Old Name" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const input = await screen.findByPlaceholderText("Collection name");
+    await user.clear(input);
+    await user.type(input, "New Name");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("New Name")).toBeTruthy();
+    expect(screen.queryByText("Old Name")).toBeFalsy();
+  });
+
+  it("deletes a collection without touching its tabs", async () => {
+    seedCollection("c1", "Physics IA", ["1"]);
+    const user = userEvent.setup();
+    const { onTabsChange } = renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for Physics IA" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete collection" }));
+    await user.click(await screen.findByRole("button", { name: "Delete collection" }));
+
+    expect(screen.queryByText("Physics IA")).toBeFalsy();
+    expect(onTabsChange).not.toHaveBeenCalled();
+  });
+
+  it("removes a tab from a collection via its own menu, leaving the collection otherwise intact", async () => {
+    seedCollection("c1", "Physics IA", ["1", "2"]);
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByText("Physics IA");
+    await user.click(screen.getByRole("button", { name: "More actions for github.com" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove from collection" }));
+
+    expect(await screen.findByText("1 tab")).toBeTruthy();
+  });
+
+  it("gathers a multi-tab selection into a brand-new collection", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "a"); // matches github.com, arxiv.org, amazon.in
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByLabelText("Select github.com"));
+    await user.click(screen.getByLabelText("Select arxiv.org"));
+
+    await user.click(screen.getByRole("button", { name: "Gather" }));
+    await user.click(await screen.findByRole("menuitem", { name: "New collection…" }));
+
+    const nameInput = await screen.findByPlaceholderText("Collection name");
+    await user.type(nameInput, "Physics IA");
+    await user.keyboard("{Enter}");
+
+    // Gather clears the selection and drops back out of selection mode.
+    expect(screen.queryByText(/selected$/)).toBeFalsy();
+
+    await user.click(screen.getByLabelText("Clear search"));
+    expect(await screen.findByText("Physics IA")).toBeTruthy();
+    expect(screen.getByText("2 tabs")).toBeTruthy();
+  });
+
+  it("creates an empty collection from the command palette", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(await screen.findByText("New collection"));
+
+    const nameInput = await screen.findByPlaceholderText("Collection name");
+    await user.type(nameInput, "Reading List");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("Reading List")).toBeTruthy();
+    expect(screen.getByText("0 tabs")).toBeTruthy();
+  });
+
+  it("opens every tab in a small collection without a confirmation prompt", async () => {
+    seedCollection("c1", "Physics IA", ["1", "2"]);
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "More actions for Physics IA" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Open all" }));
+
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
+  });
+});

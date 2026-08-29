@@ -535,3 +535,99 @@ describe("parseWorkspaceExport", () => {
     expect(new Set(result.workspaces.map((w) => w.id)).size).toBe(2);
   });
 });
+
+describe("parseWorkspaceExport collections", () => {
+  it("round-trips a collection, remapping its workspaceId and tabIds to the freshly-minted ones", () => {
+    const workspace = makeWorkspace({
+      id: "a",
+      tabs: [
+        { id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example" },
+        { id: "t2", url: "https://b.example", normalizedUrl: "https://b.example", domain: "b.example" },
+      ],
+    });
+    const collections = [
+      { id: "c1", workspaceId: "a", name: "Physics IA", tabIds: ["t1", "t2"], createdAt: 1, updatedAt: 1 },
+    ];
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace], [], collections));
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections).toHaveLength(1);
+    const [t1, t2] = result.workspaces[0].tabs;
+    expect(result.collections[0].name).toBe("Physics IA");
+    expect(result.collections[0].workspaceId).toBe(result.workspaces[0].id);
+    expect(result.collections[0].tabIds.sort()).toEqual([t1.id, t2.id].sort());
+    expect(result.skippedCollections).toBe(0);
+  });
+
+  it("mints a fresh collection id rather than trusting the raw one", () => {
+    const workspace = makeWorkspace({ id: "a" });
+    const collections = [{ id: "same-id", workspaceId: "a", name: "One", tabIds: [], createdAt: 1, updatedAt: 1 }];
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace], [], collections));
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections[0].id).not.toBe("same-id");
+  });
+
+  it("drops a stale tab id from an imported collection instead of failing the entry", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Ws", tabs: [{ id: "t1", url: "https://x.example", normalizedUrl: "https://x.example", domain: "x.example" }], createdAt: 1, updatedAt: 1 }],
+      collections: [{ id: "c1", workspaceId: "a", name: "Physics", tabIds: ["t1", "ghost"], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections[0].tabIds).toEqual([result.workspaces[0].tabs[0].id]);
+  });
+
+  it("drops a collection referencing a workspace that isn't part of this import", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Ws", tabs: [], createdAt: 1, updatedAt: 1 }],
+      collections: [{ id: "c1", workspaceId: "not-in-file", name: "Orphan", tabIds: [], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections).toEqual([]);
+    expect(result.skippedCollections).toBe(1);
+  });
+
+  it("drops a malformed collection (missing name) rather than failing the whole import", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Ws", tabs: [], createdAt: 1, updatedAt: 1 }],
+      collections: [{ id: "c1", workspaceId: "a", tabIds: [] }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections).toEqual([]);
+    expect(result.skippedCollections).toBe(1);
+  });
+
+  it("imports an export with no `collections` field at all (backward compatibility)", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Legacy", tabs: [], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.collections).toEqual([]);
+    expect(result.skippedCollections).toBe(0);
+  });
+});

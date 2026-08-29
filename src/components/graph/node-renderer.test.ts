@@ -39,6 +39,9 @@ const palette: GraphPalette = {
   edgeDim: "#7",
   edgeDependency: "#8",
   edgeDependencyHighlighted: "#9",
+  collectionBoundary: "#c1",
+  collectionBoundarySelected: "#c2",
+  collectionLabel: "#c3",
   category: {
     research: "#a",
     school: "#b",

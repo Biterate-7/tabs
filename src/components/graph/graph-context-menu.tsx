@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, ExternalLink, FolderInput, GitBranchPlus, Link2, ListTree, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import type { GraphNode } from "@/lib/graph/types"
@@ -21,6 +21,7 @@ export function GraphContextMenu({
   state,
   otherWorkspaces,
   dependencyCount,
+  collections,
   onOpenTab,
   onOpenNewTab,
   onCopyUrl,
@@ -29,6 +30,8 @@ export function GraphContextMenu({
   onLinkTo,
   onAddDependency,
   onViewDependencies,
+  onAddToCollection,
+  onGatherNewCollection,
   onRemove,
   onClose,
 }: {
@@ -36,6 +39,8 @@ export function GraphContextMenu({
   otherWorkspaces: { id: string; name: string }[]
   /** Count of dependencies + used-by relationships for the right-clicked node — drives the "View dependencies (N)" label (AGENTS.md section 10). */
   dependencyCount: number
+  /** Collections in the right-clicked node's own workspace — for the "Add to collection" submenu. */
+  collections: { id: string; name: string }[]
   onOpenTab: () => void
   onOpenNewTab: () => void
   onCopyUrl: () => void
@@ -44,10 +49,13 @@ export function GraphContextMenu({
   onLinkTo: () => void
   onAddDependency: () => void
   onViewDependencies: () => void
+  onAddToCollection: (collectionId: string) => void
+  onGatherNewCollection: () => void
   onRemove: () => void
   onClose: () => void
 }) {
   const [moveOpen, setMoveOpen] = useState(false)
+  const [collectionOpen, setCollectionOpen] = useState(false)
 
   // Reset the open submenu whenever a different menu invocation comes in —
   // done during render, per React's "adjusting state when a prop changes"
@@ -57,6 +65,7 @@ export function GraphContextMenu({
   if (state !== trackedState) {
     setTrackedState(state)
     setMoveOpen(false)
+    setCollectionOpen(false)
   }
 
   const { panelRef, style } = usePointAnchoredPanel(state, onClose)
@@ -125,6 +134,38 @@ export function GraphContextMenu({
           <ListTree /> Dependencies ({dependencyCount})
         </button>
       )}
+
+      <div className="-mx-1 my-1 h-px bg-border" />
+
+      <div className="relative">
+        <button
+          type="button"
+          role="menuitem"
+          className={cn(ITEM_CLASS, collectionOpen && "bg-accent text-accent-foreground")}
+          onClick={() => setCollectionOpen((v) => !v)}
+        >
+          <Layers /> Add to collection
+        </button>
+        {collectionOpen && (
+          <div className="absolute top-0 left-full ml-1 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+            {collections.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                role="menuitem"
+                className={ITEM_CLASS}
+                onClick={() => onAddToCollection(c.id)}
+              >
+                {c.name}
+              </button>
+            ))}
+            {collections.length > 0 && <div className="-mx-1 my-1 h-px bg-border" />}
+            <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onGatherNewCollection}>
+              New collection…
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="-mx-1 my-1 h-px bg-border" />
 

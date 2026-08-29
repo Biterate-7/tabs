@@ -17,6 +17,7 @@ import { buildExportText, downloadTextFile } from "@/lib/workspace/export"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import type { TabDependency } from "@/lib/dependencies/types"
+import type { Collection } from "@/lib/collections/types"
 
 export function WorkspaceHeader({
   tabs,
@@ -34,6 +35,7 @@ export function WorkspaceHeader({
   currentWorkspace,
   allWorkspaces,
   dependencies,
+  collections,
 }: {
   tabs: Tab[]
   searchValue: string
@@ -51,6 +53,7 @@ export function WorkspaceHeader({
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   dependencies?: TabDependency[]
+  collections?: Collection[]
 }) {
   const tabCount = tabs.length
 
@@ -103,7 +106,13 @@ export function WorkspaceHeader({
             <Button variant="ghost" size="sm" onClick={onCleanup}>
               <Sparkles /> Cleanup
             </Button>
-            <ExportMenu tabs={tabs} currentWorkspace={currentWorkspace} allWorkspaces={allWorkspaces} dependencies={dependencies} />
+            <ExportMenu
+              tabs={tabs}
+              currentWorkspace={currentWorkspace}
+              allWorkspaces={allWorkspaces}
+              dependencies={dependencies}
+              collections={collections}
+            />
             <Button variant="ghost" size="sm" onClick={onRequestClear}>
               <Trash2 /> Clear
             </Button>

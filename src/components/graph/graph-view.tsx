@@ -40,6 +40,12 @@ import { validateDependency } from "@/lib/dependencies/validation"
 import { buildDependencyTree } from "@/lib/dependencies/tree"
 import { useDependencyStore } from "@/hooks/use-dependency-store"
 import type { DependencyType } from "@/lib/dependencies/types"
+import { useCollectionStore } from "@/hooks/use-collection-store"
+import { getCollectionsForWorkspace } from "@/lib/collections/relations"
+import { validateAddTabToCollection } from "@/lib/collections/validation"
+import { GatherDialog } from "@/components/workspace/gather-dialog"
+import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
+import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
 
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
@@ -66,6 +72,10 @@ export function GraphView({
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState | null>(null)
   const [edgePopover, setEdgePopover] = useState<GraphEdgePopoverState | null>(null)
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const [gatherDialogState, setGatherDialogState] = useState<{ workspaceId: string; tabIds: string[] } | null>(null)
+  const [renameCollectionId, setRenameCollectionId] = useState<string | null>(null)
+  const [deleteCollectionId, setDeleteCollectionId] = useState<string | null>(null)
 
   const pendingCameraRef = useRef<CameraState | null>(null)
   const cameraFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -81,6 +91,14 @@ export function GraphView({
     removeDependency: storeRemoveDependency,
     updateDependencyType: storeUpdateDependencyType,
   } = useDependencyStore(validTabIds)
+
+  const {
+    collections: allCollections,
+    createCollection: createCollectionStore,
+    renameCollection: renameCollectionStore,
+    deleteCollection: deleteCollectionStore,
+    addTabToCollection: addTabToCollectionStore,
+  } = useCollectionStore(store.workspaces)
 
   const scopedTabs = useMemo(() => {
     const all = store.workspaces.flatMap((w) => w.tabs)
@@ -160,6 +178,10 @@ export function GraphView({
     () => (selectedTabId ? buildDependencyTree(selectedTabId, dependencies, validTabIds) : []),
     [selectedTabId, dependencies, validTabIds]
   )
+
+  const selectedCollection = selectedCollectionId
+    ? (allCollections.find((c) => c.id === selectedCollectionId) ?? null)
+    : null
 
   // Debounced localStorage write — state itself always updates immediately
   // so the UI (checkboxes, pills, selection) never feels laggy; only the
@@ -309,6 +331,74 @@ export function GraphView({
     if (node) openTab(node.tab.url)
   }
 
+  function handleSelectCollection(id: string | null) {
+    setSelectedCollectionId(id)
+    if (id) updateSettings({ selectedTabId: null })
+  }
+
+  function handleAddNodeToCollection(tabId: string, collectionId: string) {
+    const collection = allCollections.find((c) => c.id === collectionId)
+    if (!collection) return
+    const tabWorkspaceId = workspaceLookup.get(tabId)?.id
+    const validation = validateAddTabToCollection(allCollections, collectionId, tabId, tabWorkspaceId)
+    if (!validation.ok) {
+      if (validation.reason !== "duplicate") toast.error("Couldn't add that tab to the collection")
+      return
+    }
+    addTabToCollectionStore(collectionId, tabId)
+    toast.success(`Added to ${collection.name}`)
+  }
+
+  function handleGatherNewCollectionForNode(tabId: string) {
+    const workspaceId = workspaceLookup.get(tabId)?.id
+    if (!workspaceId) return
+    setGatherDialogState({ workspaceId, tabIds: [tabId] })
+  }
+
+  function handleGatherConfirm(name: string) {
+    if (!gatherDialogState) return
+    const collection = createCollectionStore(gatherDialogState.workspaceId, name, gatherDialogState.tabIds)
+    toast.success(
+      gatherDialogState.tabIds.length > 0 ? `Gathered into "${name}"` : `Created "${name}"`
+    )
+    setGatherDialogState(null)
+    setSelectedCollectionId(collection.id)
+    updateSettings({ selectedTabId: null })
+  }
+
+  function handleRenameCollectionConfirm(name: string) {
+    if (renameCollectionId) renameCollectionStore(renameCollectionId, name)
+    setRenameCollectionId(null)
+  }
+
+  function handleDeleteCollectionConfirm() {
+    if (deleteCollectionId) {
+      deleteCollectionStore(deleteCollectionId)
+      if (selectedCollectionId === deleteCollectionId) setSelectedCollectionId(null)
+      toast.success("Collection deleted")
+    }
+    setDeleteCollectionId(null)
+  }
+
+  function handleOpenAllInSelectedCollection() {
+    if (!selectedCollection) return
+    for (const tabId of selectedCollection.tabIds) {
+      const node = everyNodeById.get(tabId)
+      if (node) openTab(node.tab.url, { newTab: true })
+    }
+  }
+
+  function handleFocusCollection() {
+    if (selectedCollectionId) canvasHandleRef.current?.focusCollection(selectedCollectionId)
+  }
+
+  const renameCollectionTarget = renameCollectionId
+    ? (allCollections.find((c) => c.id === renameCollectionId) ?? null)
+    : null
+  const deleteCollectionTarget = deleteCollectionId
+    ? (allCollections.find((c) => c.id === deleteCollectionId) ?? null)
+    : null
+
   const contextNode = contextMenu?.node
   const otherWorkspaces = contextNode
     ? store.workspaces
@@ -321,6 +411,12 @@ export function GraphView({
         return counts.dependencies + counts.usedBy
       })()
     : 0
+  const contextNodeCollections = contextNode
+    ? getCollectionsForWorkspace(allCollections, workspaceLookup.get(contextNode.id)?.id ?? "").map((c) => ({
+        id: c.id,
+        name: c.name,
+      }))
+    : []
 
   // Dependency mode deliberately ignores the graph's workspace filter — a
   // tab can depend on a resource living in a different workspace, so the
@@ -405,8 +501,11 @@ export function GraphView({
           centerTabId={centerTabId}
           centerDistances={centerDistances}
           searchMatches={searchMatches}
+          collections={allCollections}
+          selectedCollectionId={selectedCollectionId}
           onCameraChange={handleCameraChange}
           onSelectNode={(id) => updateSettings({ selectedTabId: id })}
+          onSelectCollection={handleSelectCollection}
           onOpenNode={(node) => openTab(node.tab.url)}
           onContextMenu={(node, x, y) => {
             closeMenus()
@@ -465,12 +564,26 @@ export function GraphView({
         onAddDependency={() => selectedTabId && setLinkDialog({ mode: "dependency", tabId: selectedTabId })}
         onRemoveDependency={handleRemoveDependency}
         onChangeDependencyType={handleChangeDependencyType}
+        selectedCollection={selectedCollection}
+        onFocusCollection={handleFocusCollection}
+        onRenameCollection={() => selectedCollectionId && setRenameCollectionId(selectedCollectionId)}
+        onOpenAllInCollection={handleOpenAllInSelectedCollection}
+        onDeleteCollection={() => selectedCollectionId && setDeleteCollectionId(selectedCollectionId)}
       />
 
       <GraphContextMenu
         state={contextMenu}
         otherWorkspaces={otherWorkspaces}
         dependencyCount={contextNodeDependencyCount}
+        collections={contextNodeCollections}
+        onAddToCollection={(collectionId) => {
+          if (contextNode) handleAddNodeToCollection(contextNode.id, collectionId)
+          setContextMenu(null)
+        }}
+        onGatherNewCollection={() => {
+          if (contextNode) handleGatherNewCollectionForNode(contextNode.id)
+          setContextMenu(null)
+        }}
         onOpenTab={() => {
           if (contextNode) openTab(contextNode.tab.url)
           setContextMenu(null)
@@ -537,6 +650,39 @@ export function GraphView({
           if (linkDialog) handleAddDependency(linkDialog.tabId, targetId, type)
         }}
       />
+
+      <GatherDialog
+        open={gatherDialogState !== null}
+        onOpenChange={(open) => {
+          if (!open) setGatherDialogState(null)
+        }}
+        tabCount={gatherDialogState?.tabIds.length ?? 0}
+        onConfirm={handleGatherConfirm}
+      />
+
+      {renameCollectionTarget && (
+        <RenameCollectionDialog
+          key={renameCollectionTarget.id}
+          open={renameCollectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setRenameCollectionId(null)
+          }}
+          currentName={renameCollectionTarget.name}
+          onRename={handleRenameCollectionConfirm}
+        />
+      )}
+
+      {deleteCollectionTarget && (
+        <DeleteCollectionDialog
+          open={deleteCollectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteCollectionId(null)
+          }}
+          collectionName={deleteCollectionTarget.name}
+          tabCount={deleteCollectionTarget.tabIds.length}
+          onConfirm={handleDeleteCollectionConfirm}
+        />
+      )}
     </div>
   )
 }

@@ -46,6 +46,28 @@ describe("buildWorkspaceExport", () => {
     const data = buildWorkspaceExport([makeWorkspace("a")], [dep]);
     expect(data.dependencies).toEqual([]);
   });
+
+  it("defaults to an empty collections array when none are given", () => {
+    expect(buildWorkspaceExport([makeWorkspace("a")]).collections).toEqual([]);
+  });
+
+  it("includes a collection whose workspace is exported", () => {
+    const collection = { id: "c1", workspaceId: "a", name: "Physics IA", tabIds: ["t1"], createdAt: 1, updatedAt: 1 };
+    const data = buildWorkspaceExport([makeWorkspace("a")], [], [collection]);
+    expect(data.collections).toEqual([collection]);
+  });
+
+  it("drops a collection whose workspace isn't exported", () => {
+    const collection = { id: "c1", workspaceId: "not-exported", name: "Orphan", tabIds: [], createdAt: 1, updatedAt: 1 };
+    const data = buildWorkspaceExport([makeWorkspace("a")], [], [collection]);
+    expect(data.collections).toEqual([]);
+  });
+
+  it("prunes a collection's tab ids down to tabs actually in the exported workspace", () => {
+    const collection = { id: "c1", workspaceId: "a", name: "Physics IA", tabIds: ["t1", "stale"], createdAt: 1, updatedAt: 1 };
+    const data = buildWorkspaceExport([makeWorkspace("a")], [], [collection]);
+    expect(data.collections[0].tabIds).toEqual(["t1"]);
+  });
 });
 
 describe("serializeWorkspaceExport", () => {

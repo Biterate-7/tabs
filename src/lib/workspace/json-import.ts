@@ -4,6 +4,7 @@ import { DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import { EXPORT_VERSION } from "./json-export";
 import type { Tab } from "@/lib/tabs/types";
+import type { Collection } from "@/lib/collections/types";
 import type { Group, Workspace } from "./types";
 
 export type ImportResult =
@@ -14,6 +15,8 @@ export type ImportResult =
       skippedTabs: number;
       dependencies: TabDependency[];
       skippedDependencies: number;
+      collections: Collection[];
+      skippedCollections: number;
     }
   | { ok: false; reason: "invalid-json" | "invalid-schema" | "unsupported-version" };
 
@@ -141,7 +144,14 @@ function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: n
  */
 function sanitizeWorkspace(
   raw: unknown
-): { workspace: Workspace; skippedTabs: number; skippedGroups: number; tabIdMap: Map<string, string> } | null {
+): {
+  workspace: Workspace;
+  skippedTabs: number;
+  skippedGroups: number;
+  tabIdMap: Map<string, string>;
+  /** The workspace's ORIGINAL raw id (if it had a string one) — lets the caller build a raw→final workspace id map, mirroring tabIdMap, so a collection's workspaceId reference survives the fresh id this function always mints below. */
+  rawWorkspaceId: string | undefined;
+} | null {
   if (!isPlainObject(raw) || !Array.isArray(raw.tabs)) return null;
 
   const { groups, skipped: skippedGroups, idMap: groupIdMap } = sanitizeGroups(raw.groups);
@@ -157,7 +167,13 @@ function sanitizeWorkspace(
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };
 
-  return { workspace, skippedTabs: skipped, skippedGroups, tabIdMap };
+  return {
+    workspace,
+    skippedTabs: skipped,
+    skippedGroups,
+    tabIdMap,
+    rawWorkspaceId: typeof raw.id === "string" ? raw.id : undefined,
+  };
 }
 
 function isValidRawDependency(
@@ -228,6 +244,72 @@ function sanitizeDependencies(
   return { dependencies, skipped };
 }
 
+function isValidRawCollection(
+  value: unknown
+): value is { workspaceId: string; name: string } & Record<string, unknown> {
+  return (
+    isPlainObject(value) &&
+    typeof value.workspaceId === "string" &&
+    typeof value.name === "string" &&
+    value.name.trim().length > 0
+  );
+}
+
+/**
+ * Mirrors sanitizeDependencies: resolves each raw collection's `workspaceId`
+ * through `workspaceIdMap` and its `tabIds` through `tabIdMap` so both
+ * survive the fresh ids sanitizeWorkspace/this file always mint on import. A
+ * collection naming a workspace that isn't part of this import at all is
+ * dropped (there's nothing sensible to attach it to); a tabId that doesn't
+ * resolve is just left out of the collection rather than failing the whole
+ * entry, same "sanitize, don't fail" contract as everything else here. The
+ * id itself is always reminted (never trusts the raw id) — same reasoning
+ * sanitizeWorkspace already documents for workspace ids: guarantees an
+ * import can never collide with a collection already in the store.
+ */
+function sanitizeCollections(
+  raw: unknown,
+  workspaceIdMap: Map<string, string>,
+  tabIdMap: Map<string, string>
+): { collections: Collection[]; skipped: number } {
+  if (!Array.isArray(raw)) return { collections: [], skipped: 0 };
+
+  const collections: Collection[] = [];
+  let skipped = 0;
+  const now = Date.now();
+
+  for (const entry of raw) {
+    if (!isValidRawCollection(entry)) {
+      skipped += 1;
+      continue;
+    }
+    const workspaceId = workspaceIdMap.get(entry.workspaceId);
+    if (!workspaceId) {
+      skipped += 1;
+      continue;
+    }
+    const rawTabIds = Array.isArray(entry.tabIds) ? entry.tabIds : [];
+    const tabIds = [
+      ...new Set(
+        rawTabIds
+          .filter((id): id is string => typeof id === "string")
+          .map((id) => tabIdMap.get(id))
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+    collections.push({
+      id: createId("collection"),
+      workspaceId,
+      name: entry.name.trim(),
+      tabIds,
+      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
+      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+    });
+  }
+
+  return { collections, skipped };
+}
+
 export function parseWorkspaceExport(raw: string): ImportResult {
   let parsed: unknown;
   try {
@@ -246,9 +328,11 @@ export function parseWorkspaceExport(raw: string): ImportResult {
   const workspaces: Workspace[] = [];
   let skippedWorkspaces = 0;
   let skippedTabs = 0;
-  // Combined across every workspace in this file — a dependency can point
-  // from a tab in one exported workspace to a tab in another.
+  // Combined across every workspace in this file — a dependency (or
+  // collection tab reference) can point from a tab in one exported
+  // workspace to a tab in another.
   const combinedTabIdMap = new Map<string, string>();
+  const combinedWorkspaceIdMap = new Map<string, string>();
 
   for (const entry of parsed.workspaces) {
     const sanitized = sanitizeWorkspace(entry);
@@ -261,12 +345,29 @@ export function parseWorkspaceExport(raw: string): ImportResult {
     for (const [rawId, finalId] of sanitized.tabIdMap) {
       if (!combinedTabIdMap.has(rawId)) combinedTabIdMap.set(rawId, finalId);
     }
+    if (sanitized.rawWorkspaceId && !combinedWorkspaceIdMap.has(sanitized.rawWorkspaceId)) {
+      combinedWorkspaceIdMap.set(sanitized.rawWorkspaceId, sanitized.workspace.id);
+    }
   }
 
   const { dependencies, skipped: skippedDependencies } = sanitizeDependencies(
     parsed.dependencies,
     combinedTabIdMap
   );
+  const { collections, skipped: skippedCollections } = sanitizeCollections(
+    parsed.collections,
+    combinedWorkspaceIdMap,
+    combinedTabIdMap
+  );
 
-  return { ok: true, workspaces, skippedWorkspaces, skippedTabs, dependencies, skippedDependencies };
+  return {
+    ok: true,
+    workspaces,
+    skippedWorkspaces,
+    skippedTabs,
+    dependencies,
+    skippedDependencies,
+    collections,
+    skippedCollections,
+  };
 }

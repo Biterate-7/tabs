@@ -20,6 +20,7 @@ import {
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { mergeDependencies } from "@/lib/dependencies/relations"
 import { loadDependencyState, pruneDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
+import { loadCollectionState, pruneCollectionState, saveCollectionState } from "@/lib/collections/persistence"
 import { countRelationshipsByWorkspace } from "@/lib/workspace/relationships"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
@@ -276,9 +277,23 @@ export function AppShell() {
       saveDependencyState(pruneDependencyState({ version: 1, dependencies: merged }, validIds));
     }
 
+    // Collections live in their own localStorage-backed store (see
+    // hooks/use-collection-store.ts) — same "merge directly into persisted
+    // state, not through `store`" reasoning as dependencies above. Imported
+    // collections always carry freshly-minted ids (see
+    // json-import.ts's sanitizeCollections), so a plain concat can't collide
+    // with anything already in the store.
+    if (result.collections.length > 0) {
+      const validWorkspaceIds = new Set(withImported.workspaces.map((w) => w.id));
+      const tabWorkspaceOf = new Map<string, string>();
+      for (const w of withImported.workspaces) for (const t of w.tabs) tabWorkspaceOf.set(t.id, w.id);
+      const merged = [...loadCollectionState().collections, ...result.collections];
+      saveCollectionState(pruneCollectionState({ version: 1, collections: merged }, validWorkspaceIds, tabWorkspaceOf));
+    }
+
     const skippedNote =
-      result.skippedWorkspaces > 0 || result.skippedTabs > 0 || result.skippedDependencies > 0
-        ? ` (skipped ${result.skippedWorkspaces} workspace${result.skippedWorkspaces === 1 ? "" : "s"}, ${result.skippedTabs} tab${result.skippedTabs === 1 ? "" : "s"}${result.skippedDependencies > 0 ? `, ${result.skippedDependencies} dependenc${result.skippedDependencies === 1 ? "y" : "ies"}` : ""})`
+      result.skippedWorkspaces > 0 || result.skippedTabs > 0 || result.skippedDependencies > 0 || result.skippedCollections > 0
+        ? ` (skipped ${result.skippedWorkspaces} workspace${result.skippedWorkspaces === 1 ? "" : "s"}, ${result.skippedTabs} tab${result.skippedTabs === 1 ? "" : "s"}${result.skippedDependencies > 0 ? `, ${result.skippedDependencies} dependenc${result.skippedDependencies === 1 ? "y" : "ies"}` : ""}${result.skippedCollections > 0 ? `, ${result.skippedCollections} collection${result.skippedCollections === 1 ? "" : "s"}` : ""})`
         : ""
     toast.success(
       `Imported ${result.workspaces.length} workspace${result.workspaces.length === 1 ? "" : "s"}${skippedNote}`

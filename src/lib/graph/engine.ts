@@ -6,6 +6,7 @@ import {
   forceSimulation,
   forceX,
   forceY,
+  type Force,
   type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
@@ -38,15 +39,58 @@ export type GraphSimulation = {
     initialPositions: Record<string, { x: number; y: number }>
   ) => void;
   setEdges: (edges: GraphEdge[], strength: number) => void;
+  /**
+   * Installs a weak attraction pulling each collection's member nodes toward
+   * their shared centroid — the graph's "collection members tend to
+   * cluster" behavior (AGENTS.md-style spec: "influence layout, not
+   * dominate it"). Single-member collections are skipped (nothing to
+   * cluster toward). Deliberately much weaker than the link force so
+   * dependency/manual-link edges and the charge/collide forces still win —
+   * see COLLECTION_FORCE_STRENGTH.
+   */
+  setCollections: (collections: { tabIds: string[] }[]) => void;
   pin: (id: string, x: number, y: number) => void;
   unpin: (id: string) => void;
   findNode: (id: string) => PhysicsNode | undefined;
 };
 
 const ALPHA_MIN = 0.005;
+const COLLECTION_FORCE_STRENGTH = 0.025;
+
+/** A minimal d3-force-compatible force: pulls each group of nodes toward its own centroid, scaled by alpha like any built-in force. */
+function createCollectionForce(strength: number) {
+  let groups: PhysicsNode[][] = [];
+  const force = ((alpha: number) => {
+    for (const group of groups) {
+      if (group.length < 2) continue;
+      let cx = 0;
+      let cy = 0;
+      let counted = 0;
+      for (const n of group) {
+        if (n.x === undefined || n.y === undefined) continue;
+        cx += n.x;
+        cy += n.y;
+        counted += 1;
+      }
+      if (counted === 0) continue;
+      cx /= counted;
+      cy /= counted;
+      for (const n of group) {
+        if (n.x === undefined || n.y === undefined) continue;
+        n.vx = (n.vx ?? 0) + (cx - n.x) * strength * alpha;
+        n.vy = (n.vy ?? 0) + (cy - n.y) * strength * alpha;
+      }
+    }
+  }) as Force<PhysicsNode, PhysicsLink> & { setGroups: (next: PhysicsNode[][]) => void };
+  force.setGroups = (next) => {
+    groups = next;
+  };
+  return force;
+}
 
 export function createGraphSimulation(): GraphSimulation {
   const byId = new Map<string, PhysicsNode>();
+  const collectionForce = createCollectionForce(COLLECTION_FORCE_STRENGTH);
 
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
     .force("charge", forceManyBody().strength(-140).distanceMax(500))
@@ -59,6 +103,7 @@ export function createGraphSimulation(): GraphSimulation {
     .force("center", forceCenter(0, 0).strength(0.015))
     .force("x", forceX(0).strength(0.008))
     .force("y", forceY(0).strength(0.008))
+    .force("collections", collectionForce)
     .alphaMin(ALPHA_MIN)
     .alphaDecay(0.025)
     .velocityDecay(0.32)
@@ -105,6 +150,13 @@ export function createGraphSimulation(): GraphSimulation {
     );
   }
 
+  function setCollections(collections: { tabIds: string[] }[]) {
+    const groups = collections
+      .map((c) => c.tabIds.map((id) => byId.get(id)).filter((n): n is PhysicsNode => Boolean(n)))
+      .filter((group) => group.length >= 2);
+    collectionForce.setGroups(groups);
+  }
+
   return {
     tick: () => {
       if (simulation.alpha() > simulation.alphaMin()) simulation.tick();
@@ -115,6 +167,7 @@ export function createGraphSimulation(): GraphSimulation {
     },
     setNodes,
     setEdges,
+    setCollections,
     pin: (id, x, y) => {
       const node = byId.get(id);
       if (!node) return;

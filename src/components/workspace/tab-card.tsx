@@ -1,7 +1,7 @@
 "use client"
 
-import type { CSSProperties } from "react"
-import { ExternalLink, GitBranchPlus, MoreHorizontal, PanelRight } from "lucide-react"
+import type { CSSProperties, DragEvent } from "react"
+import { ExternalLink, FolderInput, GitBranchPlus, MoreHorizontal, PanelRight, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
@@ -10,8 +10,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { setDragTabId } from "@/lib/collections/drag"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
@@ -59,6 +63,11 @@ export function TabCard({
   onSelectDependencyTab,
   onOpenDependencyTab,
   isRecentlyAdded = false,
+  collectionName,
+  onRemoveFromCollection,
+  otherCollections,
+  onMoveToCollection,
+  draggable = true,
 }: {
   tab: Tab
   onCategoryChange: (id: string, category: CategoryId) => void
@@ -75,18 +84,35 @@ export function TabCard({
   onOpenDependencyTab?: (id: string) => void
   /** True for a short window right after this tab was dumped/imported — a transient, non-persisted highlight (see app-shell.tsx's recentlyAddedIds). */
   isRecentlyAdded?: boolean
+  /** This tab's collection, shown as a quiet "Collection: X" line — search-results context only (progressive disclosure), never inside the collection's own grouped view where it would be redundant. */
+  collectionName?: string
+  /** Omitted entirely outside a CollectionGroup's tab list — the menu item simply doesn't render there. */
+  onRemoveFromCollection?: (id: string) => void
+  /** Other collections in this tab's workspace, for the "Move to collection" submenu. Omitted (or empty) hides the submenu. */
+  otherCollections?: { id: string; name: string }[]
+  onMoveToCollection?: (id: string, collectionId: string) => void
+  /** Disabled during multi-select (checkbox click and drag would otherwise compete for the same pointer-down). */
+  draggable?: boolean
 }) {
   const category = (tab.category as CategoryId | undefined) ?? "other"
   const primaryLine = tab.title?.trim() || tab.domain
+  const isDraggable = draggable && !selectable
+
+  function handleDragStart(e: DragEvent<HTMLDivElement>) {
+    setDragTabId(e.dataTransfer, tab.id)
+  }
 
   return (
     <div
+      draggable={isDraggable}
+      onDragStart={isDraggable ? handleDragStart : undefined}
       className={cn(
         "group flex items-center gap-3 border-b border-subtle px-1 py-2.5 transition-colors duration-(--duration-fast) ease-(--ease-standard) last:border-b-0",
         "focus-within:rounded-md focus-within:ring-2 focus-within:ring-ring/50",
         selected && "rounded-md bg-primary/5",
         isRecentlyAdded && "rounded-md bg-accent-text/[0.06]",
-        tab.isDuplicate && "opacity-70"
+        tab.isDuplicate && "opacity-70",
+        isDraggable && "cursor-grab active:cursor-grabbing"
       )}
       style={isRecentlyAdded ? arrivalStyle(tab.id) : undefined}
     >
@@ -103,6 +129,9 @@ export function TabCard({
       <div className="min-w-0 flex-1">
         <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
         <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
+        {collectionName && (
+          <p className="truncate text-meta text-tertiary">Collection: {collectionName}</p>
+        )}
         {dependencyIndicator && (
           <TabDependencyIndicator
             data={dependencyIndicator}
@@ -169,7 +198,26 @@ export function TabCard({
                 <GitBranchPlus /> Add dependency…
               </DropdownMenuItem>
             )}
-            {(onInspect || onAddDependency) && <DropdownMenuSeparator />}
+            {onRemoveFromCollection && (
+              <DropdownMenuItem onClick={() => onRemoveFromCollection(tab.id)}>
+                <X /> Remove from collection
+              </DropdownMenuItem>
+            )}
+            {onMoveToCollection && otherCollections && otherCollections.length > 0 && (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <FolderInput /> Move to collection
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {otherCollections.map((c) => (
+                    <DropdownMenuItem key={c.id} onClick={() => onMoveToCollection(tab.id, c.id)}>
+                      {c.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            )}
+            {(onInspect || onAddDependency || onRemoveFromCollection || onMoveToCollection) && <DropdownMenuSeparator />}
             {CATEGORY_ORDER.map((id) => (
               <DropdownMenuItem
                 key={id}
