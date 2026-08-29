@@ -9,10 +9,17 @@
 // handful of small text/PNG files. Every entry uses the STORED method (no
 // compression): this keeps the implementation simple and low-risk (no
 // DEFLATE-in-ZIP edge cases to get wrong) and costs nothing meaningful for
-// an archive this small. Entries are placed under an `extension/` prefix
-// so extracting the ZIP always yields a folder literally named `extension`
-// — matching the onboarding guide's instructions exactly, regardless of
-// which unzip tool is used.
+// an archive this small. Entries are stored FLAT at the ZIP root (no
+// `extension/` prefix) so that extracting the downloaded
+// `tabdump-extension.zip` — with Windows' "Extract All", macOS Archive
+// Utility, or `unzip` on the command line — produces manifest.json sitting
+// directly inside the extracted `tabdump-extension` folder. Those tools
+// name the extracted folder after the archive precisely because the
+// archive has no single top-level folder of its own; nesting one in here
+// would instead produce `tabdump-extension/extension/manifest.json`,
+// forcing users to hunt for the folder Chrome's "Load unpacked" actually
+// wants. See the onboarding guide (extension-install-guide.tsx) for the
+// matching install instructions.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { crc32 } from "node:zlib";
 import path from "node:path";
@@ -109,10 +116,10 @@ function buildZip(files) {
     if (ORIGIN_SUBSTITUTED_FILES.has(relativePath) && TARGET_ORIGIN !== DEV_ORIGIN) {
       data = Buffer.from(data.toString("utf8").split(DEV_ORIGIN).join(TARGET_ORIGIN), "utf8");
     }
-    // Force forward slashes and an `extension/` prefix regardless of
-    // platform, per the ZIP spec (paths are always "/"-separated) and so
-    // extraction always yields a folder literally named `extension`.
-    const zipEntryName = `extension/${relativePath.split(path.sep).join("/")}`;
+    // Force forward slashes regardless of platform, per the ZIP spec (paths
+    // are always "/"-separated). No folder prefix: entries sit at the ZIP
+    // root, see the header comment above for why.
+    const zipEntryName = relativePath.split(path.sep).join("/");
     const nameBuf = Buffer.from(zipEntryName, "utf8");
     const crc = crc32(data) >>> 0;
     const size = data.length;
@@ -183,4 +190,4 @@ writeFileSync(OUTPUT_PATH, zip);
 
 console.log(`Extension origin baked into this ZIP: ${TARGET_ORIGIN}`);
 console.log(`Wrote ${OUTPUT_PATH} (${zip.length} bytes, ${files.length} files):`);
-for (const f of files) console.log(`  extension/${f.split(path.sep).join("/")}`);
+for (const f of files) console.log(`  ${f.split(path.sep).join("/")}`);

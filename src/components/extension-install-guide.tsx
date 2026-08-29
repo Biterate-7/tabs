@@ -4,6 +4,10 @@ import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 const STEPS = [
   "Download the TabDump extension.",
   <>
+    Extract the downloaded <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">tabdump-extension.zip</code>{" "}
+    file — do not select the .zip itself in Chrome.
+  </>,
+  <>
     Open <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">chrome://extensions</code> in
     Chrome.
   </>,
@@ -14,8 +18,8 @@ const STEPS = [
     Click <strong className="font-semibold text-foreground">Load unpacked</strong>.
   </>,
   <>
-    Select the downloaded <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">extension</code>{" "}
-    folder.
+    Select the extracted <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">tabdump-extension</code>{" "}
+    folder — the one containing <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">manifest.json</code>.
   </>,
   "Pin TabDump to your Chrome toolbar.",
   "Return to TabDump and click the TabDump extension.",
