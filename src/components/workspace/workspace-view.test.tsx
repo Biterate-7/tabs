@@ -163,6 +163,18 @@ describe("WorkspaceView search/filter/sort", () => {
     expect(locationAssignMock).toHaveBeenCalledWith(expect.any(String));
     expect(openSpy).not.toHaveBeenCalled();
   });
+
+  it("clicking a saved tab card's Open button navigates the current tab in place, not a new one", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.type(screen.getByPlaceholderText("Search tabs..."), "github");
+    await user.click(screen.getByRole("button", { name: "Open github.com" }));
+
+    expect(locationAssignMock).toHaveBeenCalledTimes(1);
+    expect(locationAssignMock).toHaveBeenCalledWith("https://github.com/a");
+    expect(openSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("WorkspaceView cleanup (Phase 6)", () => {
