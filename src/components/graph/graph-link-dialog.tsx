@@ -93,14 +93,14 @@ export function GraphLinkDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(85vh,32rem)] w-full flex-col overflow-hidden sm:max-w-md">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         {isDependency && sourceNode && (
-          <div>
+          <div className="shrink-0">
             <p className="mb-1 text-label text-tertiary">PARENT</p>
             <div className="flex items-center gap-2.5 rounded-md border border-subtle bg-muted/40 px-2.5 py-2">
               <TabFavicon domain={sourceNode.tab.domain} size={20} />
@@ -110,7 +110,7 @@ export function GraphLinkDialog({
         )}
 
         {isDependency && picked ? (
-          <div className="space-y-3 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 slide-in-from-bottom-1">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 slide-in-from-bottom-1">
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <p className="text-label text-tertiary">DEPENDS ON</p>
@@ -165,13 +165,14 @@ export function GraphLinkDialog({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={isDependency ? "Search tabs…" : "Search tabs to link…"}
+              className="shrink-0"
             />
 
-            <ScrollArea className="h-64 -mx-1 px-1">
+            <ScrollArea className="min-h-0 flex-1 -mx-1 px-1">
               {results.length === 0 ? (
                 <EmptyState icon={Link2} title="No tabs match" description="Try a different search." />
               ) : (
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 pb-2">
                   {results.map((node) => {
                     const isExisting = isDependency && (existingDependencyTargetIds?.has(node.id) ?? false)
                     return (
@@ -201,7 +202,7 @@ export function GraphLinkDialog({
         )}
 
         {isDependency && picked && (
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => handleOpenChange(false)}>
               Cancel
             </Button>
