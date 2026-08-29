@@ -28,6 +28,31 @@ if (typeof Element !== "undefined" && !Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
 
+// Nor requestAnimationFrame — the Graph View's canvas render loop drives its
+// physics tick from it. A setTimeout-based stand-in is enough for tests that
+// mount it; components cancel their loop on unmount via cancelAnimationFrame,
+// so this never leaks a pending timer past a test's cleanup().
+if (typeof globalThis.requestAnimationFrame === "undefined") {
+  let nextHandle = 0;
+  const pending = new Map<number, ReturnType<typeof setTimeout>>();
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+    const handle = ++nextHandle;
+    const timeoutId = setTimeout(() => {
+      pending.delete(handle);
+      callback(performance.now());
+    }, 16);
+    pending.set(handle, timeoutId);
+    return handle;
+  };
+  globalThis.cancelAnimationFrame = (handle: number) => {
+    const timeoutId = pending.get(handle);
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      pending.delete(handle);
+    }
+  };
+}
+
 // Nor the Pointer Capture APIs — sonner's toast swipe-to-dismiss handling
 // calls `setPointerCapture` on pointerdown. Without a stub, userEvent's
 // realistic pointer-event simulation throws from inside React's event

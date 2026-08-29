@@ -13,6 +13,7 @@ import {
   Keyboard,
   CheckSquare,
   X,
+  Waypoints,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -67,6 +68,7 @@ export function WorkspaceView({
   currentWorkspace,
   allWorkspaces,
   onStoreUpdate,
+  onOpenGraph,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
@@ -76,6 +78,7 @@ export function WorkspaceView({
   allWorkspaces?: Workspace[]
   /** Lets Ask TabDump's agent mode write back a store mutated by an action (create/rename workspace, move tabs, etc). */
   onStoreUpdate?: (store: WorkspaceStore) => void
+  onOpenGraph?: () => void
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -253,6 +256,17 @@ export function WorkspaceView({
         setDuplicatesOnly(true)
       },
     },
+    ...(onOpenGraph
+      ? [
+          {
+            id: "nav-open-graph",
+            label: "Open graph view",
+            group: "Navigation",
+            icon: Waypoints,
+            onSelect: onOpenGraph,
+          } satisfies Command,
+        ]
+      : []),
     ...CATEGORY_ORDER.map(
       (id): Command => ({
         id: `nav-category-${id}`,
@@ -388,6 +402,7 @@ export function WorkspaceView({
         onRequestClear={() => setClearConfirmOpen(true)}
         onOpenPalette={() => setCommandPaletteOpen(true)}
         onOpenAsk={() => setAskOpen(true)}
+        onOpenGraph={onOpenGraph}
         workspaceSwitcher={workspaceSwitcher}
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}

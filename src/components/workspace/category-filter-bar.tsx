@@ -4,7 +4,7 @@ import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 import { categoryCounts } from "@/lib/workspace/search"
 
-function Pill({
+export function Pill({
   active,
   onClick,
   children,

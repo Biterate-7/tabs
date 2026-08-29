@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
+import { GraphView } from "@/components/graph/graph-view"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -35,6 +36,7 @@ export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
+  const [view, setView] = useState<"workspace" | "graph">("workspace")
   // Snapshot of the store immediately before the most recent import-type
   // mutation (initial paste dump, extension import). A ref rather than
   // state: it's only ever read inside the toast's "Undo" click handler, so
@@ -198,6 +200,10 @@ export function AppShell() {
 
   if (!hydrated || !store || !currentWorkspace) return null
 
+  if (view === "graph") {
+    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
+  }
+
   const switcher = (
     <WorkspaceSwitcher
       workspaces={store.workspaces}
@@ -227,6 +233,7 @@ export function AppShell() {
       currentWorkspace={currentWorkspace}
       allWorkspaces={store.workspaces}
       onStoreUpdate={persist}
+      onOpenGraph={() => setView("graph")}
     />
   )
 }

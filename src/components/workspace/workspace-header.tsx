@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import { toast } from "sonner"
-import { Sparkles, Trash2, MoreHorizontal, FileText } from "lucide-react"
+import { Sparkles, Trash2, MoreHorizontal, FileText, Waypoints } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Kbd } from "@/components/ui/kbd"
@@ -29,6 +29,7 @@ export function WorkspaceHeader({
   onRequestClear,
   onOpenPalette,
   onOpenAsk,
+  onOpenGraph,
   workspaceSwitcher,
   currentWorkspace,
   allWorkspaces,
@@ -43,6 +44,7 @@ export function WorkspaceHeader({
   onRequestClear: () => void
   onOpenPalette?: () => void
   onOpenAsk: () => void
+  onOpenGraph?: () => void
   workspaceSwitcher?: ReactNode
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
@@ -84,6 +86,11 @@ export function WorkspaceHeader({
             <Button variant="secondary" size="sm" onClick={onOpenAsk}>
               <Sparkles /> Ask TabDump
             </Button>
+            {onOpenGraph && (
+              <Button variant="ghost" size="sm" onClick={onOpenGraph}>
+                <Waypoints /> Graph
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={onCleanup}>
               <Sparkles /> Cleanup
             </Button>
@@ -112,6 +119,11 @@ export function WorkspaceHeader({
               <DropdownMenuItem onClick={onOpenAsk}>
                 <Sparkles /> Ask TabDump
               </DropdownMenuItem>
+              {onOpenGraph && (
+                <DropdownMenuItem onClick={onOpenGraph}>
+                  <Waypoints /> Graph view
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onCleanup}>
                 <Sparkles /> Cleanup
               </DropdownMenuItem>

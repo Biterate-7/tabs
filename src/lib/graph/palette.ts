@@ -1,0 +1,71 @@
+import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories";
+import type { CategoryId } from "@/lib/categories";
+import type { EdgeReason } from "./types";
+
+export type GraphPalette = {
+  nodeDefault: string;
+  nodeStroke: string;
+  nodeSelectedRing: string;
+  nodeCenterRing: string;
+  textPrimary: string;
+  textDim: string;
+  edge: Record<EdgeReason, string>;
+  edgeHighlighted: string;
+  edgeDim: string;
+  category: Record<CategoryId, string>;
+  /** Canvas `ctx.font` can't resolve CSS variables, so the app's actual resolved font stack is captured once via `getComputedStyle`. */
+  fontFamily: string;
+};
+
+const FALLBACK: Record<string, string> = {
+  "--muted-foreground": "#a1a1aa",
+  "--text-tertiary": "#87878f",
+  "--foreground": "#f4f4f5",
+  "--primary": "#4361ff",
+  "--accent-text": "#8a9dff",
+  "--border": "rgba(255,255,255,0.08)",
+};
+
+/**
+ * Reads graph colors from TabDump's CSS custom properties once (not per
+ * frame — `getComputedStyle` is comparatively expensive) so the canvas
+ * renderer stays in sync with the app's design tokens without hardcoding a
+ * parallel color palette.
+ */
+export function resolveGraphPalette(root: HTMLElement = document.documentElement): GraphPalette {
+  const style = getComputedStyle(root);
+  const v = (name: string) => style.getPropertyValue(name).trim() || FALLBACK[name] || "#888888";
+
+  const category = {} as Record<CategoryId, string>;
+  for (const id of CATEGORY_ORDER) category[id] = v(CATEGORIES[id].accentColor);
+
+  return {
+    nodeDefault: v("--muted-foreground"),
+    nodeStroke: v("--border"),
+    nodeSelectedRing: v("--primary"),
+    nodeCenterRing: v("--accent-text"),
+    textPrimary: v("--foreground"),
+    textDim: v("--text-tertiary"),
+    edge: {
+      domain: "rgba(138, 157, 255, 0.35)",
+      workspace: "rgba(161, 161, 170, 0.35)",
+      category: "rgba(245, 166, 35, 0.3)",
+      group: "rgba(34, 197, 94, 0.3)",
+      manual: "rgba(67, 97, 255, 0.55)",
+    },
+    edgeHighlighted: v("--accent-text"),
+    edgeDim: "rgba(255, 255, 255, 0.04)",
+    category,
+    fontFamily: getComputedStyle(document.body).fontFamily || "ui-sans-serif, system-ui, sans-serif",
+  };
+}
+
+/** Picks one representative color when an edge matches several relationship types, prioritizing the most intentional/specific signal. */
+const REASON_PRIORITY: EdgeReason[] = ["manual", "group", "workspace", "domain", "category"];
+
+export function primaryEdgeReason(reasons: EdgeReason[]): EdgeReason {
+  for (const reason of REASON_PRIORITY) {
+    if (reasons.includes(reason)) return reason;
+  }
+  return reasons[0] ?? "domain";
+}
