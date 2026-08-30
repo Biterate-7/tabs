@@ -102,8 +102,7 @@ describe("GraphView", () => {
 // Seeds the graph's own persisted UI state (camera, selection, etc. — see
 // src/lib/graph/persistence.ts) so a node shows up already selected without
 // having to click through the canvas's hit-testing, which needs real layout
-// geometry jsdom doesn't provide (see graph-notes-popover.tsx's doc comment
-// on why positioning is tested at the component level instead).
+// geometry jsdom doesn't provide.
 function seedSelectedTab(tabId: string) {
   window.localStorage.setItem(
     "tabdump:graph:v1",
@@ -116,7 +115,7 @@ function seedSelectedTab(tabId: string) {
   );
 }
 
-describe("GraphView notes popover", () => {
+describe("GraphView dedicated notes page", () => {
   let openSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -133,6 +132,7 @@ describe("GraphView notes popover", () => {
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
+    expect(screen.getByRole("button", { name: "Back to graph" })).toBeTruthy();
     expect((screen.getByPlaceholderText("Add a note for github.com…") as HTMLTextAreaElement).value).toBe("");
   });
 
@@ -157,13 +157,9 @@ describe("GraphView notes popover", () => {
 
     const textarea = screen.getByPlaceholderText("Add a note for github.com…");
     fireEvent.change(textarea, { target: { value: "Check the README" } });
-    // getByText rather than getByRole: the popover starts `visibility:
-    // hidden` until it's positioned relative to its node (see
-    // graph-notes-popover.tsx), which here only resolves once the canvas's
-    // own (regular, not layout) effect has assigned the node a physics
-    // position — getByRole's accessibility-tree check would still see it as
-    // hidden at this point even though the button is present and clickable.
-    fireEvent.click(screen.getByText("Done"));
+    // Going back flushes the pending debounced save immediately, rather than
+    // waiting out SAVE_DEBOUNCE_MS.
+    fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
     expect(onStoreUpdate).toHaveBeenCalledTimes(1);
     const next = onStoreUpdate.mock.calls[0][0] as WorkspaceStore;
@@ -183,17 +179,28 @@ describe("GraphView notes popover", () => {
 
     const textarea = screen.getByPlaceholderText("Add a note for github.com…");
     fireEvent.change(textarea, { target: { value: "Updated note" } });
-    fireEvent.click(screen.getByText("Done"));
+    fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
     const next = onStoreUpdate.mock.calls[0][0] as WorkspaceStore;
     expect(next.workspaces[0].tabs.find((t) => t.id === "a")?.notes).toBe("Updated note");
+  });
+
+  it("closing the notes page returns to the graph without touching selection", () => {
+    seedSelectedTab("a");
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
+
+    expect(screen.queryByPlaceholderText("Add a note for github.com…")).toBeNull();
+    expect(screen.getByText("GRAPH")).toBeTruthy();
   });
 
   it("does not open when no node is selected", () => {
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
-    expect(screen.queryByRole("dialog", { name: "Note" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
   });
 
   it("closes when the tab is removed from the store while its note is open", () => {
@@ -205,6 +212,6 @@ describe("GraphView notes popover", () => {
     const withoutA = makeStore([makeTab({ id: "b", domain: "github.com" })]);
     rerender(<GraphView store={withoutA} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
-    expect(screen.queryByRole("dialog", { name: "Note" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
   });
 });

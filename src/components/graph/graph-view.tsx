@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { ChevronLeft, Waypoints } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
@@ -11,7 +11,7 @@ import { GraphControls } from "./graph-controls"
 import { GraphNodeTooltip } from "./graph-node-tooltip"
 import { GraphContextMenu, type GraphContextMenuState } from "./graph-context-menu"
 import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popover"
-import { GraphNotesPopover } from "./graph-notes-popover"
+import { GraphNodeNotesView } from "./graph-node-notes-view"
 import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
@@ -207,14 +207,13 @@ export function GraphView({
     }
   }, [])
 
-  // The notes popover follows node selection: selecting a node (fresh, or
-  // switching from another) opens/retargets it; deselecting closes it. The
-  // popover's own Done button / outside-click / Escape can additionally
-  // dismiss it without touching selection — so this can't be plain derived
-  // state (memo), it needs its own independently-settable state, kept in
-  // sync with *changes* to selection via the same "adjust state during
-  // render" pattern GraphContextMenu/GraphNotesPopover use for their own
-  // tracked state.
+  // The dedicated notes page follows node selection: selecting a node
+  // (fresh, or switching from another) opens/retargets it; deselecting
+  // closes it. The page's own Back button can additionally dismiss it
+  // without touching selection — so this can't be plain derived state
+  // (memo), it needs its own independently-settable state, kept in sync
+  // with *changes* to selection via the same "adjust state during render"
+  // pattern GraphContextMenu uses for its own tracked state.
   const [trackedSelectedTabId, setTrackedSelectedTabId] = useState(selectedTabId)
   if (selectedTabId !== trackedSelectedTabId) {
     setTrackedSelectedTabId(selectedTabId)
@@ -292,11 +291,6 @@ export function GraphView({
     )
     onStoreUpdate(next)
   }
-
-  const getNotesAnchor = useCallback(
-    (tabId: string) => canvasHandleRef.current?.getNodeScreenPosition(tabId) ?? null,
-    []
-  )
 
   function handleRemoveTab(tabId: string) {
     const workspace = findTabWorkspace(tabId)
@@ -675,13 +669,14 @@ export function GraphView({
         }}
       />
 
-      <GraphNotesPopover
-        tabId={notesOpenTabId}
-        node={notesNode}
-        getAnchor={getNotesAnchor}
-        onNotesChange={handleNotesChange}
-        onClose={() => setNotesOpenTabId(null)}
-      />
+      {notesOpenTabId && notesNode && (
+        <GraphNodeNotesView
+          key={notesOpenTabId}
+          node={notesNode}
+          onNotesChange={handleNotesChange}
+          onClose={() => setNotesOpenTabId(null)}
+        />
+      )}
 
       <GraphLinkDialog
         open={linkDialog !== null}

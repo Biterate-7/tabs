@@ -34,15 +34,6 @@ export type GraphCanvasHandle = {
   fitToView: () => void
   centerOnNode: (id: string) => void
   focusCollection: (id: string) => void
-  /**
-   * The node's current on-screen position (viewport coordinates, matching
-   * `PointerEvent.clientX/Y`) and screen-space radius, via the same
-   * camera/worldToScreen transform draw() uses — for anchoring an HTML
-   * overlay (see GraphNotesPopover) to a canvas node that has no real DOM
-   * element. Returns null once the node isn't in the currently-visible set
-   * (filtered out, deleted) or hasn't been given a physics position yet.
-   */
-  getNodeScreenPosition: (id: string) => { x: number; y: number; radius: number } | null
 }
 
 export type HoverInfo = {
@@ -839,19 +830,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (points.length === 0) return
       const next = computeFitCamera(points, width, height)
       animateCameraTo(next)
-    },
-    getNodeScreenPosition(id: string) {
-      if (!nodesRef.current.some((n) => n.id === id)) return null
-      const simulation = simulationRef.current!
-      const physicsNode = simulation.findNode(id)
-      if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) return null
-      const canvas = canvasRef.current
-      if (!canvas) return null
-      const { width, height } = sizeRef.current
-      const camera = cameraRef.current
-      const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
-      const rect = canvas.getBoundingClientRect()
-      return { x: rect.left + screen.x, y: rect.top + screen.y, radius: physicsNode.radius * camera.zoom }
     },
   }))
 
