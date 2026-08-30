@@ -1,8 +1,7 @@
 import "server-only";
 import type { ResolverContext, ResolverResult, TitleResolver } from "@/lib/titles/types";
+import { isGoogleDocsHostname, stripGoogleDocsSuffix } from "@/lib/titles/google-docs-host";
 import { extractTitleFromHtml, fetchHtmlCapped } from "./generic";
-
-const DOC_SUFFIX = /\s*[-–]\s*Google (Docs|Sheets|Slides|Forms|Drawings)\s*$/i;
 
 /**
  * Public docs only: this resolver never authenticates. A private/auth-walled
@@ -14,7 +13,7 @@ const DOC_SUFFIX = /\s*[-–]\s*Google (Docs|Sheets|Slides|Forms|Drawings)\s*$/i
 export const googleDocsResolver: TitleResolver = {
   id: "google-docs",
   canHandle(ctx: ResolverContext): boolean {
-    return ctx.hostname === "docs.google.com" || ctx.hostname === "drive.google.com";
+    return isGoogleDocsHostname(ctx.hostname);
   },
   async resolve(ctx: ResolverContext, signal: AbortSignal): Promise<ResolverResult> {
     const fetched = await fetchHtmlCapped(ctx.url, signal);
@@ -50,7 +49,7 @@ export const googleDocsResolver: TitleResolver = {
       return { ok: false, reason: "no-title", permanent: true };
     }
 
-    const title = rawTitle.replace(DOC_SUFFIX, "").trim();
+    const title = stripGoogleDocsSuffix(rawTitle);
     if (!title) {
       return { ok: false, reason: "no-title", permanent: true };
     }

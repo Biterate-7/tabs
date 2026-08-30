@@ -84,4 +84,22 @@ describe("buildTabsFromBrowserImport", () => {
     expect(tabs).toHaveLength(2);
     expect(tabs.every((t) => !t.isDuplicate)).toBe(true);
   });
+
+  it("strips the browser's own Google Docs/Sheets/Slides suffix from a Google Docs URL's title", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "https://docs.google.com/document/d/abc/edit", title: "My Research Paper - Google Docs" },
+      { url: "https://docs.google.com/spreadsheets/d/abc/edit", title: "Q3 Budget - Google Sheets" },
+      { url: "https://docs.google.com/presentation/d/abc/edit", title: "Pitch Deck - Google Slides" },
+    ]);
+    expect(tabs[0].title).toBe("My Research Paper");
+    expect(tabs[1].title).toBe("Q3 Budget");
+    expect(tabs[2].title).toBe("Pitch Deck");
+  });
+
+  it("does not strip a Google-Docs-style suffix from a non-Google-Docs URL's title", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "https://example.com/page", title: "Something - Google Docs" },
+    ]);
+    expect(tabs[0].title).toBe("Something - Google Docs");
+  });
 });

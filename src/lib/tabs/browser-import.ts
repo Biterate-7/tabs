@@ -1,5 +1,6 @@
 import { parseSingleUrl } from "./parse";
 import { categorizeTabs } from "@/lib/categories";
+import { isGoogleDocsHostname, stripGoogleDocsSuffix } from "@/lib/titles/google-docs-host";
 import type { Tab } from "./types";
 
 /**
@@ -24,6 +25,12 @@ export type BrowserImportEntry = {
  * which also means `useTitleResolution` will skip it: no redundant
  * `/api/titles` call for a title the browser already gave us for free.
  *
+ * The one exception: `chrome.tabs.Tab.title` for a Google Docs/Sheets/Slides
+ * tab carries the browser's own "Document Name - Google Docs" suffix, which
+ * the server-side resolver already strips for pasted URLs (see
+ * server/resolvers/google-docs.ts) — stripping it here too keeps a tab's
+ * displayed name consistent regardless of which path it arrived through.
+ *
  * Deliberately does not de-duplicate or persist here — the caller decides
  * whether this is a fresh dump or a merge into an existing workspace, and
  * either way needs to run `markDuplicates` over the *combined* list, not
@@ -36,7 +43,9 @@ export function buildTabsFromBrowserImport(entries: BrowserImportEntry[]): Tab[]
     const tab = parseSingleUrl(entry.url);
     if (!tab) continue;
 
-    const title = entry.title?.trim();
+    const trimmedTitle = entry.title?.trim();
+    const title =
+      trimmedTitle && isGoogleDocsHostname(tab.domain) ? stripGoogleDocsSuffix(trimmedTitle) : trimmedTitle;
     tabs.push({
       ...tab,
       ...(title ? { title } : {}),
