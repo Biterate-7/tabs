@@ -76,17 +76,25 @@ function waitForTabComplete(tabId) {
   });
 }
 
+// Resolves to `{ tabId, focusWindowId }`. `focusWindowId` is only set when
+// reusing an already-open tab (a freshly created one is already active in
+// the current window, per chrome.tabs.create's default `active: true` — no
+// extra focus needed there). Deliberately does NOT call
+// chrome.windows.update itself: doing so here, synchronously as part of
+// finding the tab, can focus a *different* window than the one this
+// extension's own popup lives in — which blurs, and Chrome then destroys,
+// the popup before dumpTabs() finishes and sendResponse() can reach it. The
+// caller focuses the window only after the popup already has its result.
 async function findOrOpenTabDumpTab() {
   const [existing] = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
   if (existing) {
     await chrome.tabs.update(existing.id, { active: true });
-    await chrome.windows.update(existing.windowId, { focused: true });
-    return existing.id;
+    return { tabId: existing.id, focusWindowId: existing.windowId };
   }
 
   const created = await chrome.tabs.create({ url: TABDUMP_ORIGIN });
   await waitForTabComplete(created.id);
-  return created.id;
+  return { tabId: created.id, focusWindowId: undefined };
 }
 
 async function dumpTabs(excludeUrls) {
@@ -94,22 +102,40 @@ async function dumpTabs(excludeUrls) {
   const payload = buildImportPayload(chromeTabs, excludeUrls);
 
   if (payload.tabs.length === 0) {
-    return { ok: false, reason: "no-importable-tabs", count: 0 };
+    return { result: { ok: false, reason: "no-importable-tabs", count: 0 } };
   }
 
-  const tabId = await findOrOpenTabDumpTab();
+  const { tabId, focusWindowId } = await findOrOpenTabDumpTab();
   const delivered = await sendImportToTab(tabId, payload);
 
-  return delivered
+  const result = delivered
     ? { ok: true, count: payload.tabs.length }
     : { ok: false, reason: "delivery-failed", count: payload.tabs.length };
+
+  return { result, focusWindowId };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== MSG_DUMP_TABS) return undefined;
 
   dumpTabs(message.payload?.excludeUrls)
-    .then(sendResponse)
+    .then(({ result, focusWindowId }) => {
+      sendResponse(result);
+      // Best-effort only, and deliberately after sendResponse: the popup
+      // must get to render the dump's outcome before focus can move away
+      // from it. Wrapped defensively (not just a trailing .catch) since a
+      // window that's since closed can make this reject OR throw
+      // synchronously depending on the Chrome version — either way, the
+      // dump's own result was already delivered above and shouldn't be
+      // clobbered by a failure in this purely cosmetic follow-up.
+      if (focusWindowId !== undefined) {
+        try {
+          Promise.resolve(chrome.windows.update(focusWindowId, { focused: true })).catch(() => {});
+        } catch {
+          // Ignored — see comment above.
+        }
+      }
+    })
     .catch((err) => {
       console.error("TabDump: dumpTabs failed", err);
       sendResponse({ ok: false, reason: "unexpected-error", count: 0 });
