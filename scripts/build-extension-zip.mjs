@@ -42,27 +42,32 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // files only — the actual files on disk are never touched, so `npm run
 // dev` + loading extension/ unpacked keeps working exactly as before.
 //
-// TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. once a custom
-// domain is configured). Otherwise this prefers Vercel's
-// VERCEL_PROJECT_PRODUCTION_URL — the project's *stable* production domain,
-// unchanged across deployments — over VERCEL_URL, which is a fresh,
-// throwaway per-deployment URL every single build. Baking VERCEL_URL in
-// means every new deployment silently invalidates every previously
-// downloaded extension ZIP: the extension's host_permissions/content_scripts
-// match only that one build's URL, so chrome.tabs.query()/tabs.create() in
-// background.js's findOrOpenTabDumpTab() end up targeting a stale,
-// deployment-specific origin instead of the domain the user is actually
-// looking at — landing imported tabs in a different origin's localStorage
-// than the one being viewed, with no visible error. Falls back to
-// VERCEL_URL for Preview builds (which don't get a production URL), then to
-// localhost:3000 for a plain local build with none of these set.
+// TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. if the canonical
+// domain below ever changes). Otherwise this defaults to TabDump's actual
+// canonical production domain — deliberately NOT derived from Vercel's
+// VERCEL_PROJECT_PRODUCTION_URL, which reflects whatever domain the Vercel
+// project happens to be assigned (e.g. an auto-suffixed tabdump-eight.vercel.app
+// if the exact project name was taken) rather than the domain TabDump is
+// actually meant to be reached at. Preview builds are the one case that
+// legitimately need a different, per-deployment origin — those still pick
+// up Vercel's own VERCEL_URL, a fresh throwaway URL every build. Baking a
+// Preview's VERCEL_URL into a Production build would instead mean every new
+// deployment silently invalidates every previously downloaded extension
+// ZIP: the extension's host_permissions/content_scripts match only that one
+// build's URL, so chrome.tabs.query()/tabs.create() in background.js's
+// findOrOpenTabDumpTab() end up targeting a stale, deployment-specific
+// origin instead of the domain the user is actually looking at — landing
+// imported tabs in a different origin's localStorage than the one being
+// viewed, with no visible error. Falls back to localhost:3000 for a plain
+// local build with none of these set.
 const DEV_ORIGIN = "http://localhost:3000";
+const CANONICAL_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
 const TARGET_ORIGIN =
   process.env.TABDUMP_PRODUCTION_ORIGIN ||
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
     : null) ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+  (process.env.VERCEL_ENV === "production" ? CANONICAL_PRODUCTION_ORIGIN : null) ||
   DEV_ORIGIN;
 
 const ORIGIN_SUBSTITUTED_FILES = new Set([
