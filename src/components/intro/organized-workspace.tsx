@@ -1,6 +1,6 @@
-import { BUCKET_LABEL, categoryColorVar, type IntroTab } from "./intro-data"
+import { BUCKET_LABEL, CARD_STAGGER_MS, categoryColorVar, type IntroTab } from "./intro-data"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
-import type { IntroPhase } from "./phase"
+import { EXIT_DURATION_MS, type IntroPhase } from "./phase"
 
 const BUCKET_ORDER: IntroTab["bucket"][] = ["projects", "research", "other"]
 
@@ -46,12 +46,12 @@ function edgeLength(edge: GraphEdge): number {
   return Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) * 1.08
 }
 
-function CollectionCard({ bucket, tabs }: { bucket: IntroTab["bucket"]; tabs: IntroTab[] }) {
+function CollectionCard({ bucket, tabs, delayMs }: { bucket: IntroTab["bucket"]; tabs: IntroTab[]; delayMs: number }) {
   const preview = tabs.slice(0, 3)
   return (
     <div
       className="w-[152px] rounded-lg border border-subtle bg-card p-2.5 sm:w-[176px]"
-      style={{ animation: "intro-card-in 420ms var(--ease-standard) both" }}
+      style={{ animation: `intro-card-in 420ms var(--ease-standard) ${delayMs}ms both` }}
     >
       <div className="flex items-baseline justify-between gap-2 px-0.5 pb-1.5">
         <span className="truncate text-body-sm font-medium text-foreground">{BUCKET_LABEL[bucket]}</span>
@@ -77,7 +77,11 @@ function CollectionCard({ bucket, tabs }: { bucket: IntroTab["bucket"]; tabs: In
  */
 export function OrganizedWorkspace({ phase, tabs }: { phase: IntroPhase; tabs: IntroTab[] }) {
   const cardsActive = phase === "organized"
-  const graphActive = phase === "graph"
+  // Graph stays mounted/visible through "exit" (rather than fading out on
+  // its own 260ms timer the moment "exit" starts) so it reads as expanding
+  // into the full-page transition instead of vanishing just before it.
+  const graphActive = phase === "graph" || phase === "exit"
+  const graphExiting = phase === "exit"
   const grouped = BUCKET_ORDER.map((bucket) => ({ bucket, tabs: tabs.filter((t) => t.bucket === bucket) }))
 
   return (
@@ -86,13 +90,24 @@ export function OrganizedWorkspace({ phase, tabs }: { phase: IntroPhase; tabs: I
         className="flex flex-wrap justify-center gap-3 sm:gap-4"
         style={{ opacity: cardsActive ? 1 : 0, pointerEvents: "none", transition: "opacity 260ms var(--ease-standard)" }}
       >
-        {cardsActive && grouped.map(({ bucket, tabs: bucketTabs }) => <CollectionCard key={bucket} bucket={bucket} tabs={bucketTabs} />)}
+        {cardsActive &&
+          grouped.map(({ bucket, tabs: bucketTabs }, i) => (
+            <CollectionCard key={bucket} bucket={bucket} tabs={bucketTabs} delayMs={CARD_STAGGER_MS[i] ?? 0} />
+          ))}
       </div>
 
       <svg
         viewBox="0 0 320 170"
         className="absolute top-0 w-[300px] sm:w-[340px]"
-        style={{ opacity: graphActive ? 1 : 0, pointerEvents: "none", transition: "opacity 260ms var(--ease-standard)" }}
+        style={{
+          opacity: graphActive ? 1 : 0,
+          pointerEvents: "none",
+          transformOrigin: "50% 40%",
+          transform: graphExiting ? "scale(1.8)" : "scale(1)",
+          transition: graphExiting
+            ? `transform ${EXIT_DURATION_MS}ms var(--ease-standard)`
+            : "opacity 260ms var(--ease-standard)",
+        }}
       >
         {graphActive &&
           GRAPH_EDGES.map((edge, i) => {

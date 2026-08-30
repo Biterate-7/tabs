@@ -6,7 +6,10 @@ import type { IntroPhase } from "./phase"
 const CONVERGE_MS = 760
 
 function chipStyle(layout: ReturnType<typeof computeChaosLayout> extends Map<string, infer V> ? V : never, phase: IntroPhase): CSSProperties {
-  const base: CSSProperties = { position: "absolute" }
+  // Depth ordering carries through chaos and converge so nearby chips
+  // visibly pass over/under each other during the funnel, not just slide on
+  // one flat plane.
+  const base: CSSProperties = { position: "absolute", zIndex: layout.zIndex }
 
   if (phase === "chaos") {
     return {

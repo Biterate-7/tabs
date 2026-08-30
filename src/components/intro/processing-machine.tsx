@@ -32,8 +32,15 @@ export function ProcessingMachine({ phase, tabs }: { phase: IntroPhase; tabs: In
         <div className="absolute inset-x-6 top-3 flex justify-center">
           <span className="text-label tracking-[0.14em] text-tertiary uppercase">TabDump Engine</span>
         </div>
-        {[25, 50, 75].map((pct) => (
-          <div key={pct} className="absolute top-8 bottom-0 w-px bg-border/60" style={{ left: `${pct}%` }} />
+        {[25, 50, 75].map((pct, i) => (
+          <div
+            key={pct}
+            className="absolute top-8 bottom-0 w-px bg-border/60"
+            style={{
+              left: `${pct}%`,
+              animation: active ? `intro-divider-shift 2400ms var(--ease-standard) ${i * 220}ms infinite` : undefined,
+            }}
+          />
         ))}
         {active && (
           <div
@@ -44,10 +51,17 @@ export function ProcessingMachine({ phase, tabs }: { phase: IntroPhase; tabs: In
       </div>
 
       <div className="flex gap-8 sm:gap-14">
-        {grouped.map(({ bucket, tabs: bucketTabs }) => (
+        {grouped.map(({ bucket, tabs: bucketTabs }, groupIndex) => (
           <div key={bucket} className="flex flex-col items-center gap-2">
             <span className="text-label tracking-[0.08em] text-tertiary uppercase">{BUCKET_LABEL[bucket]}</span>
-            <div className="flex max-w-[64px] flex-wrap justify-center gap-1.5 sm:max-w-[84px]">
+            <div
+              className="flex max-w-[64px] flex-wrap justify-center gap-1.5 sm:max-w-[84px]"
+              style={{
+                animation: active
+                  ? `intro-group-breathe 820ms var(--ease-standard) ${360 + groupIndex * 130}ms both`
+                  : undefined,
+              }}
+            >
               {bucketTabs.map((tab, i) => (
                 <span
                   key={tab.id}

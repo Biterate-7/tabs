@@ -2,13 +2,34 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { markIntroSeen, prefersReducedMotion, shouldPlayIntro, isMobileViewport } from "@/lib/intro"
-import { buildIntroTabs } from "./intro-data"
+import { useIntroSound, type IntroSound } from "@/hooks/use-intro-sound"
+import { buildIntroTabs, computeChaosLayout, CARD_STAGGER_MS } from "./intro-data"
 import { IntroTitle } from "./intro-title"
 import { ChaosField } from "./chaos-field"
 import { ProcessingMachine } from "./processing-machine"
 import { OrganizedWorkspace } from "./organized-workspace"
 import { SkipButton } from "./skip-button"
+import { IntroRevealProvider } from "./intro-reveal"
 import { EXIT_DURATION_MS, FULL_SCHEDULE, REDUCED_SCHEDULE, SKIP_EXIT_DURATION_MS, type IntroPhase } from "./phase"
+
+/**
+ * Scene-level sound hooks, keyed to the same FULL_SCHEDULE phase timestamps
+ * that drive the visuals — not an independent timeline. See intro-audio.ts
+ * for what each one actually plays.
+ */
+const PHASE_SOUND: Partial<Record<IntroPhase, (sound: IntroSound) => void>> = {
+  converge: (sound) => sound.convergeWhoosh(1),
+  machine: (sound) => sound.machineHumStart(),
+  organized: (sound) => {
+    sound.machineHumStop()
+    sound.sortWhoosh()
+  },
+  exit: (sound) => sound.transition(),
+  done: (sound) => sound.dispose(),
+}
+
+/** A sparse subset of the graph's edges get a pulse — never all of them. */
+const GRAPH_PULSE_EDGE_INDICES = [0, 3, 6]
 
 type IntroDecision = { play: boolean; reduced: boolean; mobile: boolean }
 
@@ -39,22 +60,72 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const tabs = useMemo(() => buildIntroTabs(decision.mobile), [decision.mobile])
+  const chaosLayout = useMemo(() => computeChaosLayout(tabs, decision.mobile), [tabs, decision.mobile])
+  // Reduced motion disables audio outright (per the "minimize under reduced
+  // motion" requirement) — every method below becomes a no-op, so the
+  // scheduling code beneath never needs its own reduced-motion branch.
+  const sound = useIntroSound(decision.play && !decision.reduced)
 
   useEffect(() => {
     if (!decision.play) return
 
     markIntroSeen()
     const schedule = decision.reduced ? REDUCED_SCHEDULE : FULL_SCHEDULE
-    timersRef.current = schedule.map(({ phase: nextPhase, at }) => setTimeout(() => setPhase(nextPhase), at))
+    const timers: ReturnType<typeof setTimeout>[] = schedule.map(({ phase: nextPhase, at }) =>
+      setTimeout(() => {
+        setPhase(nextPhase)
+        PHASE_SOUND[nextPhase]?.(sound)
+      }, at)
+    )
 
+    // The wordmark's entrance animation starts immediately; the tone lands
+    // just as it becomes visible.
+    timers.push(setTimeout(() => sound.title(), 180))
+
+    if (!decision.reduced) {
+      const at = (target: IntroPhase) => FULL_SCHEDULE.find((entry) => entry.phase === target)!.at
+
+      // A sparse handful of scattering tabs get a tiny tick, timed off the
+      // exact same per-tab entrance delay that drives their CSS transition —
+      // never all of them, never a fresh/independent timeline.
+      let tickIndex = 0
+      for (const layout of chaosLayout.values()) {
+        tickIndex += 1
+        if (tickIndex % 4 !== 0) continue
+        timers.push(setTimeout(() => sound.chaosTick(), at("chaos") + layout.entranceDelayMs))
+      }
+
+      // A second, slightly fuller whoosh as more tabs join the funnel.
+      timers.push(setTimeout(() => sound.convergeWhoosh(1.7), at("converge") + 320))
+
+      for (const offset of [280, 620, 980, 1340]) {
+        timers.push(setTimeout(() => sound.machineClick(), at("machine") + offset))
+      }
+
+      // One snap per collection card, on the same beat as its stagger.
+      for (const delayMs of CARD_STAGGER_MS) {
+        timers.push(setTimeout(() => sound.sortSnap(), at("organized") + delayMs))
+      }
+      timers.push(
+        setTimeout(() => sound.resolve(), at("organized") + CARD_STAGGER_MS[CARD_STAGGER_MS.length - 1] + 260)
+      )
+
+      for (const i of GRAPH_PULSE_EDGE_INDICES) {
+        timers.push(setTimeout(() => sound.graphPulse(), at("graph") + 120 + i * 70))
+      }
+    }
+
+    timersRef.current = timers
     return () => {
       for (const id of timersRef.current) clearTimeout(id)
       timersRef.current = []
     }
-  }, [decision.play, decision.reduced])
+  }, [decision.play, decision.reduced, sound, chaosLayout])
 
   function handleSkip() {
     for (const id of timersRef.current) clearTimeout(id)
+    timersRef.current = []
+    sound.dispose()
     setSkipped(true)
     setPhase("exit")
     timersRef.current = [setTimeout(() => setPhase("done"), SKIP_EXIT_DURATION_MS)]
@@ -67,6 +138,10 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
   // step with the overlay fading out — a crossfade, not a hard cut once the
   // overlay finally unmounts.
   const childrenVisible = phase === "exit" || phase === "done"
+  // Only a session where the intro actually plays (completed or skipped)
+  // gets the hero's staggered reveal — a repeat visit, where it never plays
+  // at all, renders the hero instantly with no animation.
+  const revealActive = decision.play && childrenVisible
 
   return (
     <>
@@ -76,7 +151,11 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
           data-intro-phase={phase}
           style={{
             opacity: exiting ? 0 : 1,
-            transform: exiting ? "scale(1.015)" : "scale(1)",
+            // A slightly larger push than a plain crossfade would use — paired
+            // with OrganizedWorkspace's own, more dramatic graph expansion,
+            // it reads as a camera dollying forward through the scene rather
+            // than two flat layers swapping.
+            transform: exiting ? "scale(1.035)" : "scale(1)",
             transition: `opacity ${exitDurationMs}ms var(--ease-standard), transform ${exitDurationMs}ms var(--ease-standard)`,
           }}
         >
@@ -93,7 +172,7 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
           transition: showOverlay ? `opacity ${exitDurationMs}ms var(--ease-standard)` : undefined,
         }}
       >
-        {children}
+        <IntroRevealProvider active={revealActive}>{children}</IntroRevealProvider>
       </div>
     </>
   )

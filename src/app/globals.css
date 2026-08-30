@@ -382,6 +382,48 @@
       transform: translateY(0) scale(1);
     }
   }
+
+  /* Processing machine's divider ticks getting occasional life — a small
+     lateral nudge, never a big move. */
+  @keyframes intro-divider-shift {
+    0%,
+    100% {
+      transform: translateX(0);
+      opacity: 0.6;
+    }
+    50% {
+      transform: translateX(3px);
+      opacity: 0.9;
+    }
+  }
+
+  /* A bucket's dot cluster briefly compressing then separating — reads as
+     the group being handled, not a mechanical wobble. One shot, not looped. */
+  @keyframes intro-group-breathe {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(0.9);
+    }
+    75% {
+      transform: scale(1.05);
+    }
+  }
+
+  /* LandingView's hero content staggering in as the intro's exit crossfade
+     begins — see IntroReveal in src/components/intro/intro-reveal.tsx. */
+  @keyframes hero-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
