@@ -85,6 +85,10 @@
   --duration-fast: 120ms;
   --duration-base: 160ms;
   --duration-slow: 220ms;
+  /* Intro-only: the one place in the app that wants a touch of overshoot
+     (scene 3's "tabs recognize the center" convergence) — everywhere else
+     uses --ease-standard, which has none by design. */
+  --ease-intro-converge: cubic-bezier(0.32, 1.3, 0.56, 1);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -309,6 +313,73 @@
     to {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  /* --- TabDumpIntro (src/components/intro) ------------------------------ */
+
+  @keyframes intro-title-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Horizontal sweep inside the processing-machine frame — a plain looping
+     translate, never combined with blur/glow (see AGENTS.md's "no excessive
+     glow" constraint). */
+  @keyframes intro-scan {
+    from {
+      transform: translateX(-20%);
+    }
+    to {
+      transform: translateX(220%);
+    }
+  }
+
+  @keyframes intro-node-in {
+    from {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes intro-dot-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.4);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes intro-edge-draw {
+    from {
+      stroke-dashoffset: var(--intro-edge-length, 140);
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes intro-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
     }
   }
 }
