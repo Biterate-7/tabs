@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { LandingView } from "./landing-view"
 import { getOnboardingState, dismissOnboarding } from "@/lib/onboarding"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
+import { shouldPlayIntro } from "@/lib/intro"
 
 vi.mock("@/lib/onboarding", () => ({
   getOnboardingState: vi.fn(),
@@ -15,9 +16,20 @@ vi.mock("@/lib/extension-config", () => ({
   EXTENSION_DOWNLOAD_URL: "/tabdump-extension.zip",
 }))
 
+vi.mock("@/lib/intro", () => ({
+  shouldPlayIntro: vi.fn(),
+  prefersReducedMotion: vi.fn().mockReturnValue(false),
+  isMobileViewport: vi.fn().mockReturnValue(false),
+}))
+
+function overlay() {
+  return document.querySelector("[data-intro-phase]")
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getExtensionInstallInfo).mockReturnValue({ mode: "download" })
+  vi.mocked(shouldPlayIntro).mockReturnValue(false)
 })
 
 describe("LandingView onboarding", () => {
@@ -126,5 +138,26 @@ describe("LandingView onboarding", () => {
     expect(screen.queryByText("Dump your Chrome tabs in one click.")).toBeNull()
     // Manual pasting remains available in every state.
     expect(screen.getByLabelText("Paste your tabs")).toBeTruthy()
+  })
+})
+
+describe("LandingView intro gating", () => {
+  beforeEach(() => {
+    vi.mocked(getOnboardingState).mockReturnValue({ dismissed: true, extensionConnected: false })
+  })
+
+  it("mounts no intro overlay at all when the setting is off", () => {
+    vi.mocked(shouldPlayIntro).mockReturnValue(false)
+    render(<LandingView onDump={vi.fn()} />)
+
+    expect(overlay()).toBeNull()
+    expect(screen.getByText(/Your tabs are a mess/)).toBeTruthy()
+  })
+
+  it("mounts the intro overlay when the setting is on", () => {
+    vi.mocked(shouldPlayIntro).mockReturnValue(true)
+    render(<LandingView onDump={vi.fn()} />)
+
+    expect(overlay()).not.toBeNull()
   })
 })

@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { TabDumpIntro } from "./tabdump-intro"
-import { shouldPlayIntro, markIntroSeen, prefersReducedMotion, isMobileViewport } from "@/lib/intro"
+import { shouldPlayIntro, prefersReducedMotion, isMobileViewport } from "@/lib/intro"
 
 vi.mock("@/lib/intro", () => ({
   shouldPlayIntro: vi.fn(),
-  markIntroSeen: vi.fn(),
   prefersReducedMotion: vi.fn(),
   isMobileViewport: vi.fn(),
 }))
@@ -31,7 +30,7 @@ afterEach(() => {
 })
 
 describe("TabDumpIntro", () => {
-  it("skips straight to the real page on a repeat visit", () => {
+  it("skips straight to the real page when the setting is off", () => {
     setDecision({ play: false })
     render(
       <TabDumpIntro>
@@ -42,7 +41,6 @@ describe("TabDumpIntro", () => {
     expect(overlay()).toBeNull()
     expect(screen.queryByRole("button", { name: "Skip intro →" })).toBeNull()
     expect(screen.getByText("Real landing page")).toBeTruthy()
-    expect(markIntroSeen).not.toHaveBeenCalled()
   })
 
   it("plays the full cinematic sequence through every phase to done, then reveals the page", () => {
@@ -54,7 +52,6 @@ describe("TabDumpIntro", () => {
     )
 
     expect(overlay()?.getAttribute("data-intro-phase")).toBe("title")
-    expect(markIntroSeen).toHaveBeenCalledOnce()
 
     act(() => vi.advanceTimersByTime(600))
     expect(overlay()?.getAttribute("data-intro-phase")).toBe("chaos")
@@ -157,5 +154,47 @@ describe("TabDumpIntro", () => {
     expect(screen.getByText("Real landing page")).toBeTruthy()
 
     ;(window as unknown as { AudioContext: unknown }).AudioContext = OriginalAudioContext
+  })
+
+  it("never constructs an AudioContext when the intro isn't playing", () => {
+    const audioCtorSpy = vi.fn()
+    const OriginalAudioContext = (window as unknown as { AudioContext?: unknown }).AudioContext
+    ;(window as unknown as { AudioContext: unknown }).AudioContext = class {
+      constructor() {
+        audioCtorSpy()
+      }
+    }
+
+    setDecision({ play: false })
+    render(
+      <TabDumpIntro>
+        <div>Real landing page</div>
+      </TabDumpIntro>
+    )
+
+    expect(audioCtorSpy).not.toHaveBeenCalled()
+    ;(window as unknown as { AudioContext: unknown }).AudioContext = OriginalAudioContext
+  })
+
+  it("replays in full on every mount — nothing persists a completed play across instances", () => {
+    setDecision({ play: true })
+    const { unmount } = render(
+      <TabDumpIntro>
+        <div>Real landing page</div>
+      </TabDumpIntro>
+    )
+    act(() => vi.advanceTimersByTime(8600))
+    expect(overlay()).toBeNull()
+    unmount()
+
+    // shouldPlayIntro is the only thing TabDumpIntro consults, and this test
+    // never changes what it returns — a fresh mount (a reload, a new tab)
+    // must play the full sequence again, exactly like the first mount did.
+    render(
+      <TabDumpIntro>
+        <div>Real landing page</div>
+      </TabDumpIntro>
+    )
+    expect(overlay()?.getAttribute("data-intro-phase")).toBe("title")
   })
 })

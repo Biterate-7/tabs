@@ -4,9 +4,10 @@ const IntroRevealContext = createContext(false)
 
 /**
  * Marks whether LandingView's hero should play its staggered reveal right
- * now. Only ever true for the moment TabDumpIntro's real first-visit intro
- * hands off into the landing page — a repeat visit (intro skipped entirely,
- * `shouldPlayIntro()` false) never sets this, so the hero just renders
+ * now. Only ever true for the moment TabDumpIntro's cinematic intro hands
+ * off into the landing page — with the "Play intro animation" setting off
+ * (`shouldPlayIntro()` false), LandingView never mounts TabDumpIntro at all,
+ * so this context's default (`false`) applies and the hero just renders
  * normally with no animation.
  */
 export function IntroRevealProvider({ active, children }: { active: boolean; children: React.ReactNode }) {

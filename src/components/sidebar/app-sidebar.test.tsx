@@ -36,6 +36,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       onDelete={vi.fn()}
       onImportFile={vi.fn()}
       onOpenGraph={vi.fn()}
+      onOpenSettings={vi.fn()}
       {...overrides}
     />
   );
@@ -101,6 +102,16 @@ describe("AppSidebar", () => {
     await user.click(screen.getByRole("button", { name: "Open Graph View" }));
 
     expect(onOpenGraph).toHaveBeenCalledOnce();
+  });
+
+  it("opens Settings from the sidebar", async () => {
+    const user = userEvent.setup();
+    const onOpenSettings = vi.fn();
+    renderSidebar({ onOpenSettings });
+
+    await user.click(screen.getByRole("button", { name: "Open Settings" }));
+
+    expect(onOpenSettings).toHaveBeenCalledOnce();
   });
 
   it("shows full labels inside the mobile drawer even when the desktop rail is collapsed", () => {

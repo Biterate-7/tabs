@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { markIntroSeen, prefersReducedMotion, shouldPlayIntro, isMobileViewport } from "@/lib/intro"
+import { prefersReducedMotion, shouldPlayIntro, isMobileViewport } from "@/lib/intro"
 import { useIntroSound, type IntroSound } from "@/hooks/use-intro-sound"
 import { buildIntroTabs, computeChaosLayout, CARD_STAGGER_MS } from "./intro-data"
 import { IntroTitle } from "./intro-title"
@@ -47,11 +47,13 @@ function decideIntro(): IntroDecision {
 }
 
 /**
- * Wraps the real landing page. Plays the cinematic chaos→structure intro on
- * a first-ever visit, then reveals `children` (the actual landing page,
- * which is mounted the entire time — see the note on childrenVisible below).
- * On every later visit, or once reduced-motion/skip/completion has run its
- * course, this is a no-op passthrough.
+ * Wraps the real landing page. Plays the cinematic chaos→structure intro
+ * whenever the "Play intro animation" setting is on (see lib/settings.ts —
+ * every fresh load, not just a first-ever visit), then reveals `children`
+ * (the actual landing page, which is mounted the entire time — see the note
+ * on childrenVisible below). LandingView only mounts this wrapper at all
+ * when the setting is on; once reduced-motion/skip/completion has run its
+ * course this is a no-op passthrough.
  */
 export function TabDumpIntro({ children }: { children: ReactNode }) {
   const [decision] = useState(decideIntro)
@@ -69,7 +71,6 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!decision.play) return
 
-    markIntroSeen()
     const schedule = decision.reduced ? REDUCED_SCHEDULE : FULL_SCHEDULE
     const timers: ReturnType<typeof setTimeout>[] = schedule.map(({ phase: nextPhase, at }) =>
       setTimeout(() => {
@@ -139,8 +140,9 @@ export function TabDumpIntro({ children }: { children: ReactNode }) {
   // overlay finally unmounts.
   const childrenVisible = phase === "exit" || phase === "done"
   // Only a session where the intro actually plays (completed or skipped)
-  // gets the hero's staggered reveal — a repeat visit, where it never plays
-  // at all, renders the hero instantly with no animation.
+  // gets the hero's staggered reveal — with the setting off, LandingView
+  // never mounts this component at all, so the hero just renders instantly
+  // with no animation.
   const revealActive = decision.play && childrenVisible
 
   return (

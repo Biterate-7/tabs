@@ -1,6 +1,6 @@
 "use client"
 
-import { PanelLeftClose, PanelLeftOpen, Waypoints } from "lucide-react"
+import { PanelLeftClose, PanelLeftOpen, Settings, Waypoints } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
@@ -40,6 +40,7 @@ export function AppSidebar({
   onDelete,
   onImportFile,
   onOpenGraph,
+  onOpenSettings,
 }: {
   workspaces: Workspace[]
   currentId: string
@@ -57,6 +58,7 @@ export function AppSidebar({
   onDelete: (id: string) => void
   onImportFile: (text: string) => void
   onOpenGraph: () => void
+  onOpenSettings: () => void
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
   const currentRelationships = relationshipCounts[currentId] ?? 0
@@ -157,7 +159,7 @@ export function AppSidebar({
         </div>
       </div>
 
-      <div className="border-t border-subtle p-2">
+      <div className="flex flex-col gap-1 border-t border-subtle p-2">
         <IconButton
           aria-label="Open Graph View"
           tooltip="Graph"
@@ -166,6 +168,15 @@ export function AppSidebar({
         >
           <Waypoints />
           {showLabels && <span className="text-body-sm">Graph</span>}
+        </IconButton>
+        <IconButton
+          aria-label="Open Settings"
+          tooltip="Settings"
+          onClick={onOpenSettings}
+          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
+        >
+          <Settings />
+          {showLabels && <span className="text-body-sm">Settings</span>}
         </IconButton>
       </div>
       </aside>

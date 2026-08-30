@@ -11,6 +11,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { getOnboardingState, dismissOnboarding } from "@/lib/onboarding"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
+import { shouldPlayIntro } from "@/lib/intro"
 import type { Tab } from "@/lib/tabs/types"
 
 export function LandingView({
@@ -29,6 +30,11 @@ export function LandingView({
   // Ephemeral, not persisted: the install guide is a sub-screen of the
   // "new visitor" state, not a fourth top-level onboarding state.
   const [guideOpen, setGuideOpen] = useState(false)
+  // Read once at mount, same lazy-initializer reasoning as `onboarding`
+  // above. When this is false, TabDumpIntro is never even mounted below —
+  // not mounted-then-hidden — so a disabled intro carries no timers, no
+  // audio, and no extra DOM at all.
+  const [playIntro] = useState(shouldPlayIntro)
 
   function handleDismiss() {
     dismissOnboarding()
@@ -38,9 +44,8 @@ export function LandingView({
 
   const installInfo = getExtensionInstallInfo()
 
-  return (
-    <TabDumpIntro>
-      <div className="relative flex min-h-screen flex-1 flex-col">
+  const content = (
+    <div className="relative flex min-h-screen flex-1 flex-col">
         <HeroBackground />
         {onOpenSidebar && (
           <div className="relative p-3 md:hidden">
@@ -131,6 +136,7 @@ export function LandingView({
           </IntroReveal>
         </main>
       </div>
-    </TabDumpIntro>
   )
+
+  return playIntro ? <TabDumpIntro>{content}</TabDumpIntro> : content
 }
