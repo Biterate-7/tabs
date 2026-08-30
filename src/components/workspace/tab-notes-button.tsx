@@ -4,8 +4,7 @@ import { useState } from "react"
 import { StickyNote } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { NotesEditorFields } from "@/components/workspace/notes-editor-fields"
 import { cn } from "@/lib/utils"
 
 /**
@@ -54,23 +53,13 @@ export function TabNotesButton({
         }
       />
       <PopoverContent>
-        <label htmlFor={`tab-notes-${tabId}`} className="text-label text-tertiary">
-          Notes
-        </label>
-        <Textarea
+        <NotesEditorFields
           id={`tab-notes-${tabId}`}
-          autoFocus
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={setDraft}
+          onDone={() => handleOpenChange(false)}
           placeholder={`Add a note for ${domain}…`}
-          className="mt-2"
-          rows={4}
         />
-        <div className="mt-2 flex justify-end">
-          <Button type="button" size="sm" onClick={() => handleOpenChange(false)}>
-            Done
-          </Button>
-        </div>
       </PopoverContent>
     </Popover>
   )

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { ChevronLeft, Waypoints } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
@@ -11,6 +11,7 @@ import { GraphControls } from "./graph-controls"
 import { GraphNodeTooltip } from "./graph-node-tooltip"
 import { GraphContextMenu, type GraphContextMenuState } from "./graph-context-menu"
 import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popover"
+import { GraphNotesPopover } from "./graph-notes-popover"
 import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
@@ -71,6 +72,11 @@ export function GraphView({
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState | null>(null)
   const [edgePopover, setEdgePopover] = useState<GraphEdgePopoverState | null>(null)
+  // Initialized from the persisted selection (not null) so a node that's
+  // already selected on mount — e.g. the graph was reopened, or reloaded —
+  // shows its notes immediately, without waiting on the render-time sync
+  // below (which only fires on a subsequent *change* to selectedTabId).
+  const [notesOpenTabId, setNotesOpenTabId] = useState<string | null>(graphState.settings.selectedTabId)
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
   const [gatherDialogState, setGatherDialogState] = useState<{ workspaceId: string; tabIds: string[] } | null>(null)
@@ -166,6 +172,7 @@ export function GraphView({
   )
 
   const selectedNode = selectedTabId ? (everyNodeById.get(selectedTabId) ?? null) : null
+  const notesNode = notesOpenTabId ? (everyNodeById.get(notesOpenTabId) ?? null) : null
   const dependenciesOfSelected = useMemo(
     () => (selectedTabId ? dependenciesOf(selectedTabId, dependencies) : []),
     [selectedTabId, dependencies]
@@ -199,6 +206,20 @@ export function GraphView({
       if (cameraFlushTimer.current) clearTimeout(cameraFlushTimer.current)
     }
   }, [])
+
+  // The notes popover follows node selection: selecting a node (fresh, or
+  // switching from another) opens/retargets it; deselecting closes it. The
+  // popover's own Done button / outside-click / Escape can additionally
+  // dismiss it without touching selection — so this can't be plain derived
+  // state (memo), it needs its own independently-settable state, kept in
+  // sync with *changes* to selection via the same "adjust state during
+  // render" pattern GraphContextMenu/GraphNotesPopover use for their own
+  // tracked state.
+  const [trackedSelectedTabId, setTrackedSelectedTabId] = useState(selectedTabId)
+  if (selectedTabId !== trackedSelectedTabId) {
+    setTrackedSelectedTabId(selectedTabId)
+    setNotesOpenTabId(selectedTabId)
+  }
 
   function updateSettings(patch: Partial<GraphPersistedState["settings"]>) {
     setGraphState((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }))
@@ -256,6 +277,26 @@ export function GraphView({
   function findTabWorkspace(tabId: string) {
     return store.workspaces.find((w) => w.tabs.some((t) => t.id === tabId))
   }
+
+  // Same tab.notes field, same updateWorkspaceTabs/onStoreUpdate path
+  // WorkspaceView's handleNotesChange uses for TabNotesButton — the Graph
+  // view is just another UI entry point onto it, not a second notes store.
+  function handleNotesChange(tabId: string, notes: string) {
+    const workspace = findTabWorkspace(tabId)
+    if (!workspace) return
+    const trimmed = notes.trim()
+    const next = updateWorkspaceTabs(
+      store,
+      workspace.id,
+      workspace.tabs.map((t) => (t.id === tabId ? { ...t, notes: trimmed || undefined } : t))
+    )
+    onStoreUpdate(next)
+  }
+
+  const getNotesAnchor = useCallback(
+    (tabId: string) => canvasHandleRef.current?.getNodeScreenPosition(tabId) ?? null,
+    []
+  )
 
   function handleRemoveTab(tabId: string) {
     const workspace = findTabWorkspace(tabId)
@@ -632,6 +673,14 @@ export function GraphView({
         onRemoveDependency={() => {
           if (edgePopover?.kind === "dependency") handleRemoveDependency(edgePopover.edge.id)
         }}
+      />
+
+      <GraphNotesPopover
+        tabId={notesOpenTabId}
+        node={notesNode}
+        getAnchor={getNotesAnchor}
+        onNotesChange={handleNotesChange}
+        onClose={() => setNotesOpenTabId(null)}
       />
 
       <GraphLinkDialog

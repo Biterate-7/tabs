@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GraphView } from "./graph-view";
 import type { Tab } from "@/lib/tabs/types";
@@ -96,5 +96,115 @@ describe("GraphView", () => {
     await user.click(screen.getByRole("checkbox", { name: /same workspace/i }));
 
     expect(screen.getByText("No connections match the current filters.")).toBeTruthy();
+  });
+});
+
+// Seeds the graph's own persisted UI state (camera, selection, etc. — see
+// src/lib/graph/persistence.ts) so a node shows up already selected without
+// having to click through the canvas's hit-testing, which needs real layout
+// geometry jsdom doesn't provide (see graph-notes-popover.tsx's doc comment
+// on why positioning is tested at the component level instead).
+function seedSelectedTab(tabId: string) {
+  window.localStorage.setItem(
+    "tabdump:graph:v1",
+    JSON.stringify({
+      version: 1,
+      positions: {},
+      manualConnections: [],
+      settings: { selectedTabId: tabId },
+    })
+  );
+}
+
+describe("GraphView notes popover", () => {
+  let openSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+  });
+
+  it("opens for a pre-selected node and shows a placeholder when it has no note", () => {
+    seedSelectedTab("a");
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    expect((screen.getByPlaceholderText("Add a note for github.com…") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("shows a note that already exists on the tab (e.g. added via the tab card)", () => {
+    seedSelectedTab("a");
+    const store = makeStore([
+      makeTab({ id: "a", domain: "github.com", notes: "From the tab card" }),
+      makeTab({ id: "b", domain: "github.com" }),
+    ]);
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    expect((screen.getByPlaceholderText("Add a note for github.com…") as HTMLTextAreaElement).value).toBe(
+      "From the tab card"
+    );
+  });
+
+  it("adding a note through the graph calls onStoreUpdate with the tab's notes set", () => {
+    seedSelectedTab("a");
+    const onStoreUpdate = vi.fn();
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+
+    const textarea = screen.getByPlaceholderText("Add a note for github.com…");
+    fireEvent.change(textarea, { target: { value: "Check the README" } });
+    // getByText rather than getByRole: the popover starts `visibility:
+    // hidden` until it's positioned relative to its node (see
+    // graph-notes-popover.tsx), which here only resolves once the canvas's
+    // own (regular, not layout) effect has assigned the node a physics
+    // position — getByRole's accessibility-tree check would still see it as
+    // hidden at this point even though the button is present and clickable.
+    fireEvent.click(screen.getByText("Done"));
+
+    expect(onStoreUpdate).toHaveBeenCalledTimes(1);
+    const next = onStoreUpdate.mock.calls[0][0] as WorkspaceStore;
+    expect(next.workspaces[0].tabs.find((t) => t.id === "a")?.notes).toBe("Check the README");
+    // The other tab is untouched.
+    expect(next.workspaces[0].tabs.find((t) => t.id === "b")?.notes).toBeUndefined();
+  });
+
+  it("editing an existing note calls onStoreUpdate with the updated text", () => {
+    seedSelectedTab("a");
+    const onStoreUpdate = vi.fn();
+    const store = makeStore([
+      makeTab({ id: "a", domain: "github.com", notes: "Old note" }),
+      makeTab({ id: "b", domain: "github.com" }),
+    ]);
+    render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+
+    const textarea = screen.getByPlaceholderText("Add a note for github.com…");
+    fireEvent.change(textarea, { target: { value: "Updated note" } });
+    fireEvent.click(screen.getByText("Done"));
+
+    const next = onStoreUpdate.mock.calls[0][0] as WorkspaceStore;
+    expect(next.workspaces[0].tabs.find((t) => t.id === "a")?.notes).toBe("Updated note");
+  });
+
+  it("does not open when no node is selected", () => {
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("dialog", { name: "Note" })).toBeNull();
+  });
+
+  it("closes when the tab is removed from the store while its note is open", () => {
+    seedSelectedTab("a");
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    const { rerender } = render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByPlaceholderText("Add a note for github.com…")).toBeTruthy();
+
+    const withoutA = makeStore([makeTab({ id: "b", domain: "github.com" })]);
+    rerender(<GraphView store={withoutA} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("dialog", { name: "Note" })).toBeNull();
   });
 });
