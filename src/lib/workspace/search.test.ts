@@ -39,6 +39,16 @@ describe("matchesQuery", () => {
     expect(matchesQuery(tab, "resea")).toBe(true);
   });
 
+  it("matches on notes", () => {
+    const tab = makeTab({ title: "Federal Reserve", notes: "Useful for my Economics IA" });
+    expect(matchesQuery(tab, "economics ia")).toBe(true);
+  });
+
+  it("does not throw and simply doesn't match on notes when notes is undefined", () => {
+    const tab = makeTab({ title: "Federal Reserve", notes: undefined });
+    expect(matchesQuery(tab, "economics")).toBe(false);
+  });
+
   it("returns false when nothing matches", () => {
     const tab = makeTab({ title: "Foo", domain: "bar.com" });
     expect(matchesQuery(tab, "zzz")).toBe(false);

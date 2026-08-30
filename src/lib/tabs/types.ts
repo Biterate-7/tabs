@@ -20,6 +20,8 @@ export type Tab = {
    * tab itself — see assignTabsToGroup in src/lib/workspace/store.ts.
    */
   groupId?: string;
+  /** Freeform personal note for this tab. Absent (not an empty string) means no note — see tab-notes-button.tsx, which normalizes whitespace-only input back to undefined on save. */
+  notes?: string;
 };
 
 export type ParseResult = {

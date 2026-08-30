@@ -20,7 +20,8 @@ export function matchesQuery(tab: Tab, query: string): boolean {
     (tab.title ?? "").toLowerCase().includes(q) ||
     tab.domain.toLowerCase().includes(q) ||
     tab.url.toLowerCase().includes(q) ||
-    categoryName(tab).toLowerCase().includes(q)
+    categoryName(tab).toLowerCase().includes(q) ||
+    (tab.notes ?? "").toLowerCase().includes(q)
   );
 }
 

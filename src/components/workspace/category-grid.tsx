@@ -14,6 +14,7 @@ export function CategoryGrid({
   onSheetOpenChange,
   onAddDependency,
   onInspect,
+  onNotesChange,
   recentlyAddedIds,
 }: {
   tabs: Tab[]
@@ -23,6 +24,7 @@ export function CategoryGrid({
   onSheetOpenChange?: (open: boolean) => void
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
+  onNotesChange?: (id: string, notes: string) => void
   recentlyAddedIds?: Set<string>
 }) {
   const [openCategory, setOpenCategoryState] = useState<CategoryId | null>(null)
@@ -140,6 +142,7 @@ export function CategoryGrid({
         workspaceId={workspaceId}
         onAddDependency={onAddDependency}
         onInspect={onInspect}
+        onNotesChange={onNotesChange}
         recentlyAddedIds={recentlyAddedIds}
       />
     </>

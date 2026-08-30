@@ -481,6 +481,11 @@ export function WorkspaceView({
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, category } : t)))
   }
 
+  function handleNotesChange(id: string, notes: string) {
+    const trimmed = notes.trim()
+    onTabsChange(tabs.map((t) => (t.id === id ? { ...t, notes: trimmed || undefined } : t)))
+  }
+
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -891,6 +896,7 @@ export function WorkspaceView({
             onDropTab={handleDropTabOnCollection}
             onAddDependency={setDepDialogFor}
             onInspect={setInspectTabId}
+            onNotesChange={handleNotesChange}
             dependencyIndicators={dependencyIndicators}
             onSelectDependencyTab={handleSelectDependencyTab}
             onOpenDependencyTab={handleOpenDependencyTab}
@@ -905,6 +911,7 @@ export function WorkspaceView({
               onSheetOpenChange={setCategorySheetOpen}
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
+              onNotesChange={handleNotesChange}
               recentlyAddedIds={recentlyAddedIds}
             />
           ) : (
@@ -918,6 +925,7 @@ export function WorkspaceView({
               onToggleSelected={toggleSelected}
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
+              onNotesChange={handleNotesChange}
               dependencyIndicators={dependencyIndicators}
               collectionNames={tabCollectionNames}
               onSelectDependencyTab={handleSelectDependencyTab}

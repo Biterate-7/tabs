@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { setDragTabId } from "@/lib/collections/drag"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { TabNotesButton } from "@/components/workspace/tab-notes-button"
 import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
@@ -59,6 +60,7 @@ export function TabCard({
   onToggleSelected,
   onAddDependency,
   onInspect,
+  onNotesChange,
   dependencyIndicator,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -78,6 +80,8 @@ export function TabCard({
   onAddDependency?: (id: string) => void
   /** Omitted entirely in contexts that don't wire up the tab inspector sheet — the menu item simply doesn't render. */
   onInspect?: (id: string) => void
+  /** Omitted entirely in contexts that don't wire up notes persistence — the notes button simply doesn't render. */
+  onNotesChange?: (id: string, notes: string) => void
   /** This tab's dependency/used-by relationships, pre-resolved to displayable labels. Omitted entirely (not just empty) in contexts that don't compute it — see filtered-tab-list.tsx. */
   dependencyIndicator?: DependencyIndicatorData
   onSelectDependencyTab?: (id: string) => void
@@ -174,6 +178,15 @@ export function TabCard({
         >
           <ExternalLink />
         </IconButton>
+
+        {onNotesChange && (
+          <TabNotesButton
+            tabId={tab.id}
+            domain={tab.domain}
+            notes={tab.notes}
+            onNotesChange={onNotesChange}
+          />
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger

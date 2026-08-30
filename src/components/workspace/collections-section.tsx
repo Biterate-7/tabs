@@ -33,6 +33,7 @@ export function CollectionsSection({
   onDropTab,
   onAddDependency,
   onInspect,
+  onNotesChange,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -54,6 +55,7 @@ export function CollectionsSection({
   onDropTab: (collectionId: string, tabId: string) => void
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
+  onNotesChange?: (id: string, notes: string) => void
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
@@ -96,6 +98,7 @@ export function CollectionsSection({
             onDropTab={onDropTab}
             onAddDependency={onAddDependency}
             onInspect={onInspect}
+            onNotesChange={onNotesChange}
             dependencyIndicators={dependencyIndicators}
             onSelectDependencyTab={onSelectDependencyTab}
             onOpenDependencyTab={onOpenDependencyTab}

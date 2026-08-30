@@ -34,6 +34,7 @@ export function CollectionGroup({
   onDropTab,
   onAddDependency,
   onInspect,
+  onNotesChange,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -55,6 +56,7 @@ export function CollectionGroup({
   onDropTab: (collectionId: string, tabId: string) => void
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
+  onNotesChange?: (id: string, notes: string) => void
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
@@ -130,6 +132,7 @@ export function CollectionGroup({
                   onCategoryChange={onCategoryChange}
                   onAddDependency={onAddDependency}
                   onInspect={onInspect}
+                  onNotesChange={onNotesChange}
                   onRemoveFromCollection={onRemoveTab}
                   otherCollections={otherCollections}
                   onMoveToCollection={onMoveTab}
