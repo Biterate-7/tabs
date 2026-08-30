@@ -72,11 +72,11 @@ export function GraphView({
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState | null>(null)
   const [edgePopover, setEdgePopover] = useState<GraphEdgePopoverState | null>(null)
-  // Initialized from the persisted selection (not null) so a node that's
-  // already selected on mount — e.g. the graph was reopened, or reloaded —
-  // shows its notes immediately, without waiting on the render-time sync
-  // below (which only fires on a subsequent *change* to selectedTabId).
-  const [notesOpenTabId, setNotesOpenTabId] = useState<string | null>(graphState.settings.selectedTabId)
+  // Deliberately independent of node selection — opening the notes page is
+  // its own explicit action (context menu "Notes", or the sidebar's Notes
+  // button), not something that fires just from selecting/clicking a node.
+  // See handleOpenNotes below.
+  const [notesOpenTabId, setNotesOpenTabId] = useState<string | null>(null)
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
   const [gatherDialogState, setGatherDialogState] = useState<{ workspaceId: string; tabIds: string[] } | null>(null)
@@ -207,19 +207,6 @@ export function GraphView({
     }
   }, [])
 
-  // The dedicated notes page follows node selection: selecting a node
-  // (fresh, or switching from another) opens/retargets it; deselecting
-  // closes it. The page's own Back button can additionally dismiss it
-  // without touching selection — so this can't be plain derived state
-  // (memo), it needs its own independently-settable state, kept in sync
-  // with *changes* to selection via the same "adjust state during render"
-  // pattern GraphContextMenu uses for its own tracked state.
-  const [trackedSelectedTabId, setTrackedSelectedTabId] = useState(selectedTabId)
-  if (selectedTabId !== trackedSelectedTabId) {
-    setTrackedSelectedTabId(selectedTabId)
-    setNotesOpenTabId(selectedTabId)
-  }
-
   function updateSettings(patch: Partial<GraphPersistedState["settings"]>) {
     setGraphState((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }))
   }
@@ -290,6 +277,10 @@ export function GraphView({
       workspace.tabs.map((t) => (t.id === tabId ? { ...t, notes: trimmed || undefined } : t))
     )
     onStoreUpdate(next)
+  }
+
+  function handleOpenNotes(tabId: string) {
+    setNotesOpenTabId(tabId)
   }
 
   function handleRemoveTab(tabId: string) {
@@ -599,6 +590,7 @@ export function GraphView({
         onAddDependency={() => selectedTabId && setLinkDialog({ mode: "dependency", tabId: selectedTabId })}
         onRemoveDependency={handleRemoveDependency}
         onChangeDependencyType={handleChangeDependencyType}
+        onOpenNotes={handleOpenNotes}
         selectedCollection={selectedCollection}
         onFocusCollection={handleFocusCollection}
         onRenameCollection={() => selectedCollectionId && setRenameCollectionId(selectedCollectionId)}
@@ -611,6 +603,11 @@ export function GraphView({
         otherWorkspaces={otherWorkspaces}
         dependencyCount={contextNodeDependencyCount}
         collections={contextNodeCollections}
+        hasNotes={Boolean(contextNode?.tab.notes?.trim())}
+        onOpenNotes={() => {
+          if (contextNode) handleOpenNotes(contextNode.id)
+          setContextMenu(null)
+        }}
         onAddToCollection={(collectionId) => {
           if (contextNode) handleAddNodeToCollection(contextNode.id, collectionId)
           setContextMenu(null)

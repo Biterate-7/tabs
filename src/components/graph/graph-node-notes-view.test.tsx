@@ -3,10 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { GraphNodeNotesView } from "./graph-node-notes-view";
 import type { GraphNode } from "@/lib/graph/types";
 
-function makeNode(id: string, domain: string, notes?: string, title?: string): GraphNode {
+function makeNode(id: string, domain: string, over: Partial<GraphNode["tab"]> = {}): GraphNode {
   return {
     id,
-    tab: { id, url: `https://${domain}`, normalizedUrl: `https://${domain}`, domain, notes, title },
+    tab: { id, url: `https://${domain}`, normalizedUrl: `https://${domain}`, domain, ...over },
     workspaceId: "ws-1",
     workspaceName: "School",
   };
@@ -21,34 +21,64 @@ describe("GraphNodeNotesView", () => {
     vi.useRealTimers();
   });
 
-  it("identifies which tab/domain the notes belong to", () => {
-    render(
-      <GraphNodeNotesView node={makeNode("a", "arxiv.org", undefined, "arXiv")} onNotesChange={vi.fn()} onClose={vi.fn()} />
-    );
-    expect(screen.getByText("arXiv")).toBeTruthy();
-    expect(screen.getByText("arxiv.org")).toBeTruthy();
+  it("shows the document title and workspace/domain breadcrumb", () => {
+    render(<GraphNodeNotesView node={makeNode("a", "arxiv.org", { title: "arXiv" })} onNotesChange={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "arXiv" })).toBeTruthy();
+    expect(
+      screen.getByText((_, el) => el?.tagName.toLowerCase() === "p" && el.textContent === "School / arxiv.org")
+    ).toBeTruthy();
   });
 
-  it("shows an 'add a note' placeholder for a tab with no note", () => {
+  it("falls back to the domain as the title when the tab has no title", () => {
     render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={vi.fn()} onClose={vi.fn()} />);
-    const textarea = screen.getByPlaceholderText("Add a note for arxiv.org…") as HTMLTextAreaElement;
+    expect(screen.getByRole("heading", { name: "arxiv.org" })).toBeTruthy();
+  });
+
+  it("shows the real properties for the tab: title, url, and workspace", () => {
+    render(<GraphNodeNotesView node={makeNode("a", "arxiv.org", { title: "arXiv" })} onNotesChange={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText("Properties")).toBeTruthy();
+    expect(screen.getByText("title")).toBeTruthy();
+    expect(screen.getByText("url")).toBeTruthy();
+    expect(
+      screen.getByText((_, el) => el?.tagName.toLowerCase() === "span" && el.textContent === "https://arxiv.org")
+    ).toBeTruthy();
+    expect(screen.getByText("workspace")).toBeTruthy();
+    expect(screen.getByText("School")).toBeTruthy();
+  });
+
+  it("shows a category property only when the tab has one", () => {
+    const { rerender } = render(
+      <GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={vi.fn()} onClose={vi.fn()} />
+    );
+    expect(screen.queryByText("category")).toBeNull();
+
+    rerender(
+      <GraphNodeNotesView node={makeNode("a", "arxiv.org", { category: "research" })} onNotesChange={vi.fn()} onClose={vi.fn()} />
+    );
+    expect(screen.getByText("category")).toBeTruthy();
+    expect(
+      screen.getByText((_, el) => el?.tagName.toLowerCase() === "span" && el.textContent === "Research")
+    ).toBeTruthy();
+  });
+
+  it("shows a 'Start writing…' placeholder for a tab with no note", () => {
+    render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={vi.fn()} onClose={vi.fn()} />);
+    const textarea = screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement;
     expect(textarea.value).toBe("");
   });
 
   it("shows the existing note text for a tab that already has one", () => {
     render(
-      <GraphNodeNotesView node={makeNode("a", "arxiv.org", "Read this later")} onNotesChange={vi.fn()} onClose={vi.fn()} />
+      <GraphNodeNotesView node={makeNode("a", "arxiv.org", { notes: "Read this later" })} onNotesChange={vi.fn()} onClose={vi.fn()} />
     );
-    expect((screen.getByPlaceholderText("Add a note for arxiv.org…") as HTMLTextAreaElement).value).toBe(
-      "Read this later"
-    );
+    expect((screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement).value).toBe("Read this later");
   });
 
   it("autosaves the trimmed draft through onNotesChange after the debounce window", () => {
     const onNotesChange = vi.fn();
     render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={onNotesChange} onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByPlaceholderText("Add a note for arxiv.org…"), {
+    fireEvent.change(screen.getByPlaceholderText("Start writing…"), {
       target: { value: "  New note  " },
     });
     expect(onNotesChange).not.toHaveBeenCalled();
@@ -62,7 +92,7 @@ describe("GraphNodeNotesView", () => {
     const onClose = vi.fn();
     render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={onNotesChange} onClose={onClose} />);
 
-    fireEvent.change(screen.getByPlaceholderText("Add a note for arxiv.org…"), { target: { value: "Via back" } });
+    fireEvent.change(screen.getByPlaceholderText("Start writing…"), { target: { value: "Via back" } });
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
     expect(onNotesChange).toHaveBeenCalledWith("a", "Via back");
@@ -72,7 +102,7 @@ describe("GraphNodeNotesView", () => {
   it("does not call onNotesChange when the draft is unchanged", () => {
     const onNotesChange = vi.fn();
     render(
-      <GraphNodeNotesView node={makeNode("a", "arxiv.org", "Existing")} onNotesChange={onNotesChange} onClose={vi.fn()} />
+      <GraphNodeNotesView node={makeNode("a", "arxiv.org", { notes: "Existing" })} onNotesChange={onNotesChange} onClose={vi.fn()} />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
@@ -82,10 +112,10 @@ describe("GraphNodeNotesView", () => {
   it("treats a whitespace-only draft as an empty note", () => {
     const onNotesChange = vi.fn();
     render(
-      <GraphNodeNotesView node={makeNode("a", "arxiv.org", "Existing")} onNotesChange={onNotesChange} onClose={vi.fn()} />
+      <GraphNodeNotesView node={makeNode("a", "arxiv.org", { notes: "Existing" })} onNotesChange={onNotesChange} onClose={vi.fn()} />
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Add a note for arxiv.org…"), { target: { value: "   " } });
+    fireEvent.change(screen.getByPlaceholderText("Start writing…"), { target: { value: "   " } });
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
     expect(onNotesChange).toHaveBeenCalledWith("a", "");
@@ -97,7 +127,7 @@ describe("GraphNodeNotesView", () => {
       <GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={onNotesChange} onClose={vi.fn()} />
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Add a note for arxiv.org…"), { target: { value: "Unsaved" } });
+    fireEvent.change(screen.getByPlaceholderText("Start writing…"), { target: { value: "Unsaved" } });
     unmount();
 
     expect(onNotesChange).toHaveBeenCalledWith("a", "Unsaved");

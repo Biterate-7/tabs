@@ -19,6 +19,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof GraphContextMe
     otherWorkspaces: [],
     dependencyCount: 0,
     collections: [],
+    hasNotes: false,
     onOpenTab: vi.fn(),
     onOpenNewTab: vi.fn(),
     onCopyUrl: vi.fn(),
@@ -29,6 +30,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof GraphContextMe
     onViewDependencies: vi.fn(),
     onAddToCollection: vi.fn(),
     onGatherNewCollection: vi.fn(),
+    onOpenNotes: vi.fn(),
     onRemove: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
@@ -65,5 +67,14 @@ describe("GraphContextMenu collection submenu", () => {
   it("renders nothing when state is null", () => {
     const { container } = render(<GraphContextMenu {...baseProps({ state: null })} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("calls onOpenNotes when the Notes item is clicked", () => {
+    const onOpenNotes = vi.fn();
+    render(<GraphContextMenu {...baseProps({ onOpenNotes })} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Notes" }));
+
+    expect(onOpenNotes).toHaveBeenCalledTimes(1);
   });
 });

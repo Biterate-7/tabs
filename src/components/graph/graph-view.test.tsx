@@ -127,13 +127,30 @@ describe("GraphView dedicated notes page", () => {
     openSpy.mockRestore();
   });
 
-  it("opens for a pre-selected node and shows a placeholder when it has no note", () => {
+  // Opening notes is an explicit action (the sidebar's Notes button, once a
+  // node is selected), not something that follows selection automatically —
+  // see handleOpenNotes in graph-view.tsx.
+  function openNotes() {
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+  }
+
+  it("does not open just from selecting a node, but offers an explicit Notes action", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
+    expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
+  });
+
+  it("opens via the sidebar's Notes button and shows a placeholder when it has no note", () => {
+    seedSelectedTab("a");
+    const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    openNotes();
+
     expect(screen.getByRole("button", { name: "Back to graph" })).toBeTruthy();
-    expect((screen.getByPlaceholderText("Add a note for github.com…") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("shows a note that already exists on the tab (e.g. added via the tab card)", () => {
@@ -143,8 +160,9 @@ describe("GraphView dedicated notes page", () => {
       makeTab({ id: "b", domain: "github.com" }),
     ]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    openNotes();
 
-    expect((screen.getByPlaceholderText("Add a note for github.com…") as HTMLTextAreaElement).value).toBe(
+    expect((screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement).value).toBe(
       "From the tab card"
     );
   });
@@ -154,8 +172,9 @@ describe("GraphView dedicated notes page", () => {
     const onStoreUpdate = vi.fn();
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+    openNotes();
 
-    const textarea = screen.getByPlaceholderText("Add a note for github.com…");
+    const textarea = screen.getByPlaceholderText("Start writing…");
     fireEvent.change(textarea, { target: { value: "Check the README" } });
     // Going back flushes the pending debounced save immediately, rather than
     // waiting out SAVE_DEBOUNCE_MS.
@@ -176,8 +195,9 @@ describe("GraphView dedicated notes page", () => {
       makeTab({ id: "b", domain: "github.com" }),
     ]);
     render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+    openNotes();
 
-    const textarea = screen.getByPlaceholderText("Add a note for github.com…");
+    const textarea = screen.getByPlaceholderText("Start writing…");
     fireEvent.change(textarea, { target: { value: "Updated note" } });
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
@@ -189,17 +209,21 @@ describe("GraphView dedicated notes page", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    openNotes();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
 
-    expect(screen.queryByPlaceholderText("Add a note for github.com…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Start writing…")).toBeNull();
     expect(screen.getByText("GRAPH")).toBeTruthy();
+    // Selection survived the close — the sidebar still shows "a"'s panel, Notes button included.
+    expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
   });
 
-  it("does not open when no node is selected", () => {
+  it("offers no Notes entry point when no node is selected", () => {
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
+    expect(screen.queryByRole("button", { name: "Notes" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
   });
 
@@ -207,7 +231,8 @@ describe("GraphView dedicated notes page", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     const { rerender } = render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByPlaceholderText("Add a note for github.com…")).toBeTruthy();
+    openNotes();
+    expect(screen.getByPlaceholderText("Start writing…")).toBeTruthy();
 
     const withoutA = makeStore([makeTab({ id: "b", domain: "github.com" })]);
     rerender(<GraphView store={withoutA} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);

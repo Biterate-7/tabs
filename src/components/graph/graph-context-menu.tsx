@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, StickyNote, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import type { GraphNode } from "@/lib/graph/types"
@@ -22,6 +22,7 @@ export function GraphContextMenu({
   otherWorkspaces,
   dependencyCount,
   collections,
+  hasNotes,
   onOpenTab,
   onOpenNewTab,
   onCopyUrl,
@@ -32,6 +33,7 @@ export function GraphContextMenu({
   onViewDependencies,
   onAddToCollection,
   onGatherNewCollection,
+  onOpenNotes,
   onRemove,
   onClose,
 }: {
@@ -41,6 +43,8 @@ export function GraphContextMenu({
   dependencyCount: number
   /** Collections in the right-clicked node's own workspace — for the "Add to collection" submenu. */
   collections: { id: string; name: string }[]
+  /** Whether the right-clicked node already has a note — drives the "Notes"/filled-icon distinction, mirroring TabNotesButton. */
+  hasNotes: boolean
   onOpenTab: () => void
   onOpenNewTab: () => void
   onCopyUrl: () => void
@@ -51,6 +55,7 @@ export function GraphContextMenu({
   onViewDependencies: () => void
   onAddToCollection: (collectionId: string) => void
   onGatherNewCollection: () => void
+  onOpenNotes: () => void
   onRemove: () => void
   onClose: () => void
 }) {
@@ -90,6 +95,12 @@ export function GraphContextMenu({
       </button>
       <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onCopyCleanUrl}>
         <Copy /> Copy clean URL
+      </button>
+
+      <div className="-mx-1 my-1 h-px bg-border" />
+
+      <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onOpenNotes}>
+        <StickyNote fill={hasNotes ? "currentColor" : "none"} fillOpacity={hasNotes ? 0.15 : 1} /> Notes
       </button>
 
       {otherWorkspaces.length > 0 && (

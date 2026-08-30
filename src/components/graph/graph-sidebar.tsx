@@ -56,6 +56,7 @@ export function GraphSidebar({
   onAddDependency,
   onRemoveDependency,
   onChangeDependencyType,
+  onOpenNotes,
   selectedCollection,
   onFocusCollection,
   onRenameCollection,
@@ -91,6 +92,7 @@ export function GraphSidebar({
   onAddDependency: () => void
   onRemoveDependency: (depId: string) => void
   onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
+  onOpenNotes: (id: string) => void
   /** The currently-selected collection region's detail — omitted (undefined) when nothing is selected. Mutually exclusive with selectedNode (see graph-canvas.tsx). */
   selectedCollection?: Collection | null
   onFocusCollection: () => void
@@ -166,6 +168,7 @@ export function GraphSidebar({
                 onAddDependency={onAddDependency}
                 onRemoveDependency={onRemoveDependency}
                 onChangeDependencyType={onChangeDependencyType}
+                onOpenNotes={() => onOpenNotes(selectedNode.id)}
               />
             </>
           )}

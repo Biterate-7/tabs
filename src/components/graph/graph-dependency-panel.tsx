@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp, Boxes, ChevronDown, ChevronRight, CornerDownRight, GitBranchPlus, MoreHorizontal, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Boxes, ChevronDown, ChevronRight, CornerDownRight, GitBranchPlus, MoreHorizontal, StickyNote, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -135,6 +135,7 @@ export function GraphDependencyPanel({
   onAddDependency,
   onRemoveDependency,
   onChangeDependencyType,
+  onOpenNotes,
 }: {
   node: GraphNode
   dependencies: TabDependency[]
@@ -146,16 +147,26 @@ export function GraphDependencyPanel({
   onAddDependency: () => void
   onRemoveDependency: (depId: string) => void
   onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
+  /** Omitted where this panel is reused outside the Graph view (TabInspector) and there's no dedicated notes page to open. */
+  onOpenNotes?: () => void
 }) {
   const isEmpty = dependencies.length === 0 && usedByDeps.length === 0
+  const hasNotes = Boolean(node.tab.notes?.trim())
 
   return (
     <div className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0">
-      <div className="flex items-center justify-between">
-        <p className="truncate text-body-sm font-medium text-foreground">{node.tab.title?.trim() || node.tab.domain}</p>
-        <Button variant="ghost" size="xs" onClick={onAddDependency}>
-          <GitBranchPlus /> Add
-        </Button>
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-body-sm font-medium text-foreground">{node.tab.title?.trim() || node.tab.domain}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          {onOpenNotes && (
+            <Button variant="ghost" size="xs" className={hasNotes ? "text-accent-text" : undefined} onClick={onOpenNotes}>
+              <StickyNote fill={hasNotes ? "currentColor" : "none"} fillOpacity={hasNotes ? 0.15 : 1} /> Notes
+            </Button>
+          )}
+          <Button variant="ghost" size="xs" onClick={onAddDependency}>
+            <GitBranchPlus /> Add
+          </Button>
+        </div>
       </div>
 
       {!isEmpty && (
