@@ -1,10 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { shouldPlayIntro, prefersReducedMotion, isMobileViewport } from "./intro";
-import { getSettings } from "./settings";
+import { getSettings, type Settings } from "./settings";
+import { DEFAULT_APPEARANCE_SETTINGS } from "./appearance/defaults";
 
 vi.mock("./settings", () => ({
   getSettings: vi.fn(),
 }));
+
+function settingsWith(playIntro: boolean): Settings {
+  return { playIntro, ...DEFAULT_APPEARANCE_SETTINGS };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -12,17 +17,17 @@ beforeEach(() => {
 
 describe("shouldPlayIntro", () => {
   it("plays when the setting is on", () => {
-    vi.mocked(getSettings).mockReturnValue({ playIntro: true });
+    vi.mocked(getSettings).mockReturnValue(settingsWith(true));
     expect(shouldPlayIntro()).toBe(true);
   });
 
   it("does not play when the setting is off", () => {
-    vi.mocked(getSettings).mockReturnValue({ playIntro: false });
+    vi.mocked(getSettings).mockReturnValue(settingsWith(false));
     expect(shouldPlayIntro()).toBe(false);
   });
 
   it("has no memory of a previous call — every call re-reads the setting fresh", () => {
-    vi.mocked(getSettings).mockReturnValue({ playIntro: true });
+    vi.mocked(getSettings).mockReturnValue(settingsWith(true));
     expect(shouldPlayIntro()).toBe(true);
     expect(shouldPlayIntro()).toBe(true);
     expect(shouldPlayIntro()).toBe(true);

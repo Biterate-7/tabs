@@ -32,7 +32,7 @@ export function NotesEditorFields({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="mt-2"
+        className="text-content mt-2 bg-editor-background text-editor-text placeholder:text-editor-placeholder"
         rows={4}
       />
       <div className="mt-2 flex justify-end">

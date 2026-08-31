@@ -824,7 +824,14 @@ export function WorkspaceView({
         dependencies={dependencies}
         collections={allCollections}
       />
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main
+        className="mx-auto max-w-6xl"
+        // Settings → Appearance → Layout → Spacing (see --tabdump-density-scale in resolve.ts).
+        style={{
+          paddingInline: "calc(1.5rem * var(--tabdump-density-scale, 1))",
+          paddingBlock: "calc(2rem * var(--tabdump-density-scale, 1))",
+        }}
+      >
         <AttentionStrip
           attention={attention}
           onCleanup={() => setCleanupOpen(true)}

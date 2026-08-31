@@ -30,7 +30,10 @@ describe("settings", () => {
     setPlayIntro(false);
     const raw = window.localStorage.getItem(STORAGE_KEY);
     expect(raw).not.toBeNull();
-    expect(JSON.parse(raw as string)).toEqual({ playIntro: false });
+    // Only asserts the one field this test owns — the object also carries
+    // the appearance system's settings (theme, typography, …), which have
+    // their own dedicated coverage in appearance/*.test.ts.
+    expect(JSON.parse(raw as string)).toMatchObject({ playIntro: false });
   });
 
   it("ignores the old first-visit 'seen' key entirely — it never implies the new setting is off", () => {

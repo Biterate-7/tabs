@@ -84,6 +84,11 @@ export function AppSidebar({
           "md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-[width]",
           collapsed ? "md:w-14" : "md:w-60"
         )}
+        // Settings → Appearance → Layout → Sidebar density controls this var
+        // (see resolve.ts). Only applied when the rail is actually showing
+        // its full-width state — the collapsed desktop icon rail keeps its
+        // fixed w-14, which isn't a "density" the appearance system governs.
+        style={!collapsed || mobileOpen ? { width: "var(--tabdump-sidebar-width)" } : undefined}
       >
         <div className={cn("flex items-center gap-2 px-3 py-3", showLabels ? "justify-between" : "justify-center")}>
           {showLabels && <p className="text-body font-semibold tracking-tight text-foreground">TabDump</p>}

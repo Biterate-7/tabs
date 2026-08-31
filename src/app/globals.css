@@ -15,8 +15,6 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -54,63 +52,62 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-}
 
-:root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
-  --duration-fast: 120ms;
-  --duration-base: 160ms;
-  --duration-slow: 220ms;
-  /* Intro-only: the one place in the app that wants a touch of overshoot
-     (scene 3's "tabs recognize the center" convergence) — everywhere else
-     uses --ease-standard, which has none by design. */
-  --ease-intro-converge: cubic-bezier(0.32, 1.3, 0.56, 1);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Appearance system (src/lib/appearance) — every value below is written
+     at runtime by AppearanceProvider (see use-appearance.ts); the :root
+     block further down only supplies the pre-hydration/no-JS fallback. */
+  --font-sans: var(--tabdump-font-ui);
+  --font-mono: var(--tabdump-font-mono);
+  --color-background-secondary: var(--background-secondary);
+  --color-background-tertiary: var(--background-tertiary);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-surface-selected: var(--surface-selected);
+  --color-text-secondary: var(--text-secondary);
+  --color-disabled: var(--text-disabled);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-subtle: var(--border-subtle);
+  --color-strong: var(--border-strong);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-error: var(--error);
+  --color-error-subtle: var(--error-subtle);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-subtle: var(--info-subtle);
+  --color-selection: var(--selection);
+  --color-focus: var(--focus);
+  --color-graph-node: var(--graph-node);
+  --color-graph-node-selected: var(--graph-node-selected);
+  --color-graph-edge: var(--graph-edge);
+  --color-editor-background: var(--editor-background);
+  --color-editor-text: var(--editor-text);
+  --color-editor-placeholder: var(--editor-placeholder);
 }
 
 /*
- * Text hierarchy (3 tiers — do not add a 4th ad hoc gray):
- *   text-foreground        primary   — titles, primary values, active state
- *   text-muted-foreground  secondary — descriptions, body copy, labels
- *   text-tertiary          tertiary  — metadata, counts, timestamps (dimmer, still AA)
+ * Text hierarchy (4 tiers — do not add a 5th ad hoc gray):
+ *   text-foreground   primary   — titles, primary values, active state
+ *   text-secondary    secondary — descriptions, body copy, labels
+ *   text-tertiary     tertiary  — metadata, counts, timestamps (dimmer, still AA)
+ *   text-disabled     disabled  — inactive controls, placeholder-adjacent text
  *
  * Elevation (3 tiers — match surface to layer, don't default everything to bg-card):
  *   bg-background  base    — page canvas
- *   bg-card        surface — tab rows, category groups, inline panels
+ *   bg-card/bg-surface  surface — tab rows, category groups, inline panels
  *   bg-popover     elevated — menus, dialogs, sheets, command palette
+ *
+ * Every color below is the pre-hydration / no-JS fallback and is normally
+ * overwritten at runtime by AppearanceProvider (src/components/
+ * appearance-provider.tsx) from the active theme — see src/lib/appearance.
+ * They deliberately reproduce TabDump's original dark palette ("Midnight",
+ * the default theme) so nothing changes for a user before JS applies their
+ * saved preference.
  */
-.dark {
+:root {
   /* bg-base */
   --background: #0a0a0b;
   /* text-primary */
@@ -134,9 +131,7 @@
   --accent: #1c1c21;
   --accent-foreground: #f4f4f5;
   --destructive: #e5484d;
-  /* border-subtle */
   --border: rgba(255, 255, 255, 0.08);
-  /* border-default / bg-input tint */
   --input: rgba(255, 255, 255, 0.12);
   /* focus ring = accent */
   --ring: #4361ff;
@@ -154,7 +149,9 @@
   /* destructive/remove actions outside confirm dialogs (bulk remove, etc.) */
   --danger: var(--destructive);
   --danger-foreground: #ffffff;
-  /* category accents (Phase 3) */
+  /* category accents (Phase 3) — fixed across every theme, deliberately not
+     theme-driven: they're identity colors for the 8 fixed categories, not
+     UI chrome, and stay legible against both dark and light surfaces. */
   --category-research: #8b7cf6;
   --category-school: #f5a623;
   --category-projects: #4361ff;
@@ -168,14 +165,85 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: #131316;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-primary: #4361ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1c1c21;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #4361ff;
+
+  --radius: 0.625rem;
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --tabdump-transition-scale: 1;
+  --motion-scale: 1;
+  --duration-fast: calc(120ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-base: calc(160ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-slow: calc(220ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  /* Intro-only: the one place in the app that wants a touch of overshoot
+     (scene 3's "tabs recognize the center" convergence) — everywhere else
+     uses --ease-standard, which has none by design. */
+  --ease-intro-converge: cubic-bezier(0.32, 1.3, 0.56, 1);
+
+  /* ---- Appearance system semantic tokens (src/lib/appearance) ---- */
+  --background-secondary: var(--sidebar);
+  --background-tertiary: #1a1a1e;
+  --surface: var(--card);
+  --surface-hover: var(--accent);
+  --surface-active: var(--secondary);
+  --surface-selected: color-mix(in oklch, var(--card), var(--primary) 18%);
+  --text-secondary: var(--muted-foreground);
+  --text-disabled: color-mix(in oklch, var(--muted-foreground), transparent 40%);
+  --accent-hover: color-mix(in oklch, var(--primary), white 12%);
+  --accent-active: color-mix(in oklch, var(--primary), black 16%);
+  --accent-subtle: color-mix(in oklch, var(--primary), var(--background) 84%);
+  --border-subtle: var(--border);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --success-subtle: color-mix(in oklch, var(--success), var(--background) 85%);
+  --warning-subtle: color-mix(in oklch, var(--warning), var(--background) 85%);
+  --error: var(--destructive);
+  --error-subtle: color-mix(in oklch, var(--destructive), var(--background) 85%);
+  --info: #4fa6f7;
+  --info-foreground: #04202f;
+  --info-subtle: color-mix(in oklch, #4fa6f7, var(--background) 85%);
+  --selection: var(--primary);
+  --selection-foreground: var(--primary-foreground);
+  --focus: var(--ring);
+  --graph-node: var(--muted-foreground);
+  --graph-node-selected: var(--primary);
+  --graph-edge: var(--accent-text);
+  --graph-edge-rgb: 138, 157, 255;
+  --text-tertiary-rgb: 135, 135, 143;
+  --warning-rgb: 166, 106, 31;
+  --success-rgb: 31, 138, 76;
+  --info-rgb: 79, 166, 247;
+  --editor-background: var(--background);
+  --editor-text: var(--foreground);
+  --editor-placeholder: color-mix(in oklch, var(--muted-foreground), transparent 40%);
+
+  --tabdump-font-ui: var(--font-geist-sans);
+  --tabdump-font-content: var(--font-geist-sans);
+  --tabdump-font-mono: var(--font-geist-mono);
+  --tabdump-font-scale: 1;
+  --tabdump-font-weight: 400;
+  --tabdump-line-height: 1.5;
+  --tabdump-letter-spacing: 0px;
+
+  --tabdump-bg-image: none;
+  --tabdump-bg-color: var(--background);
+  --tabdump-bg-size: cover;
+  --tabdump-bg-repeat: no-repeat;
+  --tabdump-bg-position: center;
+  --tabdump-bg-opacity: 1;
+  --tabdump-bg-filter: none;
+  --tabdump-overlay-color: transparent;
+  --tabdump-overlay-active: 0;
+
+  --tabdump-content-max-width: 72rem;
+  --tabdump-density-scale: 1;
+  --tabdump-sidebar-width: 15rem;
+  --tabdump-card-density-scale: 1;
 }
 
 @layer base {
@@ -190,7 +258,8 @@
   }
 
   ::selection {
-    @apply bg-primary text-primary-foreground;
+    background-color: var(--selection);
+    color: var(--selection-foreground);
   }
 
   * {
@@ -218,8 +287,36 @@
    interactive element even where a component's own focus-visible ring
    utility fails to resolve (observed on the generated Button primitive). */
 :focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Background customization (Settings → Appearance → Background). A fixed
+   layer behind all app content so filters (blur/brightness/contrast/
+   saturation) never touch foreground text, and a second layer for the
+   readability overlay — see appearanceToCssVars in src/lib/appearance/
+   resolve.ts for how these vars are computed. Pointer-events: none so the
+   layer never intercepts clicks meant for the app above it. */
+.appearance-background-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--tabdump-bg-color);
+  background-image: var(--tabdump-bg-image);
+  background-size: var(--tabdump-bg-size);
+  background-repeat: var(--tabdump-bg-repeat);
+  background-position: var(--tabdump-bg-position);
+  opacity: var(--tabdump-bg-opacity);
+  filter: var(--tabdump-bg-filter);
+}
+.appearance-background-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--tabdump-overlay-color);
+  opacity: var(--tabdump-overlay-active);
 }
 
 @layer components {
@@ -230,38 +327,48 @@
     font-weight: 600;
   }
   .text-h1 {
-    font-size: 1.5rem;
+    font-size: calc(1.5rem * var(--tabdump-font-scale));
     line-height: 1.3;
     letter-spacing: -0.01em;
     font-weight: 600;
   }
   .text-h2 {
-    font-size: 1.125rem;
+    font-size: calc(1.125rem * var(--tabdump-font-scale));
     line-height: 1.4;
     font-weight: 600;
   }
   .text-body {
-    font-size: 0.9375rem;
-    line-height: 1.5;
-    font-weight: 400;
+    font-family: var(--tabdump-font-ui);
+    font-size: calc(0.9375rem * var(--tabdump-font-scale));
+    line-height: var(--tabdump-line-height);
+    letter-spacing: var(--tabdump-letter-spacing);
+    font-weight: var(--tabdump-font-weight);
   }
   .text-body-sm {
-    font-size: 0.8125rem;
+    font-size: calc(0.8125rem * var(--tabdump-font-scale));
     line-height: 1.4;
     font-weight: 400;
   }
   .text-label {
-    font-size: 0.75rem;
+    font-size: calc(0.75rem * var(--tabdump-font-scale));
     line-height: 1.3;
     letter-spacing: 0.01em;
     font-weight: 500;
   }
   .text-meta {
-    font-family: var(--font-geist-mono);
-    font-size: 0.75rem;
+    font-family: var(--tabdump-font-mono);
+    font-size: calc(0.75rem * var(--tabdump-font-scale));
     line-height: 1.2;
     font-variant-numeric: tabular-nums;
     font-weight: 400;
+  }
+
+  /* Notes / document-editing surfaces (Graph node notes page, per-tab notes
+     popover) — deliberately separate from --tabdump-font-ui so a theme or
+     the Typography section can give long-form writing its own font/rhythm
+     without changing the rest of the app's chrome. */
+  .text-content {
+    font-family: var(--tabdump-font-content);
   }
 
   @keyframes category-card-in {
@@ -435,4 +542,17 @@
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Settings → Appearance → Motion → Animations: Off. Independent of (and on
+   top of) the OS-level prefers-reduced-motion query above — this is the
+   explicit in-app opt-out, forced on automatically when the OS preference
+   is set (see use-appearance.ts). */
+[data-motion="off"] *,
+[data-motion="off"] *::before,
+[data-motion="off"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
 }

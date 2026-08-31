@@ -31,6 +31,10 @@ const FALLBACK: Record<string, string> = {
   "--primary": "#4361ff",
   "--accent-text": "#8a9dff",
   "--border": "rgba(255,255,255,0.08)",
+  "--graph-node": "#a1a1aa",
+  "--graph-node-selected": "#4361ff",
+  "--graph-edge": "#8a9dff",
+  "--graph-edge-rgb": "138, 157, 255",
 };
 
 /**
@@ -46,26 +50,32 @@ export function resolveGraphPalette(root: HTMLElement = document.documentElement
   const category = {} as Record<CategoryId, string>;
   for (const id of CATEGORY_ORDER) category[id] = v(CATEGORIES[id].accentColor);
 
+  // The graph's edge palette is built from one theme-driven `--graph-edge`
+  // color (an rgb triplet, so it can carry the alpha each relationship type
+  // needs) rather than per-reason hardcoded colors — every theme gets a
+  // coherent, on-brand graph without having to hand-author 8 edge colors.
+  const edgeRgb = v("--graph-edge-rgb") || "138, 157, 255";
+
   return {
-    nodeDefault: v("--muted-foreground"),
+    nodeDefault: v("--graph-node"),
     nodeStroke: v("--border"),
-    nodeSelectedRing: v("--primary"),
+    nodeSelectedRing: v("--graph-node-selected"),
     nodeCenterRing: v("--accent-text"),
     textPrimary: v("--foreground"),
     textDim: v("--text-tertiary"),
     edge: {
-      domain: "rgba(138, 157, 255, 0.35)",
-      workspace: "rgba(161, 161, 170, 0.35)",
-      category: "rgba(245, 166, 35, 0.3)",
-      group: "rgba(34, 197, 94, 0.3)",
-      manual: "rgba(67, 97, 255, 0.55)",
+      domain: `rgba(${edgeRgb}, 0.35)`,
+      workspace: `rgba(${v("--text-tertiary-rgb") || "161, 161, 170"}, 0.35)`,
+      category: `rgba(${v("--warning-rgb") || "245, 166, 35"}, 0.3)`,
+      group: `rgba(${v("--success-rgb") || "34, 197, 94"}, 0.3)`,
+      manual: `rgba(${edgeRgb}, 0.55)`,
     },
     edgeHighlighted: v("--accent-text"),
     edgeDim: "rgba(255, 255, 255, 0.04)",
-    edgeDependency: "rgba(45, 212, 191, 0.55)",
-    edgeDependencyHighlighted: "rgba(45, 212, 191, 0.9)",
+    edgeDependency: `rgba(${v("--info-rgb") || "45, 212, 191"}, 0.55)`,
+    edgeDependencyHighlighted: `rgba(${v("--info-rgb") || "45, 212, 191"}, 0.9)`,
     collectionBoundary: v("--border"),
-    collectionBoundarySelected: v("--primary"),
+    collectionBoundarySelected: v("--graph-node-selected"),
     collectionLabel: v("--text-tertiary"),
     category,
     fontFamily: getComputedStyle(document.body).fontFamily || "ui-sans-serif, system-ui, sans-serif",

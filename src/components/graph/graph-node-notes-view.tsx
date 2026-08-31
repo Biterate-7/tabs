@@ -91,7 +91,7 @@ export function GraphNodeNotesView({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="fixed inset-0 z-50 flex flex-col bg-editor-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-8">
@@ -144,7 +144,7 @@ export function GraphNodeNotesView({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Start writing…"
-            className="field-sizing-content min-h-[45vh] w-full resize-none border-none bg-transparent p-0 text-body leading-[1.7] text-foreground shadow-none focus-visible:border-none focus-visible:ring-0 dark:bg-transparent placeholder:text-muted-foreground/60"
+            className="text-content field-sizing-content min-h-[45vh] w-full resize-none border-none bg-transparent p-0 text-body leading-[1.7] text-editor-text shadow-none focus-visible:border-none focus-visible:ring-0 dark:bg-transparent placeholder:text-editor-placeholder"
             // The app sets a global `:focus-visible { outline: ... }` rule (see
             // globals.css) outside any @layer, so it beats every Tailwind
             // utility regardless of specificity — only an inline style can

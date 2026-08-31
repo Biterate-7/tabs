@@ -5,7 +5,7 @@ import { toast } from "sonner"
 import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
-import { SettingsDialog } from "@/components/settings-dialog"
+import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
@@ -60,13 +60,12 @@ export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
-  const [view, setView] = useState<"workspace" | "graph">("workspace")
+  const [view, setView] = useState<"workspace" | "graph" | "settings">("workspace")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail
   // toggle), which has no meaningful effect on mobile.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   // Ids from the most recently completed import batch, for the "recently
   // added" tab-card treatment — ephemeral UI-only state (never persisted,
   // no Tab field backs it), cleared automatically after a short window so
@@ -308,6 +307,10 @@ export function AppShell() {
     return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
   }
 
+  if (view === "settings") {
+    return <AppearanceSettingsView onClose={() => setView("workspace")} />
+  }
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar
@@ -324,10 +327,14 @@ export function AppShell() {
         onDelete={handleDeleteWorkspace}
         onImportFile={handleImportJson}
         onOpenGraph={() => setView("graph")}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => setView("settings")}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <div className="min-w-0 flex-1">
+      <div
+        className="min-w-0 flex-1"
+        // Settings → Appearance → Layout → Content width (see resolve.ts).
+        // "Full" resolves to `none`, i.e. today's unconstrained behavior.
+        style={{ maxWidth: "var(--tabdump-content-max-width)", marginInline: "auto" }}
+      >
         {currentWorkspace.tabs.length === 0 ? (
           <LandingView onDump={handleDump} onOpenSidebar={() => setMobileSidebarOpen(true)} />
         ) : (

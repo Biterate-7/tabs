@@ -54,9 +54,12 @@ export function CategoryCard({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 rounded-lg border border-subtle bg-card p-4",
+        "flex flex-col gap-3 rounded-lg border border-subtle bg-card",
         presence === "large" && "sm:col-span-2 lg:col-span-1 lg:row-span-1"
       )}
+      // Settings → Appearance → Layout → Card density (see
+      // --tabdump-card-density-scale in resolve.ts).
+      style={{ padding: "calc(1rem * var(--tabdump-card-density-scale, 1))" }}
     >
       <div className="flex items-center gap-2">
         <Icon

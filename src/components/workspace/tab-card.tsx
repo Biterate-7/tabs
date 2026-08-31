@@ -111,14 +111,19 @@ export function TabCard({
       draggable={isDraggable}
       onDragStart={isDraggable ? handleDragStart : undefined}
       className={cn(
-        "group flex items-center gap-3 border-b border-subtle px-1 py-2.5 transition-colors duration-(--duration-fast) ease-(--ease-standard) last:border-b-0",
+        "group flex items-center gap-3 border-b border-subtle px-1 transition-colors duration-(--duration-fast) ease-(--ease-standard) last:border-b-0",
         "focus-within:rounded-md focus-within:ring-2 focus-within:ring-ring/50",
         selected && "rounded-md bg-primary/5",
         isRecentlyAdded && "rounded-md bg-accent-text/[0.06]",
         tab.isDuplicate && "opacity-70",
         isDraggable && "cursor-grab active:cursor-grabbing"
       )}
-      style={isRecentlyAdded ? arrivalStyle(tab.id) : undefined}
+      // Settings → Appearance → Layout → Card density scales this card's
+      // vertical padding (see --tabdump-card-density-scale in resolve.ts).
+      style={{
+        paddingBlock: "calc(0.625rem * var(--tabdump-card-density-scale, 1))",
+        ...(isRecentlyAdded ? arrivalStyle(tab.id) : undefined),
+      }}
     >
       {selectable && (
         <Checkbox
