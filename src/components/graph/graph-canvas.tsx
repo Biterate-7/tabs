@@ -98,6 +98,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   onDependencyEdgeClick: (edge: GraphDependencyEdge, screenX: number, screenY: number) => void
   onNodeMoved: (id: string, x: number, y: number) => void
   onHoverChange: (hover: HoverInfo | null) => void
+  /** Fired whenever the selected node's live on-screen anchor changes (selection, pan, zoom, drag, camera animation) — lets the host pin a persistent Tab Peek popup to the node itself rather than to the cursor, so it survives hover moving anywhere else on the canvas. Null whenever nothing is selected or the selected node isn't currently visible. */
+  onSelectedNodeScreenChange: (info: HoverInfo | null) => void
 }>(function GraphCanvas(
   {
     nodes,
@@ -121,6 +123,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     onDependencyEdgeClick,
     onNodeMoved,
     onHoverChange,
+    onSelectedNodeScreenChange,
   },
   ref
 ) {
@@ -149,6 +152,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const centerTabIdRef = useRef(centerTabId)
   const searchMatchesRef = useRef(searchMatches)
   const displayRef = useRef(display)
+
+  // Canvas's viewport offset, refreshed on resize — lets draw() convert its
+  // canvas-local worldToScreen output into the client/page coordinates a
+  // `position: fixed` popup needs, without a getBoundingClientRect() read
+  // every frame.
+  const canvasRectRef = useRef({ left: 0, top: 0 })
+  // Last position reported via onSelectedNodeScreenChange, so draw() only
+  // calls back when the anchor actually moved (or the selection/visibility
+  // changed) instead of every frame regardless.
+  const lastReportedSelectedRef = useRef<{ id: string; x: number; y: number } | null>(null)
 
   const hoveredIdRef = useRef<string | null>(null)
   const dragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
@@ -611,6 +624,40 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         visualScale,
       })
     }
+
+    // Report the selected node's live screen anchor for the host's
+    // persistent Tab Peek popup — entirely separate from hover, so panning,
+    // zooming, or dragging keeps the popup attached to the node itself
+    // while hovering elsewhere on the canvas never touches it. Hidden (like
+    // the node itself, above) once it's scrolled far enough off-screen that
+    // anchoring a popup to it would be misleading rather than useful.
+    const selectedNode = selectedTabId ? nodesRef.current.find((n) => n.id === selectedTabId) ?? null : null
+    const selectedPhysicsNode = selectedNode ? simulation.findNode(selectedNode.id) : null
+    let nextReported: { id: string; x: number; y: number } | null = null
+    if (selectedNode && selectedPhysicsNode?.x !== undefined && selectedPhysicsNode?.y !== undefined) {
+      const screen = worldToScreen(camera, { x: selectedPhysicsNode.x, y: selectedPhysicsNode.y }, width, height)
+      if (screen.x >= -40 && screen.x <= width + 40 && screen.y >= -40 && screen.y <= height + 40) {
+        nextReported = {
+          id: selectedNode.id,
+          x: screen.x + canvasRectRef.current.left,
+          y: screen.y + canvasRectRef.current.top,
+        }
+      }
+    }
+    const lastReported = lastReportedSelectedRef.current
+    const changed =
+      (nextReported === null) !== (lastReported === null) ||
+      (nextReported !== null &&
+        lastReported !== null &&
+        (nextReported.id !== lastReported.id ||
+          Math.abs(nextReported.x - lastReported.x) > 0.5 ||
+          Math.abs(nextReported.y - lastReported.y) > 0.5))
+    if (changed) {
+      lastReportedSelectedRef.current = nextReported
+      onSelectedNodeScreenChange(
+        nextReported && selectedNode ? { node: selectedNode, screenX: nextReported.x, screenY: nextReported.y } : null
+      )
+    }
   }
 
   // Physics setup: reruns whenever the visible node/edge set or size-affecting
@@ -706,6 +753,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const rect = wrapper!.getBoundingClientRect()
       const dpr = window.devicePixelRatio || 1
       sizeRef.current = { width: rect.width, height: rect.height }
+      canvasRectRef.current = { left: rect.left, top: rect.top }
       canvas!.width = Math.max(1, Math.round(rect.width * dpr))
       canvas!.height = Math.max(1, Math.round(rect.height * dpr))
       canvas!.style.width = `${rect.width}px`

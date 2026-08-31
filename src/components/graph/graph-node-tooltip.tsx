@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type CSSProperties, type FocusEvent } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { GraphNode } from "@/lib/graph/types"
@@ -8,12 +8,6 @@ import type { HoverInfo } from "./graph-canvas"
 import { TabPeekContent } from "@/components/workspace/tab-peek-content"
 import { computeTabPeekContext, type TabPeekContext } from "@/lib/tabs/peek"
 
-// Same hover-intent delay Tab Peek uses everywhere else (see
-// TabPeekTrigger) — a canvas node has no DOM element to anchor a real
-// PreviewCard to, so this reimplements just the timing/positioning by hand
-// while still rendering the exact same TabPeekContent everyone else gets.
-const PEEK_DELAY_MS = 400
-const PEEK_CLOSE_DELAY_MS = 200
 const PEEK_WIDTH = 320
 const PEEK_EST_HEIGHT = 280
 const EDGE_MARGIN = 12
@@ -44,159 +38,93 @@ function clampPeekPosition(x: number, y: number): { left: number; top: number; o
   return { left, top, origin: `${originY} ${originX}` }
 }
 
+function nodeTitle(node: GraphNode): string {
+  return node.tab.title?.trim() || node.tab.domain
+}
+
 /**
- * A lightweight hover tooltip positioned at the last known cursor point —
- * deliberately not tracking continuous physics motion frame-by-frame, since
- * a hover target barely moves once the layout has settled.
+ * Renders two independent, non-conflated pieces of UI over the Graph canvas:
  *
- * After the cursor rests on the same node for PEEK_DELAY_MS, this escalates
- * into full Tab Peek — the same TabPeekContent every DOM tab row shows (see
- * TabPeekTrigger) — so the Graph gets the identical "what is this tab"
- * surface, just reached without a DOM anchor to hang a real popup off of.
+ * - A small, non-interactive preview at the cursor for whatever node is
+ *   currently `hover`ed — purely ephemeral, gone the instant the cursor
+ *   moves off (no delay, nothing to keep alive).
+ * - The full Tab Peek card — same TabPeekContent every DOM tab row shows via
+ *   TabPeekTrigger — pinned to `selected`, the node the Graph has actually
+ *   selected (clicked), positioned at its live canvas anchor rather than the
+ *   cursor (see onSelectedNodeScreenChange in graph-canvas.tsx).
  *
- * The escalated card floats in a `position: fixed` div stacked above the
- * canvas, which means the canvas's own `pointerleave` fires the instant the
- * cursor crosses onto the card — the canvas is no longer the topmost element
- * under the pointer, even though it's still visually behind it. Naively
- * tying the card's mounted lifetime to `hover` becoming null would make it
- * vanish the moment the user tries to move into it. Instead `pinned` (the
- * node the card is currently showing) is only updated to null once neither
- * the canvas-reported hover, the card's own pointer presence, nor focus
- * inside it have been true for PEEK_CLOSE_DELAY_MS — tracked via refs so the
- * close timer always reads live state rather than a stale closure.
+ * The card's lifetime is tied to `selected` alone: it opens the moment a
+ * node is selected and stays open — regardless of where the cursor wanders,
+ * which other nodes get hovered, or the camera panning/zooming — until the
+ * Graph's own selection changes (a different node, or an intentional
+ * deselect). It never reacts to hover, so there's nothing for mouse movement
+ * to race or accidentally tear down.
  */
 export function GraphNodeTooltip({
   hover,
+  selected,
   onOpenNotes,
   onCategoryChange,
 }: {
   hover: HoverInfo | null
+  /** The Graph's current selection with its live on-screen anchor, or null when nothing is selected. Independent of `hover` — see the component doc comment. */
+  selected: HoverInfo | null
   /** Routes to the Graph's own full-page notes view (GraphNodeNotesView) rather than the inline popover editor — Graph's existing Notes entry point, reused as-is. */
   onOpenNotes?: (id: string) => void
   onCategoryChange?: (id: string, category: CategoryId) => void
 }) {
-  const [pinned, setPinned] = useState<HoverInfo | null>(null)
-  const [expanded, setExpanded] = useState(false)
   const [context, setContext] = useState<TabPeekContext | null>(null)
-
-  const triggerHoveredRef = useRef(false)
-  const cardHoveredRef = useRef(false)
-  const cardFocusedRef = useRef(false)
-  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function cancelClose() {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
-    }
-  }
-
-  function scheduleClose() {
-    cancelClose()
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null
-      if (triggerHoveredRef.current || cardHoveredRef.current || cardFocusedRef.current) return
-      setPinned(null)
-      setExpanded(false)
-      setContext(null)
-    }, PEEK_CLOSE_DELAY_MS)
-  }
+  const selectedIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    triggerHoveredRef.current = hover !== null
+    const id = selected?.node.id ?? null
+    if (id === selectedIdRef.current) return
+    selectedIdRef.current = id
+    setContext(id && selected ? computeTabPeekContext(selected.node.tab) : null)
+  }, [selected])
 
-    if (hover) {
-      cancelClose()
-      setPinned((prev) => {
-        if (prev?.node.id === hover.node.id) return hover
-        // Retargeted to a different node — restart the open-delay escalation
-        // from scratch rather than keeping the previous node's expanded card.
-        if (openTimerRef.current) clearTimeout(openTimerRef.current)
-        setExpanded(false)
-        setContext(null)
-        openTimerRef.current = setTimeout(() => {
-          openTimerRef.current = null
-          setExpanded(true)
-          setContext(computeTabPeekContext(hover.node.tab))
-        }, PEEK_DELAY_MS)
-        return hover
-      })
-      return
-    }
-
-    if (openTimerRef.current) {
-      clearTimeout(openTimerRef.current)
-      openTimerRef.current = null
-    }
-    scheduleClose()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hover])
-
-  useEffect(
-    () => () => {
-      if (openTimerRef.current) clearTimeout(openTimerRef.current)
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    },
-    []
-  )
-
-  if (!pinned) return null
-
-  const node: GraphNode = pinned.node
-  const category = (node.tab.category as CategoryId | undefined) ?? "other"
-  const title = node.tab.title?.trim() || node.tab.domain
-
-  if (!expanded) {
-    return (
-      <div
-        className="pointer-events-none fixed z-50 max-w-64 -translate-x-1/2 -translate-y-[calc(100%+14px)] rounded-md bg-popover px-2.5 py-1.5 text-label text-foreground shadow-md ring-1 ring-foreground/10"
-        style={{ left: pinned.screenX, top: pinned.screenY }}
-      >
-        <p className="truncate font-medium text-foreground">{title}</p>
-        <p className="truncate text-tertiary">{node.tab.domain}</p>
-        <p className="mt-0.5 flex items-center gap-1 text-tertiary">
-          <span className="truncate">{node.workspaceName}</span>
-          <span aria-hidden>·</span>
-          <span className="truncate">{CATEGORIES[category].name}</span>
-        </p>
-      </div>
-    )
-  }
-
-  const { left, top, origin } = clampPeekPosition(pinned.screenX, pinned.screenY)
-
-  function handleCardPointerEnter() {
-    cardHoveredRef.current = true
-    cancelClose()
-  }
-
-  function handleCardPointerLeave() {
-    cardHoveredRef.current = false
-    scheduleClose()
-  }
-
-  function handleCardFocus() {
-    cardFocusedRef.current = true
-    cancelClose()
-  }
-
-  function handleCardBlur(e: FocusEvent<HTMLDivElement>) {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    cardFocusedRef.current = false
-    scheduleClose()
-  }
+  // The small hover preview is suppressed for the selected node itself —
+  // its full card (below) already covers that node, so showing both would
+  // just stack two popups on top of each other.
+  const showHoverPreview = hover !== null && hover.node.id !== selected?.node.id
 
   return (
-    <div
-      className="fixed z-50 origin-(--peek-origin) overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 zoom-in-95"
-      style={{ left, top, "--peek-origin": origin } as CSSProperties}
-      onPointerEnter={handleCardPointerEnter}
-      onPointerLeave={handleCardPointerLeave}
-      onFocus={handleCardFocus}
-      onBlur={handleCardBlur}
-    >
-      <TabPeekContent tab={node.tab} context={context} onOpenNotes={onOpenNotes} onCategoryChange={onCategoryChange} />
-    </div>
+    <>
+      {showHoverPreview && (
+        <div
+          className="pointer-events-none fixed z-50 max-w-64 -translate-x-1/2 -translate-y-[calc(100%+14px)] rounded-md bg-popover px-2.5 py-1.5 text-label text-foreground shadow-md ring-1 ring-foreground/10"
+          style={{ left: hover.screenX, top: hover.screenY }}
+        >
+          <p className="truncate font-medium text-foreground">{nodeTitle(hover.node)}</p>
+          <p className="truncate text-tertiary">{hover.node.tab.domain}</p>
+          <p className="mt-0.5 flex items-center gap-1 text-tertiary">
+            <span className="truncate">{hover.node.workspaceName}</span>
+            <span aria-hidden>·</span>
+            <span className="truncate">
+              {CATEGORIES[(hover.node.tab.category as CategoryId | undefined) ?? "other"].name}
+            </span>
+          </p>
+        </div>
+      )}
+
+      {selected &&
+        (() => {
+          const { left, top, origin } = clampPeekPosition(selected.screenX, selected.screenY)
+          return (
+            <div
+              key={selected.node.id}
+              className="fixed z-50 origin-(--peek-origin) overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 zoom-in-95"
+              style={{ left, top, "--peek-origin": origin } as CSSProperties}
+            >
+              <TabPeekContent
+                tab={selected.node.tab}
+                context={context}
+                onOpenNotes={onOpenNotes}
+                onCategoryChange={onCategoryChange}
+              />
+            </div>
+          )
+        })()}
+    </>
   )
 }

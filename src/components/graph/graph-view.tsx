@@ -70,6 +70,12 @@ export function GraphView({
   })
   const [query, setQuery] = useState("")
   const [hover, setHover] = useState<HoverInfo | null>(null)
+  // The selected node's live on-screen anchor, reported by GraphCanvas —
+  // deliberately independent of `hover` above (see onSelectedNodeScreenChange
+  // in graph-canvas.tsx) so the persistent Tab Peek popup below stays
+  // attached to the selection and never closes just because the cursor
+  // moved somewhere else on the canvas.
+  const [selectedNodeScreen, setSelectedNodeScreen] = useState<HoverInfo | null>(null)
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState | null>(null)
   const [edgePopover, setEdgePopover] = useState<GraphEdgePopoverState | null>(null)
   // Deliberately independent of node selection — opening the notes page is
@@ -555,10 +561,13 @@ export function GraphView({
           }}
           onNodeMoved={handleNodeMoved}
           onHoverChange={setHover}
+          onSelectedNodeScreenChange={setSelectedNodeScreen}
         />
       )}
 
-      {!emptyState && <GraphNodeTooltip hover={hover} onOpenNotes={handleOpenNotes} />}
+      {!emptyState && (
+        <GraphNodeTooltip hover={hover} selected={selectedNodeScreen} onOpenNotes={handleOpenNotes} />
+      )}
       {!emptyState && <GraphControls onZoomIn={() => canvasHandleRef.current?.zoomBy(1.3)} onZoomOut={() => canvasHandleRef.current?.zoomBy(1 / 1.3)} onFit={handleFit} />}
 
       <GraphSidebar
