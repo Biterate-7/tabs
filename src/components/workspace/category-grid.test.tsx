@@ -16,7 +16,7 @@ function makeTab(over: Partial<Tab>): Tab {
 }
 
 describe("CategoryGrid", () => {
-  it("opens the category sheet when a card's 'view all' is clicked", async () => {
+  it("opens the category page when a card's 'view all' is clicked", async () => {
     const user = userEvent.setup();
     const tabs = [makeTab({ id: "1", title: "Tab 1" })];
 
@@ -27,14 +27,14 @@ describe("CategoryGrid", () => {
     expect(screen.getByText("Tab 1")).toBeTruthy();
   });
 
-  it("closes the category sheet when the user closes it", async () => {
+  it("closes the category page when the user goes back", async () => {
     const user = userEvent.setup();
     const tabs = [makeTab({ id: "1", title: "Tab 1" })];
 
     render(<CategoryGrid tabs={tabs} onCategoryChange={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: /view all/i }));
-    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(screen.getByRole("button", { name: /back/i }));
 
     expect(screen.queryByText("Tab 1")).toBeNull();
   });

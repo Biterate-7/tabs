@@ -10,9 +10,9 @@ import type { DependencyTreeNode } from "@/lib/dependencies/tree"
 import type { GraphNode } from "@/lib/graph/types"
 
 /**
- * The workspace's tab detail panel — a right-side Sheet, the same convention
- * CategorySheet already uses for detail views, not a new layout pattern. Its
- * dependency section is GraphDependencyPanel exactly as
+ * The workspace's tab detail panel — a right-side Sheet, the ui/sheet.tsx
+ * convention this app uses for lightweight detail panels, not a new layout
+ * pattern. Its dependency section is GraphDependencyPanel exactly as
  * Graph View uses it: state-agnostic (a node plus pre-computed dependency
  * data and callbacks), so this reuses the existing dependency functionality
  * instead of standing up a second copy of it.

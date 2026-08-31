@@ -181,11 +181,14 @@
   --duration-fast: calc(120ms * var(--tabdump-transition-scale) * var(--motion-scale));
   --duration-base: calc(160ms * var(--tabdump-transition-scale) * var(--motion-scale));
   --duration-slow: calc(220ms * var(--tabdump-transition-scale) * var(--motion-scale));
-  /* The folder-open sequence (category-folder.tsx) is deliberately longer
-     than the base duration scale — it's a one-shot, one-at-a-time
-     interaction (never a list of simultaneously-animating items), so the
-     usual "keep it snappy across many elements" pressure doesn't apply. */
-  --duration-folder-open: calc(820ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  /* The folder-open sequence (category-folder.tsx) plays once per click, so
+     it can afford to be a touch longer than the base duration scale — but it
+     hands off to CategoryPage's own view-pop-in entrance immediately after
+     (see handleAnimationEnd), so this only covers the "zoom into the folder"
+     gesture itself, not the full trip to the destination page. Keep it quick
+     enough that the two feel like one continuous motion rather than two
+     separate waits. */
+  --duration-folder-open: calc(360ms * var(--tabdump-transition-scale) * var(--motion-scale));
   /* Intro-only: the one place in the app that wants a touch of overshoot
      (scene 3's "tabs recognize the center" convergence) — everywhere else
      uses --ease-standard, which has none by design. */

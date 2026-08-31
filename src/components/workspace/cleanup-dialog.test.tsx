@@ -166,7 +166,7 @@ describe("CleanupDialog — review stage", () => {
     // library, so a real `h-*` class is what actually makes it scrollable
     // (verified against a real browser: max-h-only and flex-1/min-h-0 both
     // silently fail to constrain the viewport, matching this project's
-    // other working ScrollArea usage in CategorySheet).
+    // other working ScrollArea usage in CategoryPage).
     const scrollArea = document.body.querySelector('[data-slot="scroll-area"]');
     expect(scrollArea).toBeTruthy();
     expect(scrollArea!.className).toMatch(/h-\[45vh\]/);

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { CategoryFolder } from "@/components/workspace/category-folder"
-import { CategorySheet } from "@/components/workspace/category-sheet"
+import { CategoryPage } from "@/components/workspace/category-page"
 import { orderCategoriesByPresence } from "@/lib/workspace/hierarchy"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
@@ -103,17 +103,18 @@ export function CategoryGrid({
         </div>
       )}
 
-      <CategorySheet
-        categoryId={openCategory}
-        tabs={openCategory ? groupsById[openCategory] : []}
-        open={openCategory !== null}
-        onOpenChange={(open) => !open && setOpenCategory(null)}
-        onCategoryChange={onCategoryChange}
-        onAddDependency={onAddDependency}
-        onInspect={onInspect}
-        onNotesChange={onNotesChange}
-        recentlyAddedIds={recentlyAddedIds}
-      />
+      {openCategory && (
+        <CategoryPage
+          categoryId={openCategory}
+          tabs={groupsById[openCategory]}
+          onClose={() => setOpenCategory(null)}
+          onCategoryChange={onCategoryChange}
+          onAddDependency={onAddDependency}
+          onInspect={onInspect}
+          onNotesChange={onNotesChange}
+          recentlyAddedIds={recentlyAddedIds}
+        />
+      )}
     </>
   )
 }
