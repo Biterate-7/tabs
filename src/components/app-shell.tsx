@@ -7,6 +7,8 @@ import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
 import { GraphView } from "@/components/graph/graph-view"
+import { FavoritesView } from "@/components/workspace/favorites-view"
+import { RecentsView } from "@/components/workspace/recents-view"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -32,7 +34,9 @@ import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/
 import { applyOrganizationPlan } from "@/lib/organize/apply"
 import type { OrganizationPlan } from "@/lib/organize/types"
 import type { Tab } from "@/lib/tabs/types"
+import type { CategoryId } from "@/lib/categories"
 import type { WorkspaceStore } from "@/lib/workspace/types"
+import { openTab } from "@/lib/browser/open-tab"
 
 const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
 const RECENTLY_ADDED_DURATION_MS = 6000
@@ -63,7 +67,7 @@ export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
-  const [view, setView] = useState<"workspace" | "graph" | "settings">("workspace")
+  const [view, setView] = useState<"workspace" | "graph" | "settings" | "favorites" | "recents">("workspace")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail
@@ -169,6 +173,36 @@ export function AppShell() {
   function handleTabsChange(tabs: Tab[]) {
     if (!store) return
     persist(updateWorkspaceTabs(store, getCurrentWorkspace(store).id, tabs))
+  }
+
+  // Favorites/Recents render as siblings of WorkspaceView rather than inside
+  // it, so they need their own copies of the same small per-tab mutations
+  // WorkspaceView already has (handleCategoryChange/handleToggleFavorite/
+  // handleOpenTab/handleNotesChange there) — all of them funnel through the
+  // same handleTabsChange → persist path, just scoped from currentWorkspace
+  // instead of WorkspaceView's local `tabs` prop.
+  function handleCategoryChangeInView(id: string, category: CategoryId) {
+    if (!currentWorkspace) return
+    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, category } : t)))
+  }
+
+  function handleToggleFavoriteInView(id: string) {
+    if (!currentWorkspace) return
+    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, isFavorite: !t.isFavorite } : t)))
+  }
+
+  function handleOpenTabInView(id: string) {
+    if (!currentWorkspace) return
+    const tab = currentWorkspace.tabs.find((t) => t.id === id)
+    if (!tab) return
+    openTab(tab.url)
+    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, lastAccessedAt: Date.now() } : t)))
+  }
+
+  function handleNotesChangeInView(id: string, notes: string) {
+    if (!currentWorkspace) return
+    const trimmed = notes.trim()
+    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, notes: trimmed || undefined } : t)))
   }
 
   // Title resolution runs asynchronously and may still be in flight if the
@@ -355,6 +389,32 @@ export function AppShell() {
     return <AppearanceSettingsView onClose={() => setView("workspace")} />
   }
 
+  if (view === "favorites") {
+    return (
+      <FavoritesView
+        tabs={currentWorkspace.tabs}
+        onClose={() => setView("workspace")}
+        onCategoryChange={handleCategoryChangeInView}
+        onToggleFavorite={handleToggleFavoriteInView}
+        onOpenTab={handleOpenTabInView}
+        onNotesChange={handleNotesChangeInView}
+      />
+    )
+  }
+
+  if (view === "recents") {
+    return (
+      <RecentsView
+        tabs={currentWorkspace.tabs}
+        onClose={() => setView("workspace")}
+        onCategoryChange={handleCategoryChangeInView}
+        onToggleFavorite={handleToggleFavoriteInView}
+        onOpenTab={handleOpenTabInView}
+        onNotesChange={handleNotesChangeInView}
+      />
+    )
+  }
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar
@@ -370,6 +430,8 @@ export function AppShell() {
         onRename={handleRenameWorkspace}
         onDelete={handleDeleteWorkspace}
         onImportFile={handleImportJson}
+        onOpenFavorites={() => setView("favorites")}
+        onOpenRecents={() => setView("recents")}
         onOpenGraph={() => setView("graph")}
         onOpenSettings={() => setView("settings")}
       />
@@ -393,6 +455,8 @@ export function AppShell() {
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
             onOpenGraph={() => setView("graph")}
+            onOpenFavorites={() => setView("favorites")}
+            onOpenRecents={() => setView("recents")}
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}

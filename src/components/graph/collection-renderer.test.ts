@@ -41,6 +41,7 @@ const palette: GraphPalette = {
   collectionBoundary: "#quiet",
   collectionBoundarySelected: "#bright",
   collectionLabel: "#label",
+  favoriteGlow: "234, 179, 8",
   category: {
     research: "#a",
     school: "#b",

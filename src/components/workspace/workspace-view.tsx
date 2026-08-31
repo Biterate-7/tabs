@@ -17,6 +17,8 @@ import {
   Layers,
   Pencil,
   ExternalLink as OpenAllIcon,
+  Star,
+  History,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -86,6 +88,8 @@ export function WorkspaceView({
   currentWorkspace,
   allWorkspaces,
   onOpenGraph,
+  onOpenFavorites,
+  onOpenRecents,
   onSwitchWorkspace,
   recentlyAddedIds,
   onOpenSidebar,
@@ -101,6 +105,9 @@ export function WorkspaceView({
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   onOpenGraph?: () => void
+  /** Backs the command palette's "Go to Favorites"/"Go to Recents" entries — omitted in standalone/test contexts that don't wire up a shell. */
+  onOpenFavorites?: () => void
+  onOpenRecents?: () => void
   /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
   onSwitchWorkspace?: (id: string) => void
   /** Ids from the most recently completed dump/import — drives TabCard's "recently added" highlight. Omitted (not just empty) outside AppShell. */
@@ -311,6 +318,7 @@ export function WorkspaceView({
     if (!collection) return
     const collectionTabs = getCollectionTabs(collection, tabsById)
     collectionTabs.forEach((t) => openTab(t.url, { newTab: true }))
+    markAccessed(collectionTabs.map((t) => t.id))
   }
 
   function handleOpenAllInCollection(id: string) {
@@ -417,11 +425,6 @@ export function WorkspaceView({
     handleSearch(node.tab.url)
   }
 
-  function handleOpenDependencyTab(id: string) {
-    const node = depNodeById.get(id)
-    if (!node) return
-    openTab(node.tab.url)
-  }
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
 
@@ -486,6 +489,30 @@ export function WorkspaceView({
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, notes: trimmed || undefined } : t)))
   }
 
+  function handleToggleFavorite(id: string) {
+    onTabsChange(tabs.map((t) => (t.id === id ? { ...t, isFavorite: !t.isFavorite } : t)))
+  }
+
+  // The one place a tab actually being opened from TabDump is recorded —
+  // every "Open" control (card, peek, actions menu, search-enter, dependency
+  // indicator) funnels through this, never a hover or render. Bulk opens
+  // (openSelectedTabs, openAllInCollection below) mark every affected id in
+  // a single onTabsChange call rather than one per tab, so opening N tabs at
+  // once causes one re-render, not N.
+  function handleOpenTab(id: string) {
+    const tab = tabsById.get(id)
+    if (!tab) return
+    openTab(tab.url)
+    onTabsChange(tabs.map((t) => (t.id === id ? { ...t, lastAccessedAt: Date.now() } : t)))
+  }
+
+  function markAccessed(ids: string[]) {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const now = Date.now()
+    onTabsChange(tabs.map((t) => (idSet.has(t.id) ? { ...t, lastAccessedAt: now } : t)))
+  }
+
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -522,6 +549,7 @@ export function WorkspaceView({
   function openSelectedTabs() {
     const selected = tabs.filter((t) => selectedIds.has(t.id))
     selected.forEach((t) => openTab(t.url, { newTab: true }))
+    markAccessed(selected.map((t) => t.id))
   }
 
   function handleOpenSelected() {
@@ -613,6 +641,28 @@ export function WorkspaceView({
             group: "Navigation",
             icon: Waypoints,
             onSelect: onOpenGraph,
+          } satisfies Command,
+        ]
+      : []),
+    ...(onOpenFavorites
+      ? [
+          {
+            id: "nav-open-favorites",
+            label: "Go to Favorites",
+            group: "Navigation",
+            icon: Star,
+            onSelect: onOpenFavorites,
+          } satisfies Command,
+        ]
+      : []),
+    ...(onOpenRecents
+      ? [
+          {
+            id: "nav-open-recents",
+            label: "Go to Recents",
+            group: "Navigation",
+            icon: History,
+            onSelect: onOpenRecents,
           } satisfies Command,
         ]
       : []),
@@ -812,7 +862,7 @@ export function WorkspaceView({
         onSearchArrowUp={() => setHighlightedIndex((i) => Math.max(i - 1, 0))}
         onSearchEnter={() => {
           const target = resultTabs[highlightedIndex]
-          if (target) openTab(target.url)
+          if (target) handleOpenTab(target.id)
         }}
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}
@@ -914,9 +964,11 @@ export function WorkspaceView({
             onAddDependency={setDepDialogFor}
             onInspect={setInspectTabId}
             onNotesChange={handleNotesChange}
+            onToggleFavorite={handleToggleFavorite}
+            onOpenTab={handleOpenTab}
             dependencyIndicators={dependencyIndicators}
             onSelectDependencyTab={handleSelectDependencyTab}
-            onOpenDependencyTab={handleOpenDependencyTab}
+            onOpenDependencyTab={handleOpenTab}
             recentlyAddedIds={recentlyGatheredIds}
           />
 
@@ -927,6 +979,8 @@ export function WorkspaceView({
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
               onNotesChange={handleNotesChange}
+              onToggleFavorite={handleToggleFavorite}
+              onOpenTab={handleOpenTab}
               recentlyAddedIds={recentlyAddedIds}
             />
           ) : (
@@ -941,10 +995,12 @@ export function WorkspaceView({
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
               onNotesChange={handleNotesChange}
+              onToggleFavorite={handleToggleFavorite}
+              onOpenTab={handleOpenTab}
               dependencyIndicators={dependencyIndicators}
               collectionNames={tabCollectionNames}
               onSelectDependencyTab={handleSelectDependencyTab}
-              onOpenDependencyTab={handleOpenDependencyTab}
+              onOpenDependencyTab={handleOpenTab}
               recentlyAddedIds={recentlyAddedIds}
             />
           )}
@@ -1075,7 +1131,7 @@ export function WorkspaceView({
         tree={inspectTree}
         nodeById={depNodeById}
         onSelectTab={setInspectTabId}
-        onOpenTab={handleOpenDependencyTab}
+        onOpenTab={handleOpenTab}
         onAddDependency={() => inspectTabId && setDepDialogFor(inspectTabId)}
         onRemoveDependency={handleRemoveDependency}
         onChangeDependencyType={storeUpdateDependencyType}

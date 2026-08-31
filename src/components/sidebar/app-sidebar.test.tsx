@@ -35,6 +35,8 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       onRename={vi.fn()}
       onDelete={vi.fn()}
       onImportFile={vi.fn()}
+      onOpenFavorites={vi.fn()}
+      onOpenRecents={vi.fn()}
       onOpenGraph={vi.fn()}
       onOpenSettings={vi.fn()}
       {...overrides}

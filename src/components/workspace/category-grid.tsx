@@ -13,6 +13,8 @@ export function CategoryGrid({
   onAddDependency,
   onInspect,
   onNotesChange,
+  onToggleFavorite,
+  onOpenTab,
   recentlyAddedIds,
 }: {
   tabs: Tab[]
@@ -20,6 +22,8 @@ export function CategoryGrid({
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
   recentlyAddedIds?: Set<string>
 }) {
   const [openCategory, setOpenCategory] = useState<CategoryId | null>(null)
@@ -112,6 +116,8 @@ export function CategoryGrid({
           onAddDependency={onAddDependency}
           onInspect={onInspect}
           onNotesChange={onNotesChange}
+          onToggleFavorite={onToggleFavorite}
+          onOpenTab={onOpenTab}
           recentlyAddedIds={recentlyAddedIds}
         />
       )}

@@ -618,6 +618,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         isCenter,
         isDimmed: false,
         isMatch,
+        isFavorite: node.tab.isFavorite === true,
         showLabel: showLabels || isHovered,
         textSize: display.textSize,
         visualAlpha,

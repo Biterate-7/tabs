@@ -35,6 +35,8 @@ export function CollectionGroup({
   onAddDependency,
   onInspect,
   onNotesChange,
+  onToggleFavorite,
+  onOpenTab,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -57,6 +59,8 @@ export function CollectionGroup({
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
@@ -133,6 +137,8 @@ export function CollectionGroup({
                   onAddDependency={onAddDependency}
                   onInspect={onInspect}
                   onNotesChange={onNotesChange}
+                  onToggleFavorite={onToggleFavorite}
+                  onOpenTab={onOpenTab}
                   onRemoveFromCollection={onRemoveTab}
                   otherCollections={otherCollections}
                   onMoveToCollection={onMoveTab}

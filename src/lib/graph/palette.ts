@@ -19,6 +19,8 @@ export type GraphPalette = {
   collectionBoundary: string;
   collectionBoundarySelected: string;
   collectionLabel: string;
+  /** Bare "r, g, b" triplet (not a full color string, matching edgeRgb's convention) so node-renderer.ts can compose it into an rgba() with its own halo alpha. Restrained gold, independent of the active theme's accent — see --favorite-accent's doc comment in globals.css. */
+  favoriteGlow: string;
   category: Record<CategoryId, string>;
   /** Canvas `ctx.font` can't resolve CSS variables, so the app's actual resolved font stack is captured once via `getComputedStyle`. */
   fontFamily: string;
@@ -77,6 +79,7 @@ export function resolveGraphPalette(root: HTMLElement = document.documentElement
     collectionBoundary: v("--border"),
     collectionBoundarySelected: v("--graph-node-selected"),
     collectionLabel: v("--text-tertiary"),
+    favoriteGlow: v("--favorite-accent-rgb") || "234, 179, 8",
     category,
     fontFamily: getComputedStyle(document.body).fontFamily || "ui-sans-serif, system-ui, sans-serif",
   };

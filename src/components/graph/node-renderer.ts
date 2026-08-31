@@ -28,6 +28,8 @@ export type NodeVisual = {
   isCenter: boolean;
   isDimmed: boolean;
   isMatch: boolean;
+  /** Draws a soft gold halo behind the node body — independent of isSelected/isHovered, see the module doc comment below. Defaults to false so existing fixtures/tests that don't set it keep rendering unchanged. */
+  isFavorite?: boolean;
   showLabel: boolean;
   textSize: number;
   /** Eased 0..1 opacity multiplier driven by the canvas's own animation loop (selection/search/hover fades, arrival pop-in). Falls back to the isDimmed boolean's snapped value when omitted, so fixtures that don't set it keep working unchanged. */
@@ -46,6 +48,29 @@ export function drawNode(ctx: DrawContext, palette: GraphPalette, node: NodeVisu
 
   ctx.save();
   ctx.globalAlpha = bodyAlpha;
+
+  // A restrained gold halo for favorited nodes, independent of selection/
+  // hover — drawn as two soft falloff rings (rather than a canvas shadow
+  // blur, which DrawContext's deliberately narrow test surface doesn't
+  // carry) behind the node body, which then paints over their inner portion
+  // so only the outer bleed reads as a halo. Purely additive: it never
+  // changes the body fill, selection ring, or hover ring drawn below.
+  if (node.isFavorite) {
+    ctx.save();
+    ctx.globalAlpha = bodyAlpha * 0.45;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = `rgba(${palette.favoriteGlow}, 0.4)`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = bodyAlpha * 0.85;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `rgba(${palette.favoriteGlow}, 0.75)`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);

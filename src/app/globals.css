@@ -86,6 +86,7 @@
   --color-editor-background: var(--editor-background);
   --color-editor-text: var(--editor-text);
   --color-editor-placeholder: var(--editor-placeholder);
+  --color-favorite-accent: var(--favorite-accent);
 }
 
 /*
@@ -160,6 +161,12 @@
   --category-news: #38bdf8;
   --category-read-later: #a1a1aa;
   --category-other: #71717a;
+  /* Favorites identity color (Star toggle, Graph's favorite halo) — fixed
+     across every theme like the category accents above, not derived from
+     the user's accent color: a "gold star" needs to actually read as gold
+     regardless of which accent hue is active. */
+  --favorite-accent: #eab308;
+  --favorite-accent-rgb: 234, 179, 8;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);

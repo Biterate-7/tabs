@@ -22,6 +22,10 @@ export type Tab = {
   groupId?: string;
   /** Freeform personal note for this tab. Absent (not an empty string) means no note — see tab-notes-button.tsx, which normalizes whitespace-only input back to undefined on save. */
   notes?: string;
+  /** User-toggled "keep this close" flag — see tab-favorite-button.tsx. Absent (not false) for tabs saved before Favorites existed; treated identically to false everywhere it's read. */
+  isFavorite?: boolean;
+  /** Epoch ms of the last time the user intentionally opened this tab from TabDump (see openTab call sites) — never set just from the tab rendering, being hovered, or appearing in Graph. Absent means "never opened from here." Drives the Recents view (src/lib/workspace/recents.ts) and Favorites' default sort. */
+  lastAccessedAt?: number;
 };
 
 export type ParseResult = {

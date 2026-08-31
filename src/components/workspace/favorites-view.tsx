@@ -1,49 +1,45 @@
 "use client"
 
-import { Bookmark, ChevronLeft } from "lucide-react"
+import { ChevronLeft, Star } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TabCard } from "@/components/workspace/tab-card"
-import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 
+/** Most recently interacted-with favorite first; a favorite that's never been opened from TabDump sorts after ones that have, in their existing relative order — see AGENTS.md's "Favorite Sorting" section. */
+function sortFavorites(tabs: Tab[]): Tab[] {
+  return [...tabs].sort((a, b) => (b.lastAccessedAt ?? 0) - (a.lastAccessedAt ?? 0))
+}
+
 /**
- * Full-page "inside the folder" view, mounted the same way Graph's node
- * notes page and Settings are (fixed overlay + view-pop-in, see
- * GraphNodeNotesView/AppearanceSettingsView) — reached by zooming into a
- * CategoryFolder on the homepage, so landing here should read as having
- * stepped inside that category, not as a drawer sliding over the homepage.
- * That's why this replaces the CategorySheet side panel: a docked sheet
- * leaves the homepage visible behind it, which undercuts the "entering the
- * folder" gesture the open animation sets up.
+ * Dedicated Favorites destination — same full-page overlay shape as
+ * CategoryPage (fixed inset, view-pop-in), scoped to the current workspace
+ * like every other TabDump view. Reuses TabCard for every row rather than a
+ * bespoke favorite-row component, so unfavoriting here behaves identically
+ * (and stays in sync) with unfavoriting anywhere else.
  */
-export function CategoryPage({
-  categoryId,
+export function FavoritesView({
   tabs,
   onClose,
   onCategoryChange,
+  onToggleFavorite,
+  onOpenTab,
   onAddDependency,
   onInspect,
   onNotesChange,
-  onToggleFavorite,
-  onOpenTab,
-  recentlyAddedIds,
 }: {
-  categoryId: CategoryId
   tabs: Tab[]
   onClose: () => void
   onCategoryChange: (id: string, category: CategoryId) => void
+  onToggleFavorite: (id: string) => void
+  onOpenTab?: (id: string) => void
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
-  onToggleFavorite?: (id: string) => void
-  onOpenTab?: (id: string) => void
-  recentlyAddedIds?: Set<string>
 }) {
-  const def = CATEGORIES[categoryId]
-  const Icon = def.icon
+  const favorites = sortFavorites(tabs.filter((t) => t.isFavorite))
 
   return (
     <div
@@ -54,35 +50,33 @@ export function CategoryPage({
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
-        <Icon className="size-4 shrink-0" style={{ color: `var(${def.accentColor})` }} />
+        <Star className="size-4 shrink-0 text-favorite-accent" fill="currentColor" fillOpacity={0.2} />
         <p className="text-h1 text-foreground">
-          {def.name} <span className="text-tertiary">· {tabs.length} tab{tabs.length === 1 ? "" : "s"}</span>
+          Favorites{" "}
+          <span className="text-tertiary">
+            · {favorites.length} tab{favorites.length === 1 ? "" : "s"}
+          </span>
         </p>
       </div>
 
-      {tabs.length === 0 ? (
+      {favorites.length === 0 ? (
         <div className="flex flex-1 items-center justify-center">
-          <EmptyState
-            icon={Bookmark}
-            title={`No tabs in ${def.name} anymore.`}
-            description="They were recategorized or removed elsewhere in this session."
-          />
+          <EmptyState icon={Star} title="No favorites yet." description="Favorite tabs to keep them close." />
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8">
             <div className="rounded-lg border border-subtle bg-card px-2 pb-6">
-              {tabs.map((tab) => (
+              {favorites.map((tab) => (
                 <TabCard
                   key={tab.id}
                   tab={tab}
                   onCategoryChange={onCategoryChange}
+                  onToggleFavorite={onToggleFavorite}
+                  onOpenTab={onOpenTab}
                   onAddDependency={onAddDependency}
                   onInspect={onInspect}
                   onNotesChange={onNotesChange}
-                  onToggleFavorite={onToggleFavorite}
-                  onOpenTab={onOpenTab}
-                  isRecentlyAdded={recentlyAddedIds?.has(tab.id) ?? false}
                 />
               ))}
             </div>

@@ -31,6 +31,7 @@ export function TabActionsMenu({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  onOpenTab,
   trigger,
   align = "end",
 }: {
@@ -41,6 +42,8 @@ export function TabActionsMenu({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** When provided, takes over this menu's "Open" item entirely — see tab-card.tsx's matching prop for the full contract. */
+  onOpenTab?: (id: string) => void
   trigger: ReactElement
   align?: "start" | "end" | "center"
 }) {
@@ -48,7 +51,9 @@ export function TabActionsMenu({
     <DropdownMenu>
       <DropdownMenuTrigger render={trigger} />
       <DropdownMenuContent align={align}>
-        <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => (onOpenTab ? onOpenTab(tab.id) : openTab(tab.url))}>
+          Open
+        </DropdownMenuItem>
         {onInspect && (
           <DropdownMenuItem onClick={() => onInspect(tab.id)}>
             <PanelRight /> Inspect…

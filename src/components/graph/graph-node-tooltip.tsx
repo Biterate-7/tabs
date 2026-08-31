@@ -65,6 +65,8 @@ export function GraphNodeTooltip({
   selected,
   onOpenNotes,
   onCategoryChange,
+  onToggleFavorite,
+  onOpenTab,
 }: {
   hover: HoverInfo | null
   /** The Graph's current selection with its live on-screen anchor, or null when nothing is selected. Independent of `hover` — see the component doc comment. */
@@ -72,6 +74,8 @@ export function GraphNodeTooltip({
   /** Routes to the Graph's own full-page notes view (GraphNodeNotesView) rather than the inline popover editor — Graph's existing Notes entry point, reused as-is. */
   onOpenNotes?: (id: string) => void
   onCategoryChange?: (id: string, category: CategoryId) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
 }) {
   const [context, setContext] = useState<TabPeekContext | null>(null)
   const selectedIdRef = useRef<string | null>(null)
@@ -121,6 +125,8 @@ export function GraphNodeTooltip({
                 context={context}
                 onOpenNotes={onOpenNotes}
                 onCategoryChange={onCategoryChange}
+                onToggleFavorite={onToggleFavorite}
+                onOpenTab={onOpenTab}
               />
             </div>
           )

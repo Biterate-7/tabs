@@ -289,6 +289,48 @@ export function GraphView({
     setNotesOpenTabId(tabId)
   }
 
+  function handleToggleFavorite(tabId: string) {
+    const workspace = findTabWorkspace(tabId)
+    if (!workspace) return
+    const next = updateWorkspaceTabs(
+      store,
+      workspace.id,
+      workspace.tabs.map((t) => (t.id === tabId ? { ...t, isFavorite: !t.isFavorite } : t))
+    )
+    onStoreUpdate(next)
+  }
+
+  // Batches a lastAccessedAt update across every workspace in one
+  // onStoreUpdate call — used for both a single open and a bulk "open all in
+  // collection" so opening N tabs at once causes one re-render, not N.
+  function markAccessed(ids: string[]) {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const now = Date.now()
+    const workspaces = store.workspaces.map((w) => {
+      let changed = false
+      const tabs = w.tabs.map((t) => {
+        if (!idSet.has(t.id)) return t
+        changed = true
+        return { ...t, lastAccessedAt: now }
+      })
+      return changed ? { ...w, tabs, updatedAt: now } : w
+    })
+    onStoreUpdate({ ...store, workspaces })
+  }
+
+  // The one place a tab actually being opened from the Graph is recorded —
+  // double-click, the sidebar dependency panel's "Open", and the context
+  // menu's Open/Open in new tab all funnel through this, mirroring
+  // WorkspaceView's handleOpenTab. Never fires from hover (see
+  // GraphCanvas's onHoverChange) or from a node simply being rendered.
+  function handleOpenTab(tabId: string, opts?: { newTab?: boolean }) {
+    const node = everyNodeById.get(tabId)
+    if (!node) return
+    openTab(node.tab.url, opts)
+    markAccessed([tabId])
+  }
+
   function handleRemoveTab(tabId: string) {
     const workspace = findTabWorkspace(tabId)
     if (!workspace) return
@@ -358,11 +400,6 @@ export function GraphView({
     canvasHandleRef.current?.centerOnNode(id)
   }
 
-  function handleOpenTabById(id: string) {
-    const node = everyNodeById.get(id)
-    if (node) openTab(node.tab.url)
-  }
-
   function handleSelectCollection(id: string | null) {
     setSelectedCollectionId(id)
     if (id) updateSettings({ selectedTabId: null })
@@ -418,6 +455,7 @@ export function GraphView({
       const node = everyNodeById.get(tabId)
       if (node) openTab(node.tab.url, { newTab: true })
     }
+    markAccessed(selectedCollection.tabIds)
   }
 
   function handleFocusCollection() {
@@ -538,7 +576,7 @@ export function GraphView({
           onCameraChange={handleCameraChange}
           onSelectNode={(id) => updateSettings({ selectedTabId: id })}
           onSelectCollection={handleSelectCollection}
-          onOpenNode={(node) => openTab(node.tab.url)}
+          onOpenNode={(node) => handleOpenTab(node.id)}
           onContextMenu={(node, x, y) => {
             closeMenus()
             setContextMenu({ node, x, y })
@@ -566,7 +604,13 @@ export function GraphView({
       )}
 
       {!emptyState && (
-        <GraphNodeTooltip hover={hover} selected={selectedNodeScreen} onOpenNotes={handleOpenNotes} />
+        <GraphNodeTooltip
+          hover={hover}
+          selected={selectedNodeScreen}
+          onOpenNotes={handleOpenNotes}
+          onToggleFavorite={handleToggleFavorite}
+          onOpenTab={handleOpenTab}
+        />
       )}
       {!emptyState && <GraphControls onZoomIn={() => canvasHandleRef.current?.zoomBy(1.3)} onZoomOut={() => canvasHandleRef.current?.zoomBy(1 / 1.3)} onFit={handleFit} />}
 
@@ -595,7 +639,7 @@ export function GraphView({
         dependencyTree={dependencyTree}
         allNodeById={everyNodeById}
         onSelectTab={handleSelectTab}
-        onOpenTab={handleOpenTabById}
+        onOpenTab={handleOpenTab}
         onAddDependency={() => selectedTabId && setLinkDialog({ mode: "dependency", tabId: selectedTabId })}
         onRemoveDependency={handleRemoveDependency}
         onChangeDependencyType={handleChangeDependencyType}
@@ -613,8 +657,13 @@ export function GraphView({
         dependencyCount={contextNodeDependencyCount}
         collections={contextNodeCollections}
         hasNotes={Boolean(contextNode?.tab.notes?.trim())}
+        isFavorite={contextNode?.tab.isFavorite === true}
         onOpenNotes={() => {
           if (contextNode) handleOpenNotes(contextNode.id)
+          setContextMenu(null)
+        }}
+        onToggleFavorite={() => {
+          if (contextNode) handleToggleFavorite(contextNode.id)
           setContextMenu(null)
         }}
         onAddToCollection={(collectionId) => {
@@ -626,11 +675,11 @@ export function GraphView({
           setContextMenu(null)
         }}
         onOpenTab={() => {
-          if (contextNode) openTab(contextNode.tab.url)
+          if (contextNode) handleOpenTab(contextNode.id)
           setContextMenu(null)
         }}
         onOpenNewTab={() => {
-          if (contextNode) openTab(contextNode.tab.url, { newTab: true })
+          if (contextNode) handleOpenTab(contextNode.id, { newTab: true })
           setContextMenu(null)
         }}
         onCopyUrl={async () => {

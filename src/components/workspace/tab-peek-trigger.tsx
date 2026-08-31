@@ -41,6 +41,8 @@ export function TabPeekTrigger({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  onToggleFavorite,
+  onOpenTab,
 }: {
   tab: Tab
   children: ReactNode
@@ -52,6 +54,8 @@ export function TabPeekTrigger({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
 }) {
   const [context, setContext] = useState<TabPeekContext | null>(null)
 
@@ -100,6 +104,8 @@ export function TabPeekTrigger({
               onRemoveFromCollection={onRemoveFromCollection}
               otherCollections={otherCollections}
               onMoveToCollection={onMoveToCollection}
+              onToggleFavorite={onToggleFavorite}
+              onOpenTab={onOpenTab}
             />
           </PreviewCard.Popup>
         </PreviewCard.Positioner>

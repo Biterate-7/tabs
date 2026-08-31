@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { TabNotesButton } from "@/components/workspace/tab-notes-button"
+import { TabFavoriteButton } from "@/components/workspace/tab-favorite-button"
 import { TabActionsMenu } from "@/components/workspace/tab-actions-menu"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
@@ -31,6 +32,8 @@ export function TabPeekContent({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  onToggleFavorite,
+  onOpenTab,
 }: {
   tab: Tab
   context: TabPeekContext | null
@@ -45,6 +48,10 @@ export function TabPeekContent({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** Omitted in contexts that don't wire up favorite persistence — the star button simply doesn't render. */
+  onToggleFavorite?: (id: string) => void
+  /** When provided, takes over this card's "Open" button entirely — see tab-card.tsx's matching prop for the full contract. */
+  onOpenTab?: (id: string) => void
 }) {
   const title = tab.title?.trim() || tab.domain
   const categoryId = (tab.category as CategoryId | undefined) ?? "other"
@@ -88,9 +95,19 @@ export function TabPeekContent({
       </div>
 
       <div className="flex items-center gap-1 border-t border-subtle px-2 py-1.5">
-        <Button variant="ghost" size="sm" onClick={() => openTab(tab.url)}>
+        <Button variant="ghost" size="sm" onClick={() => (onOpenTab ? onOpenTab(tab.id) : openTab(tab.url))}>
           <ExternalLink /> Open
         </Button>
+        {onToggleFavorite && (
+          <TabFavoriteButton
+            tabId={tab.id}
+            domain={tab.domain}
+            isFavorite={tab.isFavorite === true}
+            onToggleFavorite={onToggleFavorite}
+            alwaysVisible
+            className="size-8"
+          />
+        )}
         {onNotesChange ? (
           <TabNotesButton tabId={tab.id} domain={tab.domain} notes={tab.notes} onNotesChange={onNotesChange} />
         ) : (
@@ -115,6 +132,7 @@ export function TabPeekContent({
               onRemoveFromCollection={onRemoveFromCollection}
               otherCollections={otherCollections}
               onMoveToCollection={onMoveToCollection}
+              onOpenTab={onOpenTab}
               trigger={
                 <IconButton aria-label={`More actions for ${tab.domain}`} className="size-8">
                   <MoreHorizontal />

@@ -17,6 +17,8 @@ export function FilteredTabList({
   onAddDependency,
   onInspect,
   onNotesChange,
+  onToggleFavorite,
+  onOpenTab,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -33,6 +35,8 @@ export function FilteredTabList({
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
   /** Keyed by tab id — only present for tabs that actually have a dependency/used-by relationship. Omitted entirely in contexts that don't compute it (e.g. no dependency store wired up). */
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
@@ -68,6 +72,8 @@ export function FilteredTabList({
             onAddDependency={onAddDependency}
             onInspect={onInspect}
             onNotesChange={onNotesChange}
+            onToggleFavorite={onToggleFavorite}
+            onOpenTab={onOpenTab}
             dependencyIndicator={dependencyIndicators?.get(tab.id)}
             onSelectDependencyTab={onSelectDependencyTab}
             onOpenDependencyTab={onOpenDependencyTab}

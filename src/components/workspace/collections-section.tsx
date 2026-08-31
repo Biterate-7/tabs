@@ -34,6 +34,8 @@ export function CollectionsSection({
   onAddDependency,
   onInspect,
   onNotesChange,
+  onToggleFavorite,
+  onOpenTab,
   dependencyIndicators,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -56,6 +58,8 @@ export function CollectionsSection({
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
+  onToggleFavorite?: (id: string) => void
+  onOpenTab?: (id: string) => void
   dependencyIndicators?: Map<string, DependencyIndicatorData>
   onSelectDependencyTab?: (id: string) => void
   onOpenDependencyTab?: (id: string) => void
@@ -99,6 +103,8 @@ export function CollectionsSection({
             onAddDependency={onAddDependency}
             onInspect={onInspect}
             onNotesChange={onNotesChange}
+            onToggleFavorite={onToggleFavorite}
+            onOpenTab={onOpenTab}
             dependencyIndicators={dependencyIndicators}
             onSelectDependencyTab={onSelectDependencyTab}
             onOpenDependencyTab={onOpenDependencyTab}

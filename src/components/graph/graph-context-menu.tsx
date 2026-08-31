@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, StickyNote, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, Star, StickyNote, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import type { GraphNode } from "@/lib/graph/types"
@@ -23,6 +23,7 @@ export function GraphContextMenu({
   dependencyCount,
   collections,
   hasNotes,
+  isFavorite,
   onOpenTab,
   onOpenNewTab,
   onCopyUrl,
@@ -34,6 +35,7 @@ export function GraphContextMenu({
   onAddToCollection,
   onGatherNewCollection,
   onOpenNotes,
+  onToggleFavorite,
   onRemove,
   onClose,
 }: {
@@ -45,6 +47,8 @@ export function GraphContextMenu({
   collections: { id: string; name: string }[]
   /** Whether the right-clicked node already has a note — drives the "Notes"/filled-icon distinction, mirroring TabNotesButton. */
   hasNotes: boolean
+  /** Whether the right-clicked node is currently favorited — drives the "Favorite"/"Unfavorite" label and filled-star treatment, mirroring TabFavoriteButton. */
+  isFavorite: boolean
   onOpenTab: () => void
   onOpenNewTab: () => void
   onCopyUrl: () => void
@@ -56,6 +60,7 @@ export function GraphContextMenu({
   onAddToCollection: (collectionId: string) => void
   onGatherNewCollection: () => void
   onOpenNotes: () => void
+  onToggleFavorite: () => void
   onRemove: () => void
   onClose: () => void
 }) {
@@ -101,6 +106,16 @@ export function GraphContextMenu({
 
       <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onOpenNotes}>
         <StickyNote fill={hasNotes ? "currentColor" : "none"} fillOpacity={hasNotes ? 0.15 : 1} /> Notes
+      </button>
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={isFavorite}
+        className={cn(ITEM_CLASS, isFavorite && "text-favorite-accent")}
+        onClick={onToggleFavorite}
+      >
+        <Star fill={isFavorite ? "currentColor" : "none"} fillOpacity={isFavorite ? 0.2 : 1} />
+        {isFavorite ? "Unfavorite" : "Favorite"}
       </button>
 
       {otherWorkspaces.length > 0 && (

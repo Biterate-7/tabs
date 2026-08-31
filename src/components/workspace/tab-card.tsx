@@ -14,6 +14,7 @@ import {
 import { setDragTabId } from "@/lib/collections/drag"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { TabNotesButton } from "@/components/workspace/tab-notes-button"
+import { TabFavoriteButton } from "@/components/workspace/tab-favorite-button"
 import { TabActionsMenu } from "@/components/workspace/tab-actions-menu"
 import { TabPeekTrigger } from "@/components/workspace/tab-peek-trigger"
 import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
@@ -59,6 +60,8 @@ export function TabCard({
   onAddDependency,
   onInspect,
   onNotesChange,
+  onToggleFavorite,
+  onOpenTab,
   dependencyIndicator,
   onSelectDependencyTab,
   onOpenDependencyTab,
@@ -80,6 +83,10 @@ export function TabCard({
   onInspect?: (id: string) => void
   /** Omitted entirely in contexts that don't wire up notes persistence — the notes button simply doesn't render. */
   onNotesChange?: (id: string, notes: string) => void
+  /** Omitted entirely in contexts that don't wire up favorite persistence — the star button simply doesn't render. */
+  onToggleFavorite?: (id: string) => void
+  /** When provided, takes over this card's "Open" control entirely — expected to call openTab itself (see lib/browser/open-tab.ts) and record lastAccessedAt, so the browser-level open only ever happens once. Falls back to a plain openTab(tab.url) when omitted (standalone/test contexts that don't track recents). */
+  onOpenTab?: (id: string) => void
   /** This tab's dependency/used-by relationships, pre-resolved to displayable labels. Omitted entirely (not just empty) in contexts that don't compute it — see filtered-tab-list.tsx. */
   dependencyIndicator?: DependencyIndicatorData
   onSelectDependencyTab?: (id: string) => void
@@ -114,6 +121,7 @@ export function TabCard({
         selected && "rounded-md bg-primary/5",
         isRecentlyAdded && "rounded-md bg-accent-text/[0.06]",
         tab.isDuplicate && "opacity-70",
+        tab.isFavorite && "border-l-2 border-l-favorite-accent/60",
         isDraggable && "cursor-grab active:cursor-grabbing"
       )}
       // Settings → Appearance → Layout → Card density scales this card's
@@ -143,6 +151,8 @@ export function TabCard({
           onRemoveFromCollection={onRemoveFromCollection}
           otherCollections={otherCollections}
           onMoveToCollection={onMoveToCollection}
+          onToggleFavorite={onToggleFavorite}
+          onOpenTab={onOpenTab}
           className="-m-1 block w-full min-w-0 rounded-md p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
@@ -185,10 +195,19 @@ export function TabCard({
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {onToggleFavorite && (
+        <TabFavoriteButton
+          tabId={tab.id}
+          domain={tab.domain}
+          isFavorite={tab.isFavorite === true}
+          onToggleFavorite={onToggleFavorite}
+        />
+      )}
+
       <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:duration-(--duration-fast) sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:has-data-open:opacity-100">
         <IconButton
           aria-label={`Open ${tab.domain}`}
-          onClick={() => openTab(tab.url)}
+          onClick={() => (onOpenTab ? onOpenTab(tab.id) : openTab(tab.url))}
           className="size-11 sm:size-8"
         >
           <ExternalLink />
@@ -211,6 +230,7 @@ export function TabCard({
           onRemoveFromCollection={onRemoveFromCollection}
           otherCollections={otherCollections}
           onMoveToCollection={onMoveToCollection}
+          onOpenTab={onOpenTab}
           trigger={
             <IconButton
               aria-label={`More actions for ${tab.domain}`}
