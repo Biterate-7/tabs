@@ -1,6 +1,6 @@
 "use client"
 
-import { History, PanelLeftClose, PanelLeftOpen, Settings, Star, Waypoints } from "lucide-react"
+import { History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
@@ -41,6 +41,7 @@ export function AppSidebar({
   onImportFile,
   onOpenFavorites,
   onOpenRecents,
+  onOpenHistoryDump,
   onOpenGraph,
   onOpenSettings,
 }: {
@@ -61,6 +62,7 @@ export function AppSidebar({
   onImportFile: (text: string) => void
   onOpenFavorites: () => void
   onOpenRecents: () => void
+  onOpenHistoryDump: () => void
   onOpenGraph: () => void
   onOpenSettings: () => void
 }) {
@@ -186,6 +188,15 @@ export function AppSidebar({
         >
           <History />
           {showLabels && <span className="text-body-sm">Recent</span>}
+        </IconButton>
+        <IconButton
+          aria-label="Open History Dump"
+          tooltip="History Dump"
+          onClick={onOpenHistoryDump}
+          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
+        >
+          <ScanSearch />
+          {showLabels && <span className="text-body-sm">History Dump</span>}
         </IconButton>
         <IconButton
           aria-label="Open Graph View"

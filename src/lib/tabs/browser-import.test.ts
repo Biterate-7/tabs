@@ -102,4 +102,17 @@ describe("buildTabsFromBrowserImport", () => {
     ]);
     expect(tabs[0].title).toBe("Something - Google Docs");
   });
+
+  it("carries History Dump metadata through when provided, omitting it otherwise", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "https://a.example", source: "history", historyVisitCount: 8, historyLastVisitedAt: 12345 },
+      { url: "https://b.example" },
+    ]);
+    expect(tabs[0].source).toBe("history");
+    expect(tabs[0].historyVisitCount).toBe(8);
+    expect(tabs[0].historyLastVisitedAt).toBe(12345);
+    expect(tabs[1].source).toBeUndefined();
+    expect(tabs[1].historyVisitCount).toBeUndefined();
+    expect(tabs[1].historyLastVisitedAt).toBeUndefined();
+  });
 });

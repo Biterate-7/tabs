@@ -9,6 +9,7 @@ import { AppearanceSettingsView } from "@/components/settings/appearance-setting
 import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
+import { HistoryDumpView } from "@/components/workspace/history-dump-view"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -67,7 +68,7 @@ export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
-  const [view, setView] = useState<"workspace" | "graph" | "settings" | "favorites" | "recents">("workspace")
+  const [view, setView] = useState<"workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump">("workspace")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail
@@ -250,6 +251,54 @@ export function AppShell() {
   // cross-batch duplicates are still caught, not just duplicates within the
   // incoming batch. Merging into an empty workspace's tabs is just a fresh
   // dump, so no separate "first import" branch is needed.
+  function notifyHistoryDumped(count: number, skipped: number) {
+    const snapshot = undoSnapshotRef.current
+    toast(`${count} tab${count === 1 ? "" : "s"} dumped`, {
+      description: skipped > 0 ? `${skipped} ${skipped === 1 ? "was" : "were"} already in TabDump` : undefined,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (!snapshot || undoSnapshotRef.current !== snapshot) return
+          persist(snapshot)
+          undoSnapshotRef.current = null
+        },
+      },
+    })
+  }
+
+  // History Dump's own merge step (AGENTS.md section 36): unlike
+  // handleBrowserImport, this filters out anything that already exists in
+  // the current workspace *before* merging, rather than letting markDuplicates
+  // flag it after the fact — History Dump's review screen already lets the
+  // user see "already in TabDump" candidates, so nothing selected from there
+  // should ever land as a second copy. Entries still funnel through the exact
+  // same buildTabsFromBrowserImport ingestion the popup-driven dump uses.
+  function handleHistoryDump(entries: BrowserImportEntry[]) {
+    if (!store) return
+    const incoming = buildTabsFromBrowserImport(entries)
+    if (incoming.length === 0) return
+
+    const current = getCurrentWorkspace(store)
+    const existingNormalized = new Set(current.tabs.map((t) => t.normalizedUrl))
+    const fresh = incoming.filter((t) => !existingNormalized.has(t.normalizedUrl))
+    const skipped = incoming.length - fresh.length
+
+    if (fresh.length === 0) {
+      toast.info("Nothing new to add", { description: "All selected pages are already in TabDump." })
+      setView("workspace")
+      return
+    }
+
+    undoSnapshotRef.current = store
+    const merged = markDuplicates([...current.tabs, ...fresh])
+    const next = updateWorkspaceTabs(store, current.id, merged)
+    persist(next)
+    markRecentlyAdded(fresh.map((t) => t.id))
+    notifyHistoryDumped(fresh.length, skipped)
+    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    setView("workspace")
+  }
+
   function handleBrowserImport(entries: BrowserImportEntry[]) {
     if (!store) return
     const incoming = buildTabsFromBrowserImport(entries)
@@ -415,6 +464,16 @@ export function AppShell() {
     )
   }
 
+  if (view === "history-dump") {
+    return (
+      <HistoryDumpView
+        tabs={currentWorkspace.tabs}
+        onClose={() => setView("workspace")}
+        onDump={handleHistoryDump}
+      />
+    )
+  }
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar
@@ -432,6 +491,7 @@ export function AppShell() {
         onImportFile={handleImportJson}
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
+        onOpenHistoryDump={() => setView("history-dump")}
         onOpenGraph={() => setView("graph")}
         onOpenSettings={() => setView("settings")}
       />
@@ -457,6 +517,7 @@ export function AppShell() {
             onOpenGraph={() => setView("graph")}
             onOpenFavorites={() => setView("favorites")}
             onOpenRecents={() => setView("recents")}
+            onOpenHistoryDump={() => setView("history-dump")}
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}

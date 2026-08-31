@@ -13,6 +13,7 @@
 
 const MAX_URLS_PER_COMMAND = 50;
 const MAX_TAB_IDS_PER_COMMAND = 200;
+const MAX_HISTORY_RESULTS = 5000;
 
 /**
  * Safelist, not a blocklist: only ever open http/https URLs. This is
@@ -67,6 +68,33 @@ export const BROWSER_COMMAND_VALIDATORS = {
 
   list_browser_windows() {
     return ok({});
+  },
+
+  /**
+   * History Dump's scan request. `startTime`/`endTime` are epoch ms —
+   * `startTime` is required (there is no sane "scan everything" default for
+   * a feature explicitly about a bounded, user-chosen time range) while
+   * `endTime` defaults to "now" in browser-actions.js when omitted.
+   * `maxResults` is capped well above what any real UI review step would
+   * ever want to render, purely as defense-in-depth against a malformed
+   * request forcing an unbounded chrome.history.search().
+   */
+  get_history(args) {
+    if (typeof args?.startTime !== "number" || !Number.isFinite(args.startTime) || args.startTime < 0) {
+      return fail("`startTime` must be a non-negative number (epoch ms).");
+    }
+    const endTime = args?.endTime === undefined ? undefined : args.endTime;
+    if (endTime !== undefined && (typeof endTime !== "number" || !Number.isFinite(endTime) || endTime < args.startTime)) {
+      return fail("`endTime` must be a number (epoch ms) not earlier than `startTime`.");
+    }
+    let maxResults = MAX_HISTORY_RESULTS;
+    if (args?.maxResults !== undefined) {
+      if (!isPositiveInteger(args.maxResults) || args.maxResults === 0) {
+        return fail(`\`maxResults\` must be a positive integer up to ${MAX_HISTORY_RESULTS}.`);
+      }
+      maxResults = Math.min(args.maxResults, MAX_HISTORY_RESULTS);
+    }
+    return ok({ startTime: args.startTime, endTime, maxResults });
   },
 
   open_url(args) {

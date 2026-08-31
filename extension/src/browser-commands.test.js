@@ -32,12 +32,13 @@ describe("validateBrowserCommand", () => {
     expect(result.error).toMatch(/unknown or disallowed/i);
   });
 
-  it("exposes exactly the spec's read/open/close/pin/window actions", () => {
+  it("exposes exactly the spec's read/open/close/pin/window/history actions", () => {
     expect([...ALLOWED_BROWSER_ACTIONS].sort()).toEqual(
       [
         "list_browser_tabs",
         "get_active_tab",
         "list_browser_windows",
+        "get_history",
         "open_url",
         "open_tabs",
         "close_tab",
@@ -126,5 +127,42 @@ describe("validateBrowserCommand", () => {
 
   it("create_browser_window rejects an unsafe url in its optional urls array", () => {
     expect(validateBrowserCommand("create_browser_window", { urls: ["javascript:alert(1)"] }).ok).toBe(false);
+  });
+});
+
+describe("get_history validation", () => {
+  it("rejects a missing or negative startTime", () => {
+    expect(validateBrowserCommand("get_history", {}).ok).toBe(false);
+    expect(validateBrowserCommand("get_history", { startTime: -1 }).ok).toBe(false);
+    expect(validateBrowserCommand("get_history", { startTime: "1000" }).ok).toBe(false);
+  });
+
+  it("accepts a bare startTime, defaulting endTime to undefined and maxResults to the cap", () => {
+    expect(validateBrowserCommand("get_history", { startTime: 1000 })).toEqual({
+      ok: true,
+      args: { startTime: 1000, endTime: undefined, maxResults: 5000 },
+    });
+  });
+
+  it("rejects an endTime earlier than startTime", () => {
+    expect(validateBrowserCommand("get_history", { startTime: 1000, endTime: 500 }).ok).toBe(false);
+  });
+
+  it("accepts a well-formed range with an explicit maxResults", () => {
+    expect(validateBrowserCommand("get_history", { startTime: 1000, endTime: 2000, maxResults: 100 })).toEqual({
+      ok: true,
+      args: { startTime: 1000, endTime: 2000, maxResults: 100 },
+    });
+  });
+
+  it("caps an oversized maxResults instead of rejecting it", () => {
+    const result = validateBrowserCommand("get_history", { startTime: 0, maxResults: 999999 });
+    expect(result).toEqual({ ok: true, args: { startTime: 0, endTime: undefined, maxResults: 5000 } });
+  });
+
+  it("rejects a zero or malformed maxResults", () => {
+    expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: 0 }).ok).toBe(false);
+    expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: -5 }).ok).toBe(false);
+    expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: "lots" }).ok).toBe(false);
   });
 });

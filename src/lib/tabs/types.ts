@@ -26,6 +26,12 @@ export type Tab = {
   isFavorite?: boolean;
   /** Epoch ms of the last time the user intentionally opened this tab from TabDump (see openTab call sites) — never set just from the tab rendering, being hovered, or appearing in Graph. Absent means "never opened from here." Drives the Recents view (src/lib/workspace/recents.ts) and Favorites' default sort. */
   lastAccessedAt?: number;
+  /** Where this tab was dumped from. Absent means "tabs" (the original, and still overwhelmingly common, path) — never written explicitly for that case, so every tab saved before History Dump existed is indistinguishable from an ordinary dump. Set to "history" only by buildTabsFromBrowserImport when the source BrowserImportEntry carries it (see src/lib/tabs/browser-import.ts, src/lib/history-dump/). */
+  source?: "tabs" | "history";
+  /** chrome.history.HistoryItem.visitCount at the moment this tab was dumped from History Dump — a point-in-time snapshot, not kept in sync afterward. Absent for source !== "history". */
+  historyVisitCount?: number;
+  /** Epoch ms of the history entry's last visit at the moment it was dumped — distinct from lastAccessedAt, which only ever reflects opens from *within* TabDump. Absent for source !== "history". */
+  historyLastVisitedAt?: number;
 };
 
 export type ParseResult = {

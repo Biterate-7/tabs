@@ -37,6 +37,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       onImportFile={vi.fn()}
       onOpenFavorites={vi.fn()}
       onOpenRecents={vi.fn()}
+      onOpenHistoryDump={vi.fn()}
       onOpenGraph={vi.fn()}
       onOpenSettings={vi.fn()}
       {...overrides}
@@ -104,6 +105,16 @@ describe("AppSidebar", () => {
     await user.click(screen.getByRole("button", { name: "Open Graph View" }));
 
     expect(onOpenGraph).toHaveBeenCalledOnce();
+  });
+
+  it("opens History Dump from the sidebar", async () => {
+    const user = userEvent.setup();
+    const onOpenHistoryDump = vi.fn();
+    renderSidebar({ onOpenHistoryDump });
+
+    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+
+    expect(onOpenHistoryDump).toHaveBeenCalledOnce();
   });
 
   it("opens Settings from the sidebar", async () => {

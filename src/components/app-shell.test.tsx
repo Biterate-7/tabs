@@ -7,6 +7,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { saveWorkspace } from "@/lib/workspace/persistence";
 import type { Tab } from "@/lib/tabs/types";
 
+const fetchBrowserHistoryMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/browser/history", () => ({ fetchBrowserHistory: fetchBrowserHistoryMock }));
+
 function makeTab(over: Partial<Tab> & { id: string }): Tab {
   return {
     url: "https://example.com",
@@ -431,5 +434,59 @@ describe("AppShell undo", () => {
     // The second import is still in effect: the older toast's Undo did
     // nothing (the search field still reads "example" from above).
     expect((await screen.findAllByText("example.com")).length).toBeGreaterThan(0);
+  });
+});
+
+describe("AppShell History Dump", () => {
+  afterEach(() => {
+    fetchBrowserHistoryMock.mockReset();
+  });
+
+  it("dumps selected history candidates through the same ingestion pipeline as a normal import, skipping ones already saved", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Toaster />
+        <AppShell />
+      </>
+    );
+
+    await dumpOneTab(user, "https://github.com/a");
+
+    fetchBrowserHistoryMock.mockResolvedValue({
+      ok: true,
+      items: [
+        // Already saved — must not be dumpable, and must not create a duplicate.
+        { url: "https://github.com/a", title: "a", lastVisitTime: Date.now(), visitCount: 5, historyItemId: "1" },
+        {
+          url: "https://en.wikipedia.org/wiki/Tab",
+          title: "Tab (interface) — a long, meaningful title",
+          lastVisitTime: Date.now(),
+          visitCount: 8,
+          historyItemId: "2",
+        },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+    await user.click(await screen.findByRole("button", { name: "Scan History" }));
+    await user.click(await screen.findByRole("button", { name: "Select all" }));
+    await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
+
+    expect(await screen.findByText("1 tab dumped")).toBeTruthy();
+    await user.type(await screen.findByPlaceholderText("Search tabs..."), "wikipedia");
+    expect((await screen.findAllByText("en.wikipedia.org")).length).toBeGreaterThan(0);
+  });
+
+  it("shows the extension-not-detected message when history scanning fails", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await dumpOneTab(user, "https://github.com/a");
+
+    fetchBrowserHistoryMock.mockResolvedValue({ ok: false, reason: "not-connected" });
+
+    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+    await user.click(await screen.findByRole("button", { name: "Scan History" }));
+    expect(await screen.findByText("TabDump extension not detected.")).toBeTruthy();
   });
 });

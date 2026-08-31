@@ -25,12 +25,14 @@ export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
  * unpin_tab, move_tabs_to_window, create_browser_window) were only ever
  * invoked by Ask TabDump's chat-driven browser-control actions, which have
  * been removed — the extension still implements handlers for them, but
- * nothing here calls them anymore.
+ * nothing here calls them anymore. `get_history` is the exception to that
+ * "three actions" count: it backs History Dump (src/lib/browser/history.ts).
  */
 export type BrowserActionName =
   | "list_browser_tabs"
   | "get_active_tab"
   | "list_browser_windows"
+  | "get_history"
   | "open_url"
   | "open_tabs"
   | "close_tab"
@@ -84,6 +86,22 @@ export type BrowserContextSnapshot = {
   tabs: BrowserTabInfo[];
   windows: BrowserWindowInfo[];
   activeTabId: number | null;
+};
+
+/**
+ * Wire shape for one `get_history` result item — mirrors
+ * extension/src/browser-actions.js's getHistory mapping exactly. Deliberately
+ * only what chrome.history.HistoryItem actually offers (see AGENTS.md's
+ * History Dump spec, section 3): no page content, no per-visit referrer, no
+ * device info.
+ */
+export type HistoryVisitItem = {
+  url: string;
+  title: string;
+  /** Epoch ms of the item's most recent visit, per chrome.history.HistoryItem. */
+  lastVisitTime: number;
+  visitCount: number;
+  historyItemId: string;
 };
 
 const MAX_OPEN_URL_LENGTH = 4000;

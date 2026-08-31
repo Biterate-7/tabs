@@ -173,6 +173,36 @@ export async function moveTabsToWindow(args) {
   return { moved: movedTabs.map(toTabSummary) };
 }
 
+/**
+ * History Dump's scan (see AGENTS.md's History Dump spec, section 5/17):
+ * a single chrome.history.search() call over the caller-chosen time range,
+ * mapped to a small wire shape. `text: ""` matches every history entry in
+ * range (the History API requires a `text` field but treats empty as "no
+ * filter") rather than this extension trying to guess useful search terms.
+ * Deliberately returns raw per-visit metadata only — no page content is
+ * fetched, matching AGENTS.md section 3's "work from history metadata"
+ * constraint. Filtering/scoring/deduplication all happen web-app-side (see
+ * src/lib/history-dump/), exactly like every other candidate-shaping step in
+ * this codebase never lives in the extension.
+ */
+export async function getHistory(args) {
+  const results = await chrome.history.search({
+    text: "",
+    startTime: args.startTime,
+    endTime: args.endTime,
+    maxResults: args.maxResults,
+  });
+  return {
+    items: results.map((item) => ({
+      url: item.url ?? "",
+      title: item.title ?? "",
+      lastVisitTime: item.lastVisitTime ?? 0,
+      visitCount: item.visitCount ?? 0,
+      historyItemId: item.id ?? "",
+    })),
+  };
+}
+
 export async function createBrowserWindow(args) {
   const win = await chrome.windows.create({
     url: args.urls.length > 0 ? args.urls : undefined,
@@ -185,6 +215,7 @@ export const BROWSER_ACTION_HANDLERS = {
   list_browser_tabs: listBrowserTabs,
   get_active_tab: getActiveTab,
   list_browser_windows: listBrowserWindows,
+  get_history: getHistory,
   open_url: openUrl,
   open_tabs: openTabs,
   close_tab: closeTab,

@@ -4,6 +4,7 @@ import {
   closeTabs,
   createBrowserWindow,
   getActiveTab,
+  getHistory,
   listBrowserTabs,
   listBrowserWindows,
   moveTabsToWindow,
@@ -32,6 +33,9 @@ beforeEach(() => {
       create: vi.fn(),
       get: vi.fn(),
       update: vi.fn(),
+    },
+    history: {
+      search: vi.fn(),
     },
   };
 });
@@ -269,6 +273,33 @@ describe("moveTabsToWindow", () => {
     const result = await moveTabsToWindow({ tabIds: [1], windowId: 9 });
     expect(chrome.tabs.move).toHaveBeenCalledWith([1], { windowId: 9, index: -1 });
     expect(result.moved).toHaveLength(1);
+  });
+});
+
+describe("getHistory", () => {
+  it("maps chrome.history.search results into the wire summary shape", async () => {
+    chrome.history.search.mockResolvedValue([
+      { url: "https://a.com", title: "A", lastVisitTime: 1000, visitCount: 3, id: "1" },
+      { url: "https://b.com", title: "", lastVisitTime: 2000, visitCount: 1, id: "2" },
+    ]);
+    const result = await getHistory({ startTime: 0, endTime: 5000, maxResults: 100 });
+    expect(chrome.history.search).toHaveBeenCalledWith({ text: "", startTime: 0, endTime: 5000, maxResults: 100 });
+    expect(result.items).toEqual([
+      { url: "https://a.com", title: "A", lastVisitTime: 1000, visitCount: 3, historyItemId: "1" },
+      { url: "https://b.com", title: "", lastVisitTime: 2000, visitCount: 1, historyItemId: "2" },
+    ]);
+  });
+
+  it("defaults missing fields on a malformed history item rather than throwing", async () => {
+    chrome.history.search.mockResolvedValue([{}]);
+    const result = await getHistory({ startTime: 0, maxResults: 10 });
+    expect(result.items).toEqual([{ url: "", title: "", lastVisitTime: 0, visitCount: 0, historyItemId: "" }]);
+  });
+
+  it("returns an empty list when nothing is found", async () => {
+    chrome.history.search.mockResolvedValue([]);
+    const result = await getHistory({ startTime: 0, maxResults: 10 });
+    expect(result.items).toEqual([]);
   });
 });
 

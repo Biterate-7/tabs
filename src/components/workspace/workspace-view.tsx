@@ -19,6 +19,7 @@ import {
   ExternalLink as OpenAllIcon,
   Star,
   History,
+  ScanSearch,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -90,6 +91,7 @@ export function WorkspaceView({
   onOpenGraph,
   onOpenFavorites,
   onOpenRecents,
+  onOpenHistoryDump,
   onSwitchWorkspace,
   recentlyAddedIds,
   onOpenSidebar,
@@ -108,6 +110,7 @@ export function WorkspaceView({
   /** Backs the command palette's "Go to Favorites"/"Go to Recents" entries — omitted in standalone/test contexts that don't wire up a shell. */
   onOpenFavorites?: () => void
   onOpenRecents?: () => void
+  onOpenHistoryDump?: () => void
   /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
   onSwitchWorkspace?: (id: string) => void
   /** Ids from the most recently completed dump/import — drives TabCard's "recently added" highlight. Omitted (not just empty) outside AppShell. */
@@ -663,6 +666,17 @@ export function WorkspaceView({
             group: "Navigation",
             icon: History,
             onSelect: onOpenRecents,
+          } satisfies Command,
+        ]
+      : []),
+    ...(onOpenHistoryDump
+      ? [
+          {
+            id: "nav-open-history-dump",
+            label: "Go to History Dump",
+            group: "Navigation",
+            icon: ScanSearch,
+            onSelect: onOpenHistoryDump,
           } satisfies Command,
         ]
       : []),
