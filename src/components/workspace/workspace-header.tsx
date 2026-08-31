@@ -114,6 +114,11 @@ export function WorkspaceHeader({
               dependencies={dependencies}
               collections={collections}
             />
+            {/* A hairline separates the destructive action from the neutral
+               cluster above — Clear is irreversible in a way Organize/Graph/
+               Cleanup/Export aren't, and shouldn't sit flush against them at
+               equal visual weight. */}
+            <div aria-hidden className="mx-1 h-5 w-px bg-border" />
             <IconButton
               aria-label="Clear"
               tooltip="Remove all tabs in this workspace"

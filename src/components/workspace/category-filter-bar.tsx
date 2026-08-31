@@ -40,13 +40,22 @@ export function CategoryFilterBar({
   onChange: (value: CategoryId | "all") => void
 }) {
   const counts = categoryCounts(tabs)
+  // Categories with nothing in them yet aren't worth a filter pill — filtering
+  // down to an empty category can never show anything, and CategoryGrid
+  // already surfaces "this category exists but is empty" via its own compact
+  // chip row. Showing both here and there would just repeat the same
+  // name-and-count twice on one screen. A category the active filter is
+  // already pointed at stays visible even at zero (e.g. the last tab in it
+  // just got recategorized away) so the active state never disappears out
+  // from under the user.
+  const visibleCategories = CATEGORY_ORDER.filter((id) => counts[id] > 0 || value === id)
 
   return (
     <div className="flex flex-wrap gap-2">
       <Pill active={value === "all"} onClick={() => onChange("all")}>
         All ({tabs.length})
       </Pill>
-      {CATEGORY_ORDER.map((id) => (
+      {visibleCategories.map((id) => (
         <Pill key={id} active={value === id} onClick={() => onChange(id)}>
           {CATEGORIES[id].name} ({counts[id]})
         </Pill>

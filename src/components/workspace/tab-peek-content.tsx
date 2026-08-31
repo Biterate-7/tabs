@@ -63,16 +63,15 @@ export function TabPeekContent({
       {/* No real page-snapshot mechanism exists in TabDump — this is the
           "beautiful fallback" the spec calls for, not a degraded state: a
           category-tinted panel built entirely from data the tab already
-          carries, so it never depends on a network fetch succeeding. */}
+          carries, so it never depends on a network fetch succeeding. Purely
+          a visual accent (the category's identity color, echoed as a tinted
+          field behind an enlarged favicon) — title and domain already read
+          clearly in the header above, so this panel doesn't repeat them. */}
       <div
-        className="mx-3 flex h-28 flex-col items-center justify-center gap-2 rounded-lg px-4"
+        className="mx-3 flex h-16 items-center justify-center rounded-lg"
         style={{ backgroundColor: `color-mix(in srgb, var(${category.accentColor}) 10%, var(--surface))` }}
       >
-        <TabFavicon domain={tab.domain} size={36} />
-        <div className="max-w-full text-center">
-          <p className="truncate text-body-sm font-medium text-foreground">{title}</p>
-          <p className="truncate text-meta text-tertiary">{tab.domain}</p>
-        </div>
+        <TabFavicon domain={tab.domain} size={32} />
       </div>
 
       <div className="space-y-1 px-3 pt-2.5 pb-2 text-meta text-tertiary">
