@@ -13,10 +13,12 @@ import {
   setPlayIntro,
   setRandomThemeEnabled,
   setShape,
+  setSound,
   setThemeId,
   setTypography,
   toggleFavoriteTheme,
   type Settings,
+  type SoundSettings,
 } from "@/lib/settings"
 import { appearanceToCssVars, resolveThemeColors } from "@/lib/appearance/resolve"
 import { THEME_REGISTRY } from "@/lib/appearance/themes"
@@ -100,6 +102,7 @@ export function useAppearance() {
       setPlayIntro(enabled)
       setSettings((prev) => (prev ? { ...prev, playIntro: enabled } : prev))
     }, []),
+    setSound: wrap((patch: Partial<SoundSettings>) => setSound(patch)),
     setThemeId: wrap(setThemeId),
     setCustomTheme: wrap((colors: ThemeColors | null) => setCustomTheme(colors)),
     toggleFavoriteTheme: wrap(toggleFavoriteTheme),

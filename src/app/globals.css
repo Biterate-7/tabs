@@ -181,6 +181,11 @@
   --duration-fast: calc(120ms * var(--tabdump-transition-scale) * var(--motion-scale));
   --duration-base: calc(160ms * var(--tabdump-transition-scale) * var(--motion-scale));
   --duration-slow: calc(220ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  /* The folder-open sequence (category-folder.tsx) is deliberately longer
+     than the base duration scale — it's a one-shot, one-at-a-time
+     interaction (never a list of simultaneously-animating items), so the
+     usual "keep it snappy across many elements" pressure doesn't apply. */
+  --duration-folder-open: calc(820ms * var(--tabdump-transition-scale) * var(--motion-scale));
   /* Intro-only: the one place in the app that wants a touch of overshoot
      (scene 3's "tabs recognize the center" convergence) — everywhere else
      uses --ease-standard, which has none by design. */
@@ -379,6 +384,100 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  /* --- Category folder open sequence (category-folder.tsx) --------------
+     Five elements share one --duration-folder-open timeline so they stay
+     perfectly in sync without any setTimeout choreography: the outer card
+     is the "driver" (its animationend fires navigation), while the flap,
+     the peeking documents, the zipper pull and its seam are all keyed to
+     the same percentage stops. Every keyframe here only ever touches
+     transform/opacity/filter — no layout properties — so it stays cheap
+     even though it runs at a longer duration than the rest of the app's
+     motion. */
+  @keyframes folder-card-open {
+    0% {
+      transform: scale(1);
+    }
+    10% {
+      transform: scale(0.97);
+    }
+    26% {
+      transform: scale(1);
+    }
+    68% {
+      transform: scale(1.02);
+      filter: blur(0px);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.4);
+      filter: blur(3px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes folder-open-reduced {
+    from {
+      transform: scale(1);
+      opacity: 1;
+    }
+    to {
+      transform: scale(0.98);
+      opacity: 0;
+    }
+  }
+
+  @keyframes folder-flap-open {
+    0%,
+    24% {
+      transform: rotateX(0deg);
+    }
+    68%,
+    100% {
+      transform: rotateX(-112deg);
+    }
+  }
+
+  @keyframes folder-docs-reveal {
+    0%,
+    24% {
+      transform: translateY(0) scale(1);
+    }
+    62% {
+      transform: translateY(-10px) scale(1.03);
+    }
+    100% {
+      transform: translateY(-17px) scale(1.06);
+    }
+  }
+
+  @keyframes folder-zipper-pull {
+    0%,
+    9% {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    48% {
+      transform: translateX(var(--zip-travel, 84%));
+      opacity: 1;
+    }
+    58%,
+    100% {
+      transform: translateX(var(--zip-travel, 84%));
+      opacity: 0;
+    }
+  }
+
+  @keyframes folder-seam-fade {
+    0%,
+    42% {
+      opacity: 1;
+    }
+    60%,
+    100% {
+      opacity: 0;
     }
   }
 

@@ -28,14 +28,6 @@ describe("runAction (registry dispatch)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("runs a read action and returns the same store reference (no mutation)", () => {
-    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
-    const result = runAction("list_workspaces", {}, store);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.store).toBe(store);
-  });
-
   it("runs a write action and returns a new store reflecting the change", () => {
     const store = makeStore([makeWorkspace({ id: "a" })], "a");
     const result = runAction("create_workspace", { name: "New" }, store);
@@ -50,7 +42,7 @@ describe("runAction (registry dispatch)", () => {
       [makeWorkspace({ id: "a", tabs: [makeTab("1")] }), makeWorkspace({ id: "b", tabs: [] })],
       "a"
     );
-    const result = runAction("move_tab", { tabId: "1", targetWorkspaceId: "b", sourceWorkspaceId: "b" }, store);
+    const result = runAction("move_tabs", { tabIds: ["1"], targetWorkspaceId: "b", sourceWorkspaceId: "b" }, store);
     expect(result.ok).toBe(false);
   });
 });

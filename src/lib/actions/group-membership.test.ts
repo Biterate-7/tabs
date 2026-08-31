@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignTabsToGroupAction, removeTabsFromGroupAction } from "./group-membership";
+import { assignTabsToGroupAction } from "./group-membership";
 import { createGroupAction } from "./groups";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
@@ -114,60 +114,5 @@ describe("assign_tabs_to_group action", () => {
     // the call to workspaceId "b" means the group lookup fails there.
     const result = assignTabsToGroupAction.run(store, { workspaceId: "b", tabIds: ["1"], groupId });
     expect(result.ok).toBe(false);
-  });
-});
-
-describe("remove_tabs_from_group action", () => {
-  it("validates required fields", () => {
-    expect(removeTabsFromGroupAction.validate({}).ok).toBe(false);
-    expect(removeTabsFromGroupAction.validate({ workspaceId: "a", tabIds: [] }).ok).toBe(false);
-  });
-
-  it("rejects duplicate tab ids", () => {
-    expect(removeTabsFromGroupAction.validate({ workspaceId: "a", tabIds: ["1", "1"] }).ok).toBe(false);
-  });
-
-  it("removes a tab from its group", () => {
-    const base = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
-    const { store, groupId } = withGroup(base, "a", "Physics");
-    const assigned = assignTabsToGroupAction.run(store, { workspaceId: "a", tabIds: ["1"], groupId });
-    if (!assigned.ok) throw new Error("expected assign to succeed");
-
-    const result = removeTabsFromGroupAction.run(assigned.store!, { workspaceId: "a", tabIds: ["1"] });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.removedCount).toBe(1);
-    expect(result.store?.workspaces[0].tabs[0].groupId).toBeUndefined();
-  });
-
-  it("removes multiple tabs from their groups in one call", () => {
-    const base = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1"), makeTab("2")] })], "a");
-    const { store, groupId } = withGroup(base, "a", "Physics");
-    const assigned = assignTabsToGroupAction.run(store, { workspaceId: "a", tabIds: ["1", "2"], groupId });
-    if (!assigned.ok) throw new Error("expected assign to succeed");
-
-    const result = removeTabsFromGroupAction.run(assigned.store!, { workspaceId: "a", tabIds: ["1", "2"] });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.removedCount).toBe(2);
-  });
-
-  it("leaves an already-ungrouped tab valid, with removedCount 0", () => {
-    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
-    const result = removeTabsFromGroupAction.run(store, { workspaceId: "a", tabIds: ["1"] });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.removedCount).toBe(0);
-    expect(result.store?.workspaces[0].tabs[0].groupId).toBeUndefined();
-  });
-
-  it("fails for a nonexistent workspace", () => {
-    const store = makeStore([makeWorkspace({ id: "a" })], "a");
-    expect(removeTabsFromGroupAction.run(store, { workspaceId: "ghost", tabIds: ["1"] }).ok).toBe(false);
-  });
-
-  it("fails when none of the given tab ids exist in the workspace", () => {
-    const store = makeStore([makeWorkspace({ id: "a", tabs: [] })], "a");
-    expect(removeTabsFromGroupAction.run(store, { workspaceId: "a", tabIds: ["ghost"] }).ok).toBe(false);
   });
 });

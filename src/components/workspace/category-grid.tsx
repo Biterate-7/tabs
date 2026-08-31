@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { CategoryCard } from "@/components/workspace/category-card"
+import { CategoryFolder } from "@/components/workspace/category-folder"
 import { CategorySheet } from "@/components/workspace/category-sheet"
 import { orderCategoriesByPresence } from "@/lib/workspace/hierarchy"
 import type { CategoryId } from "@/lib/categories"
@@ -10,8 +10,6 @@ import type { Tab } from "@/lib/tabs/types"
 export function CategoryGrid({
   tabs,
   onCategoryChange,
-  workspaceId,
-  onSheetOpenChange,
   onAddDependency,
   onInspect,
   onNotesChange,
@@ -19,43 +17,15 @@ export function CategoryGrid({
 }: {
   tabs: Tab[]
   onCategoryChange: (id: string, category: CategoryId) => void
-  workspaceId: string
-  /** Fires whenever the category detail sheet opens/closes — lets the caller know a CollectionAiActions button just became reachable, e.g. to lazily kick off AI indexing only once it might actually be used. */
-  onSheetOpenChange?: (open: boolean) => void
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
   recentlyAddedIds?: Set<string>
 }) {
-  const [openCategory, setOpenCategoryState] = useState<CategoryId | null>(null)
-  function setOpenCategory(id: CategoryId | null) {
-    setOpenCategoryState(id)
-    onSheetOpenChange?.(id !== null)
-  }
+  const [openCategory, setOpenCategory] = useState<CategoryId | null>(null)
   const hasAnimated = useRef(false)
   useEffect(() => {
     hasAnimated.current = true
-  }, [])
-
-  // "Latest ref" idiom (see use-title-resolution.ts/use-ask-tabdump.ts) —
-  // both read fresh in the unmount-only cleanup below, which otherwise
-  // closes over stale values from whichever render first mounted this
-  // effect. WorkspaceView swaps CategoryGrid out for FilteredTabList (and
-  // unmounts it, sheet and all) the moment the user starts searching or
-  // filtering — with no cleanup, a sheet left open at that instant would
-  // leave the parent's onSheetOpenChange flag stuck `true` forever, since
-  // nothing else ever tells it the sheet closed.
-  const openCategoryRef = useRef(openCategory)
-  // eslint-disable-next-line react-hooks/refs
-  openCategoryRef.current = openCategory
-  const onSheetOpenChangeRef = useRef(onSheetOpenChange)
-  // eslint-disable-next-line react-hooks/refs
-  onSheetOpenChangeRef.current = onSheetOpenChange
-
-  useEffect(() => {
-    return () => {
-      if (openCategoryRef.current !== null) onSheetOpenChangeRef.current?.(false)
-    }
   }, [])
 
   const entries = orderCategoriesByPresence(tabs)
@@ -97,7 +67,7 @@ export function CategoryGrid({
                   }
             }
           >
-            <CategoryCard
+            <CategoryFolder
               categoryId={entry.id}
               tabs={entry.tabs}
               presence={entry.presence}
@@ -122,7 +92,7 @@ export function CategoryGrid({
                     }
               }
             >
-              <CategoryCard
+              <CategoryFolder
                 categoryId={entry.id}
                 tabs={entry.tabs}
                 presence={entry.presence}
@@ -139,7 +109,6 @@ export function CategoryGrid({
         open={openCategory !== null}
         onOpenChange={(open) => !open && setOpenCategory(null)}
         onCategoryChange={onCategoryChange}
-        workspaceId={workspaceId}
         onAddDependency={onAddDependency}
         onInspect={onInspect}
         onNotesChange={onNotesChange}

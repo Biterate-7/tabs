@@ -1,14 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { shouldPlayIntro, prefersReducedMotion, isMobileViewport } from "./intro";
-import { getSettings, type Settings } from "./settings";
+import { getSettings, DEFAULT_SOUND, type Settings } from "./settings";
 import { DEFAULT_APPEARANCE_SETTINGS } from "./appearance/defaults";
 
-vi.mock("./settings", () => ({
+vi.mock("./settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./settings")>()),
   getSettings: vi.fn(),
 }));
 
 function settingsWith(playIntro: boolean): Settings {
-  return { playIntro, ...DEFAULT_APPEARANCE_SETTINGS };
+  return { playIntro, sound: DEFAULT_SOUND, ...DEFAULT_APPEARANCE_SETTINGS };
 }
 
 beforeEach(() => {

@@ -2,7 +2,7 @@
 
 import { toast } from "sonner"
 import { Copy, Download, FileText, FileJson } from "lucide-react"
-import { buttonVariants } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,9 +86,13 @@ export function ExportMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className={buttonVariants({ variant: "ghost", size: "sm" })}>
-        <Download /> Export
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger
+        render={
+          <IconButton aria-label="Export tabs" tooltip="Export tabs">
+            <Download />
+          </IconButton>
+        }
+      />
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={handleCopyAll}>
           <Copy /> Copy all URLs

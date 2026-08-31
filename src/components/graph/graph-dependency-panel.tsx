@@ -2,9 +2,9 @@
 
 import { useState, type ReactNode } from "react"
 import { ArrowDown, ArrowUp, Boxes, ChevronDown, ChevronRight, CornerDownRight, GitBranchPlus, MoreHorizontal, StickyNote, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { EmptyState } from "@/components/ui/empty-state"
+import { cn } from "@/lib/utils"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { DEPENDENCY_TYPES, DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types"
@@ -159,13 +159,18 @@ export function GraphDependencyPanel({
         <p className="min-w-0 truncate text-body-sm font-medium text-foreground">{node.tab.title?.trim() || node.tab.domain}</p>
         <div className="flex shrink-0 items-center gap-1">
           {onOpenNotes && (
-            <Button variant="ghost" size="xs" className={hasNotes ? "text-accent-text" : undefined} onClick={onOpenNotes}>
-              <StickyNote fill={hasNotes ? "currentColor" : "none"} fillOpacity={hasNotes ? 0.15 : 1} /> Notes
-            </Button>
+            <IconButton
+              aria-label="Notes"
+              tooltip="Open notes"
+              className={cn("size-7", hasNotes && "text-accent-text")}
+              onClick={onOpenNotes}
+            >
+              <StickyNote fill={hasNotes ? "currentColor" : "none"} fillOpacity={hasNotes ? 0.15 : 1} />
+            </IconButton>
           )}
-          <Button variant="ghost" size="xs" onClick={onAddDependency}>
-            <GitBranchPlus /> Add
-          </Button>
+          <IconButton aria-label="Add dependency" tooltip="Add dependency" className="size-7" onClick={onAddDependency}>
+            <GitBranchPlus />
+          </IconButton>
         </div>
       </div>
 

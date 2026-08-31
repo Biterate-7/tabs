@@ -167,3 +167,23 @@ export function buildDependencyEdges(tabs: Tab[], dependencies: TabDependency[])
   }
   return edges.sort((a, b) => a.id.localeCompare(b.id));
 }
+
+/**
+ * Maps every tab id touched by at least one edge to its total degree (plain
+ * edges plus dependency edges, both endpoints counted). Shared by GraphCanvas
+ * (node-size "connections" mode) and Tab Peek (the "N connections" line) so
+ * both read the exact same notion of "how connected is this tab" rather than
+ * keeping two counting implementations in sync by hand.
+ */
+export function buildDegreeMap(edges: GraphEdge[], dependencyEdges: GraphDependencyEdge[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const edge of edges) {
+    map.set(edge.source, (map.get(edge.source) ?? 0) + 1);
+    map.set(edge.target, (map.get(edge.target) ?? 0) + 1);
+  }
+  for (const edge of dependencyEdges) {
+    map.set(edge.parentTabId, (map.get(edge.parentTabId) ?? 0) + 1);
+    map.set(edge.childTabId, (map.get(edge.childTabId) ?? 0) + 1);
+  }
+  return map;
+}

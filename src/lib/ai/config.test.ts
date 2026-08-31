@@ -6,28 +6,28 @@ afterEach(() => {
 });
 
 describe("ai/config", () => {
-  it("defaults the chat model to gemini-3.6-flash when GEMINI_CHAT_MODEL is unset", async () => {
-    vi.stubEnv("GEMINI_CHAT_MODEL", "");
-    const { chatModel } = await import("./config");
-    expect(chatModel()).toBe("gemini-3.6-flash");
+  it("defaults the embedding model to gemini-embedding-001 when GEMINI_EMBEDDING_MODEL is unset", async () => {
+    vi.stubEnv("GEMINI_EMBEDDING_MODEL", "");
+    const { embeddingModel } = await import("./config");
+    expect(embeddingModel()).toBe("gemini-embedding-001");
   });
 
-  it("respects GEMINI_CHAT_MODEL when set", async () => {
-    vi.stubEnv("GEMINI_CHAT_MODEL", "gemini-custom-model");
-    const { chatModel } = await import("./config");
-    expect(chatModel()).toBe("gemini-custom-model");
+  it("respects GEMINI_EMBEDDING_MODEL when set", async () => {
+    vi.stubEnv("GEMINI_EMBEDDING_MODEL", "gemini-custom-embedding-model");
+    const { embeddingModel } = await import("./config");
+    expect(embeddingModel()).toBe("gemini-custom-embedding-model");
   });
 
-  it("defaults the analysis model to a cheaper flash-lite tier (its own free-tier quota bucket) when GEMINI_ANALYSIS_MODEL is unset", async () => {
-    vi.stubEnv("GEMINI_ANALYSIS_MODEL", "");
-    vi.stubEnv("GEMINI_CHAT_MODEL", "");
-    const { analysisModel } = await import("./config");
-    expect(analysisModel()).toBe("gemini-3.1-flash-lite");
+  it("has no API key configured by default in tests", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const { hasGeminiKey } = await import("./config");
+    expect(hasGeminiKey()).toBe(false);
   });
 
-  it("respects GEMINI_ANALYSIS_MODEL when set", async () => {
-    vi.stubEnv("GEMINI_ANALYSIS_MODEL", "gemini-custom-analysis-model");
-    const { analysisModel } = await import("./config");
-    expect(analysisModel()).toBe("gemini-custom-analysis-model");
+  it("reports a key as present once GEMINI_API_KEY is set", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const { hasGeminiKey, geminiApiKey } = await import("./config");
+    expect(hasGeminiKey()).toBe(true);
+    expect(geminiApiKey()).toBe("test-key");
   });
 });

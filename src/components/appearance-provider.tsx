@@ -30,3 +30,13 @@ export function useAppearanceContext(): UseAppearanceReturn {
   if (!ctx) throw new Error("useAppearanceContext must be used within AppearanceProvider")
   return ctx
 }
+
+/**
+ * Same context, without the throw — for components that read appearance
+ * state (theme/motion/sound) as a progressive enhancement rather than a hard
+ * requirement, and should render sensible defaults when mounted outside
+ * AppearanceProvider (e.g. in unit tests that don't need real theming).
+ */
+export function useOptionalAppearanceContext(): UseAppearanceReturn | null {
+  return useContext(AppearanceContext)
+}

@@ -1,7 +1,7 @@
 "use client"
 
 import type { CSSProperties, DragEvent } from "react"
-import { ExternalLink, FolderInput, GitBranchPlus, MoreHorizontal, PanelRight, X } from "lucide-react"
+import { ExternalLink, MoreHorizontal } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
@@ -9,15 +9,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { setDragTabId } from "@/lib/collections/drag"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { TabNotesButton } from "@/components/workspace/tab-notes-button"
+import { TabActionsMenu } from "@/components/workspace/tab-actions-menu"
+import { TabPeekTrigger } from "@/components/workspace/tab-peek-trigger"
 import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
@@ -136,8 +134,20 @@ export function TabCard({
       <TabFavicon domain={tab.domain} />
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
-        <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
+        <TabPeekTrigger
+          tab={tab}
+          onNotesChange={onNotesChange}
+          onCategoryChange={onCategoryChange}
+          onInspect={onInspect}
+          onAddDependency={onAddDependency}
+          onRemoveFromCollection={onRemoveFromCollection}
+          otherCollections={otherCollections}
+          onMoveToCollection={onMoveToCollection}
+          className="-m-1 block w-full min-w-0 rounded-md p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
+          <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
+          <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
+        </TabPeekTrigger>
         {collectionName && (
           <p className="truncate text-meta text-tertiary">Collection: {collectionName}</p>
         )}
@@ -193,59 +203,23 @@ export function TabCard({
           />
         )}
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <IconButton
-                aria-label={`More actions for ${tab.domain}`}
-                className="size-11 sm:size-8"
-              >
-                <MoreHorizontal />
-              </IconButton>
-            }
-          />
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => openTab(tab.url)}>Open</DropdownMenuItem>
-            {onInspect && (
-              <DropdownMenuItem onClick={() => onInspect(tab.id)}>
-                <PanelRight /> Inspect…
-              </DropdownMenuItem>
-            )}
-            {onAddDependency && (
-              <DropdownMenuItem onClick={() => onAddDependency(tab.id)}>
-                <GitBranchPlus /> Add dependency…
-              </DropdownMenuItem>
-            )}
-            {onRemoveFromCollection && (
-              <DropdownMenuItem onClick={() => onRemoveFromCollection(tab.id)}>
-                <X /> Remove from collection
-              </DropdownMenuItem>
-            )}
-            {onMoveToCollection && otherCollections && otherCollections.length > 0 && (
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderInput /> Move to collection
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {otherCollections.map((c) => (
-                    <DropdownMenuItem key={c.id} onClick={() => onMoveToCollection(tab.id, c.id)}>
-                      {c.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            )}
-            {(onInspect || onAddDependency || onRemoveFromCollection || onMoveToCollection) && <DropdownMenuSeparator />}
-            {CATEGORY_ORDER.map((id) => (
-              <DropdownMenuItem
-                key={id}
-                onClick={() => onCategoryChange(tab.id, id)}
-              >
-                Move to {CATEGORIES[id].name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <TabActionsMenu
+          tab={tab}
+          onCategoryChange={onCategoryChange}
+          onInspect={onInspect}
+          onAddDependency={onAddDependency}
+          onRemoveFromCollection={onRemoveFromCollection}
+          otherCollections={otherCollections}
+          onMoveToCollection={onMoveToCollection}
+          trigger={
+            <IconButton
+              aria-label={`More actions for ${tab.domain}`}
+              className="size-11 sm:size-8"
+            >
+              <MoreHorizontal />
+            </IconButton>
+          }
+        />
       </div>
     </div>
   )

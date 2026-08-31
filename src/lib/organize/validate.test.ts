@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidOrganizationPlanInput, validateOrganizationPlan } from "./validate";
+import { validateOrganizationPlan } from "./validate";
 import type { OrganizationPlan } from "./types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 
@@ -129,18 +129,5 @@ describe("validateOrganizationPlan", () => {
     plan.workspaces[0].tabs = []; // no moves — t2 is already in ws-2
     plan.workspaces[0].groups = [{ proposedName: "IA", reason: "r", tabIds: ["t2"] }];
     expect(validateOrganizationPlan(plan, store())).toEqual({ ok: true });
-  });
-});
-
-describe("isValidOrganizationPlanInput", () => {
-  it("accepts a well-formed plan shape", () => {
-    expect(isValidOrganizationPlanInput(basePlan())).toBe(true);
-  });
-
-  it("rejects malformed input (missing required fields)", () => {
-    expect(isValidOrganizationPlanInput({ summary: "s" })).toBe(false);
-    expect(isValidOrganizationPlanInput(null)).toBe(false);
-    expect(isValidOrganizationPlanInput("not a plan")).toBe(false);
-    expect(isValidOrganizationPlanInput({ ...basePlan(), workspaces: [{ proposedName: "x" }] })).toBe(false);
   });
 });

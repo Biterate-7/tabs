@@ -144,7 +144,14 @@ export function GraphNodeNotesView({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Start writing…"
-            className="text-content field-sizing-content min-h-[45vh] w-full resize-none border-none bg-transparent p-0 text-body leading-[1.7] text-editor-text shadow-none focus-visible:border-none focus-visible:ring-0 dark:bg-transparent placeholder:text-editor-placeholder"
+            // rounded-none: this textarea is borderless and transparent (no
+            // visible box to round), but the base Textarea's `rounded-lg`
+            // still establishes a rounded overflow-clip boundary via the
+            // browser's default textarea `overflow: auto`. At larger global
+            // --radius values that boundary cuts into the zero-padding text
+            // itself, so drop the inherited radius here — there's no surface
+            // left for it to visually round anyway.
+            className="text-content field-sizing-content min-h-[45vh] w-full resize-none rounded-none border-none bg-transparent p-0 text-body leading-[1.7] text-editor-text shadow-none focus-visible:border-none focus-visible:ring-0 dark:bg-transparent placeholder:text-editor-placeholder"
             // The app sets a global `:focus-visible { outline: ... }` rule (see
             // globals.css) outside any @layer, so it beats every Tailwind
             // utility regardless of specificity — only an inline style can

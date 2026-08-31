@@ -1,7 +1,7 @@
 "use client"
 
 import { ExternalLink, Layers, Pencil, Scan, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import type { Collection } from "@/lib/collections/types"
@@ -37,9 +37,9 @@ export function GraphCollectionPanel({
     <div className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0">
       <div className="flex items-center justify-between">
         <p className="text-label text-tertiary">COLLECTION</p>
-        <Button variant="ghost" size="xs" onClick={onFocus}>
-          <Scan /> Focus
-        </Button>
+        <IconButton aria-label="Focus collection" tooltip="Focus this collection" className="size-7" onClick={onFocus}>
+          <Scan />
+        </IconButton>
       </div>
 
       <div>
@@ -78,16 +78,28 @@ export function GraphCollectionPanel({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-subtle pt-3">
-        <Button variant="ghost" size="xs" onClick={onRename}>
-          <Pencil /> Rename
-        </Button>
-        <Button variant="ghost" size="xs" onClick={onOpenAll} disabled={collection.tabIds.length === 0}>
-          <ExternalLink /> Open all
-        </Button>
-        <Button variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={onDelete}>
-          <Trash2 /> Delete
-        </Button>
+      <div className="flex flex-wrap items-center gap-0.5 border-t border-subtle pt-3">
+        <IconButton aria-label="Rename collection" tooltip="Rename collection" className="size-7" onClick={onRename}>
+          <Pencil />
+        </IconButton>
+        <IconButton
+          aria-label="Open all in collection"
+          tooltip="Open all tabs in this collection"
+          className="size-7"
+          onClick={onOpenAll}
+          disabled={collection.tabIds.length === 0}
+        >
+          <ExternalLink />
+        </IconButton>
+        <IconButton
+          aria-label="Delete collection"
+          tooltip="Delete collection"
+          destructive
+          className="size-7"
+          onClick={onDelete}
+        >
+          <Trash2 />
+        </IconButton>
       </div>
     </div>
   )

@@ -44,17 +44,17 @@ import { SortControl } from "@/components/workspace/sort-control"
 import { FilteredTabList } from "@/components/workspace/filtered-tab-list"
 import { CommandPalette } from "@/components/command-palette/command-palette"
 import type { Command } from "@/components/command-palette/types"
-import { AskTabDumpPanel } from "@/components/ai/ask-tabdump-panel"
+import { AutoOrganizePanel } from "@/components/workspace/auto-organize-panel"
 import { filterTabs, sortTabs, categoryCounts } from "@/lib/workspace/search"
 import type { SortKey } from "@/lib/workspace/search"
 import { copyText, urlsText } from "@/lib/workspace/export"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
-import { useAiIndexing } from "@/hooks/use-ai-indexing"
 import { useDependencyStore } from "@/hooks/use-dependency-store"
+import type { OrganizationPlan } from "@/lib/organize/types"
 import type { Tab } from "@/lib/tabs/types"
-import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
+import type { Workspace } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { GraphLinkDialog } from "@/components/graph/graph-link-dialog"
 import { TabInspector } from "@/components/workspace/tab-inspector"
@@ -85,19 +85,21 @@ export function WorkspaceView({
   onClear,
   currentWorkspace,
   allWorkspaces,
-  onStoreUpdate,
   onOpenGraph,
   onSwitchWorkspace,
   recentlyAddedIds,
   onOpenSidebar,
+  autoOrganizePlan,
+  autoOrganizeApplying,
+  onApplyAutoOrganize,
+  onDismissAutoOrganize,
+  onRequestOrganize,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
   onClear: () => void
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
-  /** Lets Ask TabDump's agent mode write back a store mutated by an action (create/rename workspace, move tabs, etc). */
-  onStoreUpdate?: (store: WorkspaceStore) => void
   onOpenGraph?: () => void
   /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
   onSwitchWorkspace?: (id: string) => void
@@ -105,6 +107,13 @@ export function WorkspaceView({
   recentlyAddedIds?: Set<string>
   /** Opens the mobile sidebar drawer — omitted in standalone/test contexts that don't render a shell around this view. */
   onOpenSidebar?: () => void
+  /** A just-analyzed Auto-Organize plan awaiting review — see use-auto-organize.ts. Omitted/undefined when nothing is ready to show. */
+  autoOrganizePlan?: OrganizationPlan | null
+  autoOrganizeApplying?: boolean
+  onApplyAutoOrganize?: (plan: OrganizationPlan) => void
+  onDismissAutoOrganize?: () => void
+  /** Manually re-runs Auto-Organize analysis on demand — backs the header's "Organize" button. */
+  onRequestOrganize?: () => void
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -118,8 +127,6 @@ export function WorkspaceView({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [openSelectedConfirmOpen, setOpenSelectedConfirmOpen] = useState(false)
-  const [askOpen, setAskOpen] = useState(false)
-  const [categorySheetOpen, setCategorySheetOpen] = useState(false)
   const [depDialogFor, setDepDialogFor] = useState<string | null>(null)
   const [inspectTabId, setInspectTabId] = useState<string | null>(null)
   const [collapsedCollectionIds, setCollapsedCollectionIds] = useState<Set<string>>(new Set())
@@ -415,13 +422,6 @@ export function WorkspaceView({
     if (!node) return
     openTab(node.tab.url)
   }
-  // AI indexing (Gemini embeddings) only needs to run once something that
-  // actually reads the resulting index has been opened — the Ask TabDump
-  // panel, or a category sheet whose "Understand this collection"/"Find
-  // gaps" buttons are now reachable. Never on every workspace view, whether
-  // or not the user ever touches an AI feature — see use-ai-indexing.ts.
-  const indexState = useAiIndexing(workspaceId, tabs, askOpen || categorySheetOpen)
-
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
 
@@ -566,15 +566,17 @@ export function WorkspaceView({
     else toast.error("Couldn't copy to clipboard")
   }
 
-  const askCommands: Command[] = [
-    {
-      id: "ask-open",
-      label: "Ask TabDump…",
-      group: "Ask",
-      icon: Sparkles,
-      onSelect: () => setAskOpen(true),
-    },
-  ]
+  const organizeCommands: Command[] = onRequestOrganize
+    ? [
+        {
+          id: "organize-run",
+          label: "Organize tabs",
+          group: "Actions",
+          icon: Sparkles,
+          onSelect: onRequestOrganize,
+        },
+      ]
+    : []
 
   const navigationCommands: Command[] = [
     {
@@ -764,7 +766,7 @@ export function WorkspaceView({
   ]
 
   const allCommands = [
-    ...askCommands,
+    ...organizeCommands,
     ...navigationCommands,
     ...workspaceCommands,
     ...selectionCommands,
@@ -779,7 +781,6 @@ export function WorkspaceView({
     onFocusSearch: () => document.getElementById("workspace-search-input")?.focus(),
     onEscape: () => {
       if (commandPaletteOpen) return setCommandPaletteOpen(false)
-      if (askOpen) return setAskOpen(false)
       if (shortcutsOpen) return setShortcutsOpen(false)
       if (cleanupOpen) return setCleanupOpen(false)
       if (clearConfirmOpen) return setClearConfirmOpen(false)
@@ -816,7 +817,7 @@ export function WorkspaceView({
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}
         onOpenPalette={() => setCommandPaletteOpen(true)}
-        onOpenAsk={() => setAskOpen(true)}
+        onOrganize={onRequestOrganize}
         onOpenGraph={onOpenGraph}
         onOpenSidebar={onOpenSidebar}
         currentWorkspace={currentWorkspace}
@@ -832,6 +833,15 @@ export function WorkspaceView({
           paddingBlock: "calc(2rem * var(--tabdump-density-scale, 1))",
         }}
       >
+        {autoOrganizePlan && onApplyAutoOrganize && onDismissAutoOrganize && (
+          <AutoOrganizePanel
+            plan={autoOrganizePlan}
+            tabsById={tabsById}
+            isApplying={Boolean(autoOrganizeApplying)}
+            onApply={onApplyAutoOrganize}
+            onDismiss={onDismissAutoOrganize}
+          />
+        )}
         <AttentionStrip
           attention={attention}
           onCleanup={() => setCleanupOpen(true)}
@@ -914,8 +924,6 @@ export function WorkspaceView({
             <CategoryGrid
               tabs={tabs}
               onCategoryChange={handleCategoryChange}
-              workspaceId={workspaceId}
-              onSheetOpenChange={setCategorySheetOpen}
               onAddDependency={setDepDialogFor}
               onInspect={setInspectTabId}
               onNotesChange={handleNotesChange}
@@ -1043,16 +1051,6 @@ export function WorkspaceView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <AskTabDumpPanel
-        open={askOpen}
-        onOpenChange={setAskOpen}
-        workspaceId={workspaceId}
-        tabs={tabs}
-        indexState={indexState}
-        allWorkspaces={allWorkspaces}
-        onStoreUpdate={onStoreUpdate}
-      />
 
       <GraphLinkDialog
         open={depDialogFor !== null}

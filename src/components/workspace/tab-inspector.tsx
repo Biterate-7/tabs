@@ -2,7 +2,7 @@
 
 import { ExternalLink } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { GraphDependencyPanel } from "@/components/graph/graph-dependency-panel"
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
@@ -11,8 +11,8 @@ import type { GraphNode } from "@/lib/graph/types"
 
 /**
  * The workspace's tab detail panel — a right-side Sheet, the same convention
- * CategorySheet and AskTabDumpPanel already use for detail views, not a new
- * layout pattern. Its dependency section is GraphDependencyPanel exactly as
+ * CategorySheet already uses for detail views, not a new layout pattern. Its
+ * dependency section is GraphDependencyPanel exactly as
  * Graph View uses it: state-agnostic (a node plus pre-computed dependency
  * data and callbacks), so this reuses the existing dependency functionality
  * instead of standing up a second copy of it.
@@ -63,9 +63,9 @@ export function TabInspector({
               </div>
               <div className="flex items-center justify-between pt-1">
                 <p className="text-meta text-tertiary">Workspace: {node.workspaceName}</p>
-                <Button variant="ghost" size="xs" onClick={() => onOpenTab(node.id)}>
-                  <ExternalLink /> Open
-                </Button>
+                <IconButton aria-label="Open tab" tooltip="Open in new tab" className="size-7" onClick={() => onOpenTab(node.id)}>
+                  <ExternalLink />
+                </IconButton>
               </div>
             </SheetHeader>
 

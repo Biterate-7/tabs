@@ -20,6 +20,7 @@ import {
   zoomAroundPoint,
 } from "@/lib/graph/layout"
 import { computeCollectionBoundary, pointInRect, type CollectionBoundaryRect } from "@/lib/graph/collection-layout"
+import { buildDegreeMap } from "@/lib/graph/relations"
 import type { CameraState, GraphDependencyEdge, GraphDisplaySettings, GraphEdge, GraphNode } from "@/lib/graph/types"
 import type { CategoryId } from "@/lib/categories"
 import { faviconUrl } from "@/lib/workspace/favicon"
@@ -198,18 +199,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const selectedCollectionMemberIdsRef = useRef(selectedCollectionMemberIds)
   selectedCollectionMemberIdsRef.current = selectedCollectionMemberIds
 
-  const degreeById = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const edge of edges) {
-      map.set(edge.source, (map.get(edge.source) ?? 0) + 1)
-      map.set(edge.target, (map.get(edge.target) ?? 0) + 1)
-    }
-    for (const edge of dependencyEdges) {
-      map.set(edge.parentTabId, (map.get(edge.parentTabId) ?? 0) + 1)
-      map.set(edge.childTabId, (map.get(edge.childTabId) ?? 0) + 1)
-    }
-    return map
-  }, [edges, dependencyEdges])
+  const degreeById = useMemo(() => buildDegreeMap(edges, dependencyEdges), [edges, dependencyEdges])
 
   // Selecting either end of a dependency counts as "connected" here — a
   // parent highlights its dependencies, and a child highlights what depends

@@ -1,10 +1,8 @@
 "use client"
 
 import { toast } from "sonner"
-import { Sparkles, Trash2, MoreHorizontal, FileText, Waypoints, PanelLeftOpen } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Command, Sparkles, Trash2, MoreHorizontal, FileText, Wand2, Waypoints, PanelLeftOpen } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
-import { Kbd } from "@/components/ui/kbd"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,7 +27,7 @@ export function WorkspaceHeader({
   onCleanup,
   onRequestClear,
   onOpenPalette,
-  onOpenAsk,
+  onOrganize,
   onOpenGraph,
   onOpenSidebar,
   currentWorkspace,
@@ -46,7 +44,8 @@ export function WorkspaceHeader({
   onCleanup: () => void
   onRequestClear: () => void
   onOpenPalette?: () => void
-  onOpenAsk: () => void
+  /** Manually re-runs Auto-Organize analysis on demand — omitted in standalone/test contexts. */
+  onOrganize?: () => void
   onOpenGraph?: () => void
   /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. Omitted in standalone/test contexts that don't render a shell around this view. */
   onOpenSidebar?: () => void
@@ -83,29 +82,31 @@ export function WorkspaceHeader({
           </div>
 
           {onOpenPalette && (
-            <button
-              type="button"
-              onClick={onOpenPalette}
-              className="hidden items-center gap-1.5 rounded-lg border border-subtle px-2 py-1 text-tertiary transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:text-foreground md:inline-flex"
+            <IconButton
               aria-label="Open command palette"
+              tooltip="Open command palette"
+              shortcut="Ctrl + K"
+              onClick={onOpenPalette}
+              className="hidden md:inline-flex"
             >
-              <span className="text-label">Commands</span>
-              <Kbd keys={["⌘", "K"]} />
-            </button>
+              <Command />
+            </IconButton>
           )}
 
-          <div className="hidden items-center gap-1.5 sm:flex">
-            <Button variant="secondary" size="sm" onClick={onOpenAsk}>
-              <Sparkles /> Ask TabDump
-            </Button>
-            {onOpenGraph && (
-              <Button variant="ghost" size="sm" onClick={onOpenGraph}>
-                <Waypoints /> Graph
-              </Button>
+          <div className="hidden items-center gap-0.5 sm:flex">
+            {onOrganize && (
+              <IconButton aria-label="Organize tabs" tooltip="Auto-organize tabs" onClick={onOrganize}>
+                <Wand2 />
+              </IconButton>
             )}
-            <Button variant="ghost" size="sm" onClick={onCleanup}>
-              <Sparkles /> Cleanup
-            </Button>
+            {onOpenGraph && (
+              <IconButton aria-label="Open Graph view" tooltip="Open visual graph" onClick={onOpenGraph}>
+                <Waypoints />
+              </IconButton>
+            )}
+            <IconButton aria-label="Cleanup tabs" tooltip="Find duplicate & broken tabs" onClick={onCleanup}>
+              <Sparkles />
+            </IconButton>
             <ExportMenu
               tabs={tabs}
               currentWorkspace={currentWorkspace}
@@ -113,9 +114,14 @@ export function WorkspaceHeader({
               dependencies={dependencies}
               collections={collections}
             />
-            <Button variant="ghost" size="sm" onClick={onRequestClear}>
-              <Trash2 /> Clear
-            </Button>
+            <IconButton
+              aria-label="Clear"
+              tooltip="Remove all tabs in this workspace"
+              destructive
+              onClick={onRequestClear}
+            >
+              <Trash2 />
+            </IconButton>
           </div>
 
           <DropdownMenu>
@@ -134,9 +140,11 @@ export function WorkspaceHeader({
               {onOpenPalette && (
                 <DropdownMenuItem onClick={onOpenPalette}>Command menu</DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={onOpenAsk}>
-                <Sparkles /> Ask TabDump
-              </DropdownMenuItem>
+              {onOrganize && (
+                <DropdownMenuItem onClick={onOrganize}>
+                  <Sparkles /> Organize
+                </DropdownMenuItem>
+              )}
               {onOpenGraph && (
                 <DropdownMenuItem onClick={onOpenGraph}>
                   <Waypoints /> Graph view

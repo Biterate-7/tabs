@@ -8,7 +8,6 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TabCard } from "@/components/workspace/tab-card"
-import { CollectionAiActions } from "@/components/ai/collection-ai-actions"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
@@ -19,7 +18,6 @@ export function CategorySheet({
   open,
   onOpenChange,
   onCategoryChange,
-  workspaceId,
   onAddDependency,
   onInspect,
   onNotesChange,
@@ -30,7 +28,6 @@ export function CategorySheet({
   open: boolean
   onOpenChange: (open: boolean) => void
   onCategoryChange: (id: string, category: CategoryId) => void
-  workspaceId: string
   onAddDependency?: (id: string) => void
   onInspect?: (id: string) => void
   onNotesChange?: (id: string, notes: string) => void
@@ -46,9 +43,6 @@ export function CategorySheet({
             {def?.name} <span className="text-tertiary">· {tabs.length} tab{tabs.length === 1 ? "" : "s"}</span>
           </SheetTitle>
         </SheetHeader>
-        {tabs.length > 0 && def && (
-          <CollectionAiActions workspaceId={workspaceId} categoryName={def.name} tabs={tabs} />
-        )}
         {tabs.length === 0 ? (
           <EmptyState
             icon={Bookmark}

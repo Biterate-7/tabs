@@ -3,62 +3,6 @@ import type { OrganizationPlan } from "./types";
 
 export type OrganizationPlanValidation = { ok: true } | { ok: false; errors: string[] };
 
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === "string");
-}
-
-/**
- * Structural shape check for an OrganizationPlan arriving over the wire
- * (the client round-trips the plan it showed the user back for Apply — see
- * /api/ai/ask's "agent-organize-apply" mode). Distinct from
- * validateOrganizationPlan below: this only confirms the JSON has the right
- * shape to even attempt semantic validation against a store; a
- * shape-malformed plan (AGENTS.md section 16's "malformed AI plan" case)
- * fails here before ever reaching it.
- */
-export function isValidOrganizationPlanInput(value: unknown): value is OrganizationPlan {
-  if (!value || typeof value !== "object") return false;
-  const p = value as Record<string, unknown>;
-  if (typeof p.summary !== "string") return false;
-  if (typeof p.totalTabsConsidered !== "number") return false;
-  if (!Array.isArray(p.workspaces) || !Array.isArray(p.uncertainTabs) || !Array.isArray(p.duplicates)) return false;
-
-  const workspacesValid = p.workspaces.every((w) => {
-    if (!w || typeof w !== "object") return false;
-    const rec = w as Record<string, unknown>;
-    if (typeof rec.proposedName !== "string" || typeof rec.reason !== "string") return false;
-    if (rec.existingWorkspaceId !== undefined && typeof rec.existingWorkspaceId !== "string") return false;
-    if (!Array.isArray(rec.tabs)) return false;
-    const tabsValid = rec.tabs.every(
-      (t) => t && typeof t === "object" && typeof (t as Record<string, unknown>).tabId === "string" && typeof (t as Record<string, unknown>).confidence === "string"
-    );
-    if (!tabsValid) return false;
-    if (rec.groups === undefined) return true;
-    if (!Array.isArray(rec.groups)) return false;
-    return rec.groups.every((g) => {
-      if (!g || typeof g !== "object") return false;
-      const gRec = g as Record<string, unknown>;
-      if (typeof gRec.proposedName !== "string" || !isStringArray(gRec.tabIds)) return false;
-      if (gRec.existingGroupId !== undefined && typeof gRec.existingGroupId !== "string") return false;
-      return true;
-    });
-  });
-  if (!workspacesValid) return false;
-
-  const uncertainValid = p.uncertainTabs.every(
-    (u) =>
-      u &&
-      typeof u === "object" &&
-      typeof (u as Record<string, unknown>).tabId === "string" &&
-      typeof (u as Record<string, unknown>).currentWorkspaceId === "string"
-  );
-  if (!uncertainValid) return false;
-
-  return p.duplicates.every(
-    (d) => d && typeof d === "object" && isStringArray((d as Record<string, unknown>).tabIds)
-  );
-}
-
 /**
  * AGENTS.md section 16's safety gate — checked both right after a plan is
  * generated (before it's ever shown to the user) and again right before

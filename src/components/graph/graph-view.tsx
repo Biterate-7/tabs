@@ -558,7 +558,7 @@ export function GraphView({
         />
       )}
 
-      {!emptyState && <GraphNodeTooltip hover={hover} />}
+      {!emptyState && <GraphNodeTooltip hover={hover} onOpenNotes={handleOpenNotes} />}
       {!emptyState && <GraphControls onZoomIn={() => canvasHandleRef.current?.zoomBy(1.3)} onZoomOut={() => canvasHandleRef.current?.zoomBy(1 / 1.3)} onFit={handleFit} />}
 
       <GraphSidebar

@@ -1,5 +1,6 @@
-import { Download, ExternalLink, Layers, Trash2, X } from "lucide-react"
+import { Download, ExternalLink, Layers, Tag, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,10 +59,14 @@ export function SelectionToolbar({
         {count} selected
       </span>
 
-      <div className="ml-auto flex items-center gap-1.5 overflow-x-auto">
+      <div className="ml-auto flex items-center gap-0.5 overflow-x-auto">
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button variant="ghost" size="sm">Recategorize</Button>}
+            render={
+              <IconButton aria-label="Recategorize" tooltip="Recategorize selection">
+                <Tag />
+              </IconButton>
+            }
           />
           <DropdownMenuContent align="end">
             {CATEGORY_ORDER.map((id) => (
@@ -74,7 +79,13 @@ export function SelectionToolbar({
 
         {onGatherNew && (
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="sm">Gather</Button>} />
+            <DropdownMenuTrigger
+              render={
+                <IconButton aria-label="Gather" tooltip="Add selection to a collection">
+                  <Layers />
+                </IconButton>
+              }
+            />
             <DropdownMenuContent align="end">
               {collections && collections.length > 0 && (
                 <>
@@ -93,18 +104,18 @@ export function SelectionToolbar({
           </DropdownMenu>
         )}
 
-        <Button variant="ghost" size="sm" onClick={onExportSelected}>
-          <Download /> Export
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onOpenSelected}>
-          <ExternalLink /> Open
-        </Button>
-        <Button variant="destructive" size="sm" onClick={onRemoveSelected}>
-          <Trash2 /> Remove
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onClear}>
-          <X /> Clear selection
-        </Button>
+        <IconButton aria-label="Export selected" tooltip="Export selected tabs" onClick={onExportSelected}>
+          <Download />
+        </IconButton>
+        <IconButton aria-label="Open selected" tooltip="Open selected tabs" onClick={onOpenSelected}>
+          <ExternalLink />
+        </IconButton>
+        <IconButton aria-label="Remove" tooltip="Remove selected tabs" destructive onClick={onRemoveSelected}>
+          <Trash2 />
+        </IconButton>
+        <IconButton aria-label="Clear selection" onClick={onClear}>
+          <X />
+        </IconButton>
       </div>
     </div>
   )

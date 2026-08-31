@@ -26,8 +26,11 @@ import { countRelationshipsByWorkspace } from "@/lib/workspace/relationships"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
+import { useAutoOrganize } from "@/hooks/use-auto-organize"
 import { markDuplicates } from "@/lib/tabs"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
+import { applyOrganizationPlan } from "@/lib/organize/apply"
+import type { OrganizationPlan } from "@/lib/organize/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 
@@ -79,6 +82,13 @@ export function AppShell() {
   // equality against this ref is how "only the latest import is undoable"
   // is enforced — see notifyImported.
   const undoSnapshotRef = useRef<WorkspaceStore | null>(null)
+  // Snapshot immediately before an Auto-Organize apply — separate from
+  // undoSnapshotRef (the import undo) since the two are independent
+  // operations a user might want to undo separately, e.g. keep the import
+  // but undo just the reorganization.
+  const organizeUndoSnapshotRef = useRef<WorkspaceStore | null>(null)
+  const [applyingOrganize, setApplyingOrganize] = useState(false)
+  const autoOrganize = useAutoOrganize()
 
   useEffect(() => {
     // Hydrating from localStorage: this can only run post-mount (SSR has no
@@ -149,9 +159,11 @@ export function AppShell() {
     if (!store) return
     const current = getCurrentWorkspace(store)
     undoSnapshotRef.current = store
-    persist(updateWorkspaceTabs(store, current.id, tabs))
+    const next = updateWorkspaceTabs(store, current.id, tabs)
+    persist(next)
     markRecentlyAdded(tabs.map((t) => t.id))
     notifyImported(tabs.length)
+    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
   }
 
   function handleTabsChange(tabs: Tab[]) {
@@ -212,9 +224,11 @@ export function AppShell() {
     const current = getCurrentWorkspace(store)
     undoSnapshotRef.current = store
     const merged = markDuplicates([...current.tabs, ...incoming])
-    persist(updateWorkspaceTabs(store, current.id, merged))
+    const next = updateWorkspaceTabs(store, current.id, merged)
+    persist(next)
     markRecentlyAdded(incoming.map((t) => t.id))
     notifyImported(incoming.length)
+    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
   }
 
   useExtensionImport(handleBrowserImport)
@@ -301,6 +315,36 @@ export function AppShell() {
     )
   }
 
+  function handleRequestOrganize() {
+    if (!store || !currentWorkspace) return
+    autoOrganize.analyze(currentWorkspace, store.workspaces)
+  }
+
+  function handleApplyAutoOrganize(plan: OrganizationPlan) {
+    if (!store) return
+    organizeUndoSnapshotRef.current = store
+    setApplyingOrganize(true)
+    const result = applyOrganizationPlan(plan, store)
+    setApplyingOrganize(false)
+    autoOrganize.dismiss()
+    if (!result.storeChanged) {
+      toast.error("Couldn't organize these tabs automatically", { description: result.text })
+      return
+    }
+    const before = organizeUndoSnapshotRef.current
+    persist(result.store)
+    toast(result.text, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (!before || organizeUndoSnapshotRef.current !== before) return
+          persist(before)
+          organizeUndoSnapshotRef.current = null
+        },
+      },
+    })
+  }
+
   if (!hydrated || !store || !currentWorkspace) return null
 
   if (view === "graph") {
@@ -348,11 +392,15 @@ export function AppShell() {
             onClear={handleClear}
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
-            onStoreUpdate={persist}
             onOpenGraph={() => setView("graph")}
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
+            autoOrganizePlan={autoOrganize.plan}
+            autoOrganizeApplying={applyingOrganize}
+            onApplyAutoOrganize={handleApplyAutoOrganize}
+            onDismissAutoOrganize={autoOrganize.dismiss}
+            onRequestOrganize={handleRequestOrganize}
           />
         )}
       </div>

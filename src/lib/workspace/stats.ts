@@ -50,3 +50,23 @@ export function representativeTabLabels(tabs: Tab[], limit = 3): string[] {
   }
   return result;
 }
+
+/**
+ * Same selection as `representativeTabLabels` (one per distinct domain,
+ * non-duplicates preferred) but returns the tabs themselves — used by the
+ * folder-preview UI, which needs each tab's favicon/title, not just a label.
+ */
+export function representativeTabs(tabs: Tab[], limit = 3): Tab[] {
+  const ordered = [...tabs].sort(
+    (a, b) => Number(!!a.isDuplicate) - Number(!!b.isDuplicate)
+  );
+  const seen = new Set<string>();
+  const result: Tab[] = [];
+  for (const tab of ordered) {
+    if (seen.has(tab.domain)) continue;
+    seen.add(tab.domain);
+    result.push(tab);
+    if (result.length >= limit) break;
+  }
+  return result;
+}

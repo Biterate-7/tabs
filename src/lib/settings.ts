@@ -22,6 +22,20 @@ import type {
 
 const STORAGE_KEY = "tabdump:settings:v1";
 
+/**
+ * Interface sounds (the folder zipper-open sound, and any future UI sound
+ * effects) — a sibling of `playIntro` rather than part of `AppearanceSettings`
+ * since it isn't a theme/visual concern. `volume` is a 0-100 percentage of
+ * the sound engine's already-conservative master gain, so 100 still never
+ * reads as loud.
+ */
+export type SoundSettings = {
+  enabled: boolean;
+  volume: number;
+};
+
+export const DEFAULT_SOUND: SoundSettings = { enabled: true, volume: 35 };
+
 export type Settings = {
   /**
    * Show the cinematic chaos-to-structure intro on every landing page load.
@@ -30,9 +44,10 @@ export type Settings = {
    * this setting is the only thing allowed to turn that off.
    */
   playIntro: boolean;
+  sound: SoundSettings;
 } & AppearanceSettings;
 
-const DEFAULT_SETTINGS: Settings = { playIntro: true, ...DEFAULT_APPEARANCE_SETTINGS };
+const DEFAULT_SETTINGS: Settings = { playIntro: true, sound: DEFAULT_SOUND, ...DEFAULT_APPEARANCE_SETTINGS };
 
 function num(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -145,6 +160,15 @@ function readShape(raw: unknown): ShapeSettings {
   };
 }
 
+function readSound(raw: unknown): SoundSettings {
+  if (!raw || typeof raw !== "object") return DEFAULT_SOUND;
+  const r = raw as Record<string, unknown>;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : DEFAULT_SOUND.enabled,
+    volume: num(r.volume, DEFAULT_SOUND.volume, 0, 100),
+  };
+}
+
 function readMotion(raw: unknown): MotionSettings {
   if (!raw || typeof raw !== "object") return DEFAULT_MOTION;
   const r = raw as Record<string, unknown>;
@@ -163,6 +187,7 @@ function readSettings(): Settings {
     if (!parsed || typeof parsed !== "object") return DEFAULT_SETTINGS;
     return {
       playIntro: typeof parsed.playIntro === "boolean" ? parsed.playIntro : DEFAULT_SETTINGS.playIntro,
+      sound: readSound(parsed.sound),
       themeId: str(parsed.themeId, DEFAULT_THEME_ID),
       customTheme: isThemeColors(parsed.customTheme) ? parsed.customTheme : null,
       favoriteThemeIds: Array.isArray(parsed.favoriteThemeIds)
@@ -199,6 +224,11 @@ export function getSettings(): Settings {
 
 export function setPlayIntro(enabled: boolean): void {
   writeSettings({ playIntro: enabled });
+}
+
+export function setSound(patch: Partial<SoundSettings>): Settings {
+  const current = readSettings();
+  return writeSettings({ sound: { ...current.sound, ...patch } });
 }
 
 export function setThemeId(themeId: string): Settings {

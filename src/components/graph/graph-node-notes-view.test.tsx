@@ -74,6 +74,20 @@ describe("GraphNodeNotesView", () => {
     expect((screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement).value).toBe("Read this later");
   });
 
+  // Regression test for a bug where increasing the global Appearance corner
+  // radius clipped the notes textarea's text/placeholder: this textarea is
+  // borderless and transparent (no visible box to round), but the base
+  // Textarea component's `rounded-lg` still gave it a rounded overflow-clip
+  // boundary via the browser's default textarea `overflow: auto`. With this
+  // textarea's zero padding, a large --radius value cut directly into glyphs
+  // at the corner. See src/components/ui/textarea.tsx for the shared base.
+  it("never carries a border radius, so a large global corner radius can't clip its text", () => {
+    render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={vi.fn()} onClose={vi.fn()} />);
+    const textarea = screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement;
+    expect(textarea.className).toMatch(/\brounded-none\b/);
+    expect(textarea.className).not.toMatch(/\brounded-(?!none\b)\S+/);
+  });
+
   it("autosaves the trimmed draft through onNotesChange after the debounce window", () => {
     const onNotesChange = vi.fn();
     render(<GraphNodeNotesView node={makeNode("a", "arxiv.org")} onNotesChange={onNotesChange} onClose={vi.fn()} />);

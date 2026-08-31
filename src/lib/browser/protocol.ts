@@ -16,7 +16,17 @@ export const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";
 /** Default time to wait for a browser command's result before giving up — see sendBrowserCommand. */
 export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
 
-/** Exactly the allowlist extension/src/browser-commands.js implements — Gemini never sees a name outside this set (see src/lib/actions/browser-*.ts). */
+/**
+ * The allowlist extension/src/browser-commands.js implements. Only three of
+ * these are actually sent from this web app today — list_browser_tabs/
+ * list_browser_windows (src/lib/browser/context.ts, for title resolution)
+ * and open_url (src/lib/browser/open-tab.ts, for opening a saved tab). The
+ * rest (get_active_tab, open_tabs, close_tab, close_tabs, pin_tab,
+ * unpin_tab, move_tabs_to_window, create_browser_window) were only ever
+ * invoked by Ask TabDump's chat-driven browser-control actions, which have
+ * been removed — the extension still implements handlers for them, but
+ * nothing here calls them anymore.
+ */
 export type BrowserActionName =
   | "list_browser_tabs"
   | "get_active_tab"
