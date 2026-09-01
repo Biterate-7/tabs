@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ensureSectionsSeeded, ensureSectionsSeededInStore } from "./migrate";
+import { ensureSectionsSeeded, ensureSectionsSeededInStore, syncSectionsWithCategories, syncSectionsWithCategoriesInStore } from "./migrate";
+import type { Section } from "./types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 
@@ -91,5 +92,115 @@ describe("ensureSectionsSeededInStore", () => {
     const migrated = ensureSectionsSeededInStore(store);
     expect(migrated.workspaces[0].sections).toHaveLength(1);
     expect(migrated.workspaces[1].sections).toHaveLength(1);
+  });
+});
+
+function makeSection(over: Partial<Section> & { id: string }): Section {
+  return { parentId: null, name: "Untitled", source: "ai", createdAt: 0, updatedAt: 0, ...over };
+}
+
+describe("syncSectionsWithCategories", () => {
+  it("creates a root section for a tab whose category has no matching section yet", () => {
+    // Reproduces the reported bug: a workspace seeded with only "School",
+    // then a tab recategorized (or freshly present) as "projects" without
+    // ever going through the async AI/fallback organizer.
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [makeSection({ id: "school-1", name: "School" })],
+      tabs: [
+        makeTab({ id: "1", category: "school", sectionId: "school-1" }),
+        makeTab({ id: "2", category: "projects" }),
+      ],
+    });
+
+    const synced = syncSectionsWithCategories(workspace);
+
+    const names = synced.sections!.map((s) => s.name).sort();
+    expect(names).toEqual(["Projects", "School"]);
+    const projectsSection = synced.sections!.find((s) => s.name === "Projects")!;
+    expect(synced.tabs.find((t) => t.id === "2")!.sectionId).toBe(projectsSection.id);
+  });
+
+  it("does not swallow a categorized tab into Other just because its section is stale", () => {
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [makeSection({ id: "school-1", name: "School" })],
+      tabs: [
+        makeTab({ id: "1", category: "creative" }),
+        makeTab({ id: "2", category: "news" }),
+      ],
+    });
+
+    const synced = syncSectionsWithCategories(workspace);
+    const names = synced.sections!.map((s) => s.name).sort();
+    expect(names).toEqual(["Creative", "News", "School"]);
+    expect(synced.tabs.every((t) => t.sectionId !== undefined)).toBe(true);
+  });
+
+  it("reuses an existing root section by case-insensitive name instead of creating a duplicate", () => {
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [makeSection({ id: "projects-1", name: "projects" })],
+      tabs: [makeTab({ id: "1", category: "projects" })],
+    });
+
+    const synced = syncSectionsWithCategories(workspace);
+    expect(synced.sections).toHaveLength(1);
+    expect(synced.tabs[0].sectionId).toBe("projects-1");
+  });
+
+  it("never creates a real section for the 'other' category", () => {
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [],
+      tabs: [makeTab({ id: "1", category: "other" }), makeTab({ id: "2" })],
+    });
+
+    const synced = syncSectionsWithCategories(workspace);
+    expect(synced.sections).toEqual([]);
+    expect(synced.tabs.every((t) => t.sectionId === undefined)).toBe(true);
+  });
+
+  it("never touches a tab whose sectionId already resolves, even to a differently-named section", () => {
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [makeSection({ id: "custom-1", name: "My Custom Bucket" })],
+      tabs: [makeTab({ id: "1", category: "projects", sectionId: "custom-1", sectionLocked: true })],
+    });
+
+    const synced = syncSectionsWithCategories(workspace);
+    expect(synced).toBe(workspace);
+  });
+
+  it("is idempotent and referentially stable when nothing needs fixing", () => {
+    const school = makeSection({ id: "school-1", name: "School" });
+    const workspace = makeWorkspace({
+      id: "w1",
+      sections: [school],
+      tabs: [makeTab({ id: "1", category: "school", sectionId: "school-1" })],
+    });
+
+    expect(syncSectionsWithCategories(workspace)).toBe(workspace);
+  });
+
+  it("leaves a workspace with sections === undefined unchanged (seeding runs first)", () => {
+    const workspace = makeWorkspace({ id: "w1", tabs: [makeTab({ id: "1", category: "projects" })] });
+    expect(syncSectionsWithCategories(workspace)).toBe(workspace);
+  });
+});
+
+describe("syncSectionsWithCategoriesInStore", () => {
+  it("syncs every workspace in the store", () => {
+    const store: WorkspaceStore = {
+      version: 1,
+      currentId: "a",
+      workspaces: [
+        makeWorkspace({ id: "a", sections: [], tabs: [makeTab({ id: "1", category: "creative" })] }),
+        makeWorkspace({ id: "b", sections: [], tabs: [makeTab({ id: "2", category: "news" })] }),
+      ],
+    };
+    const synced = syncSectionsWithCategoriesInStore(store);
+    expect(synced.workspaces[0].sections!.map((s) => s.name)).toEqual(["Creative"]);
+    expect(synced.workspaces[1].sections!.map((s) => s.name)).toEqual(["News"]);
   });
 });

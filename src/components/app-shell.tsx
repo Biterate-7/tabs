@@ -26,7 +26,7 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
-import { ensureSectionsSeededInStore } from "@/lib/sections/migrate"
+import { ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsIntoSections } from "@/lib/sections/ai/organize"
 import { computeSemanticClusterHints } from "@/lib/ai/cluster"
 import type { Section } from "@/lib/sections/types"
@@ -118,9 +118,14 @@ export function AppShell() {
     // that already has one. ensureSectionsSeededInStore always returns a new
     // top-level object, so only persist when a workspace actually changed.
     const seeded = ensureSectionsSeededInStore(migrated)
-    const seededSomething = seeded.workspaces.some((w, i) => w !== migrated.workspaces[i])
-    setStore(seeded)
-    if (available && seededSomething) saveWorkspaceStore(seeded)
+    // Heals any workspace whose sections had already drifted from its tabs'
+    // flat categories before this fix existed (e.g. a tab recategorized
+    // without ever going through a dump/import) — see
+    // syncSectionsWithCategories's doc comment for why that drift happens.
+    const synced = syncSectionsWithCategoriesInStore(seeded)
+    const changedOnLoad = synced.workspaces.some((w, i) => w !== migrated.workspaces[i])
+    setStore(synced)
+    if (available && changedOnLoad) saveWorkspaceStore(synced)
     setSidebarCollapsed(loadSidebarCollapsed())
     if (!available) {
       toast.info("Your workspace won't be saved between visits", {
@@ -136,9 +141,17 @@ export function AppShell() {
     }
   }, [])
 
+  // Every mutation flows through here, so this is the single chokepoint that
+  // keeps root sections aligned with each tab's flat category — see
+  // syncSectionsWithCategories's doc comment for why that can otherwise
+  // drift (recategorizing a tab, or bulk-recategorizing a selection, never
+  // goes through the async AI/fallback organizer that dumps/imports do).
+  // Idempotent and referentially stable per-workspace when nothing needs
+  // fixing, so this adds no meaningful overhead to the common case.
   function persist(next: WorkspaceStore) {
-    setStore(next)
-    if (canPersist) saveWorkspaceStore(next)
+    const synced = syncSectionsWithCategoriesInStore(next)
+    setStore(synced)
+    if (canPersist) saveWorkspaceStore(synced)
   }
 
   function toggleSidebarCollapsed() {

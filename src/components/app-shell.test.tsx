@@ -4,8 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
 import { Toaster } from "@/components/ui/sonner";
-import { saveWorkspace } from "@/lib/workspace/persistence";
+import { saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
 import type { Tab } from "@/lib/tabs/types";
+import type { Section } from "@/lib/sections/types";
+import type { WorkspaceStore } from "@/lib/workspace/types";
 
 const fetchBrowserHistoryMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/browser/history", () => ({ fetchBrowserHistory: fetchBrowserHistoryMock }));
@@ -488,5 +490,78 @@ describe("AppShell History Dump", () => {
     await user.click(screen.getByRole("button", { name: "Open History Dump" }));
     await user.click(await screen.findByRole("button", { name: "Scan History" }));
     expect(await screen.findByText("TabDump extension not detected.")).toBeTruthy();
+  });
+});
+
+describe("AppShell section/category sync", () => {
+  function makeSection(over: Partial<Section> & { id: string }): Section {
+    return { parentId: null, name: "Untitled", source: "ai", createdAt: 0, updatedAt: 0, ...over };
+  }
+
+  // Reproduces the reported bug directly: a workspace whose sections were
+  // seeded back when only "School" tabs existed, plus tabs that were later
+  // recategorized to Projects/Creative/News without ever going through the
+  // async AI/fallback organizer (the only thing that used to keep sectionId
+  // in sync with category) — so on disk they carry a category but no
+  // resolvable sectionId. All of School/Projects/Creative/News/Other should
+  // render as their own homepage folder once this is healed on load, and
+  // none of the named categories should be swallowed into "Other".
+  function seedDriftedStore(): void {
+    const store: WorkspaceStore = {
+      version: 1,
+      currentId: "w1",
+      workspaces: [
+        {
+          id: "w1",
+          name: "General",
+          createdAt: 0,
+          updatedAt: 0,
+          sections: [makeSection({ id: "school-1", name: "School" })],
+          tabs: [
+            makeTab({ id: "1", domain: "khan.example", url: "https://khan.example", category: "school", sectionId: "school-1" }),
+            makeTab({ id: "2", domain: "github.example", url: "https://github.example", category: "projects" }),
+            makeTab({ id: "3", domain: "dribbble.example", url: "https://dribbble.example", category: "creative" }),
+            makeTab({ id: "4", domain: "nytimes.example", url: "https://nytimes.example", category: "news" }),
+            makeTab({ id: "5", domain: "random.example", url: "https://random.example", category: "other" }),
+          ],
+        },
+      ],
+    };
+    saveWorkspaceStore(store);
+  }
+
+  it("heals drifted sections on load so every present category gets its own homepage folder", async () => {
+    seedDriftedStore();
+    render(<AppShell />);
+
+    expect(await screen.findByRole("button", { name: /Open School/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Open Projects/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Open Creative/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Open News/ })).toBeTruthy();
+    // Other still exists (for the genuinely other-categorized tab) but no
+    // longer absorbs Projects/Creative/News.
+    expect(await screen.findByRole("button", { name: /Open Other, 1 tab/ })).toBeTruthy();
+  });
+
+  it("opening the healed Projects folder shows its tab, not Other's", async () => {
+    seedDriftedStore();
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click(await screen.findByRole("button", { name: /Open Projects/ }));
+    expect((await screen.findAllByText("github.example")).length).toBeGreaterThan(0);
+  });
+
+  it("recategorizing a tab to a brand-new category creates and shows a matching folder immediately", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await dumpOneTab(user, "https://example.com/a");
+
+    await user.type(await screen.findByPlaceholderText("Search tabs..."), "example.com");
+    await user.click(screen.getByRole("button", { name: /Change category for example\.com/ }));
+    await user.click(await screen.findByText("News"));
+
+    await user.clear(screen.getByPlaceholderText("Search tabs..."));
+    expect(await screen.findByRole("button", { name: /Open News/ })).toBeTruthy();
   });
 });
