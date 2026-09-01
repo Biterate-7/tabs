@@ -86,7 +86,15 @@ function waitForTabComplete(tabId) {
 // the popup before dumpTabs() finishes and sendResponse() can reach it. The
 // caller focuses the window only after the popup already has its result.
 async function findOrOpenTabDumpTab() {
-  const [existing] = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
+  const matches = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
+  // When more than one TabDump tab is open, prefer whichever one the user is
+  // currently looking at — the same "active wins" rule findMatchingTab
+  // applies in tab-matching.js — rather than whichever tab chrome.tabs.query
+  // happens to list first (window/tab-index order, unrelated to recency or
+  // focus). Without this, dumping could reuse a stale background TabDump tab
+  // instead of the one actually in front of the user, which looks exactly
+  // like being unexpectedly bounced to a different TabDump page.
+  const existing = matches.find((tab) => tab.active) ?? matches[0];
   if (existing) {
     await chrome.tabs.update(existing.id, { active: true });
     return { tabId: existing.id, focusWindowId: existing.windowId };

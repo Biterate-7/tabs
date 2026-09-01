@@ -141,6 +141,36 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(chrome.windows.update).not.toHaveBeenCalled();
   });
 
+  it("prefers the currently active TabDump tab over a stale background one when multiple are open", async () => {
+    chrome.tabs.query.mockImplementation(async (query) => {
+      if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
+      if (query.url) {
+        return [
+          // Listed first (lower windowId/tab-index) but not the tab the
+          // user is actually looking at right now.
+          fakeTab({ id: 7, windowId: 10, url: "https://tabsdump.vercel.app/", active: false }),
+          fakeTab({ id: 42, windowId: 20, url: "https://tabsdump.vercel.app/graph", active: true }),
+        ];
+      }
+      return [];
+    });
+    chrome.tabs.update.mockResolvedValue(fakeTab({ id: 42, windowId: 20 }));
+    chrome.tabs.sendMessage.mockResolvedValue({ ok: true });
+
+    const listener = await getDumpTabsListener();
+    const response = await new Promise((resolve) => {
+      listener({ type: MSG_DUMP_TABS, payload: {} }, {}, resolve);
+    });
+
+    expect(response).toEqual({ ok: true, count: 1 });
+    expect(chrome.tabs.update).toHaveBeenCalledWith(42, { active: true });
+    expect(chrome.tabs.update).not.toHaveBeenCalledWith(7, expect.anything());
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ type: MSG_TABDUMP_IMPORT })
+    );
+  });
+
   it("still returns a clean error result, without throwing, when delivery to an existing tab fails", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
