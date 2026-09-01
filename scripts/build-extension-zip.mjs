@@ -60,8 +60,8 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // imported tabs in a different origin's localStorage than the one being
 // viewed, with no visible error. Falls back to localhost:3000 for a plain
 // local build with none of these set.
-const DEV_ORIGIN = "http://localhost:3000";
-const CANONICAL_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
+export const DEV_ORIGIN = "http://localhost:3000";
+export const CANONICAL_PRODUCTION_ORIGIN = "https://tabsdump.vercel.app";
 const TARGET_ORIGIN =
   process.env.TABDUMP_PRODUCTION_ORIGIN ||
   (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL
