@@ -41,18 +41,18 @@ describe("LandingView onboarding", () => {
     expect(
       screen.getByText("Install the TabDump Chrome extension to instantly bring your open tabs into TabDump.")
     ).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Install Chrome Extension" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Download Extension" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Paste URLs manually" })).toBeTruthy()
     // Manual pasting is still available even when the extension is the primary path.
     expect(screen.getByLabelText("Paste your tabs")).toBeTruthy()
   })
 
-  it("opens the install guide when 'Install Chrome Extension' is clicked", async () => {
+  it("opens the install guide when 'Download Extension' is clicked", async () => {
     const user = userEvent.setup()
     vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: false })
     render(<LandingView onDump={vi.fn()} />)
 
-    await user.click(screen.getByRole("button", { name: "Install Chrome Extension" }))
+    await user.click(screen.getByRole("button", { name: "Download Extension" }))
 
     expect(screen.getByText("Install TabDump for Chrome")).toBeTruthy()
     expect(screen.getByText("Download the TabDump extension.")).toBeTruthy()
@@ -68,7 +68,7 @@ describe("LandingView onboarding", () => {
     vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: false })
     render(<LandingView onDump={vi.fn()} />)
 
-    await user.click(screen.getByRole("button", { name: "Install Chrome Extension" }))
+    await user.click(screen.getByRole("button", { name: "Download Extension" }))
     await user.click(screen.getByRole("button", { name: "Back" }))
 
     expect(screen.getByText("Dump your Chrome tabs in one click.")).toBeTruthy()
@@ -80,7 +80,7 @@ describe("LandingView onboarding", () => {
     vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: false })
     render(<LandingView onDump={vi.fn()} />)
 
-    await user.click(screen.getByRole("button", { name: "Install Chrome Extension" }))
+    await user.click(screen.getByRole("button", { name: "Download Extension" }))
     await user.click(screen.getByRole("button", { name: "Continue without extension" }))
 
     expect(dismissOnboarding).toHaveBeenCalledOnce()
@@ -100,7 +100,7 @@ describe("LandingView onboarding", () => {
     const link = screen.getByRole("link", { name: "Install from Chrome Web Store" })
     expect(link.getAttribute("href")).toBe("https://chromewebstore.google.com/detail/real-listing")
     expect(link.getAttribute("target")).toBe("_blank")
-    expect(screen.queryByRole("button", { name: "Install Chrome Extension" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Download Extension" })).toBeNull()
 
     await user.click(screen.getByRole("button", { name: "Paste URLs manually" }))
     expect(dismissOnboarding).toHaveBeenCalledOnce()

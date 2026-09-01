@@ -118,7 +118,7 @@ export function LandingView({
                     </a>
                   ) : (
                     <Button size="lg" onClick={() => setGuideOpen(true)}>
-                      Install Chrome Extension
+                      Download Extension
                     </Button>
                   )}
                   <Button variant="link" size="sm" onClick={handleDismiss}>
