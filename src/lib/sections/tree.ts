@@ -75,6 +75,11 @@ export function buildSectionTree(sections: Section[], tabs: Tab[]): SectionTreeN
   return [...sortedRoots.map(withPresence), withPresence(otherNode)];
 }
 
+/** Every tab in a node's subtree — its own direct tabs plus every descendant's — for previews that should reflect totalTabCount rather than just the direct-tabs bucket (e.g. a folder tile whose tabs live entirely in subsections). */
+export function collectSectionTreeTabs(node: SectionTreeNode): Tab[] {
+  return node.children.reduce((acc, child) => acc.concat(collectSectionTreeTabs(child)), [...node.tabs]);
+}
+
 /** Finds a node anywhere in a section forest by its section id — used to resolve a drill-down navigation stack (root id, then child id, then grandchild id) back to the node currently being viewed. */
 export function findSectionTreeNode(tree: SectionTreeNode[], sectionId: string): SectionTreeNode | undefined {
   for (const node of tree) {
