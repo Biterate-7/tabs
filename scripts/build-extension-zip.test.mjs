@@ -10,10 +10,20 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CANONICAL_PRODUCTION_ORIGIN, DEV_ORIGIN } from "./build-extension-zip.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const ZIP_PATH = path.join(REPO_ROOT, "public", "tabdump-extension.zip");
+
+// The actual bug this whole file guards against: a missing "s" turns the
+// real TabDump production domain into a different site entirely. Repo
+// history shows this exact typo has round-tripped in and out of
+// CANONICAL_PRODUCTION_ORIGIN more than once — so this is checked as its own
+// literal, not derived from CANONICAL_PRODUCTION_ORIGIN, and asserted with
+// the full "https://" + host string rather than a vague "vercel.app"
+// substring (which would pass even with the typo present).
+const WRONG_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
 
 /** Minimal reader for the STORED-only ZIP subset build-extension-zip.mjs writes. */
 function readZipEntries(buffer) {
@@ -114,5 +124,73 @@ describe("build-extension-zip.mjs", () => {
 
   it("refuses to build an empty ZIP if the extension source can't be found", () => {
     expect(entries.length).toBeGreaterThan(0);
+  });
+});
+
+// Regression coverage for the incident where CANONICAL_PRODUCTION_ORIGIN
+// (and therefore every production extension artifact derived from it) held
+// "https://tabdump.vercel.app" — a real but different site — instead of the
+// actual TabDump deployment. These tests fail if that typo ever comes back,
+// whether it re-lands in the constant itself or only in a generated
+// artifact because the substitution logic changed underneath it.
+describe("build-extension-zip.mjs — canonical production origin", () => {
+  it("is exactly the real TabDump production domain, not the typo'd lookalike", () => {
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabsdump.vercel.app");
+    expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(WRONG_PRODUCTION_ORIGIN);
+  });
+});
+
+describe("build-extension-zip.mjs — production build output", () => {
+  let entries;
+
+  beforeAll(() => {
+    // Build as a real production deployment would (VERCEL_ENV=production,
+    // no manual override), so TARGET_ORIGIN resolves through
+    // CANONICAL_PRODUCTION_ORIGIN exactly like the actual Vercel build does.
+    const prodEnv = { ...process.env, VERCEL_ENV: "production" };
+    delete prodEnv.TABDUMP_PRODUCTION_ORIGIN;
+    delete prodEnv.VERCEL_URL;
+
+    execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT, env: prodEnv });
+    expect(existsSync(ZIP_PATH)).toBe(true);
+    entries = readZipEntries(readFileSync(ZIP_PATH));
+  });
+
+  function entryText(name) {
+    const entry = entries.find((e) => e.name === name);
+    expect(entry, `expected a "${name}" entry in the built ZIP`).toBeTruthy();
+    return entry.data.toString("utf8");
+  }
+
+  it("bakes the canonical production origin into manifest.json's host_permissions and content_scripts.matches", () => {
+    const manifest = JSON.parse(entryText("manifest.json"));
+    expect(manifest.host_permissions).toContain(`${CANONICAL_PRODUCTION_ORIGIN}/*`);
+    expect(manifest.content_scripts[0].matches).toContain(`${CANONICAL_PRODUCTION_ORIGIN}/*`);
+  });
+
+  it("bakes the canonical production origin into src/config.js's TABDUMP_ORIGIN (the runtime tab-detection/fallback target)", () => {
+    expect(entryText("src/config.js")).toContain(`TABDUMP_ORIGIN = "${CANONICAL_PRODUCTION_ORIGIN}"`);
+  });
+
+  it("does not leave the dev origin behind in either origin-substituted file", () => {
+    expect(entryText("manifest.json")).not.toContain(DEV_ORIGIN);
+    expect(entryText("src/config.js")).not.toContain(DEV_ORIGIN);
+  });
+
+  it("never contains the wrong TabDump domain (the missing-s typo) in any generated artifact", () => {
+    for (const { name, data } of entries) {
+      expect(data.toString("utf8"), `${name} should not contain ${WRONG_PRODUCTION_ORIGIN}`).not.toContain(
+        WRONG_PRODUCTION_ORIGIN
+      );
+    }
+  });
+
+  it("keeps the canonical origin, manifest origin, and runtime config origin all consistent with each other", () => {
+    const manifest = JSON.parse(entryText("manifest.json"));
+    const configOrigin = entryText("src/config.js").match(/TABDUMP_ORIGIN = "([^"]+)"/)?.[1];
+
+    expect(configOrigin).toBe(CANONICAL_PRODUCTION_ORIGIN);
+    expect(manifest.host_permissions).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
+    expect(manifest.content_scripts[0].matches).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
   });
 });

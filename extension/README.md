@@ -90,10 +90,16 @@ read a page's content, only to manage the tab/window objects themselves.
 
 ## Changing the TabDump origin
 
-Edit `TABDUMP_ORIGIN` in `src/config.js`, and update the matching
-`host_permissions` and `content_scripts.matches` entries in `manifest.json`
-to the same origin (manifest match patterns are static and can't read from
-`config.js`).
+**Production:** edit `CANONICAL_PRODUCTION_ORIGIN` in
+`../scripts/build-extension-zip.mjs` — that's the single source of truth for
+the production domain, and it's what gets baked into `manifest.json` and
+`src/config.js` when the production ZIP is built (see that file's header
+comment). Don't hardcode the production domain anywhere else.
+
+**Local dev:** edit `TABDUMP_ORIGIN` in `src/config.js`, and update the
+matching `host_permissions` and `content_scripts.matches` entries in
+`manifest.json` to the same origin (manifest match patterns are static and
+can't read from `config.js`).
 
 ## Regenerating icons
 

@@ -1,7 +1,11 @@
-// Single place to change if TabDump is ever deployed somewhere other than
-// local dev. Must match a `host_permissions` entry and a `content_scripts`
-// match pattern in manifest.json (manifest patterns are static, so those
-// need updating by hand too if this changes).
+// Local-dev origin. Must match the `host_permissions` entry and the
+// `content_scripts` match pattern in manifest.json (manifest patterns are
+// static, so those need updating by hand too if this changes).
+//
+// The production origin is NOT set here — it's substituted into this file's
+// copy inside the packaged ZIP at build time, from the single canonical
+// CANONICAL_PRODUCTION_ORIGIN in scripts/build-extension-zip.mjs. Change the
+// production domain there, not here.
 export const TABDUMP_ORIGIN = "http://localhost:3000";
 
 // Message-passing constants shared across background/content/popup so a

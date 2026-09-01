@@ -184,15 +184,50 @@ function buildZip(files) {
   return Buffer.concat([...localChunks, centralDirectory, eocd]);
 }
 
-const files = walk(EXTENSION_DIR).sort();
-if (files.length === 0) {
-  throw new Error(`No files found under ${EXTENSION_DIR} — refusing to write an empty ZIP.`);
+// Guarded so this module can be `import`ed (e.g. by tests, to read
+// CANONICAL_PRODUCTION_ORIGIN) without the side effect of rebuilding and
+// overwriting the ZIP on disk — the actual build only runs when this file
+// is executed directly, as `npm run prebuild` and build-extension-zip.test.mjs
+// both do.
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  const files = walk(EXTENSION_DIR).sort();
+  if (files.length === 0) {
+    throw new Error(`No files found under ${EXTENSION_DIR} — refusing to write an empty ZIP.`);
+  }
+
+  // Fail loudly instead of silently packaging a broken extension: every
+  // origin-substituted file must end up with ONLY the intended target
+  // origin baked in, never a stray reference to the wrong TabDump domain
+  // (see the regression this guards against in build-extension-zip.test.mjs).
+  const WRONG_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
+  if (TARGET_ORIGIN === WRONG_PRODUCTION_ORIGIN) {
+    throw new Error(
+      `Refusing to build: TARGET_ORIGIN resolved to the invalid TabDump origin ${WRONG_PRODUCTION_ORIGIN}\n` +
+        `Expected: ${CANONICAL_PRODUCTION_ORIGIN}`
+    );
+  }
+
+  const zip = buildZip(files);
+
+  if (TARGET_ORIGIN !== DEV_ORIGIN) {
+    for (const relativePath of ORIGIN_SUBSTITUTED_FILES) {
+      const absolutePath = path.join(EXTENSION_DIR, relativePath);
+      const substituted = readFileSync(absolutePath, "utf8").split(DEV_ORIGIN).join(TARGET_ORIGIN);
+      if (substituted.includes(WRONG_PRODUCTION_ORIGIN)) {
+        throw new Error(
+          `Production extension contains an invalid TabDump origin in ${relativePath}:\n` +
+            `${WRONG_PRODUCTION_ORIGIN}\n\n` +
+            `Expected:\n${CANONICAL_PRODUCTION_ORIGIN}`
+        );
+      }
+    }
+  }
+
+  mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
+  writeFileSync(OUTPUT_PATH, zip);
+
+  console.log(`Extension origin baked into this ZIP: ${TARGET_ORIGIN}`);
+  console.log(`Wrote ${OUTPUT_PATH} (${zip.length} bytes, ${files.length} files):`);
+  for (const f of files) console.log(`  ${f.split(path.sep).join("/")}`);
 }
-
-const zip = buildZip(files);
-mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-writeFileSync(OUTPUT_PATH, zip);
-
-console.log(`Extension origin baked into this ZIP: ${TARGET_ORIGIN}`);
-console.log(`Wrote ${OUTPUT_PATH} (${zip.length} bytes, ${files.length} files):`);
-for (const f of files) console.log(`  ${f.split(path.sep).join("/")}`);
