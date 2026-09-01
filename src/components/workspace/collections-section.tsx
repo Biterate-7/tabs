@@ -6,6 +6,7 @@ import { getCollectionTabs } from "@/lib/collections/relations"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
 import type { Collection } from "@/lib/collections/types"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 
 /**
@@ -22,6 +23,8 @@ export function CollectionsSection({
   expandedIds,
   onToggleExpanded,
   onCategoryChange,
+  sections,
+  onMoveToSection,
   onNewCollection,
   onRename,
   onAddTabs,
@@ -46,6 +49,9 @@ export function CollectionsSection({
   expandedIds: Set<string>
   onToggleExpanded: (id: string) => void
   onCategoryChange: (id: string, category: CategoryId) => void
+  /** This workspace's section tree, for each tab's "Move to section" submenu — omitted (or empty) hides it. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   onNewCollection: () => void
   onRename: (id: string) => void
   onAddTabs: (id: string) => void
@@ -91,6 +97,8 @@ export function CollectionsSection({
             expanded={expandedIds.has(collection.id)}
             onToggleExpanded={() => onToggleExpanded(collection.id)}
             onCategoryChange={onCategoryChange}
+            sections={sections}
+            onMoveToSection={onMoveToSection}
             onRename={() => onRename(collection.id)}
             onAddTabs={() => onAddTabs(collection.id)}
             onOpenAll={() => onOpenAll(collection.id)}

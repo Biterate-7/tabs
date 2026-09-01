@@ -47,6 +47,7 @@ function sanitizeFilters(value: unknown): ConnectionFilters {
     workspace: typeof v.workspace === "boolean" ? v.workspace : DEFAULT_CONNECTION_FILTERS.workspace,
     category: typeof v.category === "boolean" ? v.category : DEFAULT_CONNECTION_FILTERS.category,
     group: typeof v.group === "boolean" ? v.group : DEFAULT_CONNECTION_FILTERS.group,
+    section: typeof v.section === "boolean" ? v.section : DEFAULT_CONNECTION_FILTERS.section,
     manual: typeof v.manual === "boolean" ? v.manual : DEFAULT_CONNECTION_FILTERS.manual,
     dependencies: typeof v.dependencies === "boolean" ? v.dependencies : DEFAULT_CONNECTION_FILTERS.dependencies,
   };

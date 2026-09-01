@@ -7,6 +7,7 @@ import { TabFavoriteButton } from "@/components/workspace/tab-favorite-button"
 import { TabActionsMenu } from "@/components/workspace/tab-actions-menu"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { TabPeekContext } from "@/lib/tabs/peek"
 import { openTab } from "@/lib/browser/open-tab"
@@ -32,6 +33,8 @@ export function TabPeekContent({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  sections,
+  onMoveToSection,
   onToggleFavorite,
   onOpenTab,
 }: {
@@ -48,6 +51,9 @@ export function TabPeekContent({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** This workspace's section tree, for the "Move to section" submenu in the actions menu below — same contract as tab-card.tsx's matching prop. Omitted (or empty) hides the submenu. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   /** Omitted in contexts that don't wire up favorite persistence — the star button simply doesn't render. */
   onToggleFavorite?: (id: string) => void
   /** When provided, takes over this card's "Open" button entirely — see tab-card.tsx's matching prop for the full contract. */
@@ -132,6 +138,8 @@ export function TabPeekContent({
               onRemoveFromCollection={onRemoveFromCollection}
               otherCollections={otherCollections}
               onMoveToCollection={onMoveToCollection}
+              sections={sections}
+              onMoveToSection={onMoveToSection}
               onOpenTab={onOpenTab}
               trigger={
                 <IconButton aria-label={`More actions for ${tab.domain}`} className="size-8">

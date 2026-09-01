@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceView } from "./workspace-view";
 import type { Tab } from "@/lib/tabs/types";
+import type { Section } from "@/lib/sections/types";
+import type { Workspace } from "@/lib/workspace/types";
 
 function makeTab(over: Partial<Tab>): Tab {
   return {
@@ -565,5 +567,119 @@ describe("WorkspaceView collections", () => {
 
     expect(openSpy).toHaveBeenCalledTimes(2);
     openSpy.mockRestore();
+  });
+});
+
+describe("WorkspaceView sections", () => {
+  function makeSection(over: Partial<Section> & { id: string }): Section {
+    return { parentId: null, name: "Untitled", source: "user", createdAt: 0, updatedAt: 0, ...over };
+  }
+
+  function makeSectionedWorkspace(sections: Section[], sectionedTabs: Tab[]): Workspace {
+    return { id: "w1", name: "General", tabs: sectionedTabs, sections, createdAt: 0, updatedAt: 0 };
+  }
+
+  function renderWithSections(sections: Section[], sectionedTabs: Tab[]) {
+    const onTabsChange = vi.fn();
+    const onClear = vi.fn();
+    const onCreateSection = vi.fn();
+    const onRenameSection = vi.fn();
+    const onDeleteSection = vi.fn();
+    const onAssignTabToSection = vi.fn();
+    render(
+      <WorkspaceView
+        tabs={sectionedTabs}
+        onTabsChange={onTabsChange}
+        onClear={onClear}
+        currentWorkspace={makeSectionedWorkspace(sections, sectionedTabs)}
+        onCreateSection={onCreateSection}
+        onRenameSection={onRenameSection}
+        onDeleteSection={onDeleteSection}
+        onAssignTabToSection={onAssignTabToSection}
+      />
+    );
+    return { onTabsChange, onClear, onCreateSection, onRenameSection, onDeleteSection, onAssignTabToSection };
+  }
+
+  it("shows sections instead of the flat category grid once currentWorkspace.sections is defined", () => {
+    const school = makeSection({ id: "school", name: "School" });
+    renderWithSections([school], [makeTab({ id: "1", sectionId: "school" })]);
+
+    expect(screen.getByText("School")).toBeTruthy();
+    // The legacy CategoryFolder's aria-label pattern is gone — SectionFolder uses "Open X" instead.
+    expect(screen.queryAllByRole("button", { name: /^View all/ })).toHaveLength(0);
+  });
+
+  it("falls back to the legacy category grid when sections is an empty array too (still 'defined')", () => {
+    renderWithSections([], [makeTab({ id: "1" })]);
+    // Everything with no sectionId lands in the synthetic "Other" section tile.
+    expect(screen.getByText("Other")).toBeTruthy();
+  });
+
+  it("drills into a section and shows its direct tabs", async () => {
+    const school = makeSection({ id: "school", name: "School" });
+    const user = userEvent.setup();
+    renderWithSections([school], [makeTab({ id: "1", url: "https://khan.example", domain: "khan.example", sectionId: "school" })]);
+
+    await user.click(screen.getByRole("button", { name: /Open School/ }));
+
+    expect((await screen.findAllByText("khan.example")).length).toBeGreaterThan(0);
+  });
+
+  it("creates a new root section via the dialog", async () => {
+    const user = userEvent.setup();
+    const { onCreateSection } = renderWithSections([], [makeTab({ id: "1" })]);
+
+    await user.click(screen.getByRole("button", { name: "New Section" }));
+    await user.type(await screen.findByPlaceholderText("Section name"), "Research");
+    await user.click(screen.getByRole("button", { name: "Create section" }));
+
+    expect(onCreateSection).toHaveBeenCalledWith(null, "Research");
+  });
+
+  it("renames a section from its page menu", async () => {
+    const school = makeSection({ id: "school", name: "School" });
+    const user = userEvent.setup();
+    const { onRenameSection } = renderWithSections([school], [makeTab({ id: "1", sectionId: "school" })]);
+
+    await user.click(screen.getByRole("button", { name: /Open School/ }));
+    await user.click(await screen.findByRole("button", { name: "More actions for School" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const input = await screen.findByPlaceholderText("Section name");
+    await user.clear(input);
+    await user.type(input, "Academics");
+    await user.keyboard("{Enter}");
+
+    expect(onRenameSection).toHaveBeenCalledWith("school", "Academics");
+  });
+
+  it("deletes a section, defaulting the tab reassignment to Other", async () => {
+    const school = makeSection({ id: "school", name: "School" });
+    const user = userEvent.setup();
+    const { onDeleteSection } = renderWithSections([school], [makeTab({ id: "1", sectionId: "school" })]);
+
+    await user.click(screen.getByRole("button", { name: /Open School/ }));
+    await user.click(await screen.findByRole("button", { name: "More actions for School" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete section" }));
+    await user.click(await screen.findByRole("button", { name: "Delete section" }));
+
+    expect(onDeleteSection).toHaveBeenCalledWith("school", undefined);
+  });
+
+  it("moves a tab to another section via its actions menu", async () => {
+    const school = makeSection({ id: "school", name: "School" });
+    const research = makeSection({ id: "research", name: "Research" });
+    const user = userEvent.setup();
+    const { onAssignTabToSection } = renderWithSections(
+      [school, research],
+      [makeTab({ id: "1", url: "https://khan.example", domain: "khan.example", sectionId: "school" })]
+    );
+
+    await user.click(screen.getByRole("button", { name: /Open School/ }));
+    await user.click(await screen.findByRole("button", { name: "More actions for khan.example" }));
+    await user.hover(await screen.findByRole("menuitem", { name: "Move to section" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Research" }));
+
+    expect(onAssignTabToSection).toHaveBeenCalledWith("1", "research");
   });
 });

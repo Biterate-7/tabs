@@ -20,6 +20,7 @@ import { TabPeekTrigger } from "@/components/workspace/tab-peek-trigger"
 import { TabDependencyIndicator, type DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { cn } from "@/lib/utils"
@@ -70,6 +71,8 @@ export function TabCard({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  sections,
+  onMoveToSection,
   draggable = true,
 }: {
   tab: Tab
@@ -100,6 +103,9 @@ export function TabCard({
   /** Other collections in this tab's workspace, for the "Move to collection" submenu. Omitted (or empty) hides the submenu. */
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** This workspace's full hierarchical section tree, for the "Move to section" submenu. Omitted (or empty) hides the submenu — see tab-actions-menu.tsx. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   /** Disabled during multi-select (checkbox click and drag would otherwise compete for the same pointer-down). */
   draggable?: boolean
 }) {
@@ -151,6 +157,8 @@ export function TabCard({
           onRemoveFromCollection={onRemoveFromCollection}
           otherCollections={otherCollections}
           onMoveToCollection={onMoveToCollection}
+          sections={sections}
+          onMoveToSection={onMoveToSection}
           onToggleFavorite={onToggleFavorite}
           onOpenTab={onOpenTab}
           className="-m-1 block w-full min-w-0 rounded-md p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -230,6 +238,8 @@ export function TabCard({
           onRemoveFromCollection={onRemoveFromCollection}
           otherCollections={otherCollections}
           onMoveToCollection={onMoveToCollection}
+          sections={sections}
+          onMoveToSection={onMoveToSection}
           onOpenTab={onOpenTab}
           trigger={
             <IconButton

@@ -34,7 +34,7 @@ const palette: GraphPalette = {
   nodeCenterRing: "#0f0",
   textPrimary: "#fff",
   textDim: "#999",
-  edge: { domain: "#1", workspace: "#2", category: "#3", group: "#4", manual: "#5" },
+  edge: { domain: "#1", workspace: "#2", category: "#3", group: "#4", section: "#4b", manual: "#5" },
   edgeHighlighted: "#6",
   edgeDim: "#7",
   edgeDependency: "#8",

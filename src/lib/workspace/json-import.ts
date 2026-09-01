@@ -5,6 +5,7 @@ import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import { EXPORT_VERSION } from "./json-export";
 import type { Tab } from "@/lib/tabs/types";
 import type { Collection } from "@/lib/collections/types";
+import type { Section, SectionSource } from "@/lib/sections/types";
 import type { Group, Workspace } from "./types";
 
 export type ImportResult =
@@ -54,7 +55,8 @@ function isValidRawTab(value: unknown): value is Record<string, unknown> {
  */
 function sanitizeTabs(
   raw: unknown[],
-  groupIdMap: Map<string, string>
+  groupIdMap: Map<string, string>,
+  sectionIdMap: Map<string, string>
 ): { tabs: Tab[]; skipped: number; idMap: Map<string, string> } {
   const tabs: Tab[] = [];
   const seenIds = new Set<string>();
@@ -75,9 +77,14 @@ function sanitizeTabs(
     const rawGroupId = typeof entry.groupId === "string" ? entry.groupId : undefined;
     const groupId = rawGroupId ? groupIdMap.get(rawGroupId) : undefined;
 
+    const rawSectionId = typeof entry.sectionId === "string" ? entry.sectionId : undefined;
+    const sectionId = rawSectionId ? sectionIdMap.get(rawSectionId) : undefined;
+
     const tab: Tab = { ...(entry as unknown as Tab), id };
     if (groupId) tab.groupId = groupId;
     else delete tab.groupId;
+    if (sectionId) tab.sectionId = sectionId;
+    else delete tab.sectionId;
 
     tabs.push(tab);
   }
@@ -137,6 +144,61 @@ function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: n
   return { groups, skipped, idMap };
 }
 
+function isValidRawSection(value: unknown): value is Record<string, unknown> {
+  return isPlainObject(value) && typeof value.name === "string" && value.name.trim().length > 0;
+}
+
+/**
+ * Sanitizes one workspace's `sections` — a two-pass version of
+ * sanitizeGroups's approach, because unlike a flat `Group`, a `Section` can
+ * reference ANOTHER section in the same array via `parentId`, so every
+ * surviving section needs its final id decided (pass 1, mirroring
+ * sanitizeGroups exactly) before any `parentId` can be remapped through that
+ * id map (pass 2). A `parentId` that doesn't resolve — pointing at a section
+ * that was dropped as malformed, or wasn't in this array at all — silently
+ * promotes that section to a root rather than dropping it, same
+ * "sanitize, don't fail" contract as everything else in this file.
+ */
+function sanitizeSections(raw: unknown, now: number = Date.now()): { sections: Section[] | undefined; skipped: number; idMap: Map<string, string> } {
+  const idMap = new Map<string, string>();
+  if (!Array.isArray(raw)) return { sections: undefined, skipped: 0, idMap };
+
+  type Interim = { id: string; rawParentId: string | undefined; name: string; source: SectionSource; createdAt: number; updatedAt: number };
+  const interim: Interim[] = [];
+  const seenIds = new Set<string>();
+  let skipped = 0;
+
+  for (const entry of raw) {
+    if (!isValidRawSection(entry)) {
+      skipped += 1;
+      continue;
+    }
+
+    const rawId = typeof entry.id === "string" ? entry.id : undefined;
+    const id = !rawId || seenIds.has(rawId) ? createId("section") : rawId;
+    seenIds.add(id);
+    if (rawId && !idMap.has(rawId)) idMap.set(rawId, id);
+
+    interim.push({
+      id,
+      rawParentId: typeof entry.parentId === "string" ? entry.parentId : undefined,
+      name: typeof entry.name === "string" ? entry.name.trim() : "",
+      source: entry.source === "user" ? "user" : "ai",
+      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
+      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+    });
+  }
+
+  const finalIds = new Set(interim.map((s) => s.id));
+  const sections: Section[] = interim.map((s) => {
+    const mappedParentId = s.rawParentId ? idMap.get(s.rawParentId) : undefined;
+    const parentId = mappedParentId && finalIds.has(mappedParentId) ? mappedParentId : null;
+    return { id: s.id, parentId, name: s.name, source: s.source, createdAt: s.createdAt, updatedAt: s.updatedAt };
+  });
+
+  return { sections, skipped, idMap };
+}
+
 /**
  * Always mints a fresh workspace id, regardless of what the export carried —
  * this is what guarantees an import can never collide with (and so can
@@ -148,21 +210,24 @@ function sanitizeWorkspace(
   workspace: Workspace;
   skippedTabs: number;
   skippedGroups: number;
+  skippedSections: number;
   tabIdMap: Map<string, string>;
   /** The workspace's ORIGINAL raw id (if it had a string one) — lets the caller build a raw→final workspace id map, mirroring tabIdMap, so a collection's workspaceId reference survives the fresh id this function always mints below. */
   rawWorkspaceId: string | undefined;
 } | null {
   if (!isPlainObject(raw) || !Array.isArray(raw.tabs)) return null;
 
-  const { groups, skipped: skippedGroups, idMap: groupIdMap } = sanitizeGroups(raw.groups);
-  const { tabs, skipped, idMap: tabIdMap } = sanitizeTabs(raw.tabs, groupIdMap);
   const now = Date.now();
+  const { groups, skipped: skippedGroups, idMap: groupIdMap } = sanitizeGroups(raw.groups);
+  const { sections, skipped: skippedSections, idMap: sectionIdMap } = sanitizeSections(raw.sections, now);
+  const { tabs, skipped, idMap: tabIdMap } = sanitizeTabs(raw.tabs, groupIdMap, sectionIdMap);
 
   const workspace: Workspace = {
     id: createId("workspace"),
     name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "Untitled",
     tabs,
     ...(groups !== undefined ? { groups } : {}),
+    ...(sections !== undefined ? { sections } : {}),
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };
@@ -171,6 +236,7 @@ function sanitizeWorkspace(
     workspace,
     skippedTabs: skipped,
     skippedGroups,
+    skippedSections,
     tabIdMap,
     rawWorkspaceId: typeof raw.id === "string" ? raw.id : undefined,
   };

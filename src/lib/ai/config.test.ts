@@ -30,4 +30,16 @@ describe("ai/config", () => {
     expect(hasGeminiKey()).toBe(true);
     expect(geminiApiKey()).toBe("test-key");
   });
+
+  it("defaults the generation model to gemini-flash-lite-latest when GEMINI_GENERATION_MODEL is unset", async () => {
+    vi.stubEnv("GEMINI_GENERATION_MODEL", "");
+    const { generationModel } = await import("./config");
+    expect(generationModel()).toBe("gemini-flash-lite-latest");
+  });
+
+  it("respects GEMINI_GENERATION_MODEL when set", async () => {
+    vi.stubEnv("GEMINI_GENERATION_MODEL", "gemini-custom-model");
+    const { generationModel } = await import("./config");
+    expect(generationModel()).toBe("gemini-custom-model");
+  });
 });

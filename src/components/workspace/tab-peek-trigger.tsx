@@ -5,6 +5,7 @@ import { PreviewCard } from "@base-ui/react/preview-card"
 import { TabPeekContent } from "@/components/workspace/tab-peek-content"
 import { computeTabPeekContext, type TabPeekContext } from "@/lib/tabs/peek"
 import type { CategoryId } from "@/lib/categories"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import { cn } from "@/lib/utils"
 
@@ -41,6 +42,8 @@ export function TabPeekTrigger({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  sections,
+  onMoveToSection,
   onToggleFavorite,
   onOpenTab,
 }: {
@@ -54,6 +57,9 @@ export function TabPeekTrigger({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** This workspace's section tree, for the "Move to section" submenu — same contract as tab-card.tsx's matching prop. Omitted (or empty) hides the submenu. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   onToggleFavorite?: (id: string) => void
   onOpenTab?: (id: string) => void
 }) {
@@ -104,6 +110,8 @@ export function TabPeekTrigger({
               onRemoveFromCollection={onRemoveFromCollection}
               otherCollections={otherCollections}
               onMoveToCollection={onMoveToCollection}
+              sections={sections}
+              onMoveToSection={onMoveToSection}
               onToggleFavorite={onToggleFavorite}
               onOpenTab={onOpenTab}
             />

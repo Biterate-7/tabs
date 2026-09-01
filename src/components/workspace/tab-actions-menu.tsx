@@ -14,8 +14,44 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import { rootSections, childrenOf } from "@/lib/sections/relations"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import { openTab } from "@/lib/browser/open-tab"
+
+/**
+ * Recursively renders one level of the section tree as nested
+ * DropdownMenuSub items — a leaf section (no children) is a plain clickable
+ * item, one with children opens a further submenu for its own children so a
+ * "Move to section" click can reach a project 3 levels deep.
+ */
+function SectionMenuItems({ sections, parentId, onSelect }: { sections: Section[]; parentId: string | null; onSelect: (sectionId: string) => void }) {
+  const nodes = parentId === null ? rootSections(sections) : childrenOf(sections, parentId)
+  return (
+    <>
+      {nodes.map((section) => {
+        const children = childrenOf(sections, section.id)
+        if (children.length === 0) {
+          return (
+            <DropdownMenuItem key={section.id} onClick={() => onSelect(section.id)}>
+              {section.name}
+            </DropdownMenuItem>
+          )
+        }
+        return (
+          <DropdownMenuSub key={section.id}>
+            <DropdownMenuSubTrigger>{section.name}</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem onClick={() => onSelect(section.id)}>Move to {section.name}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <SectionMenuItems sections={sections} parentId={section.id} onSelect={onSelect} />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )
+      })}
+    </>
+  )
+}
 
 /**
  * The "⋮ More actions" menu for a tab — Open / Inspect / Add dependency /
@@ -31,6 +67,8 @@ export function TabActionsMenu({
   onRemoveFromCollection,
   otherCollections,
   onMoveToCollection,
+  sections,
+  onMoveToSection,
   onOpenTab,
   trigger,
   align = "end",
@@ -42,6 +80,9 @@ export function TabActionsMenu({
   onRemoveFromCollection?: (id: string) => void
   otherCollections?: { id: string; name: string }[]
   onMoveToCollection?: (id: string, collectionId: string) => void
+  /** This workspace's full section tree, for the "Move to section" submenu. Omitted (or empty) hides the submenu. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   /** When provided, takes over this menu's "Open" item entirely — see tab-card.tsx's matching prop for the full contract. */
   onOpenTab?: (id: string) => void
   trigger: ReactElement
@@ -83,7 +124,17 @@ export function TabActionsMenu({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
-        {(onInspect || onAddDependency || onRemoveFromCollection || onMoveToCollection) && <DropdownMenuSeparator />}
+        {onMoveToSection && sections && sections.length > 0 && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <FolderInput /> Move to section
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <SectionMenuItems sections={sections} parentId={null} onSelect={(sectionId) => onMoveToSection(tab.id, sectionId)} />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+        {(onInspect || onAddDependency || onRemoveFromCollection || onMoveToCollection || onMoveToSection) && <DropdownMenuSeparator />}
         {CATEGORY_ORDER.map((id) => (
           <DropdownMenuItem key={id} onClick={() => onCategoryChange(tab.id, id)}>
             Move to {CATEGORIES[id].name}

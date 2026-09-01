@@ -36,6 +36,16 @@ describe("graph persistence", () => {
     expect(loadGraphState().settings.filters.dependencies).toBe(true);
   });
 
+  it("defaults settings.filters.section to false when the field is absent (pre-sections backward compatibility)", () => {
+    window.localStorage.setItem(
+      "tabdump:graph:v1",
+      JSON.stringify({
+        settings: { filters: { domain: true, workspace: true, category: false, group: false, manual: true } },
+      })
+    );
+    expect(loadGraphState().settings.filters.section).toBe(false);
+  });
+
   it("round-trips settings.filters.dependencies when explicitly set to false", () => {
     const state = {
       ...defaultGraphState(),

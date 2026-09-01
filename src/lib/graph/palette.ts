@@ -70,6 +70,7 @@ export function resolveGraphPalette(root: HTMLElement = document.documentElement
       workspace: `rgba(${v("--text-tertiary-rgb") || "161, 161, 170"}, 0.35)`,
       category: `rgba(${v("--warning-rgb") || "245, 166, 35"}, 0.3)`,
       group: `rgba(${v("--success-rgb") || "34, 197, 94"}, 0.3)`,
+      section: `rgba(${v("--favorite-accent-rgb") || "234, 179, 8"}, 0.3)`,
       manual: `rgba(${edgeRgb}, 0.55)`,
     },
     edgeHighlighted: v("--accent-text"),

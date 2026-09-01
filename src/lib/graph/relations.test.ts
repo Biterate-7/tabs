@@ -57,7 +57,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: true, workspace: false, category: false, group: false, manual: false, dependencies: false },
+      { domain: true, workspace: false, category: false, group: false, section: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(0);
@@ -71,7 +71,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: true, workspace: false, category: true, group: false, manual: false, dependencies: false },
+      { domain: true, workspace: false, category: true, group: false, section: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -85,7 +85,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       [tabA, tabB],
       lookup,
-      { domain: false, workspace: true, category: false, group: false, manual: false, dependencies: false },
+      { domain: false, workspace: true, category: false, group: false, section: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -101,7 +101,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: true, manual: false, dependencies: false },
+      { domain: false, workspace: false, category: false, group: true, section: false, manual: false, dependencies: false },
       []
     );
     expect(edges).toHaveLength(1);
@@ -109,12 +109,30 @@ describe("buildGraphEdges", () => {
     expect(edges[0].target).toBe("b");
   });
 
+  it("respects the section filter, only linking tabs with an explicit sectionId", () => {
+    const tabs = [
+      makeTab({ id: "a", sectionId: "s1" }),
+      makeTab({ id: "b", sectionId: "s1" }),
+      makeTab({ id: "c" }),
+    ];
+    const edges = buildGraphEdges(
+      tabs,
+      new Map(),
+      { domain: false, workspace: false, category: false, group: false, section: true, manual: false, dependencies: false },
+      []
+    );
+    expect(edges).toHaveLength(1);
+    expect(edges[0].source).toBe("a");
+    expect(edges[0].target).toBe("b");
+    expect(edges[0].reasons).toEqual(["section"]);
+  });
+
   it("includes manual connections only when both tabs still exist", () => {
     const tabs = [makeTab({ id: "a" }), makeTab({ id: "b" })];
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: false, manual: true, dependencies: false },
+      { domain: false, workspace: false, category: false, group: false, section: false, manual: true, dependencies: false },
       [
         { a: "a", b: "b", createdAt: 1 },
         { a: "a", b: "ghost", createdAt: 2 },
@@ -129,7 +147,7 @@ describe("buildGraphEdges", () => {
     const edges = buildGraphEdges(
       tabs,
       new Map(),
-      { domain: false, workspace: false, category: false, group: false, manual: false, dependencies: false },
+      { domain: false, workspace: false, category: false, group: false, section: false, manual: false, dependencies: false },
       [{ a: "a", b: "b", createdAt: 1 }]
     );
     expect(edges).toHaveLength(0);

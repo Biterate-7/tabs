@@ -536,6 +536,167 @@ describe("parseWorkspaceExport", () => {
   });
 });
 
+describe("parseWorkspaceExport sections", () => {
+  it("round-trips a nested section tree and each tab's sectionId", () => {
+    const workspace = makeWorkspace({
+      id: "a",
+      sections: [
+        { id: "root", parentId: null, name: "School", source: "ai", createdAt: 1, updatedAt: 1 },
+        { id: "sub", parentId: "root", name: "Physics", source: "ai", createdAt: 2, updatedAt: 2 },
+      ],
+      tabs: [{ id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", sectionId: "sub" }],
+    });
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace]));
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const sections = result.workspaces[0].sections!;
+    expect(sections.map((s) => s.name).sort()).toEqual(["Physics", "School"]);
+    const root = sections.find((s) => s.name === "School")!;
+    const sub = sections.find((s) => s.name === "Physics")!;
+    expect(sub.parentId).toBe(root.id);
+    expect(result.workspaces[0].tabs[0].sectionId).toBe(sub.id);
+  });
+
+  it("imports a workspace with no sections without adding one", () => {
+    const text = serializeWorkspaceExport(buildWorkspaceExport([makeWorkspace({ id: "a" })]));
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].sections).toBeUndefined();
+  });
+
+  it("imports an old export with no `sections` field at all (pre-sections backward compatibility)", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Legacy", tabs: [], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].sections).toBeUndefined();
+  });
+
+  it("promotes a section to root when its parent didn't survive sanitization, instead of dropping it", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Orphaned child",
+          tabs: [],
+          createdAt: 1,
+          updatedAt: 1,
+          sections: [{ id: "s1", parentId: "ghost-parent", name: "Physics", source: "ai", createdAt: 1, updatedAt: 1 }],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const sections = result.workspaces[0].sections!;
+    expect(sections).toHaveLength(1);
+    expect(sections[0].parentId).toBeNull();
+  });
+
+  it("regenerates a section id that collides with another in the same workspace and remaps parentId references accordingly", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Dup sections",
+          tabs: [],
+          createdAt: 1,
+          updatedAt: 1,
+          sections: [
+            { id: "dup", parentId: null, name: "First", source: "user", createdAt: 1, updatedAt: 1 },
+            { id: "dup", parentId: null, name: "Second", source: "user", createdAt: 1, updatedAt: 1 },
+            { id: "child", parentId: "dup", name: "Child of first", source: "ai", createdAt: 1, updatedAt: 1 },
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const sections = result.workspaces[0].sections!;
+    expect(sections).toHaveLength(3);
+    expect(new Set(sections.map((s) => s.id)).size).toBe(3);
+    const first = sections.find((s) => s.name === "First")!;
+    const child = sections.find((s) => s.name === "Child of first")!;
+    // "child"'s raw parentId "dup" resolves to whichever section actually
+    // kept that raw id — the first one to claim it, same convention as
+    // groups' collision handling.
+    expect(child.parentId).toBe(first.id);
+  });
+
+  it("drops a malformed section entry (missing name) while keeping valid ones", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Mixed sections",
+          tabs: [],
+          createdAt: 1,
+          updatedAt: 1,
+          sections: [
+            { id: "s1", parentId: null, name: "Valid", source: "user", createdAt: 1, updatedAt: 1 },
+            { id: "s2" }, // missing name
+            { name: "" }, // blank name
+            "not even an object",
+          ],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].sections).toEqual([
+      { id: "s1", parentId: null, name: "Valid", source: "user", createdAt: 1, updatedAt: 1 },
+    ]);
+  });
+
+  it("drops a tab's sectionId that doesn't reference any section in the workspace", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        {
+          id: "a",
+          name: "Dangling ref",
+          tabs: [{ id: "t1", url: "https://a.example", normalizedUrl: "https://a.example", domain: "a.example", sectionId: "ghost" }],
+          createdAt: 1,
+          updatedAt: 1,
+          sections: [{ id: "s1", parentId: null, name: "Real", source: "ai", createdAt: 1, updatedAt: 1 }],
+        },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].tabs[0].sectionId).toBeUndefined();
+  });
+});
+
 describe("parseWorkspaceExport collections", () => {
   it("round-trips a collection, remapping its workspaceId and tabIds to the freshly-minted ones", () => {
     const workspace = makeWorkspace({

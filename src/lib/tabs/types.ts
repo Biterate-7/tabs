@@ -32,6 +32,26 @@ export type Tab = {
   historyVisitCount?: number;
   /** Epoch ms of the history entry's last visit at the moment it was dumped — distinct from lastAccessedAt, which only ever reflects opens from *within* TabDump. Absent for source !== "history". */
   historyLastVisitedAt?: number;
+  /**
+   * The id of a Section (see src/lib/sections/types.ts) this tab belongs to,
+   * within whichever workspace currently holds this tab — TabDump's
+   * hierarchical Category/Subcategory/Project organization, distinct from
+   * (and orthogonal to) the flat `category` field above. Absent means
+   * "not yet organized into a section" (falls back to "Other" in the
+   * section-based views). Same same-workspace invariant as `groupId`.
+   */
+  sectionId?: string;
+  /**
+   * Set the moment a user manually assigns this tab's section (drag-drop or
+   * the "Move to section" menu). Once true, the AI organization engine
+   * (src/lib/sections/ai/organize.ts) never reassigns this tab's sectionId
+   * again — manual placement always overrides the AI.
+   */
+  sectionLocked?: boolean;
+  /** How this tab's current sectionId was decided — "manual" whenever a user assigned/moved it (see assignTabsToSection), or set by whichever path in src/lib/sections/ai/organize.ts assigned it otherwise. Absent for tabs never run through either (e.g. pre-migration). */
+  organizationStatus?: "classified" | "uncertain" | "fallback" | "manual";
+  /** Short, user-facing explanation of why this tab landed in its current section (e.g. "Discusses the Schwarzschild metric, alongside 3 other physics tabs in this batch.") — the AI's own `reason` field when available, or a synthesized one from the deterministic fallback. Never raw model reasoning/chain-of-thought. Cleared whenever a user manually moves the tab (see assignTabsToSection), since a stale AI-era explanation would be actively misleading once a human decided otherwise. */
+  organizationReason?: string;
 };
 
 export type ParseResult = {

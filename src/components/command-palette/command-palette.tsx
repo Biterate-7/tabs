@@ -4,7 +4,7 @@ import { Command as CommandPrimitive } from "cmdk"
 import { Kbd } from "@/components/ui/kbd"
 import type { Command, CommandGroup } from "./types"
 
-const GROUP_ORDER: CommandGroup[] = ["Ask", "Navigation", "Workspace", "Selection", "Collections", "Actions", "Sort", "Help"]
+const GROUP_ORDER: CommandGroup[] = ["Ask", "Navigation", "Workspace", "Selection", "Collections", "Sections", "Actions", "Sort", "Help"]
 
 export function CommandPalette({
   open,

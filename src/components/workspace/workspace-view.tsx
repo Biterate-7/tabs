@@ -42,6 +42,10 @@ import { AttentionStrip } from "@/components/workspace/attention-strip"
 import { computeAttention } from "@/lib/workspace/attention"
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview"
 import { CategoryGrid } from "@/components/workspace/category-grid"
+import { SectionGrid } from "@/components/workspace/section-grid"
+import { CreateSectionDialog } from "@/components/workspace/create-section-dialog"
+import { RenameSectionDialog } from "@/components/workspace/rename-section-dialog"
+import { DeleteSectionDialog } from "@/components/workspace/delete-section-dialog"
 import { CategoryFilterBar } from "@/components/workspace/category-filter-bar"
 import { SortControl } from "@/components/workspace/sort-control"
 import { FilteredTabList } from "@/components/workspace/filtered-tab-list"
@@ -53,6 +57,9 @@ import type { SortKey } from "@/lib/workspace/search"
 import { copyText, urlsText } from "@/lib/workspace/export"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import { buildSectionTree, findSectionTreeNode } from "@/lib/sections/tree"
+import { rootSections } from "@/lib/sections/relations"
+import type { Section } from "@/lib/sections/types"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useDependencyStore } from "@/hooks/use-dependency-store"
 import type { OrganizationPlan } from "@/lib/organize/types"
@@ -100,6 +107,11 @@ export function WorkspaceView({
   onApplyAutoOrganize,
   onDismissAutoOrganize,
   onRequestOrganize,
+  onCreateSection,
+  onRenameSection,
+  onDeleteSection,
+  onAssignTabToSection,
+  onReorganizeSections,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
@@ -124,6 +136,19 @@ export function WorkspaceView({
   onDismissAutoOrganize?: () => void
   /** Manually re-runs Auto-Organize analysis on demand — backs the header's "Organize" button. */
   onRequestOrganize?: () => void
+  /**
+   * Section CRUD + manual tab assignment — all omitted in standalone/test
+   * contexts that don't wire up section persistence, in which case the
+   * workspace falls back to the legacy flat CategoryGrid (see `showSections`
+   * below, gated on `currentWorkspace.sections` being defined at all, which
+   * only ever happens once a real app has run its section-seeding migration).
+   */
+  onCreateSection?: (parentId: string | null, name: string) => void
+  onRenameSection?: (id: string, name: string) => void
+  onDeleteSection?: (id: string, reassignToSectionId?: string) => void
+  onAssignTabToSection?: (tabId: string, sectionId: string) => void
+  /** Reruns the AI section-organization engine over every unlocked tab in the workspace on demand (spec §31) — backs the command palette's "Reorganize into sections". */
+  onReorganizeSections?: () => void
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -146,7 +171,18 @@ export function WorkspaceView({
   const [addToCollectionId, setAddToCollectionId] = useState<string | null>(null)
   const [openAllCollectionId, setOpenAllCollectionId] = useState<string | null>(null)
   const [recentlyGatheredIds, setRecentlyGatheredIds] = useState<Set<string>>(new Set())
+  // `undefined` = dialog closed; `null` = creating a new root/category section; a string = creating a subsection under that section id.
+  const [createSectionParentId, setCreateSectionParentId] = useState<string | null | undefined>(undefined)
+  const [renameSectionId, setRenameSectionId] = useState<string | null>(null)
+  const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null)
   const recentlyGatheredTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // `undefined` (never migrated to sections) falls back to the legacy flat
+  // CategoryGrid; `[]` (migrated, user cleared every section) still shows
+  // SectionGrid — everything just lands in its "Other" bucket, letting the
+  // user build sections back up.
+  const sections: Section[] | undefined = currentWorkspace?.sections
+  const showSections = sections !== undefined
 
   useEffect(() => {
     return () => {
@@ -446,7 +482,7 @@ export function WorkspaceView({
   }, [workspaceCollections, query])
 
   const resultTabs = useMemo(() => {
-    const base = filterTabs(tabs, { query, categoryId: categoryFilter, duplicatesOnly })
+    const base = filterTabs(tabs, { query, categoryId: categoryFilter, duplicatesOnly, sections })
     if (!collectionQueryMatchIds) return sortTabs(base, sortKey)
     const baseIds = new Set(base.map((t) => t.id))
     const extra = tabs.filter(
@@ -457,7 +493,7 @@ export function WorkspaceView({
         (!duplicatesOnly || Boolean(t.isDuplicate))
     )
     return sortTabs([...base, ...extra], sortKey)
-  }, [tabs, query, categoryFilter, sortKey, duplicatesOnly, collectionQueryMatchIds])
+  }, [tabs, query, categoryFilter, sortKey, duplicatesOnly, collectionQueryMatchIds, sections])
 
   const attention = useMemo(() => computeAttention(tabs), [tabs])
 
@@ -485,6 +521,39 @@ export function WorkspaceView({
 
   function handleCategoryChange(id: string, category: CategoryId) {
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, category } : t)))
+  }
+
+  const createSectionParentName =
+    createSectionParentId != null ? (sections?.find((s) => s.id === createSectionParentId)?.name ?? null) : null
+  const renameSectionTarget = renameSectionId ? (sections?.find((s) => s.id === renameSectionId) ?? null) : null
+  const deleteSectionTree = deleteSectionId && sections ? findSectionTreeNode(buildSectionTree(sections, tabs), deleteSectionId) : null
+  const deleteSectionOtherRoots = sections ? rootSections(sections).filter((s) => s.id !== deleteSectionId) : []
+
+  function handleCreateSectionConfirm(name: string) {
+    if (createSectionParentId !== undefined) onCreateSection?.(createSectionParentId, name)
+    setCreateSectionParentId(undefined)
+  }
+
+  function handleRenameSectionConfirm(name: string) {
+    if (renameSectionId) onRenameSection?.(renameSectionId, name)
+    setRenameSectionId(null)
+  }
+
+  function handleDeleteSectionConfirm(reassignToSectionId?: string) {
+    if (deleteSectionId) {
+      onDeleteSection?.(deleteSectionId, reassignToSectionId)
+      toast.success("Section deleted")
+    }
+    setDeleteSectionId(null)
+  }
+
+  function handleAssignTabToSection(tabId: string, sectionId: string) {
+    onAssignTabToSection?.(tabId, sectionId)
+  }
+
+  /** Drop-target callbacks (SectionFolder/SectionPage) pass `(sectionId, tabId)` — the same argument order CollectionGroup's onDropTab already uses — so this just re-orders into handleAssignTabToSection's `(tabId, sectionId)` convention. */
+  function handleDropTabOnSection(sectionId: string, tabId: string) {
+    handleAssignTabToSection(tabId, sectionId)
   }
 
   function handleNotesChange(id: string, notes: string) {
@@ -605,6 +674,18 @@ export function WorkspaceView({
           group: "Actions",
           icon: Sparkles,
           onSelect: onRequestOrganize,
+        },
+      ]
+    : []
+
+  const reorganizeSectionsCommands: Command[] = onReorganizeSections
+    ? [
+        {
+          id: "sections-reorganize",
+          label: "Reorganize into sections",
+          group: "Actions",
+          icon: Sparkles,
+          onSelect: onReorganizeSections,
         },
       ]
     : []
@@ -772,6 +853,45 @@ export function WorkspaceView({
     ),
   ]
 
+  const sectionCommands: Command[] = showSections
+    ? [
+        {
+          id: "section-new",
+          label: "New section",
+          group: "Sections",
+          icon: Layers,
+          onSelect: () => setCreateSectionParentId(null),
+        },
+        ...rootSections(sections!).flatMap(
+          (s): Command[] => [
+            {
+              id: `section-goto-${s.id}`,
+              label: `Go to "${s.name}"`,
+              group: "Sections",
+              icon: Layers,
+              onSelect: () => {
+                setQuery(s.name)
+              },
+            },
+            {
+              id: `section-rename-${s.id}`,
+              label: `Rename "${s.name}"`,
+              group: "Sections",
+              icon: Pencil,
+              onSelect: () => setRenameSectionId(s.id),
+            },
+            {
+              id: `section-delete-${s.id}`,
+              label: `Delete "${s.name}"`,
+              group: "Sections",
+              icon: Trash2,
+              onSelect: () => setDeleteSectionId(s.id),
+            },
+          ]
+        ),
+      ]
+    : []
+
   const counts = categoryCounts(tabs)
 
   const actionCommands: Command[] = [
@@ -831,10 +951,12 @@ export function WorkspaceView({
 
   const allCommands = [
     ...organizeCommands,
+    ...reorganizeSectionsCommands,
     ...navigationCommands,
     ...workspaceCommands,
     ...selectionCommands,
     ...collectionCommands,
+    ...sectionCommands,
     ...actionCommands,
     ...sortCommands,
     ...helpCommands,
@@ -966,6 +1088,8 @@ export function WorkspaceView({
             expandedIds={expandedCollectionIds}
             onToggleExpanded={handleToggleCollectionExpanded}
             onCategoryChange={handleCategoryChange}
+            sections={sections}
+            onMoveToSection={handleAssignTabToSection}
             onNewCollection={handleNewCollection}
             onRename={(id) => setRenameCollectionId(id)}
             onAddTabs={handleAddTabsRequest}
@@ -987,21 +1111,42 @@ export function WorkspaceView({
           />
 
           {isBrowsing ? (
-            <CategoryGrid
-              tabs={tabs}
-              onCategoryChange={handleCategoryChange}
-              onAddDependency={setDepDialogFor}
-              onInspect={setInspectTabId}
-              onNotesChange={handleNotesChange}
-              onToggleFavorite={handleToggleFavorite}
-              onOpenTab={handleOpenTab}
-              recentlyAddedIds={recentlyAddedIds}
-            />
+            showSections ? (
+              <SectionGrid
+                sections={sections!}
+                tabs={tabs}
+                onCategoryChange={handleCategoryChange}
+                onSectionChange={handleAssignTabToSection}
+                onDropTabOnSection={handleDropTabOnSection}
+                onCreateSection={(parentId) => setCreateSectionParentId(parentId)}
+                onRenameSection={(id) => setRenameSectionId(id)}
+                onDeleteSection={(id) => setDeleteSectionId(id)}
+                onAddDependency={setDepDialogFor}
+                onInspect={setInspectTabId}
+                onNotesChange={handleNotesChange}
+                onToggleFavorite={handleToggleFavorite}
+                onOpenTab={handleOpenTab}
+                recentlyAddedIds={recentlyAddedIds}
+              />
+            ) : (
+              <CategoryGrid
+                tabs={tabs}
+                onCategoryChange={handleCategoryChange}
+                onAddDependency={setDepDialogFor}
+                onInspect={setInspectTabId}
+                onNotesChange={handleNotesChange}
+                onToggleFavorite={handleToggleFavorite}
+                onOpenTab={handleOpenTab}
+                recentlyAddedIds={recentlyAddedIds}
+              />
+            )
           ) : (
             <FilteredTabList
               tabs={resultTabs}
               highlightedIndex={highlightedIndex}
               onCategoryChange={handleCategoryChange}
+              sections={sections}
+              onMoveToSection={handleAssignTabToSection}
               onClearFilters={resetFilters}
               selectionMode={selectionMode}
               selectedIds={selectedIds}
@@ -1097,6 +1242,40 @@ export function WorkspaceView({
           collectionName={deleteCollectionTarget.name}
           tabCount={deleteCollectionTarget.tabIds.length}
           onConfirm={handleDeleteCollectionConfirm}
+        />
+      )}
+
+      <CreateSectionDialog
+        open={createSectionParentId !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setCreateSectionParentId(undefined)
+        }}
+        parentName={createSectionParentName}
+        onCreate={handleCreateSectionConfirm}
+      />
+
+      {renameSectionTarget && (
+        <RenameSectionDialog
+          key={renameSectionTarget.id}
+          open={renameSectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setRenameSectionId(null)
+          }}
+          currentName={renameSectionTarget.name}
+          onRename={handleRenameSectionConfirm}
+        />
+      )}
+
+      {deleteSectionTree && (
+        <DeleteSectionDialog
+          open={deleteSectionId !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteSectionId(null)
+          }}
+          sectionName={deleteSectionTree.section.name}
+          tabCount={deleteSectionTree.totalTabCount}
+          otherRootSections={deleteSectionOtherRoots.map((s) => ({ id: s.id, name: s.name }))}
+          onConfirm={handleDeleteSectionConfirm}
         />
       )}
 

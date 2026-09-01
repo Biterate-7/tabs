@@ -27,6 +27,7 @@ const REASON_LABEL: Record<EdgeReason, string> = {
   workspace: "Same workspace",
   category: "Same category",
   group: "Same group",
+  section: "Same section",
   manual: "Manually linked",
 }
 

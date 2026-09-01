@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
 import type { Collection } from "@/lib/collections/types"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 
 /**
@@ -23,6 +24,8 @@ export function CollectionGroup({
   expanded,
   onToggleExpanded,
   onCategoryChange,
+  sections,
+  onMoveToSection,
   onRename,
   onAddTabs,
   onOpenAll,
@@ -47,6 +50,8 @@ export function CollectionGroup({
   expanded: boolean
   onToggleExpanded: () => void
   onCategoryChange: (id: string, category: CategoryId) => void
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   onRename: () => void
   onAddTabs: () => void
   onOpenAll: () => void
@@ -134,6 +139,8 @@ export function CollectionGroup({
                   key={tab.id}
                   tab={tab}
                   onCategoryChange={onCategoryChange}
+                  sections={sections}
+                  onMoveToSection={onMoveToSection}
                   onAddDependency={onAddDependency}
                   onInspect={onInspect}
                   onNotesChange={onNotesChange}

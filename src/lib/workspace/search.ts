@@ -1,5 +1,7 @@
 import { CATEGORIES } from "@/lib/categories";
 import type { CategoryId } from "@/lib/categories";
+import { sectionPath } from "@/lib/sections/relations";
+import type { Section } from "@/lib/sections/types";
 import type { Tab } from "@/lib/tabs/types";
 import { groupByCategory } from "./stats";
 
@@ -13,7 +15,15 @@ function categoryName(tab: Tab): string {
   return CATEGORIES[categoryOf(tab)].name;
 }
 
-export function matchesQuery(tab: Tab, query: string): boolean {
+/** Every section name in this tab's root→leaf path (e.g. "School" and "Physics" both match a tab filed under School → Physics) — see spec §23. Empty string for an unorganized tab. */
+function sectionPathNames(tab: Tab, sections: Section[]): string {
+  if (!tab.sectionId) return "";
+  return sectionPath(sections, tab.sectionId)
+    .map((s) => s.name)
+    .join(" ");
+}
+
+export function matchesQuery(tab: Tab, query: string, sections: Section[] = []): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
@@ -21,17 +31,18 @@ export function matchesQuery(tab: Tab, query: string): boolean {
     tab.domain.toLowerCase().includes(q) ||
     tab.url.toLowerCase().includes(q) ||
     categoryName(tab).toLowerCase().includes(q) ||
+    sectionPathNames(tab, sections).toLowerCase().includes(q) ||
     (tab.notes ?? "").toLowerCase().includes(q)
   );
 }
 
 export function filterTabs(
   tabs: Tab[],
-  opts: { query: string; categoryId: CategoryId | "all"; duplicatesOnly?: boolean }
+  opts: { query: string; categoryId: CategoryId | "all"; duplicatesOnly?: boolean; sections?: Section[] }
 ): Tab[] {
   return tabs.filter(
     (tab) =>
-      matchesQuery(tab, opts.query) &&
+      matchesQuery(tab, opts.query, opts.sections) &&
       (opts.categoryId === "all" || categoryOf(tab) === opts.categoryId) &&
       (!opts.duplicatesOnly || Boolean(tab.isDuplicate))
   );

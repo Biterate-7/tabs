@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react"
 
-export type CommandGroup = "Ask" | "Navigation" | "Workspace" | "Selection" | "Collections" | "Actions" | "Sort" | "Help"
+export type CommandGroup = "Ask" | "Navigation" | "Workspace" | "Selection" | "Collections" | "Sections" | "Actions" | "Sort" | "Help"
 
 export type Command = {
   id: string

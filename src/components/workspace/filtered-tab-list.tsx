@@ -4,12 +4,15 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { TabCard } from "@/components/workspace/tab-card"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
+import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 
 export function FilteredTabList({
   tabs,
   highlightedIndex,
   onCategoryChange,
+  sections,
+  onMoveToSection,
   onClearFilters,
   selectionMode = false,
   selectedIds,
@@ -28,6 +31,9 @@ export function FilteredTabList({
   tabs: Tab[]
   highlightedIndex: number
   onCategoryChange: (id: string, category: CategoryId) => void
+  /** This workspace's section tree, for each row's "Move to section" submenu — omitted (or empty) hides it. */
+  sections?: Section[]
+  onMoveToSection?: (id: string, sectionId: string) => void
   onClearFilters?: () => void
   selectionMode?: boolean
   selectedIds?: Set<string>
@@ -66,6 +72,8 @@ export function FilteredTabList({
           <TabCard
             tab={tab}
             onCategoryChange={onCategoryChange}
+            sections={sections}
+            onMoveToSection={onMoveToSection}
             selectable={selectionMode}
             selected={selectedIds?.has(tab.id) ?? false}
             onToggleSelected={() => onToggleSelected?.(tab.id)}

@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   addWorkspaces,
   assignTabsToGroup,
+  assignTabsToSection,
   createGroup,
+  createSectionInWorkspace,
   createWorkspace,
+  deleteSectionInWorkspace,
   deleteWorkspace,
   getCurrentWorkspace,
+  moveSectionInWorkspace,
   moveTabsBetweenWorkspaces,
   removeTabsFromGroup,
   renameGroup,
+  renameSectionInWorkspace,
   renameWorkspace,
   switchWorkspace,
   updateWorkspaceTabs,
@@ -353,5 +358,103 @@ describe("removeTabsFromGroup", () => {
     const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
     const next = removeTabsFromGroup(store, "a", ["1"]);
     expect(next.workspaces[0].tabs[0]).toEqual(makeTab("1"));
+  });
+});
+
+describe("createSectionInWorkspace / renameSectionInWorkspace", () => {
+  it("adds a new root section to the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const result = createSectionInWorkspace(store, "a", null, "School", "user");
+    if (!result) throw new Error("expected a section to be created");
+    expect(result.store.workspaces[0].sections).toEqual([result.section]);
+    expect(result.section.name).toBe("School");
+  });
+
+  it("returns null (no-op) for an unknown workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    expect(createSectionInWorkspace(store, "ghost", null, "School", "user")).toBeNull();
+  });
+
+  it("renames an existing section", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const created = createSectionInWorkspace(store, "a", null, "Old name", "user")!;
+    const next = renameSectionInWorkspace(created.store, "a", created.section.id, "New name");
+    expect(next.workspaces[0].sections?.[0].name).toBe("New name");
+  });
+});
+
+describe("deleteSectionInWorkspace", () => {
+  it("removes the section and clears sectionId on tabs that pointed at it", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), sectionId: "s1" }] })], "a");
+    const withSection = { ...store, workspaces: [{ ...store.workspaces[0], sections: [{ id: "s1", parentId: null, name: "School", source: "user" as const, createdAt: 0, updatedAt: 0 }] }] };
+
+    const next = deleteSectionInWorkspace(withSection, "a", "s1");
+
+    expect(next.workspaces[0].sections).toEqual([]);
+    expect(next.workspaces[0].tabs[0].sectionId).toBeUndefined();
+  });
+
+  it("reassigns orphaned tabs to the given replacement section instead of leaving them unset", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), sectionId: "s1" }] })], "a");
+    const withSection = { ...store, workspaces: [{ ...store.workspaces[0], sections: [{ id: "s1", parentId: null, name: "School", source: "user" as const, createdAt: 0, updatedAt: 0 }] }] };
+
+    const next = deleteSectionInWorkspace(withSection, "a", "s1", "other-section-id");
+
+    expect(next.workspaces[0].tabs[0].sectionId).toBe("other-section-id");
+  });
+});
+
+describe("moveSectionInWorkspace", () => {
+  it("re-parents a section within the workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const root = createSectionInWorkspace(store, "a", null, "School", "user")!;
+    const other = createSectionInWorkspace(root.store, "a", null, "Research", "user")!;
+
+    const next = moveSectionInWorkspace(other.store, "a", other.section.id, root.section.id);
+
+    expect(next.workspaces[0].sections?.find((s) => s.id === other.section.id)?.parentId).toBe(root.section.id);
+  });
+
+  it("is a no-op (same store) for an unknown workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    expect(moveSectionInWorkspace(store, "ghost", "s1", null)).toBe(store);
+  });
+});
+
+describe("assignTabsToSection", () => {
+  it("sets sectionId and locks the tab by default", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = assignTabsToSection(store, "a", ["1"], "s1");
+    expect(next.workspaces[0].tabs[0].sectionId).toBe("s1");
+    expect(next.workspaces[0].tabs[0].sectionLocked).toBe(true);
+  });
+
+  it("does not lock the tab when locked=false (the AI-assignment path)", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = assignTabsToSection(store, "a", ["1"], "s1", false);
+    expect(next.workspaces[0].tabs[0].sectionId).toBe("s1");
+    expect(next.workspaces[0].tabs[0].sectionLocked).toBeUndefined();
+  });
+
+  it("is referentially stable when nothing changes", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), sectionId: "s1", sectionLocked: true }] })], "a");
+    const next = assignTabsToSection(store, "a", ["1"], "s1");
+    expect(next).toBe(store);
+  });
+
+  it("marks a manual move with organizationStatus 'manual' and clears any stale AI-era reason", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), sectionId: "old", organizationStatus: "classified", organizationReason: "AI said so" }] })],
+      "a"
+    );
+    const next = assignTabsToSection(store, "a", ["1"], "s1");
+    expect(next.workspaces[0].tabs[0].organizationStatus).toBe("manual");
+    expect(next.workspaces[0].tabs[0].organizationReason).toBeUndefined();
+  });
+
+  it("does not set organizationStatus to 'manual' on the AI-assignment path (locked=false)", () => {
+    const store = makeStore([makeWorkspace({ id: "a", tabs: [makeTab("1")] })], "a");
+    const next = assignTabsToSection(store, "a", ["1"], "s1", false);
+    expect(next.workspaces[0].tabs[0].organizationStatus).toBeUndefined();
   });
 });

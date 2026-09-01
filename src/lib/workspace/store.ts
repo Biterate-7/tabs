@@ -1,6 +1,13 @@
 import { createId } from "@/lib/id";
 import { createDefaultWorkspace } from "./migration";
 import { markDuplicates } from "@/lib/tabs";
+import {
+  createSection as createSectionInTree,
+  deleteSection as deleteSectionInTree,
+  moveSection as moveSectionInTree,
+  renameSection as renameSectionInTree,
+} from "@/lib/sections/relations";
+import type { Section, SectionSource } from "@/lib/sections/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Group, Workspace, WorkspaceStore } from "./types";
 
@@ -209,6 +216,112 @@ export function removeTabsFromGroup(store: WorkspaceStore, workspaceId: string, 
       changed = true;
       const copy = { ...t };
       delete copy.groupId;
+      return copy;
+    });
+    return changed ? { ...w, tabs, updatedAt: now } : w;
+  });
+  return workspaces.every((w, i) => w === store.workspaces[i]) ? store : { ...store, workspaces };
+}
+
+/** Creates a section (root when `parentId` is null) in `workspaceId`. Returns `null` (no-op) when the name is blank or `parentId` is already at MAX_SECTION_DEPTH — see src/lib/sections/relations.ts's createSection. */
+export function createSectionInWorkspace(
+  store: WorkspaceStore,
+  workspaceId: string,
+  parentId: string | null,
+  name: string,
+  source: SectionSource
+): { store: WorkspaceStore; section: Section } | null {
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) return null;
+  const now = Date.now();
+  const result = createSectionInTree(workspace.sections ?? [], parentId, name, source, now);
+  if (!result) return null;
+  const workspaces = store.workspaces.map((w) =>
+    w.id === workspaceId ? { ...w, sections: result.sections, updatedAt: now } : w
+  );
+  return { store: { ...store, workspaces }, section: result.section };
+}
+
+export function renameSectionInWorkspace(store: WorkspaceStore, workspaceId: string, sectionId: string, name: string): WorkspaceStore {
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) =>
+    w.id === workspaceId ? { ...w, sections: renameSectionInTree(w.sections ?? [], sectionId, name), updatedAt: now } : w
+  );
+  return { ...store, workspaces };
+}
+
+/**
+ * Deletes `sectionId` (and every descendant section) from `workspaceId`.
+ * Every tab that pointed at any removed section has its `sectionId` cleared
+ * and is repointed at `reassignToSectionId` when given (must itself survive
+ * the deletion — the caller is responsible for that), or left unset
+ * ("Other") when omitted — see spec §16's "Delete Section?" flow. Tabs are
+ * never deleted.
+ */
+export function deleteSectionInWorkspace(
+  store: WorkspaceStore,
+  workspaceId: string,
+  sectionId: string,
+  reassignToSectionId?: string
+): WorkspaceStore {
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) return store;
+  const now = Date.now();
+  const { sections, removedIds } = deleteSectionInTree(workspace.sections ?? [], sectionId);
+  const removedSet = new Set(removedIds);
+  const tabs = workspace.tabs.map((t) => {
+    if (!t.sectionId || !removedSet.has(t.sectionId)) return t;
+    if (reassignToSectionId) return { ...t, sectionId: reassignToSectionId };
+    const copy = { ...t };
+    delete copy.sectionId;
+    return copy;
+  });
+  const workspaces = store.workspaces.map((w) => (w.id === workspaceId ? { ...w, sections, tabs, updatedAt: now } : w));
+  return { ...store, workspaces };
+}
+
+/** Re-parents `sectionId` within `workspaceId`. No-op (same store reference) when the move would create a cycle or exceed MAX_SECTION_DEPTH — see moveSection. */
+export function moveSectionInWorkspace(store: WorkspaceStore, workspaceId: string, sectionId: string, newParentId: string | null): WorkspaceStore {
+  const workspace = store.workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) return store;
+  const moved = moveSectionInTree(workspace.sections ?? [], sectionId, newParentId);
+  if (!moved) return store;
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => (w.id === workspaceId ? { ...w, sections: moved, updatedAt: now } : w));
+  return { ...store, workspaces };
+}
+
+/**
+ * Sets `sectionId` (and, when `locked`, `sectionLocked: true` — the
+ * mechanism behind "manual placement overrides the AI", spec §13/34) on
+ * every tab in `workspaceId` matching `tabIds`. `locked` defaults to `true`
+ * since every current caller is a manual user action (drag-drop or the
+ * "Move to section" menu); the AI engine writes `sectionId` directly on the
+ * Tab objects it returns instead of going through this function, so it never
+ * accidentally locks a tab it placed itself.
+ */
+export function assignTabsToSection(
+  store: WorkspaceStore,
+  workspaceId: string,
+  tabIds: string[],
+  sectionId: string,
+  locked: boolean = true
+): WorkspaceStore {
+  const wanted = new Set(tabIds);
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => {
+    if (w.id !== workspaceId) return w;
+    let changed = false;
+    const tabs = w.tabs.map((t) => {
+      if (!wanted.has(t.id) || (t.sectionId === sectionId && (!locked || t.sectionLocked))) return t;
+      changed = true;
+      if (!locked) return { ...t, sectionId };
+      // A manual move (the only current caller path with locked=true) makes
+      // any AI-era reason/status stale and actively misleading — a future
+      // "Why here?" UI should say "you moved this here," not repeat an
+      // explanation for a placement the user just overrode.
+      const copy = { ...t, sectionId, sectionLocked: true as const, organizationStatus: "manual" as const };
+      delete copy.organizationReason;
       return copy;
     });
     return changed ? { ...w, tabs, updatedAt: now } : w;

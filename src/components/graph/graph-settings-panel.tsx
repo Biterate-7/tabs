@@ -9,6 +9,7 @@ const CONNECTION_ROWS: { key: keyof ConnectionFilters; label: string }[] = [
   { key: "workspace", label: "Same workspace" },
   { key: "category", label: "Same category" },
   { key: "group", label: "Same group" },
+  { key: "section", label: "Same section" },
   { key: "manual", label: "Manual" },
   { key: "dependencies", label: "Dependencies" },
 ]

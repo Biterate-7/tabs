@@ -126,6 +126,17 @@ export function buildGraphEdges(
     for (const ids of byGroup.values()) raw.push(...chainEdges(ids, "group"));
   }
 
+  if (filters.section) {
+    const bySection = new Map<string, string[]>();
+    for (const tab of tabs) {
+      if (!tab.sectionId) continue;
+      const list = bySection.get(tab.sectionId);
+      if (list) list.push(tab.id);
+      else bySection.set(tab.sectionId, [tab.id]);
+    }
+    for (const ids of bySection.values()) raw.push(...chainEdges(ids, "section"));
+  }
+
   if (filters.manual) {
     for (const connection of manualConnections) {
       if (!validIds.has(connection.a) || !validIds.has(connection.b)) continue;

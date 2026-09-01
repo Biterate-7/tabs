@@ -2,7 +2,7 @@ import type { Tab } from "@/lib/tabs/types";
 import type { DependencyType } from "@/lib/dependencies/types";
 
 /** The relationship signals a graph edge can be built from. `manual` is user-created and never auto-generated. */
-export type EdgeReason = "domain" | "workspace" | "category" | "group" | "manual";
+export type EdgeReason = "domain" | "workspace" | "category" | "group" | "section" | "manual";
 
 /**
  * `dependencies` gates a separate, directional edge set (see
@@ -20,6 +20,7 @@ export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
   workspace: true,
   category: false,
   group: false,
+  section: false,
   manual: true,
   dependencies: true,
 };

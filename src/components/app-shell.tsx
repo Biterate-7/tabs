@@ -14,14 +14,22 @@ import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persiste
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
   addWorkspaces,
+  assignTabsToSection,
+  createSectionInWorkspace,
   createWorkspace,
+  deleteSectionInWorkspace,
   deleteWorkspace,
   getCurrentWorkspace,
+  renameSectionInWorkspace,
   renameWorkspace,
   switchWorkspace,
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
+import { ensureSectionsSeededInStore } from "@/lib/sections/migrate"
+import { organizeTabsIntoSections } from "@/lib/sections/ai/organize"
+import { computeSemanticClusterHints } from "@/lib/ai/cluster"
+import type { Section } from "@/lib/sections/types"
 import { mergeDependencies } from "@/lib/dependencies/relations"
 import { loadDependencyState, pruneDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
 import { loadCollectionState, pruneCollectionState, saveCollectionState } from "@/lib/collections/persistence"
@@ -104,7 +112,15 @@ export function AppShell() {
     const available = isStorageAvailable()
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCanPersist(available)
-    setStore(migrateToWorkspaceStore())
+    const migrated = migrateToWorkspaceStore()
+    // One-time, idempotent: seeds a root section per legacy category for any
+    // workspace that predates sections (spec §26) — never reorganizes a tab
+    // that already has one. ensureSectionsSeededInStore always returns a new
+    // top-level object, so only persist when a workspace actually changed.
+    const seeded = ensureSectionsSeededInStore(migrated)
+    const seededSomething = seeded.workspaces.some((w, i) => w !== migrated.workspaces[i])
+    setStore(seeded)
+    if (available && seededSomething) saveWorkspaceStore(seeded)
     setSidebarCollapsed(loadSidebarCollapsed())
     if (!available) {
       toast.info("Your workspace won't be saved between visits", {
@@ -169,6 +185,8 @@ export function AppShell() {
     markRecentlyAdded(tabs.map((t) => t.id))
     notifyImported(tabs.length)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    const nextWorkspace = getCurrentWorkspace(next)
+    organizeNewTabsIntoSections(nextWorkspace.id, tabs, nextWorkspace.sections ?? [])
   }
 
   function handleTabsChange(tabs: Tab[]) {
@@ -213,13 +231,112 @@ export function AppShell() {
   // closure was created with), means a resolved title always lands back in
   // the workspace it was actually resolved for — never wherever the user
   // happens to be looking by the time the fetch completes.
+  //
+  // `tabs` is useTitleResolution's own snapshot, built from whatever tabs
+  // looked like when its effect started — patching in just the `title`
+  // field by id onto the workspace's CURRENT tabs (rather than replacing
+  // the array with this stale snapshot wholesale) means a concurrent edit
+  // to some other field (category, sectionId from organizeNewTabsIntoSections,
+  // notes, ...) that landed while resolution was in flight survives instead
+  // of being silently reverted by an unrelated title update.
   function handleTitlesResolved(workspaceId: string, tabs: Tab[]) {
     setStore((prev) => {
       if (!prev) return prev
-      const next = updateWorkspaceTabs(prev, workspaceId, tabs)
+      const workspace = prev.workspaces.find((w) => w.id === workspaceId)
+      if (!workspace) return prev
+      const resolvedById = new Map(tabs.map((t) => [t.id, t]))
+      const mergedTabs = workspace.tabs.map((t) => {
+        const resolved = resolvedById.get(t.id)
+        return resolved && resolved.title !== t.title ? { ...t, title: resolved.title } : t
+      })
+      const next = updateWorkspaceTabs(prev, workspaceId, mergedTabs)
       if (canPersist) saveWorkspaceStore(next)
       return next
     })
+  }
+
+  // Runs the AI section-organization engine (src/lib/sections/ai/organize.ts)
+  // over `tabsSnapshot` and merges the result back into whichever workspace
+  // matching `workspaceId` looks like BY THE TIME THE CALL RESOLVES (a
+  // functional setStore update, same "always merge into the latest state"
+  // pattern handleTitlesResolved uses) — never the stale `store` this
+  // function's caller closed over. New sections are unioned in rather than
+  // overwriting the workspace's current list, so a section the user created
+  // while this was in flight survives. Tabs no longer present in the
+  // workspace (deleted/moved meanwhile) are silently skipped. Deliberately
+  // fire-and-forget from every call site: this NEVER blocks or fails a dump
+  // (spec §28) — organizeTabsIntoSections itself never throws, and this
+  // wrapper's own best-effort embedding-hint lookup is wrapped separately.
+  async function organizeNewTabsIntoSections(workspaceId: string, tabsSnapshot: Tab[], sectionsSnapshot: Section[]) {
+    if (tabsSnapshot.length === 0) return
+
+    let hints: Awaited<ReturnType<typeof computeSemanticClusterHints>> = []
+    try {
+      hints = await computeSemanticClusterHints([workspaceId])
+    } catch {
+      // Best-effort signal only — organizeTabsIntoSections works fine without it.
+    }
+
+    const result = await organizeTabsIntoSections(tabsSnapshot, sectionsSnapshot, hints)
+
+    setStore((prev) => {
+      if (!prev) return prev
+      const workspace = prev.workspaces.find((w) => w.id === workspaceId)
+      if (!workspace) return prev
+
+      const existingSectionIds = new Set((workspace.sections ?? []).map((s) => s.id))
+      const newSections = result.sections.filter((s) => !existingSectionIds.has(s.id))
+      const sections = [...(workspace.sections ?? []), ...newSections]
+
+      const organizedById = new Map(result.tabs.map((t) => [t.id, t]))
+      const tabs = workspace.tabs.map((t) => organizedById.get(t.id) ?? t)
+
+      const workspaces = prev.workspaces.map((w) =>
+        w.id === workspaceId ? { ...w, sections, tabs, updatedAt: Date.now() } : w
+      )
+      const next = { ...prev, workspaces }
+      if (canPersist) saveWorkspaceStore(next)
+      return next
+    })
+  }
+
+  function handleCreateSection(parentId: string | null, name: string) {
+    if (!store || !currentWorkspace) return
+    const result = createSectionInWorkspace(store, currentWorkspace.id, parentId, name, "user")
+    if (!result) {
+      toast.error("Couldn't create that section", {
+        description: parentId ? "Sections can be nested at most 3 levels deep." : undefined,
+      })
+      return
+    }
+    persist(result.store)
+  }
+
+  function handleRenameSection(id: string, name: string) {
+    if (!store || !currentWorkspace) return
+    persist(renameSectionInWorkspace(store, currentWorkspace.id, id, name))
+  }
+
+  function handleDeleteSection(id: string, reassignToSectionId?: string) {
+    if (!store || !currentWorkspace) return
+    persist(deleteSectionInWorkspace(store, currentWorkspace.id, id, reassignToSectionId))
+  }
+
+  function handleAssignTabToSection(tabId: string, sectionId: string) {
+    if (!store || !currentWorkspace) return
+    persist(assignTabsToSection(store, currentWorkspace.id, [tabId], sectionId))
+  }
+
+  async function handleReorganizeSections() {
+    if (!currentWorkspace) return
+    const unlocked = currentWorkspace.tabs.filter((t) => !t.sectionLocked)
+    if (unlocked.length === 0) {
+      toast.info("Nothing to reorganize", { description: "Every tab here has been manually placed." })
+      return
+    }
+    toast.info(`Reorganizing ${unlocked.length} tab${unlocked.length === 1 ? "" : "s"}…`)
+    await organizeNewTabsIntoSections(currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
+    toast.success("Reorganized")
   }
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
@@ -296,6 +413,13 @@ export function AppShell() {
     markRecentlyAdded(fresh.map((t) => t.id))
     notifyHistoryDumped(fresh.length, skipped)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    const nextWorkspace = getCurrentWorkspace(next)
+    // Re-resolve the just-dumped tabs from the post-merge workspace (not the
+    // pre-merge `fresh` array) so their markDuplicates-assigned `isDuplicate`
+    // flag survives — organizeNewTabsIntoSections completely replaces each
+    // organized tab object with whatever it's given.
+    const freshIds = new Set(fresh.map((t) => t.id))
+    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => freshIds.has(t.id)), nextWorkspace.sections ?? [])
     setView("workspace")
   }
 
@@ -312,6 +436,9 @@ export function AppShell() {
     markRecentlyAdded(incoming.map((t) => t.id))
     notifyImported(incoming.length)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    const nextWorkspace = getCurrentWorkspace(next)
+    const incomingIds = new Set(incoming.map((t) => t.id))
+    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => incomingIds.has(t.id)), nextWorkspace.sections ?? [])
   }
 
   useExtensionImport(handleBrowserImport)
@@ -526,6 +653,11 @@ export function AppShell() {
             onApplyAutoOrganize={handleApplyAutoOrganize}
             onDismissAutoOrganize={autoOrganize.dismiss}
             onRequestOrganize={handleRequestOrganize}
+            onCreateSection={handleCreateSection}
+            onRenameSection={handleRenameSection}
+            onDeleteSection={handleDeleteSection}
+            onAssignTabToSection={handleAssignTabToSection}
+            onReorganizeSections={handleReorganizeSections}
           />
         )}
       </div>
