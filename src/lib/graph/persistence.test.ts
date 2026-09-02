@@ -58,6 +58,23 @@ describe("graph persistence", () => {
     expect(loadGraphState().settings.filters.dependencies).toBe(false);
   });
 
+  it("defaults settings.showClusterBoundaries to true when the field is absent (backward compatibility)", () => {
+    window.localStorage.setItem(
+      "tabdump:graph:v1",
+      JSON.stringify({ settings: { filters: { domain: true } } })
+    );
+    expect(loadGraphState().settings.showClusterBoundaries).toBe(true);
+  });
+
+  it("round-trips settings.showClusterBoundaries when explicitly set to false", () => {
+    const state = {
+      ...defaultGraphState(),
+      settings: { ...defaultGraphState().settings, showClusterBoundaries: false },
+    };
+    saveGraphState(state);
+    expect(loadGraphState().settings.showClusterBoundaries).toBe(false);
+  });
+
   it("sanitizes a malformed persisted blob field-by-field rather than discarding it wholesale", () => {
     window.localStorage.setItem(
       "tabdump:graph:v1",

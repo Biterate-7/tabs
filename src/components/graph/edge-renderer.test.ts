@@ -80,6 +80,72 @@ describe("drawEdge", () => {
     drawEdge(ctx, palette, { x1: 0, y1: 0, x2: 1, y2: 1, reasons: ["domain"], isHighlighted: false, isDimmed: false });
     expect(ctx.calls.filter((c) => c === "stroke")).toHaveLength(1);
   });
+
+  it("omitting isCrossCluster/isWeak behaves like both false (regression guard)", () => {
+    const ctx = makeCtx();
+    drawEdge(ctx, palette, { x1: 0, y1: 0, x2: 1, y2: 1, reasons: ["domain"], isHighlighted: false, isDimmed: false });
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it("dims a cross-cluster edge's alpha", () => {
+    const ctx = makeCtx();
+    drawEdge(ctx, palette, {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+      reasons: ["domain"],
+      isHighlighted: false,
+      isDimmed: false,
+      isCrossCluster: true,
+    });
+    expect(ctx.globalAlpha).toBeCloseTo(0.35);
+  });
+
+  it("dims a weak edge's alpha, and compounds with isCrossCluster", () => {
+    const ctx = makeCtx();
+    drawEdge(ctx, palette, {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+      reasons: ["domain"],
+      isHighlighted: false,
+      isDimmed: false,
+      isWeak: true,
+    });
+    expect(ctx.globalAlpha).toBeCloseTo(0.6);
+
+    const ctx2 = makeCtx();
+    drawEdge(ctx2, palette, {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+      reasons: ["domain"],
+      isHighlighted: false,
+      isDimmed: false,
+      isWeak: true,
+      isCrossCluster: true,
+    });
+    expect(ctx2.globalAlpha).toBeCloseTo(0.35 * 0.6);
+  });
+
+  it("ignores isCrossCluster/isWeak when highlighted or dimmed", () => {
+    const ctx = makeCtx();
+    drawEdge(ctx, palette, {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+      reasons: ["domain"],
+      isHighlighted: true,
+      isDimmed: false,
+      isCrossCluster: true,
+      isWeak: true,
+    });
+    expect(ctx.globalAlpha).toBe(0.9);
+  });
 });
 
 describe("drawDependencyEdge", () => {

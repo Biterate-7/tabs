@@ -23,6 +23,8 @@ import { computeCollectionBoundary, pointInRect, type CollectionBoundaryRect } f
 import { buildDegreeMap } from "@/lib/graph/relations"
 import type { CameraState, GraphDependencyEdge, GraphDisplaySettings, GraphEdge, GraphNode } from "@/lib/graph/types"
 import type { CategoryId } from "@/lib/categories"
+import type { ClusterAnchorAssignment, ClusterNode, ClusterTree } from "@/lib/graph/clusters"
+import { resolveLabelOverlaps, type LabelBox } from "@/lib/graph/label-layout"
 import { faviconUrl } from "@/lib/workspace/favicon"
 import { drawNode } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
@@ -35,6 +37,7 @@ export type GraphCanvasHandle = {
   fitToView: () => void
   centerOnNode: (id: string) => void
   focusCollection: (id: string) => void
+  focusCluster: (id: string) => void
 }
 
 export type HoverInfo = {
@@ -46,6 +49,22 @@ export type HoverInfo = {
 const CLICK_DRAG_THRESHOLD = 4
 const EDGE_HIT_PADDING = 6
 const LABEL_MIN_ZOOM = 0.55
+// Zoom-dependent detail tiers for cluster labels: category labels read even
+// far zoomed out, subcategory/collection labels need a bit more zoom, and
+// individual tab labels keep their existing (unchanged) threshold above —
+// same single boolean-gate mechanism as LABEL_MIN_ZOOM, just three
+// thresholds instead of one.
+const CATEGORY_LABEL_MIN_ZOOM = 0.05
+const SUBCATEGORY_LABEL_MIN_ZOOM = 0.28
+// Below this zoom, low-degree ("minor") nodes fade toward partial opacity so
+// a zoomed-out view of a large graph reads as "major hubs + cluster shape"
+// rather than a wall of equally-loud dots — nodes are never removed, so
+// hit-testing/click/hover/drag stay unaffected at any zoom.
+const CLUSTER_OVERVIEW_ZOOM = 0.22
+const MINOR_NODE_ZOOMED_OUT_ALPHA = 0.25
+const MAJOR_DEGREE_THRESHOLD = 3
+const CATEGORY_BOUNDARY_PADDING = 40
+const SUBCATEGORY_BOUNDARY_PADDING = 28
 
 // Motion tuning. Ephemeral effects (node arrival/exit, dependency edge
 // create/remove) are duration-based so they have a definite end; continuous
@@ -89,6 +108,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   /** Collections visible in the current scope — drawn as soft boundary regions behind their member nodes (never as edges; see collection-renderer.ts). */
   collections: GraphCollection[]
   selectedCollectionId: string | null
+  /** Hierarchical Category → Subcategory (→ Collection) structure derived from the current node set — see lib/graph/clusters.ts. Drives both the anchor forces (via the physics-setup effect) and the nested boundary/label rendering below. */
+  clusterTree: ClusterTree
+  clusterAnchors: Map<string, ClusterAnchorAssignment>
+  selectedClusterId: string | null
+  onSelectCluster: (id: string | null) => void
+  showClusterBoundaries: boolean
   onCameraChange: (camera: CameraState) => void
   onSelectNode: (id: string | null) => void
   onSelectCollection: (id: string | null) => void
@@ -114,6 +139,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     searchMatches,
     collections,
     selectedCollectionId,
+    clusterTree,
+    clusterAnchors,
+    selectedClusterId,
+    onSelectCluster,
+    showClusterBoundaries,
     onCameraChange,
     onSelectNode,
     onSelectCollection,
@@ -191,6 +221,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   // rect, reused for hit-testing on click instead of recomputing it there —
   // draw() already walked every collection's visible members this frame.
   const collectionRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
+  const clusterTreeRef = useRef<ClusterTree>(clusterTree)
+  const selectedClusterIdRef = useRef(selectedClusterId)
+  const showClusterBoundariesRef = useRef(showClusterBoundaries)
+  // Same "recompute during draw(), reuse for hit-testing" convention as
+  // collectionRectsRef above, one map per structural tier.
+  const categoryRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
+  const subcategoryRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
 
   nodesRef.current = nodes
   edgesRef.current = edges
@@ -201,6 +238,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   displayRef.current = display
   collectionsRef.current = collections
   selectedCollectionIdRef.current = selectedCollectionId
+  clusterTreeRef.current = clusterTree
+  selectedClusterIdRef.current = selectedClusterId
+  showClusterBoundariesRef.current = showClusterBoundaries
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
@@ -212,7 +252,17 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const selectedCollectionMemberIdsRef = useRef(selectedCollectionMemberIds)
   selectedCollectionMemberIdsRef.current = selectedCollectionMemberIds
 
+  const selectedClusterMemberIds = useMemo(() => {
+    if (!selectedClusterId) return null
+    const cluster = clusterTree.byId.get(selectedClusterId)
+    return cluster ? new Set(cluster.totalTabIds) : null
+  }, [clusterTree, selectedClusterId])
+  const selectedClusterMemberIdsRef = useRef(selectedClusterMemberIds)
+  selectedClusterMemberIdsRef.current = selectedClusterMemberIds
+
   const degreeById = useMemo(() => buildDegreeMap(edges, dependencyEdges), [edges, dependencyEdges])
+  const degreeByIdRef = useRef(degreeById)
+  degreeByIdRef.current = degreeById
 
   // Selecting either end of a dependency counts as "connected" here — a
   // parent highlights its dependencies, and a child highlights what depends
@@ -320,13 +370,31 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
       const selectedCollectionMemberIds = selectedCollectionMemberIdsRef.current
       const isCollectionMember = Boolean(selectedCollectionMemberIds?.has(node.id))
+      const selectedClusterMemberIds = selectedClusterMemberIdsRef.current
+      const isClusterMember = Boolean(selectedClusterMemberIds?.has(node.id))
 
       let targetAlpha = 1
       if (selectedTabId && !isSelected && !isSelectionNeighbor) targetAlpha = 0.22
       if (selectedCollectionMemberIds && !isCollectionMember) targetAlpha = Math.min(targetAlpha, 0.22)
+      if (selectedClusterMemberIds && !isClusterMember) targetAlpha = Math.min(targetAlpha, 0.22)
       if (hasSearch && !isMatch) targetAlpha = Math.min(targetAlpha, 0.16)
       if (!selectedTabId && !hasSearch && hoveredId && !isHovered && !isHoverNeighbor) {
         targetAlpha = Math.min(targetAlpha, 0.35)
+      }
+      // Zoomed far out: fade low-degree "minor" nodes so a large graph reads
+      // as major hubs + cluster shape rather than a uniform wall of dots.
+      // Never applied to a selected/searched/hovered node or its neighbors —
+      // this is purely an overview aid, not another dimming priority.
+      if (
+        cameraRef.current.zoom < CLUSTER_OVERVIEW_ZOOM &&
+        !isSelected &&
+        !isSelectionNeighbor &&
+        !isCollectionMember &&
+        !isClusterMember &&
+        !isMatch &&
+        (degreeByIdRef.current.get(node.id) ?? 0) < MAJOR_DEGREE_THRESHOLD
+      ) {
+        targetAlpha = Math.min(targetAlpha, MINOR_NODE_ZOOMED_OUT_ALPHA)
       }
       const targetScale = 1
 
@@ -455,8 +523,135 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const hasSearch = Boolean(searchMatches && searchMatches.size > 0)
     const showLabels = camera.zoom >= LABEL_MIN_ZOOM
     const selectedCollectionId = selectedCollectionIdRef.current
+    const selectedClusterId = selectedClusterIdRef.current
 
-    // Collection boundaries first, so every edge/node paints on top of them —
+    // Category, then Subcategory, then Collection boundaries — outermost
+    // drawn first so nesting is purely render order, all reusing the same
+    // drawCollectionBoundary renderer at a quieter `emphasis` than a
+    // Collection's own (see collection-renderer.ts). Every edge/node still
+    // paints on top of all of them.
+    categoryRectsRef.current.clear()
+    subcategoryRectsRef.current.clear()
+    const categoryLabelCandidates: (LabelBox & { node: ClusterNode })[] = []
+    const subcategoryLabelCandidates: (LabelBox & { node: ClusterNode })[] = []
+
+    if (showClusterBoundariesRef.current) {
+      const clusterPoints = (tabIds: string[]): { x: number; y: number; radius: number }[] => {
+        const points: { x: number; y: number; radius: number }[] = []
+        for (const tabId of tabIds) {
+          const physicsNode = simulation.findNode(tabId)
+          if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
+          const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
+          points.push({ x: screen.x, y: screen.y, radius: physicsNode.radius * camera.zoom })
+        }
+        return points
+      }
+
+      const showCategoryLabels = camera.zoom >= CATEGORY_LABEL_MIN_ZOOM
+      for (const category of clusterTreeRef.current.roots) {
+        const points = clusterPoints(category.totalTabIds)
+        if (points.length === 0 || (points.length === 1 && category.id !== selectedClusterId)) continue
+        const rect = computeCollectionBoundary(points, CATEGORY_BOUNDARY_PADDING)
+        if (!rect) continue
+        categoryRectsRef.current.set(category.id, rect)
+        if (showCategoryLabels) {
+          const fontSize = Math.round(11 * display.textSize)
+          ctx.font = `${fontSize}px ${palette.fontFamily}`
+          const textWidth = ctx.measureText(category.label.toUpperCase()).width
+          categoryLabelCandidates.push({
+            id: category.id,
+            x: rect.x + 4,
+            y: rect.y - 4 - fontSize,
+            width: textWidth,
+            height: fontSize,
+            priority: 2,
+            node: category,
+          })
+        }
+      }
+
+      const showSubcategoryLabels = camera.zoom >= SUBCATEGORY_LABEL_MIN_ZOOM
+      for (const category of clusterTreeRef.current.roots) {
+        for (const sub of category.children) {
+          if (sub.kind !== "subcategory") continue
+          const points = clusterPoints(sub.totalTabIds)
+          if (points.length === 0 || (points.length === 1 && sub.id !== selectedClusterId)) continue
+          const rect = computeCollectionBoundary(points, SUBCATEGORY_BOUNDARY_PADDING)
+          if (!rect) continue
+          subcategoryRectsRef.current.set(sub.id, rect)
+          if (showSubcategoryLabels) {
+            const fontSize = Math.round(11 * display.textSize)
+            ctx.font = `${fontSize}px ${palette.fontFamily}`
+            const textWidth = ctx.measureText(sub.label.toUpperCase()).width
+            subcategoryLabelCandidates.push({
+              id: sub.id,
+              x: rect.x + 4,
+              y: rect.y - 4 - fontSize,
+              width: textWidth,
+              height: fontSize,
+              priority: 1,
+              node: sub,
+            })
+          }
+        }
+      }
+
+      const suppressedLabels = resolveLabelOverlaps([...categoryLabelCandidates, ...subcategoryLabelCandidates])
+
+      for (const candidate of categoryLabelCandidates) {
+        const rect = categoryRectsRef.current.get(candidate.id)!
+        drawCollectionBoundary(ctx, palette, rect, {
+          name: candidate.node.label,
+          isSelected: candidate.id === selectedClusterId,
+          showLabel: !suppressedLabels.has(candidate.id),
+          textSize: display.textSize,
+          emphasis: 0.6,
+        })
+      }
+      // A category with no zoom-eligible label this frame still needs its
+      // region drawn — the loop above only covers candidates that got a
+      // label box; draw the rest here without a label.
+      for (const [id, rect] of categoryRectsRef.current) {
+        if (categoryLabelCandidates.some((c) => c.id === id)) continue
+        const category = clusterTreeRef.current.byId.get(id)
+        if (!category) continue
+        drawCollectionBoundary(ctx, palette, rect, {
+          name: category.label,
+          isSelected: id === selectedClusterId,
+          showLabel: false,
+          textSize: display.textSize,
+          emphasis: 0.6,
+        })
+      }
+
+      for (const candidate of subcategoryLabelCandidates) {
+        const rect = subcategoryRectsRef.current.get(candidate.id)!
+        drawCollectionBoundary(ctx, palette, rect, {
+          name: candidate.node.label,
+          isSelected: candidate.id === selectedClusterId,
+          showLabel: !suppressedLabels.has(candidate.id),
+          textSize: display.textSize,
+          emphasis: 0.8,
+        })
+      }
+      for (const [id, rect] of subcategoryRectsRef.current) {
+        if (subcategoryLabelCandidates.some((c) => c.id === id)) continue
+        const sub = clusterTreeRef.current.byId.get(id)
+        if (!sub) continue
+        drawCollectionBoundary(ctx, palette, rect, {
+          name: sub.label,
+          isSelected: id === selectedClusterId,
+          showLabel: false,
+          textSize: display.textSize,
+          emphasis: 0.8,
+        })
+      }
+    } else {
+      categoryRectsRef.current.clear()
+      subcategoryRectsRef.current.clear()
+    }
+
+    // Collection boundaries next, so every edge/node paints on top of them —
     // a soft region behind the members, never an edge fanned out to each one
     // (see collection-renderer.ts's doc comment).
     collectionRectsRef.current.clear()
@@ -484,6 +679,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       })
     }
 
+    const clusterPathOfTab = clusterTreeRef.current.clusterPathOfTab
     for (const edge of edgesRef.current) {
       const source = simulation.findNode(edge.source)
       const target = simulation.findNode(edge.target)
@@ -493,6 +689,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const p2 = worldToScreen(camera, { x: target.x, y: target.y }, width, height)
       const isHighlighted = Boolean(neighborInfo?.edgeIds.has(edge.id))
       const isDimmed = Boolean(selectedTabId) && !isHighlighted
+      const sourceCategory = clusterPathOfTab.get(edge.source)?.[0]
+      const targetCategory = clusterPathOfTab.get(edge.target)?.[0]
+      const isCrossCluster = Boolean(sourceCategory && targetCategory && sourceCategory !== targetCategory)
+      const isWeak = edge.reasons.length === 1 && (edge.reasons[0] === "domain" || edge.reasons[0] === "workspace")
       drawEdge(ctx, palette, {
         x1: p1.x,
         y1: p1.y,
@@ -501,6 +701,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         reasons: edge.reasons,
         isHighlighted,
         isDimmed,
+        isCrossCluster,
+        isWeak,
       })
     }
 
@@ -722,17 +924,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     }
     prevDependencyEdgesRef.current = dependencyEdges
 
-    simulation.setNodes(nodes, radiusOf, positions)
+    simulation.setNodes(nodes, radiusOf, positions, (node) => clusterAnchors.get(node.id)?.categoryAnchor ?? undefined)
     const physicsEdges: GraphEdge[] = [
       ...edges,
       ...dependencyEdges.map((e) => ({ id: e.id, source: e.parentTabId, target: e.childTabId, reasons: [] })),
     ]
     simulation.setEdges(physicsEdges, display.edgeStrength)
     simulation.setCollections(collections)
+    simulation.setClusterAnchors(clusterAnchors)
     simulation.reheat(0.5)
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, dependencyEdges, collections, display.nodeSize, display.edgeStrength, centerDistances])
+  }, [nodes, edges, dependencyEdges, collections, clusterTree, clusterAnchors, display.nodeSize, display.edgeStrength, centerDistances])
 
   // Selection/search/center-node/collection highlighting only affects what
   // draw() paints, not the physics simulation — once the layout has settled
@@ -742,7 +945,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   useEffect(() => {
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTabId, centerTabId, searchMatches, selectedCollectionId])
+  }, [selectedTabId, centerTabId, searchMatches, selectedCollectionId, selectedClusterId, showClusterBoundaries])
 
   // Resize handling.
   useEffect(() => {
@@ -826,6 +1029,21 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     }
   }, [])
 
+  /** Fits the camera to every tab currently belonging to cluster `id` (its own direct members plus every descendant's, via ClusterNode.totalTabIds) — same computeFitCamera/animateCameraTo mechanism as focusCollection above, just sourced from the cluster tree instead of a Collection. */
+  function focusClusterById(id: string) {
+    const simulation = simulationRef.current!
+    const { width, height } = sizeRef.current
+    const cluster = clusterTreeRef.current.byId.get(id)
+    if (!cluster) return
+    const points = cluster.totalTabIds
+      .map((tabId) => simulation.findNode(tabId))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
+      .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
+    if (points.length === 0) return
+    const next = computeFitCamera(points, width, height)
+    animateCameraTo(next)
+  }
+
   useImperativeHandle(ref, () => ({
     zoomBy(factor: number) {
       const { width, height } = sizeRef.current
@@ -870,11 +1088,25 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const next = computeFitCamera(points, width, height)
       animateCameraTo(next)
     },
+    focusCluster(id: string) {
+      focusClusterById(id)
+    },
   }))
 
   /** Hit-tests the collection boundary rects computed by the most recent draw() call — cheap reuse instead of recomputing every member's screen position on click. */
   function hitTestCollection(screenX: number, screenY: number): string | null {
     for (const [id, rect] of collectionRectsRef.current) {
+      if (pointInRect(screenX, screenY, rect)) return id
+    }
+    return null
+  }
+
+  /** Innermost wins: a subcategory boundary is checked before its parent category's, mirroring hitTestNode's reverse-draw-order convention. */
+  function hitTestCluster(screenX: number, screenY: number): string | null {
+    for (const [id, rect] of subcategoryRectsRef.current) {
+      if (pointInRect(screenX, screenY, rect)) return id
+    }
+    for (const [id, rect] of categoryRectsRef.current) {
       if (pointInRect(screenX, screenY, rect)) return id
     }
     return null
@@ -1038,9 +1270,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       } else {
         const node = nodeById.get(id)
         if (node) {
-          // Clicking a node always wins over any collection selection —
-          // node and collection selection are mutually exclusive states.
+          // Clicking a node always wins over any collection/cluster
+          // selection — node, collection, and cluster selection are
+          // mutually exclusive states.
           onSelectCollection(null)
+          onSelectCluster(null)
           onSelectNode(node.id === selectedTabId ? null : node.id)
         }
       }
@@ -1067,10 +1301,25 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         const collectionHit = hitTestCollection(point.x, point.y)
         if (collectionHit) {
           onSelectNode(null)
+          onSelectCluster(null)
           onSelectCollection(collectionHit === selectedCollectionIdRef.current ? null : collectionHit)
+          return
+        }
+        const clusterHit = hitTestCluster(point.x, point.y)
+        if (clusterHit) {
+          onSelectNode(null)
+          onSelectCollection(null)
+          const next = clusterHit === selectedClusterIdRef.current ? null : clusterHit
+          onSelectCluster(next)
+          // Selecting a cluster also frames it — a cluster carries much less
+          // UI chrome than a Collection (no dedicated sidebar action panel),
+          // so auto-focusing on select reads as more natural than requiring
+          // a separate explicit "Focus" action.
+          if (next) focusClusterById(next)
         } else {
           onSelectNode(null)
           onSelectCollection(null)
+          onSelectCluster(null)
         }
       }
       return

@@ -1,6 +1,8 @@
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
 import type { TabDependency } from "@/lib/dependencies/types";
+import type { Section } from "@/lib/sections/types";
+import { resolveCategoryKey } from "./clusters";
 import type {
   ConnectionFilters,
   EdgeReason,
@@ -42,10 +44,6 @@ export function edgeKey(a: string, b: string): string {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
 }
 
-function categoryOf(tab: Tab): string {
-  return tab.category?.trim() || "other";
-}
-
 /**
  * Connecting every pair within a shared-attribute group is O(n^2) and turns
  * a 50-tab category into ~1,200 edges — unreadable and slow. Chaining
@@ -76,7 +74,8 @@ export function buildGraphEdges(
   tabs: Tab[],
   workspaceOf: WorkspaceLookup,
   filters: ConnectionFilters,
-  manualConnections: ManualConnection[]
+  manualConnections: ManualConnection[],
+  sections: Section[] = []
 ): GraphEdge[] {
   const validIds = new Set(tabs.map((t) => t.id));
   const raw: Array<{ a: string; b: string; reason: EdgeReason }> = [];
@@ -105,9 +104,15 @@ export function buildGraphEdges(
   }
 
   if (filters.category) {
+    // Section-tree-aware: two tabs under different Subcategories of the same
+    // root Category now correctly share a "category" edge (they used to get
+    // none at all, since tab.category is only ever set for section-less
+    // tabs) — see resolveCategoryKey's doc comment. Uses the exact same key
+    // clusters.ts's cluster tree buckets by, so an edge and a cluster
+    // boundary can never disagree about "same category."
     const byCategory = new Map<string, string[]>();
     for (const tab of tabs) {
-      const key = categoryOf(tab);
+      const key = resolveCategoryKey(tab, sections);
       const list = byCategory.get(key);
       if (list) list.push(tab.id);
       else byCategory.set(key, [tab.id]);

@@ -92,4 +92,26 @@ describe("drawCollectionBoundary", () => {
     drawCollectionBoundary(ctx, palette, rect, { name: "Physics IA", isSelected: false, showLabel: true, textSize: 1 });
     expect(ctx.calls.some((c) => c === "fillText:PHYSICS IA")).toBe(true);
   });
+
+  it("omitting emphasis behaves exactly like emphasis: 1 (regression guard for existing Collection callers)", () => {
+    const withoutEmphasis = makeCtx();
+    const alphas: number[] = []
+    withoutEmphasis.fill = () => alphas.push(withoutEmphasis.globalAlpha)
+    drawCollectionBoundary(withoutEmphasis, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1 });
+
+    const withEmphasis1 = makeCtx();
+    const alphas2: number[] = []
+    withEmphasis1.fill = () => alphas2.push(withEmphasis1.globalAlpha)
+    drawCollectionBoundary(withEmphasis1, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1, emphasis: 1 });
+
+    expect(alphas).toEqual(alphas2);
+  });
+
+  it("multiplies fill/stroke alpha by emphasis", () => {
+    const ctx = makeCtx();
+    let fillAlpha = 0
+    ctx.fill = () => { fillAlpha = ctx.globalAlpha }
+    drawCollectionBoundary(ctx, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1, emphasis: 0.6 });
+    expect(fillAlpha).toBeCloseTo(0.035 * 0.6);
+  });
 });

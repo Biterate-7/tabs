@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
 import type { TabDependency } from "@/lib/dependencies/types";
+import type { Section } from "@/lib/sections/types";
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "./relations";
 import { DEFAULT_CONNECTION_FILTERS } from "./types";
 
@@ -155,6 +156,67 @@ describe("buildGraphEdges", () => {
 
   it("produces a deterministic edge id via edgeKey regardless of argument order", () => {
     expect(edgeKey("a", "b")).toBe(edgeKey("b", "a"));
+  });
+
+  function section(overrides: Partial<Section> & { id: string; parentId: string | null }): Section {
+    return { name: overrides.id, source: "user", createdAt: 0, updatedAt: 0, ...overrides };
+  }
+
+  it("connects two tabs under different subcategories of the same root category (section-tree-aware)", () => {
+    const root = section({ id: "root-1", parentId: null });
+    const subA = section({ id: "sub-a", parentId: "root-1" });
+    const subB = section({ id: "sub-b", parentId: "root-1" });
+    const tabs = [makeTab({ id: "a", sectionId: "sub-a" }), makeTab({ id: "b", sectionId: "sub-b" })];
+    const edges = buildGraphEdges(
+      tabs,
+      new Map(),
+      { domain: false, workspace: false, category: true, group: false, section: false, manual: false, dependencies: false },
+      [],
+      [root, subA, subB]
+    );
+    expect(edges).toHaveLength(1);
+    expect(edges[0].reasons).toEqual(["category"]);
+  });
+
+  it("does not connect tabs under different root categories", () => {
+    const rootA = section({ id: "root-a", parentId: null });
+    const rootB = section({ id: "root-b", parentId: null });
+    const tabs = [makeTab({ id: "a", sectionId: "root-a" }), makeTab({ id: "b", sectionId: "root-b" })];
+    const edges = buildGraphEdges(
+      tabs,
+      new Map(),
+      { domain: false, workspace: false, category: true, group: false, section: false, manual: false, dependencies: false },
+      [],
+      [rootA, rootB]
+    );
+    expect(edges).toHaveLength(0);
+  });
+
+  it("falls back to the legacy category field when a tab has no sectionId", () => {
+    const tabs = [makeTab({ id: "a", category: "school" }), makeTab({ id: "b", category: "school" })];
+    const edges = buildGraphEdges(
+      tabs,
+      new Map(),
+      { domain: false, workspace: false, category: true, group: false, section: false, manual: false, dependencies: false },
+      [],
+      []
+    );
+    expect(edges).toHaveLength(1);
+  });
+
+  it("still buckets a tab with a dangling sectionId instead of dropping it", () => {
+    const tabs = [
+      makeTab({ id: "a", sectionId: "ghost", category: "research" }),
+      makeTab({ id: "b", category: "research" }),
+    ];
+    const edges = buildGraphEdges(
+      tabs,
+      new Map(),
+      { domain: false, workspace: false, category: true, group: false, section: false, manual: false, dependencies: false },
+      [],
+      []
+    );
+    expect(edges).toHaveLength(1);
   });
 });
 

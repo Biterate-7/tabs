@@ -12,6 +12,7 @@ import {
   type SimulationNodeDatum,
 } from "d3-force";
 import type { GraphEdge, GraphNode } from "./types";
+import type { ClusterAnchorAssignment } from "./clusters";
 
 export type PhysicsNode = SimulationNodeDatum & {
   id: string;
@@ -36,7 +37,9 @@ export type GraphSimulation = {
   setNodes: (
     nodes: GraphNode[],
     radiusOf: (node: GraphNode) => number,
-    initialPositions: Record<string, { x: number; y: number }>
+    initialPositions: Record<string, { x: number; y: number }>,
+    /** Optional seed for a brand-new node (no saved position): jitters it near this point instead of the world origin, so it appears roughly where its cluster already is instead of having to physically migrate there. */
+    anchorFallback?: (node: GraphNode) => { x: number; y: number } | undefined
   ) => void;
   setEdges: (edges: GraphEdge[], strength: number) => void;
   /**
@@ -49,13 +52,61 @@ export type GraphSimulation = {
    * see COLLECTION_FORCE_STRENGTH.
    */
   setCollections: (collections: { tabIds: string[] }[]) => void;
+  /**
+   * Installs the hierarchical Category/Subcategory anchor pull — a weak,
+   * per-tab target position derived from lib/graph/clusters.ts's
+   * deterministic cluster-anchor seeding. Unlike the collection force above,
+   * this doesn't need a live-centroid computation (the target is a fixed
+   * point per tick), so it's implemented as plain forceX/forceY accessor
+   * forces rather than a hand-rolled Force. A tab absent from `assignments`
+   * (or with a null anchor) is left untouched — the accessor falls back to
+   * the node's own current position, i.e. a true no-op.
+   */
+  setClusterAnchors: (assignments: Map<string, ClusterAnchorAssignment>) => void;
   pin: (id: string, x: number, y: number) => void;
   unpin: (id: string) => void;
   findNode: (id: string) => PhysicsNode | undefined;
 };
 
 const ALPHA_MIN = 0.005;
-const COLLECTION_FORCE_STRENGTH = 0.025;
+// Tuned together, not independently: the spec treats "subcategory" and
+// "collection" as the same attraction tier, so COLLECTION_FORCE_STRENGTH
+// sits close to SUBCATEGORY_ANCHOR_STRENGTH rather than well below it, while
+// CATEGORY_ANCHOR_STRENGTH stays the loosest (outermost) pull. All three
+// remain far below collide(0.85)/link(<=0.5) so they influence layout
+// without ever fighting node-overlap or explicit-relationship forces.
+const COLLECTION_FORCE_STRENGTH = 0.045;
+const CATEGORY_ANCHOR_STRENGTH = 0.02;
+const SUBCATEGORY_ANCHOR_STRENGTH = 0.05;
+
+/**
+ * Pulls every node toward a per-node anchor point read fresh each tick from
+ * `anchorById`/`byId` (both closed over from createGraphSimulation), rather
+ * than d3-force's built-in forceX/forceY — those cache their accessor
+ * function's result once at `initialize()` time (when `.nodes()` is set),
+ * so a `setClusterAnchors()` call arriving after `setNodes()` (the actual
+ * call order in graph-canvas.tsx's physics effect) would otherwise be
+ * silently ignored until the next full setNodes(). Reading live state each
+ * tick, like createCollectionForce below, sidesteps that entirely.
+ */
+function createClusterAnchorForce(
+  strength: number,
+  byId: Map<string, PhysicsNode>,
+  anchorById: () => Map<string, ClusterAnchorAssignment>,
+  pick: (a: ClusterAnchorAssignment) => { x: number; y: number } | null
+): Force<PhysicsNode, PhysicsLink> {
+  return ((alpha: number) => {
+    const anchors = anchorById();
+    for (const [id, node] of byId) {
+      if (node.x === undefined || node.y === undefined) continue;
+      const assignment = anchors.get(id);
+      const target = assignment ? pick(assignment) : null;
+      if (!target) continue;
+      node.vx = (node.vx ?? 0) + (target.x - node.x) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (target.y - node.y) * strength * alpha;
+    }
+  }) as Force<PhysicsNode, PhysicsLink>;
+}
 
 /** A minimal d3-force-compatible force: pulls each group of nodes toward its own centroid, scaled by alpha like any built-in force. */
 function createCollectionForce(strength: number) {
@@ -91,6 +142,20 @@ function createCollectionForce(strength: number) {
 export function createGraphSimulation(): GraphSimulation {
   const byId = new Map<string, PhysicsNode>();
   const collectionForce = createCollectionForce(COLLECTION_FORCE_STRENGTH);
+  let anchorById = new Map<string, ClusterAnchorAssignment>();
+  const getAnchorById = () => anchorById;
+  const categoryAnchorForce = createClusterAnchorForce(
+    CATEGORY_ANCHOR_STRENGTH,
+    byId,
+    getAnchorById,
+    (a) => a.categoryAnchor
+  );
+  const subcategoryAnchorForce = createClusterAnchorForce(
+    SUBCATEGORY_ANCHOR_STRENGTH,
+    byId,
+    getAnchorById,
+    (a) => a.subcategoryAnchor
+  );
 
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
     .force("charge", forceManyBody().strength(-140).distanceMax(500))
@@ -104,6 +169,8 @@ export function createGraphSimulation(): GraphSimulation {
     .force("x", forceX(0).strength(0.008))
     .force("y", forceY(0).strength(0.008))
     .force("collections", collectionForce)
+    .force("categoryAnchor", categoryAnchorForce)
+    .force("subcategoryAnchor", subcategoryAnchorForce)
     .alphaMin(ALPHA_MIN)
     .alphaDecay(0.025)
     .velocityDecay(0.32)
@@ -112,7 +179,8 @@ export function createGraphSimulation(): GraphSimulation {
   function setNodes(
     nodes: GraphNode[],
     radiusOf: (node: GraphNode) => number,
-    initialPositions: Record<string, { x: number; y: number }>
+    initialPositions: Record<string, { x: number; y: number }>,
+    anchorFallback?: (node: GraphNode) => { x: number; y: number } | undefined
   ) {
     const next: PhysicsNode[] = nodes.map((node) => {
       const existing = byId.get(node.id);
@@ -121,13 +189,22 @@ export function createGraphSimulation(): GraphSimulation {
         return existing;
       }
       const saved = initialPositions[node.id];
+      if (saved) return { id: node.id, radius: radiusOf(node), x: saved.x, y: saved.y };
+
+      // No saved position: seed near the tab's eventual cluster anchor (small
+      // jitter) when one is known, instead of scattering around the world
+      // origin — the anchor forces would otherwise have to drag a new tab
+      // across the whole canvas to reach its cluster.
+      const anchor = anchorFallback?.(node);
       const angle = Math.random() * Math.PI * 2;
-      const dist = 60 + Math.random() * 160;
+      const dist = anchor ? 24 * Math.random() : 60 + Math.random() * 160;
+      const originX = anchor?.x ?? 0;
+      const originY = anchor?.y ?? 0;
       return {
         id: node.id,
         radius: radiusOf(node),
-        x: saved?.x ?? Math.cos(angle) * dist,
-        y: saved?.y ?? Math.sin(angle) * dist,
+        x: originX + Math.cos(angle) * dist,
+        y: originY + Math.sin(angle) * dist,
       };
     });
 
@@ -157,6 +234,10 @@ export function createGraphSimulation(): GraphSimulation {
     collectionForce.setGroups(groups);
   }
 
+  function setClusterAnchors(assignments: Map<string, ClusterAnchorAssignment>) {
+    anchorById = assignments;
+  }
+
   return {
     tick: () => {
       if (simulation.alpha() > simulation.alphaMin()) simulation.tick();
@@ -168,6 +249,7 @@ export function createGraphSimulation(): GraphSimulation {
     setNodes,
     setEdges,
     setCollections,
+    setClusterAnchors,
     pin: (id, x, y) => {
       const node = byId.get(id);
       if (!node) return;

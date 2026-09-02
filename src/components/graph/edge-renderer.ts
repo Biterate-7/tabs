@@ -11,6 +11,10 @@ export type EdgeVisual = {
   reasons: EdgeReason[];
   isHighlighted: boolean;
   isDimmed: boolean;
+  /** True when the edge's two endpoints belong to different top-level cluster regions — dimmed further so cross-cluster connections stay subtle without disappearing (see clusters.ts's ClusterTree.clusterPathOfTab). Optional/falsy by default so existing callers are unaffected. */
+  isCrossCluster?: boolean;
+  /** True when the edge's only reason is a broad, low-signal relationship (currently "domain" or "workspace") — dimmed slightly so stronger signals (category/section/manual/dependency) read more clearly. Optional/falsy by default. */
+  isWeak?: boolean;
 };
 
 export type EdgeDrawContext = Pick<DrawContext, "beginPath" | "stroke"> & {
@@ -37,7 +41,7 @@ export function drawEdge(ctx: EdgeDrawContext, palette: GraphPalette, edge: Edge
   } else {
     ctx.strokeStyle = palette.edge[primaryEdgeReason(edge.reasons)];
     ctx.lineWidth = 1;
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = (edge.isCrossCluster ? 0.35 : 1) * (edge.isWeak ? 0.6 : 1);
   }
 
   ctx.stroke();

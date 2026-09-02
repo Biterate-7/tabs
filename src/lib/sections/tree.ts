@@ -27,8 +27,9 @@ const OTHER_SECTION: Section = {
   updatedAt: 0,
 };
 
-const LARGE_SHARE_THRESHOLD = 0.2;
-const COMPACT_MAX_COUNT = 1;
+/** Exported so other hierarchy-aware consumers (e.g. lib/graph/clusters.ts) can classify presence the same way a section tree does, instead of restating these thresholds. */
+export const LARGE_SHARE_THRESHOLD = 0.2;
+export const COMPACT_MAX_COUNT = 1;
 
 function buildNode(section: Section, sections: Section[], tabsBySection: Map<string, Tab[]>): SectionTreeNode {
   const children = childrenOf(sections, section.id).map((child) => buildNode(child, sections, tabsBySection));

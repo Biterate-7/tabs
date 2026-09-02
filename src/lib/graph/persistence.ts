@@ -87,6 +87,8 @@ function sanitizeSettings(value: unknown): GraphSettings {
       zoom: isFiniteNumber(camera.zoom) && camera.zoom > 0 ? camera.zoom : DEFAULT_CAMERA.zoom,
     },
     selectedTabId: typeof v.selectedTabId === "string" ? v.selectedTabId : null,
+    showClusterBoundaries:
+      typeof v.showClusterBoundaries === "boolean" ? v.showClusterBoundaries : DEFAULT_GRAPH_SETTINGS.showClusterBoundaries,
   };
 }
 

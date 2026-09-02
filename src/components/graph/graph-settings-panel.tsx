@@ -57,6 +57,8 @@ export function GraphSettingsPanel({
   onFiltersChange,
   display,
   onDisplayChange,
+  showClusterBoundaries,
+  onShowClusterBoundariesChange,
   workspaces,
   workspaceFilter,
   onWorkspaceFilterChange,
@@ -65,6 +67,8 @@ export function GraphSettingsPanel({
   onFiltersChange: (filters: ConnectionFilters) => void
   display: GraphDisplaySettings
   onDisplayChange: (display: GraphDisplaySettings) => void
+  showClusterBoundaries: boolean
+  onShowClusterBoundariesChange: (value: boolean) => void
   workspaces: { id: string; name: string }[]
   workspaceFilter: string | "all"
   onWorkspaceFilterChange: (value: string | "all") => void
@@ -91,6 +95,13 @@ export function GraphSettingsPanel({
       <div>
         <p className="text-label text-tertiary">DISPLAY</p>
         <div className="mt-2 space-y-3">
+          <label className="flex items-center gap-2 text-body-sm text-foreground">
+            <Checkbox
+              checked={showClusterBoundaries}
+              onCheckedChange={(checked) => onShowClusterBoundariesChange(checked === true)}
+            />
+            Show category regions
+          </label>
           <div>
             <p className="mb-1.5 text-body-sm text-muted-foreground">Node size</p>
             <div className="flex flex-wrap gap-1.5">

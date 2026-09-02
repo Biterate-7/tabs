@@ -42,6 +42,8 @@ export function GraphSidebar({
   onFiltersChange,
   display,
   onDisplayChange,
+  showClusterBoundaries,
+  onShowClusterBoundariesChange,
   workspaces,
   workspaceFilter,
   onWorkspaceFilterChange,
@@ -77,6 +79,8 @@ export function GraphSidebar({
   onFiltersChange: (filters: ConnectionFilters) => void
   display: GraphDisplaySettings
   onDisplayChange: (display: GraphDisplaySettings) => void
+  showClusterBoundaries: boolean
+  onShowClusterBoundariesChange: (value: boolean) => void
   workspaces: { id: string; name: string }[]
   workspaceFilter: string | "all"
   onWorkspaceFilterChange: (value: string | "all") => void
@@ -196,6 +200,8 @@ export function GraphSidebar({
             onFiltersChange={onFiltersChange}
             display={display}
             onDisplayChange={onDisplayChange}
+            showClusterBoundaries={showClusterBoundaries}
+            onShowClusterBoundariesChange={onShowClusterBoundariesChange}
             workspaces={workspaces}
             workspaceFilter={workspaceFilter}
             onWorkspaceFilterChange={onWorkspaceFilterChange}

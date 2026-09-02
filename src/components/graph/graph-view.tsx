@@ -14,6 +14,7 @@ import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popov
 import { GraphNodeNotesView } from "./graph-node-notes-view"
 import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
+import { buildClusterTree, computeClusterAnchors } from "@/lib/graph/clusters"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
 import { searchGraphNodes } from "@/lib/graph/search"
 import {
@@ -85,6 +86,7 @@ export function GraphView({
   const [notesOpenTabId, setNotesOpenTabId] = useState<string | null>(null)
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [gatherDialogState, setGatherDialogState] = useState<{ workspaceId: string; tabIds: string[] } | null>(null)
   const [renameCollectionId, setRenameCollectionId] = useState<string | null>(null)
   const [deleteCollectionId, setDeleteCollectionId] = useState<string | null>(null)
@@ -130,10 +132,30 @@ export function GraphView({
   )
   const everyNodeById = useMemo(() => new Map(everyNode.map((n) => [n.id, n])), [everyNode])
 
+  const allSections = useMemo(() => store.workspaces.flatMap((w) => w.sections ?? []), [store.workspaces])
+
   const allEdges = useMemo(
-    () => buildGraphEdges(scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections),
-    [scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections]
+    () =>
+      buildGraphEdges(
+        scopedTabs,
+        workspaceLookup,
+        graphState.settings.filters,
+        graphState.manualConnections,
+        allSections
+      ),
+    [scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections, allSections]
   )
+
+  // Hierarchical Category → Subcategory (→ Collection) structure driving the
+  // graph's clustering forces and nested boundary rendering — see
+  // lib/graph/clusters.ts. Computed from the same scoped tab set as the rest
+  // of the graph so a workspace filter narrows clusters the same way it
+  // narrows nodes/edges.
+  const clusterTree = useMemo(
+    () => buildClusterTree(scopedTabs, allSections, allCollections),
+    [scopedTabs, allSections, allCollections]
+  )
+  const clusterAnchors = useMemo(() => computeClusterAnchors(clusterTree), [clusterTree])
 
   const allDependencyEdges = useMemo(
     () => (graphState.settings.filters.dependencies ? buildDependencyEdges(scopedTabs, dependencies) : []),
@@ -405,6 +427,15 @@ export function GraphView({
     if (id) updateSettings({ selectedTabId: null })
   }
 
+  function handleSelectCluster(id: string | null) {
+    setSelectedClusterId(id)
+    if (id) updateSettings({ selectedTabId: null })
+  }
+
+  function handleShowClusterBoundariesChange(showClusterBoundaries: boolean) {
+    updateSettings({ showClusterBoundaries })
+  }
+
   function handleAddNodeToCollection(tabId: string, collectionId: string) {
     const collection = allCollections.find((c) => c.id === collectionId)
     if (!collection) return
@@ -573,6 +604,11 @@ export function GraphView({
           searchMatches={searchMatches}
           collections={allCollections}
           selectedCollectionId={selectedCollectionId}
+          clusterTree={clusterTree}
+          clusterAnchors={clusterAnchors}
+          selectedClusterId={selectedClusterId}
+          onSelectCluster={handleSelectCluster}
+          showClusterBoundaries={graphState.settings.showClusterBoundaries}
           onCameraChange={handleCameraChange}
           onSelectNode={(id) => updateSettings({ selectedTabId: id })}
           onSelectCollection={handleSelectCollection}
@@ -629,6 +665,8 @@ export function GraphView({
         onFiltersChange={handleFiltersChange}
         display={graphState.settings.display}
         onDisplayChange={handleDisplayChange}
+        showClusterBoundaries={graphState.settings.showClusterBoundaries}
+        onShowClusterBoundariesChange={handleShowClusterBoundariesChange}
         workspaces={store.workspaces.map((w) => ({ id: w.id, name: w.name }))}
         workspaceFilter={graphState.settings.workspaceFilter}
         onWorkspaceFilterChange={handleWorkspaceFilterChange}

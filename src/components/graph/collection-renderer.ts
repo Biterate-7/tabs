@@ -30,10 +30,18 @@ export function drawCollectionBoundary(
   ctx: CollectionDrawContext,
   palette: GraphPalette,
   rect: CollectionBoundaryRect,
-  options: { name: string; isSelected: boolean; showLabel: boolean; textSize: number }
+  options: {
+    name: string
+    isSelected: boolean
+    showLabel: boolean
+    textSize: number
+    /** Multiplies every alpha below — lets category/subcategory boundaries reuse this exact renderer at a quieter opacity than a Collection's, without a second boundary-drawing implementation. Defaults to 1 (byte-identical to a Collection's own rendering). */
+    emphasis?: number
+  }
 ): void {
   const { x, y, width, height } = rect;
   const color = options.isSelected ? palette.collectionBoundarySelected : palette.collectionBoundary;
+  const emphasis = options.emphasis ?? 1;
 
   ctx.save();
 
@@ -45,12 +53,12 @@ export function drawCollectionBoundary(
   ctx.closePath();
 
   ctx.fillStyle = color;
-  ctx.globalAlpha = options.isSelected ? 0.08 : 0.035;
+  ctx.globalAlpha = (options.isSelected ? 0.08 : 0.035) * emphasis;
   ctx.fill();
 
   ctx.strokeStyle = color;
   ctx.lineWidth = options.isSelected ? 1.5 : 1;
-  ctx.globalAlpha = options.isSelected ? 0.55 : 0.22;
+  ctx.globalAlpha = (options.isSelected ? 0.55 : 0.22) * emphasis;
   ctx.stroke();
 
   if (options.showLabel) {
@@ -59,7 +67,7 @@ export function drawCollectionBoundary(
     ctx.textAlign = "left";
     ctx.textBaseline = "bottom";
     ctx.fillStyle = options.isSelected ? palette.collectionBoundarySelected : palette.collectionLabel;
-    ctx.globalAlpha = options.isSelected ? 0.9 : 0.6;
+    ctx.globalAlpha = (options.isSelected ? 0.9 : 0.6) * emphasis;
     const label = truncateToWidth(ctx, options.name.toUpperCase(), LABEL_MAX_WIDTH);
     ctx.fillText(label, x + 4, y - 4);
   }

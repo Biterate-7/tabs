@@ -84,6 +84,44 @@ describe("GraphView", () => {
     expect(screen.getByText("Select a tab to see its local graph.")).toBeTruthy();
   });
 
+  it("renders without throwing for a mix of sectioned tabs, legacy-category tabs, and a cross-category collection", () => {
+    const store: WorkspaceStore = {
+      version: 1,
+      currentId: "w1",
+      workspaces: [
+        {
+          id: "w1",
+          name: "General",
+          tabs: [
+            makeTab({ id: "a", sectionId: "sub-1" }),
+            makeTab({ id: "b", sectionId: "sub-1" }),
+            makeTab({ id: "c", sectionId: "root-2" }),
+            makeTab({ id: "d", category: "news" }),
+          ],
+          sections: [
+            { id: "root-1", parentId: null, name: "School", source: "user", createdAt: 0, updatedAt: 0 },
+            { id: "sub-1", parentId: "root-1", name: "Physics", source: "user", createdAt: 0, updatedAt: 0 },
+            { id: "root-2", parentId: null, name: "Shopping", source: "user", createdAt: 0, updatedAt: 0 },
+          ],
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    };
+    window.localStorage.setItem(
+      "tabdump:collections:v1",
+      JSON.stringify({
+        version: 1,
+        collections: [{ id: "col-1", workspaceId: "w1", name: "Cross-cluster", tabIds: ["a", "c"], createdAt: 0, updatedAt: 0 }],
+      })
+    );
+
+    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.getByText("GRAPH")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /show category regions/i })).toBeTruthy();
+  });
+
   it("shows a filtered-out message when every connection filter is off", async () => {
     const user = userEvent.setup();
     // Two tabs, same domain, same (only) workspace — domain and workspace

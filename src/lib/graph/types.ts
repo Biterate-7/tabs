@@ -87,6 +87,8 @@ export type GraphSettings = {
   workspaceFilter: string | "all";
   camera: CameraState;
   selectedTabId: string | null;
+  /** Master toggle for the Category/Subcategory boundary+label rendering (lib/graph/clusters.ts) — independent of Collection boundaries, which have always been on and stay that way. */
+  showClusterBoundaries: boolean;
 };
 
 export const DEFAULT_CAMERA: CameraState = { x: 0, y: 0, zoom: 1 };
@@ -100,6 +102,7 @@ export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
   workspaceFilter: "all",
   camera: DEFAULT_CAMERA,
   selectedTabId: null,
+  showClusterBoundaries: true,
 };
 
 export type GraphPersistedState = {
