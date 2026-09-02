@@ -103,5 +103,7 @@ can't read from `config.js`).
 
 ## Regenerating icons
 
-`node scripts/generate-icons.mjs` — see that file for why icons are
-generated rather than checked in as designed assets.
+The toolbar/store icons in `icons/` (16/32/48/128px) are rasterized from the
+TabDump logo at `src/app/icon.svg` — the same mark used for the web app's
+favicon. Run `node extension/scripts/generate-icons.mjs` after changing that
+SVG to regenerate all four PNGs.
