@@ -214,7 +214,7 @@ describe("AppShell workspaces", () => {
     render(<AppShell />);
 
     await openSwitcher(user);
-    await user.click(await screen.findByText(/^Rename/));
+    await user.click(await screen.findByText(/^Edit/));
     const input = await screen.findByPlaceholderText("Workspace name");
     await user.clear(input);
     await user.type(input, "Renamed");

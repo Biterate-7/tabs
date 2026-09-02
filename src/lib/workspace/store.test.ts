@@ -16,6 +16,7 @@ import {
   renameSectionInWorkspace,
   renameWorkspace,
   switchWorkspace,
+  updateWorkspaceLogo,
   updateWorkspaceTabs,
 } from "./store";
 import type { Tab } from "@/lib/tabs/types";
@@ -91,6 +92,52 @@ describe("renameWorkspace", () => {
     );
     const next = renameWorkspace(store, "a", "A2");
     expect(next.workspaces[1].name).toBe("B");
+  });
+});
+
+describe("updateWorkspaceLogo", () => {
+  it("sets the logo on the matching workspace", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const next = updateWorkspaceLogo(store, "a", "data:image/png;base64,abc");
+    expect(next.workspaces[0].logo).toBe("data:image/png;base64,abc");
+  });
+
+  it("removes the logo field entirely (not an empty string) when given undefined", () => {
+    const store = makeStore([makeWorkspace({ id: "a", logo: "data:image/png;base64,abc" })], "a");
+    const next = updateWorkspaceLogo(store, "a", undefined);
+    expect("logo" in next.workspaces[0]).toBe(false);
+  });
+
+  it("leaves other workspaces' logos untouched", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({ id: "a", logo: "data:image/png;base64,a" }),
+        makeWorkspace({ id: "b", logo: "data:image/png;base64,b" }),
+      ],
+      "a"
+    );
+    const next = updateWorkspaceLogo(store, "a", "data:image/png;base64,new");
+    expect(next.workspaces[1].logo).toBe("data:image/png;base64,b");
+  });
+
+  it("does not touch tabs, sections, or other fields", () => {
+    const store = makeStore(
+      [makeWorkspace({ id: "a", tabs: [makeTab("1")], sections: [{ id: "s1", parentId: null, name: "S", source: "user", createdAt: 0, updatedAt: 0 }] })],
+      "a"
+    );
+    const next = updateWorkspaceLogo(store, "a", "data:image/png;base64,abc");
+    expect(next.workspaces[0].tabs).toEqual(store.workspaces[0].tabs);
+    expect(next.workspaces[0].sections).toEqual(store.workspaces[0].sections);
+  });
+
+  it("is a no-op (same store reference) when the value already matches", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    expect(updateWorkspaceLogo(store, "a", undefined)).toBe(store);
+  });
+
+  it("ignores an unknown workspace id", () => {
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    expect(updateWorkspaceLogo(store, "missing", "data:image/png;base64,abc")).toBe(store);
   });
 });
 

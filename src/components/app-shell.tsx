@@ -23,6 +23,7 @@ import {
   renameSectionInWorkspace,
   renameWorkspace,
   switchWorkspace,
+  updateWorkspaceLogo,
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
@@ -480,6 +481,11 @@ export function AppShell() {
     persist(renameWorkspace(store, id, name))
   }
 
+  function handleUpdateWorkspaceLogo(id: string, logo: string | undefined) {
+    if (!store) return
+    persist(updateWorkspaceLogo(store, id, logo))
+  }
+
   function handleDeleteWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
@@ -629,6 +635,7 @@ export function AppShell() {
         onRename={handleRenameWorkspace}
         onDelete={handleDeleteWorkspace}
         onImportFile={handleImportJson}
+        onUpdateLogo={handleUpdateWorkspaceLogo}
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}

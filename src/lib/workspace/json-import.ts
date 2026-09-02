@@ -3,6 +3,7 @@ import { dependencyId, mergeDependencies } from "@/lib/dependencies/relations";
 import { DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import { EXPORT_VERSION } from "./json-export";
+import { isValidLogoDataUrl } from "./logo";
 import type { Tab } from "@/lib/tabs/types";
 import type { Collection } from "@/lib/collections/types";
 import type { Section, SectionSource } from "@/lib/sections/types";
@@ -221,6 +222,10 @@ function sanitizeWorkspace(
   const { groups, skipped: skippedGroups, idMap: groupIdMap } = sanitizeGroups(raw.groups);
   const { sections, skipped: skippedSections, idMap: sectionIdMap } = sanitizeSections(raw.sections, now);
   const { tabs, skipped, idMap: tabIdMap } = sanitizeTabs(raw.tabs, groupIdMap, sectionIdMap);
+  // "Sanitize, don't fail," same as everything else here: a malformed,
+  // oversized, or pre-feature-missing `logo` just means no logo, never a
+  // rejected import.
+  const logo = typeof raw.logo === "string" && isValidLogoDataUrl(raw.logo) ? raw.logo : undefined;
 
   const workspace: Workspace = {
     id: createId("workspace"),
@@ -228,6 +233,7 @@ function sanitizeWorkspace(
     tabs,
     ...(groups !== undefined ? { groups } : {}),
     ...(sections !== undefined ? { sections } : {}),
+    ...(logo !== undefined ? { logo } : {}),
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };

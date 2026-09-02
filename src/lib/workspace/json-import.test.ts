@@ -152,6 +152,74 @@ describe("parseWorkspaceExport", () => {
     expect(result.workspaces[0].name).toBe("Untitled");
   });
 
+  it("round-trips a workspace's logo through export and import", () => {
+    const logo = `data:image/png;base64,${"A".repeat(100)}`;
+    const workspace = makeWorkspace({ id: "a", logo });
+    const text = serializeWorkspaceExport(buildWorkspaceExport([workspace]));
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].logo).toBe(logo);
+  });
+
+  it("imports a workspace with no logo without adding one", () => {
+    const text = serializeWorkspaceExport(buildWorkspaceExport([makeWorkspace({ id: "a" })]));
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].logo).toBeUndefined();
+  });
+
+  it("imports an old export with no `logo` field at all (pre-logo backward compatibility)", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Legacy", tabs: [], createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].logo).toBeUndefined();
+  });
+
+  it("drops a malformed logo (wrong shape) rather than rejecting the whole workspace", () => {
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [
+        { id: "a", name: "Odd", tabs: [], createdAt: 1, updatedAt: 1, logo: "not-a-data-url" },
+        { id: "b", name: "Also odd", tabs: [], createdAt: 1, updatedAt: 1, logo: 12345 },
+      ],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].logo).toBeUndefined();
+    expect(result.workspaces[1].logo).toBeUndefined();
+  });
+
+  it("drops an oversized logo rather than rejecting the whole workspace", () => {
+    const hugeLogo = `data:image/png;base64,${"A".repeat(800_000)}`;
+    const text = JSON.stringify({
+      version: 1,
+      exportedAt: "now",
+      workspaces: [{ id: "a", name: "Huge", tabs: [], createdAt: 1, updatedAt: 1, logo: hugeLogo }],
+    });
+
+    const result = parseWorkspaceExport(text);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.workspaces[0].logo).toBeUndefined();
+  });
+
   it("round-trips a workspace's groups through export and import", () => {
     const workspace = makeWorkspace({
       id: "a",

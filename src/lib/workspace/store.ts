@@ -48,6 +48,28 @@ export function renameWorkspace(store: WorkspaceStore, id: string, name: string)
   };
 }
 
+/**
+ * Sets or clears `workspaceId`'s `logo` (a data URL — see
+ * src/lib/workspace/logo.ts). Passing `undefined` removes the field entirely
+ * rather than storing an empty string, so a workspace with no custom logo
+ * looks exactly like one that predates this feature. No-ops (same store
+ * reference) when the requested value already matches, and never touches any
+ * other workspace's fields.
+ */
+export function updateWorkspaceLogo(store: WorkspaceStore, id: string, logo: string | undefined): WorkspaceStore {
+  const now = Date.now();
+  const workspaces = store.workspaces.map((w) => {
+    if (w.id !== id || w.logo === logo) return w;
+    if (logo === undefined) {
+      const copy = { ...w, updatedAt: now };
+      delete copy.logo;
+      return copy;
+    }
+    return { ...w, logo, updatedAt: now };
+  });
+  return workspaces.every((w, i) => w === store.workspaces[i]) ? store : { ...store, workspaces };
+}
+
 export function switchWorkspace(store: WorkspaceStore, id: string): WorkspaceStore {
   if (!store.workspaces.some((w) => w.id === id)) return store;
   return { ...store, currentId: id };

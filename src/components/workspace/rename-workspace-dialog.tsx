@@ -10,17 +10,23 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { WorkspaceLogoUploader } from "@/components/workspace/workspace-logo-uploader"
 
 export function RenameWorkspaceDialog({
   open,
   onOpenChange,
   currentName,
   onRename,
+  logo,
+  onLogoChange,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentName: string
   onRename: (name: string) => void
+  logo?: string
+  /** Applies immediately (upload/remove aren't gated behind the Save button below) — see WorkspaceLogoUploader's doc comment. */
+  onLogoChange: (logo: string | undefined) => void
 }) {
   // Callers key this component by workspace id (see workspace-switcher.tsx),
   // so a fresh mount — and thus a fresh `currentName` seed — happens
@@ -40,7 +46,7 @@ export function RenameWorkspaceDialog({
       <DialogContent>
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Rename workspace</DialogTitle>
+            <DialogTitle>Edit workspace</DialogTitle>
           </DialogHeader>
           <Input
             autoFocus
@@ -49,6 +55,7 @@ export function RenameWorkspaceDialog({
             placeholder="Workspace name"
             className="mt-4"
           />
+          <WorkspaceLogoUploader workspaceName={currentName} logo={logo} onChange={onLogoChange} />
           <DialogFooter>
             <Button type="submit" disabled={!name.trim()}>
               Save

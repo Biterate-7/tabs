@@ -12,7 +12,7 @@ import {
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
 import { RenameWorkspaceDialog } from "@/components/workspace/rename-workspace-dialog"
 import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-dialog"
-import { avatarFallback } from "@/lib/workspace/favicon"
+import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -24,6 +24,7 @@ export function WorkspaceSwitcher({
   onRename,
   onDelete,
   onImportFile,
+  onUpdateLogo,
   collapsed = false,
 }: {
   workspaces: Workspace[]
@@ -34,6 +35,7 @@ export function WorkspaceSwitcher({
   onDelete: (id: string) => void
   /** Reads and hands off the raw text of a user-picked .json file. */
   onImportFile: (text: string) => void
+  onUpdateLogo: (id: string, logo: string | undefined) => void
   /** Renders the trigger as a compact icon badge with no name text, for the icon-rail sidebar. */
   collapsed?: boolean
 }) {
@@ -50,7 +52,6 @@ export function WorkspaceSwitcher({
   }
 
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
-  const { letter, colorVar } = avatarFallback(current?.name ?? "")
 
   return (
     <>
@@ -60,18 +61,18 @@ export function WorkspaceSwitcher({
             collapsed ? (
               <button
                 type="button"
-                className="mx-auto flex size-8 shrink-0 items-center justify-center rounded-md text-[0.65rem] font-semibold text-white transition-transform duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]"
-                style={{ backgroundColor: `var(${colorVar})` }}
+                className="mx-auto flex shrink-0 items-center justify-center transition-transform duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]"
                 aria-label="Switch workspace"
               >
-                {letter}
+                <WorkspaceAvatar workspace={current ?? { name: "" }} size={32} />
               </button>
             ) : (
               <button
                 type="button"
-                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-subtle"
+                className="flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-subtle"
                 aria-label="Switch workspace"
               >
+                <WorkspaceAvatar workspace={current ?? { name: "" }} size={24} />
                 <span className="truncate text-body font-semibold tracking-tight text-foreground">
                   {current?.name ?? "Workspace"}
                 </span>
@@ -85,6 +86,7 @@ export function WorkspaceSwitcher({
             <DropdownMenuItem key={w.id} onClick={() => onSwitch(w.id)} className="justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1.5">
                 <Check className={cn("size-3.5 shrink-0", w.id !== currentId && "invisible")} />
+                <WorkspaceAvatar workspace={w} size={20} />
                 <span className="truncate">{w.name}</span>
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">{w.tabs.length}</span>
@@ -100,7 +102,7 @@ export function WorkspaceSwitcher({
             <Upload /> Import from JSON…
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-            <Pencil /> Rename &quot;{current?.name}&quot;
+            <Pencil /> Edit &quot;{current?.name}&quot;
           </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
             <Trash2 /> Delete &quot;{current?.name}&quot;
@@ -127,6 +129,8 @@ export function WorkspaceSwitcher({
             onOpenChange={setRenameOpen}
             currentName={current.name}
             onRename={(name) => onRename(current.id, name)}
+            logo={current.logo}
+            onLogoChange={(logo) => onUpdateLogo(current.id, logo)}
           />
           <DeleteWorkspaceDialog
             open={deleteOpen}

@@ -4,7 +4,7 @@ import { History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Way
 import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
-import { avatarFallback } from "@/lib/workspace/favicon"
+import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -39,6 +39,7 @@ export function AppSidebar({
   onRename,
   onDelete,
   onImportFile,
+  onUpdateLogo,
   onOpenFavorites,
   onOpenRecents,
   onOpenHistoryDump,
@@ -60,6 +61,7 @@ export function AppSidebar({
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onImportFile: (text: string) => void
+  onUpdateLogo: (id: string, logo: string | undefined) => void
   onOpenFavorites: () => void
   onOpenRecents: () => void
   onOpenHistoryDump: () => void
@@ -115,6 +117,7 @@ export function AppSidebar({
           onRename={onRename}
           onDelete={onDelete}
           onImportFile={onImportFile}
+          onUpdateLogo={onUpdateLogo}
           collapsed={!showLabels}
         />
         {showLabels && current && (
@@ -132,7 +135,6 @@ export function AppSidebar({
         <div className="flex flex-col gap-1">
           {workspaces.map((w) => {
             const isActive = w.id === currentId
-            const { letter, colorVar } = avatarFallback(w.name)
             const relationships = relationshipCounts[w.id] ?? 0
             return (
               <Tooltip key={w.id}>
@@ -148,12 +150,7 @@ export function AppSidebar({
                         isActive ? "border-primary/30 bg-primary/10" : "hover:bg-accent"
                       )}
                     >
-                      <span
-                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-[0.65rem] font-semibold text-white"
-                        style={{ backgroundColor: `var(${colorVar})` }}
-                      >
-                        {letter}
-                      </span>
+                      <WorkspaceAvatar workspace={w} size={24} />
                       {showLabels && (
                         <span className="ml-auto shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
                       )}
