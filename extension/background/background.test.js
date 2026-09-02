@@ -185,7 +185,47 @@ describe("MSG_DUMP_TABS dispatch", () => {
       listener({ type: MSG_DUMP_TABS, payload: {} }, {}, resolve);
     });
 
-    expect(response).toEqual({ ok: false, reason: "delivery-failed", count: 1 });
+    expect(response).toEqual({
+      ok: false,
+      reason: "delivery-failed",
+      count: 1,
+      detail: "Receiving end does not exist.",
+    });
+  });
+
+  it("reports tab-open-failed, distinct from delivery-failed, when finding/opening the TabDump tab itself throws", async () => {
+    chrome.tabs.query.mockImplementation(async (query) => {
+      if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
+      if (query.url) throw new Error("This browser API function requires a user gesture to run.");
+      return [];
+    });
+
+    const listener = await getDumpTabsListener();
+    const response = await new Promise((resolve) => {
+      listener({ type: MSG_DUMP_TABS, payload: {} }, {}, resolve);
+    });
+
+    expect(response).toEqual({
+      ok: false,
+      reason: "tab-open-failed",
+      count: 1,
+      detail: "This browser API function requires a user gesture to run.",
+    });
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports unexpected-error with the underlying message when chrome.tabs.query itself throws", async () => {
+    chrome.tabs.query.mockImplementation(async (query) => {
+      if (query.currentWindow) throw new Error("boom");
+      return [];
+    });
+
+    const listener = await getDumpTabsListener();
+    const response = await new Promise((resolve) => {
+      listener({ type: MSG_DUMP_TABS, payload: {} }, {}, resolve);
+    });
+
+    expect(response).toEqual({ ok: false, reason: "unexpected-error", count: 0, detail: "boom" });
   });
 });
 

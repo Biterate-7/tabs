@@ -112,3 +112,8 @@ body {
 .popup__error {
   color: #f87171;
 }
+
+.popup__detail {
+  font-size: 11px;
+  word-break: break-word;
+}

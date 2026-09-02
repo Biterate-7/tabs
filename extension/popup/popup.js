@@ -11,6 +11,7 @@ const els = {
   importStatus: document.getElementById("import-status"),
   successCount: document.getElementById("success-count"),
   errorMessage: document.getElementById("error-message"),
+  errorDetail: document.getElementById("error-detail"),
   preview: document.getElementById("tab-preview"),
   dumpButton: document.getElementById("dump-button"),
   retryButton: document.getElementById("retry-button"),
@@ -114,6 +115,36 @@ async function detectTabs() {
   updateReadyUi(payload.tabs, existingUrls);
 }
 
+// Maps a failed MSG_DUMP_TABS response's `reason` to copy a user can act
+// on. Each reason corresponds to a distinct failure point in the pipeline
+// (see background.js's dumpTabs) so "it didn't work" reports can actually
+// be told apart: a stale/wrong TabDump tab that never got a content script
+// attached looks nothing like TabDump's own tab-open call failing outright.
+function describeDumpFailure(response) {
+  switch (response?.reason) {
+    case "no-importable-tabs":
+      return { message: "No importable tabs in this window." };
+    case "tab-open-failed":
+      return { message: "Couldn't open or find the TabDump tab.", detail: response.detail };
+    case "delivery-failed":
+      return {
+        message: "TabDump didn't respond in that tab. Reload the TabDump page and try again.",
+        detail: response.detail,
+      };
+    case "unexpected-error":
+      return { message: "Something unexpected went wrong while dumping.", detail: response.detail };
+    default:
+      return { message: "Couldn't reach TabDump. Is it running?", detail: response?.reason };
+  }
+}
+
+function showError({ message, detail }) {
+  els.errorMessage.textContent = message;
+  els.errorDetail.textContent = detail ?? "";
+  els.errorDetail.hidden = !detail;
+  showState(els.error);
+}
+
 async function dumpTabs() {
   showState(els.dumping);
   try {
@@ -130,15 +161,17 @@ async function dumpTabs() {
       showState(els.success);
       setTimeout(() => window.close(), 900);
     } else {
-      els.errorMessage.textContent =
-        response?.reason === "no-importable-tabs"
-          ? "No importable tabs in this window."
-          : "Couldn't reach TabDump. Is it running?";
-      showState(els.error);
+      showError(describeDumpFailure(response));
     }
-  } catch {
-    els.errorMessage.textContent = "Couldn't reach TabDump. Is it running?";
-    showState(els.error);
+  } catch (err) {
+    // chrome.runtime.sendMessage itself rejected/threw — the background
+    // service worker never answered at all (distinct from it answering with
+    // an error result, handled above), e.g. right after an extension
+    // reload/update invalidates this popup's connection.
+    showError({
+      message: "Couldn't reach the TabDump extension's background service.",
+      detail: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

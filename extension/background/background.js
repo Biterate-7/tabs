@@ -18,18 +18,36 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Renders any caught value into a plain, safe-to-display string. Every
+// error surfaced this way originates locally (chrome.* API rejections, or
+// this file's own thrown errors) — never a server response — so there's
+// nothing secret in it, just something concrete enough to tell "content
+// script never attached" apart from "tab failed to open" when a user
+// reports "dumping tabs failed" with no other detail to go on.
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Resolves to `{ delivered, lastError }` rather than a bare boolean so a
+// failure after every retry still carries *why* the last attempt failed
+// (e.g. Chrome's own "Could not establish connection. Receiving end does
+// not exist." — the standard symptom of the content script never having
+// matched this tab's URL at all, as opposed to it merely not being ready
+// yet) back to dumpTabs(), and from there to the popup's error state.
 async function sendImportToTab(tabId, payload) {
+  let lastError;
   for (const delay of [0, ...SEND_RETRY_DELAYS_MS]) {
     if (delay) await sleep(delay);
     try {
       await chrome.tabs.sendMessage(tabId, { type: MSG_TABDUMP_IMPORT, payload });
-      return true;
-    } catch {
-      // Receiving end not ready yet (or gone) — try again, or give up after
-      // the last attempt.
+      return { delivered: true };
+    } catch (err) {
+      // Receiving end not ready yet (or gone) — try again, or give up and
+      // report this after the last attempt.
+      lastError = err;
     }
   }
-  return false;
+  return { delivered: false, lastError: errorMessage(lastError) };
 }
 
 const TAB_READY_TIMEOUT_MS = 8000;
@@ -113,12 +131,23 @@ async function dumpTabs(excludeUrls) {
     return { result: { ok: false, reason: "no-importable-tabs", count: 0 } };
   }
 
-  const { tabId, focusWindowId } = await findOrOpenTabDumpTab();
-  const delivered = await sendImportToTab(tabId, payload);
+  let tabId, focusWindowId;
+  try {
+    ({ tabId, focusWindowId } = await findOrOpenTabDumpTab());
+  } catch (err) {
+    // chrome.tabs.query/create/update itself failed — distinct from a
+    // *found* tab simply not answering (see "delivery-failed" below), so
+    // this never gets misreported as "TabDump didn't respond".
+    return {
+      result: { ok: false, reason: "tab-open-failed", count: payload.tabs.length, detail: errorMessage(err) },
+    };
+  }
+
+  const { delivered, lastError } = await sendImportToTab(tabId, payload);
 
   const result = delivered
     ? { ok: true, count: payload.tabs.length }
-    : { ok: false, reason: "delivery-failed", count: payload.tabs.length };
+    : { ok: false, reason: "delivery-failed", count: payload.tabs.length, detail: lastError };
 
   return { result, focusWindowId };
 }
@@ -146,7 +175,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     })
     .catch((err) => {
       console.error("TabDump: dumpTabs failed", err);
-      sendResponse({ ok: false, reason: "unexpected-error", count: 0 });
+      sendResponse({ ok: false, reason: "unexpected-error", count: 0, detail: errorMessage(err) });
     });
 
   return true; // keep the message channel open for the async sendResponse
