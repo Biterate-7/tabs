@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { drawNode, type DrawContext } from "./node-renderer";
 import type { GraphPalette } from "@/lib/graph/palette";
 
-function makeCtx(): DrawContext & { calls: string[] } {
+function makeCtx(): DrawContext & { calls: string[]; arcCalls: number[][] } {
   const calls: string[] = [];
+  const arcCalls: number[][] = [];
   const ctx = {
     calls,
+    arcCalls,
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 1,
@@ -16,7 +18,10 @@ function makeCtx(): DrawContext & { calls: string[] } {
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
-    arc: () => calls.push("arc"),
+    arc: (x: number, y: number, radius: number) => {
+      calls.push("arc");
+      arcCalls.push([x, y, radius]);
+    },
     fill: () => calls.push("fill"),
     stroke: () => calls.push("stroke"),
     clip: () => calls.push("clip"),
@@ -98,6 +103,66 @@ describe("drawNode", () => {
     });
     expect(ctx.calls).toContain("clip");
     expect(ctx.calls).toContain("drawImage");
+  });
+
+  it("clips the favicon to a circle of exactly `radius` — the body's real footprint is that circle, not the square drawImage() paints into", () => {
+    // drawImage's own bounding box is a `radius*2` square, but it's only
+    // ever invoked right after beginPath()+arc()+clip(), so every pixel
+    // outside the arc's circle is discarded before it reaches the screen.
+    // This is what src/lib/graph/engine.ts's collision-radius math relies on.
+    const ctx = makeCtx();
+    const favicon = { complete: true, naturalWidth: 16 } as unknown as HTMLImageElement;
+    drawNode(ctx, palette, {
+      x: 20,
+      y: 30,
+      radius: 8,
+      label: "",
+      color: "#000",
+      favicon,
+      isSelected: false,
+      isHovered: false,
+      isCenter: false,
+      isDimmed: false,
+      isMatch: false,
+      showLabel: false,
+      textSize: 1,
+    });
+    const clipIndex = ctx.calls.indexOf("clip");
+    const drawImageIndex = ctx.calls.indexOf("drawImage");
+    const arcIndex = ctx.calls.lastIndexOf("arc", clipIndex);
+    expect(arcIndex).toBeGreaterThanOrEqual(0);
+    expect(arcIndex).toBeLessThan(clipIndex);
+    expect(clipIndex).toBeLessThan(drawImageIndex);
+    // The arc immediately preceding the clip is the clip boundary itself —
+    // confirm it's centered on the node at exactly `radius`.
+    const arcCallsBeforeClip = ctx.arcCalls.length;
+    expect(arcCallsBeforeClip).toBeGreaterThan(0);
+    const [ax, ay, aradius] = ctx.arcCalls[0];
+    expect(ax).toBe(20);
+    expect(ay).toBe(30);
+    expect(aradius).toBe(8);
+  });
+
+  it("scales the visible circle by visualScale, not just the collision radius", () => {
+    const ctx = makeCtx();
+    drawNode(ctx, palette, {
+      x: 0,
+      y: 0,
+      radius: 10,
+      label: "",
+      color: "#000",
+      favicon: null,
+      isSelected: false,
+      isHovered: false,
+      isCenter: false,
+      isDimmed: false,
+      isMatch: false,
+      showLabel: false,
+      textSize: 1,
+      visualScale: 0.5,
+    });
+    const [, , aradius] = ctx.arcCalls[0];
+    expect(aradius).toBe(5);
   });
 
   it("ignores an incomplete favicon image and falls back to the fill color", () => {
