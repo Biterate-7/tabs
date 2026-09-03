@@ -158,12 +158,12 @@ export function createGraphSimulation(): GraphSimulation {
   );
 
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
-    .force("charge", forceManyBody().strength(-140).distanceMax(500))
+    .force("charge", forceManyBody().strength(-260).distanceMax(600))
     .force(
       "collide",
       forceCollide<PhysicsNode>()
-        .radius((n) => n.radius + 8)
-        .strength(0.85)
+        .radius((n) => n.radius + 26)
+        .strength(0.9)
     )
     .force("center", forceCenter(0, 0).strength(0.015))
     .force("x", forceX(0).strength(0.008))
@@ -222,7 +222,7 @@ export function createGraphSimulation(): GraphSimulation {
       "link",
       forceLink<PhysicsNode, PhysicsLink>(links)
         .id((n) => n.id)
-        .distance(70)
+        .distance(100)
         .strength(Math.max(0.02, Math.min(1, strength)) * 0.5)
     );
   }
