@@ -79,6 +79,29 @@ const COLLECTION_FORCE_STRENGTH = 0.045;
 const CATEGORY_ANCHOR_STRENGTH = 0.02;
 const SUBCATEGORY_ANCHOR_STRENGTH = 0.05;
 
+// The node body is rendered as a circle of `node.radius` (node-renderer.ts
+// draws/clips the favicon into `arc(x, y, radius, ...)`), but its actual
+// on-screen footprint — the square the favicon image is drawn into
+// (`drawImage(x - radius, y - radius, radius * 2, radius * 2)`) — is a
+// `2*radius` square. A collision radius of `radius + buffer` only keeps two
+// *circles* apart; it does not keep two *squares* apart, because two circles
+// can be "touching" while their bounding squares still overlap at the
+// corners (worst case: the squares approach each other diagonally). To
+// guarantee the squares themselves never overlap — with at least
+// NODE_MIN_EDGE_GAP of clear space between their edges, from any angle of
+// approach — pad each node's square by half the desired gap on every side,
+// then use the circle that circumscribes *that* padded square as the
+// collision radius. If two such circles never overlap (which is exactly
+// what forceCollide enforces), the padded squares can't overlap either
+// (basic AABB separating-axis argument: for any direction, at least one
+// axis of the offset must be >= the circle radius / sqrt(2), which is
+// exactly the padded half-width) — so the original, unpadded squares stay
+// at least NODE_MIN_EDGE_GAP apart.
+export const NODE_MIN_EDGE_GAP = 36;
+export function nodeCollisionRadius(radius: number): number {
+  return (radius + NODE_MIN_EDGE_GAP / 2) * Math.SQRT2;
+}
+
 /**
  * Pulls every node toward a per-node anchor point read fresh each tick from
  * `anchorById`/`byId` (both closed over from createGraphSimulation), rather
@@ -162,7 +185,7 @@ export function createGraphSimulation(): GraphSimulation {
     .force(
       "collide",
       forceCollide<PhysicsNode>()
-        .radius((n) => n.radius + 26)
+        .radius((n) => nodeCollisionRadius(n.radius))
         .strength(0.9)
     )
     .force("center", forceCenter(0, 0).strength(0.015))

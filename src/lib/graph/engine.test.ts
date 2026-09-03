@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createGraphSimulation } from "./engine";
+import { createGraphSimulation, NODE_MIN_EDGE_GAP, nodeCollisionRadius } from "./engine";
+import { MAX_NODE_RADIUS } from "./node-size";
 import type { GraphNode } from "./types";
 
 function makeGraphNode(id: string): GraphNode {
@@ -99,6 +100,67 @@ describe("createGraphSimulation cluster anchor forces", () => {
     sim.reheat(1);
     for (let i = 0; i < 10; i++) sim.tick();
     expect(sim.findNode("a")).toBeDefined();
+  });
+
+  it("nodeCollisionRadius circumscribes the padded visible square (guarantees square-square separation from any angle)", () => {
+    // For any radius, a circle of this size, when kept apart from another
+    // such circle by forceCollide, guarantees the two nodes' visible
+    // 2*radius squares stay at least NODE_MIN_EDGE_GAP apart edge-to-edge —
+    // even in the worst-case diagonal approach — because
+    // radius * sqrt(2) is exactly the circle that circumscribes a square of
+    // that half-width.
+    const r = MAX_NODE_RADIUS;
+    const halfWidthPadded = r + NODE_MIN_EDGE_GAP / 2;
+    expect(nodeCollisionRadius(r)).toBeCloseTo(halfWidthPadded * Math.SQRT2, 5);
+  });
+
+  it("settles a dense cluster of max-size nodes with no overlapping visible squares", () => {
+    const sim = createGraphSimulation();
+    const N = 60;
+    const nodes: GraphNode[] = [];
+    const positions: Record<string, { x: number; y: number }> = {};
+    for (let i = 0; i < N; i++) {
+      const id = `n${i}`;
+      nodes.push(makeGraphNode(id));
+      // Seed every node on top of each other (worst case for the collide
+      // force to untangle) rather than pre-spread them.
+      positions[id] = { x: 0, y: 0 };
+    }
+    sim.setNodes(nodes, () => MAX_NODE_RADIUS, positions);
+    sim.setEdges([], 1);
+    // All nodes share one subcategory anchor, like a single dense cluster in
+    // the real graph — the anchor pull keeps trying to collapse them back
+    // together while collide has to hold them apart.
+    sim.setClusterAnchors(
+      new Map(nodes.map((n) => [n.id, { categoryAnchor: { x: 0, y: 0 }, subcategoryAnchor: { x: 0, y: 0 } }]))
+    );
+    sim.reheat(1);
+
+    let ticks = 0;
+    while (!sim.isSettled() && ticks < 5000) {
+      sim.tick();
+      ticks++;
+    }
+    expect(sim.isSettled()).toBe(true);
+
+    const side = MAX_NODE_RADIUS * 2;
+    let minEdgeGap = Infinity;
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const a = sim.findNode(`n${i}`)!;
+        const b = sim.findNode(`n${j}`)!;
+        const dx = Math.abs(a.x! - b.x!);
+        const dy = Math.abs(a.y! - b.y!);
+        // Two axis-aligned squares (side `side`, centered on each node) are
+        // separated exactly when they don't overlap on at least one axis.
+        const overlapsX = dx < side;
+        const overlapsY = dy < side;
+        expect(overlapsX && overlapsY).toBe(false);
+        const edgeGap = Math.max(dx, dy) - side;
+        minEdgeGap = Math.min(minEdgeGap, edgeGap);
+      }
+    }
+    expect(minEdgeGap).toBeGreaterThan(0);
   });
 
   it("leaves a node absent from the assignment map unaffected by the anchor forces", () => {

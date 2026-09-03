@@ -1,7 +1,7 @@
 import type { NodeSizeMode } from "./types";
 
 export const BASE_NODE_RADIUS = 5;
-const MAX_NODE_RADIUS = 13;
+export const MAX_NODE_RADIUS = 13;
 
 /**
  * Node radius in world units. Capped so a heavily-connected hub never
