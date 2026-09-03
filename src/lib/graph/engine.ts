@@ -69,15 +69,24 @@ export type GraphSimulation = {
 };
 
 const ALPHA_MIN = 0.005;
-// Tuned together, not independently: the spec treats "subcategory" and
-// "collection" as the same attraction tier, so COLLECTION_FORCE_STRENGTH
-// sits close to SUBCATEGORY_ANCHOR_STRENGTH rather than well below it, while
-// CATEGORY_ANCHOR_STRENGTH stays the loosest (outermost) pull. All three
-// remain far below collide(0.85)/link(<=0.5) so they influence layout
-// without ever fighting node-overlap or explicit-relationship forces.
+// Tuned together, not independently: CATEGORY_ANCHOR_STRENGTH stays the
+// loosest (outermost) pull, SUBCATEGORY_ANCHOR_STRENGTH pulls tighter, and
+// COLLECTION_FORCE_STRENGTH sits near the subcategory tier. All three remain
+// far below collide(0.9)/link(<=0.5) so they influence layout without ever
+// fighting node-overlap or explicit-relationship forces.
+//
+// Raised 3x from their original 0.02/0.05 (still <= a third of the weakest
+// competing force, link's 0.5 floor) after measuring that anchor strength
+// alone can only ever partially reduce Category/Subcategory boundary-box
+// overlap (see collection-layout.ts's selectNonOverlappingRects for why a
+// stronger pull can't fully eliminate it: same-tier clusters sit on a ring
+// as angular wedges, and adjacent wedges' axis-aligned bounding boxes
+// overlap near the ring's center as a geometry artifact, independent of how
+// tightly each wedge's own members are pulled together). This bump still
+// buys real, measured separation without approaching collide/link strength.
 const COLLECTION_FORCE_STRENGTH = 0.045;
-const CATEGORY_ANCHOR_STRENGTH = 0.02;
-const SUBCATEGORY_ANCHOR_STRENGTH = 0.05;
+const CATEGORY_ANCHOR_STRENGTH = 0.06;
+const SUBCATEGORY_ANCHOR_STRENGTH = 0.12;
 
 // The node body's actual on-screen footprint is a CIRCLE, not a square.
 // node-renderer.ts's drawNode() always does
