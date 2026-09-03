@@ -59,6 +59,7 @@ import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { buildSectionTree, findSectionTreeNode } from "@/lib/sections/tree"
 import { rootSections } from "@/lib/sections/relations"
+import { applyCategoryChange } from "@/lib/sections/migrate"
 import type { Section } from "@/lib/sections/types"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useDependencyStore } from "@/hooks/use-dependency-store"
@@ -495,7 +496,7 @@ export function WorkspaceView({
     return sortTabs([...base, ...extra], sortKey)
   }, [tabs, query, categoryFilter, sortKey, duplicatesOnly, collectionQueryMatchIds, sections])
 
-  const attention = useMemo(() => computeAttention(tabs), [tabs])
+  const attention = useMemo(() => computeAttention(tabs, sections), [tabs, sections])
 
   function handleSearch(value: string) {
     setQuery(value)
@@ -520,7 +521,7 @@ export function WorkspaceView({
   }
 
   function handleCategoryChange(id: string, category: CategoryId) {
-    onTabsChange(tabs.map((t) => (t.id === id ? { ...t, category } : t)))
+    onTabsChange(tabs.map((t) => (t.id === id ? applyCategoryChange(t, category) : t)))
   }
 
   const createSectionParentName =
@@ -604,7 +605,7 @@ export function WorkspaceView({
 
   function handleRecategorizeSelected(category: CategoryId) {
     const ids = selectedIds
-    onTabsChange(tabs.map((t) => (ids.has(t.id) ? { ...t, category } : t)))
+    onTabsChange(tabs.map((t) => (ids.has(t.id) ? applyCategoryChange(t, category) : t)))
     toast.success(
       `Recategorized ${ids.size} tab${ids.size === 1 ? "" : "s"} to ${CATEGORIES[category].name}`
     )

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureSectionsSeeded, ensureSectionsSeededInStore, syncSectionsWithCategories, syncSectionsWithCategoriesInStore } from "./migrate";
+import { applyCategoryChange, ensureSectionsSeeded, ensureSectionsSeededInStore, syncSectionsWithCategories, syncSectionsWithCategoriesInStore } from "./migrate";
 import type { Section } from "./types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
@@ -11,6 +11,34 @@ function makeTab(over: Partial<Tab> & { id: string }): Tab {
 function makeWorkspace(over: Partial<Workspace> & { id: string }): Workspace {
   return { name: "General", tabs: [], createdAt: 0, updatedAt: 0, ...over };
 }
+
+describe("applyCategoryChange", () => {
+  it("clears sectionId/organizationStatus/organizationReason so syncSectionsWithCategories re-syncs to the new category", () => {
+    const tab = makeTab({
+      id: "1",
+      category: "school",
+      sectionId: "some-ai-section",
+      organizationStatus: "fallback",
+      organizationReason: "Grouped with other tabs that didn't clearly match an existing topic.",
+    });
+
+    const changed = applyCategoryChange(tab, "news");
+
+    expect(changed.category).toBe("news");
+    expect(changed.sectionId).toBeUndefined();
+    expect(changed.organizationStatus).toBeUndefined();
+    expect(changed.organizationReason).toBeUndefined();
+  });
+
+  it("leaves sectionId alone for a tab the user already manually moved (sectionLocked)", () => {
+    const tab = makeTab({ id: "1", category: "school", sectionId: "manual-section", sectionLocked: true });
+
+    const changed = applyCategoryChange(tab, "news");
+
+    expect(changed.category).toBe("news");
+    expect(changed.sectionId).toBe("manual-section");
+  });
+});
 
 describe("ensureSectionsSeeded", () => {
   it("creates one root section per distinct legacy category present", () => {

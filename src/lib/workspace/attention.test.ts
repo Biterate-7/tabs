@@ -51,4 +51,27 @@ describe("computeAttention", () => {
     ]
     expect(computeAttention(tabs)).toBeNull()
   })
+
+  it("measures uncategorized by sectionId (not legacy category) once a workspace has sections, so tabs the AI pipeline already organized don't false-flag just because their untouched legacy category is 'other'", () => {
+    const sections = [{ id: "s1", parentId: null, name: "School", source: "ai" as const, createdAt: 0, updatedAt: 0 }]
+    const tabs = [
+      makeTab({ id: "1", category: "other", sectionId: "s1" }),
+      makeTab({ id: "2", category: "other", sectionId: "s1" }),
+      makeTab({ id: "3", category: "other", sectionId: "s1" }),
+      makeTab({ id: "4", category: "other", sectionId: "s1" }),
+    ]
+    expect(computeAttention(tabs, sections)).toBeNull()
+  })
+
+  it("still flags when sections are given but tabs genuinely have no resolvable sectionId", () => {
+    const sections = [{ id: "s1", parentId: null, name: "School", source: "ai" as const, createdAt: 0, updatedAt: 0 }]
+    const tabs = [
+      makeTab({ id: "1", category: "research" }),
+      makeTab({ id: "2", category: "research" }),
+      makeTab({ id: "3", category: "research" }),
+      makeTab({ id: "4", category: "research", sectionId: "s1" }),
+    ]
+    const result = computeAttention(tabs, sections)
+    expect(result).toMatchObject({ kind: "uncategorized", count: 3 })
+  })
 })

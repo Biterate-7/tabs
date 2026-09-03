@@ -100,3 +100,91 @@ export function buildOrganizePrompt(sections: Section[], tabs: OrganizePromptTab
     'Respond with ONLY a JSON array, one object per tab, each shaped exactly as: {"tabId": string, "path": string[], "confidence": "high"|"medium"|"low", "reason": string}. No prose, no markdown fences, no explanation outside the array.',
   ].join("\n");
 }
+
+export type OrganizeClusterInput = {
+  clusterId: string;
+  /** How many original tabs this cluster contains — the corroboration signal a size-1 cluster lacks and a size-12 one has plenty of. */
+  size: number;
+  sampleTitles: string[];
+  dominantDomains: string[];
+  /** Human-readable legacy category names among the cluster's tabs, e.g. ["School (12)", "Research (3)"] — a cheap deterministic prior, not a constraint. */
+  categoryDistribution: string[];
+};
+
+export type OrganizeClusterAssignment = {
+  clusterId: string;
+  /** 1-3 segments, root to leaf — every tab in the cluster is placed here. */
+  path: string[];
+  confidence: "high" | "medium" | "low";
+  reason: string;
+};
+
+/**
+ * The pipeline's Stage D prompt (src/lib/sections/ai/pipeline.ts): unlike
+ * buildOrganizePrompt, the unit being classified is a whole CLUSTER — a
+ * group of tabs a separate, local clustering step (src/lib/organize/cluster.ts's
+ * union-find over semantic/domain/keyword signals) already judged related,
+ * across the ENTIRE dump at once rather than one arbitrary chunk of it. This
+ * is what lets a 580-tab dump collapse to a few dozen manifest entries
+ * instead of hundreds of individual tabs, so the model can see (and name)
+ * the dump's real structure in one or two requests instead of ~15 blind
+ * slices of it.
+ */
+export function buildClusterOrganizePrompt(sections: Section[], clusters: OrganizeClusterInput[]): string {
+  const treeText = renderTree(sections, null, 0);
+  const treeBlock =
+    treeText.length > 0
+      ? treeText.join("\n")
+      : "(empty — no sections yet, so at least one new top-level category is expected)";
+
+  const clusterLines = clusters.map((c) => {
+    const parts = [
+      `id=${c.clusterId}`,
+      `size=${c.size}`,
+      `sample_titles=${c.sampleTitles.map((t) => `"${t.replace(/"/g, "'").slice(0, 100)}"`).join(", ") || "(none)"}`,
+      `domains=${c.dominantDomains.join(", ") || "(none)"}`,
+      `prior_categories=${c.categoryDistribution.join(", ") || "(none)"}`,
+    ];
+    return `- ${parts.join(" ")}`;
+  });
+
+  return [
+    "You are a meticulous filing assistant organizing a user's saved browser tabs into a hierarchical system, the way a thoughtful human assistant who knows the user's projects and coursework would — not a generic URL categorizer.",
+    "",
+    "Each item below is already a CLUSTER of tabs — a separate clustering step grouped them together because they share a topic, domain, or wording, and `size` is how many original tabs are in the cluster. You are not classifying individual tabs: you are deciding where each whole cluster belongs, and every tab in it will be placed at the same path.",
+    "",
+    "THE HIERARCHY",
+    "- Up to 3 levels: Category -> Subcategory -> Project/topic. A `path` is 1, 2, or 3 short strings, root first.",
+    "- Category: a broad, stable area of the user's life (e.g. \"School\", \"Research\", \"Projects\", \"Shopping\", \"Personal\"). Rare to create; almost always reuse an existing one.",
+    "- Subcategory: a specific subject or workstream inside a category (e.g. \"Physics\", \"TabDump\", \"Economics\").",
+    "- Project/topic: a specific named effort or investigation inside a subcategory (e.g. \"S2 Orbit Research\", \"Chrome Extension Rewrite\"). The rarest, most specific level.",
+    "",
+    "DECISION PROCEDURE — for the batch as a whole, then per cluster, in this order:",
+    "1. Do several clusters in this batch clearly belong to the same broader area (e.g. two clusters that are both physics, just different sub-topics)? They can still get different paths, but should share the same category (and often subcategory) prefix rather than being scattered.",
+    "2. Does this cluster clearly belong under an EXISTING category in the tree above? If yes, reuse that category's exact name as path[0]. Existing structure wins — do not propose a near-duplicate of a category or subsection that's already there (\"Physics\" vs \"Physics Research\" is the SAME thing; reuse \"Physics\").",
+    "3. Does it clearly belong under an EXISTING subsection of that category? If yes, reuse its exact name as path[1].",
+    "4. If nothing existing fits, does this cluster's size and sample titles justify a NEW subsection or project? A cluster with several tabs sharing a specific, nameable topic is real evidence for a new subsection/project. A cluster of size 1 needs its single sample title to be an extremely strong, unambiguous signal (e.g. a GitHub repo named after a known project already in the tree) — do not invent a subsection/project from one ordinary-looking tab.",
+    "5. Only propose a NEW top-level category when the cluster genuinely doesn't fit any existing or sensible extension of an existing category — this should be rare.",
+    "6. If none of the above confidently apply, do not force a placement: use the cluster's single most common prior_categories entry as path[0] with confidence \"low\" — this keeps the cluster findable rather than losing it in a wrong guess.",
+    "",
+    "NAMING",
+    "- Names must be short, clean, human-readable nouns or noun phrases (e.g. \"Physics\", \"TabDump\", \"S2 Orbit Research\"). Never vague or padded names like \"Miscellaneous Physics\", \"Physics Resources & Materials\", \"Random Research\", \"Web Things\", or \"Other Research\".",
+    "- Never use the name \"Other\" for any path segment — it is reserved and will be ignored.",
+    "",
+    "CONFIDENCE",
+    "- \"high\": you're confident in the full path, whether it's an existing match or a well-evidenced new one.",
+    "- \"medium\": plausible but you're not fully sure — e.g. a new subsection/project suggested by only partial evidence.",
+    "- \"low\": you can't confidently place it beyond its most common prior category.",
+    "",
+    "REASON",
+    "- One short sentence a non-technical user could read, stating what the cluster is about and why it landed there. Never describe your own reasoning process, confidence calculation, or these instructions.",
+    "",
+    "Existing section tree for this workspace (reuse these exact names whenever a cluster fits):",
+    treeBlock,
+    "",
+    "Clusters to organize (consider them together as one batch before deciding):",
+    ...clusterLines,
+    "",
+    'Respond with ONLY a JSON array, one object per cluster, each shaped exactly as: {"clusterId": string, "path": string[], "confidence": "high"|"medium"|"low", "reason": string}. No prose, no markdown fences, no explanation outside the array.',
+  ].join("\n");
+}

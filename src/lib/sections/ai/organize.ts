@@ -18,17 +18,26 @@ const MEDIUM_CONFIDENCE_MIN_AGREEING = 2;
 /** In the deterministic fallback, a shared-cluster group needs at least this many tabs (within the same legacy category) to earn its own subsection — mirrors src/lib/organize/analyze.ts's MIN_GROUP_SIZE. */
 const FALLBACK_MIN_CLUSTER_SIZE = 3;
 /** A brand-new subsection/project/category needs at least this much combined evidence (see newSectionEvidenceScore) before it's actually created — otherwise the assignment is downgraded to whatever ancestor already exists. Prevents one confidently-worded tab from spawning a section of its own (spec's "category explosion" concern). */
-const NEW_SECTION_SCORE_THRESHOLD = 4;
+export const NEW_SECTION_SCORE_THRESHOLD = 4;
 /** Keeps a stored organizationReason short and UI-safe — a sentence, not a paragraph of model reasoning. */
 const REASON_MAX_CHARS = 160;
 
 export type OrganizeResult = { tabs: Tab[]; sections: Section[] };
 
-function pathKey(path: string[]): string {
+/**
+ * `NEW_SECTION_SCORE_THRESHOLD`, `placeAtPath`, `fullPathAlreadyExists`,
+ * `deepestExistingPrefix`, `pathKey`, `categoryNameOf`, and `sanitizeReason`
+ * are exported for src/lib/sections/ai/pipeline.ts, which reuses this
+ * file's per-tab placement/evidence primitives at the CLUSTER level (a
+ * cluster's member tabs are placed together, with the cluster's size taking
+ * the place of this file's within-batch tab-agreement count) rather than
+ * duplicating them.
+ */
+export function pathKey(path: string[]): string {
   return path.map((s) => s.trim().toLowerCase()).join(" > ");
 }
 
-function categoryNameOf(tab: Tab): string {
+export function categoryNameOf(tab: Tab): string {
   return CATEGORIES[(tab.category as CategoryId | undefined) ?? "other"].name;
 }
 
@@ -39,7 +48,7 @@ function categoryNameOf(tab: Tab): string {
  * path would exceed MAX_SECTION_DEPTH. Returns `tab` unchanged if the very
  * first segment is blank.
  */
-function placeAtPath(tab: Tab, sections: Section[], path: string[], source: SectionSource): { tab: Tab; sections: Section[] } {
+export function placeAtPath(tab: Tab, sections: Section[], path: string[], source: SectionSource): { tab: Tab; sections: Section[] } {
   let working = sections;
   let parentId: string | null = null;
   let leafId: string | null = null;
@@ -68,7 +77,7 @@ function placeAtPath(tab: Tab, sections: Section[], path: string[], source: Sect
 }
 
 /** Longest prefix of `path` that resolves to sections that already exist (via findSimilarSibling) — never creates anything. Used to downgrade a low-evidence assignment to its nearest safe existing ancestor instead of inventing a brand-new section from a single weak signal. */
-function deepestExistingPrefix(sections: Section[], path: string[]): string[] {
+export function deepestExistingPrefix(sections: Section[], path: string[]): string[] {
   let parentId: string | null = null;
   const matched: string[] = [];
   for (const rawName of path.slice(0, MAX_SECTION_DEPTH + 1)) {
@@ -124,7 +133,7 @@ function hasHintAgreement(
 }
 
 /** Trims/collapses whitespace and hard-caps length so a stored reason is always a short, UI-safe sentence — never raw model reasoning, never long enough to read as chain-of-thought. Returns undefined for a blank/missing reason rather than storing an empty string. */
-function sanitizeReason(reason: string | undefined): string | undefined {
+export function sanitizeReason(reason: string | undefined): string | undefined {
   if (!reason) return undefined;
   const cleaned = reason.replace(/\s+/g, " ").trim();
   if (!cleaned) return undefined;
@@ -137,7 +146,7 @@ function sanitizeReason(reason: string | undefined): string | undefined {
  * spec §8 wants to always win over inventing anything, regardless of
  * confidence.
  */
-function fullPathAlreadyExists(sections: Section[], path: string[]): boolean {
+export function fullPathAlreadyExists(sections: Section[], path: string[]): boolean {
   const capped = path.slice(0, MAX_SECTION_DEPTH + 1).filter((s) => s.trim().length > 0);
   return capped.length > 0 && deepestExistingPrefix(sections, path).length === capped.length;
 }

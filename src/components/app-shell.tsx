@@ -27,9 +27,10 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
-import { ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
-import { organizeTabsIntoSections } from "@/lib/sections/ai/organize"
-import { computeSemanticClusterHints } from "@/lib/ai/cluster"
+import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
+import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
+import { logOrganizeReport, summarizeReportForToast } from "@/lib/sections/ai/report"
+import type { OrganizeReport } from "@/lib/sections/ai/report"
 import type { Section } from "@/lib/sections/types"
 import { mergeDependencies } from "@/lib/dependencies/relations"
 import { loadDependencyState, pruneDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
@@ -149,10 +150,11 @@ export function AppShell() {
   // goes through the async AI/fallback organizer that dumps/imports do).
   // Idempotent and referentially stable per-workspace when nothing needs
   // fixing, so this adds no meaningful overhead to the common case.
-  function persist(next: WorkspaceStore) {
+  function persist(next: WorkspaceStore): WorkspaceStore {
     const synced = syncSectionsWithCategoriesInStore(next)
     setStore(synced)
     if (canPersist) saveWorkspaceStore(synced)
+    return synced
   }
 
   function toggleSidebarCollapsed() {
@@ -195,11 +197,16 @@ export function AppShell() {
     const current = getCurrentWorkspace(store)
     undoSnapshotRef.current = store
     const next = updateWorkspaceTabs(store, current.id, tabs)
-    persist(next)
+    // persist() runs syncSectionsWithCategoriesInStore, which can seed brand
+    // new root sections (one per legacy category newly present in `tabs`) —
+    // use ITS returned, already-synced store (not the pre-sync `next`) below,
+    // so the AI pipeline sees those roots already in place and reuses them
+    // via findSimilarSibling instead of creating same-named duplicates.
+    const synced = persist(next)
     markRecentlyAdded(tabs.map((t) => t.id))
     notifyImported(tabs.length)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
-    const nextWorkspace = getCurrentWorkspace(next)
+    const nextWorkspace = getCurrentWorkspace(synced)
     organizeNewTabsIntoSections(nextWorkspace.id, tabs, nextWorkspace.sections ?? [])
   }
 
@@ -216,7 +223,7 @@ export function AppShell() {
   // instead of WorkspaceView's local `tabs` prop.
   function handleCategoryChangeInView(id: string, category: CategoryId) {
     if (!currentWorkspace) return
-    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, category } : t)))
+    handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? applyCategoryChange(t, category) : t)))
   }
 
   function handleToggleFavoriteInView(id: string) {
@@ -281,17 +288,21 @@ export function AppShell() {
   // fire-and-forget from every call site: this NEVER blocks or fails a dump
   // (spec §28) — organizeTabsIntoSections itself never throws, and this
   // wrapper's own best-effort embedding-hint lookup is wrapped separately.
-  async function organizeNewTabsIntoSections(workspaceId: string, tabsSnapshot: Tab[], sectionsSnapshot: Section[]) {
-    if (tabsSnapshot.length === 0) return
+  async function organizeNewTabsIntoSections(workspaceId: string, tabsSnapshot: Tab[], sectionsSnapshot: Section[]): Promise<OrganizeReport | undefined> {
+    if (tabsSnapshot.length === 0) return undefined
 
-    let hints: Awaited<ReturnType<typeof computeSemanticClusterHints>> = []
-    try {
-      hints = await computeSemanticClusterHints([workspaceId])
-    } catch {
-      // Best-effort signal only — organizeTabsIntoSections works fine without it.
-    }
+    // The pipeline's multi-stage clustering/naming can take several async
+    // hops (more than the old single-shot organizeTabsIntoSections), so it's
+    // more likely than before that a user manually recategorizes/moves a tab
+    // (or locks it) while this is still in flight. Snapshotting each tab's
+    // pre-pipeline sectionId lets the merge below detect that drift and skip
+    // re-applying a now-stale AI placement onto it, instead of silently
+    // clobbering whatever the user just did.
+    const sectionIdBeforeById = new Map(tabsSnapshot.map((t) => [t.id, t.sectionId]))
 
-    const result = await organizeTabsIntoSections(tabsSnapshot, sectionsSnapshot, hints)
+    const workspaceName = store?.workspaces.find((w) => w.id === workspaceId)?.name ?? ""
+    const result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot)
+    logOrganizeReport(result.report)
 
     setStore((prev) => {
       if (!prev) return prev
@@ -303,7 +314,16 @@ export function AppShell() {
       const sections = [...(workspace.sections ?? []), ...newSections]
 
       const organizedById = new Map(result.tabs.map((t) => [t.id, t]))
-      const tabs = workspace.tabs.map((t) => organizedById.get(t.id) ?? t)
+      const tabs = workspace.tabs.map((t) => {
+        const organized = organizedById.get(t.id)
+        if (!organized) return t
+        // sectionIdBeforeById always has an entry for any id also in
+        // organizedById (both derive from the same tabsSnapshot), so a plain
+        // !== comparison correctly treats "was undefined" as a real value
+        // rather than "missing key".
+        if (t.sectionId !== sectionIdBeforeById.get(t.id)) return t
+        return organized
+      })
 
       const workspaces = prev.workspaces.map((w) =>
         w.id === workspaceId ? { ...w, sections, tabs, updatedAt: Date.now() } : w
@@ -312,6 +332,8 @@ export function AppShell() {
       if (canPersist) saveWorkspaceStore(next)
       return next
     })
+
+    return result.report
   }
 
   function handleCreateSection(parentId: string | null, name: string) {
@@ -349,8 +371,8 @@ export function AppShell() {
       return
     }
     toast.info(`Reorganizing ${unlocked.length} tab${unlocked.length === 1 ? "" : "s"}…`)
-    await organizeNewTabsIntoSections(currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
-    toast.success("Reorganized")
+    const report = await organizeNewTabsIntoSections(currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
+    toast.success("Reorganized", { description: report ? summarizeReportForToast(report) : undefined })
   }
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
@@ -423,11 +445,14 @@ export function AppShell() {
     undoSnapshotRef.current = store
     const merged = markDuplicates([...current.tabs, ...fresh])
     const next = updateWorkspaceTabs(store, current.id, merged)
-    persist(next)
+    // See handleDump's comment: use persist()'s synced return value, not the
+    // pre-sync `next`, so newly-seeded root sections are visible to the AI
+    // pipeline instead of it creating same-named duplicates.
+    const synced = persist(next)
     markRecentlyAdded(fresh.map((t) => t.id))
     notifyHistoryDumped(fresh.length, skipped)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
-    const nextWorkspace = getCurrentWorkspace(next)
+    const nextWorkspace = getCurrentWorkspace(synced)
     // Re-resolve the just-dumped tabs from the post-merge workspace (not the
     // pre-merge `fresh` array) so their markDuplicates-assigned `isDuplicate`
     // flag survives — organizeNewTabsIntoSections completely replaces each
@@ -446,11 +471,14 @@ export function AppShell() {
     undoSnapshotRef.current = store
     const merged = markDuplicates([...current.tabs, ...incoming])
     const next = updateWorkspaceTabs(store, current.id, merged)
-    persist(next)
+    // See handleDump's comment: use persist()'s synced return value, not the
+    // pre-sync `next`, so newly-seeded root sections are visible to the AI
+    // pipeline instead of it creating same-named duplicates.
+    const synced = persist(next)
     markRecentlyAdded(incoming.map((t) => t.id))
     notifyImported(incoming.length)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
-    const nextWorkspace = getCurrentWorkspace(next)
+    const nextWorkspace = getCurrentWorkspace(synced)
     const incomingIds = new Set(incoming.map((t) => t.id))
     organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => incomingIds.has(t.id)), nextWorkspace.sections ?? [])
   }

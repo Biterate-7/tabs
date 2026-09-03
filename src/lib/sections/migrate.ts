@@ -1,6 +1,7 @@
 import { createId } from "@/lib/id";
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories";
 import type { CategoryId } from "@/lib/categories";
+import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 import type { Section } from "./types";
 
@@ -79,6 +80,28 @@ export function ensureSectionsSeededInStore(store: WorkspaceStore): WorkspaceSto
  * brand-new workspace not yet seeded) is returned unchanged — seeding is
  * what turns `undefined` into a real array in the first place.
  */
+/**
+ * Applies a user's explicit "change category" pick (the legacy flat-category
+ * dropdown, distinct from moving a tab between sections directly) to `tab`.
+ *
+ * Since the categorization pipeline (src/lib/sections/ai/pipeline.ts) now
+ * gives nearly every tab a real sectionId — by design, to keep almost
+ * nothing in the synthetic "Other" bucket — syncSectionsWithCategories's own
+ * guard ("already has a valid sectionId, leave it alone") would otherwise
+ * treat that tab as permanently settled and never re-sync it to a category
+ * the user picks afterward. Clearing sectionId/organizationStatus/
+ * organizationReason here (unless the tab is sectionLocked — an explicit
+ * "move to section" already overrides any category-driven placement) makes
+ * this manual pick look like an unsectioned tab again, so the very next
+ * syncSectionsWithCategories call (every mutation runs through it — see
+ * app-shell.tsx's persist) creates/reuses a root section matching the new
+ * category, same as it always has for a genuinely never-organized tab.
+ */
+export function applyCategoryChange(tab: Tab, category: CategoryId): Tab {
+  if (tab.sectionLocked) return { ...tab, category };
+  return { ...tab, category, sectionId: undefined, organizationStatus: undefined, organizationReason: undefined };
+}
+
 export function syncSectionsWithCategories(workspace: Workspace): Workspace {
   if (workspace.sections === undefined) return workspace;
 
