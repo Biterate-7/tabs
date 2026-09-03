@@ -155,7 +155,11 @@ export function WorkspaceView({
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
   const [sortKey, setSortKey] = useState<SortKey>("recent")
   const [duplicatesOnly, setDuplicatesOnly] = useState(false)
-  const [highlightedIndex, setHighlightedIndex] = useState(0)
+  // -1 = no keyboard-navigated search result is highlighted. Only arrow-key
+  // navigation of the search box (below) should ever produce a highlight —
+  // resetting to 0 here would make the first result look permanently
+  // selected any time the list re-renders.
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
   const [cleanupOpen, setCleanupOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
@@ -500,17 +504,17 @@ export function WorkspaceView({
 
   function handleSearch(value: string) {
     setQuery(value)
-    setHighlightedIndex(0)
+    setHighlightedIndex(-1)
   }
 
   function handleCategoryFilter(value: CategoryId | "all") {
     setCategoryFilter(value)
-    setHighlightedIndex(0)
+    setHighlightedIndex(-1)
   }
 
   function handleSort(value: SortKey) {
     setSortKey(value)
-    setHighlightedIndex(0)
+    setHighlightedIndex(-1)
   }
 
   function resetFilters() {
