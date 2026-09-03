@@ -42,3 +42,26 @@ export const MSG_BROWSER_COMMAND_RESULT = "TABDUMP_BROWSER_COMMAND_RESULT";
 // src/hooks/use-browser-connection.ts).
 export const MSG_EXTENSION_PING = "TABDUMP_EXTENSION_PING";
 export const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";
+
+// Persisted (chrome.storage.session) record of the most recent MSG_DUMP_TABS
+// run, keyed by this constant. Exists so a dump's outcome survives the
+// popup that triggered it closing before background.js's sendResponse can
+// reach it — e.g. the user clicking away, or Chrome's own popup-blur
+// behavior — instead of the result being silently lost. See background.js's
+// setDumpState() (the writer) and popup.js's init()/watchForDumpCompletion()
+// (the readers).
+export const DUMP_STATE_KEY = "tabdump_dump_state";
+
+// A persisted "running" record older than this is treated as abandoned
+// (e.g. the service worker was evicted mid-dump, or simply crashed) rather
+// than genuinely still in flight, so a popup reopened long after never gets
+// stuck waiting on a dump that will never resolve. Comfortably above
+// dumpTabs()'s worst realistic duration (background.js's
+// TAB_READY_TIMEOUT_MS plus sendImportToTab's retry backoff, ~8.5s).
+export const DUMP_RUNNING_STALE_MS = 20000;
+
+// A finished ("done"/"error") record older than this is treated as history
+// rather than something to surface again on a fresh popup open — otherwise
+// reopening the popup long after a past dump would misleadingly replay its
+// result.
+export const DUMP_RESULT_FRESH_MS = 15000;

@@ -1,4 +1,10 @@
-import { MSG_DUMP_TABS, MSG_CHECK_IMPORTED } from "../src/config.js";
+import {
+  MSG_DUMP_TABS,
+  MSG_CHECK_IMPORTED,
+  DUMP_STATE_KEY,
+  DUMP_RUNNING_STALE_MS,
+  DUMP_RESULT_FRESH_MS,
+} from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 
 const els = {
@@ -131,11 +137,111 @@ function describeDumpFailure(response) {
         message: "TabDump didn't respond in that tab. Reload the TabDump page and try again.",
         detail: response.detail,
       };
+    case "already-running":
+      return { message: "A dump is already in progress. Please wait for it to finish." };
     case "unexpected-error":
       return { message: "Something unexpected went wrong while dumping.", detail: response.detail };
     default:
       return { message: "Couldn't reach TabDump. Is it running?", detail: response?.reason };
   }
+}
+
+// Best-effort read of background.js's persisted dump-state record (see
+// config.js's DUMP_STATE_KEY). Used on popup open to recover from the
+// previous popup instance having closed mid-dump — e.g. because it lost
+// focus — before its chrome.runtime.sendMessage response could arrive.
+// Never throws: chrome.storage.session may simply be unavailable, in which
+// case the popup falls back to its old behavior of always starting fresh.
+async function getPersistedDumpState() {
+  const session = chrome.storage?.session;
+  if (!session) return undefined;
+  try {
+    const data = await session.get(DUMP_STATE_KEY);
+    return data?.[DUMP_STATE_KEY];
+  } catch {
+    return undefined;
+  }
+}
+
+// Renders a finished (done/error) dump-state record exactly like a direct
+// MSG_DUMP_TABS response would — used both by dumpTabs() below (the popup
+// that actually triggered the dump, when it survives to see the response)
+// and by watchForDumpCompletion() (a freshly reopened popup picking up a
+// dump that finished after its predecessor had already closed).
+function renderDumpOutcome(state) {
+  if (state.status === "done") {
+    els.successCount.textContent = String(state.count ?? 0);
+    showState(els.success);
+    setTimeout(() => window.close(), 900);
+  } else {
+    showError(describeDumpFailure(state));
+  }
+}
+
+// Watches for background.js to finish (or fail) a dump that was already
+// running when this popup opened, so the user isn't left staring at
+// "Dumping tabs…" forever just because the popup that started it is gone.
+//
+// `referenceStartedAt` anchors the abandonment deadline below — pass the
+// dump's actual persisted `startedAt` when known (recovering an in-flight
+// dump on popup open), or omit it to mean "starting now" (attaching to a
+// dump that was only just reported as already running via a direct
+// MSG_DUMP_TABS response, e.g. from a double-click racing background.js's
+// own concurrency guard).
+function watchForDumpCompletion(referenceStartedAt) {
+  const session = chrome.storage?.session;
+  if (!session?.onChanged) {
+    // No storage.onChanged support to lean on — the dump is still running
+    // in the background either way, but this popup instance has no way to
+    // learn when it finishes. Reflect that rather than hanging silently.
+    showError({ message: "A dump is already in progress. Reopen TabDump in a moment to see the result." });
+    return;
+  }
+
+  let settled = false;
+
+  function finish(state) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    session.onChanged.removeListener(onChanged);
+    renderDumpOutcome(state);
+  }
+
+  function onChanged(changes, areaName) {
+    if (areaName !== "session") return;
+    const change = changes[DUMP_STATE_KEY];
+    if (!change?.newValue || change.newValue.status === "running") return;
+    finish(change.newValue);
+  }
+
+  session.onChanged.addListener(onChanged);
+
+  // Close the narrow race where the dump already finished (and wrote its
+  // result) in the gap between this popup's earlier storage read and the
+  // addListener call just above — onChanged only fires for changes made
+  // *after* a listener is registered, so a completion landing in that gap
+  // would otherwise never be observed by this popup instance, leaving it
+  // stuck on "Dumping tabs…" even though the result is sitting right there
+  // in storage.
+  session.get(DUMP_STATE_KEY).then((data) => {
+    const current = data?.[DUMP_STATE_KEY];
+    if (current && current.status !== "running") finish(current);
+  });
+
+  // Never wait indefinitely: if background.js's service worker was evicted
+  // or crashed mid-dump, nothing will ever write a terminal state, and
+  // onChanged would otherwise never fire — leaving the popup stuck exactly
+  // like the original bug this whole recovery path exists to fix. Bounded
+  // by the same staleness budget init() uses to judge a *persisted* running
+  // record abandoned, anchored to when the dump actually started.
+  const deadline = (referenceStartedAt ?? Date.now()) + DUMP_RUNNING_STALE_MS;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    session.onChanged.removeListener(onChanged);
+    showError({ message: "The previous dump didn't finish. Please try again." });
+  }, Math.max(0, deadline - Date.now()));
 }
 
 function showError({ message, detail }) {
@@ -145,7 +251,18 @@ function showError({ message, detail }) {
   showState(els.error);
 }
 
+// Guards against a genuine double-click (two `click` events dispatched in
+// quick succession against the same button, before the first handler's
+// showState(els.dumping) has actually taken it off-screen) sending two
+// MSG_DUMP_TABS requests. background.js's own concurrency guard would
+// reject the second one regardless, but without this, that rejection would
+// flip this popup from "Dumping tabs…" to a dead-end error — even though
+// the real (first) dump is still proceeding fine in the background.
+let dumpInFlight = false;
+
 async function dumpTabs() {
+  if (dumpInFlight) return;
+  dumpInFlight = true;
   showState(els.dumping);
   try {
     // Re-collects fresh tabs at click time (rather than reusing the popup's
@@ -160,6 +277,12 @@ async function dumpTabs() {
       els.successCount.textContent = String(response.count);
       showState(els.success);
       setTimeout(() => window.close(), 900);
+    } else if (response?.reason === "already-running") {
+      // A dump is genuinely already in flight — most likely a narrow race
+      // this popup can't otherwise prevent. Attach to its real outcome
+      // instead of dead-ending on an error the user has no useful action
+      // for; renderDumpOutcome() takes it from here once it resolves.
+      watchForDumpCompletion(Date.now());
     } else {
       showError(describeDumpFailure(response));
     }
@@ -172,10 +295,42 @@ async function dumpTabs() {
       message: "Couldn't reach the TabDump extension's background service.",
       detail: err instanceof Error ? err.message : String(err),
     });
+  } finally {
+    dumpInFlight = false;
   }
 }
 
 els.dumpButton.addEventListener("click", dumpTabs);
 els.retryButton.addEventListener("click", detectTabs);
 
-detectTabs();
+// Runs once on every popup open, before the normal detectTabs() flow, to
+// recover from a dump that's still running (or that already finished)
+// somewhere this popup instance didn't witness — most commonly because the
+// popup that started it closed before background.js's response could
+// arrive. Without this, reopening the popup would silently show "ready" as
+// if nothing had happened, inviting a duplicate dump.
+async function init() {
+  const state = await getPersistedDumpState();
+
+  if (state?.status === "running") {
+    if (Date.now() - state.startedAt < DUMP_RUNNING_STALE_MS) {
+      showState(els.dumping);
+      watchForDumpCompletion(state.startedAt);
+      return;
+    }
+    // Older than any real dump should take — the service worker that was
+    // running it was most likely evicted or crashed mid-dump. Let the user
+    // retry instead of waiting on a result that will never arrive.
+    showError({ message: "The previous dump didn't finish. Please try again." });
+    return;
+  }
+
+  if ((state?.status === "done" || state?.status === "error") && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
+    renderDumpOutcome(state);
+    return;
+  }
+
+  detectTabs();
+}
+
+init();

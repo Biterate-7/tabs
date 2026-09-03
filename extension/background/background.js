@@ -4,6 +4,7 @@ import {
   MSG_TABDUMP_IMPORT,
   MSG_CHECK_IMPORTED,
   MSG_BROWSER_COMMAND,
+  DUMP_STATE_KEY,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
@@ -17,6 +18,39 @@ const SEND_RETRY_DELAYS_MS = [150, 350];
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// Structured, single-prefixed logging for every stage of the dump pipeline
+// (dump started, tab count detected, tabs skipped, messages sent/received,
+// completion/error) — so a report of "dumping tabs failed" on some other
+// machine can actually be diagnosed from the service worker's console
+// (chrome://extensions → TabDump → "service worker" → Inspect) instead of
+// guessed at.
+function log(stage, data) {
+  console.log(`[TabDump] ${stage}`, data ?? "");
+}
+
+// chrome.storage.session may be unavailable (very old Chrome, or a
+// restricted profile) — every call through here is best-effort and never
+// allowed to fail the dump itself; it only feeds popup.js's recovery path
+// (see popup.js's init()/watchForDumpCompletion()), never the primary
+// sendResponse result channel.
+async function setDumpState(state) {
+  const session = chrome.storage?.session;
+  if (!session) return;
+  try {
+    await session.set({ [DUMP_STATE_KEY]: state });
+  } catch (err) {
+    log("dump-state-persist-failed", errorMessage(err));
+  }
+}
+
+// Guards against two dumps racing each other — e.g. a duplicate click, or a
+// second popup opened while a dump triggered from an earlier (possibly
+// already-closed) popup is still in flight. Only one dumpTabs() run is ever
+// allowed to be in progress at a time; a second request is told so
+// immediately rather than being silently queued or allowed to interleave
+// chrome.tabs calls with the first.
+let activeDump = null;
 
 // Renders any caught value into a plain, safe-to-display string. Every
 // error surfaced this way originates locally (chrome.* API rejections, or
@@ -94,15 +128,24 @@ function waitForTabComplete(tabId) {
   });
 }
 
-// Resolves to `{ tabId, focusWindowId }`. `focusWindowId` is only set when
-// reusing an already-open tab (a freshly created one is already active in
-// the current window, per chrome.tabs.create's default `active: true` — no
-// extra focus needed there). Deliberately does NOT call
-// chrome.windows.update itself: doing so here, synchronously as part of
-// finding the tab, can focus a *different* window than the one this
-// extension's own popup lives in — which blurs, and Chrome then destroys,
-// the popup before dumpTabs() finishes and sendResponse() can reach it. The
-// caller focuses the window only after the popup already has its result.
+// Resolves to `{ tabId, windowId }`. Deliberately never activates the tab
+// or focuses its window itself — not even for a freshly created tab.
+//
+// chrome.tabs.create()'s default `active: true` puts a brand-new tab in the
+// foreground *immediately*, which is precisely what was closing the
+// extension's own popup before a dump could finish: Chrome dismisses an
+// open action-popup the instant the foreground tab changes, and dumpTabs()
+// still has real async work left after this point (waiting for the new
+// tab's content script to attach, delivering the payload, retrying).
+// Whichever popup triggered the dump would already be gone by the time
+// sendResponse() ran, so the user only ever saw "Dumping tabs…" and then
+// nothing. Reusing an already-open tab had the same latent risk from
+// `chrome.tabs.update(existing.id, { active: true })` if that tab happened
+// to sit in the same window the popup was opened from.
+//
+// So both branches now leave activation/focus entirely to the caller, which
+// — like the pre-existing chrome.windows.update comment below explains —
+// only ever does it *after* the popup already has its result.
 async function findOrOpenTabDumpTab() {
   const matches = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
   // When more than one TabDump tab is open, prefer whichever one the user is
@@ -114,70 +157,115 @@ async function findOrOpenTabDumpTab() {
   // like being unexpectedly bounced to a different TabDump page.
   const existing = matches.find((tab) => tab.active) ?? matches[0];
   if (existing) {
-    await chrome.tabs.update(existing.id, { active: true });
-    return { tabId: existing.id, focusWindowId: existing.windowId };
+    return { tabId: existing.id, windowId: existing.windowId };
   }
 
-  const created = await chrome.tabs.create({ url: TABDUMP_ORIGIN });
+  const created = await chrome.tabs.create({ url: TABDUMP_ORIGIN, active: false });
   await waitForTabComplete(created.id);
-  return { tabId: created.id, focusWindowId: undefined };
+  return { tabId: created.id, windowId: created.windowId };
 }
 
 async function dumpTabs(excludeUrls) {
+  const startedAt = Date.now();
+  log("dump-started", { excludeCount: excludeUrls?.length ?? 0 });
+  await setDumpState({ status: "running", startedAt });
+
   const chromeTabs = await chrome.tabs.query({ currentWindow: true });
   const payload = buildImportPayload(chromeTabs, excludeUrls);
+  log("tabs-detected", {
+    totalOpenTabs: chromeTabs.length,
+    importable: payload.tabs.length,
+    skipped: chromeTabs.length - payload.tabs.length,
+  });
 
   if (payload.tabs.length === 0) {
-    return { result: { ok: false, reason: "no-importable-tabs", count: 0 } };
+    const result = { ok: false, reason: "no-importable-tabs", count: 0 };
+    await setDumpState({ status: "error", ...result, startedAt, finishedAt: Date.now() });
+    return { result };
   }
 
-  let tabId, focusWindowId;
+  let tabId, windowId;
   try {
-    ({ tabId, focusWindowId } = await findOrOpenTabDumpTab());
+    ({ tabId, windowId } = await findOrOpenTabDumpTab());
+    log("tabdump-tab-resolved", { tabId, windowId });
   } catch (err) {
-    // chrome.tabs.query/create/update itself failed — distinct from a
-    // *found* tab simply not answering (see "delivery-failed" below), so
-    // this never gets misreported as "TabDump didn't respond".
-    return {
-      result: { ok: false, reason: "tab-open-failed", count: payload.tabs.length, detail: errorMessage(err) },
-    };
+    // chrome.tabs.query/create itself failed — distinct from a *found* tab
+    // simply not answering (see "delivery-failed" below), so this never
+    // gets misreported as "TabDump didn't respond".
+    const result = { ok: false, reason: "tab-open-failed", count: payload.tabs.length, detail: errorMessage(err) };
+    log("tabdump-tab-resolve-failed", result.detail);
+    await setDumpState({ status: "error", ...result, startedAt, finishedAt: Date.now() });
+    return { result };
   }
 
   const { delivered, lastError } = await sendImportToTab(tabId, payload);
+  log("delivery-attempted", { delivered, error: lastError });
 
   const result = delivered
     ? { ok: true, count: payload.tabs.length }
     : { ok: false, reason: "delivery-failed", count: payload.tabs.length, detail: lastError };
 
-  return { result, focusWindowId };
+  await setDumpState({ status: delivered ? "done" : "error", ...result, startedAt, finishedAt: Date.now() });
+  log("dump-finished", result);
+
+  return { result, focusTabId: tabId, focusWindowId: windowId };
+}
+
+// Calling sendResponse on a message port whose other end (the popup) has
+// already closed throws in some Chrome versions — without this guard, that
+// throw would propagate out of the .then() below, land in the trailing
+// .catch(), and call sendResponse a *second* time with a different payload.
+// The dump's real result was already computed either way; a dead port just
+// means nobody's listening for it anymore (see setDumpState/DUMP_STATE_KEY
+// for how a freshly reopened popup recovers that result instead).
+function safeSendResponse(sendResponse, payload) {
+  try {
+    sendResponse(payload);
+  } catch (err) {
+    log("send-response-failed", errorMessage(err));
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== MSG_DUMP_TABS) return undefined;
 
-  dumpTabs(message.payload?.excludeUrls)
-    .then(({ result, focusWindowId }) => {
-      sendResponse(result);
+  if (activeDump) {
+    log("dump-rejected-already-running", {});
+    safeSendResponse(sendResponse, { ok: false, reason: "already-running", count: 0 });
+    return true;
+  }
+
+  const run = dumpTabs(message.payload?.excludeUrls)
+    .then(({ result, focusTabId, focusWindowId }) => {
+      safeSendResponse(sendResponse, result);
       // Best-effort only, and deliberately after sendResponse: the popup
       // must get to render the dump's outcome before focus can move away
-      // from it. Wrapped defensively (not just a trailing .catch) since a
-      // window that's since closed can make this reject OR throw
-      // synchronously depending on the Chrome version — either way, the
-      // dump's own result was already delivered above and shouldn't be
-      // clobbered by a failure in this purely cosmetic follow-up.
+      // from it. Wrapped defensively since a window/tab that's since closed
+      // can make this reject or throw depending on the Chrome version —
+      // either way, the dump's own result was already delivered above and
+      // shouldn't be clobbered by a failure in this purely cosmetic follow-up.
       if (focusWindowId !== undefined) {
-        try {
-          Promise.resolve(chrome.windows.update(focusWindowId, { focused: true })).catch(() => {});
-        } catch {
-          // Ignored — see comment above.
-        }
+        (async () => {
+          try {
+            if (focusTabId !== undefined) await chrome.tabs.update(focusTabId, { active: true });
+            await chrome.windows.update(focusWindowId, { focused: true });
+          } catch {
+            // Ignored — see comment above.
+          }
+        })();
       }
     })
     .catch((err) => {
       console.error("TabDump: dumpTabs failed", err);
-      sendResponse({ ok: false, reason: "unexpected-error", count: 0, detail: errorMessage(err) });
+      const result = { ok: false, reason: "unexpected-error", count: 0, detail: errorMessage(err) };
+      safeSendResponse(sendResponse, result);
+      setDumpState({ status: "error", ...result, finishedAt: Date.now() });
+    })
+    .finally(() => {
+      activeDump = null;
     });
 
+  activeDump = run;
   return true; // keep the message channel open for the async sendResponse
 });
 
@@ -206,8 +294,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== MSG_CHECK_IMPORTED) return undefined;
 
   checkImported(message.payload?.urls ?? [])
-    .then(sendResponse)
-    .catch(() => sendResponse({ ok: false, reason: "unexpected-error" }));
+    .then((response) => safeSendResponse(sendResponse, response))
+    .catch(() => safeSendResponse(sendResponse, { ok: false, reason: "unexpected-error" }));
 
   return true; // keep the message channel open for the async sendResponse
 });
@@ -250,13 +338,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const payload = message.payload ?? {};
   if (typeof payload.id !== "string" || typeof payload.action !== "string") {
-    sendResponse({ id: typeof payload.id === "string" ? payload.id : "", ok: false, error: "Malformed browser command." });
+    safeSendResponse(sendResponse, {
+      id: typeof payload.id === "string" ? payload.id : "",
+      ok: false,
+      error: "Malformed browser command.",
+    });
     return undefined;
   }
 
   handleBrowserCommand(payload, sender.tab?.id)
-    .then(sendResponse)
-    .catch(() => sendResponse({ id: payload.id, ok: false, error: "Unexpected error running browser command." }));
+    .then((response) => safeSendResponse(sendResponse, response))
+    .catch(() => safeSendResponse(sendResponse, { id: payload.id, ok: false, error: "Unexpected error running browser command." }));
 
   return true; // keep the message channel open for the async sendResponse
 });
