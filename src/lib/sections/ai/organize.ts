@@ -1,6 +1,6 @@
 import { CATEGORIES } from "@/lib/categories";
 import type { CategoryId } from "@/lib/categories";
-import { deriveClusterName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
+import { deriveSectionName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
 import type { SemanticClusterHint } from "@/lib/organize/types";
 import type { Tab } from "@/lib/tabs/types";
 import { childrenOf, createSection, rootSections } from "../relations";
@@ -315,7 +315,7 @@ function fallbackOrganize(tabs: Tab[], sections: Section[], hintByTabId: Map<str
   const subNameByTabId = new Map<string, string>();
   for (const groupTabs of groups.values()) {
     if (groupTabs.length < FALLBACK_MIN_CLUSTER_SIZE) continue;
-    const subName = deriveClusterName(groupTabs);
+    const subName = deriveSectionName(groupTabs);
     for (const tab of groupTabs) subNameByTabId.set(tab.id, subName);
   }
 

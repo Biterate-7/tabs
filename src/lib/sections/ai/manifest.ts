@@ -1,6 +1,7 @@
 import { CATEGORIES } from "@/lib/categories";
 import type { CategoryId } from "@/lib/categories";
 import type { RawCluster, JoinReason } from "@/lib/organize/cluster";
+import { canonicalSiteIdentity } from "@/lib/organize/domain-identity";
 import type { Tab } from "@/lib/tabs/types";
 
 export type ClusterManifestEntry = {
@@ -11,6 +12,10 @@ export type ClusterManifestEntry = {
   dominantDomains: string[];
   categoryDistribution: string[];
   dominantJoinReason: JoinReason;
+  /** Canonical site identity (domain-identity.ts) shared by a majority of this cluster's members, if any — see RawCluster.dominantDomain. */
+  dominantDomain?: string;
+  /** Share (0-1) of members whose canonical identity is `dominantDomain`. */
+  domainShare?: number;
 };
 
 const JOIN_REASON_RANK: Record<JoinReason, number> = { semantic: 3, domain: 2, keyword: 1, none: 0 };
@@ -48,7 +53,10 @@ export function buildClusterManifest(clusters: RawCluster[], tabsById: Map<strin
     }
 
     const domainCounts = new Map<string, number>();
-    for (const t of members) domainCounts.set(t.domain, (domainCounts.get(t.domain) ?? 0) + 1);
+    for (const t of members) {
+      const identity = canonicalSiteIdentity(t.domain);
+      domainCounts.set(identity, (domainCounts.get(identity) ?? 0) + 1);
+    }
     const dominantDomains = [...domainCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([d]) => d);
 
     const categoryCounts = new Map<string, number>();
@@ -68,6 +76,8 @@ export function buildClusterManifest(clusters: RawCluster[], tabsById: Map<strin
       dominantDomains,
       categoryDistribution,
       dominantJoinReason: dominantJoinReason(cluster),
+      dominantDomain: cluster.dominantDomain,
+      domainShare: cluster.domainShare,
     };
   });
 }

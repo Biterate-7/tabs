@@ -1,6 +1,7 @@
 import { computeSemanticClusterHints } from "@/lib/ai/cluster";
 import { buildRawClusters } from "@/lib/organize/cluster";
-import { deriveClusterName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
+import { canonicalSiteIdentity, getDomainSectionName, isGenericSiteIdentity } from "@/lib/organize/domain-identity";
+import { deriveSectionName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
 import type { ScopedTab, SemanticClusterHint } from "@/lib/organize/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "../types";
@@ -65,10 +66,10 @@ function mostCommonCategoryName(tabs: Tab[]): string {
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Other";
 }
 
-/** Never proposes "Other" as a root — mirrors organize.ts's fallbackOrganize: a genuine cluster found among "other"-categorized tabs is promoted straight to its own named root instead of nesting under a parent that would just fail to create. */
+/** Never proposes "Other" as a root — mirrors organize.ts's fallbackOrganize: a genuine cluster found among "other"-categorized tabs is promoted straight to its own named root instead of nesting under a parent that would just fail to create. Naming goes through deriveSectionName, so a strong domain cluster (14 Instagram tabs) always gets its real brand name rather than whatever title token happens to be most frequent. */
 function deterministicPath(members: Tab[]): string[] {
   const dominantCategory = mostCommonCategoryName(members);
-  const derivedName = deriveClusterName(members);
+  const derivedName = deriveSectionName(members);
   return dominantCategory === "Other" ? [derivedName] : [dominantCategory, derivedName];
 }
 
@@ -85,7 +86,12 @@ function deterministicPath(members: Tab[]): string[] {
 function clusterEvidenceScore(entry: ClusterManifestEntry, assignment: OrganizeClusterAssignment, sections: Section[]): number {
   let score = entry.size >= MIN_CONFIDENT_CLUSTER_SIZE ? 4 : 1;
   if (entry.dominantJoinReason === "semantic") score += 2;
-  else if (entry.dominantJoinReason === "domain") score += 1;
+  // A cluster with strong, majority domain coherence (AGENTS.md's LEVEL 1/2
+  // evidence hierarchy: "3+ tabs sharing the same meaningful website/product
+  // identity" or "4+ sharing a clear topic") is at least as strong evidence
+  // for creating a section as semantic agreement — a real website cluster
+  // doesn't need semantic similarity between individual pages to be valid.
+  else if (entry.dominantJoinReason === "domain") score += (entry.domainShare ?? 0) >= 0.6 ? 2 : 1;
 
   if (assignment.path.length > 1) {
     const existingPrefixLen = deepestExistingPrefix(sections, assignment.path).length;
@@ -289,24 +295,54 @@ export async function organizeTabsCollectively(
 
   // Stage F.3 — the true last resort: anything STILL without a sectionId
   // (e.g. its legacy category was "other" and Stage F.2 also couldn't place
-  // it) gets grouped with its fellow leftovers under one small, real,
-  // content-derived category (spec §9's "Reference / General Resources"
-  // example) — never the synthetic "Other" bucket.
+  // it). Spec §8's "repeated singletons" recovery: a tab that looked like a
+  // singleton on its own can turn out to share a site with several other
+  // leftovers once everything else has been placed (that shared site may not
+  // have cleared MIN_CONFIDENT_CLUSTER_SIZE earlier if some of its tabs got
+  // folded elsewhere first) — regroup by canonical site identity one more
+  // time before falling back to a generic bucket, so e.g. 5 leftover
+  // Instagram tabs still become a real "Instagram" section rather than
+  // diluting into "Reference" alongside everything else.
   const trulyUnplaced = unlocked.filter((t) => {
     const placed = placedById.get(t.id);
     return !placed || !placed.sectionId;
   });
   if (trulyUnplaced.length > 0) {
-    const derivedName = deriveClusterName(trulyUnplaced);
-    const path = derivedName === "Miscellaneous" ? ["Reference", "General Resources"] : ["Reference", derivedName];
+    const byIdentity = new Map<string, Tab[]>();
     for (const tab of trulyUnplaced) {
-      const { tab: placed, sections: next } = placeAtPath(tab, workingSections, path, "ai");
-      workingSections = next;
-      placedById.set(tab.id, {
-        ...placed,
-        organizationStatus: placed.sectionId ? "fallback" : "uncertain",
-        organizationReason: "Grouped with other tabs that didn't clearly match an existing topic.",
-      });
+      const identity = canonicalSiteIdentity(tab.domain);
+      if (isGenericSiteIdentity(identity)) continue;
+      const bucket = byIdentity.get(identity);
+      if (bucket) bucket.push(tab);
+      else byIdentity.set(identity, [tab]);
+    }
+
+    const regroupedIds = new Set<string>();
+    for (const [identity, members] of byIdentity) {
+      if (members.length < MIN_CONFIDENT_CLUSTER_SIZE) continue;
+      const path = [getDomainSectionName(identity)];
+      const reason = `Shares a site with ${members.length - 1} other tab${members.length === 2 ? "" : "s"} left over from earlier organizing.`;
+      for (const tab of members) {
+        const { tab: placed, sections: next } = placeAtPath(tab, workingSections, path, "ai");
+        workingSections = next;
+        placedById.set(tab.id, { ...placed, organizationStatus: placed.sectionId ? "fallback" : "uncertain", organizationReason: reason });
+        regroupedIds.add(tab.id);
+      }
+    }
+
+    const stillLeftover = trulyUnplaced.filter((t) => !regroupedIds.has(t.id));
+    if (stillLeftover.length > 0) {
+      const derivedName = deriveSectionName(stillLeftover);
+      const path = derivedName === "Miscellaneous" ? ["Reference", "General Resources"] : ["Reference", derivedName];
+      for (const tab of stillLeftover) {
+        const { tab: placed, sections: next } = placeAtPath(tab, workingSections, path, "ai");
+        workingSections = next;
+        placedById.set(tab.id, {
+          ...placed,
+          organizationStatus: placed.sectionId ? "fallback" : "uncertain",
+          organizationReason: "Grouped with other tabs that didn't clearly match an existing topic.",
+        });
+      }
     }
   }
 

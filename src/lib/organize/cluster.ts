@@ -1,5 +1,6 @@
 import type { ScopedTab, SemanticClusterHint } from "./types";
-import { GENERIC_DOMAINS, tabTokens } from "./keywords";
+import { tabTokens } from "./keywords";
+import { canonicalSiteIdentity, isGenericSiteIdentity } from "./domain-identity";
 
 /** Precedence used when a tab ends up joined into its cluster via more than one signal — the strongest one wins for confidence scoring later. */
 export type JoinReason = "semantic" | "domain" | "keyword" | "none";
@@ -11,6 +12,10 @@ export type RawCluster = {
   tabIds: string[];
   /** Best join reason seen for each tab in this cluster — see UnionFind.recordReason. */
   joinReasons: Map<string, JoinReason>;
+  /** Canonical site identity (see domain-identity.ts) shared by every member, when this cluster was formed (or dominated) by the hard domain-clustering stage — undefined for a cluster with no single dominant site. */
+  dominantDomain?: string;
+  /** Share (0-1) of this cluster's tabs whose canonical site identity equals `dominantDomain`. */
+  domainShare?: number;
 };
 
 /** Standard union-find with path compression + union by size — plenty fast for the hundreds of tabs a real library holds. */
@@ -92,9 +97,22 @@ const MIN_KEYWORD_DOC_COUNT = 2;
  *     actual page meaning even across differently-worded titles (AGENTS.md's
  *     "General Relativity Notes" / "Schwarzschild Metric" / "S2 Star Orbit
  *     Data" example);
- * (2) an exact non-generic domain match;
+ * (2) a shared canonical site identity (domain-identity.ts) — a HARD signal:
+ *     www.instagram.com / m.instagram.com / instagram.com all count as the
+ *     same site, and once 2+ tabs share one, they're locked to that cluster
+ *     and taken out of the keyword pool below (see domainLockedIds) so a
+ *     single incidental shared word (e.g. two different projects both
+ *     mentioning "notes") can never transitively bridge two unrelated site
+ *     clusters into one mixed blob — the actual failure mode behind AGENTS.md's
+ *     "Instagram tabs dumped into Other" regression: without this exclusion,
+ *     keyword union-find's transitive closure could (and in practice did)
+ *     chain together tabs from entirely different sites/topics through a
+ *     sequence of weak pairwise links, none of which individually looked
+ *     wrong, producing one mega-cluster mislabeled after whichever token
+ *     happened to be most frequent;
  * (3) a shared significant keyword token (title/domain), bounded by
- *     document frequency as above.
+ *     document frequency as above, and restricted to tabs NOT already
+ *     domain-locked by (2).
  * Pure and read-only — never touches a WorkspaceStore.
  */
 export function buildRawClusters(scopedTabs: ScopedTab[], semanticHints: SemanticClusterHint[] = []): RawCluster[] {
@@ -117,20 +135,24 @@ export function buildRawClusters(scopedTabs: ScopedTab[], semanticHints: Semanti
     for (let i = 1; i < ids.length; i++) uf.union(ids[0], ids[i], "semantic");
   }
 
-  const byDomain = new Map<string, string[]>();
+  const identityByTab = new Map(scopedTabs.map((st) => [st.tab.id, canonicalSiteIdentity(st.tab.domain)]));
+  const byIdentity = new Map<string, string[]>();
   for (const st of scopedTabs) {
-    const domain = st.tab.domain.toLowerCase();
-    if (GENERIC_DOMAINS.has(domain)) continue;
-    const bucket = byDomain.get(domain);
+    const identity = identityByTab.get(st.tab.id)!;
+    if (isGenericSiteIdentity(identity)) continue;
+    const bucket = byIdentity.get(identity);
     if (bucket) bucket.push(st.tab.id);
-    else byDomain.set(domain, [st.tab.id]);
+    else byIdentity.set(identity, [st.tab.id]);
   }
-  for (const ids of byDomain.values()) {
+  const domainLockedIds = new Set<string>();
+  for (const ids of byIdentity.values()) {
     if (ids.length < 2) continue;
+    for (const id of ids) domainLockedIds.add(id);
     for (let i = 1; i < ids.length; i++) uf.union(ids[0], ids[i], "domain");
   }
 
-  const tokensByTab = new Map(scopedTabs.map((st) => [st.tab.id, tabTokens(st.tab)]));
+  const keywordPool = scopedTabs.filter((st) => !domainLockedIds.has(st.tab.id));
+  const tokensByTab = new Map(keywordPool.map((st) => [st.tab.id, tabTokens(st.tab)]));
   const byToken = new Map<string, string[]>();
   for (const [tabId, tokens] of tokensByTab) {
     for (const tok of tokens) {
@@ -140,7 +162,7 @@ export function buildRawClusters(scopedTabs: ScopedTab[], semanticHints: Semanti
     }
   }
 
-  const maxDocCount = Math.max(MIN_KEYWORD_DOC_COUNT, Math.floor(scopedTabs.length * MAX_KEYWORD_DOC_FRACTION));
+  const maxDocCount = Math.max(MIN_KEYWORD_DOC_COUNT, Math.floor(keywordPool.length * MAX_KEYWORD_DOC_FRACTION));
   const eligibleTokens = [...byToken.entries()]
     .filter(([, ids]) => ids.length >= MIN_KEYWORD_DOC_COUNT && ids.length <= maxDocCount)
     .sort((a, b) => a[1].length - b[1].length);
@@ -155,7 +177,18 @@ export function buildRawClusters(scopedTabs: ScopedTab[], semanticHints: Semanti
   for (const [root, tabIds] of groups) {
     const joinReasons = new Map<string, JoinReason>();
     for (const id of tabIds) joinReasons.set(id, uf.reasonFor(id));
-    clusters.push({ id: `cluster-${i++}-${root}`, tabIds, joinReasons });
+
+    const identityCounts = new Map<string, number>();
+    for (const id of tabIds) {
+      const identity = identityByTab.get(id);
+      if (!identity) continue;
+      identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+    }
+    const dominant = [...identityCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const dominantDomain = dominant && !isGenericSiteIdentity(dominant[0]) ? dominant[0] : undefined;
+    const domainShare = dominant && dominantDomain ? dominant[1] / tabIds.length : undefined;
+
+    clusters.push({ id: `cluster-${i++}-${root}`, tabIds, joinReasons, dominantDomain, domainShare });
   }
   return clusters;
 }

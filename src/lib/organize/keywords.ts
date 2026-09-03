@@ -6,6 +6,8 @@
  * scoring.
  */
 
+import { canonicalSiteIdentity, getDomainSectionName, isGenericSiteIdentity } from "./domain-identity";
+
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "how", "what", "why", "who", "when", "where",
   "is", "are", "was", "were", "be", "been", "being", "of", "in", "on", "to",
@@ -15,25 +17,18 @@ const STOPWORDS = new Set([
   "untitled", "welcome", "about", "www", "http", "https", "html", "htm",
   "com", "org", "net", "io", "co", "edu", "gov", "dev", "app", "ai", "us",
   "get", "getting", "started", "docs", "documentation", "learn", "guide",
-  // Generic hub/brand words — a shared "Google Search" title tells you
-  // nothing about topic, same reasoning as GENERIC_DOMAINS below (and
-  // deliberately excluded from clustering/naming for the same reason, not
-  // just from domain-based joining).
-  "google", "youtube", "gmail", "bing", "duckduckgo", "chatgpt", "openai",
-  "outlook", "amazon",
+  // Generic hub/search words only — a shared "Google Search" title tells you
+  // nothing about topic. Deliberately NOT extended to youtube/gmail/chatgpt/
+  // amazon/outlook/etc: those ARE the destination/product (see
+  // domain-identity.ts's BRAND_NAMES), so stripping them as stopwords would
+  // erase the one word that actually names that cluster.
+  "google", "bing", "duckduckgo",
 ]);
 
 /** Known dev-tool hosts get a synthetic "development" token boost — the one small domain-specific special-case, since generic keyword frequency alone under-names these clusters (AGENTS.md's "Development" example). */
 const DEV_TOOL_DOMAINS = new Set([
   "github.com", "gitlab.com", "bitbucket.org", "stackoverflow.com",
   "npmjs.com", "developer.mozilla.org", "stackexchange.com",
-]);
-
-/** Hosts too generic to ever drive a domain-only cluster join — a shared "google.com" tells you nothing about topic. */
-export const GENERIC_DOMAINS = new Set([
-  "google.com", "www.google.com", "youtube.com", "www.youtube.com",
-  "gmail.com", "mail.google.com", "bing.com", "duckduckgo.com",
-  "chatgpt.com", "chat.openai.com", "outlook.com", "amazon.com",
 ]);
 
 function isMostlyNumeric(token: string): boolean {
@@ -129,6 +124,35 @@ export function deriveClusterName(tabs: { title?: string; domain: string }[]): s
 
   const runnerUpDisplay = caseToken(firstSeenCasing.get(runnerUp[0]) ?? runnerUp[0]);
   return `${topDisplay} ${runnerUpDisplay}`;
+}
+
+/** A dominant site needs at least this many members AND this share of the group before its brand name wins over a title-derived topic name — see deriveSectionName. */
+const DOMAIN_NAME_MIN_MEMBERS = 2;
+const DOMAIN_NAME_MIN_SHARE = 0.5;
+
+/**
+ * The single naming entry point every "name this group of tabs" call site
+ * should use (AGENTS.md §4: deterministic section naming for strong
+ * website/domain clusters, never left to the AI to invent). Prefers a known
+ * brand/product name when a majority of the group shares one non-generic
+ * site identity — e.g. 14 Instagram tabs always become "Instagram", never
+ * whatever title token happens to be most frequent — and otherwise falls
+ * back to deriveClusterName's topic/keyword-frequency naming.
+ */
+export function deriveSectionName(tabs: { title?: string; domain: string }[]): string {
+  if (tabs.length === 0) return "Miscellaneous";
+
+  const counts = new Map<string, number>();
+  for (const t of tabs) {
+    const identity = canonicalSiteIdentity(t.domain);
+    if (isGenericSiteIdentity(identity)) continue;
+    counts.set(identity, (counts.get(identity) ?? 0) + 1);
+  }
+  const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (dominant && dominant[1] >= DOMAIN_NAME_MIN_MEMBERS && dominant[1] / tabs.length >= DOMAIN_NAME_MIN_SHARE) {
+    return getDomainSectionName(dominant[0]);
+  }
+  return deriveClusterName(tabs);
 }
 
 /** Jaccard-style overlap in [0, 1] between two token sets — used to score cluster↔existing-workspace fit. */

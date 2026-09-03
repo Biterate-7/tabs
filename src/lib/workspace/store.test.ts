@@ -70,6 +70,19 @@ describe("createWorkspace", () => {
     createWorkspace(store, "Research");
     expect(store.workspaces).toHaveLength(1);
   });
+
+  it("seeds a defined (empty) sections array rather than leaving it undefined", () => {
+    // A workspace with sections === undefined reads as "predates sections,
+    // needs migrating" to syncSectionsWithCategories (which no-ops for it)
+    // and as "show the legacy flat-category grid" to the workspace view — a
+    // workspace created mid-session (no full page load in between, so the
+    // one-time ensureSectionsSeededInStore migration never runs again) would
+    // otherwise show that legacy grid, with its own much bigger "Other"
+    // bucket, for as long as nothing else happens to define `sections`.
+    const store = makeStore([makeWorkspace({ id: "a" })], "a");
+    const next = createWorkspace(store, "Research");
+    expect(next.workspaces[1].sections).toEqual([]);
+  });
 });
 
 describe("renameWorkspace", () => {

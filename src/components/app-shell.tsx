@@ -29,6 +29,7 @@ import {
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
+import type { PipelineResult } from "@/lib/sections/ai/pipeline"
 import { logOrganizeReport, summarizeReportForToast } from "@/lib/sections/ai/report"
 import type { OrganizeReport } from "@/lib/sections/ai/report"
 import type { Section } from "@/lib/sections/types"
@@ -207,7 +208,17 @@ export function AppShell() {
     notifyImported(tabs.length)
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
     const nextWorkspace = getCurrentWorkspace(synced)
-    organizeNewTabsIntoSections(nextWorkspace.id, tabs, nextWorkspace.sections ?? [])
+    // Snapshot from `nextWorkspace.tabs` (post-persist/post-sync), not the
+    // raw `tabs` param — syncSectionsWithCategoriesInStore inside persist()
+    // just gave every non-"other"-category tab a coarse category-root
+    // sectionId synchronously, before this async call even starts. Snapshotting
+    // the PRE-sync value here would make organizeNewTabsIntoSections's own
+    // drift guard see that sync-assigned id as "drift" the moment this
+    // resolves and discard the pipeline's real placement for every single
+    // categorized tab, every single dump — starting from the already-synced
+    // value means the guard only fires for drift that happens DURING the
+    // async window (a genuine concurrent user edit), which is what it's for.
+    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs, nextWorkspace.sections ?? [])
   }
 
   function handleTabsChange(tabs: Tab[]) {
@@ -301,7 +312,19 @@ export function AppShell() {
     const sectionIdBeforeById = new Map(tabsSnapshot.map((t) => [t.id, t.sectionId]))
 
     const workspaceName = store?.workspaces.find((w) => w.id === workspaceId)?.name ?? ""
-    const result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot)
+    let result: PipelineResult
+    try {
+      result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot)
+    } catch (err) {
+      // organizeTabsCollectively is designed to never throw (every AI/network
+      // failure inside it degrades to a deterministic fallback instead) — but
+      // if something unexpected still does, failing loudly here beats the
+      // alternative: an unhandled rejection from this fire-and-forget async
+      // function would silently vanish, leaving every one of these tabs
+      // exactly as un-sectioned as they were the moment they were dumped.
+      console.error("[organize] pipeline threw unexpectedly — tabs left unorganized:", err)
+      return undefined
+    }
     logOrganizeReport(result.report)
 
     setStore((prev) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveClusterName, domainTokens, tabTokens, tokenOverlap, tokenize } from "./keywords";
+import { deriveClusterName, deriveSectionName, domainTokens, tabTokens, tokenOverlap, tokenize } from "./keywords";
 
 describe("tokenize", () => {
   it("lowercases, splits on non-alnum, and drops stopwords/short tokens", () => {
@@ -52,6 +52,34 @@ describe("deriveClusterName", () => {
 
   it("falls back to Miscellaneous when nothing is significant", () => {
     expect(deriveClusterName([{ title: "", domain: "" }])).toBe("Miscellaneous");
+  });
+});
+
+describe("deriveSectionName", () => {
+  it("uses the brand name when a majority of the group shares one site, even with unrelated titles", () => {
+    const name = deriveSectionName([
+      { title: "Instagram", domain: "www.instagram.com" },
+      { title: "Login • Instagram", domain: "m.instagram.com" },
+      { title: "jane_doe • Instagram photos and videos", domain: "instagram.com" },
+    ]);
+    expect(name).toBe("Instagram");
+  });
+
+  it("falls back to topic-derived naming when no site dominates", () => {
+    const name = deriveSectionName([
+      { title: "Physics IA Notes", domain: "docs.google.com" },
+      { title: "Physics Orbital Mechanics", domain: "wikipedia.org" },
+      { title: "Physics Lab Report", domain: "notion.so" },
+    ]);
+    expect(name).toBe("Physics");
+  });
+
+  it("does not let a bare google.com/bing.com majority produce a meaningless 'Google' section", () => {
+    const name = deriveSectionName([
+      { title: "a - Google Search", domain: "google.com" },
+      { title: "b - Google Search", domain: "google.com" },
+    ]);
+    expect(name).not.toBe("Google");
   });
 });
 

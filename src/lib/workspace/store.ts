@@ -27,6 +27,22 @@ export function createWorkspace(store: WorkspaceStore, name: string): WorkspaceS
     id: createId("workspace"),
     name: trimmed || "Untitled",
     tabs: [],
+    // Defined (empty) rather than omitted: `sections === undefined` means
+    // "predates sections, still needs migrating" (see ensureSectionsSeeded)
+    // and is also what the workspace view reads to decide whether to render
+    // the legacy flat-category grid (with ITS OWN, much bigger "Other" tile —
+    // just every tab whose category didn't match one of the few hard-coded
+    // classify.ts rules) instead of the section tree. A brand-new workspace
+    // has no legacy tabs to migrate, so there's nothing to seed — but leaving
+    // this `undefined` meant syncSectionsWithCategoriesInStore (which
+    // no-ops for an undefined `sections`, by design, so it never fights
+    // ensureSectionsSeeded's one-time migration) would never engage for a
+    // workspace created mid-session, and nothing else sets `sections` until
+    // the next full page load. Every dump into such a workspace would render
+    // the legacy grid until then, dumping anything without a classify.ts rule
+    // (most social/video/AI-tool sites — there's no rule for any of them)
+    // into ITS "Other", even once the AI section pipeline had already run.
+    sections: [],
     createdAt: now,
     updatedAt: now,
   };
