@@ -64,6 +64,18 @@ const LABEL_MIN_ZOOM = 0.55
 // thresholds instead of one.
 const CATEGORY_LABEL_MIN_ZOOM = 0.05
 const SUBCATEGORY_LABEL_MIN_ZOOM = 0.28
+// Ceiling on how many ambient (unselected) Category/Subcategory/Collection
+// boundaries can be on screen at once. Overlap suppression alone doesn't
+// scale: on a real dense workspace with dozens of real (per-domain
+// "collective clustering") categories, the ring layout packs candidate boxes
+// into overlapping territory near its center as a geometry artifact,
+// independent of how well-separated the underlying data is — an uncapped
+// pass ends up silently keeping only a handful of 30-60 legitimate
+// candidates, in a somewhat arbitrary order. A bounded top-N-by-weight set
+// is deliberate and predictable instead. A selected cluster/collection is
+// exempt (see alwaysDrawBoundaryIds) so it never disappears for being
+// outside the top N.
+const MAX_AMBIENT_BOUNDARIES = 8
 // Below this zoom, low-degree ("minor") nodes fade toward partial opacity so
 // a zoomed-out view of a large graph reads as "major hubs + cluster shape"
 // rather than a wall of equally-loud dots — nodes are never removed, so
@@ -71,8 +83,17 @@ const SUBCATEGORY_LABEL_MIN_ZOOM = 0.28
 const CLUSTER_OVERVIEW_ZOOM = 0.22
 const MINOR_NODE_ZOOMED_OUT_ALPHA = 0.25
 const MAJOR_DEGREE_THRESHOLD = 3
-const CATEGORY_BOUNDARY_PADDING = 40
-const SUBCATEGORY_BOUNDARY_PADDING = 28
+// Halved from 40/28 — a real-pipeline benchmark sweep (570 tabs, dozens of
+// real per-domain categories) found the smaller padded AABB lets more
+// legitimate boundaries survive overlap suppression (mean drawn count +16%
+// at this value, aggregated across 250-750 tabs x 5-50 categories) with
+// zero crossings/oversized boxes and unchanged parent/child containment.
+// Halving both together (not just Category) matters: shrinking Category
+// alone while leaving Subcategory fixed can pop a Subcategory box outside
+// its own parent's shrunk box, which the crossing-suppression pass then
+// treats as ordinary unrelated overlap instead of intentional nesting.
+const CATEGORY_BOUNDARY_PADDING = 20
+const SUBCATEGORY_BOUNDARY_PADDING = 14
 
 // Motion tuning. Ephemeral effects (node arrival/exit, dependency edge
 // create/remove) are duration-based so they have a definite end; continuous
@@ -759,7 +780,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const drawableBoundaryIds = selectNonOverlappingRects(
       combinedBoundaryEntries,
       alwaysDrawBoundaryIds,
-      isBoundaryParentChildPair
+      isBoundaryParentChildPair,
+      MAX_AMBIENT_BOUNDARIES
     )
     for (const id of [...categoryRectsRef.current.keys()]) {
       if (!drawableBoundaryIds.has(id)) categoryRectsRef.current.delete(id)

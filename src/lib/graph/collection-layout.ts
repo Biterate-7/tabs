@@ -163,6 +163,24 @@ export function boundaryDelimitsMembers(
  * batch is treated as mutually exclusive, unchanged from before this
  * parameter existed — so a same-tier-only caller needs no changes.
  *
+ * `maxAmbient`, when given, caps how many non-always-drawn entries this call
+ * can add to the result, regardless of whether they'd otherwise pass the
+ * overlap check. Exists because overlap suppression alone doesn't scale: on
+ * a real dense workspace (measured: 570 tabs, 50 real categories from
+ * per-domain "collective clustering" — see clusters.ts/pipeline.ts) the ring
+ * layout packs dozens of candidate boxes into overlapping territory near its
+ * center as a geometry artifact, independent of how well-separated the
+ * underlying data actually is (confirmed empirically: neither more anchor
+ * spacing nor trimming outlier members meaningfully changed the count) — so
+ * an uncapped pass ends up silently keeping only 1-6 of 30-60 legitimate,
+ * concentration-passing candidates, in a somewhat arbitrary order driven by
+ * which ones happen not to conflict. A bounded ambient set is an honest,
+ * predictable "top N by weight" instead. Always-drawn entries are exempt
+ * from the cap the same way they're exempt from overlap suppression — a
+ * deliberate selection must never vanish for being outside the top N.
+ * `undefined` (the default) means no cap, unchanged from before this
+ * parameter existed.
+ *
  * An always-drawn entry is never merely skipped past a conflict: if it
  * overlaps a non-exempt rect already drawn earlier (lower priority, but
  * processed first), that earlier rect is EVICTED from the result so the
@@ -179,19 +197,26 @@ export function boundaryDelimitsMembers(
 export function selectNonOverlappingRects(
   entries: { id: string; rect: CollectionBoundaryRect }[],
   alwaysDrawId: string | ReadonlySet<string> | null,
-  isExemptOverlap?: (a: string, b: string) => boolean
+  isExemptOverlap?: (a: string, b: string) => boolean,
+  maxAmbient?: number
 ): Set<string> {
   const isAlwaysDraw = (id: string): boolean =>
     alwaysDrawId !== null && (typeof alwaysDrawId === "string" ? id === alwaysDrawId : alwaysDrawId.has(id));
   let drawn: { id: string; rect: CollectionBoundaryRect }[] = [];
   const result = new Set<string>();
+  let ambientCount = 0;
   for (const { id, rect } of entries) {
+    const alwaysDraw = isAlwaysDraw(id);
+    if (!alwaysDraw && maxAmbient !== undefined && ambientCount >= maxAmbient) continue;
     const conflicts = drawn.filter(
       (existing) => !isExemptOverlap?.(existing.id, id) && rectsOverlap(existing.rect, rect)
     );
-    if (isAlwaysDraw(id)) {
+    if (alwaysDraw) {
       for (const conflict of conflicts) {
-        if (!isAlwaysDraw(conflict.id)) result.delete(conflict.id);
+        if (!isAlwaysDraw(conflict.id)) {
+          result.delete(conflict.id);
+          ambientCount--;
+        }
       }
       const evictedIds = new Set(conflicts.filter((c) => !isAlwaysDraw(c.id)).map((c) => c.id));
       drawn = drawn.filter((d) => !evictedIds.has(d.id));
@@ -200,6 +225,7 @@ export function selectNonOverlappingRects(
     } else if (conflicts.length === 0) {
       result.add(id);
       drawn.push({ id, rect });
+      ambientCount++;
     }
   }
   return result;

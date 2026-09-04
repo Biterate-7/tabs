@@ -435,6 +435,69 @@ describe("selectNonOverlappingRects", () => {
       expect(drawable.has("bystander")).toBe(false);
     });
   });
+
+  // Regression coverage for the follow-up to the crossing/ballooning fixes:
+  // overlap suppression alone doesn't bound how many ambient boxes end up on
+  // screen when dozens of non-overlapping candidates exist (a real dense
+  // workspace routinely has 20-50+ real per-domain categories — see
+  // graph-canvas.tsx's MAX_AMBIENT_BOUNDARIES doc comment). `maxAmbient`
+  // gives the caller an explicit, predictable "top N by weight" ceiling
+  // instead of "however many happen to survive greedy overlap resolution."
+  describe("maxAmbient", () => {
+    it("keeps only the first maxAmbient non-overlapping entries", () => {
+      const entries = Array.from({ length: 10 }, (_, i) => ({
+        id: `c${i}`,
+        rect: { x: i * 1000, y: 0, width: 10, height: 10 }, // none overlap each other
+      }));
+      const drawable = selectNonOverlappingRects(entries, null, undefined, 3);
+      expect(drawable.size).toBe(3);
+      expect([...drawable]).toEqual(["c0", "c1", "c2"]);
+    });
+
+    it("does not count a suppressed (overlapping) candidate against the cap", () => {
+      const entries = [
+        { id: "a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "b", rect: { x: 50, y: 50, width: 100, height: 100 } }, // overlaps a, suppressed
+        { id: "c", rect: { x: 1000, y: 1000, width: 10, height: 10 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, null, undefined, 2);
+      expect(drawable.has("a")).toBe(true);
+      expect(drawable.has("b")).toBe(false);
+      expect(drawable.has("c")).toBe(true);
+    });
+
+    it("never caps out an always-drawn entry, even past the limit", () => {
+      const entries = Array.from({ length: 5 }, (_, i) => ({
+        id: `c${i}`,
+        rect: { x: i * 1000, y: 0, width: 10, height: 10 },
+      })).concat([{ id: "selected", rect: { x: 99999, y: 0, width: 10, height: 10 } }]);
+      const drawable = selectNonOverlappingRects(entries, "selected", undefined, 2);
+      expect(drawable.has("selected")).toBe(true);
+      expect([...drawable].filter((id) => id !== "selected")).toHaveLength(2);
+    });
+
+    it("frees a cap slot when an always-drawn entry evicts an ambient bystander", () => {
+      const entries = [
+        { id: "bystander", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "selected", rect: { x: 20, y: 20, width: 100, height: 100 } }, // overlaps bystander, evicts it
+        { id: "far", rect: { x: 1000, y: 1000, width: 10, height: 10 } },
+      ];
+      // maxAmbient=1: without eviction freeing the slot, "far" would never fit.
+      const drawable = selectNonOverlappingRects(entries, "selected", undefined, 1);
+      expect(drawable.has("selected")).toBe(true);
+      expect(drawable.has("bystander")).toBe(false);
+      expect(drawable.has("far")).toBe(true);
+    });
+
+    it("undefined maxAmbient keeps every non-overlapping entry, unchanged from before this parameter existed", () => {
+      const entries = Array.from({ length: 20 }, (_, i) => ({
+        id: `c${i}`,
+        rect: { x: i * 1000, y: 0, width: 10, height: 10 },
+      }));
+      const drawable = selectNonOverlappingRects(entries, null);
+      expect(drawable.size).toBe(20);
+    });
+  });
 });
 
 describe("rectContains", () => {

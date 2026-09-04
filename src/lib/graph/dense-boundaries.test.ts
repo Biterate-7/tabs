@@ -41,6 +41,8 @@ const CATEGORY_BOUNDARY_PADDING = 40;
 const SUBCATEGORY_BOUNDARY_PADDING = 28;
 const VIEWPORT_W = 1280;
 const VIEWPORT_H = 720;
+/** Mirrors graph-canvas.tsx's MAX_AMBIENT_BOUNDARIES. */
+const MAX_AMBIENT_BOUNDARIES = 8;
 
 /**
  * Ceiling on how much of the viewport one boundary may cover. Not a
@@ -147,6 +149,82 @@ function buildWorkspace(total: number, separable: boolean) {
   return { tabs, sections, collections, workspaces: [workspace] };
 }
 
+/**
+ * A second, more realistic dataset shape: MANY flat, single-domain root
+ * categories rather than `buildWorkspace`'s fixed 10. This is what a real
+ * dense workspace actually produces — sections/ai/pipeline.ts's collective
+ * clustering promotes any confident domain cluster (>=2 tabs) straight to
+ * its own root category, with no cap — so a 500+ tab dump easily produces
+ * 20-50 categories (one per AI tool/site the user visited), not 10 broad
+ * buckets. `buildWorkspace`'s fixed 10 categories never stressed category
+ * *count*, only tab count, which is why the crossing/ballooning fixes
+ * verified against it didn't catch the failure this file's newer describe
+ * block guards: at realistic category counts, almost every legitimate
+ * candidate boundary gets suppressed as an "overlap," not because the data
+ * is poorly separated (confirmed at `separable: false` below too) but
+ * because dozens of ring-adjacent AABBs mutually overlap near the ring's
+ * center as a geometry artifact, independent of separation quality.
+ */
+function buildFineGrainedWorkspace(total: number, categoryCount: number) {
+  const now = 1_700_000_000_000;
+  const random = makeRandom(54321);
+  const sections: Section[] = [];
+  const categoryIds: string[] = [];
+  const names = [
+    "Perplexity", "Higgsfield", "Projects", "Claude", "ChatGPT", "Midjourney", "Runway",
+    "ElevenLabs", "Suno", "GitHub", "Figma", "Notion", "Linear", "Vercel", "YouTube", "Reddit",
+    "Twitter", "Discord", "Gmail", "Docs", "Sheets", "Amazon", "Stripe", "Cursor", "Replit",
+    "HuggingFace", "OpenAI", "Anthropic", "Gemini", "Grok", "Leonardo", "Kling", "Pika", "Ideogram",
+    "Perchance", "CapCut", "Canva", "Framer", "Webflow", "Zapier", "n8n", "Airtable", "Slack",
+    "Miro", "Loom", "Descript", "Krea", "Freepik", "Civitai", "Substack",
+  ];
+  for (let i = 0; i < categoryCount; i++) {
+    const id = `sec-cat-${i}`;
+    const name = names[i % names.length] + (i >= names.length ? `${Math.floor(i / names.length)}` : "");
+    sections.push({ id, parentId: null, name, source: "ai", createdAt: now, updatedAt: now });
+    categoryIds.push(id);
+  }
+
+  // Each category gets its own domain — the well-clustered case, matching
+  // `buildWorkspace`'s `separable: true`. Even here, real per-category boxes
+  // still overlap each other purely from ring-adjacency (see doc comment
+  // above), so this is the harder case to defend, not an easier one.
+  const domains = names.map((n) => `${n.toLowerCase()}.com`);
+  const tabs: Tab[] = [];
+  for (let i = 0; i < total; i++) {
+    const categoryIndex = i % categoryCount;
+    const domain = domains[categoryIndex % domains.length];
+    tabs.push({
+      id: `tab-${i}`,
+      url: `https://${domain}/page/${i}`,
+      normalizedUrl: `https://${domain}/page/${i}`,
+      domain,
+      title: `item ${i}`,
+      category: "other",
+      sectionId: categoryIds[categoryIndex],
+    });
+  }
+
+  const collections: Collection[] = [];
+  for (let c = 0; c < Math.max(2, Math.round(total / 40)); c++) {
+    const size = 4 + Math.floor(random() * 12);
+    const base = Math.floor(random() * total);
+    const ids: string[] = [];
+    for (let k = 0; k < size; k++) ids.push(`tab-${(base + k * 7) % total}`);
+    collections.push({
+      id: `col-${c}`,
+      workspaceId: "ws",
+      name: `Collection ${c}`,
+      tabIds: [...new Set(ids)],
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const workspace: Workspace = { id: "ws", name: "Dense", tabs, sections, createdAt: now, updatedAt: now };
+  return { tabs, sections, collections, workspaces: [workspace] };
+}
+
 type DrawnBoundary = {
   id: string;
   kind: "category" | "subcategory" | "collection";
@@ -154,9 +232,10 @@ type DrawnBoundary = {
   rect: CollectionBoundaryRect;
 };
 
-/** Mirrors graph-canvas.tsx's draw(): settle the layout, fit the camera, then build the frame's boundary draw list. */
-function boundaryDrawList(total: number, separable: boolean, selectedId: string | null = null) {
-  const data = buildWorkspace(total, separable);
+type WorkspaceData = ReturnType<typeof buildWorkspace>;
+
+/** Mirrors graph-canvas.tsx's draw(): settle the layout, fit the camera, then build the frame's boundary draw list. Shared by every dataset builder in this file so a fixture change can't accidentally diverge from the real draw() path in only one of them. */
+function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   const lookup = buildWorkspaceLookup(data.workspaces);
   const nodes = buildGraphNodes(data.tabs, lookup);
   const edges = buildGraphEdges(data.tabs, lookup, DEFAULT_CONNECTION_FILTERS, [], data.sections);
@@ -255,7 +334,8 @@ function boundaryDrawList(total: number, separable: boolean, selectedId: string 
   const drawableIds = selectNonOverlappingRects(
     ordered.map((c) => ({ id: c.id, rect: c.rect })),
     selectedId === null ? null : new Set([selectedId]),
-    isNestedPair
+    isNestedPair,
+    MAX_AMBIENT_BOUNDARIES
   );
 
   return {
@@ -264,6 +344,14 @@ function boundaryDrawList(total: number, separable: boolean, selectedId: string 
     drawn: ordered.filter((c) => drawableIds.has(c.id)),
     isNestedPair,
   };
+}
+
+function boundaryDrawList(total: number, separable: boolean, selectedId: string | null = null) {
+  return runBoundaryPipeline(buildWorkspace(total, separable), selectedId);
+}
+
+function fineGrainedBoundaryDrawList(total: number, categoryCount: number, selectedId: string | null = null) {
+  return runBoundaryPipeline(buildFineGrainedWorkspace(total, categoryCount), selectedId);
 }
 
 function describeRect(boundary: DrawnBoundary): string {
@@ -336,4 +424,79 @@ describe("boundary rendering on a dense graph", () => {
       }
     });
   }
+});
+
+/**
+ * End-to-end guard for the follow-up failure found while investigating a
+ * live "570 tabs, still shows a mess of boundary boxes" report: the
+ * crossing/ballooning fixes above hold (verified again below), but at
+ * realistic category *counts* — not just tab counts — overlap suppression
+ * alone silently keeps only a handful of dozens of legitimate,
+ * concentration-passing candidates, because the ring layout packs that many
+ * candidate boxes into mutually-overlapping territory near its center
+ * regardless of how well-separated the underlying data is. graph-canvas.tsx
+ * now bounds the ambient set to MAX_AMBIENT_BOUNDARIES (top-N by weight)
+ * instead of leaving the count to whatever survives greedy overlap
+ * resolution. This suite is the one that would have caught it:
+ * dense-boundaries.test.ts's original describe block never varies category
+ * *count* (buildWorkspace always uses the same fixed 10), only tab count.
+ */
+describe("boundary rendering with realistic (many, fine-grained) categories", () => {
+  for (const categoryCount of [20, 35, 50]) {
+    describe(`570 tabs, ${categoryCount} single-domain categories`, () => {
+      const frame = fineGrainedBoundaryDrawList(570, categoryCount);
+
+      it("draws no two boundaries that visibly cross each other", () => {
+        const crossings: string[] = [];
+        for (let i = 0; i < frame.drawn.length; i++) {
+          for (let j = i + 1; j < frame.drawn.length; j++) {
+            const a = frame.drawn[i];
+            const b = frame.drawn[j];
+            if (rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id)) {
+              crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
+            }
+          }
+        }
+        expect(crossings, `boundaries crossing each other:\n${crossings.join("\n")}`).toEqual([]);
+      });
+
+      it("draws no boundary that has ballooned across the graph", () => {
+        const oversized = frame.drawn
+          .filter((b) => (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > MAX_BOUNDARY_VIEWPORT_SHARE)
+          .map(describeRect);
+        expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
+      });
+
+      // MAX_AMBIENT_BOUNDARIES is a CEILING, not a target: it stops a
+      // scenario with many genuinely non-conflicting candidates (e.g. a few
+      // huge categories plus dozens of small, scattered, far-apart
+      // Collections) from drawing an unbounded pile of ambient boxes. It is
+      // NOT, by itself, a fix for this specific scenario — measured here,
+      // it draws the exact same small handful (2-3 of 30-64 candidates)
+      // with or without the cap, because overlap suppression, not the cap,
+      // is the binding constraint: with the anchor forces as weak as
+      // engine.ts currently keeps them, most of these single-domain
+      // categories' settled point-clouds genuinely interleave near the
+      // ring's center regardless of how many are still "allowed" by the
+      // cap. Getting MORE of these 30-64 legitimate candidates to actually
+      // render would require the anchors to pull harder — a real physics
+      // change, out of scope for this cap. This test locks in the ceiling
+      // half of the contract; it deliberately does not assert reaching it.
+      it("never draws more than the ambient cap", () => {
+        expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
+      });
+    });
+  }
+
+  // Selecting a category that the cap alone would have excluded must still
+  // show it — the cap is about ambient clutter, not about what a deliberate
+  // click can bring on screen.
+  it("still draws an explicitly selected boundary that the ambient cap would otherwise exclude", () => {
+    const unselected = fineGrainedBoundaryDrawList(570, 50);
+    const excluded = unselected.candidates.find((c) => !unselected.drawn.some((d) => d.id === c.id));
+    expect(excluded, "expected the ambient cap to exclude at least one candidate").toBeDefined();
+
+    const selected = fineGrainedBoundaryDrawList(570, 50, excluded!.id);
+    expect(selected.drawn.map((d) => d.id)).toContain(excluded!.id);
+  });
 });
