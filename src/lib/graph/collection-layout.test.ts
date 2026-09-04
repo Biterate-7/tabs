@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeCollectionBoundary, pointInRect, rectsOverlap, selectNonOverlappingRects } from "./collection-layout";
+import {
+  boundaryDelimitsMembers,
+  computeCollectionBoundary,
+  pointInRect,
+  rectContains,
+  rectsOverlap,
+  selectNonOverlappingRects,
+} from "./collection-layout";
 
 describe("computeCollectionBoundary", () => {
   it("returns null for no points", () => {
@@ -427,5 +434,69 @@ describe("selectNonOverlappingRects", () => {
       expect(drawable.has("selected-b")).toBe(true);
       expect(drawable.has("bystander")).toBe(false);
     });
+  });
+});
+
+describe("rectContains", () => {
+  const outer = { x: 0, y: 0, width: 100, height: 100 };
+
+  it("is true for a rect wholly inside, including flush edges", () => {
+    expect(rectContains(outer, { x: 10, y: 10, width: 20, height: 20 })).toBe(true);
+    expect(rectContains(outer, outer)).toBe(true);
+  });
+
+  it("is false when the inner rect pokes out on any side", () => {
+    expect(rectContains(outer, { x: -1, y: 10, width: 20, height: 20 })).toBe(false);
+    expect(rectContains(outer, { x: 10, y: -1, width: 20, height: 20 })).toBe(false);
+    expect(rectContains(outer, { x: 90, y: 10, width: 20, height: 20 })).toBe(false);
+    expect(rectContains(outer, { x: 10, y: 90, width: 20, height: 20 })).toBe(false);
+  });
+
+  it("is false for a merely-overlapping rect", () => {
+    expect(rectContains(outer, { x: 50, y: 50, width: 100, height: 100 })).toBe(false);
+  });
+});
+
+describe("boundaryDelimitsMembers", () => {
+  const rect = { x: 0, y: 0, width: 100, height: 100 };
+  const inside = (id: string) => ({ id, x: 50, y: 50 });
+  const outside = (id: string) => ({ id, x: 500, y: 500 });
+
+  it("accepts a box whose contents are almost entirely its own members", () => {
+    const occupants = [inside("a"), inside("b"), inside("c"), outside("x"), outside("y")];
+    expect(boundaryDelimitsMembers(rect, new Set(["a", "b", "c"]), occupants)).toBe(true);
+  });
+
+  // The reported 500-tab glitch, reduced: a cluster owning a tenth of the
+  // graph whose box has swallowed the whole graph. Inside the box its
+  // members are no more concentrated than they are anywhere else, so the
+  // outline marks out nothing and must not be drawn.
+  it("rejects a box that has swallowed the whole graph", () => {
+    const occupants = Array.from({ length: 100 }, (_, i) => inside(`t${i}`));
+    const members = new Set(Array.from({ length: 10 }, (_, i) => `t${i}`));
+    expect(boundaryDelimitsMembers(rect, members, occupants)).toBe(false);
+  });
+
+  // Same 10%-of-the-graph cluster, but now its box really does mark out
+  // where those tabs live: they are 4x denser inside it than graph-wide.
+  it("accepts a modest share when it is well above the graph-wide baseline", () => {
+    const occupants = [
+      ...Array.from({ length: 8 }, (_, i) => inside(`m${i}`)),
+      ...Array.from({ length: 12 }, (_, i) => inside(`f${i}`)),
+      ...Array.from({ length: 80 }, (_, i) => outside(`o${i}`)),
+    ];
+    expect(boundaryDelimitsMembers(rect, new Set(occupants.slice(0, 8).map((o) => o.id)), occupants)).toBe(true);
+  });
+
+  it("still draws a cluster that legitimately dominates the graph", () => {
+    const occupants = [
+      ...Array.from({ length: 90 }, (_, i) => inside(`m${i}`)),
+      ...Array.from({ length: 10 }, (_, i) => outside(`o${i}`)),
+    ];
+    expect(boundaryDelimitsMembers(rect, new Set(occupants.slice(0, 90).map((o) => o.id)), occupants)).toBe(true);
+  });
+
+  it("treats a box with nothing inside it as vacuously fine", () => {
+    expect(boundaryDelimitsMembers(rect, new Set(["a"]), [outside("a")])).toBe(true);
   });
 });

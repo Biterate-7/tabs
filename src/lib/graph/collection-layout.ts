@@ -42,6 +42,92 @@ export function rectsOverlap(a: CollectionBoundaryRect, b: CollectionBoundaryRec
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
+/** True when `inner` lies wholly within `outer` — the only shape "nesting" actually has. */
+export function rectContains(outer: CollectionBoundaryRect, inner: CollectionBoundaryRect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+/** A node's screen position, as seen by the boundary that might enclose it. */
+export type BoundaryOccupant = { id: string; x: number; y: number };
+
+/**
+ * How much denser a cluster must be INSIDE its own boundary box than it is
+ * across the graph as a whole before that box is worth drawing.
+ *
+ * 2 = "at least twice as concentrated in here as out there". A box whose
+ * contents look just like a random sample of the graph tells the reader
+ * nothing, however tightly it hugs its members' extremes.
+ */
+export const MIN_BOUNDARY_CONCENTRATION = 2;
+
+/**
+ * Ceiling on the bar `boundaryDelimitsMembers` can demand, so a cluster
+ * that legitimately dominates the graph can still show a boundary. Without
+ * it, a cluster holding half the tabs would need an impossible 100%-pure
+ * box (0.5 x 2) and could never draw one.
+ */
+const MAX_BOUNDARY_SHARE_BAR = 0.9;
+
+/**
+ * Whether `rect` actually *delimits* `memberIds`, rather than merely being
+ * the smallest box that happens to contain them.
+ *
+ * computeCollectionBoundary is a plain axis-aligned bounding box over a
+ * cluster's members, and nothing about that construction requires the
+ * result to enclose anything meaningful. The anchor forces that group a
+ * cluster are deliberately weak relative to collide/link (see engine.ts),
+ * so past a few hundred tabs clusters interleave spatially and every
+ * cluster's AABB balloons out to cover almost the whole graph: measured on
+ * a settled 520-tab layout, the "Claude" category's box spanned 36% of the
+ * viewport and contained 513 of the 520 nodes while owning only 52 of
+ * them. Boxes like that are not boundaries — they are large faint
+ * rectangles draped over the entire graph, and several of them at once is
+ * the visual glitch this guard exists to prevent. Suppressing overlaps
+ * cannot help: that pass ranks by weight, so its survivors are precisely
+ * the most sprawling boxes.
+ *
+ * The test is concentration, not purity. Purity alone can't tell the two
+ * cases apart: clusters sit as adjacent wedges on a ring (see clusters.ts's
+ * computeClusterAnchors), so even a cleanly separated category's box picks
+ * up a good share of its neighbours' nodes. Measured across settled
+ * layouts, a well-separated 520-tab graph's category boxes hold ~29% own
+ * members against a 10% graph-wide share (~3x — informative, and drawn),
+ * while the degenerate whole-graph boxes hold ~10% against that same 10%
+ * (~1x — a random sample of the graph, and dropped). A flat purity
+ * threshold high enough to reject the second would throw away the first.
+ *
+ * `occupants` is every currently-positioned node on screen, not just this
+ * cluster's — both the density inside the box and the graph-wide baseline
+ * are measured from it. An empty box is vacuously fine.
+ */
+export function boundaryDelimitsMembers(
+  rect: CollectionBoundaryRect,
+  memberIds: ReadonlySet<string>,
+  occupants: readonly BoundaryOccupant[],
+  minConcentration = MIN_BOUNDARY_CONCENTRATION
+): boolean {
+  let inside = 0;
+  let ownInside = 0;
+  let ownTotal = 0;
+  for (const point of occupants) {
+    const isOwn = memberIds.has(point.id);
+    if (isOwn) ownTotal++;
+    if (!pointInRect(point.x, point.y, rect)) continue;
+    inside++;
+    if (isOwn) ownInside++;
+  }
+  if (inside === 0 || ownTotal === 0) return true;
+
+  const graphWideShare = ownTotal / occupants.length;
+  const bar = Math.min(MAX_BOUNDARY_SHARE_BAR, graphWideShare * minConcentration);
+  return ownInside / inside >= bar;
+}
+
 /**
  * Decides which boundary rects in one priority-ordered batch are actually
  * safe to draw so no two drawn rects visibly overlap on screen. `entries`

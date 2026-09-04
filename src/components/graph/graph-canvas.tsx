@@ -20,9 +20,12 @@ import {
   zoomAroundPoint,
 } from "@/lib/graph/layout"
 import {
+  boundaryDelimitsMembers,
   computeCollectionBoundary,
   pointInRect,
+  rectContains,
   selectNonOverlappingRects,
+  type BoundaryOccupant,
   type CollectionBoundaryRect,
 } from "@/lib/graph/collection-layout"
 import { buildDegreeMap } from "@/lib/graph/relations"
@@ -530,6 +533,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const selectedCollectionId = selectedCollectionIdRef.current
     const selectedClusterId = selectedClusterIdRef.current
 
+    // Every positioned node's screen position, gathered once per frame:
+    // boundaryDelimitsMembers below has to ask "how much of what this box
+    // encloses is foreign to it", which is a question about *all* nodes,
+    // not just one cluster's own members.
+    const boundaryOccupants: BoundaryOccupant[] = []
+    for (const node of nodesRef.current) {
+      const physicsNode = simulation.findNode(node.id)
+      if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
+      const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
+      boundaryOccupants.push({ id: node.id, x: screen.x, y: screen.y })
+    }
+
     // Category, then Subcategory, then Collection boundaries — outermost
     // drawn first so nesting is purely render order, all reusing the same
     // drawCollectionBoundary renderer at a quieter `emphasis` than a
@@ -668,6 +683,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // majority parent — is treated as ordinary unwanted overlap. Nothing
     // is exempted merely for being a Collection.
     //
+    // Tree parentage alone is NOT enough to earn that exemption: the child
+    // rect must also actually SIT INSIDE the parent's (rectContains). A
+    // Collection's box is a live AABB of wherever its members happen to be
+    // and routinely juts out past its own majority parent's box; exempting
+    // that on parentage alone let two viewport-sized boxes cross each
+    // other's outlines — the exact "unintended large overlapping
+    // rectangles" this pass exists to stop, waved through by the one rule
+    // meant to permit clean nesting. Partial poke-out is ordinary overlap.
+    //
     // A suppressed rect is pruned from categoryRectsRef/subcategoryRectsRef/
     // collectionRectsRef right here (not just skipped in the draw loops
     // below) so hitTestCluster/hitTestCollection — which reuse these exact
@@ -684,11 +708,44 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // in collectionRectsRef — this bridges the two id spaces for lookup.
     const clusterNodeForBoundary = (id: string): ClusterNode | undefined =>
       clusterTreeRef.current.byId.get(boundaryTierById.get(id) === "collection" ? `col:${id}` : id)
+    const boundaryRectById = (id: string): CollectionBoundaryRect | undefined =>
+      categoryRectsRef.current.get(id) ?? subcategoryRectsRef.current.get(id) ?? collectionRectsRef.current.get(id)
     const isBoundaryParentChildPair = (a: string, b: string): boolean => {
       const nodeA = clusterNodeForBoundary(a)
       const nodeB = clusterNodeForBoundary(b)
       if (!nodeA || !nodeB) return false
-      return nodeA.parentId === b || nodeB.parentId === a
+      if (nodeA.parentId !== b && nodeB.parentId !== a) return false
+      const rectA = boundaryRectById(a)
+      const rectB = boundaryRectById(b)
+      if (!rectA || !rectB) return false
+      return rectContains(rectA, rectB) || rectContains(rectB, rectA)
+    }
+    const alwaysDrawBoundaryIds = new Set<string>(
+      [selectedClusterId, selectedCollectionId].filter((id): id is string => id !== null)
+    )
+    // A boundary box is only worth drawing when it actually delimits its own
+    // cluster. Past a few hundred tabs the cluster anchors are far too weak
+    // (deliberately — see engine.ts) to keep clusters spatially apart, so
+    // each cluster's AABB degenerates into a box around most of the graph;
+    // drawing those is the "large faint rectangles draped over everything"
+    // glitch, and the overlap pass below cannot catch it because it ranks
+    // weight-first and so keeps exactly the most sprawling boxes. Dropped
+    // here rather than in the draw loops so the boundary maps stay the
+    // single source of truth for hit-testing too (see below). An explicitly
+    // selected boundary is exempt: it's direct feedback for a deliberate
+    // click, one box rather than ambient clutter, and it should never
+    // silently fail to appear.
+    for (const [id, rect] of [
+      ...categoryRectsRef.current,
+      ...subcategoryRectsRef.current,
+      ...collectionRectsRef.current,
+    ]) {
+      if (alwaysDrawBoundaryIds.has(id)) continue
+      const members = clusterNodeForBoundary(id)?.totalTabIds
+      if (!members || boundaryDelimitsMembers(rect, new Set(members), boundaryOccupants)) continue
+      categoryRectsRef.current.delete(id)
+      subcategoryRectsRef.current.delete(id)
+      collectionRectsRef.current.delete(id)
     }
     const combinedBoundaryEntries = [
       ...[...categoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
@@ -699,9 +756,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const weightB = clusterNodeForBoundary(b.id)?.weight ?? 0
       return weightB - weightA || a.id.localeCompare(b.id)
     })
-    const alwaysDrawBoundaryIds = new Set<string>(
-      [selectedClusterId, selectedCollectionId].filter((id): id is string => id !== null)
-    )
     const drawableBoundaryIds = selectNonOverlappingRects(
       combinedBoundaryEntries,
       alwaysDrawBoundaryIds,
