@@ -600,73 +600,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
           }
         }
       }
-
-      const suppressedLabels = resolveLabelOverlaps([...categoryLabelCandidates, ...subcategoryLabelCandidates])
-
-      // Same-tier boundary boxes are drawn in priority (weight-desc) order,
-      // skipping any box that would visibly overlap one already drawn this
-      // frame — see selectNonOverlappingRects's doc comment for why the
-      // anchor forces alone can't guarantee that on their own. The selected
-      // cluster is always exempt so selecting it never makes its own box
-      // disappear. A category's own rect is unaffected by its children's
-      // (nesting a subcategory box inside its parent category box is
-      // intentional, not the clutter this guards against), so categories and
-      // subcategories each get their own independent suppression pass.
-      //
-      // A suppressed rect is pruned from categoryRectsRef/subcategoryRectsRef
-      // right here (not just skipped in the draw loop below) so hitTestCluster
-      // — which reuses these exact maps for click/focus — can never resolve a
-      // click to a cluster whose boundary isn't actually on screen. Without
-      // this, clicking blank-looking canvas could silently select and
-      // camera-focus a cluster the user never saw a hint of.
-      const drawableCategoryIds = selectNonOverlappingRects(
-        [...categoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
-        selectedClusterId
-      )
-      for (const id of [...categoryRectsRef.current.keys()]) {
-        if (!drawableCategoryIds.has(id)) categoryRectsRef.current.delete(id)
-      }
-      for (const [id, rect] of categoryRectsRef.current) {
-        const category = clusterTreeRef.current.byId.get(id)
-        if (!category) continue
-        const hasLabelCandidate = categoryLabelCandidates.some((c) => c.id === id)
-        drawCollectionBoundary(ctx, palette, rect, {
-          name: category.label,
-          isSelected: id === selectedClusterId,
-          showLabel: hasLabelCandidate && !suppressedLabels.has(id),
-          textSize: display.textSize,
-          emphasis: 0.6,
-        })
-      }
-
-      const drawableSubcategoryIds = selectNonOverlappingRects(
-        [...subcategoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
-        selectedClusterId
-      )
-      for (const id of [...subcategoryRectsRef.current.keys()]) {
-        if (!drawableSubcategoryIds.has(id)) subcategoryRectsRef.current.delete(id)
-      }
-      for (const [id, rect] of subcategoryRectsRef.current) {
-        const sub = clusterTreeRef.current.byId.get(id)
-        if (!sub) continue
-        const hasLabelCandidate = subcategoryLabelCandidates.some((c) => c.id === id)
-        drawCollectionBoundary(ctx, palette, rect, {
-          name: sub.label,
-          isSelected: id === selectedClusterId,
-          showLabel: hasLabelCandidate && !suppressedLabels.has(id),
-          textSize: display.textSize,
-          emphasis: 0.8,
-        })
-      }
     } else {
       categoryRectsRef.current.clear()
       subcategoryRectsRef.current.clear()
     }
 
-    // Collection boundaries next, so every edge/node paints on top of them —
-    // a soft region behind the members, never an edge fanned out to each one
-    // (see collection-renderer.ts's doc comment).
+    const suppressedLabels = resolveLabelOverlaps([...categoryLabelCandidates, ...subcategoryLabelCandidates])
+
+    // Collection boundaries — a third, cross-cutting cluster kind, computed
+    // regardless of showClusterBoundariesRef (Collections aren't gated by
+    // the "Show category regions" toggle; see collection-renderer.ts's doc
+    // comment for why they're a soft region, never an edge fanned to every
+    // member).
     collectionRectsRef.current.clear()
+    const collectionNameById = new Map<string, string>()
     for (const collection of collectionsRef.current) {
       const isSelected = collection.id === selectedCollectionId
       const points: { x: number; y: number; radius: number }[] = []
@@ -683,9 +630,125 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const rect = computeCollectionBoundary(points)
       if (!rect) continue
       collectionRectsRef.current.set(collection.id, rect)
+      collectionNameById.set(collection.id, collection.name)
+    }
+
+    // Category, Subcategory, AND Collection boundary boxes are suppressed
+    // together, in ONE combined priority (weight-desc) pass, skipping any
+    // box that would visibly overlap one already drawn this frame — see
+    // selectNonOverlappingRects's doc comment for why the anchor forces
+    // alone can't guarantee that on their own. Every selected boundary
+    // (selectedClusterId AND selectedCollectionId — independent selections
+    // that can both be active at once) is always exempt so selecting one
+    // never makes its own box disappear.
+    //
+    // This must be ONE pass across all three tiers, not per-tier passes:
+    // a Subcategory's ring sits around its OWN parent Category's anchor at
+    // an arbitrary angle (see clusters.ts's computeClusterAnchors), so its
+    // box routinely reaches into an unrelated Category's box; a Collection
+    // is a live AABB of wherever its members' physics nodes currently sit,
+    // completely independent of the Category/Subcategory ring layout, so it
+    // routinely pokes only PARTIALLY into a Category/Subcategory box rather
+    // than nesting cleanly inside one — confirmed empirically (not merely
+    // assumed "intentional cross-cutting"): a settled dense layout measured
+    // Collection boxes overlapping an unrelated Category box at 30-90% of
+    // the smaller box's area, with the Collection's own edge extending
+    // outside the Category's edge — the same visually-crossing-outlines
+    // mesh the Category<->Subcategory fix exists to prevent, just one tier
+    // over. A same-tier-only (or two-tier-only) pass can never see any of
+    // this, let alone suppress it.
+    //
+    // isBoundaryParentChildPair exempts exactly the one relationship that
+    // IS intentional nesting: an entry nested inside its own tree-parent
+    // (a Subcategory inside its parent Category, or a Collection inside
+    // whichever Category/Subcategory holds the majority of its members —
+    // see clusters.ts's buildClusterTree, which computes that exact
+    // relationship for the SAME purpose). Every other pairing — including
+    // a Collection against any Category/Subcategory that ISN'T its
+    // majority parent — is treated as ordinary unwanted overlap. Nothing
+    // is exempted merely for being a Collection.
+    //
+    // A suppressed rect is pruned from categoryRectsRef/subcategoryRectsRef/
+    // collectionRectsRef right here (not just skipped in the draw loops
+    // below) so hitTestCluster/hitTestCollection — which reuse these exact
+    // maps for click/focus — can never resolve a click to a boundary whose
+    // box isn't actually on screen. Without this, clicking blank-looking
+    // canvas could silently select and camera-focus something the user
+    // never saw a hint of.
+    const boundaryTierById = new Map<string, "category" | "subcategory" | "collection">()
+    for (const id of categoryRectsRef.current.keys()) boundaryTierById.set(id, "category")
+    for (const id of subcategoryRectsRef.current.keys()) boundaryTierById.set(id, "subcategory")
+    for (const id of collectionRectsRef.current.keys()) boundaryTierById.set(id, "collection")
+    // Collections live in the cluster tree under a `col:`-prefixed id (see
+    // clusters.ts) distinct from their own raw `collection.id` used here and
+    // in collectionRectsRef — this bridges the two id spaces for lookup.
+    const clusterNodeForBoundary = (id: string): ClusterNode | undefined =>
+      clusterTreeRef.current.byId.get(boundaryTierById.get(id) === "collection" ? `col:${id}` : id)
+    const isBoundaryParentChildPair = (a: string, b: string): boolean => {
+      const nodeA = clusterNodeForBoundary(a)
+      const nodeB = clusterNodeForBoundary(b)
+      if (!nodeA || !nodeB) return false
+      return nodeA.parentId === b || nodeB.parentId === a
+    }
+    const combinedBoundaryEntries = [
+      ...[...categoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
+      ...[...subcategoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
+      ...[...collectionRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
+    ].sort((a, b) => {
+      const weightA = clusterNodeForBoundary(a.id)?.weight ?? 0
+      const weightB = clusterNodeForBoundary(b.id)?.weight ?? 0
+      return weightB - weightA || a.id.localeCompare(b.id)
+    })
+    const alwaysDrawBoundaryIds = new Set<string>(
+      [selectedClusterId, selectedCollectionId].filter((id): id is string => id !== null)
+    )
+    const drawableBoundaryIds = selectNonOverlappingRects(
+      combinedBoundaryEntries,
+      alwaysDrawBoundaryIds,
+      isBoundaryParentChildPair
+    )
+    for (const id of [...categoryRectsRef.current.keys()]) {
+      if (!drawableBoundaryIds.has(id)) categoryRectsRef.current.delete(id)
+    }
+    for (const id of [...subcategoryRectsRef.current.keys()]) {
+      if (!drawableBoundaryIds.has(id)) subcategoryRectsRef.current.delete(id)
+    }
+    for (const id of [...collectionRectsRef.current.keys()]) {
+      if (!drawableBoundaryIds.has(id)) collectionRectsRef.current.delete(id)
+    }
+
+    for (const [id, rect] of categoryRectsRef.current) {
+      const category = clusterTreeRef.current.byId.get(id)
+      if (!category) continue
+      const hasLabelCandidate = categoryLabelCandidates.some((c) => c.id === id)
       drawCollectionBoundary(ctx, palette, rect, {
-        name: collection.name,
-        isSelected,
+        name: category.label,
+        isSelected: id === selectedClusterId,
+        showLabel: hasLabelCandidate && !suppressedLabels.has(id),
+        textSize: display.textSize,
+        emphasis: 0.6,
+      })
+    }
+
+    for (const [id, rect] of subcategoryRectsRef.current) {
+      const sub = clusterTreeRef.current.byId.get(id)
+      if (!sub) continue
+      const hasLabelCandidate = subcategoryLabelCandidates.some((c) => c.id === id)
+      drawCollectionBoundary(ctx, palette, rect, {
+        name: sub.label,
+        isSelected: id === selectedClusterId,
+        showLabel: hasLabelCandidate && !suppressedLabels.has(id),
+        textSize: display.textSize,
+        emphasis: 0.8,
+      })
+    }
+
+    for (const [id, rect] of collectionRectsRef.current) {
+      const name = collectionNameById.get(id)
+      if (name === undefined) continue
+      drawCollectionBoundary(ctx, palette, rect, {
+        name,
+        isSelected: id === selectedCollectionId,
         showLabel: showLabels,
         textSize: display.textSize,
       })

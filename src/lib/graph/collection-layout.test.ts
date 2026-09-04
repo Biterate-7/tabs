@@ -81,14 +81,18 @@ describe("selectNonOverlappingRects", () => {
     expect(drawable.size).toBe(3);
   });
 
-  it("never suppresses alwaysDrawId even when it overlaps an earlier rect", () => {
+  it("never suppresses alwaysDrawId even when it overlaps an earlier rect (evicting that earlier rect instead)", () => {
     const entries = [
       { id: "big", rect: { x: 0, y: 0, width: 100, height: 100 } },
       { id: "selected", rect: { x: 50, y: 50, width: 100, height: 100 } },
     ];
     const drawable = selectNonOverlappingRects(entries, "selected");
-    expect(drawable.has("big")).toBe(true);
     expect(drawable.has("selected")).toBe(true);
+    // "big" is evicted, not left drawn alongside "selected" — the two rects
+    // overlap and neither is exempt, so keeping both would be exactly the
+    // visible crossing this function exists to prevent. See the dedicated
+    // "always-drawn entries evict conflicting bystanders" tests below.
+    expect(drawable.has("big")).toBe(false);
   });
 
   it("lets a rect overlapping only a suppressed rect still draw (transitively takes over its spot)", () => {
@@ -158,5 +162,270 @@ describe("selectNonOverlappingRects", () => {
     ];
     const drawable = selectNonOverlappingRects(entries, null);
     expect(drawable.has("many-nodes")).toBe(true);
+  });
+
+  // Regression coverage for the Category/Subcategory cross-tier overlap that
+  // survived the first same-tier-only suppression fix: a Subcategory's ring
+  // sits around its own parent Category's anchor at an arbitrary angle (see
+  // clusters.ts's computeClusterAnchors), so its bounding box can reach into
+  // a completely unrelated Category's box. That's unintended overlap and
+  // must be suppressed same as any other; only the intentional
+  // parent-inside-its-own-parent nesting should be exempt.
+  describe("isExemptOverlap (cross-tier nesting)", () => {
+    it("suppresses an overlap between unrelated rects even when a predicate is supplied", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "sub-of-cat-b", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      // Predicate present, but this pair isn't parent/child — still suppressed.
+      const drawable = selectNonOverlappingRects(entries, null, () => false);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("sub-of-cat-b")).toBe(false);
+    });
+
+    it("draws both members of an exempt (parent/child) pair even though their rects overlap", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "sub-of-cat-a", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const isParentChild = (a: string, b: string) =>
+        (a === "cat-a" && b === "sub-of-cat-a") || (a === "sub-of-cat-a" && b === "cat-a");
+      const drawable = selectNonOverlappingRects(entries, null, isParentChild);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("sub-of-cat-a")).toBe(true);
+    });
+
+    it("still suppresses a third, unrelated rect that overlaps only the exempt pair", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "sub-of-cat-a", rect: { x: 50, y: 50, width: 100, height: 100 } },
+        { id: "cat-b", rect: { x: 60, y: 60, width: 100, height: 100 } },
+      ];
+      const isParentChild = (a: string, b: string) =>
+        (a === "cat-a" && b === "sub-of-cat-a") || (a === "sub-of-cat-a" && b === "cat-a");
+      const drawable = selectNonOverlappingRects(entries, null, isParentChild);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("sub-of-cat-a")).toBe(true);
+      expect(drawable.has("cat-b")).toBe(false);
+    });
+
+    it("omitting the predicate keeps the old all-pairs-mutually-exclusive behavior", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "sub-of-cat-a", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, null);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("sub-of-cat-a")).toBe(false);
+    });
+  });
+
+  // Regression coverage for the Collection<->Category/Subcategory overlap
+  // discovered after the Category<->Subcategory fix: Collections share the
+  // exact same computeCollectionBoundary/drawCollectionBoundary pipeline but
+  // were suppressed only against other Collections, never against a
+  // Category/Subcategory box they happen to cross — measured live to be a
+  // genuine PARTIAL overlap (a Collection box's edge extending outside a
+  // Category box's edge, not clean containment), the same visually-crossing
+  // mesh the Category<->Subcategory fix exists to prevent, one tier over.
+  // The fix folds all three tiers into one combined pass; a Collection gets
+  // no automatic exemption merely for being a Collection — only an actual
+  // tree parent/child relationship (its own majority-parent Category, same
+  // as a Subcategory's parent) is exempt.
+  describe("mixed Category/Subcategory/Collection suppression", () => {
+    it("suppresses a Collection that overlaps an unrelated Category, same as any other unintended overlap", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "coll-x", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, null, () => false);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("coll-x")).toBe(false);
+    });
+
+    it("draws a Collection nested inside its own majority-parent Category even though the rects overlap", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "coll-x", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const isTreeParentChild = (a: string, b: string) =>
+        (a === "cat-a" && b === "coll-x") || (a === "coll-x" && b === "cat-a");
+      const drawable = selectNonOverlappingRects(entries, null, isTreeParentChild);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("coll-x")).toBe(true);
+    });
+
+    it("does not exempt a Collection against a Category/Subcategory that isn't its own tree parent", () => {
+      const entries = [
+        { id: "cat-a", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "coll-x", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      // coll-x's real parent is "cat-b" (not present here) — cat-a is a
+      // stranger to it, so the predicate correctly returns false for this pair.
+      const isTreeParentChild = (a: string, b: string) =>
+        (a === "cat-b" && b === "coll-x") || (a === "coll-x" && b === "cat-b");
+      const drawable = selectNonOverlappingRects(entries, null, isTreeParentChild);
+      expect(drawable.has("cat-a")).toBe(true);
+      expect(drawable.has("coll-x")).toBe(false);
+    });
+
+    it("keeps Collections mutually exclusive of each other within the combined pass", () => {
+      const entries = [
+        { id: "coll-big", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "coll-small", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, null);
+      expect(drawable.has("coll-big")).toBe(true);
+      expect(drawable.has("coll-small")).toBe(false);
+    });
+
+    it("a dense mix of Category, Subcategory, and Collection rects produces zero unintended overlaps among the drawn set", () => {
+      // Mirrors the real bug: a dominant Category (cat-0) whose box spans
+      // most of the area, its own Subcategory nested inside it, and several
+      // small Collections scattered so some overlap cat-0 and some don't.
+      const entries: { id: string; rect: { x: number; y: number; width: number; height: number } }[] = [
+        { id: "cat-0", rect: { x: 0, y: 0, width: 400, height: 400 } },
+        { id: "sub-0-a", rect: { x: 50, y: 50, width: 150, height: 150 } }, // nested in cat-0
+        { id: "coll-1", rect: { x: 350, y: 350, width: 100, height: 100 } }, // overlaps cat-0's corner
+        { id: "coll-2", rect: { x: 500, y: 500, width: 80, height: 80 } }, // clear of everything
+        { id: "coll-3", rect: { x: 520, y: 520, width: 80, height: 80 } }, // overlaps coll-2
+      ];
+      const parentOf: Record<string, string | null> = {
+        "cat-0": null,
+        "sub-0-a": "cat-0",
+        "coll-1": "cat-0",
+        "coll-2": null,
+        "coll-3": null,
+      };
+      const isParentChild = (a: string, b: string) => parentOf[a] === b || parentOf[b] === a;
+      const drawable = selectNonOverlappingRects(entries, null, isParentChild);
+
+      // cat-0 and its real nested child both survive.
+      expect(drawable.has("cat-0")).toBe(true);
+      expect(drawable.has("sub-0-a")).toBe(true);
+      // coll-1 is exempt against cat-0 (its own parent) despite overlapping it.
+      expect(drawable.has("coll-1")).toBe(true);
+      // coll-2 and coll-3 overlap each other and aren't exempt — only one survives.
+      expect(drawable.has("coll-2")).toBe(true);
+      expect(drawable.has("coll-3")).toBe(false);
+
+      // Zero unintended overlaps among whatever ends up drawn.
+      const drawnRects = entries.filter((e) => drawable.has(e.id));
+      for (let i = 0; i < drawnRects.length; i++) {
+        for (let j = i + 1; j < drawnRects.length; j++) {
+          const a = drawnRects[i];
+          const b = drawnRects[j];
+          const overlap = rectsOverlap(a.rect, b.rect);
+          if (overlap) expect(isParentChild(a.id, b.id)).toBe(true);
+        }
+      }
+    });
+  });
+
+  describe("alwaysDrawId as a Set (multiple independent selections)", () => {
+    it("exempts every id in the Set from suppressing each other, e.g. a selected cluster AND a separately selected collection", () => {
+      const entries = [
+        { id: "selected-cluster", rect: { x: 20, y: 20, width: 100, height: 100 } },
+        { id: "selected-collection", rect: { x: 40, y: 40, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, new Set(["selected-cluster", "selected-collection"]));
+      expect(drawable.has("selected-cluster")).toBe(true);
+      expect(drawable.has("selected-collection")).toBe(true);
+    });
+
+    it("an empty Set exempts nothing, same as null", () => {
+      const entries = [
+        { id: "big", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "small", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, new Set());
+      expect(drawable.has("big")).toBe(true);
+      expect(drawable.has("small")).toBe(false);
+    });
+  });
+
+  // Regression coverage for a real bug found while auditing the combined
+  // Category/Subcategory/Collection suppression pass: a higher-priority,
+  // unrelated rect drawn BEFORE a selected one used to stay on screen even
+  // though the always-draw exemption then forced the selected rect to draw
+  // on top of it — satisfying "selected boundaries must remain visible" at
+  // the direct expense of "unrelated boundaries must never visually cross".
+  // Measured on a ~280-tab synthetic dataset: selecting any non-dominant
+  // Category/Subcategory/Collection produced a real, visible crossing
+  // (overlap area up to 100% of the smaller rect) with whichever unrelated
+  // rect had already won the draw. The fix: an always-drawn entry evicts
+  // any non-exempt, non-always-drawn rect it conflicts with instead of
+  // merely drawing alongside it.
+  describe("always-drawn entries evict conflicting bystanders (no forced crossing)", () => {
+    it("evicts an unrelated higher-priority rect that already overlaps the selected one", () => {
+      const entries = [
+        { id: "big-unselected", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "selected", rect: { x: 20, y: 20, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, "selected");
+      expect(drawable.has("selected")).toBe(true);
+      expect(drawable.has("big-unselected")).toBe(false);
+    });
+
+    it("does not evict a bystander that doesn't actually overlap the selected rect", () => {
+      const entries = [
+        { id: "far-away", rect: { x: 1000, y: 1000, width: 50, height: 50 } },
+        { id: "selected", rect: { x: 0, y: 0, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, "selected");
+      expect(drawable.has("selected")).toBe(true);
+      expect(drawable.has("far-away")).toBe(true);
+    });
+
+    it("does not evict a bystander the selected rect overlaps only via an exempt (parent/child) relationship", () => {
+      const entries = [
+        { id: "parent", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "selected-child", rect: { x: 20, y: 20, width: 100, height: 100 } },
+      ];
+      const isParentChild = (a: string, b: string) => (a === "parent" && b === "selected-child") || (a === "selected-child" && b === "parent");
+      const drawable = selectNonOverlappingRects(entries, "selected-child", isParentChild);
+      expect(drawable.has("parent")).toBe(true);
+      expect(drawable.has("selected-child")).toBe(true);
+    });
+
+    it("never evicts another always-drawn entry — two simultaneous selections may still cross each other", () => {
+      const entries = [
+        { id: "selected-cluster", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "selected-collection", rect: { x: 50, y: 50, width: 100, height: 100 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, new Set(["selected-cluster", "selected-collection"]));
+      expect(drawable.has("selected-cluster")).toBe(true);
+      expect(drawable.has("selected-collection")).toBe(true);
+    });
+
+    it("a bystander evicted to make room for one selection is not resurrected by a later, unrelated selection", () => {
+      const entries = [
+        { id: "bystander", rect: { x: 0, y: 0, width: 100, height: 100 } },
+        { id: "selected-a", rect: { x: 20, y: 20, width: 100, height: 100 } },
+        { id: "selected-b", rect: { x: 500, y: 500, width: 50, height: 50 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, new Set(["selected-a", "selected-b"]));
+      expect(drawable.has("selected-a")).toBe(true);
+      expect(drawable.has("selected-b")).toBe(true);
+      expect(drawable.has("bystander")).toBe(false);
+    });
+
+    // Distinct from the case above: here the bystander overlaps BOTH
+    // simultaneous selections (not just one) — e.g. a selected cluster and a
+    // separately selected collection whose boxes both happen to cross a
+    // third, unrelated category nobody selected. Both selections must
+    // survive and the bystander must be evicted regardless of which
+    // selection's turn in priority order triggers the eviction.
+    it("evicts a bystander that overlaps both of two simultaneous selections", () => {
+      const entries = [
+        { id: "bystander", rect: { x: 0, y: 0, width: 200, height: 200 } },
+        { id: "selected-a", rect: { x: 10, y: 10, width: 50, height: 50 } },
+        { id: "selected-b", rect: { x: 100, y: 100, width: 50, height: 50 } },
+      ];
+      const drawable = selectNonOverlappingRects(entries, new Set(["selected-a", "selected-b"]));
+      expect(drawable.has("selected-a")).toBe(true);
+      expect(drawable.has("selected-b")).toBe(true);
+      expect(drawable.has("bystander")).toBe(false);
+    });
   });
 });
