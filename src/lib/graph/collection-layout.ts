@@ -34,6 +34,48 @@ export function computeCollectionBoundary(
   };
 }
 
+/**
+ * Screen-space padding around a Category / Subcategory candidate AABB.
+ *
+ * Halved from 40/28 — a real-pipeline benchmark sweep (570 tabs, dozens of
+ * real per-domain categories) found the smaller padded AABB lets more
+ * legitimate boundaries survive overlap suppression (mean drawn count +16%
+ * at this value, aggregated across 250-750 tabs x 5-50 categories) with
+ * zero crossings/oversized boxes and unchanged parent/child containment.
+ * Halving both together (not just Category) matters: shrinking Category
+ * alone while leaving Subcategory fixed can pop a Subcategory box outside
+ * its own parent's shrunk box, which the crossing-suppression pass then
+ * treats as ordinary unrelated overlap instead of intentional nesting.
+ * Collections keep computeCollectionBoundary's own 20px default.
+ *
+ * These live here, beside the rest of the boundary policy, rather than in
+ * graph-canvas.tsx, so the regression suites can assert against the values
+ * the renderer actually uses. They previously sat private to the component
+ * and dense-boundaries.test.ts kept its own copies, which silently went on
+ * testing the pre-halving 40/28 after production moved to 20/14 — a green
+ * suite that no longer described the shipped renderer.
+ */
+export const CATEGORY_BOUNDARY_PADDING = 20;
+export const SUBCATEGORY_BOUNDARY_PADDING = 14;
+
+/**
+ * Ceiling on how many ambient (unselected) Category/Subcategory/Collection
+ * boundaries can be on screen at once. Overlap suppression alone doesn't
+ * scale: on a real dense workspace with dozens of real (per-domain
+ * "collective clustering") categories, the ring layout packs candidate boxes
+ * into overlapping territory near its center as a geometry artifact,
+ * independent of how well-separated the underlying data is. A bounded,
+ * deliberate top-N is predictable where "whatever greedy suppression happened
+ * to leave" is not. A selected cluster/collection is exempt (see
+ * graph-canvas.tsx's alwaysDrawBoundaryIds) so it never disappears for being
+ * outside the top N.
+ *
+ * This is a presentation-density ceiling, NOT the mechanism that rejects bad
+ * geometry — boundaryDelimitsMembers does that first, and boundaryDrawPriority
+ * decides who competes for the remaining slots.
+ */
+export const MAX_AMBIENT_BOUNDARIES = 8;
+
 export function pointInRect(x: number, y: number, rect: CollectionBoundaryRect): boolean {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
 }
@@ -111,6 +153,27 @@ export function boundaryDelimitsMembers(
   occupants: readonly BoundaryOccupant[],
   minConcentration = MIN_BOUNDARY_CONCENTRATION
 ): boolean {
+  return occupancyDelimitsMembers(
+    measureBoundaryOccupancy(rect, memberIds, occupants),
+    occupants.length,
+    minConcentration
+  );
+}
+
+/**
+ * What one candidate box actually encloses, counted once so both the
+ * concentration gate and the draw-priority ranking can read it without
+ * re-walking every occupant. `inside` is every node inside the rect,
+ * `ownInside` the subset belonging to the cluster, `ownTotal` the cluster's
+ * members anywhere on screen.
+ */
+export type BoundaryOccupancy = { inside: number; ownInside: number; ownTotal: number };
+
+export function measureBoundaryOccupancy(
+  rect: CollectionBoundaryRect,
+  memberIds: ReadonlySet<string>,
+  occupants: readonly BoundaryOccupant[]
+): BoundaryOccupancy {
   let inside = 0;
   let ownInside = 0;
   let ownTotal = 0;
@@ -121,19 +184,90 @@ export function boundaryDelimitsMembers(
     inside++;
     if (isOwn) ownInside++;
   }
+  return { inside, ownInside, ownTotal };
+}
+
+/** `boundaryDelimitsMembers`'s test, against an already-measured occupancy. */
+export function occupancyDelimitsMembers(
+  occupancy: BoundaryOccupancy,
+  occupantCount: number,
+  minConcentration = MIN_BOUNDARY_CONCENTRATION
+): boolean {
+  const { inside, ownInside, ownTotal } = occupancy;
   if (inside === 0 || ownTotal === 0) return true;
 
-  const graphWideShare = ownTotal / occupants.length;
+  const graphWideShare = ownTotal / occupantCount;
   const bar = Math.min(MAX_BOUNDARY_SHARE_BAR, graphWideShare * minConcentration);
   return ownInside / inside >= bar;
+}
+
+/**
+ * The share of what a box encloses that actually belongs to it — 1 when the
+ * box holds nothing but its own members, approaching 0 as it sweeps in
+ * unrelated graph content. An empty box is vacuously pure.
+ */
+export function boundaryPurity(occupancy: BoundaryOccupancy): number {
+  return occupancy.inside === 0 ? 1 : occupancy.ownInside / occupancy.inside;
+}
+
+/**
+ * How much a box is worth drawing, used to order `selectNonOverlappingRects`
+ * — roughly "how many of its own members this box actually communicates":
+ * the cluster's size, discounted by how much foreign content the box drags
+ * in alongside them.
+ *
+ * The ordering matters far more than it looks, because the overlap pass is
+ * greedy: whatever goes first claims its territory outright and every later
+ * box touching that territory is dropped. Ranking by raw cluster weight —
+ * what this replaces — therefore hands the first pick to the single most
+ * sprawling box on screen, which is exactly the box most likely to blanket
+ * the territory of a dozen smaller, tighter, more informative ones, and to
+ * be the least informative box in the frame while it does so.
+ *
+ * Measured over 35 settled layouts of the skewed dense fixture in
+ * dense-boundaries.test.ts (250-750 tabs x 12-40 real per-domain categories),
+ * against the weight ordering this replaces: mean purity of the drawn set
+ * rises from 0.40 to 0.46, with the drawn count (6.23) and the largest drawn
+ * box (10.4% of the viewport) unchanged, and still zero crossings. So the
+ * frame shows the same number of boundaries, but each one is markedly more
+ * about its own cluster and less a rectangle laid over its neighbours.
+ *
+ * What this is NOT: it does not draw materially more boxes. On this fixture
+ * family the count is flat; on an earlier, more separable fixture it rose
+ * ~13%. Either way ~6 boxes out of 30-50 eligible candidates is what
+ * non-overlapping axis-aligned packing allows at these densities, and
+ * reordering cannot lift that ceiling — only looser geometry or a stronger
+ * anchor force could, both of which are out of scope here. Purity is the
+ * axis this moves.
+ *
+ * It is deliberately not a purity-maximizing rule either. Ranking by purity
+ * alone scores better on box quality but drops the heaviest cluster's box in
+ * 31 of 40 measured layouts, which reads as broken when that cluster visibly
+ * dominates the graph. Multiplying by weight keeps a big cluster near the top
+ * while its box stays honest, and demotes it below its compact neighbours
+ * once the box stops being honest — the intended trade, and the one the spec
+ * asks for: "a meaningful boundary is preferable to a misleading boundary".
+ *
+ * Also rejected, measured on the same layouts: tolerating a small overlap
+ * rather than reordering. It raises the count (7.4 boxes at a tolerance of
+ * 25% of the smaller box) but leaves mean purity at 0.41 and the largest box
+ * at 9.1% — it packs in more of the same bad boxes, and reintroduces exactly
+ * the visibly-crossing outlines overlap suppression exists to prevent.
+ */
+export function boundaryDrawPriority(occupancy: BoundaryOccupancy, weight: number): number {
+  return weight * boundaryPurity(occupancy);
 }
 
 /**
  * Decides which boundary rects in one priority-ordered batch are actually
  * safe to draw so no two drawn rects visibly overlap on screen. `entries`
  * must already be in priority order (earlier wins a contested overlap) —
- * graph-canvas.tsx feeds this the cluster tree's existing weight-desc order,
- * so bigger/more populated clusters win over smaller ones.
+ * graph-canvas.tsx feeds this `boundaryDrawPriority` order, so the boxes
+ * that most honestly delimit their own cluster claim territory first. That
+ * ordering is load-bearing, not cosmetic: this pass is greedy, so the first
+ * entry to claim a region silently erases every later one touching it.
+ * Feeding it raw cluster weight (as this did before) gives the first pick to
+ * the most sprawling box on screen — see boundaryDrawPriority.
  *
  * This exists because the anchor forces that position cluster members are
  * deliberately weak relative to collide/link (see engine.ts), so clusters

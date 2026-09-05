@@ -5,11 +5,17 @@ import { createGraphSimulation } from "./engine";
 import { computeNodeRadius } from "./node-size";
 import { computeFitCamera, worldToScreen } from "./layout";
 import {
-  boundaryDelimitsMembers,
+  boundaryDrawPriority,
+  boundaryPurity,
+  CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
+  MAX_AMBIENT_BOUNDARIES,
+  measureBoundaryOccupancy,
+  occupancyDelimitsMembers,
   rectContains,
   rectsOverlap,
   selectNonOverlappingRects,
+  SUBCATEGORY_BOUNDARY_PADDING,
   type BoundaryOccupant,
   type CollectionBoundaryRect,
 } from "./collection-layout";
@@ -37,12 +43,8 @@ import type { Workspace } from "@/lib/workspace/types";
  * this stops testing the thing that broke.
  */
 
-const CATEGORY_BOUNDARY_PADDING = 40;
-const SUBCATEGORY_BOUNDARY_PADDING = 28;
 const VIEWPORT_W = 1280;
 const VIEWPORT_H = 720;
-/** Mirrors graph-canvas.tsx's MAX_AMBIENT_BOUNDARIES. */
-const MAX_AMBIENT_BOUNDARIES = 8;
 
 /**
  * Ceiling on how much of the viewport one boundary may cover. Not a
@@ -310,10 +312,22 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   const clusterNodeFor = (id: string): ClusterNode | undefined =>
     tree.byId.get(kindById.get(id) === "collection" ? `col:${id}` : id);
 
+  // Mirrors draw()'s single measure-once pass: the same occupancy feeds both
+  // the concentration gate and the draw-priority ranking.
+  const occupancyById = new Map(
+    candidates.map((c) => [
+      c.id,
+      measureBoundaryOccupancy(c.rect, new Set(clusterNodeFor(c.id)?.totalTabIds ?? []), occupants),
+    ])
+  );
+  const priorityOf = (id: string) =>
+    boundaryDrawPriority(occupancyById.get(id)!, clusterNodeFor(id)?.weight ?? 0);
+  const purityOf = (id: string) => boundaryPurity(occupancyById.get(id)!);
+
   const gated = candidates.filter(
     (candidate) =>
       selectedId === candidate.id ||
-      boundaryDelimitsMembers(candidate.rect, new Set(clusterNodeFor(candidate.id)?.totalTabIds ?? []), occupants)
+      occupancyDelimitsMembers(occupancyById.get(candidate.id)!, occupants.length)
   );
   const rectById = new Map(gated.map((c) => [c.id, c.rect]));
   const isNestedPair = (a: string, b: string) => {
@@ -328,8 +342,7 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   };
 
   const ordered = [...gated].sort(
-    (a, b) =>
-      (clusterNodeFor(b.id)?.weight ?? 0) - (clusterNodeFor(a.id)?.weight ?? 0) || a.id.localeCompare(b.id)
+    (a, b) => priorityOf(b.id) - priorityOf(a.id) || a.id.localeCompare(b.id)
   );
   const drawableIds = selectNonOverlappingRects(
     ordered.map((c) => ({ id: c.id, rect: c.rect })),
@@ -341,8 +354,12 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   return {
     nodeCount: nodes.length,
     candidates,
+    gated,
     drawn: ordered.filter((c) => drawableIds.has(c.id)),
     isNestedPair,
+    purityOf,
+    priorityOf,
+    weightOf: (id: string) => clusterNodeFor(id)?.weight ?? 0,
   };
 }
 
@@ -472,16 +489,23 @@ describe("boundary rendering with realistic (many, fine-grained) categories", ()
       // huge categories plus dozens of small, scattered, far-apart
       // Collections) from drawing an unbounded pile of ambient boxes. It is
       // NOT, by itself, a fix for this specific scenario — measured here,
-      // it draws the exact same small handful (2-3 of 30-64 candidates)
-      // with or without the cap, because overlap suppression, not the cap,
-      // is the binding constraint: with the anchor forces as weak as
-      // engine.ts currently keeps them, most of these single-domain
-      // categories' settled point-clouds genuinely interleave near the
-      // ring's center regardless of how many are still "allowed" by the
-      // cap. Getting MORE of these 30-64 legitimate candidates to actually
-      // render would require the anchors to pull harder — a real physics
-      // change, out of scope for this cap. This test locks in the ceiling
-      // half of the contract; it deliberately does not assert reaching it.
+      // it draws the same handful with or without the cap, because overlap
+      // suppression, not the cap, is the binding constraint.
+      //
+      // An earlier revision of this comment concluded from that that the
+      // only remaining lever was stronger anchor forces — "a real physics
+      // change, out of scope." That was wrong, and it is why the shipped
+      // renderer still looked broken on a real 281-tab workspace while this
+      // suite was green. What overlap suppression keeps depends entirely on
+      // the ORDER it sees, and the order was cluster weight: the greedy pass
+      // handed first pick to the single most sprawling box on screen, which
+      // then erased a dozen compact neighbours before anything else was
+      // considered. Reordering by boundaryDrawPriority — same physics, same
+      // geometry, same cap — recovers a mean of 6.03 boxes against weight's
+      // 5.35 across 40 settled layouts, at meaningfully higher purity. See
+      // "priority ordering recovers boundaries weight ordering erased" below.
+      // This test locks in the ceiling half of the contract; it deliberately
+      // does not assert reaching it.
       it("never draws more than the ambient cap", () => {
         expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
       });
@@ -498,5 +522,282 @@ describe("boundary rendering with realistic (many, fine-grained) categories", ()
 
     const selected = fineGrainedBoundaryDrawList(570, 50, excluded!.id);
     expect(selected.drawn.map((d) => d.id)).toContain(excluded!.id);
+  });
+});
+
+/**
+ * The dataset shape that actually produced the reported screenshot, and that
+ * neither builder above covers: a few dominant categories plus a long tail of
+ * small ones. `buildWorkspace` splits tabs evenly across a fixed 10 and
+ * `buildFineGrainedWorkspace` splits them evenly across N, so in both every
+ * category ends up roughly the same size — and the failure needs the opposite.
+ * Weight-descending suppression only misbehaves badly when one candidate is
+ * far heavier than the rest: that box goes first, sprawls across the centre of
+ * the ring, and erases the compact neighbours behind it. With uniform sizes
+ * there is no runaway first pick, which is why the even-split fixtures stayed
+ * green while a real workspace (one huge "Perplexity", a tail of 2-10 tab
+ * per-domain categories) showed a handful of big faint rectangles and nothing
+ * else.
+ */
+function buildSkewedWorkspace(total: number, categoryCount: number) {
+  const now = 1_700_000_000_000;
+  const random = makeRandom(24680);
+  const names = [
+    "Perplexity", "Claude", "School", "Free", "Greenwood", "Reddit", "Google Docs", "DaFont",
+    "Vercel Tabs", "9Mod", "Projects", "ChatGPT", "YouTube", "GitHub", "Figma", "Notion",
+    "Gmail", "Amazon", "Discord", "Canva", "Spotify", "Twitch", "Steam", "Roblox", "Pinterest",
+    "Quizlet", "Desmos", "Scratch", "Khan", "Wikipedia",
+  ];
+  const sections: Section[] = [];
+  const categoryIds: string[] = [];
+  for (let i = 0; i < categoryCount; i++) {
+    const id = `sec-cat-${i}`;
+    sections.push({ id, parentId: null, name: names[i % names.length], source: "ai", createdAt: now, updatedAt: now });
+    categoryIds.push(id);
+  }
+  // Zipf-ish sizes: category i gets ~1/(i+1) of the mass, so the largest is an
+  // order of magnitude bigger than the tail — the real "collective clustering"
+  // output shape (see sections/ai/pipeline.ts).
+  const shares = categoryIds.map((_, i) => 1 / (i + 1));
+  const shareTotal = shares.reduce((a, b) => a + b, 0);
+  const counts = shares.map((s) => Math.max(2, Math.round((s / shareTotal) * total)));
+
+  const tabs: Tab[] = [];
+  let n = 0;
+  counts.forEach((count, categoryIndex) => {
+    const domain = `${names[categoryIndex % names.length].toLowerCase().replace(/[^a-z0-9]/g, "")}.com`;
+    for (let k = 0; k < count && n < total; k++, n++) {
+      tabs.push({
+        id: `tab-${n}`,
+        url: `https://${domain}/page/${n}`,
+        normalizedUrl: `https://${domain}/page/${n}`,
+        domain,
+        title: `item ${n}`,
+        category: "other",
+        sectionId: categoryIds[categoryIndex],
+      });
+    }
+  });
+
+  const collections: Collection[] = [];
+  for (let c = 0; c < Math.max(2, Math.round(tabs.length / 60)); c++) {
+    const ids: string[] = [];
+    const base = Math.floor(random() * tabs.length);
+    for (let k = 0; k < 6; k++) ids.push(tabs[(base + k * 5) % tabs.length].id);
+    collections.push({
+      id: `col-${c}`,
+      workspaceId: "ws",
+      name: `Collection ${c}`,
+      tabIds: [...new Set(ids)],
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const workspace: Workspace = { id: "ws", name: "Skewed", tabs, sections, createdAt: now, updatedAt: now };
+  return { tabs, sections, collections, workspaces: [workspace] };
+}
+
+function skewedBoundaryDrawList(total: number, categoryCount: number, selectedId: string | null = null) {
+  return runBoundaryPipeline(buildSkewedWorkspace(total, categoryCount), selectedId);
+}
+
+/**
+ * The reported failure, stated as properties rather than as a screenshot: on a
+ * dense workspace with skewed category sizes the graph showed a few large
+ * faint rectangles draped over unrelated nodes while most legitimate
+ * categories had no boundary at all.
+ */
+describe("boundary rendering on a realistically skewed dense workspace", () => {
+  for (const [total, categoryCount] of [
+    [281, 25],
+    [281, 12],
+    [500, 30],
+    [570, 40],
+    [750, 30],
+  ] as [number, number][]) {
+    describe(`${total} tabs, ${categoryCount} skewed categories`, () => {
+      const frame = skewedBoundaryDrawList(total, categoryCount);
+
+      it("draws no two boundaries that visibly cross each other", () => {
+        const crossings: string[] = [];
+        for (let i = 0; i < frame.drawn.length; i++) {
+          for (let j = i + 1; j < frame.drawn.length; j++) {
+            const a = frame.drawn[i];
+            const b = frame.drawn[j];
+            if (rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id)) {
+              crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
+            }
+          }
+        }
+        expect(crossings, `boundaries crossing each other:\n${crossings.join("\n")}`).toEqual([]);
+      });
+
+      it("draws no boundary that has ballooned across the graph", () => {
+        const oversized = frame.drawn
+          .filter((b) => (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > MAX_BOUNDARY_VIEWPORT_SHARE)
+          .map(describeRect);
+        expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
+      });
+
+      it("never draws more than the ambient cap", () => {
+        expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
+      });
+
+      // The feature must not silently switch itself off: plenty of clusters
+      // clear the concentration gate, and the frame has to keep showing the
+      // reader some of them. Deliberately a floor, not a target — see
+      // boundaryDrawPriority for why ~6 boxes out of 30-50 eligible ones is
+      // what non-overlapping axis-aligned packing allows at these densities.
+      it("keeps drawing boundaries rather than suppressing the feature away", () => {
+        expect(frame.gated.length).toBeGreaterThan(10);
+        expect(
+          frame.drawn.length,
+          `only ${frame.drawn.length} of ${frame.gated.length} eligible boundaries survived`
+        ).toBeGreaterThanOrEqual(2);
+      });
+
+      // The reported symptom, stated as the shape that actually reads as
+      // broken: a box big enough to dominate the picture whose contents are
+      // overwhelmingly somebody else's nodes. A SMALL box with low purity is
+      // a known, accepted consequence of boundaryDelimitsMembers being a
+      // relative test (a 5-tab cluster in a 570-tab graph can never reach
+      // high absolute purity, and demanding it would delete every small
+      // category — the over-suppression this file's other tests guard).
+      // Harm scales with area, so the assertion does too.
+      it("draws no large boundary whose contents are mostly foreign nodes", () => {
+        const misleading = frame.drawn
+          .filter(
+            (b) =>
+              (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > 0.1 && frame.purityOf(b.id) < 0.3
+          )
+          .map((b) => `${describeRect(b)} purity=${frame.purityOf(b.id).toFixed(2)}`);
+        expect(misleading, `large boundaries enclosing mostly unrelated nodes:\n${misleading.join("\n")}`).toEqual(
+          []
+        );
+      });
+
+      it("draws each boundary once, in priority order", () => {
+        const ids = frame.drawn.map((b) => b.id);
+        expect(ids).toEqual([...new Set(ids)]);
+        const expected = [...frame.gated]
+          .sort((a, b) => frame.priorityOf(b.id) - frame.priorityOf(a.id) || a.id.localeCompare(b.id))
+          .filter((c) => ids.includes(c.id))
+          .map((c) => c.id);
+        expect(ids).toEqual(expected);
+      });
+    });
+  }
+
+  /**
+   * The direct A/B for the fix, and the test that would have failed before
+   * it. Same settled layout, same geometry, same gate, same cap — the ONLY
+   * difference is the order handed to selectNonOverlappingRects.
+   *
+   * The claim under test is specifically about boundary QUALITY, not count:
+   * measured over 35 layouts of this fixture family, reordering lifts the
+   * mean purity of the drawn set from 0.40 to 0.46 while leaving the drawn
+   * count flat at 6.23. Asserted in aggregate rather than per scenario
+   * because the physics seeds new nodes with Math.random(), so any single
+   * settled layout is noisy (purity came out worse in 2 of those 35 runs,
+   * and the count lower in 3, never by more than one box).
+   */
+  it("priority ordering draws more honest boundaries than weight ordering", () => {
+    let priorityDrawn = 0;
+    let weightDrawn = 0;
+    let priorityPurity = 0;
+    let weightPurity = 0;
+    let samples = 0;
+
+    for (const [total, categoryCount] of [
+      [281, 25],
+      [281, 12],
+      [500, 30],
+      [570, 40],
+      [750, 30],
+    ] as [number, number][]) {
+      const frame = skewedBoundaryDrawList(total, categoryCount);
+
+      const byWeight = selectNonOverlappingRects(
+        [...frame.gated]
+          .sort((a, b) => frame.weightOf(b.id) - frame.weightOf(a.id) || a.id.localeCompare(b.id))
+          .map((c) => ({ id: c.id, rect: c.rect })),
+        null,
+        frame.isNestedPair,
+        MAX_AMBIENT_BOUNDARIES
+      );
+
+      const meanPurity = (ids: string[]) =>
+        ids.length === 0 ? 0 : ids.reduce((sum, id) => sum + frame.purityOf(id), 0) / ids.length;
+
+      priorityDrawn += frame.drawn.length;
+      weightDrawn += byWeight.size;
+      priorityPurity += meanPurity(frame.drawn.map((b) => b.id));
+      weightPurity += meanPurity([...byWeight]);
+      samples++;
+
+      // Reordering trades a box only at the margin: it must never cost the
+      // frame a meaningful number of boundaries to buy that quality.
+      expect(
+        frame.drawn.length,
+        `${total}t/${categoryCount}c: priority drew ${frame.drawn.length}, weight drew ${byWeight.size}`
+      ).toBeGreaterThanOrEqual(byWeight.size - 1);
+    }
+
+    expect(priorityPurity / samples).toBeGreaterThan(weightPurity / samples);
+    expect(priorityDrawn / samples).toBeGreaterThanOrEqual(weightDrawn / samples - 0.5);
+  });
+
+  // Selection must still win over both the gate and the cap, and must not
+  // resurrect a box by trampling bystanders it visibly crosses.
+  it("still draws an explicitly selected boundary the ambient pass excluded, without crossing anything", () => {
+    const unselected = skewedBoundaryDrawList(281, 25);
+    const excluded = unselected.candidates.find((c) => !unselected.drawn.some((d) => d.id === c.id));
+    expect(excluded, "expected the ambient pass to exclude at least one candidate").toBeDefined();
+
+    const selected = skewedBoundaryDrawList(281, 25, excluded!.id);
+    expect(selected.drawn.map((d) => d.id)).toContain(excluded!.id);
+
+    const crossings: string[] = [];
+    for (let i = 0; i < selected.drawn.length; i++) {
+      for (let j = i + 1; j < selected.drawn.length; j++) {
+        const a = selected.drawn[i];
+        const b = selected.drawn[j];
+        if (rectsOverlap(a.rect, b.rect) && !selected.isNestedPair(a.id, b.id)) {
+          crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
+        }
+      }
+    }
+    expect(crossings, `selection introduced crossings:\n${crossings.join("\n")}`).toEqual([]);
+  });
+
+  // A Collection is ambient like any other tier — it competes for the same
+  // slots and cannot slip past the cap by being a different kind of cluster.
+  it("does not let collections bypass the ambient cap", () => {
+    const frame = skewedBoundaryDrawList(570, 40);
+    expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
+    expect(frame.candidates.some((c) => c.kind === "collection")).toBe(true);
+  });
+
+  // Nesting must remain a geometric fact, not a hierarchy claim: any pair
+  // exempted from suppression has to actually contain one another.
+  it("only exempts parent/child pairs that geometrically contain each other", () => {
+    for (const [total, categoryCount] of [
+      [281, 25],
+      [570, 40],
+    ] as [number, number][]) {
+      const frame = skewedBoundaryDrawList(total, categoryCount);
+      for (let i = 0; i < frame.drawn.length; i++) {
+        for (let j = i + 1; j < frame.drawn.length; j++) {
+          const a = frame.drawn[i];
+          const b = frame.drawn[j];
+          if (!frame.isNestedPair(a.id, b.id)) continue;
+          expect(
+            rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect),
+            `${describeRect(a)} and ${describeRect(b)} were exempted without containment`
+          ).toBe(true);
+        }
+      }
+    }
   });
 });

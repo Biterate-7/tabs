@@ -20,11 +20,16 @@ import {
   zoomAroundPoint,
 } from "@/lib/graph/layout"
 import {
-  boundaryDelimitsMembers,
+  boundaryDrawPriority,
+  CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
+  MAX_AMBIENT_BOUNDARIES,
+  measureBoundaryOccupancy,
+  occupancyDelimitsMembers,
   pointInRect,
   rectContains,
   selectNonOverlappingRects,
+  SUBCATEGORY_BOUNDARY_PADDING,
   type BoundaryOccupant,
   type CollectionBoundaryRect,
 } from "@/lib/graph/collection-layout"
@@ -64,18 +69,6 @@ const LABEL_MIN_ZOOM = 0.55
 // thresholds instead of one.
 const CATEGORY_LABEL_MIN_ZOOM = 0.05
 const SUBCATEGORY_LABEL_MIN_ZOOM = 0.28
-// Ceiling on how many ambient (unselected) Category/Subcategory/Collection
-// boundaries can be on screen at once. Overlap suppression alone doesn't
-// scale: on a real dense workspace with dozens of real (per-domain
-// "collective clustering") categories, the ring layout packs candidate boxes
-// into overlapping territory near its center as a geometry artifact,
-// independent of how well-separated the underlying data is — an uncapped
-// pass ends up silently keeping only a handful of 30-60 legitimate
-// candidates, in a somewhat arbitrary order. A bounded top-N-by-weight set
-// is deliberate and predictable instead. A selected cluster/collection is
-// exempt (see alwaysDrawBoundaryIds) so it never disappears for being
-// outside the top N.
-const MAX_AMBIENT_BOUNDARIES = 8
 // Below this zoom, low-degree ("minor") nodes fade toward partial opacity so
 // a zoomed-out view of a large graph reads as "major hubs + cluster shape"
 // rather than a wall of equally-loud dots — nodes are never removed, so
@@ -83,18 +76,6 @@ const MAX_AMBIENT_BOUNDARIES = 8
 const CLUSTER_OVERVIEW_ZOOM = 0.22
 const MINOR_NODE_ZOOMED_OUT_ALPHA = 0.25
 const MAJOR_DEGREE_THRESHOLD = 3
-// Halved from 40/28 — a real-pipeline benchmark sweep (570 tabs, dozens of
-// real per-domain categories) found the smaller padded AABB lets more
-// legitimate boundaries survive overlap suppression (mean drawn count +16%
-// at this value, aggregated across 250-750 tabs x 5-50 categories) with
-// zero crossings/oversized boxes and unchanged parent/child containment.
-// Halving both together (not just Category) matters: shrinking Category
-// alone while leaving Subcategory fixed can pop a Subcategory box outside
-// its own parent's shrunk box, which the crossing-suppression pass then
-// treats as ordinary unrelated overlap instead of intentional nesting.
-const CATEGORY_BOUNDARY_PADDING = 20
-const SUBCATEGORY_BOUNDARY_PADDING = 14
-
 // Motion tuning. Ephemeral effects (node arrival/exit, dependency edge
 // create/remove) are duration-based so they have a definite end; continuous
 // state (selection/search/hover dimming, arrival scale/opacity) instead
@@ -555,7 +536,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const selectedClusterId = selectedClusterIdRef.current
 
     // Every positioned node's screen position, gathered once per frame:
-    // boundaryDelimitsMembers below has to ask "how much of what this box
+    // measureBoundaryOccupancy below has to ask "how much of what this box
     // encloses is foreign to it", which is a question about *all* nodes,
     // not just one cluster's own members.
     const boundaryOccupants: BoundaryOccupant[] = []
@@ -749,33 +730,55 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // (deliberately — see engine.ts) to keep clusters spatially apart, so
     // each cluster's AABB degenerates into a box around most of the graph;
     // drawing those is the "large faint rectangles draped over everything"
-    // glitch, and the overlap pass below cannot catch it because it ranks
-    // weight-first and so keeps exactly the most sprawling boxes. Dropped
-    // here rather than in the draw loops so the boundary maps stay the
-    // single source of truth for hit-testing too (see below). An explicitly
-    // selected boundary is exempt: it's direct feedback for a deliberate
-    // click, one box rather than ambient clutter, and it should never
-    // silently fail to appear.
+    // glitch. The overlap pass below now demotes such a box (see
+    // boundaryDrawPriority) but cannot drop it on its own — one that happens
+    // to conflict with nothing would still be drawn — so this gate rejects it
+    // outright. Dropped here rather than in the draw loops so the boundary
+    // maps stay the single source of truth for hit-testing too (see below).
+    // An explicitly selected boundary is exempt: it's direct feedback for a
+    // deliberate click, one box rather than ambient clutter, and it should
+    // never silently fail to appear.
+    //
+    // Each candidate's occupancy is measured ONCE, here, and reused for both
+    // this gate and the draw-priority sort below: the sort needs the same
+    // "how much of this box is foreign" count the gate already walks every
+    // occupant to get, and measuring twice would double the only superlinear
+    // work in the whole pass. A selected boundary is measured too — it skips
+    // the gate, but it still needs a real priority so it evicts as few
+    // already-drawn bystanders as possible.
+    const boundaryPriorityById = new Map<string, number>()
     for (const [id, rect] of [
       ...categoryRectsRef.current,
       ...subcategoryRectsRef.current,
       ...collectionRectsRef.current,
     ]) {
+      const cluster = clusterNodeForBoundary(id)
+      // No cluster node: nothing to measure, and nothing to judge it by —
+      // kept, as before, and left at the sort's default priority of 0.
+      if (!cluster) continue
+      const occupancy = measureBoundaryOccupancy(rect, new Set(cluster.totalTabIds), boundaryOccupants)
+      boundaryPriorityById.set(id, boundaryDrawPriority(occupancy, cluster.weight))
       if (alwaysDrawBoundaryIds.has(id)) continue
-      const members = clusterNodeForBoundary(id)?.totalTabIds
-      if (!members || boundaryDelimitsMembers(rect, new Set(members), boundaryOccupants)) continue
+      if (occupancyDelimitsMembers(occupancy, boundaryOccupants.length)) continue
       categoryRectsRef.current.delete(id)
       subcategoryRectsRef.current.delete(id)
       collectionRectsRef.current.delete(id)
     }
+    // Priority-descending, NOT weight-descending: the overlap pass below is
+    // greedy, so whichever box is considered first claims its territory and
+    // silently erases every later box touching it. Ranking by raw weight
+    // hands that first pick to the most sprawling box on screen — see
+    // boundaryDrawPriority for the measurements, and for why "biggest
+    // cluster first" is what left a real dense workspace showing a handful
+    // of large faint rectangles while most categories had no box at all.
     const combinedBoundaryEntries = [
       ...[...categoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
       ...[...subcategoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
       ...[...collectionRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
     ].sort((a, b) => {
-      const weightA = clusterNodeForBoundary(a.id)?.weight ?? 0
-      const weightB = clusterNodeForBoundary(b.id)?.weight ?? 0
-      return weightB - weightA || a.id.localeCompare(b.id)
+      const priorityA = boundaryPriorityById.get(a.id) ?? 0
+      const priorityB = boundaryPriorityById.get(b.id) ?? 0
+      return priorityB - priorityA || a.id.localeCompare(b.id)
     })
     const drawableBoundaryIds = selectNonOverlappingRects(
       combinedBoundaryEntries,

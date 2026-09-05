@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   boundaryDelimitsMembers,
+  boundaryDrawPriority,
+  boundaryPurity,
   computeCollectionBoundary,
+  measureBoundaryOccupancy,
+  occupancyDelimitsMembers,
   pointInRect,
   rectContains,
   rectsOverlap,
@@ -128,8 +132,9 @@ describe("selectNonOverlappingRects", () => {
 
   // Priority is deliberately a function of *input order*, not id, size, or
   // any other rect property — the contract (see the function's doc comment)
-  // is that the caller supplies entries already sorted by priority (weight
-  // desc in graph-canvas.tsx). This test locks that contract in: the same
+  // is that the caller supplies entries already sorted by priority
+  // (boundaryDrawPriority desc in graph-canvas.tsx). This test locks that
+  // contract in: the same
   // two overlapping rects produce the opposite winner when the caller's
   // order is reversed, so a regression that started ignoring input order
   // (e.g. sorting by id internally) would be caught here.
@@ -159,10 +164,12 @@ describe("selectNonOverlappingRects", () => {
   });
 
   it("never lets a lower-priority (later) rect suppress a higher-priority (earlier) one", () => {
-    // Encodes the "a category with many nodes must never disappear just
-    // because a smaller one happens to be processed first" invariant —
-    // guaranteed here because graph-canvas.tsx always feeds entries in
-    // weight-desc order, so "earlier" always means "bigger/more populated."
+    // Encodes the "a higher-priority boundary must never disappear just
+    // because a lower-priority one happens to be processed first" invariant.
+    // "Earlier" means higher boundaryDrawPriority — a bigger cluster still
+    // outranks a smaller one at equal purity (see boundaryDrawPriority's
+    // "orders two equally pure boxes by size" test), but a box that sweeps in
+    // mostly foreign nodes no longer outranks a compact one on size alone.
     const entries = [
       { id: "many-nodes", rect: { x: 0, y: 0, width: 200, height: 200 } },
       { id: "few-nodes", rect: { x: 100, y: 100, width: 200, height: 200 } },
@@ -561,5 +568,111 @@ describe("boundaryDelimitsMembers", () => {
 
   it("treats a box with nothing inside it as vacuously fine", () => {
     expect(boundaryDelimitsMembers(rect, new Set(["a"]), [outside("a")])).toBe(true);
+  });
+});
+
+describe("measureBoundaryOccupancy", () => {
+  const rect = { x: 0, y: 0, width: 100, height: 100 };
+  const inside = (id: string) => ({ id, x: 50, y: 50 });
+  const outside = (id: string) => ({ id, x: 500, y: 500 });
+
+  it("counts what the box holds, what of that is its own, and its members overall", () => {
+    const occupants = [inside("a"), inside("b"), inside("x"), outside("c"), outside("y")];
+    expect(measureBoundaryOccupancy(rect, new Set(["a", "b", "c"]), occupants)).toEqual({
+      inside: 3,
+      ownInside: 2,
+      ownTotal: 3,
+    });
+  });
+
+  it("agrees with boundaryDelimitsMembers, which is now defined in terms of it", () => {
+    const occupants = [
+      ...Array.from({ length: 5 }, (_, i) => inside(`m${i}`)),
+      ...Array.from({ length: 40 }, (_, i) => inside(`f${i}`)),
+      ...Array.from({ length: 55 }, (_, i) => outside(`o${i}`)),
+    ];
+    const members = new Set(occupants.slice(0, 5).map((o) => o.id));
+    expect(occupancyDelimitsMembers(measureBoundaryOccupancy(rect, members, occupants), occupants.length)).toBe(
+      boundaryDelimitsMembers(rect, members, occupants)
+    );
+  });
+});
+
+describe("boundaryPurity", () => {
+  it("is the share of the box's contents that belongs to it", () => {
+    expect(boundaryPurity({ inside: 8, ownInside: 6, ownTotal: 6 })).toBeCloseTo(0.75);
+  });
+
+  it("treats an empty box as vacuously pure", () => {
+    expect(boundaryPurity({ inside: 0, ownInside: 0, ownTotal: 3 })).toBe(1);
+  });
+});
+
+/**
+ * The ordering property that fixes the reported failure. selectNonOverlappingRects
+ * is greedy, so whatever sorts first claims its territory and erases every later
+ * box touching it. Ranking by raw cluster weight gave that first pick to the most
+ * sprawling box on screen, which is exactly the box that blankets the compact,
+ * informative neighbours the reader actually wanted.
+ */
+describe("boundaryDrawPriority", () => {
+  it("ranks a compact box above a heavier one that sprawls over foreign nodes", () => {
+    // 60 members, but its box holds 240 nodes — three quarters of what it
+    // encloses belongs to somebody else.
+    const sprawling = boundaryDrawPriority({ inside: 240, ownInside: 60, ownTotal: 60 }, 60);
+    // A third the size, but its box is almost purely its own.
+    const compact = boundaryDrawPriority({ inside: 22, ownInside: 20, ownTotal: 20 }, 20);
+    expect(compact).toBeGreaterThan(sprawling);
+  });
+
+  it("still ranks a big cluster first when its box is honest", () => {
+    const bigAndTight = boundaryDrawPriority({ inside: 70, ownInside: 60, ownTotal: 60 }, 60);
+    const smallAndTight = boundaryDrawPriority({ inside: 22, ownInside: 20, ownTotal: 20 }, 20);
+    expect(bigAndTight).toBeGreaterThan(smallAndTight);
+  });
+
+  it("orders two equally pure boxes by size, as weight-ranking always did", () => {
+    const bigger = boundaryDrawPriority({ inside: 50, ownInside: 40, ownTotal: 40 }, 40);
+    const smaller = boundaryDrawPriority({ inside: 25, ownInside: 20, ownTotal: 20 }, 20);
+    expect(bigger).toBeGreaterThan(smaller);
+  });
+
+  it("orders two equally sized boxes by how little foreign content they sweep in", () => {
+    const cleaner = boundaryDrawPriority({ inside: 22, ownInside: 20, ownTotal: 20 }, 20);
+    const dirtier = boundaryDrawPriority({ inside: 80, ownInside: 20, ownTotal: 20 }, 20);
+    expect(cleaner).toBeGreaterThan(dirtier);
+  });
+
+  it("is deterministic and pure", () => {
+    const occupancy = { inside: 31, ownInside: 17, ownTotal: 19 };
+    expect(boundaryDrawPriority(occupancy, 19)).toBe(boundaryDrawPriority(occupancy, 19));
+  });
+
+  it("drives selectNonOverlappingRects to keep two compact boxes over one sprawling box", () => {
+    // The sprawling box overlaps both compact ones; the compact pair do not
+    // touch each other. Weight order draws 1 box, priority order draws 2.
+    const sprawl = { id: "sprawl", rect: { x: 0, y: 0, width: 400, height: 400 } };
+    const tightA = { id: "tightA", rect: { x: 10, y: 10, width: 60, height: 60 } };
+    const tightB = { id: "tightB", rect: { x: 300, y: 300, width: 60, height: 60 } };
+
+    const byWeight = selectNonOverlappingRects([sprawl, tightA, tightB], null);
+    expect([...byWeight]).toEqual(["sprawl"]);
+
+    const occupancies = {
+      sprawl: { inside: 240, ownInside: 60, ownTotal: 60 },
+      tightA: { inside: 22, ownInside: 20, ownTotal: 20 },
+      tightB: { inside: 21, ownInside: 20, ownTotal: 20 },
+    } as const;
+    const weights = { sprawl: 60, tightA: 20, tightB: 20 } as const;
+    const byPriority = selectNonOverlappingRects(
+      [sprawl, tightA, tightB].sort(
+        (a, b) =>
+          boundaryDrawPriority(occupancies[b.id as keyof typeof occupancies], weights[b.id as keyof typeof weights]) -
+            boundaryDrawPriority(occupancies[a.id as keyof typeof occupancies], weights[a.id as keyof typeof weights]) ||
+          a.id.localeCompare(b.id)
+      ),
+      null
+    );
+    expect([...byPriority].sort()).toEqual(["tightA", "tightB"]);
   });
 });
