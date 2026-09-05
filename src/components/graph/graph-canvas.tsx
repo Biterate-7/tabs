@@ -23,7 +23,6 @@ import {
   boundaryDrawPriority,
   CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
-  MAX_AMBIENT_BOUNDARIES,
   measureBoundaryOccupancy,
   occupancyDelimitsMembers,
   pointInRect,
@@ -780,11 +779,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const priorityB = boundaryPriorityById.get(b.id) ?? 0
       return priorityB - priorityA || a.id.localeCompare(b.id)
     })
+    // No ambient count cap: the concentration gate above, the priority
+    // ordering, and this pass's own non-overlap guarantee are the density
+    // control. A count cap on top of them only hid clean, well-separated
+    // category boxes once packed2d gave every category its own territory —
+    // see collection-layout.ts, where the old MAX_AMBIENT_BOUNDARIES was.
     const drawableBoundaryIds = selectNonOverlappingRects(
       combinedBoundaryEntries,
       alwaysDrawBoundaryIds,
-      isBoundaryParentChildPair,
-      MAX_AMBIENT_BOUNDARIES
+      isBoundaryParentChildPair
     )
     for (const id of [...categoryRectsRef.current.keys()]) {
       if (!drawableBoundaryIds.has(id)) categoryRectsRef.current.delete(id)

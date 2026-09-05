@@ -9,7 +9,6 @@ import {
   boundaryPurity,
   CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
-  MAX_AMBIENT_BOUNDARIES,
   measureBoundaryOccupancy,
   occupancyDelimitsMembers,
   rectContains,
@@ -347,8 +346,7 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   const drawableIds = selectNonOverlappingRects(
     ordered.map((c) => ({ id: c.id, rect: c.rect })),
     selectedId === null ? null : new Set([selectedId]),
-    isNestedPair,
-    MAX_AMBIENT_BOUNDARIES
+    isNestedPair
   );
 
   return {
@@ -451,10 +449,11 @@ describe("boundary rendering on a dense graph", () => {
  * alone silently keeps only a handful of dozens of legitimate,
  * concentration-passing candidates, because the ring layout packs that many
  * candidate boxes into mutually-overlapping territory near its center
- * regardless of how well-separated the underlying data is. graph-canvas.tsx
- * now bounds the ambient set to MAX_AMBIENT_BOUNDARIES (top-N by weight)
- * instead of leaving the count to whatever survives greedy overlap
- * resolution. This suite is the one that would have caught it:
+ * regardless of how well-separated the underlying data is. The fix that
+ * actually held was ordering (boundaryDrawPriority) plus, ultimately, the
+ * packed2d layout that gives every category its own disjoint territory — not
+ * the count cap that was briefly tried here. This suite is the one that would
+ * have caught it:
  * dense-boundaries.test.ts's original describe block never varies category
  * *count* (buildWorkspace always uses the same fixed 10), only tab count.
  */
@@ -484,41 +483,28 @@ describe("boundary rendering with realistic (many, fine-grained) categories", ()
         expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
       });
 
-      // MAX_AMBIENT_BOUNDARIES is a CEILING, not a target: it stops a
-      // scenario with many genuinely non-conflicting candidates (e.g. a few
-      // huge categories plus dozens of small, scattered, far-apart
-      // Collections) from drawing an unbounded pile of ambient boxes. It is
-      // NOT, by itself, a fix for this specific scenario — measured here,
-      // it draws the same handful with or without the cap, because overlap
-      // suppression, not the cap, is the binding constraint.
-      //
-      // An earlier revision of this comment concluded from that that the
-      // only remaining lever was stronger anchor forces — "a real physics
-      // change, out of scope." That was wrong, and it is why the shipped
-      // renderer still looked broken on a real 281-tab workspace while this
-      // suite was green. What overlap suppression keeps depends entirely on
-      // the ORDER it sees, and the order was cluster weight: the greedy pass
-      // handed first pick to the single most sprawling box on screen, which
-      // then erased a dozen compact neighbours before anything else was
-      // considered. Reordering by boundaryDrawPriority — same physics, same
-      // geometry, same cap — recovers a mean of 6.03 boxes against weight's
-      // 5.35 across 40 settled layouts, at meaningfully higher purity. See
-      // "priority ordering recovers boundaries weight ordering erased" below.
-      // This test locks in the ceiling half of the contract; it deliberately
-      // does not assert reaching it.
-      it("never draws more than the ambient cap", () => {
-        expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
-      });
+      // What bounds the ambient set is overlap suppression, not a count:
+      // whatever survives here must not visibly cross anything (asserted
+      // above) and must not have ballooned (asserted above). There used to
+      // be a MAX_AMBIENT_BOUNDARIES ceiling asserted here too; it was
+      // removed once the packed2d layout made every category's box small and
+      // disjoint, at which point a count cap only hid clean boxes — see
+      // collection-layout.ts. This scenario's own numbers said as much all
+      // along: measured here, the frame drew the same handful with or
+      // without the cap, because overlap suppression was always the binding
+      // constraint. What overlap suppression keeps depends entirely on the
+      // ORDER it sees — see "priority ordering recovers boundaries weight
+      // ordering erased" below.
     });
   }
 
-  // Selecting a category that the cap alone would have excluded must still
-  // show it — the cap is about ambient clutter, not about what a deliberate
-  // click can bring on screen.
-  it("still draws an explicitly selected boundary that the ambient cap would otherwise exclude", () => {
+  // Selecting a category the ambient pass excluded must still show it —
+  // suppression is about ambient clutter, not about what a deliberate click
+  // can bring on screen.
+  it("still draws an explicitly selected boundary the ambient pass would otherwise exclude", () => {
     const unselected = fineGrainedBoundaryDrawList(570, 50);
     const excluded = unselected.candidates.find((c) => !unselected.drawn.some((d) => d.id === c.id));
-    expect(excluded, "expected the ambient cap to exclude at least one candidate").toBeDefined();
+    expect(excluded, "expected the ambient pass to exclude at least one candidate").toBeDefined();
 
     const selected = fineGrainedBoundaryDrawList(570, 50, excluded!.id);
     expect(selected.drawn.map((d) => d.id)).toContain(excluded!.id);
@@ -640,10 +626,6 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
         expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
       });
 
-      it("never draws more than the ambient cap", () => {
-        expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
-      });
-
       // The feature must not silently switch itself off: plenty of clusters
       // clear the concentration gate, and the frame has to keep showing the
       // reader some of them. Deliberately a floor, not a target — see
@@ -723,8 +705,7 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
           .sort((a, b) => frame.weightOf(b.id) - frame.weightOf(a.id) || a.id.localeCompare(b.id))
           .map((c) => ({ id: c.id, rect: c.rect })),
         null,
-        frame.isNestedPair,
-        MAX_AMBIENT_BOUNDARIES
+        frame.isNestedPair
       );
 
       const meanPurity = (ids: string[]) =>
@@ -771,12 +752,23 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
     expect(crossings, `selection introduced crossings:\n${crossings.join("\n")}`).toEqual([]);
   });
 
-  // A Collection is ambient like any other tier — it competes for the same
-  // slots and cannot slip past the cap by being a different kind of cluster.
-  it("does not let collections bypass the ambient cap", () => {
+  // A Collection is ambient like any other tier — it competes in the same
+  // single suppression pass and cannot claim territory that visibly crosses
+  // another tier's box by being a different kind of cluster.
+  it("does not let collections bypass ambient overlap suppression", () => {
     const frame = skewedBoundaryDrawList(570, 40);
-    expect(frame.drawn.length).toBeLessThanOrEqual(MAX_AMBIENT_BOUNDARIES);
     expect(frame.candidates.some((c) => c.kind === "collection")).toBe(true);
+    for (let i = 0; i < frame.drawn.length; i++) {
+      for (let j = i + 1; j < frame.drawn.length; j++) {
+        const a = frame.drawn[i];
+        const b = frame.drawn[j];
+        if (a.kind !== "collection" && b.kind !== "collection") continue;
+        expect(
+          rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id),
+          `${describeRect(a)} X ${describeRect(b)}`
+        ).toBe(false);
+      }
+    }
   });
 
   // Nesting must remain a geometric fact, not a hierarchy claim: any pair

@@ -8,6 +8,7 @@ import {
   CLUSTER_LAYOUT_MODE,
   computeClusterRegions,
   computeSubcategoryRegion,
+  confinementRegion,
   type ClusterRegion,
 } from "./cluster-regions";
 
@@ -292,10 +293,14 @@ function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnch
     const region = regions.get(category.id);
     if (!region) continue;
 
+    // Members are held inside a disc sized to what they need, not the whole
+    // reserved territory — see confinementRegion. Subcategory regions are laid
+    // out inside that same confined disc so they stay nested within it.
+    const confined = confinementRegion(region);
     const subcategories = category.children.filter((child) => child.kind === "subcategory");
     const subcategoryRegions = new Map<string, ClusterRegion>();
     subcategories.forEach((sub, index) => {
-      subcategoryRegions.set(sub.id, computeSubcategoryRegion(region, index, subcategories.length, sub.weight));
+      subcategoryRegions.set(sub.id, computeSubcategoryRegion(confined, index, subcategories.length, sub.weight));
     });
 
     for (const tabId of category.totalTabIds) {
@@ -307,7 +312,7 @@ function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnch
         // A tab in a subcategory is confined to that subcategory's own disc,
         // which sits wholly inside its parent's — so a subcategory's boundary
         // box nests inside its category's instead of merely overlapping it.
-        confineTo: subRegion ?? region,
+        confineTo: subRegion ?? confined,
       });
     }
   }

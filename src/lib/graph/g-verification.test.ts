@@ -11,7 +11,7 @@
  *
  * The boundary renderer is FROZEN and only read from here:
  * computeCollectionBoundary / measureBoundaryOccupancy / boundaryPurity /
- * occupancyDelimitsMembers / rectsOverlap / MAX_AMBIENT_BOUNDARIES and the
+ * occupancyDelimitsMembers / rectsOverlap and the
  * padding constants are used exactly as graph-canvas.tsx uses them.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -25,7 +25,6 @@ import {
   boundaryPurity,
   CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
-  MAX_AMBIENT_BOUNDARIES,
   measureBoundaryOccupancy,
   occupancyDelimitsMembers,
   rectContains,
@@ -166,7 +165,6 @@ function boundaryPass(run: Pipeline, zoomFactor = 1, selectedClusterId: string |
       gated++;
       continue;
     }
-    if (!always && drawn.length >= MAX_AMBIENT_BOUNDARIES) continue;
     if (!always && drawn.some((d) => rectsOverlap(d.rect, c.rect))) {
       overlapSuppressed++;
       continue;
@@ -406,8 +404,106 @@ describe.skipIf(!HAS_FIXTURE)("packed2d category layout, on the real export", ()
     // The screenshot failure: no drawn box may be both large and mostly foreign.
     expect(g.worstBoxForeignPct).toBeLessThan(25);
     expect(g.worstBoxAreaPct).toBeLessThan(6);
-    // The accepted cost, pinned so it cannot silently grow.
-    expect(g.crossEdgePx / a.crossEdgePx).toBeLessThan(2.6);
+    // The accepted cost, pinned so it cannot silently grow. Raised from 2.6
+    // to 3.0 when REGION_CONFINE_DISC_SCALE was introduced: holding a
+    // category's members inside a disc sized to what they need, rather than
+    // letting them spread across the whole 2.2x territory reserved for it,
+    // necessarily moves every member further from its neighbours across the
+    // gap. Measured on this export, that is the entire cost of the fix —
+    // 186px -> 207px of mean cross-category edge, ~11% — and it buys 0 of 33
+    // categories split (from 15 of 33) plus kNN 99% -> 100% and purity
+    // 0.99 -> 1.00. See "keeps every category's members in one spatial group".
+    expect(g.crossEdgePx / a.crossEdgePx).toBeLessThan(3);
+  }, 600_000);
+
+  /**
+   * The invariant the reported bug violated: same category assignment =>
+   * same coherent spatial cluster. Deliberately measured member-to-member
+   * (single linkage at COHESION_LINK_PX, plus the worst member's distance to
+   * its own nearest same-category member) rather than member-to-anchor,
+   * because the failure mode was a member sitting comfortably inside its own
+   * region while being hundreds of pixels from every tab it shares that
+   * region with — every anchor/region-based metric read as healthy while a
+   * tab was visibly adrift on screen.
+   *
+   * A chain/arc-shaped category passes this: single linkage only asks that
+   * consecutive members be close, not that the cluster be a blob.
+   */
+  it("keeps every category's members in one spatial group", async () => {
+    const packed = await runPipeline("packed2d");
+    // 140px ~ 3x the ~48px collide spacing two adjacent members settle at.
+    // Deliberately not tighter: the physics seeds new nodes with Math.random(),
+    // so the worst member moves a few px run to run (measured 97-104px on this
+    // export). Deliberately not looser either — before
+    // REGION_CONFINE_DISC_SCALE the same measurement was 316px with 15 of 33
+    // categories split, and this guard fails at 140px on that layout.
+    const COHESION_LINK_PX = 140;
+    const pos = new Map(packed.world.map((w) => [w.id, w]));
+
+    const split: string[] = [];
+    let worstPx = 0;
+    let worstLabel = "-";
+    for (const cat of packed.tree.roots) {
+      const pts = cat.totalTabIds.map((id) => pos.get(id)!).filter(Boolean);
+      if (pts.length < 2) continue;
+
+      const parent = new Map(pts.map((p) => [p.id, p.id]));
+      const find = (id: string): string => {
+        let root = id;
+        while (parent.get(root) !== root) root = parent.get(root)!;
+        return root;
+      };
+      for (let i = 0; i < pts.length; i++) {
+        let nearest = Infinity;
+        for (let j = 0; j < pts.length; j++) {
+          if (i === j) continue;
+          const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+          nearest = Math.min(nearest, d);
+          if (j > i && d <= COHESION_LINK_PX) {
+            const a = find(pts[i].id);
+            const b = find(pts[j].id);
+            if (a !== b) parent.set(a, b);
+          }
+        }
+        if (nearest > worstPx) {
+          worstPx = nearest;
+          worstLabel = cat.label;
+        }
+      }
+      const groups = new Set(pts.map((p) => find(p.id))).size;
+      if (groups > 1) split.push(`${cat.label} (${pts.length} tabs) -> ${groups} separate groups`);
+    }
+
+    console.log(
+      `\ncategory cohesion: ${split.length} split categories | ` +
+        `worst member ${worstPx.toFixed(0)}px from its own nearest sibling (${worstLabel})`
+    );
+    expect(split, `categories whose members are not one spatial group:\n${split.join("\n")}`).toEqual([]);
+    expect(worstPx).toBeLessThan(COHESION_LINK_PX);
+  }, 600_000);
+
+  /**
+   * The other half of the reported failure: categories that plainly exist on
+   * screen with no box around them. Nothing here asks for a box per category
+   * unconditionally — a box still has to clear the concentration gate and not
+   * cross a box already drawn — only that a clean, well-separated category is
+   * not dropped for a reason unrelated to its own geometry, which is what the
+   * old MAX_AMBIENT_BOUNDARIES ceiling did (8 of 39 candidates drawn).
+   */
+  it("draws a boundary for the large majority of eligible category candidates", async () => {
+    const packed = await runPipeline("packed2d");
+    const { cands, drawn, gated } = boundaryPass(packed);
+    expect(gated).toBe(0);
+    expect(drawn.length).toBeGreaterThanOrEqual(cands.length * 0.75);
+    for (let i = 0; i < drawn.length; i++) {
+      for (let j = i + 1; j < drawn.length; j++) {
+        const a = drawn[i];
+        const b = drawn[j];
+        const nested = rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect);
+        expect(rectsOverlap(a.rect, b.rect) && !nested, `${a.label} X ${b.label}`).toBe(false);
+      }
+    }
+    console.log(`\nboundaries: ${drawn.length}/${cands.length} candidates drawn, 0 gated, 0 crossings`);
   }, 600_000);
 
   it("keeps every drawn boundary tied to its own members, not merely non-overlapping", async () => {

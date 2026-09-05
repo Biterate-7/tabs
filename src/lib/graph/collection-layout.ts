@@ -58,23 +58,40 @@ export function computeCollectionBoundary(
 export const CATEGORY_BOUNDARY_PADDING = 20;
 export const SUBCATEGORY_BOUNDARY_PADDING = 14;
 
-/**
- * Ceiling on how many ambient (unselected) Category/Subcategory/Collection
- * boundaries can be on screen at once. Overlap suppression alone doesn't
- * scale: on a real dense workspace with dozens of real (per-domain
- * "collective clustering") categories, the ring layout packs candidate boxes
- * into overlapping territory near its center as a geometry artifact,
- * independent of how well-separated the underlying data is. A bounded,
- * deliberate top-N is predictable where "whatever greedy suppression happened
- * to leave" is not. A selected cluster/collection is exempt (see
- * graph-canvas.tsx's alwaysDrawBoundaryIds) so it never disappears for being
- * outside the top N.
+/*
+ * There is deliberately no ambient boundary cap here any more.
  *
- * This is a presentation-density ceiling, NOT the mechanism that rejects bad
- * geometry — boundaryDelimitsMembers does that first, and boundaryDrawPriority
- * decides who competes for the remaining slots.
+ * MAX_AMBIENT_BOUNDARIES = 8 used to bound how many unselected boundaries a
+ * frame could draw. It was introduced under the old ring layout, where every
+ * category was a point on one shared circle and adjacent categories'
+ * axis-aligned bounding boxes overlapped near the ring's centre as a pure
+ * geometry artifact — dozens of candidate boxes contending for the same
+ * territory, so "whatever greedy overlap suppression happened to leave" was
+ * unpredictable and a deliberate top-N was the honest alternative.
+ *
+ * The packed2d layout (see cluster-regions.ts) removed that premise: every
+ * category owns a disjoint disc, so its box is small and lands on its own
+ * territory. Measured on the real 283-tab export at one fixed layout seed,
+ * with the cap the only variable: 39 candidates, 0 rejected by the
+ * concentration gate, 3 by overlap suppression — and then 28 more discarded by
+ * the cap alone, leaving 8 boxes for 34 categories. Uncapped, the same frame
+ * draws 36, with zero rectangle intersections, 1.00 mean category purity, 5%
+ * foreign nodes inside drawn boxes, and a 0.5% mean / 1.4% largest box as a
+ * share of the viewport (against 0.9%/1.4% at the cap). Every box the cap was
+ * hiding was clean; the cap was the only reason most categories had no
+ * boundary at all.
+ *
+ * Nor did it ever protect the ring layout it was written for: measured there,
+ * greedy overlap suppression alone leaves 1-6 boxes, so a ceiling of 8 never
+ * binds. boundaryDelimitsMembers rejects boxes that don't delimit anything,
+ * boundaryDrawPriority decides who claims territory first, and
+ * selectNonOverlappingRects guarantees no two drawn boxes ever cross. Those
+ * three are the density control; a fourth, purely count-based one only hid
+ * legitimate categories.
+ *
+ * selectNonOverlappingRects still accepts an optional `maxAmbient`, so a
+ * caller that genuinely needs a ceiling can pass one — the renderer does not.
  */
-export const MAX_AMBIENT_BOUNDARIES = 8;
 
 export function pointInRect(x: number, y: number, rect: CollectionBoundaryRect): boolean {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;

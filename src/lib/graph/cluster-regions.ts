@@ -50,6 +50,61 @@ export const REGION_GAP = 180;
  */
 export const REGION_DISC_SCALE = 2.2;
 
+/**
+ * Multiplier on a category disc's radius for the CONFINEMENT disc — the disc
+ * its members are actually held inside, as opposed to REGION_DISC_SCALE above,
+ * which sizes the territory the packer RESERVES for the category.
+ *
+ * These were the same number until members were measured against each other
+ * rather than against their region. Inside a 2.2x-oversized disc nothing holds
+ * a category together at range: charge(-260) reaches every same-category pair
+ * (distanceMax 600), links only pull the pairs that happen to BE linked, and
+ * the category anchor spring is deliberately weak — so a member with one or no
+ * same-category link is pushed outward until confinement stops it, at the rim,
+ * hundreds of pixels from the nearest tab it shares a category with. Measured
+ * on the real 283-tab export: the farthest member sat 316px from its own
+ * category's nearest other member (median 49px), 29 members were >100px away,
+ * and 15 of 33 multi-member categories broke into two or more spatial groups
+ * at a 100px single-linkage threshold — one tab visibly adrift from its own
+ * category, which is the reported bug.
+ *
+ * Raising the anchor spring does NOT fix that (measured: 0.06 -> 0.45 moves the
+ * worst member only 316px -> 291px and still leaves 15 of 33 categories split),
+ * because a fixed-point spring competes against charge from the whole cluster
+ * plus cross-category links that are far longer, hence far stronger, than it
+ * is. Sizing the confinement disc to what the members actually need does fix
+ * it: the same export at 1.0 has 0 of 33 categories split, a worst member 97px
+ * from its nearest sibling, and 100% kNN category locality.
+ *
+ * Kept separate from REGION_DISC_SCALE rather than lowering that one, because
+ * the two do different jobs and the 2.2x reservation is load-bearing: it is
+ * what packs the discs into a well-spaced blob (see REGION_GAP), and lowering
+ * it would move every category, i.e. redo the whole layout. Confining more
+ * tightly inside an unchanged reservation only ADDS empty space between
+ * categories — measured kNN locality 99% -> 100%, purity 0.99 -> 1.00.
+ *
+ * 1.0 is the tightest setting that leaves the layout uniformly filled rather
+ * than rim-piled: the rim share sits at 36%, exactly the uniformly-filled-disc
+ * expectation quoted above, with one category (Instagram, 42 tabs) mildly
+ * annular. Looser reintroduces the bug (1.2 -> 3 of 33 categories split, worst
+ * member 121px; 1.5 -> 11 of 33, 166px); tighter starts genuinely rim-piling
+ * (0.9 -> 40% rim share, 2 crescent-shaped categories) for no cohesion gain.
+ * The one cost is cross-category edge length, 186px -> 207px, the direct
+ * consequence of pulling members away from their shared borders.
+ */
+export const REGION_CONFINE_DISC_SCALE = 1.0;
+
+/**
+ * The disc a category's members are actually held inside, given the territory
+ * reserved for it by computeClusterRegions — same centre, radius rescaled from
+ * REGION_DISC_SCALE to REGION_CONFINE_DISC_SCALE. Also the disc subcategory
+ * regions are laid out within, so a subcategory stays nested inside the part of
+ * its parent that the parent's own members actually occupy.
+ */
+export function confinementRegion(reserved: ClusterRegion): ClusterRegion {
+  return { ...reserved, r: (reserved.r / REGION_DISC_SCALE) * REGION_CONFINE_DISC_SCALE };
+}
+
 /** Matches engine.ts's collide spacing, so a disc sized from member count can actually hold them. */
 const MEMBER_SPACING = NODE_MIN_EDGE_GAP;
 
