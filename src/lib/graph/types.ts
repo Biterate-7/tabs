@@ -108,6 +108,20 @@ export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
 export type GraphPersistedState = {
   version: 1;
   positions: Record<string, { x: number; y: number }>;
+  /**
+   * How far each tab's cluster anchor and confinement disc have been carried
+   * by boundary-square drags — see engine.ts's anchorOffsetById.
+   *
+   * Saved alongside `positions` because on its own a saved position doesn't
+   * survive a reload: computeClusterAnchors puts a category's territory back
+   * at its canonical point every session, and confineToRegions then projects
+   * the tabs straight back into it, undoing the move. Keyed by tab id, like
+   * `positions`, so it prunes with exactly the same rule.
+   *
+   * Absent in blobs written before draggable boundaries existed; an empty
+   * record means "nothing has been moved", which is the correct reading.
+   */
+  boundaryOffsets: Record<string, { x: number; y: number }>;
   manualConnections: ManualConnection[];
   settings: GraphSettings;
 };

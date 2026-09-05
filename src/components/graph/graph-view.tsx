@@ -253,6 +253,28 @@ export function GraphView({
     setGraphState((prev) => ({ ...prev, positions: { ...prev.positions, [id]: { x, y } } }))
   }
 
+  /**
+   * A boundary-square drag moves a whole cluster at once, so its tabs arrive
+   * as one batch rather than one call per tab. Alongside each new position it
+   * carries how far that tab's cluster territory travelled — without saving
+   * that too, the next session would rebuild the territory at its canonical
+   * spot and pull the tabs straight back (see GraphPersistedState.boundaryOffsets).
+   */
+  function handleBoundaryMembersMoved(
+    moves: { id: string; x: number; y: number; offset: { x: number; y: number } }[]
+  ) {
+    if (moves.length === 0) return
+    setGraphState((prev) => {
+      const positions = { ...prev.positions }
+      const boundaryOffsets = { ...prev.boundaryOffsets }
+      for (const move of moves) {
+        positions[move.id] = { x: move.x, y: move.y }
+        boundaryOffsets[move.id] = move.offset
+      }
+      return { ...prev, positions, boundaryOffsets }
+    })
+  }
+
   function handleSelectResult(id: string) {
     setQuery("")
     updateSettings({ selectedTabId: id })
@@ -596,6 +618,7 @@ export function GraphView({
           edges={visibleEdges}
           dependencyEdges={visibleDependencyEdges}
           positions={graphState.positions}
+          boundaryOffsets={graphState.boundaryOffsets}
           initialCamera={graphState.settings.camera}
           display={graphState.settings.display}
           selectedTabId={selectedTabId}
@@ -634,6 +657,7 @@ export function GraphView({
             setEdgePopover({ kind: "dependency", edge, source, target, otherReasons, x, y })
           }}
           onNodeMoved={handleNodeMoved}
+          onBoundaryMembersMoved={handleBoundaryMembersMoved}
           onHoverChange={setHover}
           onSelectedNodeScreenChange={setSelectedNodeScreen}
         />

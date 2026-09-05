@@ -96,6 +96,7 @@ export function defaultGraphState(): GraphPersistedState {
   return {
     version: 1,
     positions: {},
+    boundaryOffsets: {},
     manualConnections: [],
     settings: DEFAULT_GRAPH_SETTINGS,
   };
@@ -112,6 +113,7 @@ export function loadGraphState(): GraphPersistedState {
     return {
       version: 1,
       positions: sanitizePositions(v.positions),
+      boundaryOffsets: sanitizePositions(v.boundaryOffsets),
       manualConnections: sanitizeManualConnections(v.manualConnections),
       settings: sanitizeSettings(v.settings),
     };
@@ -139,6 +141,10 @@ export function pruneGraphState(state: GraphPersistedState, validTabIds: Set<str
   for (const [id, pos] of Object.entries(state.positions)) {
     if (validTabIds.has(id)) positions[id] = pos;
   }
+  const boundaryOffsets: Record<string, { x: number; y: number }> = {};
+  for (const [id, offset] of Object.entries(state.boundaryOffsets ?? {})) {
+    if (validTabIds.has(id)) boundaryOffsets[id] = offset;
+  }
   const manualConnections = state.manualConnections.filter(
     (c) => validTabIds.has(c.a) && validTabIds.has(c.b)
   );
@@ -150,6 +156,7 @@ export function pruneGraphState(state: GraphPersistedState, validTabIds: Set<str
   return {
     ...state,
     positions,
+    boundaryOffsets,
     manualConnections,
     settings: { ...state.settings, selectedTabId },
   };

@@ -2,6 +2,14 @@ export type CollectionBoundaryPoint = { x: number; y: number; radius: number };
 export type CollectionBoundaryRect = { x: number; y: number; width: number; height: number };
 
 /**
+ * Screen-space padding around a Collection's member bounding box —
+ * `computeCollectionBoundary`'s default, named so callers that need to
+ * reproduce the same box in another space (e.g. the world-space collider
+ * behind a draggable boundary) can't drift from it.
+ */
+export const COLLECTION_BOUNDARY_PADDING = 20;
+
+/**
  * Axis-aligned bounding rect (with a fixed screen-space padding) around a
  * collection's currently-visible member nodes — the "soft enclosing region"
  * the graph draws behind a collection's nodes (AGENTS.md-style spec:
@@ -11,7 +19,7 @@ export type CollectionBoundaryRect = { x: number; y: number; width: number; heig
  */
 export function computeCollectionBoundary(
   points: CollectionBoundaryPoint[],
-  padding = 20
+  padding = COLLECTION_BOUNDARY_PADDING
 ): CollectionBoundaryRect | null {
   if (points.length === 0) return null;
 

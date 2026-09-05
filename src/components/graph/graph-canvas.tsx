@@ -22,6 +22,7 @@ import {
 import {
   boundaryDrawPriority,
   CATEGORY_BOUNDARY_PADDING,
+  COLLECTION_BOUNDARY_PADDING,
   computeCollectionBoundary,
   measureBoundaryOccupancy,
   occupancyDelimitsMembers,
@@ -108,6 +109,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   edges: GraphEdge[]
   dependencyEdges: GraphDependencyEdge[]
   positions: Record<string, { x: number; y: number }>
+  /** Persisted per-tab cluster-territory displacement from past boundary drags — see GraphPersistedState.boundaryOffsets. */
+  boundaryOffsets: Record<string, { x: number; y: number }>
   initialCamera: CameraState
   display: GraphDisplaySettings
   selectedTabId: string | null
@@ -131,6 +134,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   onEdgeClick: (edge: GraphEdge, screenX: number, screenY: number) => void
   onDependencyEdgeClick: (edge: GraphDependencyEdge, screenX: number, screenY: number) => void
   onNodeMoved: (id: string, x: number, y: number) => void
+  /** Every tab carried by a boundary-square drag, reported in one batch — position plus the cluster-territory offset that has to travel with it. */
+  onBoundaryMembersMoved: (
+    moves: { id: string; x: number; y: number; offset: { x: number; y: number } }[]
+  ) => void
   onHoverChange: (hover: HoverInfo | null) => void
   /** Fired whenever the selected node's live on-screen anchor changes (selection, pan, zoom, drag, camera animation) — lets the host pin a persistent Tab Peek popup to the node itself rather than to the cursor, so it survives hover moving anywhere else on the canvas. Null whenever nothing is selected or the selected node isn't currently visible. */
   onSelectedNodeScreenChange: (info: HoverInfo | null) => void
@@ -140,6 +147,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     edges,
     dependencyEdges,
     positions,
+    boundaryOffsets,
     initialCamera,
     display,
     selectedTabId,
@@ -161,6 +169,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     onEdgeClick,
     onDependencyEdgeClick,
     onNodeMoved,
+    onBoundaryMembersMoved,
     onHoverChange,
     onSelectedNodeScreenChange,
   },
@@ -204,6 +213,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
   const hoveredIdRef = useRef<string | null>(null)
   const dragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
+  // The boundary square currently held by the pointer. Its physics body lives
+  // in the same simulation as the nodes (see engine.ts's boundary layer); this
+  // only remembers which one, and where the gesture started, so a click
+  // without meaningful movement still resolves as a click.
+  const boundaryDragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
+  // Tracks the boundary layer's settled edge so member positions are flushed
+  // once, when everything has come to rest, rather than every frame.
+  const boundarySettledRef = useRef(true)
   const panRef = useRef<{ startX: number; startY: number; lastX: number; lastY: number; pointerId: number } | null>(
     null
   )
@@ -441,6 +458,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     return animating
   }
 
+  /**
+   * Writes every tab a boundary move displaced into the graph's own per-node
+   * position state — the same store `onNodeMoved` writes to, just batched,
+   * since one box carries a whole cluster. A repositioned square therefore
+   * survives a rerender and a reload exactly the way a repositioned node does.
+   *
+   * Called on release AND again once the layer comes to rest, rather than
+   * only on rest: the render loop is a requestAnimationFrame chain, which the
+   * browser pauses outright while the tab isn't visible. Waiting for the
+   * settle alone would silently lose the move whenever someone drags a box
+   * and immediately switches tabs.
+   */
+  function flushBoundaryPositions() {
+    const moved = simulationRef.current!.takeDisplacedBoundaryMembers()
+    if (moved.length > 0) onBoundaryMembersMoved(moved)
+  }
+
   function requestDraw() {
     // A favicon Image can finish loading (or the resize/palette effects can
     // fire their cleanup) after the component has already unmounted — its
@@ -478,9 +512,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   function loop() {
     const simulation = simulationRef.current!
     const wasSettled = simulation.isSettled()
-    const isInteracting = Boolean(dragRef.current || panRef.current)
+    const isInteracting = Boolean(dragRef.current || panRef.current || boundaryDragRef.current)
+    // A boundary square can still be coasting to a stop after a release long
+    // after the node layout has cooled, so it gets its own settled check.
+    const boundaryMoving = !simulation.isBoundaryLayerSettled()
 
-    if (!wasSettled || isInteracting) {
+    if (!wasSettled || isInteracting || boundaryMoving) {
       simulation.tick()
       needsDrawRef.current = true
     }
@@ -493,7 +530,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       needsDrawRef.current = false
     }
 
-    const stillSettling = !simulation.isSettled()
+    // Top-up flush: a box keeps coasting (and keeps shoving its neighbours)
+    // for a few frames after the pointer lets go, so whatever moved after the
+    // release-time flush is written when the layer finally comes to rest.
+    const boundarySettledNow = simulation.isBoundaryLayerSettled()
+    if (boundarySettledNow && !boundarySettledRef.current) flushBoundaryPositions()
+    boundarySettledRef.current = boundarySettledNow
+
+    const stillSettling = !simulation.isSettled() || !simulation.isBoundaryLayerSettled()
     if (stillSettling || isInteracting || stillAnimating) {
       rafRef.current = requestAnimationFrame(loop)
     } else {
@@ -533,6 +577,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const showLabels = camera.zoom >= LABEL_MIN_ZOOM
     const selectedCollectionId = selectedCollectionIdRef.current
     const selectedClusterId = selectedClusterIdRef.current
+    const draggedBoundaryId = boundaryDragRef.current?.id ?? null
 
     // Every positioned node's screen position, gathered once per frame:
     // measureBoundaryOccupancy below has to ask "how much of what this box
@@ -721,8 +766,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (!rectA || !rectB) return false
       return rectContains(rectA, rectB) || rectContains(rectB, rectA)
     }
+    // The box under the pointer joins the selected ones in being exempt from
+    // suppression: a square must never blink out of existence mid-drag just
+    // because the box it is being pushed into happened to be drawn first.
     const alwaysDrawBoundaryIds = new Set<string>(
-      [selectedClusterId, selectedCollectionId].filter((id): id is string => id !== null)
+      [selectedClusterId, selectedCollectionId, draggedBoundaryId].filter((id): id is string => id !== null)
     )
     // A boundary box is only worth drawing when it actually delimits its own
     // cluster. Past a few hundred tabs the cluster anchors are far too weak
@@ -799,9 +847,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (!drawableBoundaryIds.has(id)) collectionRectsRef.current.delete(id)
     }
 
-    for (const [id, rect] of categoryRectsRef.current) {
+    // The box being dragged is skipped in its own tier's pass and painted
+    // after all three, so it sits above every other boundary while it moves.
+    const drawCategoryBoundary = (id: string, rect: CollectionBoundaryRect) => {
       const category = clusterTreeRef.current.byId.get(id)
-      if (!category) continue
+      if (!category) return
       const hasLabelCandidate = categoryLabelCandidates.some((c) => c.id === id)
       drawCollectionBoundary(ctx, palette, rect, {
         name: category.label,
@@ -811,10 +861,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         emphasis: 0.6,
       })
     }
-
-    for (const [id, rect] of subcategoryRectsRef.current) {
+    const drawSubcategoryBoundary = (id: string, rect: CollectionBoundaryRect) => {
       const sub = clusterTreeRef.current.byId.get(id)
-      if (!sub) continue
+      if (!sub) return
       const hasLabelCandidate = subcategoryLabelCandidates.some((c) => c.id === id)
       drawCollectionBoundary(ctx, palette, rect, {
         name: sub.label,
@@ -824,10 +873,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         emphasis: 0.8,
       })
     }
-
-    for (const [id, rect] of collectionRectsRef.current) {
+    const drawCollectionRegion = (id: string, rect: CollectionBoundaryRect) => {
       const name = collectionNameById.get(id)
-      if (name === undefined) continue
+      if (name === undefined) return
       drawCollectionBoundary(ctx, palette, rect, {
         name,
         isSelected: id === selectedCollectionId,
@@ -835,6 +883,53 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         textSize: display.textSize,
       })
     }
+
+    for (const [id, rect] of categoryRectsRef.current) {
+      if (id !== draggedBoundaryId) drawCategoryBoundary(id, rect)
+    }
+    for (const [id, rect] of subcategoryRectsRef.current) {
+      if (id !== draggedBoundaryId) drawSubcategoryBoundary(id, rect)
+    }
+    for (const [id, rect] of collectionRectsRef.current) {
+      if (id !== draggedBoundaryId) drawCollectionRegion(id, rect)
+    }
+    if (draggedBoundaryId) {
+      const categoryRect = categoryRectsRef.current.get(draggedBoundaryId)
+      const subcategoryRect = subcategoryRectsRef.current.get(draggedBoundaryId)
+      const collectionRect = collectionRectsRef.current.get(draggedBoundaryId)
+      if (categoryRect) drawCategoryBoundary(draggedBoundaryId, categoryRect)
+      else if (subcategoryRect) drawSubcategoryBoundary(draggedBoundaryId, subcategoryRect)
+      else if (collectionRect) drawCollectionRegion(draggedBoundaryId, collectionRect)
+    }
+
+    // Hand the physics layer exactly the boxes that survived to be drawn, so
+    // what can be grabbed is always what is visible, and give it the visible
+    // canvas as its sandbox walls. Padding is converted screen -> world
+    // (camera.zoom scales uniformly) so the collider matches the drawn rect.
+    const boundarySpecs: { id: string; memberIds: string[]; padding: number }[] = []
+    for (const id of categoryRectsRef.current.keys()) {
+      const cluster = clusterTreeRef.current.byId.get(id)
+      if (cluster) boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: CATEGORY_BOUNDARY_PADDING / camera.zoom })
+    }
+    for (const id of subcategoryRectsRef.current.keys()) {
+      const cluster = clusterTreeRef.current.byId.get(id)
+      if (cluster)
+        boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: SUBCATEGORY_BOUNDARY_PADDING / camera.zoom })
+    }
+    for (const id of collectionRectsRef.current.keys()) {
+      const collection = collectionsRef.current.find((c) => c.id === id)
+      if (collection)
+        boundarySpecs.push({ id, memberIds: collection.tabIds, padding: COLLECTION_BOUNDARY_PADDING / camera.zoom })
+    }
+    simulation.setBoundaryBodies(boundarySpecs)
+    const topLeft = screenToWorld(camera, { x: 0, y: 0 }, width, height)
+    const bottomRight = screenToWorld(camera, { x: width, y: height }, width, height)
+    simulation.setBoundarySandbox({
+      minX: topLeft.x,
+      minY: topLeft.y,
+      maxX: bottomRight.x,
+      maxY: bottomRight.y,
+    })
 
     const clusterPathOfTab = clusterTreeRef.current.clusterPathOfTab
     for (const edge of edgesRef.current) {
@@ -1082,6 +1177,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     prevDependencyEdgesRef.current = dependencyEdges
 
     simulation.setNodes(nodes, radiusOf, positions, (node) => clusterAnchors.get(node.id)?.categoryAnchor ?? undefined)
+    // After setNodes (which prunes offsets for tabs that are gone) and before
+    // setClusterAnchors, so a category dragged in a past session has its
+    // territory back where the user left it rather than snapping home.
+    simulation.seedBoundaryOffsets(boundaryOffsets)
     const physicsEdges: GraphEdge[] = [
       ...edges,
       ...dependencyEdges.map((e) => ({ id: e.id, source: e.parentTabId, target: e.childTabId, reasons: [] })),
@@ -1269,6 +1368,31 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     return null
   }
 
+  /**
+   * The drawn boundary square a pointer press should grab — smallest area
+   * wins, so a nested Subcategory or Collection box is picked up rather than
+   * the Category box it sits inside (same innermost-first intent as
+   * hitTestCluster, but comparing across all three tiers at once since a
+   * Collection box is not part of that tier order).
+   *
+   * Reuses the exact rect maps draw() left behind, so a box that was
+   * suppressed this frame is not secretly draggable.
+   */
+  function hitTestBoundary(screenX: number, screenY: number): string | null {
+    let bestId: string | null = null
+    let bestArea = Infinity
+    for (const rects of [collectionRectsRef.current, subcategoryRectsRef.current, categoryRectsRef.current]) {
+      for (const [id, rect] of rects) {
+        if (!pointInRect(screenX, screenY, rect)) continue
+        const area = rect.width * rect.height
+        if (area >= bestArea) continue
+        bestArea = area
+        bestId = id
+      }
+    }
+    return bestId
+  }
+
   function hitTestNode(screenX: number, screenY: number): GraphNode | null {
     const simulation = simulationRef.current!
     const { width, height } = sizeRef.current
@@ -1364,9 +1488,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       simulation.reheat(0.6)
       dragRef.current = { id: hit.id, startX: point.x, startY: point.y, pointerId: e.pointerId }
       requestDraw()
-    } else {
-      panRef.current = { startX: point.x, startY: point.y, lastX: point.x, lastY: point.y, pointerId: e.pointerId }
+      return
     }
+
+    // No node under the pointer: grab the boundary square there, if any, and
+    // drag it as a physics body. Pressing on bare canvas still pans, and
+    // space-drag / middle-drag still pan from anywhere.
+    const boundaryHit = hitTestBoundary(point.x, point.y)
+    if (boundaryHit) {
+      const { width, height } = sizeRef.current
+      const world = screenToWorld(cameraRef.current, point, width, height)
+      if (simulationRef.current!.beginBoundaryDrag(boundaryHit, world.x, world.y)) {
+        boundaryDragRef.current = { id: boundaryHit, startX: point.x, startY: point.y, pointerId: e.pointerId }
+        requestDraw()
+        return
+      }
+    }
+
+    panRef.current = { startX: point.x, startY: point.y, lastX: point.x, lastY: point.y, pointerId: e.pointerId }
   }
 
   function handlePointerMove(e: ReactPointerEvent<HTMLCanvasElement>) {
@@ -1377,6 +1516,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const world = screenToWorld(cameraRef.current, point, width, height)
       simulationRef.current!.pin(dragRef.current.id, world.x, world.y)
       simulationRef.current!.reheat(0.35)
+      requestDraw()
+      return
+    }
+
+    if (boundaryDragRef.current && boundaryDragRef.current.pointerId === e.pointerId) {
+      const world = screenToWorld(cameraRef.current, point, width, height)
+      simulationRef.current!.moveBoundaryDrag(world.x, world.y)
+      // The box physically carries its tabs with it, so nudge the node layout
+      // awake to re-settle around where they now are.
+      simulationRef.current!.reheat(0.2)
       requestDraw()
       return
     }
@@ -1438,48 +1587,74 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       return
     }
 
+    if (boundaryDragRef.current && boundaryDragRef.current.pointerId === e.pointerId) {
+      const { startX, startY } = boundaryDragRef.current
+      const moved = Math.hypot(point.x - startX, point.y - startY) > CLICK_DRAG_THRESHOLD
+      boundaryDragRef.current = null
+      // Hands the box back to the physics with a damped, capped share of the
+      // pointer's speed — see boundary-physics.ts's releaseVelocity.
+      simulationRef.current!.endBoundaryDrag()
+      canvasRef.current?.releasePointerCapture(e.pointerId)
+      flushBoundaryPositions()
+      requestDraw()
+      // Below the drag threshold this was a click, not a drag: resolve it the
+      // same way pressing bare canvas would, so selecting a Collection or a
+      // cluster by clicking its box still works.
+      if (!moved) resolveCanvasClick(point, e.clientX, e.clientY)
+      return
+    }
+
     if (panRef.current && panRef.current.pointerId === e.pointerId) {
       const { startX, startY } = panRef.current
       const moved = Math.hypot(point.x - startX, point.y - startY) > CLICK_DRAG_THRESHOLD
       panRef.current = null
       canvasRef.current?.releasePointerCapture(e.pointerId)
       onCameraChange(cameraRef.current)
-      if (!moved) {
-        const dependencyHit = hitTestDependencyEdge(point.x, point.y)
-        if (dependencyHit) {
-          onDependencyEdgeClick(dependencyHit, e.clientX, e.clientY)
-          return
-        }
-        const edgeHit = hitTestEdge(point.x, point.y)
-        if (edgeHit) {
-          onEdgeClick(edgeHit, e.clientX, e.clientY)
-          return
-        }
-        const collectionHit = hitTestCollection(point.x, point.y)
-        if (collectionHit) {
-          onSelectNode(null)
-          onSelectCluster(null)
-          onSelectCollection(collectionHit === selectedCollectionIdRef.current ? null : collectionHit)
-          return
-        }
-        const clusterHit = hitTestCluster(point.x, point.y)
-        if (clusterHit) {
-          onSelectNode(null)
-          onSelectCollection(null)
-          const next = clusterHit === selectedClusterIdRef.current ? null : clusterHit
-          onSelectCluster(next)
-          // Selecting a cluster also frames it — a cluster carries much less
-          // UI chrome than a Collection (no dedicated sidebar action panel),
-          // so auto-focusing on select reads as more natural than requiring
-          // a separate explicit "Focus" action.
-          if (next) focusClusterById(next)
-        } else {
-          onSelectNode(null)
-          onSelectCollection(null)
-          onSelectCluster(null)
-        }
-      }
+      if (!moved) resolveCanvasClick(point, e.clientX, e.clientY)
       return
+    }
+  }
+
+  /**
+   * What a press that ended without meaningful movement resolves to — edge
+   * popover, then Collection, then cluster selection, then "clear". Shared by
+   * the pan gesture and the boundary-drag gesture so that grabbing a boundary
+   * square and letting go without moving it still behaves exactly like the
+   * click it used to be.
+   */
+  function resolveCanvasClick(point: { x: number; y: number }, clientX: number, clientY: number) {
+    const dependencyHit = hitTestDependencyEdge(point.x, point.y)
+    if (dependencyHit) {
+      onDependencyEdgeClick(dependencyHit, clientX, clientY)
+      return
+    }
+    const edgeHit = hitTestEdge(point.x, point.y)
+    if (edgeHit) {
+      onEdgeClick(edgeHit, clientX, clientY)
+      return
+    }
+    const collectionHit = hitTestCollection(point.x, point.y)
+    if (collectionHit) {
+      onSelectNode(null)
+      onSelectCluster(null)
+      onSelectCollection(collectionHit === selectedCollectionIdRef.current ? null : collectionHit)
+      return
+    }
+    const clusterHit = hitTestCluster(point.x, point.y)
+    if (clusterHit) {
+      onSelectNode(null)
+      onSelectCollection(null)
+      const next = clusterHit === selectedClusterIdRef.current ? null : clusterHit
+      onSelectCluster(next)
+      // Selecting a cluster also frames it — a cluster carries much less
+      // UI chrome than a Collection (no dedicated sidebar action panel),
+      // so auto-focusing on select reads as more natural than requiring
+      // a separate explicit "Focus" action.
+      if (next) focusClusterById(next)
+    } else {
+      onSelectNode(null)
+      onSelectCollection(null)
+      onSelectCluster(null)
     }
   }
 

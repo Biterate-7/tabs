@@ -107,4 +107,24 @@ describe("graph persistence", () => {
     expect(pruned.manualConnections).toEqual([{ a: "a", b: "b", createdAt: 1 }]);
     expect(pruned.settings.selectedTabId).toBeNull();
   });
+
+  it("round-trips and prunes boundary offsets the same way as positions", () => {
+    const state = {
+      ...defaultGraphState(),
+      boundaryOffsets: { a: { x: 40, y: -12 }, ghost: { x: 1, y: 1 } },
+    };
+    saveGraphState(state);
+    expect(loadGraphState().boundaryOffsets).toEqual(state.boundaryOffsets);
+    expect(pruneGraphState(state, new Set(["a"])).boundaryOffsets).toEqual({ a: { x: 40, y: -12 } });
+  });
+
+  it("reads a blob written before boundary offsets existed as 'nothing moved'", () => {
+    window.localStorage.setItem(
+      "tabdump:graph:v1",
+      JSON.stringify({ version: 1, positions: { a: { x: 1, y: 2 } }, manualConnections: [] })
+    );
+    const loaded = loadGraphState();
+    expect(loaded.boundaryOffsets).toEqual({});
+    expect(loaded.positions).toEqual({ a: { x: 1, y: 2 } });
+  });
 });

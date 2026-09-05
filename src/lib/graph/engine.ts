@@ -13,6 +13,13 @@ import {
 } from "d3-force";
 import type { GraphEdge, GraphNode } from "./types";
 import type { ClusterAnchorAssignment } from "./clusters";
+import {
+  releaseVelocity,
+  stepBoundaryBodies,
+  type BoundaryBody,
+  type BoundaryDrag,
+  type Sandbox,
+} from "./boundary-physics";
 
 export type PhysicsNode = SimulationNodeDatum & {
   id: string;
@@ -66,6 +73,50 @@ export type GraphSimulation = {
   pin: (id: string, x: number, y: number) => void;
   unpin: (id: string) => void;
   findNode: (id: string) => PhysicsNode | undefined;
+
+  /**
+   * Declares which boundary squares currently exist as physics bodies — the
+   * renderer passes exactly the boxes it actually drew this frame, so what is
+   * grabbable is always what is visible. Bodies already present keep their
+   * velocity/sleep state (and the in-progress drag), new ids get a fresh
+   * resting body, and ids no longer present are dropped.
+   *
+   * A body has no position of its own: its rect is re-derived from
+   * `memberIds`' live physics positions on every tick, padded by `padding`
+   * world units (the renderer's screen-space padding divided by the zoom).
+   */
+  setBoundaryBodies: (specs: { id: string; memberIds: string[]; padding: number }[]) => void;
+  /** The world-space rect boundary bodies are kept inside. `null` removes the walls. */
+  setBoundarySandbox: (sandbox: Sandbox | null) => void;
+  /** Grabs the body at `id` from world point (x, y). Returns false when there's no such body. */
+  beginBoundaryDrag: (id: string, x: number, y: number) => boolean;
+  /** Retargets the in-progress drag to a world point. No-op when nothing is being dragged. */
+  moveBoundaryDrag: (x: number, y: number) => void;
+  /** Releases the dragged body back into the physics, keeping a damped, capped share of the pointer's speed. */
+  endBoundaryDrag: () => void;
+  getBoundaryBody: (id: string) => BoundaryBody | undefined;
+  /** True once nothing is being dragged and every boundary body has come to rest. */
+  isBoundaryLayerSettled: () => boolean;
+  /**
+   * Restores previously persisted per-tab anchor offsets (see
+   * GraphPersistedState.boundaryOffsets). Only fills in tabs that don't
+   * already carry a live offset, so reloading saved state can never undo a
+   * move made in this session — the same "existing wins" rule setNodes uses
+   * for positions.
+   */
+  seedBoundaryOffsets: (offsets: Record<string, { x: number; y: number }>) => void;
+  /**
+   * Tabs whose position was changed by a boundary move since the last call —
+   * their current position plus their accumulated anchor offset. The caller
+   * persists both: the position through the same per-node state a node drag
+   * writes to, the offset so the move survives a reload. Cleared on read.
+   */
+  takeDisplacedBoundaryMembers: () => {
+    id: string;
+    x: number;
+    y: number;
+    offset: { x: number; y: number };
+  }[];
 };
 
 const ALPHA_MIN = 0.005;
@@ -129,17 +180,22 @@ function createClusterAnchorForce(
   strength: number,
   byId: Map<string, PhysicsNode>,
   anchorById: () => Map<string, ClusterAnchorAssignment>,
+  anchorOffsetById: () => Map<string, { dx: number; dy: number }>,
   pick: (a: ClusterAnchorAssignment) => { x: number; y: number } | null
 ): Force<PhysicsNode, PhysicsLink> {
   return ((alpha: number) => {
     const anchors = anchorById();
+    const offsets = anchorOffsetById();
     for (const [id, node] of byId) {
       if (node.x === undefined || node.y === undefined) continue;
       const assignment = anchors.get(id);
       const target = assignment ? pick(assignment) : null;
       if (!target) continue;
-      node.vx = (node.vx ?? 0) + (target.x - node.x) * strength * alpha;
-      node.vy = (node.vy ?? 0) + (target.y - node.y) * strength * alpha;
+      const offset = offsets.get(id);
+      const targetX = target.x + (offset?.dx ?? 0);
+      const targetY = target.y + (offset?.dy ?? 0);
+      node.vx = (node.vx ?? 0) + (targetX - node.x) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (targetY - node.y) * strength * alpha;
     }
   }) as Force<PhysicsNode, PhysicsLink>;
 }
@@ -180,18 +236,45 @@ export function createGraphSimulation(): GraphSimulation {
   const collectionForce = createCollectionForce(COLLECTION_FORCE_STRENGTH);
   let anchorById = new Map<string, ClusterAnchorAssignment>();
   const getAnchorById = () => anchorById;
+  /**
+   * How far each tab's cluster anchor (and confinement disc) has been carried
+   * by boundary drags, accumulated per tab.
+   *
+   * Without this, dragging a boundary square would be a tug of war it always
+   * loses: computeClusterAnchors places a category's anchor and confinement
+   * disc at fixed points, and confineToRegions projects members back inside
+   * that disc every tick — so the box would spring straight back the moment
+   * the pointer let go. Moving a box moves its members, and its members'
+   * territory moves with them.
+   *
+   * Kept beside the anchors rather than folded into them because the anchor
+   * map is replaced wholesale by setClusterAnchors whenever the cluster tree
+   * is recomputed; the offsets have to survive that.
+   */
+  const anchorOffsetById = new Map<string, { dx: number; dy: number }>();
+  const getAnchorOffsetById = () => anchorOffsetById;
   const categoryAnchorForce = createClusterAnchorForce(
     CATEGORY_ANCHOR_STRENGTH,
     byId,
     getAnchorById,
+    getAnchorOffsetById,
     (a) => a.categoryAnchor
   );
   const subcategoryAnchorForce = createClusterAnchorForce(
     SUBCATEGORY_ANCHOR_STRENGTH,
     byId,
     getAnchorById,
+    getAnchorOffsetById,
     (a) => a.subcategoryAnchor
   );
+
+  // Boundary-square layer — see boundary-physics.ts. Stepped from this
+  // simulation's own tick() below, so there is exactly one physics loop.
+  const boundaryBodies = new Map<string, BoundaryBody>();
+  const boundaryPadding = new Map<string, number>();
+  let boundarySandbox: Sandbox | null = null;
+  let boundaryDrag: (BoundaryDrag & { grabDx: number; grabDy: number }) | null = null;
+  const displacedMembers = new Set<string>();
 
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
     .force("charge", forceManyBody().strength(-260).distanceMax(600))
@@ -247,6 +330,13 @@ export function createGraphSimulation(): GraphSimulation {
     byId.clear();
     for (const n of next) byId.set(n.id, n);
     simulation.nodes(next);
+
+    // A tab that has left the visible set can't be carried by a boundary any
+    // more, so its in-memory offset goes with it rather than accumulating for
+    // the life of the session. If it comes back, seedBoundaryOffsets restores
+    // it from the persisted record, which is the source of truth.
+    for (const id of [...anchorOffsetById.keys()]) if (!byId.has(id)) anchorOffsetById.delete(id);
+    for (const id of [...displacedMembers]) if (!byId.has(id)) displacedMembers.delete(id);
   }
 
   function setEdges(edges: GraphEdge[], strength: number) {
@@ -302,8 +392,11 @@ export function createGraphSimulation(): GraphSimulation {
       if (!region || node.x === undefined || node.y === undefined) continue;
       // A pinned node is under the user's finger — never fight a drag.
       if (node.fx !== undefined && node.fx !== null) continue;
-      const dx = node.x - region.x;
-      const dy = node.y - region.y;
+      // The region travels with any boundary drag that carried this tab —
+      // see anchorOffsetById.
+      const offset = anchorOffsetById.get(node.id);
+      const dx = node.x - (region.x + (offset?.dx ?? 0));
+      const dy = node.y - (region.y + (offset?.dy ?? 0));
       const distance = Math.hypot(dx, dy);
       if (distance <= region.r || distance === 0) continue;
       const ux = dx / distance;
@@ -318,12 +411,127 @@ export function createGraphSimulation(): GraphSimulation {
     }
   }
 
+  function setBoundaryBodies(specs: { id: string; memberIds: string[]; padding: number }[]) {
+    const nextIds = new Set(specs.map((s) => s.id));
+    for (const id of [...boundaryBodies.keys()]) {
+      if (nextIds.has(id)) continue;
+      boundaryBodies.delete(id);
+      boundaryPadding.delete(id);
+      if (boundaryDrag?.id === id) boundaryDrag = null;
+    }
+    for (const spec of specs) {
+      boundaryPadding.set(spec.id, spec.padding);
+      const existing = boundaryBodies.get(spec.id);
+      if (existing) {
+        // Membership can change under a live body (a tab is recategorized, a
+        // filter narrows the graph) — the body itself, and its motion, are
+        // deliberately untouched. Bodies are never merged or replaced.
+        existing.memberIds = spec.memberIds;
+        existing.members = new Set(spec.memberIds);
+        continue;
+      }
+      boundaryBodies.set(spec.id, {
+        id: spec.id,
+        memberIds: spec.memberIds,
+        members: new Set(spec.memberIds),
+        x: 0,
+        y: 0,
+        halfWidth: 0,
+        halfHeight: 0,
+        vx: 0,
+        vy: 0,
+        asleep: true,
+        dragging: false,
+      });
+    }
+    syncBoundaryBodies();
+  }
+
+  /**
+   * Re-derives every body's rect from its members' live physics positions —
+   * the box IS its members' padded bounding box, exactly as the renderer
+   * draws it, so the collider and the visible square can never disagree.
+   * A body whose members have no positions yet keeps its previous rect.
+   */
+  function syncBoundaryBodies() {
+    for (const body of boundaryBodies.values()) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const id of body.memberIds) {
+        const node = byId.get(id);
+        if (!node || node.x === undefined || node.y === undefined) continue;
+        minX = Math.min(minX, node.x - node.radius);
+        maxX = Math.max(maxX, node.x + node.radius);
+        minY = Math.min(minY, node.y - node.radius);
+        maxY = Math.max(maxY, node.y + node.radius);
+      }
+      if (minX === Infinity) continue;
+      const padding = boundaryPadding.get(body.id) ?? 0;
+      body.x = (minX + maxX) / 2;
+      body.y = (minY + maxY) / 2;
+      body.halfWidth = (maxX - minX) / 2 + padding;
+      body.halfHeight = (maxY - minY) / 2 + padding;
+    }
+  }
+
+  /**
+   * Moves a boundary's tabs — and the cluster territory holding them — by the
+   * same rigid delta the box itself moved. This is what makes a boundary drag
+   * a real change to the graph's own node positions rather than a floating
+   * rectangle drawn somewhere else.
+   */
+  function translateBoundaryMembers(memberIds: string[], dx: number, dy: number) {
+    for (const id of memberIds) {
+      const node = byId.get(id);
+      if (!node) continue;
+      if (node.x !== undefined) node.x += dx;
+      if (node.y !== undefined) node.y += dy;
+      if (node.fx !== undefined && node.fx !== null) node.fx += dx;
+      if (node.fy !== undefined && node.fy !== null) node.fy += dy;
+      const offset = anchorOffsetById.get(id);
+      if (offset) {
+        offset.dx += dx;
+        offset.dy += dy;
+      } else {
+        anchorOffsetById.set(id, { dx, dy });
+      }
+      displacedMembers.add(id);
+    }
+  }
+
+  function stepBoundaryLayer() {
+    if (boundaryBodies.size === 0) return;
+    syncBoundaryBodies();
+    const bodies = [...boundaryBodies.values()];
+    if (!boundaryDrag && bodies.every((b) => b.asleep)) return;
+
+    const drag = boundaryDrag
+      ? {
+          id: boundaryDrag.id,
+          targetX: boundaryDrag.targetX + boundaryDrag.grabDx,
+          targetY: boundaryDrag.targetY + boundaryDrag.grabDy,
+        }
+      : null;
+    const deltas = stepBoundaryBodies(bodies, boundarySandbox, drag);
+    for (const [id, delta] of deltas) {
+      const body = boundaryBodies.get(id);
+      if (!body) continue;
+      translateBoundaryMembers(body.memberIds, delta.dx, delta.dy);
+    }
+  }
+
   return {
     tick: () => {
       if (simulation.alpha() > simulation.alphaMin()) {
         simulation.tick();
         confineToRegions();
       }
+      // Always stepped, even once the node layout has cooled: a boundary drag
+      // is direct manipulation and shouldn't depend on alpha. A no-op when
+      // every body is asleep and nothing is being dragged.
+      stepBoundaryLayer();
     },
     isSettled: () => simulation.alpha() <= simulation.alphaMin(),
     reheat: (amount = 0.4) => {
@@ -346,5 +554,56 @@ export function createGraphSimulation(): GraphSimulation {
       node.fy = null;
     },
     findNode: (id) => byId.get(id),
+
+    setBoundaryBodies,
+    setBoundarySandbox: (sandbox) => {
+      boundarySandbox = sandbox;
+    },
+    beginBoundaryDrag: (id, x, y) => {
+      const body = boundaryBodies.get(id);
+      if (!body) return false;
+      body.asleep = false;
+      body.vx = 0;
+      body.vy = 0;
+      // Grab offset, so the box keeps its position relative to the pointer
+      // instead of snapping its centre under the cursor.
+      boundaryDrag = { id, targetX: x, targetY: y, grabDx: body.x - x, grabDy: body.y - y };
+      return true;
+    },
+    moveBoundaryDrag: (x, y) => {
+      if (!boundaryDrag) return;
+      boundaryDrag.targetX = x;
+      boundaryDrag.targetY = y;
+    },
+    endBoundaryDrag: () => {
+      if (!boundaryDrag) return;
+      const body = boundaryBodies.get(boundaryDrag.id);
+      boundaryDrag = null;
+      if (!body) return;
+      const { vx, vy } = releaseVelocity(body);
+      body.dragging = false;
+      body.vx = vx;
+      body.vy = vy;
+      body.asleep = false;
+    },
+    getBoundaryBody: (id) => boundaryBodies.get(id),
+    isBoundaryLayerSettled: () => !boundaryDrag && [...boundaryBodies.values()].every((b) => b.asleep),
+    seedBoundaryOffsets: (offsets) => {
+      for (const [id, offset] of Object.entries(offsets)) {
+        if (anchorOffsetById.has(id)) continue;
+        anchorOffsetById.set(id, { dx: offset.x, dy: offset.y });
+      }
+    },
+    takeDisplacedBoundaryMembers: () => {
+      const moved: { id: string; x: number; y: number; offset: { x: number; y: number } }[] = [];
+      for (const id of displacedMembers) {
+        const node = byId.get(id);
+        if (node?.x === undefined || node?.y === undefined) continue;
+        const offset = anchorOffsetById.get(id);
+        moved.push({ id, x: node.x, y: node.y, offset: { x: offset?.dx ?? 0, y: offset?.dy ?? 0 } });
+      }
+      displacedMembers.clear();
+      return moved;
+    },
   };
 }
