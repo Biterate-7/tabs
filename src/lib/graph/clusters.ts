@@ -4,6 +4,12 @@ import type { Collection } from "@/lib/collections/types";
 import { sectionPath } from "@/lib/sections/relations";
 import { LARGE_SHARE_THRESHOLD, COMPACT_MAX_COUNT } from "@/lib/sections/tree";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
+import {
+  CLUSTER_LAYOUT_MODE,
+  computeClusterRegions,
+  computeSubcategoryRegion,
+  type ClusterRegion,
+} from "./cluster-regions";
 
 export type ClusterKind = "category" | "subcategory" | "collection";
 export type ClusterPresence = "large" | "standard" | "compact";
@@ -230,6 +236,18 @@ export function buildClusterTree(tabs: Tab[], sections: Section[], collections: 
 export type ClusterAnchorAssignment = {
   categoryAnchor: { x: number; y: number } | null;
   subcategoryAnchor: { x: number; y: number } | null;
+  /**
+   * The region this tab is confined to, under CLUSTER_LAYOUT_MODE "packed2d" —
+   * its category's (or subcategory's) reserved disc. Null under "ring" mode,
+   * where nothing is confined and the anchors above are the only cluster
+   * force. Carried here rather than through a separate simulation setter so
+   * the existing setClusterAnchors() call site stays the single place layout
+   * intent reaches the physics engine.
+   *
+   * Optional: absent means "not confined", so every existing caller that
+   * builds an assignment by hand keeps working unchanged.
+   */
+  confineTo?: ClusterRegion | null;
 };
 
 /** Small, pure, deterministic hash — used only to jitter anchor placement so it doesn't read as a perfect pie chart, never for anything security-sensitive. */
@@ -255,6 +273,49 @@ const CATEGORY_RING_GROWTH = 3.2;
  * their parent category's anchor, by the same logic.
  */
 export function computeClusterAnchors(tree: ClusterTree): Map<string, ClusterAnchorAssignment> {
+  if (CLUSTER_LAYOUT_MODE === "packed2d") return computePackedClusterAnchors(tree);
+  return computeRingClusterAnchors(tree);
+}
+
+/**
+ * "packed2d": every category gets a reserved disc (see cluster-regions.ts)
+ * rather than a point on a shared ring, and its members are confined to it.
+ * The anchor spring is left at its existing weak strength — the confinement,
+ * not the spring, is what holds a category together, so nothing about the
+ * force balance between charge/collide/link changes.
+ */
+function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnchorAssignment> {
+  const regions = computeClusterRegions(tree);
+  const result = new Map<string, ClusterAnchorAssignment>();
+
+  for (const category of tree.roots) {
+    const region = regions.get(category.id);
+    if (!region) continue;
+
+    const subcategories = category.children.filter((child) => child.kind === "subcategory");
+    const subcategoryRegions = new Map<string, ClusterRegion>();
+    subcategories.forEach((sub, index) => {
+      subcategoryRegions.set(sub.id, computeSubcategoryRegion(region, index, subcategories.length, sub.weight));
+    });
+
+    for (const tabId of category.totalTabIds) {
+      const path = tree.clusterPathOfTab.get(tabId);
+      const subRegion = path && path.length > 1 ? subcategoryRegions.get(path[1]) : undefined;
+      result.set(tabId, {
+        categoryAnchor: { x: region.x, y: region.y },
+        subcategoryAnchor: subRegion ? { x: subRegion.x, y: subRegion.y } : null,
+        // A tab in a subcategory is confined to that subcategory's own disc,
+        // which sits wholly inside its parent's — so a subcategory's boundary
+        // box nests inside its category's instead of merely overlapping it.
+        confineTo: subRegion ?? region,
+      });
+    }
+  }
+
+  return result;
+}
+
+function computeRingClusterAnchors(tree: ClusterTree): Map<string, ClusterAnchorAssignment> {
   const anchors = new Map<string, { x: number; y: number }>();
   const totalTabs = tree.roots.reduce((sum, r) => sum + r.weight, 0);
   const totalShare = tree.roots.reduce((sum, r) => sum + Math.sqrt(Math.max(1, r.weight)), 0) || 1;
@@ -290,7 +351,7 @@ export function computeClusterAnchors(tree: ClusterTree): Map<string, ClusterAnc
   for (const [tabId, path] of tree.clusterPathOfTab) {
     const categoryAnchor = anchors.get(path[0]) ?? null;
     const subcategoryAnchor = path.length > 1 ? (anchors.get(path[1]) ?? null) : null;
-    result.set(tabId, { categoryAnchor, subcategoryAnchor });
+    result.set(tabId, { categoryAnchor, subcategoryAnchor, confineTo: null });
   }
   return result;
 }

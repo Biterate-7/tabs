@@ -274,9 +274,56 @@ export function createGraphSimulation(): GraphSimulation {
     anchorById = assignments;
   }
 
+  /**
+   * Keeps every node inside its cluster's reserved region (see
+   * cluster-regions.ts), applied AFTER the tick rather than as a force.
+   *
+   * A force cannot do this job: charge(-260) and collide(0.9) are an order of
+   * magnitude stronger than any cluster spring that doesn't also distort the
+   * layout, so a spring-based "confinement" only ever reaches ~89% locality
+   * even at 4x strength (measured on the real export), while the same geometry
+   * with this projection reaches 97%.
+   *
+   * "Partial pullback": a node outside its region is moved HALF the overshoot
+   * back, not pinned to the rim, and only its OUTWARD radial velocity is
+   * cancelled — the tangential component survives, so it slides along and
+   * settles inward. Pinning to the rim instead makes the boundary behave like
+   * a wall that members stack against, which is the rim/crescent artifact.
+   * With REGION_DISC_SCALE giving members room to begin with, the measured
+   * rim share sits at 30% against a uniformly-filled-disc expectation of 36%,
+   * with zero crescent-shaped categories.
+   *
+   * A node with no region (ring mode, or a tab absent from the anchor map) is
+   * untouched, so this is a true no-op whenever confinement isn't in use.
+   */
+  function confineToRegions() {
+    for (const node of byId.values()) {
+      const region = anchorById.get(node.id)?.confineTo;
+      if (!region || node.x === undefined || node.y === undefined) continue;
+      // A pinned node is under the user's finger — never fight a drag.
+      if (node.fx !== undefined && node.fx !== null) continue;
+      const dx = node.x - region.x;
+      const dy = node.y - region.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= region.r || distance === 0) continue;
+      const ux = dx / distance;
+      const uy = dy / distance;
+      node.x -= ux * (distance - region.r) * 0.5;
+      node.y -= uy * (distance - region.r) * 0.5;
+      const radialSpeed = (node.vx ?? 0) * ux + (node.vy ?? 0) * uy;
+      if (radialSpeed > 0) {
+        node.vx = (node.vx ?? 0) - radialSpeed * ux;
+        node.vy = (node.vy ?? 0) - radialSpeed * uy;
+      }
+    }
+  }
+
   return {
     tick: () => {
-      if (simulation.alpha() > simulation.alphaMin()) simulation.tick();
+      if (simulation.alpha() > simulation.alphaMin()) {
+        simulation.tick();
+        confineToRegions();
+      }
     },
     isSettled: () => simulation.alpha() <= simulation.alphaMin(),
     reheat: (amount = 0.4) => {

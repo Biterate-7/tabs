@@ -43,3 +43,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tabdump-export.json: a real personal workspace export used as a local
+# fixture for graph-layout verification (see g-verification.test.ts) -
+# contains a real user's actual tab/browsing categories, so it is never
+# committed. g-verification.test.ts skips itself when this file is absent.
+/tabdump-export.json
+/.layout-audit/
