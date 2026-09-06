@@ -23,11 +23,14 @@
       </div>
 
       <div id="state-dumping" class="popup__state" hidden>
-        <p class="popup__muted">Dumping tabs…</p>
+        <p class="popup__muted" id="dumping-message">Dumping tabs…</p>
+        <p class="popup__muted popup__detail">You can close this popup — the dump keeps running.</p>
       </div>
 
       <div id="state-success" class="popup__state" hidden>
         <p class="popup__success">✓ Dumped <span id="success-count">0</span> tabs</p>
+        <p class="popup__muted popup__detail" id="success-detail" hidden></p>
+        <button id="open-button" class="popup__button">Open TabDump</button>
       </div>
 
       <div id="state-error" class="popup__state" hidden>

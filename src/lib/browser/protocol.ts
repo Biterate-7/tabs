@@ -13,6 +13,22 @@ export const MSG_BROWSER_COMMAND_RESULT = "TABDUMP_BROWSER_COMMAND_RESULT";
 export const MSG_EXTENSION_PING = "TABDUMP_EXTENSION_PING";
 export const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";
 
+/**
+ * The tab-dump import handshake (see src/hooks/use-extension-import.ts here,
+ * extension/content/content-script.js and extension/src/config.js there).
+ *
+ * TABDUMP_IMPORT carries the batch plus an `importId`; the page answers
+ * TABDUMP_IMPORT_ACK with that same id and the number of tabs it accepted,
+ * and announces TABDUMP_PAGE_READY as soon as it is able to ingest at all.
+ * The ack is what lets the extension distinguish "handed the message to a
+ * content script" from "the app actually took these tabs" — without it, a
+ * batch delivered while the page was still hydrating was dropped silently
+ * and still reported as a successful dump.
+ */
+export const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
+export const MSG_TABDUMP_IMPORT_ACK = "TABDUMP_IMPORT_ACK";
+export const MSG_TABDUMP_PAGE_READY = "TABDUMP_PAGE_READY";
+
 /** Default time to wait for a browser command's result before giving up — see sendBrowserCommand. */
 export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
 

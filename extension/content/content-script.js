@@ -6,6 +6,8 @@
 // if either ever changes.
 const MESSAGE_SOURCE = "tabdump-extension";
 const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
+const MSG_TABDUMP_IMPORT_ACK = "TABDUMP_IMPORT_ACK";
+const MSG_TABDUMP_PAGE_READY = "TABDUMP_PAGE_READY";
 const MSG_CHECK_IMPORTED = "TABDUMP_CHECK_IMPORTED";
 const MSG_CHECK_IMPORTED_RESULT = "TABDUMP_CHECK_IMPORTED_RESULT";
 const MSG_BROWSER_COMMAND = "TABDUMP_BROWSER_COMMAND";
@@ -14,20 +16,109 @@ const MSG_EXTENSION_PING = "TABDUMP_EXTENSION_PING";
 const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";
 
 const CHECK_IMPORTED_TIMEOUT_MS = 1500;
+// Mirrors config.js's IMPORT_ACK_TIMEOUT_MS. Duplicated for the same
+// no-ES-module reason as the constants above; background.js's own budget
+// arithmetic reads the canonical value from config.js.
+const IMPORT_ACK_TIMEOUT_MS = 8000;
 
-// Bridges the extension's isolated world to the page's own JS context:
-// content scripts share the DOM/window with the page for postMessage
-// purposes, so this is received by the page's own `window.addEventListener`
-// (see src/hooks/use-extension-import.ts), which validates it again before
-// trusting it — a content script relaying a message is not itself a trust
-// boundary, just a transport.
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type !== MSG_TABDUMP_IMPORT) return;
+// Whether the page has told us it can ingest an import (see
+// src/hooks/use-extension-import.ts, which posts MSG_TABDUMP_PAGE_READY from
+// the same effect that attaches its `message` listener). A page reload tears
+// this whole content script down with the document, so this can never
+// outlive the page it describes.
+let pageReady = false;
 
+// The one import currently waiting on the page, if any:
+// `{ importId, payload, respond, timer }`. Held rather than fired-and-
+// forgotten because the payload routinely arrives BEFORE the page is ready —
+// background.js sends the moment chrome.tabs reports `status: "complete"`,
+// and the app's listener demonstrably attaches after the load event, not
+// before. Holding it here (and re-posting on MSG_TABDUMP_PAGE_READY below)
+// is what makes delivery ordering-independent instead of a race.
+let pendingImport = null;
+
+function settlePendingImport(response) {
+  if (!pendingImport) return;
+  const { respond, timer } = pendingImport;
+  pendingImport = null;
+  clearTimeout(timer);
+  try {
+    respond(response);
+  } catch {
+    // The background service worker's message port is already gone (it was
+    // evicted, or the extension reloaded). Nothing to deliver the answer to;
+    // background.js treats a dropped port as a delivery failure and reports
+    // it, so this can't turn into a silent success.
+  }
+}
+
+function postImportToPage(importId, payload) {
   window.postMessage(
-    { source: MESSAGE_SOURCE, type: MSG_TABDUMP_IMPORT, payload: message.payload },
+    { source: MESSAGE_SOURCE, type: MSG_TABDUMP_IMPORT, payload: { ...payload, importId } },
     window.location.origin
   );
+}
+
+/**
+ * Bridges the extension's isolated world to the page's own JS context:
+ * content scripts share the DOM/window with the page for postMessage
+ * purposes, so this is received by the page's own `window.addEventListener`
+ * (see src/hooks/use-extension-import.ts), which validates it again before
+ * trusting it — a content script relaying a message is not itself a trust
+ * boundary, just a transport.
+ *
+ * Unlike the fire-and-forget relay this replaced, the response to
+ * background.js is deferred until the page acks the batch. That makes
+ * "delivered" mean "the web app took ownership of these tabs" rather than
+ * merely "a content script was attached", which is the distinction the whole
+ * cross-machine dump failure turned on.
+ */
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== MSG_TABDUMP_IMPORT) return undefined;
+
+  const importId = typeof message.importId === "string" ? message.importId : `${Date.now()}-${Math.random()}`;
+
+  // A second import while one is still pending: answer the first honestly
+  // (it never got acked) rather than leaving background.js's port hanging.
+  settlePendingImport({ ok: false, reason: "superseded" });
+
+  const timer = setTimeout(() => {
+    settlePendingImport({ ok: false, reason: pageReady ? "no-ack" : "page-not-ready" });
+  }, IMPORT_ACK_TIMEOUT_MS);
+
+  pendingImport = { importId, payload: message.payload, respond: sendResponse, timer };
+  postImportToPage(importId, message.payload);
+
+  return true; // keep the message channel open until the page acks
+});
+
+// The page's ack — the only thing that turns a delivery into a success.
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.source !== window) return;
+
+  const data = event.data;
+  if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_TABDUMP_IMPORT_ACK) return;
+  if (!pendingImport || data.payload?.importId !== pendingImport.importId) return;
+
+  const accepted = Number(data.payload?.accepted);
+  settlePendingImport({ ok: true, accepted: Number.isFinite(accepted) ? accepted : 0 });
+});
+
+// The page announcing it can ingest imports. Re-posting any held payload
+// here is the actual fix for the hydration race: the batch that arrived
+// while React was still hydrating is delivered again the instant a listener
+// exists, instead of having been dropped into a document nobody was
+// listening to.
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.source !== window) return;
+
+  const data = event.data;
+  if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_TABDUMP_PAGE_READY) return;
+
+  pageReady = true;
+  if (pendingImport) postImportToPage(pendingImport.importId, pendingImport.payload);
 });
 
 // Round-trips the popup's "which of these urls are already in the
@@ -111,7 +202,7 @@ window.addEventListener("message", (event) => {
 // Connection-liveness: answered entirely within this content script (no
 // background trip) since the content script only runs when the extension is
 // installed and enabled — its mere presence here IS the "connected" signal.
-// See src/hooks/use-browser-connection.ts for the page-side ping loop.
+// See src/lib/browser/bridge.ts for the page-side ping loop.
 window.addEventListener("message", (event) => {
   if (event.origin !== window.location.origin) return;
   if (event.source !== window) return;

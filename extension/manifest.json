@@ -3,6 +3,7 @@
   "name": "TabDump",
   "version": "0.1.0",
   "description": "Dump your open browser tabs straight into TabDump.",
+  "minimum_chrome_version": "102",
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "Dump tabs into TabDump",

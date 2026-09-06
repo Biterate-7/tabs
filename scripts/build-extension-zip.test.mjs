@@ -109,9 +109,32 @@ describe("build-extension-zip.mjs", () => {
   it("excludes test files, the packaging README, and the icon-generation script", () => {
     const names = entries.map((e) => e.name);
     for (const name of names) {
-      expect(name.endsWith(".test.js")).toBe(false);
+      // Any test-shaped name, not just .test.js: a future .test.mjs/.test.ts
+      // living next to the source it covers must not ship inside the
+      // extension users download.
+      expect(name).not.toMatch(/\.(test|spec)\.[cm]?[jt]sx?$/);
       expect(name).not.toBe("README.md");
       expect(name.startsWith("scripts/")).toBe(false);
+    }
+    // The one that exists today is genuinely on disk next to its source, so
+    // this asserts the exclusion is doing work rather than passing vacuously.
+    expect(existsSync(path.join(REPO_ROOT, "extension", "content", "content-script.test.js"))).toBe(true);
+    expect(names).not.toContain("content/content-script.test.js");
+  });
+
+  // Everything the popup's DOM lookups and the module graph need must be in
+  // the archive: popup.js resolves every element by id at load and throws
+  // outright if one is missing, and each of these modules is imported by
+  // path from another packaged file. A missing entry here is not a degraded
+  // extension, it is one that does nothing at all when clicked.
+  it("packages a popup whose element ids all exist in the packaged HTML", () => {
+    const html = entries.find((e) => e.name === "popup/popup.html").data.toString("utf8");
+    const js = entries.find((e) => e.name === "popup/popup.js").data.toString("utf8");
+    const requestedIds = [...js.matchAll(/getElementById\("([^"]+)"\)/g)].map((m) => m[1]);
+
+    expect(requestedIds.length).toBeGreaterThan(0);
+    for (const id of requestedIds) {
+      expect(html).toContain(`id="${id}"`);
     }
   });
 
