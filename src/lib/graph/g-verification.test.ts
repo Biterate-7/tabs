@@ -495,15 +495,25 @@ describe.skipIf(!HAS_FIXTURE)("packed2d category layout, on the real export", ()
     const { cands, drawn, gated } = boundaryPass(packed);
     expect(gated).toBe(0);
     expect(drawn.length).toBeGreaterThanOrEqual(cands.length * 0.75);
+    // Crossings are REPORTED here, not forbidden. Boundary squares are
+    // physics bodies now: two of them overlapping is what a collision looks
+    // like, and the layer pulls them apart rather than hiding one (see
+    // boundary-physics.ts, and collection-layout.ts where the suppression
+    // pass used to be). What this measures is how much separation the
+    // packed2d layout and that layer actually achieve together on the real
+    // export — it read 0 when this line was written.
+    let crossings = 0;
     for (let i = 0; i < drawn.length; i++) {
       for (let j = i + 1; j < drawn.length; j++) {
         const a = drawn[i];
         const b = drawn[j];
         const nested = rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect);
-        expect(rectsOverlap(a.rect, b.rect) && !nested, `${a.label} X ${b.label}`).toBe(false);
+        if (rectsOverlap(a.rect, b.rect) && !nested) crossings++;
       }
     }
-    console.log(`\nboundaries: ${drawn.length}/${cands.length} candidates drawn, 0 gated, 0 crossings`);
+    console.log(
+      `\nboundaries: ${drawn.length}/${cands.length} candidates drawn, 0 gated, ${crossings} crossings`
+    );
   }, 600_000);
 
   it("keeps every drawn boundary tied to its own members, not merely non-overlapping", async () => {

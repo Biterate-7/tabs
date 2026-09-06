@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   boundariesShareMembers,
   boundaryPenetration,
+  BOUNDARY_MAX_COORD,
   BOUNDARY_MAX_SPEED,
   clampBodyToSandbox,
   releaseVelocity,
@@ -186,5 +187,140 @@ describe("clampBodyToSandbox", () => {
     stepBoundaryBodies([a], sandbox, { id: "a", targetX: 10_000, targetY: 10_000 });
     expect(a.x).toBe(450);
     expect(a.y).toBe(250);
+  });
+});
+
+/**
+ * The lifecycle that replaced overlap suppression: CREATE -> AWAKE ->
+ * initial collision resolution -> settle -> normal sleeping. Nothing here
+ * may ever remove a body — separation is the only remedy a collision has.
+ */
+describe("initially overlapping bodies", () => {
+  it("separates two peers that start deeply overlapped, keeping both", () => {
+    // ~80% of the smaller box, the worst case measured on the real export.
+    const a = makeBody("a", 0, 0);
+    const b = makeBody("b", 20, 0);
+    a.asleep = false;
+    b.asleep = false;
+
+    for (let frame = 0; frame < 60 && (!a.asleep || !b.asleep); frame++) stepBoundaryBodies([a, b], null, null);
+
+    expect(overlaps(a, b)).toBe(false);
+    // Both are still here, still themselves, still their own size.
+    expect([a.id, b.id]).toEqual(["a", "b"]);
+    expect(a.memberIds).toEqual(["a-tab"]);
+    expect(b.memberIds).toEqual(["b-tab"]);
+    expect(a.halfWidth).toBe(50);
+    expect(b.halfWidth).toBe(50);
+  });
+
+  it("comes back to rest once separated instead of jittering forever", () => {
+    const a = makeBody("a", 0, 0);
+    const b = makeBody("b", 20, 0);
+    a.asleep = false;
+    b.asleep = false;
+
+    let frames = 0;
+    while (frames < 200 && (!a.asleep || !b.asleep)) {
+      stepBoundaryBodies([a, b], null, null);
+      frames++;
+    }
+    expect(a.asleep && b.asleep, `still awake after ${frames} frames`).toBe(true);
+
+    // And stays at rest: a settled pair produces no further motion at all.
+    const resting = { ax: a.x, bx: b.x };
+    for (let i = 0; i < 20; i++) expect(stepBoundaryBodies([a, b], null, null).size).toBe(0);
+    expect(a.x).toBe(resting.ax);
+    expect(b.x).toBe(resting.bx);
+  });
+
+  it("leaves an intentionally nested pair exactly where it is", () => {
+    // Shares a member, so it is one region seen at two scales — a
+    // subcategory inside its category — not two colliding peers.
+    const parent = makeBody("parent", 0, 0, 100, ["t1", "t2"]);
+    const child = makeBody("child", 10, 0, 30, ["t1"]);
+    parent.asleep = false;
+    child.asleep = false;
+
+    for (let frame = 0; frame < 60; frame++) stepBoundaryBodies([parent, child], null, null);
+
+    expect(parent.x).toBe(0);
+    expect(child.x).toBe(10);
+    expect(parent.asleep && child.asleep).toBe(true);
+  });
+
+  it("wakes a sleeping body only through a peer that is itself awake", () => {
+    // Two sleeping bodies are skipped by design (that is what keeps an
+    // untouched layout inert); the engine is what wakes a body whose rect
+    // changed — see engine.ts's syncBoundaryBodies.
+    const a = makeBody("a", 0, 0);
+    const b = makeBody("b", 20, 0);
+    expect(stepBoundaryBodies([a, b], null, null).size).toBe(0);
+    expect(overlaps(a, b)).toBe(true);
+
+    a.asleep = false;
+    for (let frame = 0; frame < 60; frame++) stepBoundaryBodies([a, b], null, null);
+    expect(overlaps(a, b)).toBe(false);
+  });
+});
+
+describe("recovering from invalid physics values", () => {
+  it("restores a body whose centre went NaN instead of dropping it", () => {
+    const a = makeBody("a", 120, -40);
+    stepBoundaryBodies([a], null, null); // records 120,-40 as last-good
+    a.x = Number.NaN;
+    a.y = Number.NaN;
+    a.asleep = false;
+
+    stepBoundaryBodies([a], null, null);
+
+    expect(a.x).toBe(120);
+    expect(a.y).toBe(-40);
+    expect(Number.isFinite(a.vx) && Number.isFinite(a.vy)).toBe(true);
+  });
+
+  it("pulls a body back from an absurd coordinate rather than letting it escape", () => {
+    const a = makeBody("a", 10, 10);
+    stepBoundaryBodies([a], null, null);
+    a.x = 1e300;
+    a.asleep = false;
+
+    stepBoundaryBodies([a], null, null);
+
+    expect(Math.abs(a.x)).toBeLessThanOrEqual(BOUNDARY_MAX_COORD);
+    expect(a.x).toBe(10);
+  });
+
+  it("treats an infinite velocity as broken, not as very fast", () => {
+    const a = makeBody("a", 0, 0);
+    a.vx = Number.POSITIVE_INFINITY;
+    a.vy = Number.NaN;
+    a.asleep = false;
+
+    stepBoundaryBodies([a], null, null);
+
+    expect(Number.isFinite(a.x) && Number.isFinite(a.y)).toBe(true);
+    expect(Number.isFinite(a.vx) && Number.isFinite(a.vy)).toBe(true);
+  });
+
+  it("never reports a non-finite delta, so members can never be NaN'd by a move", () => {
+    const a = makeBody("a", 0, 0);
+    a.asleep = false;
+    a.vx = Number.NaN;
+    for (const [, delta] of stepBoundaryBodies([a], null, { id: "a", targetX: Number.NaN, targetY: 0 })) {
+      expect(Number.isFinite(delta.dx) && Number.isFinite(delta.dy)).toBe(true);
+    }
+  });
+
+  it("keeps a degenerate rect non-negative", () => {
+    const a = makeBody("a", 0, 0);
+    a.halfWidth = Number.NaN;
+    a.halfHeight = -50;
+    a.asleep = false;
+
+    stepBoundaryBodies([a], null, null);
+
+    expect(a.halfWidth).toBeGreaterThanOrEqual(0);
+    expect(a.halfHeight).toBeGreaterThanOrEqual(0);
   });
 });

@@ -96,16 +96,15 @@ export const SUBCATEGORY_BOUNDARY_PADDING = 14;
  * hiding was clean; the cap was the only reason most categories had no
  * boundary at all.
  *
- * Nor did it ever protect the ring layout it was written for: measured there,
- * greedy overlap suppression alone leaves 1-6 boxes, so a ceiling of 8 never
- * binds. boundaryDelimitsMembers rejects boxes that don't delimit anything,
- * boundaryDrawPriority decides who claims territory first, and
- * selectNonOverlappingRects guarantees no two drawn boxes ever cross. Those
- * three are the density control; a fourth, purely count-based one only hid
- * legitimate categories.
+ * Nor did it ever protect the ring layout it was written for: measured
+ * there, the greedy overlap suppression of the day left only 1-6 boxes, so a
+ * ceiling of 8 never bound.
  *
- * selectNonOverlappingRects still accepts an optional `maxAmbient`, so a
- * caller that genuinely needs a ceiling can pass one — the renderer does not.
+ * Both of those passes are gone now (see the note further down, where
+ * selectNonOverlappingRects was). The density control that remains is
+ * boundaryDelimitsMembers, which refuses to admit a box that doesn't delimit
+ * anything; a purely count-based cap on top of it only ever hid legitimate
+ * categories.
  */
 
 export function pointInRect(x: number, y: number, rect: CollectionBoundaryRect): boolean {
@@ -242,160 +241,31 @@ export function boundaryPurity(occupancy: BoundaryOccupancy): number {
   return occupancy.inside === 0 ? 1 : occupancy.ownInside / occupancy.inside;
 }
 
-/**
- * How much a box is worth drawing, used to order `selectNonOverlappingRects`
- * — roughly "how many of its own members this box actually communicates":
- * the cluster's size, discounted by how much foreign content the box drags
- * in alongside them.
+/*
+ * boundaryDrawPriority and selectNonOverlappingRects used to live here.
  *
- * The ordering matters far more than it looks, because the overlap pass is
- * greedy: whatever goes first claims its territory outright and every later
- * box touching that territory is dropped. Ranking by raw cluster weight —
- * what this replaces — therefore hands the first pick to the single most
- * sprawling box on screen, which is exactly the box most likely to blanket
- * the territory of a dozen smaller, tighter, more informative ones, and to
- * be the least informative box in the frame while it does so.
+ * Together they were the overlap-suppression pass: rank every candidate box,
+ * then greedily drop any that would visibly cross a higher-ranked one. That
+ * is deliberately gone. Boundary squares are persistent physics bodies now
+ * (see boundary-physics.ts) — two of them overlapping is the ordinary,
+ * expected state of a collision, and the layer resolves it by pushing them
+ * apart. Hiding one instead is what deleted squares: the suppressed set was
+ * also the set handed to setBoundaryBodies, so losing the overlap contest
+ * destroyed the losing square's physics body outright.
  *
- * Measured over 35 settled layouts of the skewed dense fixture in
- * dense-boundaries.test.ts (250-750 tabs x 12-40 real per-domain categories),
- * against the weight ordering this replaces: mean purity of the drawn set
- * rises from 0.40 to 0.46, with the drawn count (6.23) and the largest drawn
- * box (10.4% of the viewport) unchanged, and still zero crossings. So the
- * frame shows the same number of boundaries, but each one is markedly more
- * about its own cluster and less a rectangle laid over its neighbours.
+ * Keeping boxes from resting on top of each other is therefore the physics
+ * layer's job, and only its job. Measured on the real 283-tab export: 3
+ * unrelated pairs overlap the moment the bodies are created (worst 83% of
+ * the smaller box), and 21 ticks later all 3 have separated with the 7
+ * intentional parent/child nestings untouched.
  *
- * What this is NOT: it does not draw materially more boxes. On this fixture
- * family the count is flat; on an earlier, more separable fixture it rose
- * ~13%. Either way ~6 boxes out of 30-50 eligible candidates is what
- * non-overlapping axis-aligned packing allows at these densities, and
- * reordering cannot lift that ceiling — only looser geometry or a stronger
- * anchor force could, both of which are out of scope here. Purity is the
- * axis this moves.
- *
- * It is deliberately not a purity-maximizing rule either. Ranking by purity
- * alone scores better on box quality but drops the heaviest cluster's box in
- * 31 of 40 measured layouts, which reads as broken when that cluster visibly
- * dominates the graph. Multiplying by weight keeps a big cluster near the top
- * while its box stays honest, and demotes it below its compact neighbours
- * once the box stops being honest — the intended trade, and the one the spec
- * asks for: "a meaningful boundary is preferable to a misleading boundary".
- *
- * Also rejected, measured on the same layouts: tolerating a small overlap
- * rather than reordering. It raises the count (7.4 boxes at a tolerance of
- * 25% of the smaller box) but leaves mean purity at 0.41 and the largest box
- * at 9.1% — it packs in more of the same bad boxes, and reintroduces exactly
- * the visibly-crossing outlines overlap suppression exists to prevent.
+ * What survives here is the part that was never about overlap: the
+ * concentration gate (boundaryDelimitsMembers / occupancyDelimitsMembers),
+ * which still keeps a box that has degenerated into a rectangle draped over
+ * the whole graph from ever being admitted in the first place. See
+ * resolveLiveBoundaries below.
  */
-export function boundaryDrawPriority(occupancy: BoundaryOccupancy, weight: number): number {
-  return weight * boundaryPurity(occupancy);
-}
 
-/**
- * Decides which boundary rects in one priority-ordered batch are actually
- * safe to draw so no two drawn rects visibly overlap on screen. `entries`
- * must already be in priority order (earlier wins a contested overlap) —
- * graph-canvas.tsx feeds this `boundaryDrawPriority` order, so the boxes
- * that most honestly delimit their own cluster claim territory first. That
- * ordering is load-bearing, not cosmetic: this pass is greedy, so the first
- * entry to claim a region silently erases every later one touching it.
- * Feeding it raw cluster weight (as this did before) gives the first pick to
- * the most sprawling box on screen — see boundaryDrawPriority.
- *
- * This exists because the anchor forces that position cluster members are
- * deliberately weak relative to collide/link (see engine.ts), so clusters
- * routinely end up spatially interleaved rather than cleanly separated —
- * and even a much stronger anchor pull can't fully fix that on its own:
- * clusters sit on a ring as angular wedges, and adjacent wedges'
- * axis-aligned bounding boxes overlap near the ring's center purely as a
- * geometry artifact of "smallest rect containing a wedge," independent of
- * how tightly each wedge's members are pulled together. Suppressing the
- * draw of a losing rect is what actually guarantees the rendered picture
- * never shows two overlapping boundary boxes, regardless of layout.
- *
- * `alwaysDrawId` (typically the selected cluster/collection) is exempt from
- * suppression — its own boundary should never vanish just because something
- * else was drawn first. A single id covers the common case; a caller with
- * more than one independent, simultaneously-active selection (e.g. a
- * selected Category/Subcategory cluster AND a separately selected
- * Collection) passes a `Set` instead so neither one can suppress the other.
- * `null` means nothing is exempt.
- *
- * `isExemptOverlap`, when given, lets the caller mark specific pairs as
- * *intentionally* nested (e.g. a Subcategory rect inside its own parent
- * Category rect) rather than the unintended sibling/cross-cluster overlap
- * this function otherwise guards against — an exempt pair never blocks
- * either member from being drawn, in either direction, regardless of which
- * one comes first in `entries`. Omitted (the default), every pair in the
- * batch is treated as mutually exclusive, unchanged from before this
- * parameter existed — so a same-tier-only caller needs no changes.
- *
- * `maxAmbient`, when given, caps how many non-always-drawn entries this call
- * can add to the result, regardless of whether they'd otherwise pass the
- * overlap check. Exists because overlap suppression alone doesn't scale: on
- * a real dense workspace (measured: 570 tabs, 50 real categories from
- * per-domain "collective clustering" — see clusters.ts/pipeline.ts) the ring
- * layout packs dozens of candidate boxes into overlapping territory near its
- * center as a geometry artifact, independent of how well-separated the
- * underlying data actually is (confirmed empirically: neither more anchor
- * spacing nor trimming outlier members meaningfully changed the count) — so
- * an uncapped pass ends up silently keeping only 1-6 of 30-60 legitimate,
- * concentration-passing candidates, in a somewhat arbitrary order driven by
- * which ones happen not to conflict. A bounded ambient set is an honest,
- * predictable "top N by weight" instead. Always-drawn entries are exempt
- * from the cap the same way they're exempt from overlap suppression — a
- * deliberate selection must never vanish for being outside the top N.
- * `undefined` (the default) means no cap, unchanged from before this
- * parameter existed.
- *
- * An always-drawn entry is never merely skipped past a conflict: if it
- * overlaps a non-exempt rect already drawn earlier (lower priority, but
- * processed first), that earlier rect is EVICTED from the result so the
- * always-drawn one never ends up visibly crossing it — "selected boundaries
- * must remain visible" would otherwise be satisfied at the cost of the
- * "unrelated boundaries must never visually cross" guarantee, which this
- * function exists to uphold unconditionally. An already-drawn rect that is
- * itself always-drawn is never evicted this way (two independently selected
- * ids — e.g. a selected cluster and a separately selected collection — are
- * each exempt from suppressing the other; see `alwaysDrawId`'s own doc
- * above), so two simultaneous selections can still cross each other, but a
- * selection can never force an uninvolved bystander to cross it.
- */
-export function selectNonOverlappingRects(
-  entries: { id: string; rect: CollectionBoundaryRect }[],
-  alwaysDrawId: string | ReadonlySet<string> | null,
-  isExemptOverlap?: (a: string, b: string) => boolean,
-  maxAmbient?: number
-): Set<string> {
-  const isAlwaysDraw = (id: string): boolean =>
-    alwaysDrawId !== null && (typeof alwaysDrawId === "string" ? id === alwaysDrawId : alwaysDrawId.has(id));
-  let drawn: { id: string; rect: CollectionBoundaryRect }[] = [];
-  const result = new Set<string>();
-  let ambientCount = 0;
-  for (const { id, rect } of entries) {
-    const alwaysDraw = isAlwaysDraw(id);
-    if (!alwaysDraw && maxAmbient !== undefined && ambientCount >= maxAmbient) continue;
-    const conflicts = drawn.filter(
-      (existing) => !isExemptOverlap?.(existing.id, id) && rectsOverlap(existing.rect, rect)
-    );
-    if (alwaysDraw) {
-      for (const conflict of conflicts) {
-        if (!isAlwaysDraw(conflict.id)) {
-          result.delete(conflict.id);
-          ambientCount--;
-        }
-      }
-      const evictedIds = new Set(conflicts.filter((c) => !isAlwaysDraw(c.id)).map((c) => c.id));
-      drawn = drawn.filter((d) => !evictedIds.has(d.id));
-      result.add(id);
-      drawn.push({ id, rect });
-    } else if (conflicts.length === 0) {
-      result.add(id);
-      drawn.push({ id, rect });
-      ambientCount++;
-    }
-  }
-  return result;
-}
 
 /** One boundary square offered to `resolveLiveBoundaries` for this frame. */
 export type BoundaryCandidate = {
@@ -447,6 +317,7 @@ export function resolveLiveBoundaries(
   alwaysAdmit: ReadonlySet<string>
 ): void {
   const offered = new Set<string>();
+  const extentArea = occupantExtentArea(occupants);
   for (const candidate of candidates) {
     offered.add(candidate.id);
     if (live.has(candidate.id)) continue;
@@ -455,7 +326,68 @@ export function resolveLiveBoundaries(
       continue;
     }
     const occupancy = measureBoundaryOccupancy(candidate.rect, candidate.memberIds, occupants);
-    if (occupancyDelimitsMembers(occupancy, occupants.length)) live.add(candidate.id);
+    if (!occupancyDelimitsMembers(occupancy, occupants.length)) continue;
+    if (boundarySprawlsOverGraph(candidate.rect, occupancy, extentArea)) continue;
+    live.add(candidate.id);
   }
   for (const id of [...live]) if (!offered.has(id)) live.delete(id);
+}
+
+/**
+ * Share of the graph's own extent a box may cover before it has to justify
+ * itself, and the purity it then has to show. Calibrated against measured
+ * data rather than picked: on the dense fixtures every legitimate
+ * Category/Subcategory box covers at most 4% of the extent at 1.00 purity,
+ * while the boxes this rejects sit at 32-49% of it at 0.04-0.05 purity.
+ * The gap between those two populations is nearly an order of magnitude on
+ * both axes, so these thresholds sit in empty space.
+ */
+const MAX_SPRAWLING_EXTENT_SHARE = 0.1;
+const SPRAWLING_PURITY_FLOOR = 0.5;
+
+/**
+ * Whether a box is one of the "large faint rectangles draped over the whole
+ * graph" — big enough to dominate the picture while being mostly somebody
+ * else's nodes.
+ *
+ * This is a second ADMISSION rule beside the concentration gate, not a
+ * second suppression pass: it can keep a box from ever being admitted, and
+ * it is never consulted again afterwards, so it can no more make a live
+ * square disappear than the concentration gate can.
+ *
+ * It exists because the concentration gate is purely RELATIVE — it asks only
+ * that a box be denser in its own members than the graph at large — and that
+ * bar scales down with the cluster. A 5-tab collection scattered across half
+ * the graph needs to clear only 4%, and clears it at 4.1%, so the gate
+ * admits a box covering 49% of the graph that holds 5 of its own tabs among
+ * 122. Overlap suppression used to drop those boxes as a side effect of them
+ * crossing everything; with suppression gone (deliberately — see the note
+ * where selectNonOverlappingRects was) nothing else stood between them and
+ * the screen. That is a hole the relative gate always had, previously masked.
+ */
+export function boundarySprawlsOverGraph(
+  rect: CollectionBoundaryRect,
+  occupancy: BoundaryOccupancy,
+  extentArea: number
+): boolean {
+  if (extentArea <= 0) return false;
+  const share = (rect.width * rect.height) / extentArea;
+  return share > MAX_SPRAWLING_EXTENT_SHARE && boundaryPurity(occupancy) < SPRAWLING_PURITY_FLOOR;
+}
+
+/** Area of the axis-aligned box containing every occupant — the graph's own footprint, in whatever space the caller is working in. */
+export function occupantExtentArea(occupants: readonly BoundaryOccupant[]): number {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of occupants) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+  if (minX === Infinity) return 0;
+  return (maxX - minX) * (maxY - minY);
 }

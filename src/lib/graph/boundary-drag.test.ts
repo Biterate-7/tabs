@@ -225,14 +225,131 @@ describe("dragging a boundary square", () => {
 
   it("leaves the boundary layer alone when nothing is being dragged", () => {
     const sim = twoBoxes();
+    // One tick for the freshly created bodies to find they have nothing to
+    // resolve and settle — bodies are born awake now so that a pair born
+    // overlapping still gets its chance to separate (see the lifecycle suite).
+    sim.tick();
     expect(sim.isBoundaryLayerSettled()).toBe(true);
+    sim.takeDisplacedBoundaryMembers();
     for (let i = 0; i < 30; i++) sim.tick();
     expect(sim.takeDisplacedBoundaryMembers()).toEqual([]);
   });
 
   it("refuses to grab a box that has no body", () => {
     const sim = twoBoxes();
+    sim.tick();
     expect(sim.beginBoundaryDrag("nope", 0, 0)).toBe(false);
+    expect(sim.isBoundaryLayerSettled()).toBe(true);
+  });
+});
+
+/**
+ * CREATE -> AWAKE -> initial collision resolution -> settle -> sleep, at the
+ * engine level, where a body's rect is re-derived from its members and any
+ * separation has to move those members to be real.
+ */
+describe("a boundary body's lifecycle", () => {
+  /** Two boxes whose padding alone makes them overlap, so the overlap is the boundary layer's to resolve. */
+  function overlappingBoxes(padding = 120) {
+    const sim = createGraphSimulation();
+    sim.setNodes([makeGraphNode("a"), makeGraphNode("b")], () => 10, {
+      a: { x: -60, y: 0 },
+      b: { x: 60, y: 0 },
+    });
+    sim.setEdges([], 1);
+    sim.setBoundaryBodies([
+      { id: "boxA", memberIds: ["a"], padding },
+      { id: "boxB", memberIds: ["b"], padding },
+    ]);
+    return sim;
+  }
+
+  it("is created awake, so an overlap it is born with can still be resolved", () => {
+    const sim = overlappingBoxes();
+    expect(sim.getBoundaryBody("boxA")!.asleep).toBe(false);
+    expect(sim.isBoundaryLayerSettled()).toBe(false);
+    expect(boxesOverlap(sim)).toBe(true);
+  });
+
+  it("separates the pair it was born overlapping, and keeps both bodies", () => {
+    const sim = overlappingBoxes();
+    for (let frame = 0; frame < 240 && !sim.isBoundaryLayerSettled(); frame++) sim.tick();
+
+    expect(boxesOverlap(sim)).toBe(false);
+    expect(sim.getBoundaryBody("boxA")).toBeDefined();
+    expect(sim.getBoundaryBody("boxB")).toBeDefined();
+    // The separation is real: it moved the member tabs, not just the rects.
+    expect(sim.findNode("a")!.x!).toBeLessThan(-60);
+    expect(sim.findNode("b")!.x!).toBeGreaterThan(60);
+  });
+
+  it("goes back to sleep once separated, rather than staying awake forever", () => {
+    const sim = overlappingBoxes();
+    let frames = 0;
+    while (frames < 400 && !sim.isBoundaryLayerSettled()) {
+      sim.tick();
+      frames++;
+    }
+    expect(sim.isBoundaryLayerSettled(), `layer never settled (${frames} frames)`).toBe(true);
+    expect(sim.getBoundaryBody("boxA")!.asleep).toBe(true);
+    expect(sim.getBoundaryBody("boxB")!.asleep).toBe(true);
+  });
+
+  it("wakes a resting body whose members have drifted it into a neighbour", () => {
+    const sim = overlappingBoxes(40);
+    for (let frame = 0; frame < 200 && !sim.isBoundaryLayerSettled(); frame++) sim.tick();
+    expect(sim.isBoundaryLayerSettled()).toBe(true);
+
+    // Shove a's tab across into b's box behind the layer's back, exactly as
+    // the node forces would while both boxes were asleep.
+    const node = sim.findNode("a")!;
+    node.x = sim.findNode("b")!.x! - 10;
+    sim.tick();
+
+    expect(sim.getBoundaryBody("boxA")!.asleep, "a rect that moved must not stay asleep").toBe(false);
+    for (let frame = 0; frame < 400 && !sim.isBoundaryLayerSettled(); frame++) sim.tick();
+    expect(boxesOverlap(sim)).toBe(false);
+    expect(sim.getBoundaryBody("boxA")).toBeDefined();
+    expect(sim.getBoundaryBody("boxB")).toBeDefined();
+  });
+
+  it("never separates an intentionally nested pair — they share a tab, so they are one region", () => {
+    const sim = createGraphSimulation();
+    sim.setNodes([makeGraphNode("a"), makeGraphNode("b")], () => 10, {
+      a: { x: 0, y: 0 },
+      b: { x: 40, y: 0 },
+    });
+    sim.setEdges([], 1);
+    sim.setBoundaryBodies([
+      { id: "parent", memberIds: ["a", "b"], padding: 60 },
+      { id: "child", memberIds: ["a"], padding: 20 },
+    ]);
+    for (let frame = 0; frame < 120 && !sim.isBoundaryLayerSettled(); frame++) sim.tick();
+
+    // Still nested, and still two bodies: the pair was never treated as a
+    // collision to be resolved. (Their members do drift under the node
+    // forces, which is why this asserts containment rather than a fixed
+    // position — that drift is the node simulation's, not the layer's.)
+    const parent = sim.getBoundaryBody("parent")!;
+    const child = sim.getBoundaryBody("child")!;
+    expect(child.x - child.halfWidth).toBeGreaterThanOrEqual(parent.x - parent.halfWidth - 1);
+    expect(child.x + child.halfWidth).toBeLessThanOrEqual(parent.x + parent.halfWidth + 1);
+    expect(child.y - child.halfHeight).toBeGreaterThanOrEqual(parent.y - parent.halfHeight - 1);
+    expect(child.y + child.halfHeight).toBeLessThanOrEqual(parent.y + parent.halfHeight + 1);
+  });
+
+  it("leaves a graph whose boxes never touched completely inert", () => {
+    const sim = twoBoxes();
+    // One tick to let the freshly-created bodies find they have nothing to do.
+    sim.tick();
+    expect(sim.isBoundaryLayerSettled()).toBe(true);
+    sim.takeDisplacedBoundaryMembers();
+
+    // The node simulation goes on moving tabs; what must be zero is the
+    // BOUNDARY layer's own contribution, which is exactly the set of tabs it
+    // reports having displaced.
+    for (let i = 0; i < 50; i++) sim.tick();
+    expect(sim.takeDisplacedBoundaryMembers()).toEqual([]);
     expect(sim.isBoundaryLayerSettled()).toBe(true);
   });
 });

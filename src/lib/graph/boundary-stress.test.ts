@@ -22,7 +22,7 @@ import { computeClusterAnchors } from "./clusters";
 import { computeNodeRadius } from "./node-size";
 import { createGraphSimulation } from "./engine";
 import { CATEGORY_BOUNDARY_PADDING, SUBCATEGORY_BOUNDARY_PADDING } from "./collection-layout";
-import { BOUNDARY_MAX_COORD } from "./boundary-physics";
+import { boundariesShareMembers, BOUNDARY_MAX_COORD } from "./boundary-physics";
 import { DEFAULT_CONNECTION_FILTERS } from "./types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
@@ -142,6 +142,60 @@ describe.skipIf(!HAS_FIXTURE)("boundary layer under adversarial drag input (real
     },
     30_000
   );
+
+  /**
+   * The initial-overlap lifecycle, on the real export rather than a pair of
+   * synthetic boxes. Before bodies were created awake this measured 3
+   * unrelated pairs still overlapping after any amount of stepping, the
+   * worst at 83% of the smaller box — because a body born asleep inside
+   * another one is skipped by resolveOverlaps forever.
+   *
+   * Peer overlaps must go; the intentional parent/child nestings (boxes that
+   * share tabs — a subcategory inside its category) must stay exactly as
+   * they are; and every body must still be there afterwards.
+   */
+  it("resolves the overlaps its bodies are born with, keeping every body and every nesting", () => {
+    const { sim, specs } = setUp();
+
+    const bodiesNow = () =>
+      specs.map((s2) => sim.getBoundaryBody(s2.id)).filter((b): b is NonNullable<typeof b> => Boolean(b));
+    const survey = () => {
+      const bodies = bodiesNow();
+      let peers = 0;
+      let nested = 0;
+      let worst = 0;
+      for (let i = 0; i < bodies.length; i++) {
+        for (let j = i + 1; j < bodies.length; j++) {
+          const a = bodies[i];
+          const b = bodies[j];
+          const ox = a.halfWidth + b.halfWidth - Math.abs(a.x - b.x);
+          const oy = a.halfHeight + b.halfHeight - Math.abs(a.y - b.y);
+          if (ox <= 0 || oy <= 0) continue;
+          if (boundariesShareMembers(a, b)) {
+            nested++;
+            continue;
+          }
+          peers++;
+          worst = Math.max(worst, (ox * oy) / (Math.min(a.halfWidth * a.halfHeight, b.halfWidth * b.halfHeight) * 4));
+        }
+      }
+      return { count: bodies.length, peers, nested, worst };
+    };
+
+    const before = survey();
+    expect(before.count, "expected the real export to produce a body per drawn boundary").toBeGreaterThan(10);
+
+    for (let frame = 0; frame < 600 && !sim.isBoundaryLayerSettled(); frame++) sim.tick();
+
+    const after = survey();
+    expect(sim.isBoundaryLayerSettled(), "boundary layer never came to rest").toBe(true);
+    expect(after.peers, `${after.peers} peer boundaries still overlapping at rest`).toBe(0);
+    // Nesting is not a collision and must be untouched by any of this.
+    expect(after.nested).toBe(before.nested);
+    // NOT ONE BODY LOST. Resolving a collision moves squares; it never removes them.
+    expect(after.count).toBe(before.count);
+    assertAllClean(sim, specs);
+  }, 60_000);
 
   it("stays finite and bounded while every box is dragged into the same point simultaneously", () => {
     const { sim, specs } = setUp();

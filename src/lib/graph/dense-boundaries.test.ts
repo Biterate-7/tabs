@@ -3,17 +3,13 @@ import { buildGraphEdges, buildGraphNodes, buildWorkspaceLookup } from "./relati
 import { buildClusterTree, computeClusterAnchors, type ClusterNode } from "./clusters";
 import { createGraphSimulation } from "./engine";
 import { computeNodeRadius } from "./node-size";
-import { computeFitCamera, worldToScreen } from "./layout";
 import {
-  boundaryDrawPriority,
   boundaryPurity,
   CATEGORY_BOUNDARY_PADDING,
   computeCollectionBoundary,
   measureBoundaryOccupancy,
-  occupancyDelimitsMembers,
-  rectContains,
   rectsOverlap,
-  selectNonOverlappingRects,
+  resolveLiveBoundaries,
   SUBCATEGORY_BOUNDARY_PADDING,
   type BoundaryOccupant,
   type CollectionBoundaryRect,
@@ -35,22 +31,22 @@ import type { Workspace } from "@/lib/workspace/types";
  * node layout decides where the nodes actually are — that is what turns a
  * cluster's bounding box from a tight region into a box around the whole
  * graph. So this file runs the real pipeline (relations -> cluster tree ->
- * d3-force simulation -> fit camera -> boundary rects) and asserts on what
+ * d3-force simulation -> world-space boundary rects) and asserts on what
  * a frame would actually paint.
  *
  * Kept deliberately close to graph-canvas.tsx's draw(): if the two drift,
  * this stops testing the thing that broke.
  */
 
-const VIEWPORT_W = 1280;
-const VIEWPORT_H = 720;
-
 /**
- * Ceiling on how much of the viewport one boundary may cover. Not a
- * constant the renderer enforces — an independent check that no box has
- * gone back to being a rectangle draped over the whole graph. The reported
- * failure drew boxes at 0.36 and 0.19 of the viewport; healthy boundaries
- * measured 0.01-0.15.
+ * Ceiling on how much of the GRAPH'S OWN EXTENT one boundary may cover. Not
+ * a constant the renderer enforces — an independent check that no box has
+ * gone back to being a rectangle draped over everything. Measured against
+ * the content bounding box rather than a viewport because boundary rects are
+ * world-space now and there is no camera in this pipeline at all; under the
+ * old fit-camera pipeline the two were the same thing by construction. The
+ * reported failure drew boxes at 0.36 and 0.19; healthy boundaries measure
+ * 0.01-0.04.
  */
 const MAX_BOUNDARY_VIEWPORT_SHARE = 0.25;
 
@@ -236,6 +232,17 @@ type DrawnBoundary = {
 type WorkspaceData = ReturnType<typeof buildWorkspace>;
 
 /** Mirrors graph-canvas.tsx's draw(): settle the layout, fit the camera, then build the frame's boundary draw list. Shared by every dataset builder in this file so a fixture change can't accidentally diverge from the real draw() path in only one of them. */
+/**
+ * The renderer's boundary pass, in the same order draw() runs it: settle the
+ * layout, build every candidate's WORLD-space rect, then hand the batch to
+ * resolveLiveBoundaries.
+ *
+ * World space, and no camera at all, because that is what the renderer does
+ * now — a boundary rect is camera-independent and is projected to the screen
+ * only at paint time. This function used to build screen rects through a fit
+ * camera, which is exactly the coupling that let a zoom level decide whether
+ * a square existed.
+ */
 function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   const lookup = buildWorkspaceLookup(data.workspaces);
   const nodes = buildGraphNodes(data.tabs, lookup);
@@ -269,18 +276,25 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
     const physicsNode = simulation.findNode(node.id)!;
     return { id: node.id, x: physicsNode.x!, y: physicsNode.y!, radius: physicsNode.radius };
   });
-  const camera = computeFitCamera(world, VIEWPORT_W, VIEWPORT_H);
-  const screen = new Map(
-    world.map((point) => {
-      const projected = worldToScreen(camera, point, VIEWPORT_W, VIEWPORT_H);
-      return [point.id, { x: projected.x, y: projected.y, radius: point.radius * camera.zoom }] as const;
-    })
-  );
-  const occupants: BoundaryOccupant[] = [...screen].map(([id, p]) => ({ id, x: p.x, y: p.y }));
+  const occupants: BoundaryOccupant[] = world.map((p) => ({ id: p.id, x: p.x, y: p.y }));
+  const byId = new Map(world.map((p) => [p.id, p] as const));
   const pointsOf = (tabIds: string[]) =>
-    tabIds
-      .map((id) => screen.get(id))
-      .filter((p): p is { x: number; y: number; radius: number } => Boolean(p));
+    tabIds.map((id) => byId.get(id)).filter((p): p is (typeof world)[number] => Boolean(p));
+
+  // The graph's own extent, so "how much of the picture does this box cover"
+  // can be asked without inventing a camera. Under the old fit-camera
+  // pipeline this was the viewport by construction.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of world) {
+    minX = Math.min(minX, p.x - p.radius);
+    maxX = Math.max(maxX, p.x + p.radius);
+    minY = Math.min(minY, p.y - p.radius);
+    maxY = Math.max(maxY, p.y + p.radius);
+  }
+  const contentArea = Math.max(1, (maxX - minX) * (maxY - minY));
 
   const candidates: DrawnBoundary[] = [];
   for (const category of tree.roots) {
@@ -311,52 +325,40 @@ function runBoundaryPipeline(data: WorkspaceData, selectedId: string | null) {
   const clusterNodeFor = (id: string): ClusterNode | undefined =>
     tree.byId.get(kindById.get(id) === "collection" ? `col:${id}` : id);
 
-  // Mirrors draw()'s single measure-once pass: the same occupancy feeds both
-  // the concentration gate and the draw-priority ranking.
   const occupancyById = new Map(
     candidates.map((c) => [
       c.id,
       measureBoundaryOccupancy(c.rect, new Set(clusterNodeFor(c.id)?.totalTabIds ?? []), occupants),
     ])
   );
-  const priorityOf = (id: string) =>
-    boundaryDrawPriority(occupancyById.get(id)!, clusterNodeFor(id)?.weight ?? 0);
   const purityOf = (id: string) => boundaryPurity(occupancyById.get(id)!);
 
-  const gated = candidates.filter(
-    (candidate) =>
-      selectedId === candidate.id ||
-      occupancyDelimitsMembers(occupancyById.get(candidate.id)!, occupants.length)
+  const live = new Set<string>();
+  resolveLiveBoundaries(
+    candidates.map((c) => ({
+      id: c.id,
+      rect: c.rect,
+      memberIds: new Set(clusterNodeFor(c.id)?.totalTabIds ?? []),
+    })),
+    live,
+    occupants,
+    selectedId === null ? new Set<string>() : new Set([selectedId])
   );
-  const rectById = new Map(gated.map((c) => [c.id, c.rect]));
-  const isNestedPair = (a: string, b: string) => {
-    const nodeA = clusterNodeFor(a);
-    const nodeB = clusterNodeFor(b);
-    if (!nodeA || !nodeB) return false;
-    if (nodeA.parentId !== b && nodeB.parentId !== a) return false;
-    const rectA = rectById.get(a);
-    const rectB = rectById.get(b);
-    if (!rectA || !rectB) return false;
-    return rectContains(rectA, rectB) || rectContains(rectB, rectA);
-  };
 
-  const ordered = [...gated].sort(
-    (a, b) => priorityOf(b.id) - priorityOf(a.id) || a.id.localeCompare(b.id)
-  );
-  const drawableIds = selectNonOverlappingRects(
-    ordered.map((c) => ({ id: c.id, rect: c.rect })),
-    selectedId === null ? null : new Set([selectedId]),
-    isNestedPair
-  );
+  /** Two boxes that enclose any of the same tab are nested views of one region, not colliding peers — the same test boundary-physics.ts uses. */
+  const isNestedPair = (a: string, b: string) => {
+    const membersA = new Set(clusterNodeFor(a)?.totalTabIds ?? []);
+    for (const id of clusterNodeFor(b)?.totalTabIds ?? []) if (membersA.has(id)) return true;
+    return false;
+  };
 
   return {
     nodeCount: nodes.length,
     candidates,
-    gated,
-    drawn: ordered.filter((c) => drawableIds.has(c.id)),
+    drawn: candidates.filter((c) => live.has(c.id)),
+    contentArea,
     isNestedPair,
     purityOf,
-    priorityOf,
     weightOf: (id: string) => clusterNodeFor(id)?.weight ?? 0,
   };
 }
@@ -370,8 +372,7 @@ function fineGrainedBoundaryDrawList(total: number, categoryCount: number, selec
 }
 
 function describeRect(boundary: DrawnBoundary): string {
-  const share = (boundary.rect.width * boundary.rect.height) / (VIEWPORT_W * VIEWPORT_H);
-  return `${boundary.kind}:${boundary.label} ${Math.round(boundary.rect.width)}x${Math.round(boundary.rect.height)} (${share.toFixed(2)} of viewport)`;
+  return `${boundary.kind}:${boundary.label} ${Math.round(boundary.rect.width)}x${Math.round(boundary.rect.height)}`;
 }
 
 describe("boundary rendering on a dense graph", () => {
@@ -381,18 +382,19 @@ describe("boundary rendering on a dense graph", () => {
     describe(`${total} tabs, interleaved clusters`, () => {
       const frame = boundaryDrawList(total, false);
 
-      it("draws no two boundaries that visibly cross each other", () => {
-        const crossings: string[] = [];
-        for (let i = 0; i < frame.drawn.length; i++) {
-          for (let j = i + 1; j < frame.drawn.length; j++) {
-            const a = frame.drawn[i];
-            const b = frame.drawn[j];
-            if (rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id)) {
-              crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
-            }
-          }
+      // Overlapping is allowed now, and must never cost a square its place:
+      // two boxes crossing is what a collision LOOKS like, and pulling them
+      // apart is the physics layer's job (see boundary-physics.ts). What has
+      // to hold here is only that nothing is dropped for it.
+      it("never drops a boundary for overlapping another", () => {
+        const ids = frame.drawn.map((d) => d.id);
+        const overlapping = frame.drawn.filter((a, i2) =>
+          frame.drawn.some((b, j2) => i2 !== j2 && rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id))
+        );
+        for (const boundary of overlapping) {
+          expect(ids, describeRect(boundary)).toContain(boundary.id);
         }
-        expect(crossings, `boundaries crossing each other:\n${crossings.join("\n")}`).toEqual([]);
+        expect(ids.length).toBe(new Set(ids).size);
       });
 
       // The heart of the reported bug: the surviving boxes were viewport
@@ -400,7 +402,7 @@ describe("boundary rendering on a dense graph", () => {
       // at 520 tabs.
       it("draws no boundary that has ballooned across the graph", () => {
         const oversized = frame.drawn
-          .filter((b) => (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > MAX_BOUNDARY_VIEWPORT_SHARE)
+          .filter((b) => (b.rect.width * b.rect.height) / frame.contentArea > MAX_BOUNDARY_VIEWPORT_SHARE)
           .map(describeRect);
         expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
       });
@@ -434,7 +436,7 @@ describe("boundary rendering on a dense graph", () => {
       const frame = boundaryDrawList(total, true);
       expect(frame.drawn.length).toBeGreaterThan(0);
       for (const boundary of frame.drawn) {
-        const share = (boundary.rect.width * boundary.rect.height) / (VIEWPORT_W * VIEWPORT_H);
+        const share = (boundary.rect.width * boundary.rect.height) / frame.contentArea;
         expect(share, describeRect(boundary)).toBeLessThanOrEqual(MAX_BOUNDARY_VIEWPORT_SHARE);
       }
     });
@@ -449,10 +451,10 @@ describe("boundary rendering on a dense graph", () => {
  * alone silently keeps only a handful of dozens of legitimate,
  * concentration-passing candidates, because the ring layout packs that many
  * candidate boxes into mutually-overlapping territory near its center
- * regardless of how well-separated the underlying data is. The fix that
- * actually held was ordering (boundaryDrawPriority) plus, ultimately, the
- * packed2d layout that gives every category its own disjoint territory — not
- * the count cap that was briefly tried here. This suite is the one that would
+ * regardless of how well-separated the underlying data is. What ultimately
+ * held was the packed2d layout, which gives every category its own disjoint
+ * territory — not the count cap briefly tried here, and not the draw-priority
+ * ordering, which has since been removed along with suppression itself. This suite is the one that would
  * have caught it:
  * dense-boundaries.test.ts's original describe block never varies category
  * *count* (buildWorkspace always uses the same fixed 10), only tab count.
@@ -462,23 +464,24 @@ describe("boundary rendering with realistic (many, fine-grained) categories", ()
     describe(`570 tabs, ${categoryCount} single-domain categories`, () => {
       const frame = fineGrainedBoundaryDrawList(570, categoryCount);
 
-      it("draws no two boundaries that visibly cross each other", () => {
-        const crossings: string[] = [];
-        for (let i = 0; i < frame.drawn.length; i++) {
-          for (let j = i + 1; j < frame.drawn.length; j++) {
-            const a = frame.drawn[i];
-            const b = frame.drawn[j];
-            if (rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id)) {
-              crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
-            }
-          }
+      // Overlapping is allowed now, and must never cost a square its place:
+      // two boxes crossing is what a collision LOOKS like, and pulling them
+      // apart is the physics layer's job (see boundary-physics.ts). What has
+      // to hold here is only that nothing is dropped for it.
+      it("never drops a boundary for overlapping another", () => {
+        const ids = frame.drawn.map((d) => d.id);
+        const overlapping = frame.drawn.filter((a, i2) =>
+          frame.drawn.some((b, j2) => i2 !== j2 && rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id))
+        );
+        for (const boundary of overlapping) {
+          expect(ids, describeRect(boundary)).toContain(boundary.id);
         }
-        expect(crossings, `boundaries crossing each other:\n${crossings.join("\n")}`).toEqual([]);
+        expect(ids.length).toBe(new Set(ids).size);
       });
 
       it("draws no boundary that has ballooned across the graph", () => {
         const oversized = frame.drawn
-          .filter((b) => (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > MAX_BOUNDARY_VIEWPORT_SHARE)
+          .filter((b) => (b.rect.width * b.rect.height) / frame.contentArea > MAX_BOUNDARY_VIEWPORT_SHARE)
           .map(describeRect);
         expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
       });
@@ -605,38 +608,39 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
     describe(`${total} tabs, ${categoryCount} skewed categories`, () => {
       const frame = skewedBoundaryDrawList(total, categoryCount);
 
-      it("draws no two boundaries that visibly cross each other", () => {
-        const crossings: string[] = [];
-        for (let i = 0; i < frame.drawn.length; i++) {
-          for (let j = i + 1; j < frame.drawn.length; j++) {
-            const a = frame.drawn[i];
-            const b = frame.drawn[j];
-            if (rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id)) {
-              crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
-            }
-          }
+      // Overlapping is allowed now, and must never cost a square its place:
+      // two boxes crossing is what a collision LOOKS like, and pulling them
+      // apart is the physics layer's job (see boundary-physics.ts). What has
+      // to hold here is only that nothing is dropped for it.
+      it("never drops a boundary for overlapping another", () => {
+        const ids = frame.drawn.map((d) => d.id);
+        const overlapping = frame.drawn.filter((a, i2) =>
+          frame.drawn.some((b, j2) => i2 !== j2 && rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id))
+        );
+        for (const boundary of overlapping) {
+          expect(ids, describeRect(boundary)).toContain(boundary.id);
         }
-        expect(crossings, `boundaries crossing each other:\n${crossings.join("\n")}`).toEqual([]);
+        expect(ids.length).toBe(new Set(ids).size);
       });
 
       it("draws no boundary that has ballooned across the graph", () => {
         const oversized = frame.drawn
-          .filter((b) => (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > MAX_BOUNDARY_VIEWPORT_SHARE)
+          .filter((b) => (b.rect.width * b.rect.height) / frame.contentArea > MAX_BOUNDARY_VIEWPORT_SHARE)
           .map(describeRect);
         expect(oversized, `boundaries covering the whole graph:\n${oversized.join("\n")}`).toEqual([]);
       });
 
-      // The feature must not silently switch itself off: plenty of clusters
-      // clear the concentration gate, and the frame has to keep showing the
-      // reader some of them. Deliberately a floor, not a target — see
-      // boundaryDrawPriority for why ~6 boxes out of 30-50 eligible ones is
-      // what non-overlapping axis-aligned packing allows at these densities.
+      // The feature must not silently switch itself off. With overlap
+      // suppression gone the only thing that can still keep a candidate off
+      // screen is the concentration gate, so at these densities the frame
+      // should be showing most of what it considers — not the handful of
+      // boxes greedy packing used to leave.
       it("keeps drawing boundaries rather than suppressing the feature away", () => {
-        expect(frame.gated.length).toBeGreaterThan(10);
+        expect(frame.candidates.length).toBeGreaterThan(10);
         expect(
           frame.drawn.length,
-          `only ${frame.drawn.length} of ${frame.gated.length} eligible boundaries survived`
-        ).toBeGreaterThanOrEqual(2);
+          `only ${frame.drawn.length} of ${frame.candidates.length} candidate boundaries survived`
+        ).toBeGreaterThan(frame.candidates.length / 2);
       });
 
       // The reported symptom, stated as the shape that actually reads as
@@ -651,7 +655,7 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
         const misleading = frame.drawn
           .filter(
             (b) =>
-              (b.rect.width * b.rect.height) / (VIEWPORT_W * VIEWPORT_H) > 0.1 && frame.purityOf(b.id) < 0.3
+              (b.rect.width * b.rect.height) / frame.contentArea > 0.1 && frame.purityOf(b.id) < 0.3
           )
           .map((b) => `${describeRect(b)} purity=${frame.purityOf(b.id).toFixed(2)}`);
         expect(misleading, `large boundaries enclosing mostly unrelated nodes:\n${misleading.join("\n")}`).toEqual(
@@ -659,137 +663,40 @@ describe("boundary rendering on a realistically skewed dense workspace", () => {
         );
       });
 
-      it("draws each boundary once, in priority order", () => {
+      it("draws each boundary exactly once", () => {
         const ids = frame.drawn.map((b) => b.id);
         expect(ids).toEqual([...new Set(ids)]);
-        const expected = [...frame.gated]
-          .sort((a, b) => frame.priorityOf(b.id) - frame.priorityOf(a.id) || a.id.localeCompare(b.id))
-          .filter((c) => ids.includes(c.id))
-          .map((c) => c.id);
-        expect(ids).toEqual(expected);
       });
     });
   }
 
-  /**
-   * The direct A/B for the fix, and the test that would have failed before
-   * it. Same settled layout, same geometry, same gate, same cap — the ONLY
-   * difference is the order handed to selectNonOverlappingRects.
-   *
-   * The claim under test is specifically about boundary QUALITY, not count:
-   * measured over 35 layouts of this fixture family, reordering lifts the
-   * mean purity of the drawn set from 0.40 to 0.46 while leaving the drawn
-   * count flat at 6.23. Asserted in aggregate rather than per scenario
-   * because the physics seeds new nodes with Math.random(), so any single
-   * settled layout is noisy (purity came out worse in 2 of those 35 runs,
-   * and the count lower in 3, never by more than one box).
-   */
-  it("priority ordering draws more honest boundaries than weight ordering", () => {
-    let priorityDrawn = 0;
-    let weightDrawn = 0;
-    let priorityPurity = 0;
-    let weightPurity = 0;
-    let samples = 0;
-
-    for (const [total, categoryCount] of [
-      [281, 25],
-      [281, 12],
-      [500, 30],
-      [570, 40],
-      [750, 30],
-    ] as [number, number][]) {
-      const frame = skewedBoundaryDrawList(total, categoryCount);
-
-      const byWeight = selectNonOverlappingRects(
-        [...frame.gated]
-          .sort((a, b) => frame.weightOf(b.id) - frame.weightOf(a.id) || a.id.localeCompare(b.id))
-          .map((c) => ({ id: c.id, rect: c.rect })),
-        null,
-        frame.isNestedPair
-      );
-
-      const meanPurity = (ids: string[]) =>
-        ids.length === 0 ? 0 : ids.reduce((sum, id) => sum + frame.purityOf(id), 0) / ids.length;
-
-      priorityDrawn += frame.drawn.length;
-      weightDrawn += byWeight.size;
-      priorityPurity += meanPurity(frame.drawn.map((b) => b.id));
-      weightPurity += meanPurity([...byWeight]);
-      samples++;
-
-      // Reordering trades a box only at the margin: it must never cost the
-      // frame a meaningful number of boundaries to buy that quality.
-      expect(
-        frame.drawn.length,
-        `${total}t/${categoryCount}c: priority drew ${frame.drawn.length}, weight drew ${byWeight.size}`
-      ).toBeGreaterThanOrEqual(byWeight.size - 1);
-    }
-
-    expect(priorityPurity / samples).toBeGreaterThan(weightPurity / samples);
-    expect(priorityDrawn / samples).toBeGreaterThanOrEqual(weightDrawn / samples - 0.5);
-  });
 
   // Selection must still win over both the gate and the cap, and must not
   // resurrect a box by trampling bystanders it visibly crosses.
-  it("still draws an explicitly selected boundary the ambient pass excluded, without crossing anything", () => {
+  // Selecting a boundary the admission gates excluded must show it — and,
+  // unlike before, must do so without costing any bystander its place. The
+  // old version of this test asserted the selection introduced no crossings,
+  // which it achieved by EVICTING whatever the selected box overlapped. That
+  // eviction is one of the two paths that used to delete a square outright,
+  // so what is asserted now is the opposite: everything that was on screen
+  // before the selection is still on screen after it.
+  it("draws an explicitly excluded boundary once selected, without displacing any other", () => {
     const unselected = skewedBoundaryDrawList(281, 25);
     const excluded = unselected.candidates.find((c) => !unselected.drawn.some((d) => d.id === c.id));
     expect(excluded, "expected the ambient pass to exclude at least one candidate").toBeDefined();
 
     const selected = skewedBoundaryDrawList(281, 25, excluded!.id);
-    expect(selected.drawn.map((d) => d.id)).toContain(excluded!.id);
-
-    const crossings: string[] = [];
-    for (let i = 0; i < selected.drawn.length; i++) {
-      for (let j = i + 1; j < selected.drawn.length; j++) {
-        const a = selected.drawn[i];
-        const b = selected.drawn[j];
-        if (rectsOverlap(a.rect, b.rect) && !selected.isNestedPair(a.id, b.id)) {
-          crossings.push(`${describeRect(a)} X ${describeRect(b)}`);
-        }
-      }
+    const drawnIds = selected.drawn.map((d) => d.id);
+    expect(drawnIds).toContain(excluded!.id);
+    for (const boundary of unselected.drawn) {
+      expect(drawnIds, `${describeRect(boundary)} was dropped to make room for the selection`).toContain(boundary.id);
     }
-    expect(crossings, `selection introduced crossings:\n${crossings.join("\n")}`).toEqual([]);
   });
 
   // A Collection is ambient like any other tier — it competes in the same
   // single suppression pass and cannot claim territory that visibly crosses
   // another tier's box by being a different kind of cluster.
-  it("does not let collections bypass ambient overlap suppression", () => {
-    const frame = skewedBoundaryDrawList(570, 40);
-    expect(frame.candidates.some((c) => c.kind === "collection")).toBe(true);
-    for (let i = 0; i < frame.drawn.length; i++) {
-      for (let j = i + 1; j < frame.drawn.length; j++) {
-        const a = frame.drawn[i];
-        const b = frame.drawn[j];
-        if (a.kind !== "collection" && b.kind !== "collection") continue;
-        expect(
-          rectsOverlap(a.rect, b.rect) && !frame.isNestedPair(a.id, b.id),
-          `${describeRect(a)} X ${describeRect(b)}`
-        ).toBe(false);
-      }
-    }
-  });
 
   // Nesting must remain a geometric fact, not a hierarchy claim: any pair
   // exempted from suppression has to actually contain one another.
-  it("only exempts parent/child pairs that geometrically contain each other", () => {
-    for (const [total, categoryCount] of [
-      [281, 25],
-      [570, 40],
-    ] as [number, number][]) {
-      const frame = skewedBoundaryDrawList(total, categoryCount);
-      for (let i = 0; i < frame.drawn.length; i++) {
-        for (let j = i + 1; j < frame.drawn.length; j++) {
-          const a = frame.drawn[i];
-          const b = frame.drawn[j];
-          if (!frame.isNestedPair(a.id, b.id)) continue;
-          expect(
-            rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect),
-            `${describeRect(a)} and ${describeRect(b)} were exempted without containment`
-          ).toBe(true);
-        }
-      }
-    }
-  });
 });

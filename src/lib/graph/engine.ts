@@ -14,6 +14,7 @@ import {
 import type { GraphEdge, GraphNode } from "./types";
 import type { ClusterAnchorAssignment } from "./clusters";
 import {
+  BOUNDARY_SLEEP_SPEED,
   releaseVelocity,
   sanitizeBody,
   stepBoundaryBodies,
@@ -144,8 +145,7 @@ const ALPHA_MIN = 0.005;
 // Raised 3x from their original 0.02/0.05 (still <= a third of the weakest
 // competing force, link's 0.5 floor) after measuring that anchor strength
 // alone can only ever partially reduce Category/Subcategory boundary-box
-// overlap (see collection-layout.ts's selectNonOverlappingRects for why a
-// stronger pull can't fully eliminate it: same-tier clusters sit on a ring
+// overlap (a stronger pull can't fully eliminate it: same-tier clusters sit on a ring
 // as angular wedges, and adjacent wedges' axis-aligned bounding boxes
 // overlap near the ring's center as a geometry artifact, independent of how
 // tightly each wedge's own members are pulled together). This bump still
@@ -491,7 +491,27 @@ export function createGraphSimulation(): GraphSimulation {
         halfHeight: 0,
         vx: 0,
         vy: 0,
-        asleep: true,
+        // Born AWAKE, with zero velocity — not resting.
+        //
+        // A new body's rect is simply wherever its members' bounding box
+        // already is, so it can be overlapping a neighbour from its very
+        // first frame; and since the renderer stopped hiding overlapping
+        // boxes (collection-layout.ts's resolveLiveBoundaries), nothing else
+        // resolves that any more. Asleep, it never would: resolveOverlaps
+        // skips a pair only when BOTH bodies are asleep, and stepBoundaryLayer
+        // skips the whole layer when every body is, so a box born inside
+        // another one stayed there indefinitely — 3 unrelated pairs left
+        // overlapping on the real 283-tab export, one of them by 83% of the
+        // smaller box.
+        //
+        // This is not "sleeping disabled": with no velocity and nothing to
+        // push against, a body goes back to sleep on its very next step (see
+        // stepBoundaryBodies' settle pass — zero speed and zero movement is
+        // below BOUNDARY_SLEEP_SPEED on both counts). The bodies that stay
+        // awake are exactly the ones genuinely overlapping a peer, and only
+        // until they have separated. Nesting is unaffected: two boxes sharing
+        // a member are filtered out before either is woken.
+        asleep: false,
         dragging: false,
         lastGoodX: 0,
         lastGoodY: 0,
@@ -530,10 +550,40 @@ export function createGraphSimulation(): GraphSimulation {
       // rather than collapsing. It stays in the world either way.
       if (minX === Infinity) continue;
       const padding = boundaryPadding.get(body.id) ?? 0;
-      body.x = (minX + maxX) / 2;
-      body.y = (minY + maxY) / 2;
-      body.halfWidth = (maxX - minX) / 2 + padding;
-      body.halfHeight = (maxY - minY) / 2 + padding;
+      const x = (minX + maxX) / 2;
+      const y = (minY + maxY) / 2;
+      const halfWidth = (maxX - minX) / 2 + padding;
+      const halfHeight = (maxY - minY) / 2 + padding;
+
+      // A sleeping body whose SHAPE just changed is no longer a body at rest
+      // in a known-good configuration — its members moved under the node
+      // forces, so whatever it was or wasn't touching is now stale. Waking it
+      // is what gets that re-tested: resolveOverlaps skips a pair only when
+      // both bodies are asleep, so without this, two boxes that drift into
+      // each other after settling stay overlapped forever, exactly as a box
+      // born overlapping used to.
+      //
+      // This does not make the layer busy. The rects of a settled graph are
+      // bit-stable (once alpha falls below alphaMin the node simulation stops
+      // advancing at all), so nothing changes, nothing wakes, and an
+      // untouched layout stays completely inert — the property the sleeping
+      // was there for. While the layout IS converging the rects genuinely do
+      // change every tick, which is precisely when the boxes should be
+      // colliding rather than sitting inert on top of one another.
+      if (
+        body.asleep &&
+        (Math.abs(x - body.x) > BOUNDARY_SLEEP_SPEED ||
+          Math.abs(y - body.y) > BOUNDARY_SLEEP_SPEED ||
+          Math.abs(halfWidth - body.halfWidth) > BOUNDARY_SLEEP_SPEED ||
+          Math.abs(halfHeight - body.halfHeight) > BOUNDARY_SLEEP_SPEED)
+      ) {
+        body.asleep = false;
+      }
+
+      body.x = x;
+      body.y = y;
+      body.halfWidth = halfWidth;
+      body.halfHeight = halfHeight;
       sanitizeBody(body);
     }
   }
