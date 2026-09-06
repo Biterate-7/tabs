@@ -36,9 +36,21 @@ export type BoundaryBody = {
   asleep: boolean;
   /** Set by `stepBoundaryBodies` for the single body under the pointer. */
   dragging: boolean;
+  /**
+   * The last centre this body was known to be finite and in-range at.
+   * `sanitizeBody` recovers to it rather than ever dropping a body whose
+   * numbers have gone bad — see BOUNDARY_MAX_COORD.
+   */
+  lastGoodX: number;
+  lastGoodY: number;
 };
 
-/** The world-space rect boundary bodies are kept inside (the visible canvas). */
+/**
+ * The world-space rect boundary bodies are kept inside. A fixed feature of
+ * the world (see engine.ts's `worldSandbox`), deliberately NOT the visible
+ * canvas — walls derived from the viewport move when the camera does, which
+ * makes zooming rewrite physics positions.
+ */
 export type Sandbox = { minX: number; minY: number; maxX: number; maxY: number };
 
 /** Where the pointer wants the dragged body's CENTRE to be this frame. */
@@ -90,8 +102,70 @@ const MAX_SUBSTEPS = 8;
 /** Sequential-impulse style: a couple of passes settles a body wedged between two others. */
 const RESOLUTION_PASSES = 2;
 
+/**
+ * Absolute ceiling on how far from the world origin a body's centre may sit.
+ *
+ * This is a last-resort numeric guard, not a layout constraint — the sandbox
+ * walls are what actually contain a body (see `clampBodyToSandbox`), and they
+ * sit orders of magnitude inside this. It exists so that a coordinate that has
+ * gone bad by some route nobody anticipated is *recovered* rather than left to
+ * propagate: a body at 1e18 still renders somewhere, but the moment it reaches
+ * Infinity (or NaN) every arithmetic result downstream of it — its own rect,
+ * its members' positions, the deltas applied to them — is NaN too, and a NaN
+ * position is a square that is gone from the picture with no way back.
+ */
+export const BOUNDARY_MAX_COORD = 1e7;
+
+/** NaN-safe: a non-finite speed is not "very fast", it is broken, so it becomes 0. */
 function clampSpeed(v: number): number {
+  if (!Number.isFinite(v)) return 0;
   return Math.max(-BOUNDARY_MAX_SPEED, Math.min(BOUNDARY_MAX_SPEED, v));
+}
+
+/**
+ * Forces one body back into a state the rest of this module can do arithmetic
+ * on, and returns whether anything had to be repaired.
+ *
+ * A body is NEVER dropped for failing this: a bad number costs it its
+ * momentum and returns it to where it last legitimately was, and that is the
+ * entire consequence. The invariant this upholds is that every body handed to
+ * `stepBoundaryBodies` comes back out of it with finite, in-range x/y/vx/vy
+ * and a non-negative rect, whatever it went in as.
+ */
+export function sanitizeBody(body: BoundaryBody): boolean {
+  let repaired = false;
+
+  if (!Number.isFinite(body.halfWidth) || body.halfWidth < 0) {
+    body.halfWidth = 0;
+    repaired = true;
+  }
+  if (!Number.isFinite(body.halfHeight) || body.halfHeight < 0) {
+    body.halfHeight = 0;
+    repaired = true;
+  }
+
+  const badX = !Number.isFinite(body.x) || Math.abs(body.x) > BOUNDARY_MAX_COORD;
+  const badY = !Number.isFinite(body.y) || Math.abs(body.y) > BOUNDARY_MAX_COORD;
+  if (badX || badY) {
+    // Recover to the last centre that was good; a body that has never had one
+    // (its very first sync produced garbage) falls back to the origin, which
+    // is inside every sandbox this app builds.
+    body.x = Number.isFinite(body.lastGoodX) ? body.lastGoodX : 0;
+    body.y = Number.isFinite(body.lastGoodY) ? body.lastGoodY : 0;
+    body.vx = 0;
+    body.vy = 0;
+    repaired = true;
+  }
+
+  const vx = clampSpeed(body.vx);
+  const vy = clampSpeed(body.vy);
+  if (vx !== body.vx || vy !== body.vy) repaired = true;
+  body.vx = vx;
+  body.vy = vy;
+
+  body.lastGoodX = body.x;
+  body.lastGoodY = body.y;
+  return repaired;
 }
 
 /**
@@ -172,10 +246,15 @@ function resolveOverlaps(bodies: BoundaryBody[]): void {
       for (let j = i + 1; j < bodies.length; j++) {
         const a = bodies[i];
         const b = bodies[j];
-        // Two resting boxes are never re-tested. The drawn set is
-        // non-overlapping by construction (selectNonOverlappingRects), so
-        // this is what keeps an untouched graph completely inert instead of
-        // nudging boxes around as their members jiggle under the node forces.
+        // Two resting boxes are never re-tested — that is what keeps an
+        // untouched graph completely inert instead of nudging boxes around
+        // as their members jiggle under the node forces. Note that resting
+        // boxes MAY be overlapping: since the renderer stopped suppressing
+        // overlapping boxes (see collection-layout.ts's
+        // resolveLiveBoundaries), separating them is this layer's job alone,
+        // and a pair that settled while overlapping stays that way until
+        // something wakes it. That is the intended trade — a visible overlap
+        // the user can drag apart, rather than a square that vanished.
         if (a.asleep && b.asleep) continue;
         const mtv = boundaryPenetration(a, b);
         if (!mtv) continue;
@@ -210,6 +289,11 @@ export function stepBoundaryBodies(
   sandbox: Sandbox | null,
   drag: BoundaryDrag | null
 ): Map<string, { dx: number; dy: number }> {
+  // Everything below assumes finite numbers, so nothing enters the step
+  // without them — a body that arrives broken is repaired in place and
+  // carries on, never dropped. See sanitizeBody.
+  for (const body of bodies) sanitizeBody(body);
+
   const start = new Map(bodies.map((b) => [b.id, { x: b.x, y: b.y }]));
 
   const dragged = drag ? (bodies.find((b) => b.id === drag.id) ?? null) : null;
@@ -219,7 +303,7 @@ export function stepBoundaryBodies(
   let dragDx = 0;
   let dragDy = 0;
   let substeps = 1;
-  if (dragged && drag) {
+  if (dragged && drag && Number.isFinite(drag.targetX) && Number.isFinite(drag.targetY)) {
     dragDx = drag.targetX - dragged.x;
     dragDy = drag.targetY - dragged.y;
     // Never advance further than roughly the dragged box's smaller half-side
@@ -239,11 +323,18 @@ export function stepBoundaryBodies(
       body.y += body.vy / substeps;
     }
     resolveOverlaps(bodies);
-    if (sandbox) {
-      for (const body of bodies) {
-        if (body.asleep) continue;
-        clampBodyToSandbox(body, sandbox);
-      }
+    for (const body of bodies) {
+      // Sleeping bodies are checked too, unlike the integration above: "no
+      // square is ever outside the sandbox, or holding a bad number" is an
+      // invariant over every body, not only the moving ones. On a stable
+      // world-space sandbox this is a no-op for anything at rest.
+      //
+      // Re-checked every substep rather than once at the end: an overlap
+      // resolution that produced a bad number would otherwise be fed straight
+      // back into the next substep's penetration tests and poison neighbours
+      // that were fine.
+      sanitizeBody(body);
+      if (sandbox) clampBodyToSandbox(body, sandbox);
     }
   }
 
@@ -269,7 +360,11 @@ export function stepBoundaryBodies(
       }
     }
 
-    if (dx !== 0 || dy !== 0) deltas.set(body.id, { dx, dy });
+    // A non-finite delta would be applied to every member tab of this body,
+    // turning a numeric glitch in one square into a whole cluster of nodes
+    // with NaN positions. Both bodies are sanitized above, so this cannot
+    // trigger today; it stays as the guarantee the caller relies on.
+    if ((dx !== 0 || dy !== 0) && Number.isFinite(dx) && Number.isFinite(dy)) deltas.set(body.id, { dx, dy });
   }
   return deltas;
 }

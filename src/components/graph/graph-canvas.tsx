@@ -20,16 +20,13 @@ import {
   zoomAroundPoint,
 } from "@/lib/graph/layout"
 import {
-  boundaryDrawPriority,
   CATEGORY_BOUNDARY_PADDING,
   COLLECTION_BOUNDARY_PADDING,
   computeCollectionBoundary,
-  measureBoundaryOccupancy,
-  occupancyDelimitsMembers,
   pointInRect,
-  rectContains,
-  selectNonOverlappingRects,
+  resolveLiveBoundaries,
   SUBCATEGORY_BOUNDARY_PADDING,
+  type BoundaryCandidate,
   type BoundaryOccupant,
   type CollectionBoundaryRect,
 } from "@/lib/graph/collection-layout"
@@ -243,8 +240,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const hoverNeighborsRef = useRef<Set<string> | null>(null)
   const collectionsRef = useRef<GraphCollection[]>(collections)
   const selectedCollectionIdRef = useRef(selectedCollectionId)
-  // Populated during draw() with each currently-drawn collection's screen-space
-  // rect, reused for hit-testing on click instead of recomputing it there —
+  // Populated during draw() with each live collection's WORLD-space rect,
+  // reused for hit-testing on click instead of recomputing it there —
   // draw() already walked every collection's visible members this frame.
   const collectionRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
   const clusterTreeRef = useRef<ClusterTree>(clusterTree)
@@ -254,6 +251,17 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   // collectionRectsRef above, one map per structural tier.
   const categoryRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
   const subcategoryRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
+  /**
+   * The ids of the boundary squares that currently EXIST — drawn,
+   * hit-testable and backed by a physics body, all three or none.
+   *
+   * It lives across frames on purpose. A square's existence is a persistent
+   * fact about the graph, not a per-frame re-derivation from the geometry it
+   * happens to have this instant; see collection-layout.ts's
+   * resolveLiveBoundaries, which owns the admission/retention rule and the
+   * reason a per-frame re-election is what used to delete squares mid-drag.
+   */
+  const liveBoundaryIdsRef = useRef<Set<string>>(new Set())
 
   nodesRef.current = nodes
   edgesRef.current = edges
@@ -579,16 +587,18 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const selectedClusterId = selectedClusterIdRef.current
     const draggedBoundaryId = boundaryDragRef.current?.id ?? null
 
-    // Every positioned node's screen position, gathered once per frame:
-    // measureBoundaryOccupancy below has to ask "how much of what this box
+    // Every positioned node's WORLD position, gathered once per frame:
+    // resolveLiveBoundaries below has to ask "how much of what this box
     // encloses is foreign to it", which is a question about *all* nodes,
-    // not just one cluster's own members.
+    // not just one cluster's own members. World, not screen, so the answer
+    // is the same however far out the camera is — measured in screen space
+    // (as this was), zooming out packed every node inside every box and
+    // collapsed the measurement to "everything contains everything".
     const boundaryOccupants: BoundaryOccupant[] = []
     for (const node of nodesRef.current) {
       const physicsNode = simulation.findNode(node.id)
       if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
-      const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
-      boundaryOccupants.push({ id: node.id, x: screen.x, y: screen.y })
+      boundaryOccupants.push({ id: node.id, x: physicsNode.x, y: physicsNode.y })
     }
 
     // Category, then Subcategory, then Collection boundaries — outermost
@@ -596,10 +606,22 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // drawCollectionBoundary renderer at a quieter `emphasis` than a
     // Collection's own (see collection-renderer.ts). Every edge/node still
     // paints on top of all of them.
+    //
+    // Every rect below is WORLD space, projected through the camera only at
+    // the moment it is painted (worldRectToScreen). A boundary square's
+    // geometry, its collider and its hit box are therefore identical at
+    // every zoom level — the camera decides how big a square looks, never
+    // whether it exists. Computed in screen space (as this was), the fixed
+    // pixel padding dominated the box once zoomed out, so cleanly separated
+    // squares collapsed into each other.
     categoryRectsRef.current.clear()
     subcategoryRectsRef.current.clear()
     const categoryLabelCandidates: (LabelBox & { node: ClusterNode })[] = []
     const subcategoryLabelCandidates: (LabelBox & { node: ClusterNode })[] = []
+    const worldRectToScreen = (rect: CollectionBoundaryRect): CollectionBoundaryRect => {
+      const topLeft = worldToScreen(camera, { x: rect.x, y: rect.y }, width, height)
+      return { x: topLeft.x, y: topLeft.y, width: rect.width * camera.zoom, height: rect.height * camera.zoom }
+    }
 
     if (showClusterBoundariesRef.current) {
       const clusterPoints = (tabIds: string[]): { x: number; y: number; radius: number }[] => {
@@ -607,8 +629,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         for (const tabId of tabIds) {
           const physicsNode = simulation.findNode(tabId)
           if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
-          const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
-          points.push({ x: screen.x, y: screen.y, radius: physicsNode.radius * camera.zoom })
+          points.push({ x: physicsNode.x, y: physicsNode.y, radius: physicsNode.radius })
         }
         return points
       }
@@ -624,10 +645,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
           const fontSize = Math.round(11 * display.textSize)
           ctx.font = `${fontSize}px ${palette.fontFamily}`
           const textWidth = ctx.measureText(category.label.toUpperCase()).width
+          const screenRect = worldRectToScreen(rect)
           categoryLabelCandidates.push({
             id: category.id,
-            x: rect.x + 4,
-            y: rect.y - 4 - fontSize,
+            x: screenRect.x + 4,
+            y: screenRect.y - 4 - fontSize,
             width: textWidth,
             height: fontSize,
             priority: 2,
@@ -649,10 +671,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
             const fontSize = Math.round(11 * display.textSize)
             ctx.font = `${fontSize}px ${palette.fontFamily}`
             const textWidth = ctx.measureText(sub.label.toUpperCase()).width
+            const screenRect = worldRectToScreen(rect)
             subcategoryLabelCandidates.push({
               id: sub.id,
-              x: rect.x + 4,
-              y: rect.y - 4 - fontSize,
+              x: screenRect.x + 4,
+              y: screenRect.y - 4 - fontSize,
               width: textWidth,
               height: fontSize,
               priority: 1,
@@ -681,8 +704,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       for (const tabId of collection.tabIds) {
         const physicsNode = simulation.findNode(tabId)
         if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
-        const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
-        points.push({ x: screen.x, y: screen.y, radius: physicsNode.radius * camera.zoom })
+        points.push({ x: physicsNode.x, y: physicsNode.y, radius: physicsNode.radius })
       }
       // A lone visible member only gets drawn while explicitly selected —
       // otherwise every single-tab collection would paint a box around it at
@@ -694,157 +716,49 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       collectionNameById.set(collection.id, collection.name)
     }
 
-    // Category, Subcategory, AND Collection boundary boxes are suppressed
-    // together, in ONE combined priority (weight-desc) pass, skipping any
-    // box that would visibly overlap one already drawn this frame — see
-    // selectNonOverlappingRects's doc comment for why the anchor forces
-    // alone can't guarantee that on their own. Every selected boundary
-    // (selectedClusterId AND selectedCollectionId — independent selections
-    // that can both be active at once) is always exempt so selecting one
-    // never makes its own box disappear.
+    // Which of those candidate boxes are LIVE — drawn, hit-testable, and
+    // backed by a physics body, as one indivisible set. See
+    // collection-layout.ts's resolveLiveBoundaries for the rule and for the
+    // measurements behind it; the short version is that a square's existence
+    // now depends only on its cluster still existing, never on where it
+    // currently sits or on how far out the camera is.
     //
-    // This must be ONE pass across all three tiers, not per-tier passes:
-    // a Subcategory's ring sits around its OWN parent Category's anchor at
-    // an arbitrary angle (see clusters.ts's computeClusterAnchors), so its
-    // box routinely reaches into an unrelated Category's box; a Collection
-    // is a live AABB of wherever its members' physics nodes currently sit,
-    // completely independent of the Category/Subcategory ring layout, so it
-    // routinely pokes only PARTIALLY into a Category/Subcategory box rather
-    // than nesting cleanly inside one — confirmed empirically (not merely
-    // assumed "intentional cross-cutting"): a settled dense layout measured
-    // Collection boxes overlapping an unrelated Category box at 30-90% of
-    // the smaller box's area, with the Collection's own edge extending
-    // outside the Category's edge — the same visually-crossing-outlines
-    // mesh the Category<->Subcategory fix exists to prevent, just one tier
-    // over. A same-tier-only (or two-tier-only) pass can never see any of
-    // this, let alone suppress it.
-    //
-    // isBoundaryParentChildPair exempts exactly the one relationship that
-    // IS intentional nesting: an entry nested inside its own tree-parent
-    // (a Subcategory inside its parent Category, or a Collection inside
-    // whichever Category/Subcategory holds the majority of its members —
-    // see clusters.ts's buildClusterTree, which computes that exact
-    // relationship for the SAME purpose). Every other pairing — including
-    // a Collection against any Category/Subcategory that ISN'T its
-    // majority parent — is treated as ordinary unwanted overlap. Nothing
-    // is exempted merely for being a Collection.
-    //
-    // Tree parentage alone is NOT enough to earn that exemption: the child
-    // rect must also actually SIT INSIDE the parent's (rectContains). A
-    // Collection's box is a live AABB of wherever its members happen to be
-    // and routinely juts out past its own majority parent's box; exempting
-    // that on parentage alone let two viewport-sized boxes cross each
-    // other's outlines — the exact "unintended large overlapping
-    // rectangles" this pass exists to stop, waved through by the one rule
-    // meant to permit clean nesting. Partial poke-out is ordinary overlap.
-    //
-    // A suppressed rect is pruned from categoryRectsRef/subcategoryRectsRef/
-    // collectionRectsRef right here (not just skipped in the draw loops
-    // below) so hitTestCluster/hitTestCollection — which reuse these exact
-    // maps for click/focus — can never resolve a click to a boundary whose
-    // box isn't actually on screen. Without this, clicking blank-looking
-    // canvas could silently select and camera-focus something the user
-    // never saw a hint of.
-    const boundaryTierById = new Map<string, "category" | "subcategory" | "collection">()
-    for (const id of categoryRectsRef.current.keys()) boundaryTierById.set(id, "category")
-    for (const id of subcategoryRectsRef.current.keys()) boundaryTierById.set(id, "subcategory")
-    for (const id of collectionRectsRef.current.keys()) boundaryTierById.set(id, "collection")
-    // Collections live in the cluster tree under a `col:`-prefixed id (see
-    // clusters.ts) distinct from their own raw `collection.id` used here and
-    // in collectionRectsRef — this bridges the two id spaces for lookup.
-    const clusterNodeForBoundary = (id: string): ClusterNode | undefined =>
-      clusterTreeRef.current.byId.get(boundaryTierById.get(id) === "collection" ? `col:${id}` : id)
-    const boundaryRectById = (id: string): CollectionBoundaryRect | undefined =>
-      categoryRectsRef.current.get(id) ?? subcategoryRectsRef.current.get(id) ?? collectionRectsRef.current.get(id)
-    const isBoundaryParentChildPair = (a: string, b: string): boolean => {
-      const nodeA = clusterNodeForBoundary(a)
-      const nodeB = clusterNodeForBoundary(b)
-      if (!nodeA || !nodeB) return false
-      if (nodeA.parentId !== b && nodeB.parentId !== a) return false
-      const rectA = boundaryRectById(a)
-      const rectB = boundaryRectById(b)
-      if (!rectA || !rectB) return false
-      return rectContains(rectA, rectB) || rectContains(rectB, rectA)
-    }
-    // The box under the pointer joins the selected ones in being exempt from
-    // suppression: a square must never blink out of existence mid-drag just
-    // because the box it is being pushed into happened to be drawn first.
-    const alwaysDrawBoundaryIds = new Set<string>(
+    // What stood here instead was a per-frame re-election: it re-ran the
+    // concentration gate AND a greedy non-overlap pass against the current
+    // geometry, then deleted the losers out of these three maps. Because
+    // those maps also drive hit-testing and (below) setBoundaryBodies, "your
+    // box overlaps a higher-priority box this instant" and "you are small on
+    // screen right now" both resolved to *destroy this square's physics
+    // body*. That is what made squares vanish on collision, on being dragged
+    // into a neighbour, and on zooming out. Two rigid bodies overlapping is
+    // the normal, expected state during a collision; it cannot also be the
+    // trigger for deleting one of them. Keeping boxes from crossing is the
+    // physics layer's job now — it pushes them apart, which is visible and
+    // reversible, instead of hiding one, which is neither.
+    const alwaysAdmitBoundaryIds = new Set<string>(
       [selectedClusterId, selectedCollectionId, draggedBoundaryId].filter((id): id is string => id !== null)
     )
-    // A boundary box is only worth drawing when it actually delimits its own
-    // cluster. Past a few hundred tabs the cluster anchors are far too weak
-    // (deliberately — see engine.ts) to keep clusters spatially apart, so
-    // each cluster's AABB degenerates into a box around most of the graph;
-    // drawing those is the "large faint rectangles draped over everything"
-    // glitch. The overlap pass below now demotes such a box (see
-    // boundaryDrawPriority) but cannot drop it on its own — one that happens
-    // to conflict with nothing would still be drawn — so this gate rejects it
-    // outright. Dropped here rather than in the draw loops so the boundary
-    // maps stay the single source of truth for hit-testing too (see below).
-    // An explicitly selected boundary is exempt: it's direct feedback for a
-    // deliberate click, one box rather than ambient clutter, and it should
-    // never silently fail to appear.
-    //
-    // Each candidate's occupancy is measured ONCE, here, and reused for both
-    // this gate and the draw-priority sort below: the sort needs the same
-    // "how much of this box is foreign" count the gate already walks every
-    // occupant to get, and measuring twice would double the only superlinear
-    // work in the whole pass. A selected boundary is measured too — it skips
-    // the gate, but it still needs a real priority so it evicts as few
-    // already-drawn bystanders as possible.
-    const boundaryPriorityById = new Map<string, number>()
-    for (const [id, rect] of [
-      ...categoryRectsRef.current,
-      ...subcategoryRectsRef.current,
-      ...collectionRectsRef.current,
-    ]) {
-      const cluster = clusterNodeForBoundary(id)
-      // No cluster node: nothing to measure, and nothing to judge it by —
-      // kept, as before, and left at the sort's default priority of 0.
-      if (!cluster) continue
-      const occupancy = measureBoundaryOccupancy(rect, new Set(cluster.totalTabIds), boundaryOccupants)
-      boundaryPriorityById.set(id, boundaryDrawPriority(occupancy, cluster.weight))
-      if (alwaysDrawBoundaryIds.has(id)) continue
-      if (occupancyDelimitsMembers(occupancy, boundaryOccupants.length)) continue
-      categoryRectsRef.current.delete(id)
-      subcategoryRectsRef.current.delete(id)
-      collectionRectsRef.current.delete(id)
+    const boundaryCandidates: BoundaryCandidate[] = []
+    for (const [id, rect] of categoryRectsRef.current) {
+      boundaryCandidates.push({ id, rect, memberIds: new Set(clusterTreeRef.current.byId.get(id)?.totalTabIds ?? []) })
     }
-    // Priority-descending, NOT weight-descending: the overlap pass below is
-    // greedy, so whichever box is considered first claims its territory and
-    // silently erases every later box touching it. Ranking by raw weight
-    // hands that first pick to the most sprawling box on screen — see
-    // boundaryDrawPriority for the measurements, and for why "biggest
-    // cluster first" is what left a real dense workspace showing a handful
-    // of large faint rectangles while most categories had no box at all.
-    const combinedBoundaryEntries = [
-      ...[...categoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
-      ...[...subcategoryRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
-      ...[...collectionRectsRef.current.entries()].map(([id, rect]) => ({ id, rect })),
-    ].sort((a, b) => {
-      const priorityA = boundaryPriorityById.get(a.id) ?? 0
-      const priorityB = boundaryPriorityById.get(b.id) ?? 0
-      return priorityB - priorityA || a.id.localeCompare(b.id)
-    })
-    // No ambient count cap: the concentration gate above, the priority
-    // ordering, and this pass's own non-overlap guarantee are the density
-    // control. A count cap on top of them only hid clean, well-separated
-    // category boxes once packed2d gave every category its own territory —
-    // see collection-layout.ts, where the old MAX_AMBIENT_BOUNDARIES was.
-    const drawableBoundaryIds = selectNonOverlappingRects(
-      combinedBoundaryEntries,
-      alwaysDrawBoundaryIds,
-      isBoundaryParentChildPair
-    )
+    for (const [id, rect] of subcategoryRectsRef.current) {
+      boundaryCandidates.push({ id, rect, memberIds: new Set(clusterTreeRef.current.byId.get(id)?.totalTabIds ?? []) })
+    }
+    for (const [id, rect] of collectionRectsRef.current) {
+      const collection = collectionsRef.current.find((c) => c.id === id)
+      boundaryCandidates.push({ id, rect, memberIds: new Set(collection?.tabIds ?? []) })
+    }
+    const liveBoundaryIds = liveBoundaryIdsRef.current
+    resolveLiveBoundaries(boundaryCandidates, liveBoundaryIds, boundaryOccupants, alwaysAdmitBoundaryIds)
     for (const id of [...categoryRectsRef.current.keys()]) {
-      if (!drawableBoundaryIds.has(id)) categoryRectsRef.current.delete(id)
+      if (!liveBoundaryIds.has(id)) categoryRectsRef.current.delete(id)
     }
     for (const id of [...subcategoryRectsRef.current.keys()]) {
-      if (!drawableBoundaryIds.has(id)) subcategoryRectsRef.current.delete(id)
+      if (!liveBoundaryIds.has(id)) subcategoryRectsRef.current.delete(id)
     }
     for (const id of [...collectionRectsRef.current.keys()]) {
-      if (!drawableBoundaryIds.has(id)) collectionRectsRef.current.delete(id)
+      if (!liveBoundaryIds.has(id)) collectionRectsRef.current.delete(id)
     }
 
     // The box being dragged is skipped in its own tier's pass and painted
@@ -853,7 +767,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const category = clusterTreeRef.current.byId.get(id)
       if (!category) return
       const hasLabelCandidate = categoryLabelCandidates.some((c) => c.id === id)
-      drawCollectionBoundary(ctx, palette, rect, {
+      drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name: category.label,
         isSelected: id === selectedClusterId,
         showLabel: hasLabelCandidate && !suppressedLabels.has(id),
@@ -865,7 +779,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const sub = clusterTreeRef.current.byId.get(id)
       if (!sub) return
       const hasLabelCandidate = subcategoryLabelCandidates.some((c) => c.id === id)
-      drawCollectionBoundary(ctx, palette, rect, {
+      drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name: sub.label,
         isSelected: id === selectedClusterId,
         showLabel: hasLabelCandidate && !suppressedLabels.has(id),
@@ -876,7 +790,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const drawCollectionRegion = (id: string, rect: CollectionBoundaryRect) => {
       const name = collectionNameById.get(id)
       if (name === undefined) return
-      drawCollectionBoundary(ctx, palette, rect, {
+      drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name,
         isSelected: id === selectedCollectionId,
         showLabel: showLabels,
@@ -902,34 +816,33 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       else if (collectionRect) drawCollectionRegion(draggedBoundaryId, collectionRect)
     }
 
-    // Hand the physics layer exactly the boxes that survived to be drawn, so
-    // what can be grabbed is always what is visible, and give it the visible
-    // canvas as its sandbox walls. Padding is converted screen -> world
-    // (camera.zoom scales uniformly) so the collider matches the drawn rect.
+    // Hand the physics layer exactly the live set — the same set that was
+    // just drawn and that hit-testing reads below — so what can be grabbed
+    // is always what is visible, and no square can lose its body for a
+    // reason that is really about the camera or about a momentary overlap.
+    // The padding is already world-space, so there is no zoom conversion
+    // here any more: the collider matches the drawn rect at every zoom by
+    // construction rather than by cancelling one scale against another.
+    //
+    // The sandbox is deliberately NOT set from here. Walls are a property of
+    // the world, not of the viewport (see engine.ts's worldSandbox); derived
+    // from the visible rect, as they were, zooming in physically squeezed
+    // every square toward the middle of the graph — a camera change silently
+    // rewriting the tab positions the graph persists.
     const boundarySpecs: { id: string; memberIds: string[]; padding: number }[] = []
     for (const id of categoryRectsRef.current.keys()) {
       const cluster = clusterTreeRef.current.byId.get(id)
-      if (cluster) boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: CATEGORY_BOUNDARY_PADDING / camera.zoom })
+      if (cluster) boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: CATEGORY_BOUNDARY_PADDING })
     }
     for (const id of subcategoryRectsRef.current.keys()) {
       const cluster = clusterTreeRef.current.byId.get(id)
-      if (cluster)
-        boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: SUBCATEGORY_BOUNDARY_PADDING / camera.zoom })
+      if (cluster) boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: SUBCATEGORY_BOUNDARY_PADDING })
     }
     for (const id of collectionRectsRef.current.keys()) {
       const collection = collectionsRef.current.find((c) => c.id === id)
-      if (collection)
-        boundarySpecs.push({ id, memberIds: collection.tabIds, padding: COLLECTION_BOUNDARY_PADDING / camera.zoom })
+      if (collection) boundarySpecs.push({ id, memberIds: collection.tabIds, padding: COLLECTION_BOUNDARY_PADDING })
     }
     simulation.setBoundaryBodies(boundarySpecs)
-    const topLeft = screenToWorld(camera, { x: 0, y: 0 }, width, height)
-    const bottomRight = screenToWorld(camera, { x: width, y: height }, width, height)
-    simulation.setBoundarySandbox({
-      minX: topLeft.x,
-      minY: topLeft.y,
-      maxX: bottomRight.x,
-      maxY: bottomRight.y,
-    })
 
     const clusterPathOfTab = clusterTreeRef.current.clusterPathOfTab
     for (const edge of edgesRef.current) {
@@ -1349,21 +1262,33 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     },
   }))
 
-  /** Hit-tests the collection boundary rects computed by the most recent draw() call — cheap reuse instead of recomputing every member's screen position on click. */
+  /**
+   * The world point under a screen point. Every boundary hit-test below
+   * works in world space, because that is the space the boundary rects are
+   * kept in — so a box is exactly as clickable zoomed out as zoomed in.
+   */
+  function worldPointFromScreen(screenX: number, screenY: number): { x: number; y: number } {
+    const { width, height } = sizeRef.current
+    return screenToWorld(cameraRef.current, { x: screenX, y: screenY }, width, height)
+  }
+
+  /** Hit-tests the collection boundary rects computed by the most recent draw() call — cheap reuse instead of recomputing every member's position on click. */
   function hitTestCollection(screenX: number, screenY: number): string | null {
+    const world = worldPointFromScreen(screenX, screenY)
     for (const [id, rect] of collectionRectsRef.current) {
-      if (pointInRect(screenX, screenY, rect)) return id
+      if (pointInRect(world.x, world.y, rect)) return id
     }
     return null
   }
 
   /** Innermost wins: a subcategory boundary is checked before its parent category's, mirroring hitTestNode's reverse-draw-order convention. */
   function hitTestCluster(screenX: number, screenY: number): string | null {
+    const world = worldPointFromScreen(screenX, screenY)
     for (const [id, rect] of subcategoryRectsRef.current) {
-      if (pointInRect(screenX, screenY, rect)) return id
+      if (pointInRect(world.x, world.y, rect)) return id
     }
     for (const [id, rect] of categoryRectsRef.current) {
-      if (pointInRect(screenX, screenY, rect)) return id
+      if (pointInRect(world.x, world.y, rect)) return id
     }
     return null
   }
@@ -1375,15 +1300,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    * hitTestCluster, but comparing across all three tiers at once since a
    * Collection box is not part of that tier order).
    *
-   * Reuses the exact rect maps draw() left behind, so a box that was
-   * suppressed this frame is not secretly draggable.
+   * Reuses the exact rect maps draw() left behind — the live set — so what
+   * is grabbable is precisely what is on screen and what has a body.
    */
   function hitTestBoundary(screenX: number, screenY: number): string | null {
+    const world = worldPointFromScreen(screenX, screenY)
     let bestId: string | null = null
     let bestArea = Infinity
     for (const rects of [collectionRectsRef.current, subcategoryRectsRef.current, categoryRectsRef.current]) {
       for (const [id, rect] of rects) {
-        if (!pointInRect(screenX, screenY, rect)) continue
+        if (!pointInRect(world.x, world.y, rect)) continue
         const area = rect.width * rect.height
         if (area >= bestArea) continue
         bestArea = area

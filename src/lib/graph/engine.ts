@@ -15,6 +15,7 @@ import type { GraphEdge, GraphNode } from "./types";
 import type { ClusterAnchorAssignment } from "./clusters";
 import {
   releaseVelocity,
+  sanitizeBody,
   stepBoundaryBodies,
   type BoundaryBody,
   type BoundaryDrag,
@@ -76,17 +77,31 @@ export type GraphSimulation = {
 
   /**
    * Declares which boundary squares currently exist as physics bodies — the
-   * renderer passes exactly the boxes it actually drew this frame, so what is
-   * grabbable is always what is visible. Bodies already present keep their
-   * velocity/sleep state (and the in-progress drag), new ids get a fresh
-   * resting body, and ids no longer present are dropped.
+   * renderer passes its live boundary set, which is also exactly what it
+   * draws and hit-tests, so what is grabbable is always what is visible.
+   * Bodies already present keep their velocity/sleep state (and the
+   * in-progress drag), new ids get a fresh resting body, and ids no longer
+   * present are dropped.
    *
    * A body has no position of its own: its rect is re-derived from
    * `memberIds`' live physics positions on every tick, padded by `padding`
-   * world units (the renderer's screen-space padding divided by the zoom).
+   * world units.
+   *
+   * Which ids are present must be a function of which clusters EXIST, never
+   * of where they currently are: this call is what creates and destroys
+   * bodies, so anything transient feeding it (an overlap test, a zoom level)
+   * turns a collision or a camera change into a destroyed body. See
+   * collection-layout.ts's `resolveLiveBoundaries`, which is what the
+   * renderer passes through before calling this.
    */
   setBoundaryBodies: (specs: { id: string; memberIds: string[]; padding: number }[]) => void;
-  /** The world-space rect boundary bodies are kept inside. `null` removes the walls. */
+  /**
+   * Overrides the world-space rect boundary bodies are kept inside. `null`
+   * restores the automatic sandbox (see `worldSandbox` in the implementation)
+   * — which is derived from the graph's own extent and is deliberately
+   * independent of the camera, so zooming or panning never moves the walls
+   * and therefore never shoves a square around.
+   */
   setBoundarySandbox: (sandbox: Sandbox | null) => void;
   /** Grabs the body at `id` from world point (x, y). Returns false when there's no such body. */
   beginBoundaryDrag: (id: string, x: number, y: number) => boolean;
@@ -165,6 +180,19 @@ export const NODE_MIN_EDGE_GAP = 36;
 export function nodeCollisionRadius(radius: number): number {
   return radius + NODE_MIN_EDGE_GAP / 2;
 }
+
+/**
+ * Floor on the half-side of the automatic boundary sandbox, and how much
+ * clear world beyond the outermost node it always leaves. Generous on
+ * purpose: the walls are there so nothing can be launched irrecoverably far
+ * away, not to fence in ordinary dragging — a user pushing a square around
+ * their own layout should essentially never feel them.
+ */
+const MIN_SANDBOX_HALF_SIZE = 4000;
+const SANDBOX_CONTENT_MARGIN = 1200;
+
+/** Hard ceiling on |x|,|y| for a node, mirroring boundary-physics's BOUNDARY_MAX_COORD. */
+const MAX_NODE_COORD = 1e7;
 
 /**
  * Pulls every node toward a per-node anchor point read fresh each tick from
@@ -272,9 +300,30 @@ export function createGraphSimulation(): GraphSimulation {
   // simulation's own tick() below, so there is exactly one physics loop.
   const boundaryBodies = new Map<string, BoundaryBody>();
   const boundaryPadding = new Map<string, number>();
-  let boundarySandbox: Sandbox | null = null;
+  /** Set by setBoundarySandbox; `null` means "use the automatic one". */
+  let boundarySandboxOverride: Sandbox | null = null;
+  /**
+   * Half-side of the automatic, camera-independent sandbox — a square
+   * centred on the world origin, which is where the layout itself is centred
+   * (forceCenter/forceX/forceY all pull to 0,0).
+   *
+   * It must NOT be the visible viewport. Using the viewport made the walls
+   * move with the camera, so zooming in squeezed every square toward the
+   * middle of the world — a camera change silently rewriting physics
+   * positions, and with them the tab positions the graph persists. It only
+   * ever grows within a session, so a square can never be crushed by the
+   * world shrinking around it either.
+   */
+  let sandboxHalfSize = MIN_SANDBOX_HALF_SIZE;
   let boundaryDrag: (BoundaryDrag & { grabDx: number; grabDy: number }) | null = null;
   const displacedMembers = new Set<string>();
+  /**
+   * Last known-good position per node, for `sanitizeNodes`. A node whose
+   * coordinates go non-finite is restored here rather than left as NaN —
+   * NaN x/y is a node that renders nowhere, hit-tests nowhere, and poisons
+   * the bounding box of every boundary square that contains it.
+   */
+  const lastGoodNodePosition = new Map<string, { x: number; y: number }>();
 
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
     .force("charge", forceManyBody().strength(-260).distanceMax(600))
@@ -337,6 +386,8 @@ export function createGraphSimulation(): GraphSimulation {
     // it from the persisted record, which is the source of truth.
     for (const id of [...anchorOffsetById.keys()]) if (!byId.has(id)) anchorOffsetById.delete(id);
     for (const id of [...displacedMembers]) if (!byId.has(id)) displacedMembers.delete(id);
+    for (const id of [...lastGoodNodePosition.keys()]) if (!byId.has(id)) lastGoodNodePosition.delete(id);
+    sanitizeNodes();
   }
 
   function setEdges(edges: GraphEdge[], strength: number) {
@@ -442,6 +493,8 @@ export function createGraphSimulation(): GraphSimulation {
         vy: 0,
         asleep: true,
         dragging: false,
+        lastGoodX: 0,
+        lastGoodY: 0,
       });
     }
     syncBoundaryBodies();
@@ -461,19 +514,95 @@ export function createGraphSimulation(): GraphSimulation {
       let maxY = -Infinity;
       for (const id of body.memberIds) {
         const node = byId.get(id);
-        if (!node || node.x === undefined || node.y === undefined) continue;
-        minX = Math.min(minX, node.x - node.radius);
-        maxX = Math.max(maxX, node.x + node.radius);
-        minY = Math.min(minY, node.y - node.radius);
-        maxY = Math.max(maxY, node.y + node.radius);
+        // Number.isFinite, not just `!== undefined`: one NaN member position
+        // would otherwise make every extreme NaN, hand the body a NaN centre,
+        // and from there NaN out every other member through the next
+        // translate. sanitizeNodes below keeps that from arising at all; this
+        // is the second line of defence, on the path that would spread it.
+        if (!node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) continue;
+        const radius = Number.isFinite(node.radius) ? node.radius : 0;
+        minX = Math.min(minX, node.x! - radius);
+        maxX = Math.max(maxX, node.x! + radius);
+        minY = Math.min(minY, node.y! - radius);
+        maxY = Math.max(maxY, node.y! + radius);
       }
+      // No usable member position: the body keeps the rect it already had
+      // rather than collapsing. It stays in the world either way.
       if (minX === Infinity) continue;
       const padding = boundaryPadding.get(body.id) ?? 0;
       body.x = (minX + maxX) / 2;
       body.y = (minY + maxY) / 2;
       body.halfWidth = (maxX - minX) / 2 + padding;
       body.halfHeight = (maxY - minY) / 2 + padding;
+      sanitizeBody(body);
     }
+  }
+
+  /**
+   * Repairs any node whose position or velocity has gone non-finite or
+   * absurd, restoring the last position it was known to be at.
+   *
+   * d3-force is arithmetic over floats with no guard of its own: a single
+   * degenerate input (two nodes at exactly the same point, a zero-length
+   * link, an NaN radius) can put NaN into one node and every force then
+   * spreads it. A node at NaN is invisible, unclickable and unrecoverable,
+   * and it drags the boundary square containing it down with it — so this
+   * runs every tick and costs one pass over the nodes.
+   */
+  function sanitizeNodes() {
+    for (const node of byId.values()) {
+      const bad =
+        !Number.isFinite(node.x) ||
+        !Number.isFinite(node.y) ||
+        Math.abs(node.x!) > MAX_NODE_COORD ||
+        Math.abs(node.y!) > MAX_NODE_COORD;
+      if (bad) {
+        const good = lastGoodNodePosition.get(node.id);
+        node.x = good?.x ?? 0;
+        node.y = good?.y ?? 0;
+        node.vx = 0;
+        node.vy = 0;
+        if (node.fx !== undefined && node.fx !== null && !Number.isFinite(node.fx)) node.fx = node.x;
+        if (node.fy !== undefined && node.fy !== null && !Number.isFinite(node.fy)) node.fy = node.y;
+      } else {
+        const good = lastGoodNodePosition.get(node.id);
+        if (good) {
+          good.x = node.x!;
+          good.y = node.y!;
+        } else {
+          lastGoodNodePosition.set(node.id, { x: node.x!, y: node.y! });
+        }
+      }
+      if (!Number.isFinite(node.vx)) node.vx = 0;
+      if (!Number.isFinite(node.vy)) node.vy = 0;
+    }
+  }
+
+  /**
+   * The world-space walls, recomputed from the graph's own extent — never
+   * from the camera. Grows to fit the content (plus a wide margin) and never
+   * shrinks within a session, so the walls are a fixed feature of the world
+   * a square is being dragged around in rather than something the user can
+   * move by scrolling.
+   */
+  function worldSandbox(): Sandbox {
+    if (boundarySandboxOverride) return boundarySandboxOverride;
+    let reach = MIN_SANDBOX_HALF_SIZE;
+    for (const node of byId.values()) {
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue;
+      const radius = Number.isFinite(node.radius) ? node.radius : 0;
+      reach = Math.max(reach, Math.abs(node.x!) + radius + SANDBOX_CONTENT_MARGIN);
+      reach = Math.max(reach, Math.abs(node.y!) + radius + SANDBOX_CONTENT_MARGIN);
+    }
+    // Monotonic: content that later contracts must not pull the walls in
+    // over a square that has been parked out near where they were.
+    sandboxHalfSize = Math.min(MAX_NODE_COORD, Math.max(sandboxHalfSize, reach));
+    return {
+      minX: -sandboxHalfSize,
+      minY: -sandboxHalfSize,
+      maxX: sandboxHalfSize,
+      maxY: sandboxHalfSize,
+    };
   }
 
   /**
@@ -483,6 +612,7 @@ export function createGraphSimulation(): GraphSimulation {
    * rectangle drawn somewhere else.
    */
   function translateBoundaryMembers(memberIds: string[], dx: number, dy: number) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     for (const id of memberIds) {
       const node = byId.get(id);
       if (!node) continue;
@@ -514,7 +644,7 @@ export function createGraphSimulation(): GraphSimulation {
           targetY: boundaryDrag.targetY + boundaryDrag.grabDy,
         }
       : null;
-    const deltas = stepBoundaryBodies(bodies, boundarySandbox, drag);
+    const deltas = stepBoundaryBodies(bodies, worldSandbox(), drag);
     for (const [id, delta] of deltas) {
       const body = boundaryBodies.get(id);
       if (!body) continue;
@@ -526,6 +656,7 @@ export function createGraphSimulation(): GraphSimulation {
     tick: () => {
       if (simulation.alpha() > simulation.alphaMin()) {
         simulation.tick();
+        sanitizeNodes();
         confineToRegions();
       }
       // Always stepped, even once the node layout has cooled: a boundary drag
@@ -557,7 +688,7 @@ export function createGraphSimulation(): GraphSimulation {
 
     setBoundaryBodies,
     setBoundarySandbox: (sandbox) => {
-      boundarySandbox = sandbox;
+      boundarySandboxOverride = sandbox;
     },
     beginBoundaryDrag: (id, x, y) => {
       const body = boundaryBodies.get(id);

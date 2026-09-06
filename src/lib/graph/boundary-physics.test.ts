@@ -28,6 +28,8 @@ function makeBody(
     vy: 0,
     asleep: true,
     dragging: false,
+    lastGoodX: x,
+    lastGoodY: y,
   };
 }
 

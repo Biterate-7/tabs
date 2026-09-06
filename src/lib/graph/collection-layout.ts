@@ -2,10 +2,16 @@ export type CollectionBoundaryPoint = { x: number; y: number; radius: number };
 export type CollectionBoundaryRect = { x: number; y: number; width: number; height: number };
 
 /**
- * Screen-space padding around a Collection's member bounding box —
+ * World-space padding around a Collection's member bounding box —
  * `computeCollectionBoundary`'s default, named so callers that need to
- * reproduce the same box in another space (e.g. the world-space collider
- * behind a draggable boundary) can't drift from it.
+ * reproduce the same box elsewhere (the collider behind a draggable
+ * boundary, say) can't drift from it.
+ *
+ * World, not screen: a boundary square's geometry must never depend on the
+ * camera. A screen-space padding is a fixed number of PIXELS however far out
+ * you zoom, so a zoomed-out box becomes almost entirely padding — which is
+ * what used to collapse cleanly separated squares into each other, and then
+ * into the suppression pass that deleted them. See `resolveLiveBoundaries`.
  */
 export const COLLECTION_BOUNDARY_PADDING = 20;
 
@@ -43,7 +49,8 @@ export function computeCollectionBoundary(
 }
 
 /**
- * Screen-space padding around a Category / Subcategory candidate AABB.
+ * World-space padding around a Category / Subcategory candidate AABB (see
+ * COLLECTION_BOUNDARY_PADDING above for why world rather than screen).
  *
  * Halved from 40/28 — a real-pipeline benchmark sweep (570 tabs, dozens of
  * real per-domain categories) found the smaller padded AABB lets more
@@ -388,4 +395,67 @@ export function selectNonOverlappingRects(
     }
   }
   return result;
+}
+
+/** One boundary square offered to `resolveLiveBoundaries` for this frame. */
+export type BoundaryCandidate = {
+  id: string;
+  /** World-space rect, as re-derived from this frame's member positions. */
+  rect: CollectionBoundaryRect;
+  /** The cluster/collection's members, for the concentration measurement. */
+  memberIds: ReadonlySet<string>;
+};
+
+/**
+ * Decides which boundary squares are LIVE this frame — live meaning drawn,
+ * hit-testable, and backed by a physics body, all three together.
+ *
+ * The rule is deliberately a latch, not a per-frame re-election:
+ *
+ *   - a square already live STAYS live, unconditionally, for as long as its
+ *     cluster still exists and still has a positioned member;
+ *   - a square not yet live joins when it passes the concentration gate
+ *     (`occupancyDelimitsMembers`) or is explicitly exempt from it;
+ *   - a square leaves only when it stops being offered as a candidate at
+ *     all — i.e. its cluster/collection is gone from the tree, or every one
+ *     of its members has left the graph. Identity loss, never geometry.
+ *
+ * This is the whole fix for squares vanishing. What was here before re-ran
+ * every quality heuristic against the *current* geometry each frame, and
+ * pruned the losers out of the very maps that drive rendering, hit-testing
+ * AND the physics body set — so a square that merely moved could lose its
+ * body mid-simulation. Measured on cleanly separated clusters, before this
+ * latch: pushing one square 260px into its neighbour deleted the neighbour,
+ * and 300px deleted both; zooming a six-square frame out to 0.22 deleted
+ * four of the six and to 0.08 deleted all six. Overlapping is now the
+ * expected state of two colliding rigid bodies, and being small on screen is
+ * a property of the camera — neither is a reason to stop existing.
+ *
+ * The concentration gate survives as an ADMISSION rule only, where it still
+ * does its original job (see `boundaryDelimitsMembers`: keeping a cluster
+ * whose AABB has degenerated into a rectangle draped over the whole graph
+ * from ever appearing). A square that was honest when admitted and later
+ * sprawls stays on screen — deliberately: a box the reader can watch grow is
+ * a lesser problem than a box that silently disappears out from under them.
+ *
+ * `live` is read and updated in place; it is the caller's persistent set.
+ */
+export function resolveLiveBoundaries(
+  candidates: readonly BoundaryCandidate[],
+  live: Set<string>,
+  occupants: readonly BoundaryOccupant[],
+  alwaysAdmit: ReadonlySet<string>
+): void {
+  const offered = new Set<string>();
+  for (const candidate of candidates) {
+    offered.add(candidate.id);
+    if (live.has(candidate.id)) continue;
+    if (alwaysAdmit.has(candidate.id)) {
+      live.add(candidate.id);
+      continue;
+    }
+    const occupancy = measureBoundaryOccupancy(candidate.rect, candidate.memberIds, occupants);
+    if (occupancyDelimitsMembers(occupancy, occupants.length)) live.add(candidate.id);
+  }
+  for (const id of [...live]) if (!offered.has(id)) live.delete(id);
 }
