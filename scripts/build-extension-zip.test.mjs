@@ -194,3 +194,44 @@ describe("build-extension-zip.mjs — production build output", () => {
     expect(manifest.content_scripts[0].matches).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
   });
 });
+
+// Regression coverage for the actual "works on my computer, not on another's"
+// incident: a plain `npm run build` run anywhere other than Vercel's own
+// pipeline (a developer's machine, a non-Vercel host, `next build && next
+// start` for local testing) has none of VERCEL_ENV/VERCEL_URL set. The
+// downloadable ZIP built in that situation must still target the real
+// production origin — the same artifact real users get from onboarding's
+// "Download Extension" button — instead of silently baking in the builder's
+// own localhost, which only that one machine could ever reach.
+describe("build-extension-zip.mjs — default build output (no environment configured)", () => {
+  let entries;
+
+  beforeAll(() => {
+    const bareEnv = { ...process.env };
+    delete bareEnv.TABDUMP_PRODUCTION_ORIGIN;
+    delete bareEnv.VERCEL_ENV;
+    delete bareEnv.VERCEL_URL;
+
+    execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT, env: bareEnv });
+    expect(existsSync(ZIP_PATH)).toBe(true);
+    entries = readZipEntries(readFileSync(ZIP_PATH));
+  });
+
+  function entryText(name) {
+    const entry = entries.find((e) => e.name === name);
+    expect(entry, `expected a "${name}" entry in the built ZIP`).toBeTruthy();
+    return entry.data.toString("utf8");
+  }
+
+  it("defaults to the canonical production origin, not localhost, with no environment configured", () => {
+    const manifest = JSON.parse(entryText("manifest.json"));
+    expect(manifest.host_permissions).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
+    expect(manifest.content_scripts[0].matches).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
+    expect(entryText("src/config.js")).toContain(`TABDUMP_ORIGIN = "${CANONICAL_PRODUCTION_ORIGIN}"`);
+  });
+
+  it("never leaves the dev origin in a ZIP built with no environment configured", () => {
+    expect(entryText("manifest.json")).not.toContain(DEV_ORIGIN);
+    expect(entryText("src/config.js")).not.toContain(DEV_ORIGIN);
+  });
+});

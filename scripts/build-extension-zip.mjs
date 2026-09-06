@@ -43,23 +43,47 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // dev` + loading extension/ unpacked keeps working exactly as before.
 //
 // TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. if the canonical
-// domain below ever changes). Otherwise this defaults to TabDump's actual
-// canonical production domain — deliberately NOT derived from Vercel's
-// VERCEL_PROJECT_PRODUCTION_URL, which reflects whatever domain the Vercel
-// project happens to be assigned (e.g. an auto-suffixed tabdump-eight.vercel.app
-// if the exact project name was taken) rather than the domain TabDump is
-// actually meant to be reached at. Preview builds are the one case that
-// legitimately need a different, per-deployment origin — those still pick
-// up Vercel's own VERCEL_URL, a fresh throwaway URL every build. Baking a
-// Preview's VERCEL_URL into a Production build would instead mean every new
-// deployment silently invalidates every previously downloaded extension
-// ZIP: the extension's host_permissions/content_scripts match only that one
-// build's URL, so chrome.tabs.query()/tabs.create() in background.js's
-// findOrOpenTabDumpTab() end up targeting a stale, deployment-specific
-// origin instead of the domain the user is actually looking at — landing
-// imported tabs in a different origin's localStorage than the one being
-// viewed, with no visible error. Falls back to localhost:3000 for a plain
-// local build with none of these set.
+// domain below ever changes, or a developer deliberately wants a
+// localhost-targeting ZIP for local end-to-end testing — see below).
+// Otherwise this defaults to TabDump's actual canonical production domain —
+// deliberately NOT derived from Vercel's VERCEL_PROJECT_PRODUCTION_URL, which
+// reflects whatever domain the Vercel project happens to be assigned (e.g.
+// an auto-suffixed tabdump-eight.vercel.app if the exact project name was
+// taken) rather than the domain TabDump is actually meant to be reached at.
+// Preview builds are the one case that legitimately need a different,
+// per-deployment origin — those still pick up Vercel's own VERCEL_URL, a
+// fresh throwaway URL every build. Baking a Preview's VERCEL_URL into a
+// Production build would instead mean every new deployment silently
+// invalidates every previously downloaded extension ZIP: the extension's
+// host_permissions/content_scripts match only that one build's URL, so
+// chrome.tabs.query()/tabs.create() in background.js's findOrOpenTabDumpTab()
+// end up targeting a stale, deployment-specific origin instead of the domain
+// the user is actually looking at — landing imported tabs in a different
+// origin's localStorage than the one being viewed, with no visible error.
+//
+// Defaults to the canonical production origin — NOT localhost:3000 — for
+// every build that isn't explicitly configured otherwise, including a plain
+// local `npm run build` with none of Vercel's env vars set. This ZIP (see
+// OUTPUT_PATH below) is exactly what onboarding serves real users via the
+// "Download Extension" button (src/lib/extension-config.ts's
+// EXTENSION_DOWNLOAD_URL): defaulting it to localhost used to mean *any*
+// build run outside Vercel's own pipeline — a developer's own `npm run
+// build`, testing `next build && next start` locally, deploying to a
+// non-Vercel host — silently baked in the builder's personal localhost as a
+// permanent part of the downloadable extension. That extension then only
+// ever worked on the one machine that happened to have a matching dev server
+// running; installed anywhere else, host_permissions/content_scripts never
+// matched any real page, no content script ever attached, and every dump
+// failed with Chrome's "Could not establish connection. Receiving end does
+// not exist." — a silent, undetectable-until-install cross-machine failure.
+// A developer who genuinely wants a localhost-targeting ZIP (to test the
+// full download → unpack → load-unpacked → dump flow against a local dev
+// server) can still get one explicitly via
+// `TABDUMP_PRODUCTION_ORIGIN=http://localhost:3000 npm run build`. This
+// default only governs the ZIP; the on-disk extension/manifest.json and
+// extension/src/config.js (used for `npm run dev` + "Load unpacked" straight
+// from the extension/ folder) are never touched by this script and keep
+// hardcoding localhost:3000 exactly as before.
 export const DEV_ORIGIN = "http://localhost:3000";
 export const CANONICAL_PRODUCTION_ORIGIN = "https://tabsdump.vercel.app";
 const TARGET_ORIGIN =
@@ -67,8 +91,7 @@ const TARGET_ORIGIN =
   (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : null) ||
-  (process.env.VERCEL_ENV === "production" ? CANONICAL_PRODUCTION_ORIGIN : null) ||
-  DEV_ORIGIN;
+  CANONICAL_PRODUCTION_ORIGIN;
 
 const ORIGIN_SUBSTITUTED_FILES = new Set([
   path.join("manifest.json"),
