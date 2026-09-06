@@ -71,7 +71,7 @@ function assertCleanBody(body: ReturnType<ReturnType<typeof createGraphSimulatio
 }
 
 describe.skipIf(!HAS_FIXTURE)("boundary layer under adversarial drag input (real export)", () => {
-  function setUp() {
+  function setUp({ withBoxes = true } = {}) {
     const data = loadWorkspace();
     const lookup = buildWorkspaceLookup(data.workspaces);
     const nodes = buildGraphNodes(data.tabs, lookup);
@@ -105,10 +105,13 @@ describe.skipIf(!HAS_FIXTURE)("boundary layer under adversarial drag input (real
         if (sub.kind === "subcategory") specs.push({ id: sub.id, memberIds: sub.totalTabIds, padding: SUBCATEGORY_BOUNDARY_PADDING });
       }
     }
-    sim.setBoundaryBodies(specs);
+    // `withBoxes: false` is the control for the tab-drag cases below: the
+    // identical graph with no boundary layer at all, so "what did the
+    // boundary layer add to this drag" is measured rather than guessed.
+    if (withBoxes) sim.setBoundaryBodies(specs);
     for (let i = 0; i < 50; i++) sim.tick();
 
-    return { sim, specs };
+    return { sim, specs, tabIds: nodes.map((n) => n.id) };
   }
 
   function assertAllClean(sim: ReturnType<typeof createGraphSimulation>, specs: { id: string }[]) {
@@ -238,7 +241,11 @@ describe.skipIf(!HAS_FIXTURE)("boundary layer under adversarial drag input (real
       sim.tick();
       assertAllClean(sim, specs);
     }
-  });
+    // Explicit budget, like the sibling case above. 300 fling cycles over the
+    // real export's ~40 bodies, each re-surveying every body, runs ~3.7s alone
+    // and ~5s alongside the rest of this file — i.e. it has always sat on top
+    // of vitest's 5s default and failed on timing rather than on an assertion.
+  }, 30_000);
 
   it("never lets one box's rect balloon into a stretched sliver relative to its own members' spread", () => {
     const { sim, specs } = setUp();
@@ -259,4 +266,86 @@ describe.skipIf(!HAS_FIXTURE)("boundary layer under adversarial drag input (real
     const aspect = body.halfWidth > body.halfHeight ? body.halfWidth / Math.max(1, body.halfHeight) : body.halfHeight / Math.max(1, body.halfWidth);
     expect(aspect).toBeLessThan(20);
   });
+
+  /**
+   * Dragging a TAB, not a box — the gesture the corruption was actually
+   * reported for, at the density it was reported at. Everything above drags
+   * boxes, which is the one case where the layer's rigid-translation
+   * invariant was never in doubt.
+   *
+   * See boundary-node-drag.test.ts for the mechanism and the synthetic
+   * measurements; this is the same property against the real export, with its
+   * real category discs, confinement and ~40 nested boundary bodies.
+   */
+  function dragTabsAround(sim: ReturnType<typeof createGraphSimulation>, tabIds: string[], onFrame?: () => void) {
+    let rng = 1337;
+    const rand = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+    for (let gesture = 0; gesture < 25; gesture++) {
+      const id = tabIds[Math.floor(rand() * tabIds.length)];
+      const node = sim.findNode(id);
+      if (!node || node.x === undefined || node.y === undefined) continue;
+      let x = node.x;
+      let y = node.y;
+      const dx = (rand() - 0.5) * 60;
+      const dy = (rand() - 0.5) * 60;
+      // A pointer that only reports every few frames, which is what let the
+      // box keep translating underneath a tab that then snapped back.
+      const pointerEvery = 1 + Math.floor(rand() * 4);
+      for (let frame = 0; frame < 60; frame++) {
+        if (frame % pointerEvery === 0) {
+          x += dx * pointerEvery;
+          y += dy * pointerEvery;
+          sim.pin(id, x, y);
+        }
+        sim.reheat(0.35);
+        sim.tick();
+        onFrame?.();
+      }
+      sim.unpin(id);
+      for (let i = 0; i < 20; i++) {
+        sim.tick();
+        onFrame?.();
+      }
+    }
+  }
+
+  function tabExtent(sim: ReturnType<typeof createGraphSimulation>, tabIds: string[]) {
+    let reach = 0;
+    for (const id of tabIds) {
+      const node = sim.findNode(id);
+      if (!node || node.x === undefined || node.y === undefined) continue;
+      reach = Math.max(reach, Math.abs(node.x), Math.abs(node.y));
+    }
+    return reach;
+  }
+
+  it(
+    "keeps every body clean while tabs inside the boxes are dragged around",
+    () => {
+      const { sim, specs, tabIds } = setUp();
+      dragTabsAround(sim, tabIds, () => assertAllClean(sim, specs));
+    },
+    60_000
+  );
+
+  it(
+    "does not let tab drags inflate the graph beyond what the node forces alone do",
+    () => {
+      // The reported failure, stated as a measurement: with the boundary
+      // layer in play, the same 25 tab drags used to blow the graph's own
+      // extent far past what those drags do with no boxes at all — squares
+      // stretched across the canvas, edges dragged with them.
+      const control = setUp({ withBoxes: false });
+      dragTabsAround(control.sim, control.tabIds);
+      const controlExtent = tabExtent(control.sim, control.tabIds);
+
+      const live = setUp();
+      dragTabsAround(live.sim, live.tabIds);
+      const liveExtent = tabExtent(live.sim, live.tabIds);
+
+      expect(liveExtent).toBeLessThan(controlExtent * 1.25);
+    },
+    60_000
+  );
 });
