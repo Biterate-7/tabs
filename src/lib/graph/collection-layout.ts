@@ -317,7 +317,6 @@ export function resolveLiveBoundaries(
   alwaysAdmit: ReadonlySet<string>
 ): void {
   const offered = new Set<string>();
-  const extentArea = occupantExtentArea(occupants);
   for (const candidate of candidates) {
     offered.add(candidate.id);
     if (live.has(candidate.id)) continue;
@@ -326,68 +325,25 @@ export function resolveLiveBoundaries(
       continue;
     }
     const occupancy = measureBoundaryOccupancy(candidate.rect, candidate.memberIds, occupants);
-    if (!occupancyDelimitsMembers(occupancy, occupants.length)) continue;
-    if (boundarySprawlsOverGraph(candidate.rect, occupancy, extentArea)) continue;
-    live.add(candidate.id);
+    if (occupancyDelimitsMembers(occupancy, occupants.length)) live.add(candidate.id);
   }
   for (const id of [...live]) if (!offered.has(id)) live.delete(id);
 }
 
-/**
- * Share of the graph's own extent a box may cover before it has to justify
- * itself, and the purity it then has to show. Calibrated against measured
- * data rather than picked: on the dense fixtures every legitimate
- * Category/Subcategory box covers at most 4% of the extent at 1.00 purity,
- * while the boxes this rejects sit at 32-49% of it at 0.04-0.05 purity.
- * The gap between those two populations is nearly an order of magnitude on
- * both axes, so these thresholds sit in empty space.
- */
-const MAX_SPRAWLING_EXTENT_SHARE = 0.1;
-const SPRAWLING_PURITY_FLOOR = 0.5;
-
-/**
- * Whether a box is one of the "large faint rectangles draped over the whole
- * graph" — big enough to dominate the picture while being mostly somebody
- * else's nodes.
+/*
+ * There is deliberately no size/purity/sprawl admission rule here.
  *
- * This is a second ADMISSION rule beside the concentration gate, not a
- * second suppression pass: it can keep a box from ever being admitted, and
- * it is never consulted again afterwards, so it can no more make a live
- * square disappear than the concentration gate can.
+ * Removing overlap suppression did put visibly large, low-purity boxes back
+ * on screen — measured on the dense fixtures at 32-49% of the graph's extent
+ * holding 4-5% of their own members, against legitimate category boxes at
+ * <=4% and 1.00 purity. A guard rejecting those on size and purity was tried
+ * and deliberately taken out again.
  *
- * It exists because the concentration gate is purely RELATIVE — it asks only
- * that a box be denser in its own members than the graph at large — and that
- * bar scales down with the cluster. A 5-tab collection scattered across half
- * the graph needs to clear only 4%, and clears it at 4.1%, so the gate
- * admits a box covering 49% of the graph that holds 5 of its own tabs among
- * 122. Overlap suppression used to drop those boxes as a side effect of them
- * crossing everything; with suppression gone (deliberately — see the note
- * where selectNonOverlappingRects was) nothing else stood between them and
- * the screen. That is a hole the relative gate always had, previously masked.
+ * The reason is the product requirement, not an oversight: a boundary that
+ * exists in the graph must be represented by a square, and a box being large
+ * or impure is a fact about the LAYOUT, not grounds for the boundary to be
+ * absent. Hiding it makes the picture tidier by making it lie. If those boxes
+ * read badly, that is a layout/physics problem to solve where the layout is
+ * decided — better cluster separation, or the boundary layer pushing them
+ * apart — not here by omission.
  */
-export function boundarySprawlsOverGraph(
-  rect: CollectionBoundaryRect,
-  occupancy: BoundaryOccupancy,
-  extentArea: number
-): boolean {
-  if (extentArea <= 0) return false;
-  const share = (rect.width * rect.height) / extentArea;
-  return share > MAX_SPRAWLING_EXTENT_SHARE && boundaryPurity(occupancy) < SPRAWLING_PURITY_FLOOR;
-}
-
-/** Area of the axis-aligned box containing every occupant — the graph's own footprint, in whatever space the caller is working in. */
-export function occupantExtentArea(occupants: readonly BoundaryOccupant[]): number {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const point of occupants) {
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
-    minX = Math.min(minX, point.x);
-    maxX = Math.max(maxX, point.x);
-    minY = Math.min(minY, point.y);
-    maxY = Math.max(maxY, point.y);
-  }
-  if (minX === Infinity) return 0;
-  return (maxX - minX) * (maxY - minY);
-}

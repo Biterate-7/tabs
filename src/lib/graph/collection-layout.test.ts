@@ -273,49 +273,15 @@ describe("resolveLiveBoundaries", () => {
     expect(liveAt(1)).toEqual(["a", "b"]);
   });
 
+
   /**
-   * The hole the removed suppression pass had been masking. The
-   * concentration gate is purely relative, so a tiny cluster needs only a
-   * tiny bar: a 5-tab collection scattered over half the graph clears its 4%
-   * requirement at 4.1% and used to be admitted. Suppression happened to drop
-   * such boxes for crossing everything; with it gone they reached the screen.
+   * A live square whose box has grown large and mostly foreign is still a
+   * live square. There is deliberately no rule that takes it away — see the
+   * note in collection-layout.ts where a size/purity guard was tried and
+   * removed. If such a box reads badly, that is a layout problem to fix in
+   * the layout, not by making the boundary vanish.
    */
-  it("refuses to admit a box that sprawls over the graph while holding little of its own", () => {
-    // 20 nodes spread over a 1000x1000 world; "wide" owns 2 of them and its
-    // box covers most of that world.
-    const spread: BoundaryOccupant[] = Array.from({ length: 20 }, (_, i) => ({
-      id: `n${i}`,
-      x: (i % 5) * 250,
-      y: Math.floor(i / 5) * 330,
-    }));
-    const wide: BoundaryCandidate = {
-      id: "wide",
-      rect: { x: -10, y: -10, width: 1020, height: 1020 },
-      memberIds: new Set(["n0", "n19"]),
-    };
-    const live = new Set<string>();
-    resolveLiveBoundaries([wide], live, spread, new Set());
-    expect(live.has("wide")).toBe(false);
-  });
-
-  it("still admits a large box that is genuinely its own cluster's", () => {
-    // Same footprint, but everything inside it belongs to the cluster.
-    const own: BoundaryOccupant[] = Array.from({ length: 20 }, (_, i) => ({
-      id: `n${i}`,
-      x: (i % 5) * 250,
-      y: Math.floor(i / 5) * 330,
-    }));
-    const big: BoundaryCandidate = {
-      id: "big",
-      rect: { x: -10, y: -10, width: 1020, height: 1020 },
-      memberIds: new Set(own.map((o) => o.id)),
-    };
-    const live = new Set<string>();
-    resolveLiveBoundaries([big], live, own, new Set());
-    expect(live.has("big")).toBe(true);
-  });
-
-  it("cannot revoke a sprawling box that was admitted while it was still honest", () => {
+  it("keeps a live square whose box has sprawled over the graph", () => {
     const live = new Set<string>(["wide"]);
     const spread: BoundaryOccupant[] = Array.from({ length: 20 }, (_, i) => ({
       id: `n${i}`,
@@ -328,6 +294,6 @@ describe("resolveLiveBoundaries", () => {
       memberIds: new Set(["n0", "n19"]),
     };
     resolveLiveBoundaries([wide], live, spread, new Set());
-    expect(live.has("wide"), "an admission rule must never take a live square away").toBe(true);
+    expect(live.has("wide"), "nothing may take a live square away for its geometry").toBe(true);
   });
 });
