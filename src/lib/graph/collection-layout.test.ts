@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOUNDARY_HIT_TOLERANCE_PX,
   boundaryDelimitsMembers,
   boundaryPurity,
   computeCollectionBoundary,
+  distanceToRect,
+  expandRect,
+  hitTestBoundaryRects,
   measureBoundaryOccupancy,
   occupancyDelimitsMembers,
   pointInRect,
@@ -11,6 +15,7 @@ import {
   resolveLiveBoundaries,
   type BoundaryCandidate,
   type BoundaryOccupant,
+  type CollectionBoundaryRect,
 } from "./collection-layout";
 
 describe("computeCollectionBoundary", () => {
@@ -295,5 +300,115 @@ describe("resolveLiveBoundaries", () => {
     };
     resolveLiveBoundaries([wide], live, spread, new Set());
     expect(live.has("wide"), "nothing may take a live square away for its geometry").toBe(true);
+  });
+});
+
+describe("expandRect / distanceToRect", () => {
+  const rect: CollectionBoundaryRect = { x: 100, y: 100, width: 200, height: 100 };
+
+  it("grows a rect symmetrically on every side", () => {
+    expect(expandRect(rect, 10)).toEqual({ x: 90, y: 90, width: 220, height: 120 });
+  });
+
+  it("never produces a negative extent when shrunk past its own size", () => {
+    const collapsed = expandRect(rect, -500);
+    expect(collapsed.width).toBeGreaterThanOrEqual(0);
+    expect(collapsed.height).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports zero distance for a point inside, and the perpendicular gap for one outside", () => {
+    expect(distanceToRect(200, 150, rect)).toBe(0);
+    expect(distanceToRect(100, 150, rect)).toBe(0);
+    expect(distanceToRect(95, 150, rect)).toBeCloseTo(5);
+    expect(distanceToRect(310, 150, rect)).toBeCloseTo(10);
+  });
+
+  it("measures a corner miss diagonally, not per-axis", () => {
+    expect(distanceToRect(97, 96, rect)).toBeCloseTo(Math.hypot(3, 4));
+  });
+});
+
+describe("hitTestBoundaryRects", () => {
+  // A large Category box with a smaller Subcategory box nested inside it, and
+  // a separate Category box 40 units to its right — the standard arrangement
+  // every rule below has to get right at once.
+  const category: CollectionBoundaryRect = { x: 0, y: 0, width: 400, height: 300 };
+  const nested: CollectionBoundaryRect = { x: 50, y: 50, width: 120, height: 100 };
+  const neighbour: CollectionBoundaryRect = { x: 440, y: 0, width: 400, height: 300 };
+
+  const categories = new Map([
+    ["cat:a", category],
+    ["cat:b", neighbour],
+  ]);
+  const subcategories = new Map([["sub:a1", nested]]);
+  const tiers = [subcategories, categories];
+
+  it("treats the whole interior as interactive, not just the border", () => {
+    // Dead centre of the category box, hundreds of units from any drawn line.
+    expect(hitTestBoundaryRects(tiers, 300, 250, 0)).toBe("cat:a");
+    // ...and just inside the border.
+    expect(hitTestBoundaryRects(tiers, 2, 2, 0)).toBe("cat:a");
+  });
+
+  it("picks the innermost (smallest) box when boxes are nested", () => {
+    expect(hitTestBoundaryRects(tiers, 100, 100, 0)).toBe("sub:a1");
+  });
+
+  it("returns null outside every box when there is no tolerance", () => {
+    expect(hitTestBoundaryRects(tiers, -20, -20, 0)).toBeNull();
+    expect(hitTestBoundaryRects(tiers, 420, 150, 0)).toBeNull();
+  });
+
+  it("extends the hitbox beyond the visible border by the tolerance", () => {
+    expect(hitTestBoundaryRects(tiers, -8, 150, 0)).toBeNull();
+    expect(hitTestBoundaryRects(tiers, -8, 150, 10)).toBe("cat:a");
+  });
+
+  it("stops at the tolerance rather than claiming the whole canvas", () => {
+    expect(hitTestBoundaryRects(tiers, -11, 150, 10)).toBeNull();
+  });
+
+  it("never lets one box's tolerance steal a point that lies inside another box", () => {
+    // 2 units inside the neighbour's left edge, and so also within 10 units
+    // of the first category's right edge (they are 40 apart... so make the
+    // point genuinely contested by placing it just inside `neighbour`).
+    const contested = { x: 442, y: 150 };
+    expect(hitTestBoundaryRects(tiers, contested.x, contested.y, 10)).toBe("cat:b");
+  });
+
+  it("resolves a point between two boxes to the nearer one", () => {
+    // The 40-unit gap between the two categories: 415 is 15 past cat:a's
+    // right edge and 25 short of cat:b's left edge.
+    expect(hitTestBoundaryRects(tiers, 415, 150, 30)).toBe("cat:a");
+    // ...and 430 is nearer cat:b.
+    expect(hitTestBoundaryRects(tiers, 430, 150, 30)).toBe("cat:b");
+  });
+
+  it("prefers containment over a nearer border on a different box", () => {
+    // Deep inside `nested` (so contained by both nested and cat:a), while
+    // sitting only just inside cat:a's own left edge. Containment wins, and
+    // among the containers the smallest does.
+    expect(hitTestBoundaryRects(tiers, 55, 100, 30)).toBe("sub:a1");
+  });
+
+  it("searches every tier at once rather than letting tier order decide", () => {
+    // Same maps, opposite tier order: the answer must not change.
+    const reversed = [categories, subcategories];
+    expect(hitTestBoundaryRects(reversed, 100, 100, 0)).toBe("sub:a1");
+    expect(hitTestBoundaryRects(reversed, 300, 250, 0)).toBe("cat:a");
+  });
+
+  it("handles an empty tier list", () => {
+    expect(hitTestBoundaryRects([], 0, 0, 10)).toBeNull();
+    expect(hitTestBoundaryRects([new Map()], 0, 0, 10)).toBeNull();
+  });
+
+  it("ships a tolerance big enough to absorb ordinary pointing error", () => {
+    // Guards the constant itself: a 1-2px grab target is the reported bug.
+    expect(BOUNDARY_HIT_TOLERANCE_PX).toBeGreaterThanOrEqual(6);
+    // ...and small enough that it stays inside the padding each tier already
+    // puts between its outermost node and its border (14 for subcategories),
+    // so a cushion never reaches into a neighbouring box's contents.
+    expect(BOUNDARY_HIT_TOLERANCE_PX).toBeLessThanOrEqual(14);
   });
 });

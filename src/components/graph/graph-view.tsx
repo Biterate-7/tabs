@@ -134,6 +134,23 @@ export function GraphView({
 
   const allSections = useMemo(() => store.workspaces.flatMap((w) => w.sections ?? []), [store.workspaces])
 
+  // Hierarchical Category → Subcategory (→ Collection) structure driving the
+  // graph's clustering forces and nested boundary rendering — see
+  // lib/graph/clusters.ts. Computed from the same scoped tab set as the rest
+  // of the graph so a workspace filter narrows clusters the same way it
+  // narrows nodes/edges.
+  //
+  // Declared BEFORE the edges below because the edge builder now takes the
+  // cluster anchors as layout information: they decide the order each
+  // relationship's O(n) chain runs in, which is what keeps a chain from
+  // linking tabs on opposite sides of the canvas. See relations.ts's
+  // buildChainOrder. It does not change which tabs are related.
+  const clusterTree = useMemo(
+    () => buildClusterTree(scopedTabs, allSections, allCollections),
+    [scopedTabs, allSections, allCollections]
+  )
+  const clusterAnchors = useMemo(() => computeClusterAnchors(clusterTree), [clusterTree])
+
   const allEdges = useMemo(
     () =>
       buildGraphEdges(
@@ -141,21 +158,18 @@ export function GraphView({
         workspaceLookup,
         graphState.settings.filters,
         graphState.manualConnections,
-        allSections
+        allSections,
+        (tabId) => clusterAnchors.get(tabId)?.categoryAnchor ?? undefined
       ),
-    [scopedTabs, workspaceLookup, graphState.settings.filters, graphState.manualConnections, allSections]
+    [
+      scopedTabs,
+      workspaceLookup,
+      graphState.settings.filters,
+      graphState.manualConnections,
+      allSections,
+      clusterAnchors,
+    ]
   )
-
-  // Hierarchical Category → Subcategory (→ Collection) structure driving the
-  // graph's clustering forces and nested boundary rendering — see
-  // lib/graph/clusters.ts. Computed from the same scoped tab set as the rest
-  // of the graph so a workspace filter narrows clusters the same way it
-  // narrows nodes/edges.
-  const clusterTree = useMemo(
-    () => buildClusterTree(scopedTabs, allSections, allCollections),
-    [scopedTabs, allSections, allCollections]
-  )
-  const clusterAnchors = useMemo(() => computeClusterAnchors(clusterTree), [clusterTree])
 
   const allDependencyEdges = useMemo(
     () => (graphState.settings.filters.dependencies ? buildDependencyEdges(scopedTabs, dependencies) : []),

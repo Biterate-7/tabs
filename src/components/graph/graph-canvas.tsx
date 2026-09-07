@@ -9,7 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import { createGraphSimulation, type GraphSimulation } from "@/lib/graph/engine"
+import { BULK_ARRIVAL_THRESHOLD, createGraphSimulation, type GraphSimulation } from "@/lib/graph/engine"
 import { computeNodeRadius } from "@/lib/graph/node-size"
 import { resolveGraphPalette, type GraphPalette } from "@/lib/graph/palette"
 import {
@@ -20,10 +20,11 @@ import {
   zoomAroundPoint,
 } from "@/lib/graph/layout"
 import {
+  BOUNDARY_HIT_TOLERANCE_PX,
   CATEGORY_BOUNDARY_PADDING,
   COLLECTION_BOUNDARY_PADDING,
   computeCollectionBoundary,
-  pointInRect,
+  hitTestBoundaryRects,
   resolveLiveBoundaries,
   SUBCATEGORY_BOUNDARY_PADDING,
   type BoundaryCandidate,
@@ -90,11 +91,63 @@ type DepEdgeEffect =
   | { kind: "create"; start: number }
   | { kind: "remove"; start: number; x1: number; y1: number; x2: number; y2: number; targetRadius: number }
 
+// Bounds on the synchronous burst of physics run when a bulk dump arrives —
+// see the physics-setup effect. Both are ceilings, not targets: the burst
+// stops the moment the layout settles, and whatever is unfinished continues
+// in the normal animated render loop, so neither number can turn into a hang.
+// 200 ticks is roughly what the real 283-tab export needs to reach rest from
+// its seeded layout; the 120ms budget is what keeps a much larger dump from
+// spending longer than a couple of dropped frames before the first paint.
+const BULK_PRESETTLE_TICKS = 200
+const BULK_PRESETTLE_BUDGET_MS = 120
+
 /** Deterministic per-id jitter (0..range) so simultaneous arrivals don't move in lockstep. */
 function jitterFor(id: string, range: number): number {
   let hash = 0
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0
   return Math.abs(hash) % range
+}
+
+/**
+ * A cheap fingerprint of the graph's STRUCTURE — which nodes exist, which
+ * edges exist, which collections hold which tabs — and deliberately nothing
+ * about their content. Two renders with the same structure produce the same
+ * string even when every Tab object has been replaced (which is what a
+ * resolved title does). See structureSignatureRef for why that distinction
+ * decides whether the simulation is reheated.
+ *
+ * An order-insensitive additive hash rather than a concatenation: it is O(n)
+ * with no allocation per element, and the inputs are already stably sorted by
+ * their builders, so ordering carries no information to lose.
+ */
+function structureSignature(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  collections: GraphCollection[],
+  /** The display settings that are physics inputs — node radius feeds collide, edge strength feeds the link force — so changing either genuinely does need the layout to re-settle. */
+  physicsSettings: { nodeSize: string; edgeStrength: number }
+): string {
+  let nodeHash = 0
+  for (const node of nodes) {
+    for (let i = 0; i < node.id.length; i++) nodeHash = (nodeHash + node.id.charCodeAt(i) * (i + 1)) | 0
+  }
+  let edgeHash = 0
+  for (const edge of edges) {
+    for (let i = 0; i < edge.id.length; i++) edgeHash = (edgeHash + edge.id.charCodeAt(i) * (i + 1)) | 0
+  }
+  let collectionHash = 0
+  for (const collection of collections) {
+    collectionHash = (collectionHash + collection.tabIds.length) | 0
+    for (let i = 0; i < collection.id.length; i++) {
+      collectionHash = (collectionHash + collection.id.charCodeAt(i) * (i + 1)) | 0
+    }
+  }
+  return [
+    `${nodes.length}:${nodeHash}`,
+    `${edges.length}:${edgeHash}`,
+    `${collections.length}:${collectionHash}`,
+    `${physicsSettings.nodeSize}:${physicsSettings.edgeStrength}`,
+  ].join("|")
 }
 
 function easeOutCubic(t: number): number {
@@ -209,6 +262,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const lastReportedSelectedRef = useRef<{ id: string; x: number; y: number } | null>(null)
 
   const hoveredIdRef = useRef<string | null>(null)
+  /**
+   * The boundary square the pointer is currently over — purely a rendering
+   * cue, drawn one step louder so the user can see WHICH group a press would
+   * act on before committing to it. Resolved through the exact same
+   * `hitTestBoundary` the press itself uses, so what lights up is always what
+   * would be grabbed.
+   */
+  const hoveredBoundaryIdRef = useRef<string | null>(null)
   const dragRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null)
   // The boundary square currently held by the pointer. Its physics body lives
   // in the same simulation as the nodes (see engine.ts's boundary layer); this
@@ -262,6 +323,21 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    * reason a per-frame re-election is what used to delete squares mid-drag.
    */
   const liveBoundaryIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * Signature of the last STRUCTURE the physics effect saw — which nodes,
+   * which edges, which collections.
+   *
+   * The effect's dependency list is full of things that change without the
+   * layout changing at all: a title resolving rewrites every Tab object, so
+   * `nodes`, `edges` and `clusterTree` all get new identities while the graph
+   * remains, structurally, the same graph. Reheating on those was reheating
+   * the simulation dozens of times during a normal post-dump title-resolution
+   * pass, and each reheat restarts a full settle — the layout never got to
+   * finish converging before being kicked again, which is a large part of why
+   * the graph read as permanently in motion. Comparing the structure instead
+   * means a cosmetic update costs nothing.
+   */
+  const structureSignatureRef = useRef<string | null>(null)
 
   nodesRef.current = nodes
   edgesRef.current = edges
@@ -586,6 +662,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const selectedCollectionId = selectedCollectionIdRef.current
     const selectedClusterId = selectedClusterIdRef.current
     const draggedBoundaryId = boundaryDragRef.current?.id ?? null
+    const hoveredBoundaryId = hoveredBoundaryIdRef.current
+    // The node under the pointer is left out of every box's geometry while it
+    // is being dragged — see engine.ts's setBoundaryExcluded. Read here so
+    // the DRAWN rect and the box's COLLIDER are derived from the same member
+    // set; if only the collider excluded it, the visible box would still
+    // stretch and the two would disagree about where the square is.
+    const boundaryExcludedId = simulation.getBoundaryExcluded()
 
     // Every positioned node's WORLD position, gathered once per frame:
     // resolveLiveBoundaries below has to ask "how much of what this box
@@ -627,6 +710,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const clusterPoints = (tabIds: string[]): { x: number; y: number; radius: number }[] => {
         const points: { x: number; y: number; radius: number }[] = []
         for (const tabId of tabIds) {
+          if (tabId === boundaryExcludedId) continue
           const physicsNode = simulation.findNode(tabId)
           if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
           points.push({ x: physicsNode.x, y: physicsNode.y, radius: physicsNode.radius })
@@ -698,10 +782,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // member).
     collectionRectsRef.current.clear()
     const collectionNameById = new Map<string, string>()
+    // Built once per frame and reused by the candidate and boundary-spec
+    // loops below, which each used to run a linear `.find` over every
+    // collection for every collection — quadratic in the collection count for
+    // no reason.
+    const collectionById = new Map(collectionsRef.current.map((c) => [c.id, c]))
     for (const collection of collectionsRef.current) {
       const isSelected = collection.id === selectedCollectionId
       const points: { x: number; y: number; radius: number }[] = []
       for (const tabId of collection.tabIds) {
+        if (tabId === boundaryExcludedId) continue
         const physicsNode = simulation.findNode(tabId)
         if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
         points.push({ x: physicsNode.x, y: physicsNode.y, radius: physicsNode.radius })
@@ -746,8 +836,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       boundaryCandidates.push({ id, rect, memberIds: new Set(clusterTreeRef.current.byId.get(id)?.totalTabIds ?? []) })
     }
     for (const [id, rect] of collectionRectsRef.current) {
-      const collection = collectionsRef.current.find((c) => c.id === id)
-      boundaryCandidates.push({ id, rect, memberIds: new Set(collection?.tabIds ?? []) })
+      boundaryCandidates.push({ id, rect, memberIds: new Set(collectionById.get(id)?.tabIds ?? []) })
     }
     const liveBoundaryIds = liveBoundaryIdsRef.current
     resolveLiveBoundaries(boundaryCandidates, liveBoundaryIds, boundaryOccupants, alwaysAdmitBoundaryIds)
@@ -770,6 +859,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name: category.label,
         isSelected: id === selectedClusterId,
+        isHovered: id === hoveredBoundaryId,
         showLabel: hasLabelCandidate && !suppressedLabels.has(id),
         textSize: display.textSize,
         emphasis: 0.6,
@@ -782,6 +872,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name: sub.label,
         isSelected: id === selectedClusterId,
+        isHovered: id === hoveredBoundaryId,
         showLabel: hasLabelCandidate && !suppressedLabels.has(id),
         textSize: display.textSize,
         emphasis: 0.8,
@@ -793,6 +884,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       drawCollectionBoundary(ctx, palette, worldRectToScreen(rect), {
         name,
         isSelected: id === selectedCollectionId,
+        isHovered: id === hoveredBoundaryId,
         showLabel: showLabels,
         textSize: display.textSize,
       })
@@ -839,7 +931,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (cluster) boundarySpecs.push({ id, memberIds: cluster.totalTabIds, padding: SUBCATEGORY_BOUNDARY_PADDING })
     }
     for (const id of collectionRectsRef.current.keys()) {
-      const collection = collectionsRef.current.find((c) => c.id === id)
+      const collection = collectionById.get(id)
       if (collection) boundarySpecs.push({ id, memberIds: collection.tabIds, padding: COLLECTION_BOUNDARY_PADDING })
     }
     simulation.setBoundaryBodies(boundarySpecs)
@@ -1089,7 +1181,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     }
     prevDependencyEdgesRef.current = dependencyEdges
 
-    simulation.setNodes(nodes, radiusOf, positions, (node) => clusterAnchors.get(node.id)?.categoryAnchor ?? undefined)
+    // A brand-new node is seeded into its cluster's CONFINEMENT disc (the
+    // area its members are actually held in — see cluster-regions.ts) rather
+    // than at a bare anchor point, so the engine can pack a whole arrival
+    // across the space it will end up occupying instead of stacking it on one
+    // spot. Falls back to the category anchor for tabs with no confinement
+    // region (ring layout mode), which is what this always passed.
+    simulation.setNodes(nodes, radiusOf, positions, (node) => {
+      const anchor = clusterAnchors.get(node.id)
+      return anchor?.confineTo ?? anchor?.categoryAnchor ?? undefined
+    })
     // After setNodes (which prunes offsets for tabs that are gone) and before
     // setClusterAnchors, so a category dragged in a past session has its
     // territory back where the user left it rather than snapping home.
@@ -1101,7 +1202,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     simulation.setEdges(physicsEdges, display.edgeStrength)
     simulation.setCollections(collections)
     simulation.setClusterAnchors(clusterAnchors)
-    simulation.reheat(0.5)
+
+    // Only reheat when the STRUCTURE actually changed. See
+    // structureSignatureRef: this effect also fires for cosmetic updates
+    // (a resolved title rewrites every Tab object), and reheating on those
+    // restarted the settle over and over so the layout never finished.
+    const signature = structureSignature(nodes, physicsEdges, collections, {
+      nodeSize: display.nodeSize,
+      edgeStrength: display.edgeStrength,
+    })
+    const structureChanged = signature !== structureSignatureRef.current
+    structureSignatureRef.current = signature
+
+    const arrivals = simulation.lastArrivalCount()
+    if (arrivals >= BULK_ARRIVAL_THRESHOLD) {
+      // A bulk dump. The nodes have just been placed deterministically across
+      // their clusters (engine.ts's setNodes), so what is left is refinement,
+      // not layout — and refinement is exactly the part there is no reason to
+      // animate across several hundred frames. One bounded, budgeted burst of
+      // ticks here means the first frame the user sees is an organised graph
+      // easing into place rather than a cloud reorganising itself.
+      //
+      // Bounded on both axes so this can never become a hang: at most
+      // BULK_PRESETTLE_TICKS ticks, and at most BULK_PRESETTLE_BUDGET_MS of
+      // wall clock. Whatever is left settles normally in the render loop.
+      //
+      // Deliberately no reheat afterwards: if the burst converged, the graph
+      // is where it belongs and putting alpha back up would only make it
+      // drift for another couple of seconds for show. If the burst ran out of
+      // budget instead, alpha is still high and the render loop picks the
+      // remaining convergence up on its own, animated.
+      simulation.reheat(0.5)
+      simulation.settleBulk(BULK_PRESETTLE_TICKS, BULK_PRESETTLE_BUDGET_MS)
+    } else if (structureChanged) {
+      simulation.reheat(0.4)
+    }
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, dependencyEdges, collections, clusterTree, clusterAnchors, display.nodeSize, display.edgeStrength, centerDistances])
@@ -1272,51 +1407,36 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     return screenToWorld(cameraRef.current, { x: screenX, y: screenY }, width, height)
   }
 
-  /** Hit-tests the collection boundary rects computed by the most recent draw() call — cheap reuse instead of recomputing every member's position on click. */
-  function hitTestCollection(screenX: number, screenY: number): string | null {
-    const world = worldPointFromScreen(screenX, screenY)
-    for (const [id, rect] of collectionRectsRef.current) {
-      if (pointInRect(world.x, world.y, rect)) return id
-    }
-    return null
-  }
-
-  /** Innermost wins: a subcategory boundary is checked before its parent category's, mirroring hitTestNode's reverse-draw-order convention. */
-  function hitTestCluster(screenX: number, screenY: number): string | null {
-    const world = worldPointFromScreen(screenX, screenY)
-    for (const [id, rect] of subcategoryRectsRef.current) {
-      if (pointInRect(world.x, world.y, rect)) return id
-    }
-    for (const [id, rect] of categoryRectsRef.current) {
-      if (pointInRect(world.x, world.y, rect)) return id
-    }
-    return null
+  /**
+   * The world-space grab margin around a boundary square, converted from the
+   * constant screen-pixel tolerance the user actually experiences. Dividing
+   * by zoom is what keeps the cushion the same size under the cursor at every
+   * zoom level — see BOUNDARY_HIT_TOLERANCE_PX.
+   */
+  function boundaryHitTolerance(): number {
+    return BOUNDARY_HIT_TOLERANCE_PX / Math.max(cameraRef.current.zoom, 0.0001)
   }
 
   /**
-   * The drawn boundary square a pointer press should grab — smallest area
-   * wins, so a nested Subcategory or Collection box is picked up rather than
-   * the Category box it sits inside (same innermost-first intent as
-   * hitTestCluster, but comparing across all three tiers at once since a
-   * Collection box is not part of that tier order).
+   * THE boundary hit test — the single place a pointer position becomes a
+   * boundary id. Grabbing (pointerdown), hover feedback (pointermove) and
+   * click-to-select (pointerup) all go through it, so what lights up under
+   * the cursor, what a press picks up, and what a click selects can never be
+   * three different squares.
    *
-   * Reuses the exact rect maps draw() left behind — the live set — so what
-   * is grabbable is precisely what is on screen and what has a body.
+   * Reuses the exact rect maps draw() left behind — the live set — so what is
+   * grabbable is precisely what is on screen and what has a physics body.
+   * The containment-then-tolerance rule itself lives in collection-layout.ts
+   * (`hitTestBoundaryRects`) where it can be tested without a canvas.
    */
   function hitTestBoundary(screenX: number, screenY: number): string | null {
     const world = worldPointFromScreen(screenX, screenY)
-    let bestId: string | null = null
-    let bestArea = Infinity
-    for (const rects of [collectionRectsRef.current, subcategoryRectsRef.current, categoryRectsRef.current]) {
-      for (const [id, rect] of rects) {
-        if (!pointInRect(world.x, world.y, rect)) continue
-        const area = rect.width * rect.height
-        if (area >= bestArea) continue
-        bestArea = area
-        bestId = id
-      }
-    }
-    return bestId
+    return hitTestBoundaryRects(
+      [collectionRectsRef.current, subcategoryRectsRef.current, categoryRectsRef.current],
+      world.x,
+      world.y,
+      boundaryHitTolerance()
+    )
   }
 
   function hitTestNode(screenX: number, screenY: number): GraphNode | null {
@@ -1411,7 +1531,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (physicsNode?.x !== undefined && physicsNode?.y !== undefined) {
         simulation.pin(hit.id, physicsNode.x, physicsNode.y)
       }
-      simulation.reheat(0.6)
+      // The dragged tab stops counting toward its groups' geometry for the
+      // duration of the gesture, so dragging one member can't stretch the
+      // boxes around it (or their colliders, which would then shove every
+      // neighbouring square). See engine.ts's setBoundaryExcluded.
+      simulation.setBoundaryExcluded(hit.id)
+      simulation.reheat(0.35)
       dragRef.current = { id: hit.id, startX: point.x, startY: point.y, pointerId: e.pointerId }
       requestDraw()
       return
@@ -1441,7 +1566,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     if (dragRef.current && dragRef.current.pointerId === e.pointerId) {
       const world = screenToWorld(cameraRef.current, point, width, height)
       simulationRef.current!.pin(dragRef.current.id, world.x, world.y)
-      simulationRef.current!.reheat(0.35)
+      // A small top-up rather than a re-kick. The dragged node is pinned, so
+      // it follows the pointer exactly whatever alpha is; alpha only governs
+      // how hard its NEIGHBOURS react, and re-heating to 0.35 on every
+      // pointermove event (dozens per second) held the whole graph at high
+      // alpha for as long as the gesture lasted — one tab being moved kept
+      // several hundred unrelated tabs churning.
+      simulationRef.current!.reheat(0.12)
       requestDraw()
       return
     }
@@ -1483,6 +1614,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       requestDraw()
       onHoverChange(hit ? { node: hit, screenX: e.clientX, screenY: e.clientY } : null)
     }
+
+    // Boundary hover: purely a canvas repaint (no React state), and only when
+    // no node is under the cursor — a tab always outranks the group it sits
+    // in, so highlighting the group while pointing at one of its tabs would
+    // advertise the wrong target.
+    const boundaryHoverId = hitId ? null : hitTestBoundary(point.x, point.y)
+    if (boundaryHoverId !== hoveredBoundaryIdRef.current) {
+      hoveredBoundaryIdRef.current = boundaryHoverId
+      requestDraw()
+    }
   }
 
   function handlePointerUp(e: ReactPointerEvent<HTMLCanvasElement>) {
@@ -1493,6 +1634,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const moved = Math.hypot(point.x - startX, point.y - startY) > CLICK_DRAG_THRESHOLD
       const physicsNode = simulationRef.current!.findNode(id)
       simulationRef.current!.unpin(id)
+      // Back into its groups' geometry. d3 keeps a pinned node's velocity at
+      // zero for as long as it is pinned, so a released tab rejoins the
+      // simulation at rest however fast the pointer was moving — a flick can
+      // never hand it an impulse. The boxes it belongs to grow back over it
+      // on the next frame, and confineToRegions walks it home if the drag
+      // left it outside its own region.
+      simulationRef.current!.setBoundaryExcluded(null)
       dragRef.current = null
       canvasRef.current?.releasePointerCapture(e.pointerId)
       requestDraw()
@@ -1542,11 +1690,29 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   }
 
   /**
-   * What a press that ended without meaningful movement resolves to — edge
-   * popover, then Collection, then cluster selection, then "clear". Shared by
-   * the pan gesture and the boundary-drag gesture so that grabbing a boundary
-   * square and letting go without moving it still behaves exactly like the
-   * click it used to be.
+   * What a press that ended without meaningful movement resolves to. The
+   * interaction hierarchy, top to bottom:
+   *
+   *   node  →  dependency edge  →  relation edge  →  boundary  →  background
+   *
+   * A node is handled before this function is ever reached (handlePointerDown
+   * claims it on press, and handlePointerUp turns a press-without-drag into a
+   * node selection), which is what gives a tab unconditional priority over
+   * the group it sits inside. Edges come next because they are thin targets
+   * drawn on top. A boundary claims everything left over inside it — the
+   * group's empty space — and bare canvas clears the selection.
+   *
+   * The boundary step asks `hitTestBoundary`, the SAME function that decides
+   * what a press grabs and what the hover highlight lights up, then routes to
+   * the right callback by looking up which tier's map the winning id came
+   * from. It used to ask a separate collection-then-subcategory-then-category
+   * scan instead, which could disagree with the grab test: pressing inside a
+   * small Subcategory box that sat within a larger Collection box picked up
+   * the Subcategory but selected the Collection.
+   *
+   * Shared by the pan gesture and the boundary-drag gesture so that grabbing
+   * a boundary square and letting go without moving it still behaves exactly
+   * like the click it used to be.
    */
   function resolveCanvasClick(point: { x: number; y: number }, clientX: number, clientY: number) {
     const dependencyHit = hitTestDependencyEdge(point.x, point.y)
@@ -1559,32 +1725,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       onEdgeClick(edgeHit, clientX, clientY)
       return
     }
-    const collectionHit = hitTestCollection(point.x, point.y)
-    if (collectionHit) {
+
+    const boundaryHit = hitTestBoundary(point.x, point.y)
+    if (boundaryHit && collectionRectsRef.current.has(boundaryHit)) {
       onSelectNode(null)
       onSelectCluster(null)
-      onSelectCollection(collectionHit === selectedCollectionIdRef.current ? null : collectionHit)
+      onSelectCollection(boundaryHit === selectedCollectionIdRef.current ? null : boundaryHit)
       return
     }
-    const clusterHit = hitTestCluster(point.x, point.y)
-    if (clusterHit) {
+    if (boundaryHit) {
       onSelectNode(null)
       onSelectCollection(null)
-      const next = clusterHit === selectedClusterIdRef.current ? null : clusterHit
+      const next = boundaryHit === selectedClusterIdRef.current ? null : boundaryHit
       onSelectCluster(next)
       // Selecting a cluster also frames it — a cluster carries much less
       // UI chrome than a Collection (no dedicated sidebar action panel),
       // so auto-focusing on select reads as more natural than requiring
       // a separate explicit "Focus" action.
       if (next) focusClusterById(next)
-    } else {
-      onSelectNode(null)
-      onSelectCollection(null)
-      onSelectCluster(null)
+      return
     }
+
+    onSelectNode(null)
+    onSelectCollection(null)
+    onSelectCluster(null)
   }
 
   function handlePointerLeave() {
+    if (hoveredBoundaryIdRef.current !== null) {
+      hoveredBoundaryIdRef.current = null
+      requestDraw()
+    }
     if (hoveredIdRef.current === null) return
     hoveredIdRef.current = null
     hoverNeighborsRef.current = null
