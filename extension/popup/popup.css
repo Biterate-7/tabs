@@ -19,7 +19,17 @@ body {
 }
 
 .popup__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 12px;
+}
+
+.popup__brand-mark {
+  width: 14px;
+  height: 14px;
+  color: #a1a1aa;
+  flex-shrink: 0;
 }
 
 .popup__title {
