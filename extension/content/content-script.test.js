@@ -23,6 +23,14 @@ let onMessageListeners;
 
 beforeEach(() => {
   onMessageListeners = [];
+  // Each test is a fresh page. The content script marks its isolated world
+  // once so that a chrome.scripting re-injection into a tab that already has
+  // a copy registers nothing (see `alreadyRegistered` in content-script.js) —
+  // but jsdom reuses one window across this whole file, so without clearing
+  // the mark every test after the first would load an intentionally inert
+  // copy. Deleting it here models a new tab, not a second injection; the
+  // second-injection behavior is asserted deliberately further down.
+  delete window.__tabdumpBridgeRegistered;
   globalThis.chrome = {
     runtime: {
       onMessage: { addListener: vi.fn((fn) => onMessageListeners.push(fn)) },
@@ -284,5 +292,52 @@ describe("duplicated protocol constants stay in sync", () => {
     expect(CONFIG.DUMP_WORST_CASE_MS).toBeGreaterThanOrEqual(
       CONFIG.TAB_READY_TIMEOUT_MS + CONFIG.IMPORT_ACK_TIMEOUT_MS
     );
+  });
+});
+
+// background.js repairs a tab with no receiver by injecting this same file
+// with chrome.scripting.executeScript. That injection shares the isolated
+// world with any manifest-declared copy, and the two can race: a
+// document_start injection can land between the background's probe and its
+// repair. A second live listener set would mean two independent
+// `pendingImport` slots answering background.js on the same port, so which
+// answer wins would be a race rather than a fact.
+describe("a second injected copy in a tab that already has one", () => {
+  /** Re-runs the file against the same window, as a repair injection does. */
+  async function injectAgain() {
+    vi.resetModules();
+    await import("./content-script.js");
+  }
+
+  it("registers no additional listeners", async () => {
+    await loadContentScript();
+    const runtimeListeners = onMessageListeners.length;
+    expect(runtimeListeners).toBeGreaterThan(0);
+
+    await injectAgain();
+
+    expect(onMessageListeners.length).toBe(runtimeListeners);
+  });
+
+  it("delivers a payload to the page exactly once, and acks it exactly once", async () => {
+    await loadContentScript();
+    await injectAgain();
+
+    const seen = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.source === MESSAGE_SOURCE && event.data.type === MSG_TABDUMP_IMPORT) {
+        seen.push(event.data.payload);
+      }
+    });
+
+    const responsePromise = deliverImport("imp-dup", TABS);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // One copy owns the bridge, so the page sees one import, not two.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].importId).toBe("imp-dup");
+
+    pagePosts(MSG_TABDUMP_IMPORT_ACK, { importId: "imp-dup", accepted: 2 });
+    expect(await responsePromise).toEqual({ ok: true, accepted: 2 });
   });
 });

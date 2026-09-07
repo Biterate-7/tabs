@@ -148,6 +148,63 @@ describe("build-extension-zip.mjs", () => {
   it("refuses to build an empty ZIP if the extension source can't be found", () => {
     expect(entries.length).toBeGreaterThan(0);
   });
+
+  // A content script that is registered but never packaged, or packaged
+  // under a path the manifest doesn't name, produces the single least
+  // diagnosable failure this extension has: Chrome's "Could not establish
+  // connection. Receiving end does not exist.", from a ZIP that installs
+  // cleanly and looks correct in chrome://extensions.
+  it("packages every file the content_scripts registration names", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    const names = entries.map((e) => e.name);
+
+    expect(manifest.content_scripts.length).toBeGreaterThan(0);
+    for (const registration of manifest.content_scripts) {
+      expect(registration.js.length).toBeGreaterThan(0);
+      for (const file of registration.js) {
+        expect(names, `manifest registers ${file}, which is not in the ZIP`).toContain(file);
+      }
+    }
+  });
+
+  // document_idle is explicitly documented as injecting anywhere between
+  // document_end and *immediately after* window.onload — i.e. it is allowed
+  // to land after the moment chrome.tabs.onUpdated reports `status:
+  // "complete"`, which is exactly when background.js delivers. On a warm
+  // machine the script won that race; on a cold one (fresh profile, uncached
+  // bundle, slower hardware — a first install, in other words) it lost, and
+  // the dump failed against a tab that had visibly finished loading.
+  // document_start injects before the page's own scripts, removing the race
+  // instead of widening the retry window around it.
+  it("registers the content script at document_start, so it is attached before a tab can report complete", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    for (const registration of manifest.content_scripts) {
+      expect(registration.run_at).toBe("document_start");
+    }
+  });
+
+  // Without this permission chrome.scripting.executeScript is simply absent,
+  // and background.js's repair for a tab that predates the extension's
+  // installation degrades to a no-op — the exact tab onboarding's last step
+  // tells every new user to dump into.
+  it("grants the scripting permission the missing-content-script repair depends on", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    expect(manifest.permissions).toContain("scripting");
+  });
+
+  // background.js injects CONTENT_SCRIPT_FILE by name. If that constant and
+  // the manifest's registration ever name different paths, the repair
+  // injects the wrong file (or nothing) and reports a second, differently
+  // worded failure instead of fixing the first.
+  it("keeps the packaged config's CONTENT_SCRIPT_FILE identical to the packaged manifest's content-script path", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    const config = entries.find((e) => e.name === "src/config.js").data.toString("utf8");
+    const declared = config.match(/CONTENT_SCRIPT_FILE = "([^"]+)"/)?.[1];
+
+    expect(declared).toBeTruthy();
+    expect(manifest.content_scripts[0].js).toContain(declared);
+    expect(entries.map((e) => e.name)).toContain(declared);
+  });
 });
 
 // Regression coverage for the incident where CANONICAL_PRODUCTION_ORIGIN

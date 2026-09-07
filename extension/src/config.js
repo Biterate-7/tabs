@@ -23,6 +23,15 @@ export const TABDUMP_ORIGIN = "http://localhost:3000";
 // can do is open one extra tab — never silently drop a dump.
 export const TABDUMP_APP_PATH = "/";
 
+// The content script, as an extension-relative path. Named here (rather than
+// written as a literal at the chrome.scripting.executeScript call site)
+// because it has to stay identical to manifest.json's content_scripts[0].js
+// entry: background.js injects this exact file to repair a tab that never got
+// the manifest-declared copy, and a path that drifts from the manifest would
+// turn that repair into a second, differently-worded failure. Asserted against
+// the packaged manifest in scripts/build-extension-zip.test.mjs.
+export const CONTENT_SCRIPT_FILE = "content/content-script.js";
+
 // Message-passing constants shared across background/content/popup so a
 // typo in one place can't silently desync from another.
 export const MESSAGE_SOURCE = "tabdump-extension";

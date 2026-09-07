@@ -10,6 +10,7 @@ import {
   DUMP_PHASE,
   TAB_READY_TIMEOUT_MS,
   SEND_RETRY_DELAYS_MS,
+  CONTENT_SCRIPT_FILE,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
@@ -122,31 +123,101 @@ function isAppRouteUrl(url) {
 }
 
 /**
+ * Whether a rejected chrome.tabs.sendMessage means there was no content
+ * script listening in that tab at all.
+ *
+ * Chrome words this one specific condition as "Could not establish
+ * connection. Receiving end does not exist." It is materially different from
+ * every other delivery failure — the message never reached any receiver, so
+ * nothing about the page, the app or the payload is implicated — and it is
+ * the one failure this extension can actually repair, by injecting the
+ * content script itself. "The message port closed before a response was
+ * received" is deliberately NOT matched: there a receiver existed and then
+ * went away, which injecting a second copy would not fix.
+ */
+function isMissingReceiverError(err) {
+  const message = errorMessage(err);
+  return /Receiving end does not exist|Could not establish connection/i.test(message);
+}
+
+/**
+ * Puts the content script into a tab that does not have one.
+ *
+ * This is the repair for the failure that made TabDump look broken on every
+ * machine but the developer's. Chrome injects manifest-declared content
+ * scripts only as a page loads, so a tab that was already open when the
+ * extension was installed or reloaded never receives one — and onboarding's
+ * own final step ("Return to TabDump and click the TabDump extension")
+ * guarantees that the very first tab a new user dumps into is exactly such a
+ * tab. Without this, that dump could only ever fail with Chrome's
+ * "Receiving end does not exist", no matter how many times it was retried:
+ * retrying a tab that will never be injected into is not a recovery, it is
+ * the same failure spelled slower.
+ *
+ * Injecting the same file the manifest declares (CONTENT_SCRIPT_FILE) into
+ * the same isolated world is idempotent by construction — content-script.js
+ * refuses to register a second set of listeners (see `alreadyRegistered`
+ * there) — so this is safe to call on a tab that turns out to have had one
+ * after all, which a document_start injection racing this call can cause.
+ */
+async function ensureContentScriptInjected(tabId) {
+  if (!chrome.scripting?.executeScript) {
+    // Older Chrome, or the "scripting" permission missing from a hand-edited
+    // manifest. Reported rather than thrown: the caller still has the
+    // fresh-tab fallback, and a silent no-op here would make the resulting
+    // failure unattributable.
+    log("content-script-injection-unavailable", { tabId });
+    return false;
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: [CONTENT_SCRIPT_FILE] });
+    log("content-script-injected", { tabId });
+    return true;
+  } catch (err) {
+    // Injection is refused for a tab the extension has no host access to
+    // (a chrome:// page, the Web Store, another origin) and for a tab that
+    // has since closed. Neither is recoverable here.
+    log("content-script-injection-failed", { tabId, detail: errorMessage(err) });
+    return false;
+  }
+}
+
+/**
  * Delivers `payload` to one specific tab and resolves to what actually
  * happened there.
  *
- * Two failure modes are deliberately kept apart, because they call for
- * opposite responses:
+ * Three failure modes are kept apart, because they call for three different
+ * responses — and because collapsing them is what made every cross-machine
+ * report arrive as the same undiagnosable "TabDump didn't respond":
  *
- *  - chrome.tabs.sendMessage *rejecting* means no content script is attached
- *    to that tab yet (Chrome's "Could not establish connection. Receiving end
- *    does not exist."). That's often transient during a page load, so it's
- *    worth a couple of short retries.
+ *  - sendMessage rejecting with "Receiving end does not exist" means no
+ *    content script is attached to that tab. Transient during a page load, so
+ *    it is worth a couple of short retries — but PERMANENT for a tab that was
+ *    already open when the extension was installed, which no number of
+ *    retries can fix. So once the retries are spent, the script is injected
+ *    and delivery is attempted once more against a receiver now known to
+ *    exist. Only if that also fails is this reported as content-script-missing.
+ *  - sendMessage rejecting for any other reason is a genuine delivery failure
+ *    against a receiver that did exist.
  *  - a content script that answers `{ ok: false }` has given a definitive
  *    answer — the page behind it never became able to ingest the batch.
  *    Retrying the same tab would just burn another full ack timeout, so this
  *    returns immediately and lets the caller try a different tab instead.
  */
-async function deliverImportToTab(tabId, importId, payload) {
+async function deliverImportToTab(tabId, importId, payload, context = {}) {
+  const { windowId, phase } = context;
   let lastError;
-  for (const delay of [0, ...SEND_RETRY_DELAYS_MS]) {
-    if (delay) await sleep(delay);
+
+  // Reads the content script's answer, or records why there wasn't one.
+  // Returns a settled delivery result, or undefined to mean "try again".
+  async function attemptSend(attempt) {
+    // Deliberately origin-only, never the tab's actual url: enough to prove
+    // which origin was targeted (the whole failure class is "the message went
+    // somewhere the content script does not run") without logging a page the
+    // user is looking at.
+    log("send-message", { tabId, windowId, origin: TABDUMP_ORIGIN, phase, attempt });
     try {
-      const response = await chrome.tabs.sendMessage(tabId, {
-        type: MSG_TABDUMP_IMPORT,
-        importId,
-        payload,
-      });
+      const response = await chrome.tabs.sendMessage(tabId, { type: MSG_TABDUMP_IMPORT, importId, payload });
 
       // A content script from a build predating the ack handshake answers
       // `undefined`. Treat that as unproven rather than as success — the
@@ -160,19 +231,55 @@ async function deliverImportToTab(tabId, importId, payload) {
         detail: `TabDump page reported "${response.reason}".`,
       };
     } catch (err) {
-      // Receiving end not ready yet (or gone) — try again, or give up and
-      // report this after the last attempt.
       lastError = err;
+      return undefined;
     }
   }
-  return { delivered: false, reason: "delivery-failed", detail: errorMessage(lastError) };
+
+  let attempt = 0;
+  for (const delay of [0, ...SEND_RETRY_DELAYS_MS]) {
+    if (delay) await sleep(delay);
+    const settled = await attemptSend(++attempt);
+    if (settled) return settled;
+  }
+
+  // Every attempt was rejected. If that is because nothing is listening in
+  // this tab, it is repairable exactly once, right here.
+  if (isMissingReceiverError(lastError)) {
+    log("content-script-missing", { tabId, windowId, origin: TABDUMP_ORIGIN, phase, attempts: attempt });
+    if (await ensureContentScriptInjected(tabId)) {
+      const settled = await attemptSend(++attempt);
+      if (settled) return settled;
+    }
+  }
+
+  // Reported as two distinct reasons so the popup can tell the user the one
+  // thing that actually helps: a missing receiver is fixed by reloading the
+  // page (or the extension), which is useless advice for anything else.
+  return {
+    delivered: false,
+    reason: isMissingReceiverError(lastError) ? "content-script-missing" : "delivery-failed",
+    detail: errorMessage(lastError),
+  };
 }
 
 // Newly-created tabs need their content script to have attached before a
 // message can land. `status: "complete"` fires around the page's `load`
-// event, and a `document_idle` content script (the default `run_at`, used
-// here) always attaches before `load` — so waiting for "complete" is a
-// reliable, race-free way to know the *content script* is ready.
+// event, and the content script is registered `run_at: "document_start"`,
+// which injects before the page's own scripts run — so by the time a tab
+// reports "complete" its content script is necessarily already there.
+//
+// This used to be `document_idle`, and this comment used to claim the same
+// guarantee for it. That was simply false: Chrome documents document_idle as
+// injecting "between document_end and immediately after the window.onload
+// event fires", i.e. it is explicitly allowed to land AFTER the moment
+// `status: "complete"` reports. On a warm machine the script won that race
+// and everything worked; on a cold one — a fresh profile, an uncached bundle,
+// slower hardware, all at once on a first install — it lost, and the dump
+// failed with Chrome's "Receiving end does not exist" against a tab that had
+// visibly finished loading. document_start removes the race rather than
+// widening the retry window around it; the script touches only `window`, so
+// it has nothing to wait for the DOM for.
 //
 // It says nothing about the React app behind it, which demonstrably attaches
 // its own listener AFTER `load` — that gap is closed by the ack handshake in
@@ -211,6 +318,24 @@ function waitForTabComplete(tabId) {
 
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
+
+    // A tab can reach "complete" in the gap between chrome.tabs.create()
+    // resolving and these listeners attaching — a cached page routinely beats
+    // an await. The onUpdated event is then already gone, and without this
+    // re-check the load costs the full TAB_READY_TIMEOUT_MS before being
+    // misreported as a load timeout on a page that had in fact loaded fine.
+    // Ordered after addListener so a completion landing *during* the re-check
+    // is still caught by the listener; finish() is idempotent, so both firing
+    // is harmless.
+    const recheck = chrome.tabs.get?.(tabId);
+    if (recheck?.then) {
+      recheck.then(
+        (tab) => {
+          if (tab?.status === "complete") finish("complete");
+        },
+        () => finish("removed")
+      );
+    }
   });
 }
 
@@ -321,7 +446,10 @@ async function dumpTabs(excludeUrls, windowId) {
     log("tabdump-tab-reused", { tabId: existing.id, windowId: existing.windowId });
     await persist({ status: "running", phase: DUMP_PHASE.DELIVERING, ...counts });
 
-    const attempt = await deliverImportToTab(existing.id, importId, wire);
+    const attempt = await deliverImportToTab(existing.id, importId, wire, {
+      windowId: existing.windowId,
+      phase: DUMP_PHASE.DELIVERING,
+    });
     log("delivery-attempted", { tabId: existing.id, ...attempt });
     if (attempt.delivered) {
       return finishDelivered(attempt, existing.id, existing.windowId);
@@ -361,7 +489,10 @@ async function dumpTabs(excludeUrls, windowId) {
   }
 
   await persist({ status: "running", phase: DUMP_PHASE.DELIVERING, ...counts });
-  const attempt = await deliverImportToTab(opened.tabId, importId, wire);
+  const attempt = await deliverImportToTab(opened.tabId, importId, wire, {
+    windowId: opened.windowId,
+    phase: DUMP_PHASE.DELIVERING,
+  });
   log("delivery-attempted", { tabId: opened.tabId, ...attempt });
 
   if (attempt.delivered) {
@@ -505,14 +636,25 @@ async function checkImported(urls) {
   const existing = pickIngestibleTab(await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` }));
   if (!existing) return { ok: false, reason: "no-tabdump-tab" };
 
+  function ask() {
+    return chrome.tabs.sendMessage(existing.id, { type: MSG_CHECK_IMPORTED, payload: { urls } });
+  }
+
   try {
-    const response = await chrome.tabs.sendMessage(existing.id, {
-      type: MSG_CHECK_IMPORTED,
-      payload: { urls },
-    });
-    return response ?? { ok: false, reason: "no-response" };
-  } catch {
-    return { ok: false, reason: "delivery-failed" };
+    return (await ask()) ?? { ok: false, reason: "no-response" };
+  } catch (err) {
+    // Same pre-install tab, same repair as the dump path: without it the
+    // popup quietly loses its "31 new · 16 already imported" breakdown on
+    // exactly the tabs a new user has open, and falls back to plain counts
+    // for a reason nothing records.
+    if (!isMissingReceiverError(err) || !(await ensureContentScriptInjected(existing.id))) {
+      return { ok: false, reason: isMissingReceiverError(err) ? "content-script-missing" : "delivery-failed" };
+    }
+    try {
+      return (await ask()) ?? { ok: false, reason: "no-response" };
+    } catch {
+      return { ok: false, reason: "content-script-missing" };
+    }
   }
 }
 

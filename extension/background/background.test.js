@@ -5,7 +5,12 @@
 // through to openUrl, which is what lets a normal left-click on a saved tab
 // navigate the TabDump tab itself instead of creating a new one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TABDUMP_ORIGIN } from "../src/config.js";
+import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { TABDUMP_ORIGIN, CONTENT_SCRIPT_FILE } from "../src/config.js";
+
+const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const MSG_BROWSER_COMMAND = "TABDUMP_BROWSER_COMMAND";
 
@@ -35,8 +40,17 @@ beforeEach(() => {
       create: vi.fn(),
       update: vi.fn(),
       sendMessage: vi.fn(),
+      // Resolves to a still-loading tab by default so waitForTabComplete's
+      // missed-event re-check finds nothing, and the explicit onUpdated
+      // "complete" each test fires stays the thing that drives the load.
+      get: vi.fn(async (id) => fakeTab({ id, status: "loading" })),
       onUpdated: { addListener: vi.fn(), removeListener: vi.fn() },
       onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+    // The repair path for a tab with no content script in it. Resolving by
+    // default matches a real Chrome that has host access to the tab.
+    scripting: {
+      executeScript: vi.fn().mockResolvedValue([{ result: null }]),
     },
     windows: {
       update: vi.fn(),
@@ -372,7 +386,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(deliveredUrls).toEqual(["https://a.com", "https://b.com"]);
   });
 
-  it("still returns a clean error result, without throwing, when no content script ever answers", async () => {
+  it("reports content-script-missing, not a generic delivery failure, when no content script ever answers", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
       if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
@@ -388,10 +402,12 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(await responsePromise).toMatchObject({
       ok: false,
       status: "error",
-      reason: "delivery-failed",
+      reason: "content-script-missing",
       count: 1,
       detail: "Receiving end does not exist.",
     });
+    // Reported only after the repair was actually attempted and still failed.
+    expect(chrome.scripting.executeScript).toHaveBeenCalled();
   });
 
   it("reports tab-open-failed, distinct from delivery-failed, when opening the TabDump tab itself throws", async () => {
@@ -717,7 +733,7 @@ describe("the dump does not depend on the popup surviving", () => {
     }
   });
 
-  it("reports delivery-failed (not a hang) when a newly created tab's content script never attaches — e.g. the TabDump server is unreachable", async () => {
+  it("reports content-script-missing (not a hang) when a newly created tab's content script never attaches — e.g. the TabDump server is unreachable", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
       if (query.url) return [];
@@ -736,12 +752,12 @@ describe("the dump does not depend on the popup surviving", () => {
 
     expect(await responsePromise).toMatchObject({
       ok: false,
-      reason: "delivery-failed",
+      reason: "content-script-missing",
       count: 1,
       detail: "Could not establish connection. Receiving end does not exist.",
     });
     await vi.waitFor(() => {
-      expect(sessionStore.tabdump_dump_state).toMatchObject({ status: "error", reason: "delivery-failed" });
+      expect(sessionStore.tabdump_dump_state).toMatchObject({ status: "error", reason: "content-script-missing" });
     });
   });
 
@@ -846,5 +862,184 @@ describe("TABDUMP_BROWSER_COMMAND dispatch", () => {
 
     expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://a.com", active: true });
     expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+});
+
+// The exact production failure this suite exists to keep fixed:
+//
+//   "TabDump didn't respond in that tab.
+//    Could not establish connection. Receiving end does not exist."
+//
+// Reported from a second computer, on a fresh install, against the real
+// tabsdump.vercel.app package. That package was current and its manifest did
+// match the production origin; what was missing was the receiver itself.
+// Chrome injects a manifest-declared content script only as a page loads, so
+// the TabDump tab a new user already has open when they follow onboarding's
+// last step ("Return to TabDump and click the TabDump extension") has none in
+// it — and no number of retries can put one there.
+//
+// Every test here drives chrome.tabs.sendMessage to reject with Chrome's
+// verbatim wording, and asserts the failure is recognised, repaired, and
+// never rounded up into a success.
+describe("recovering a tab whose content script was never injected", () => {
+  /**
+   * A tab with no receiver in it until the content script is injected, at
+   * which point delivery starts working — exactly how Chrome behaves for a
+   * tab that predates the extension's installation.
+   */
+  function tabWithNoReceiverUntilInjected({ injectable = true } = {}) {
+    const injected = new Set();
+
+    chrome.tabs.sendMessage.mockImplementation(async (tabId, message) => {
+      if (!injected.has(tabId)) {
+        throw new Error("Could not establish connection. Receiving end does not exist.");
+      }
+      if (message?.type !== MSG_TABDUMP_IMPORT) return undefined;
+      return { ok: true, accepted: message.payload.tabs.length };
+    });
+
+    chrome.scripting.executeScript.mockImplementation(async ({ target }) => {
+      if (!injectable) throw new Error("Cannot access contents of the page.");
+      injected.add(target.tabId);
+      return [{ result: null }];
+    });
+
+    return injected;
+  }
+
+  /** The window the popup was opened over, plus one already-open TabDump tab. */
+  function oneOpenTabDumpTab(dumpedUrl = "https://a.com") {
+    chrome.tabs.query.mockImplementation(async (query) => {
+      if (query.currentWindow) return [fakeTab({ id: 1, windowId: 10, url: dumpedUrl })];
+      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      return [];
+    });
+  }
+
+  it("injects the content script into the already-open tab and delivers there, instead of failing the dump", async () => {
+    oneOpenTabDumpTab();
+    tabWithNoReceiverUntilInjected();
+
+    const response = await dump(await getDumpTabsListener());
+
+    // Delivered into the tab the user was already looking at...
+    expect(response).toMatchObject({ ok: true, status: "done", count: 1, accepted: 1, focusTabId: 42 });
+    // ...through a real ack, after a repair that actually happened...
+    expect(chrome.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 42 },
+      files: [CONTENT_SCRIPT_FILE],
+    });
+    // ...and without a second TabDump tab appearing out of nowhere.
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it("injects the manifest's own content-script path, so the repair cannot drift from what Chrome registers", () => {
+    const manifest = JSON.parse(readFileSync(path.join(EXTENSION_DIR, "manifest.json"), "utf8"));
+    expect(manifest.content_scripts[0].js).toEqual([CONTENT_SCRIPT_FILE]);
+    expect(existsSync(path.join(EXTENSION_DIR, CONTENT_SCRIPT_FILE))).toBe(true);
+    // The injection API is unavailable without this permission, which would
+    // turn the repair below into a silent no-op.
+    expect(manifest.permissions).toContain("scripting");
+  });
+
+  it("falls back to a fresh tab when the existing tab cannot be injected into, and delivers there", async () => {
+    oneOpenTabDumpTab();
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
+
+    // The pre-existing tab refuses injection; the freshly created one has a
+    // content script from the moment it loads, as document_start guarantees.
+    chrome.scripting.executeScript.mockRejectedValue(new Error("Cannot access contents of the page."));
+    chrome.tabs.sendMessage.mockImplementation(async (tabId, message) => {
+      if (tabId !== 99) throw new Error("Could not establish connection. Receiving end does not exist.");
+      if (message?.type !== MSG_TABDUMP_IMPORT) return undefined;
+      return { ok: true, accepted: message.payload.tabs.length };
+    });
+
+    const responsePromise = dump(await getDumpTabsListener());
+    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
+    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
+
+    expect(await responsePromise).toMatchObject({ ok: true, status: "done", accepted: 1, focusTabId: 99 });
+  });
+
+  it("never reports success when neither the injected tab nor a fresh one can receive the import", async () => {
+    oneOpenTabDumpTab();
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
+    tabWithNoReceiverUntilInjected({ injectable: false });
+
+    const responsePromise = dump(await getDumpTabsListener());
+    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
+    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
+    const response = await responsePromise;
+
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe("error");
+    expect(response.reason).toBe("content-script-missing");
+    expect(response.accepted).toBeUndefined();
+    // The persisted record a reopened popup recovers must agree — a failure
+    // that exists only in the sendResponse channel is a silent failure to
+    // anyone whose popup closed before it arrived.
+    await vi.waitFor(() => {
+      expect(sessionStore.tabdump_dump_state).toMatchObject({
+        status: "error",
+        ok: false,
+        reason: "content-script-missing",
+      });
+    });
+  });
+
+  it("keeps 'no receiver' distinct from 'a receiver that answered and said no'", async () => {
+    oneOpenTabDumpTab();
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
+    // A content script IS present here; the page behind it never became
+    // ready. Injecting another copy would fix nothing, so the repair must not
+    // fire and the reason must not be content-script-missing.
+    chrome.tabs.sendMessage.mockResolvedValue({ ok: false, reason: "page-not-ready" });
+
+    const responsePromise = dump(await getDumpTabsListener());
+    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
+    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
+
+    expect(await responsePromise).toMatchObject({ ok: false, reason: "page-not-ready" });
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake a closed message port for a missing receiver", async () => {
+    oneOpenTabDumpTab();
+    chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
+    // A receiver existed and then went away. Re-injecting would not bring the
+    // page back, so this stays a plain delivery failure.
+    chrome.tabs.sendMessage.mockRejectedValue(
+      new Error("The message port closed before a response was received.")
+    );
+
+    const responsePromise = dump(await getDumpTabsListener());
+    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
+    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
+
+    expect(await responsePromise).toMatchObject({ ok: false, reason: "delivery-failed" });
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("logs the delivery target as an origin and a tab id, never the page's url", async () => {
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      oneOpenTabDumpTab("https://private.example/secret-doc");
+      tabWithNoReceiverUntilInjected();
+
+      await dump(await getDumpTabsListener());
+
+      const sendLines = logged.mock.calls.filter(([stage]) => stage === "[TabDump] send-message");
+      expect(sendLines.length).toBeGreaterThan(0);
+      expect(sendLines[0][1]).toMatchObject({ tabId: 42, windowId: 20, origin: TABDUMP_ORIGIN, attempt: 1 });
+
+      // The diagnostic must stay a diagnostic, not a record of what the user
+      // has open: no dumped tab's url may appear anywhere in the log.
+      const everythingLogged = JSON.stringify(logged.mock.calls);
+      expect(everythingLogged).not.toContain("private.example");
+      expect(everythingLogged).not.toContain("secret-doc");
+    } finally {
+      logged.mockRestore();
+    }
   });
 });

@@ -71,6 +71,12 @@ function deliverToContentScript(message: unknown) {
 
 beforeEach(() => {
   window.localStorage.clear()
+  // Every test here is a fresh tab. content-script.js marks its isolated
+  // world once so a chrome.scripting repair injection into a tab that already
+  // has a copy stays inert, but jsdom reuses one window across the file — so
+  // without clearing the mark, every test after the first would boot an
+  // intentionally dead content script.
+  delete (window as { __tabdumpBridgeRegistered?: boolean }).__tabdumpBridgeRegistered
   allListeners = []
   contentScriptListeners = []
   sessionStore = {}
@@ -110,6 +116,10 @@ beforeEach(() => {
       },
     },
     windows: { update: vi.fn(async () => ({})) },
+    // Present so background.js's missing-receiver repair is reachable here
+    // exactly as it is in Chrome. This pipeline delivers through a live
+    // content script, so it should never actually need to fire.
+    scripting: { executeScript: vi.fn(async () => [{ result: null }]) },
     storage: {
       session: {
         get: vi.fn(async (key: string) => ({ [key]: sessionStore[key] })),

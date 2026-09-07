@@ -21,6 +21,46 @@ const CHECK_IMPORTED_TIMEOUT_MS = 1500;
 // arithmetic reads the canonical value from config.js.
 const IMPORT_ACK_TIMEOUT_MS = 8000;
 
+// Single-prefixed diagnostics for the one question a cross-machine dump
+// failure always turns on: is this receiver actually here? Chrome reports a
+// missing content script only as "Could not establish connection. Receiving
+// end does not exist." on the *sender* side, which cannot tell "never
+// injected" apart from "injected, then crashed before registering". These two
+// lines, read from the page console, settle that immediately.
+//
+// Logs no url, title or page content — the diagnostic value is entirely in
+// whether the lines appear at all.
+function log(stage) {
+  console.log(`[TAB-DUMP-CONTENT] ${stage}`);
+}
+
+log("loaded");
+
+// Whether THIS copy of the script is the one that owns the listeners.
+//
+// background.js repairs a tab whose content script is missing by injecting
+// this same file with chrome.scripting.executeScript (see
+// ensureContentScriptInjected there). That injection shares the isolated
+// world with any manifest-declared copy, so a copy landing in a tab that
+// already has one must register nothing: two live listener sets would each
+// hold their own `pendingImport` and each answer background.js on the same
+// port, making which response wins a race rather than a fact.
+//
+// The flag is read once, before it is set, so the first copy through always
+// takes ownership and every later one is inert.
+const alreadyRegistered = window.__tabdumpBridgeRegistered === true;
+window.__tabdumpBridgeRegistered = true;
+
+/** Registers a background→content-script listener, unless this copy is a duplicate. */
+function onExtensionMessage(listener) {
+  if (!alreadyRegistered) chrome.runtime.onMessage.addListener(listener);
+}
+
+/** Registers a page→content-script listener, unless this copy is a duplicate. */
+function onPageMessage(listener) {
+  if (!alreadyRegistered) window.addEventListener("message", listener);
+}
+
 // Whether the page has told us it can ingest an import (see
 // src/hooks/use-extension-import.ts, which posts MSG_TABDUMP_PAGE_READY from
 // the same effect that attaches its `message` listener). A page reload tears
@@ -73,7 +113,7 @@ function postImportToPage(importId, payload) {
  * merely "a content script was attached", which is the distinction the whole
  * cross-machine dump failure turned on.
  */
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+onExtensionMessage((message, _sender, sendResponse) => {
   if (message?.type !== MSG_TABDUMP_IMPORT) return undefined;
 
   const importId = typeof message.importId === "string" ? message.importId : `${Date.now()}-${Math.random()}`;
@@ -93,7 +133,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 // The page's ack — the only thing that turns a delivery into a success.
-window.addEventListener("message", (event) => {
+onPageMessage((event) => {
   if (event.origin !== window.location.origin) return;
   if (event.source !== window) return;
 
@@ -110,7 +150,7 @@ window.addEventListener("message", (event) => {
 // while React was still hydrating is delivered again the instant a listener
 // exists, instead of having been dropped into a document nobody was
 // listening to.
-window.addEventListener("message", (event) => {
+onPageMessage((event) => {
   if (event.origin !== window.location.origin) return;
   if (event.source !== window) return;
 
@@ -127,7 +167,7 @@ window.addEventListener("message", (event) => {
 // Bounded by a timeout so a page that hasn't mounted that responder yet (or
 // never will) can't hang the popup open indefinitely — the popup treats a
 // timeout exactly like "couldn't determine" and falls back gracefully.
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+onExtensionMessage((message, _sender, sendResponse) => {
   if (message?.type !== MSG_CHECK_IMPORTED) return undefined;
 
   const requestId = `${Date.now()}-${Math.random()}`;
@@ -173,7 +213,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // TABDUMP_IMPORT/CHECK_IMPORTED relays above. It does not itself interpret
 // `action`/`args` at all; background.js's allowlist + validators are the
 // only place that decides what's allowed to run.
-window.addEventListener("message", (event) => {
+onPageMessage((event) => {
   if (event.origin !== window.location.origin) return;
   if (event.source !== window) return;
 
@@ -203,7 +243,7 @@ window.addEventListener("message", (event) => {
 // background trip) since the content script only runs when the extension is
 // installed and enabled — its mere presence here IS the "connected" signal.
 // See src/lib/browser/bridge.ts for the page-side ping loop.
-window.addEventListener("message", (event) => {
+onPageMessage((event) => {
   if (event.origin !== window.location.origin) return;
   if (event.source !== window) return;
 
@@ -216,6 +256,8 @@ window.addEventListener("message", (event) => {
     window.location.origin
   );
 });
+
+log(alreadyRegistered ? "duplicate-copy-inert" : "message-listener-ready");
 
 // Also announce readiness proactively as soon as this script attaches, so a
 // page whose connection-indicator effect mounted first doesn't have to wait

@@ -178,6 +178,18 @@ function describeDumpFailure(response) {
       return { message: "Couldn't open or find the TabDump tab.", detail: response.detail };
     case "tab-load-timeout":
       return { message: "TabDump didn't finish loading. Check your connection and try again.", detail: response.detail };
+    // Distinct from every other delivery failure, and the only one with a
+    // cause the user can see: Chrome injects a manifest-declared content
+    // script only as a page loads, so a TabDump tab that was already open
+    // when the extension was installed or reloaded has no receiver in it.
+    // background.js now injects one itself before reporting this, so reaching
+    // this copy means even that was refused — which a reload does fix, and
+    // "TabDump didn't respond" gave no hint of.
+    case "content-script-missing":
+      return {
+        message: "TabDump's extension script isn't running in that tab. Reload the TabDump page and try again.",
+        detail: response.detail,
+      };
     case "delivery-failed":
       return {
         message: "TabDump didn't respond in that tab. Reload the TabDump page and try again.",
