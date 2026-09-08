@@ -25,6 +25,8 @@
  * second physics system.
  */
 
+import { MAX_GRAPH_COORD } from "./types";
+
 /** One draggable boundary square. Mutated in place by `stepBoundaryBodies`. */
 export type BoundaryBody = {
   id: string;
@@ -149,12 +151,29 @@ const RESOLUTION_PASSES = 2;
  * its members' positions, the deltas applied to them — is NaN too, and a NaN
  * position is a square that is gone from the picture with no way back.
  */
-export const BOUNDARY_MAX_COORD = 1e7;
+export const BOUNDARY_MAX_COORD = MAX_GRAPH_COORD;
 
 /** NaN-safe: a non-finite speed is not "very fast", it is broken, so it becomes 0. */
 function clampSpeed(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.max(-BOUNDARY_MAX_SPEED, Math.min(BOUNDARY_MAX_SPEED, v));
+}
+
+/**
+ * A half-extent that is negative, NaN or beyond the world's own coordinate
+ * ceiling is not a size, so it never becomes one.
+ *
+ * This is a NUMERIC floor under the geometry, not the thing that keeps boxes
+ * a sensible size — what does that is the layout: a square is its members'
+ * bounding box, its members are confined to their cluster's disc, and the
+ * boundary layer may only move whole discs (see boundary-frames.ts). Nothing
+ * in normal operation comes anywhere near this ceiling; it exists so that a
+ * coordinate that has gone bad by some route nobody anticipated cannot be
+ * multiplied into an Infinity and from there NaN out every member of the box.
+ */
+function clampHalfExtent(v: number): number {
+  if (!Number.isFinite(v) || v < 0) return 0;
+  return Math.min(v, BOUNDARY_MAX_COORD);
 }
 
 /**
@@ -170,12 +189,14 @@ function clampSpeed(v: number): number {
 export function sanitizeBody(body: BoundaryBody): boolean {
   let repaired = false;
 
-  if (!Number.isFinite(body.halfWidth) || body.halfWidth < 0) {
-    body.halfWidth = 0;
+  const halfWidth = clampHalfExtent(body.halfWidth);
+  if (halfWidth !== body.halfWidth) {
+    body.halfWidth = halfWidth;
     repaired = true;
   }
-  if (!Number.isFinite(body.halfHeight) || body.halfHeight < 0) {
-    body.halfHeight = 0;
+  const halfHeight = clampHalfExtent(body.halfHeight);
+  if (halfHeight !== body.halfHeight) {
+    body.halfHeight = halfHeight;
     repaired = true;
   }
 

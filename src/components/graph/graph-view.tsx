@@ -310,6 +310,38 @@ export function GraphView({
     })
   }
 
+  /**
+   * Writes back offsets the engine had to repair on the way in.
+   *
+   * Saved state from the build that displaced tabs one at a time holds a
+   * different offset for different members of the same cluster, which is the
+   * record of a cluster torn in half (see boundary-frames.ts). The engine
+   * re-unites them in memory on every load; this is what stops that being
+   * necessary a second time, so the saved blob converges on a coherent state
+   * instead of carrying the corruption forever.
+   *
+   * A MERGE, never a replace: only the tabs actually repaired appear here.
+   * Tabs filtered out of the current view (Local mode, a workspace filter)
+   * still exist and keep whatever they had, and positions, manual connections
+   * and settings are not touched at all.
+   */
+  function handleBoundaryOffsetsNormalized(offsets: Record<string, { x: number; y: number }>) {
+    const ids = Object.keys(offsets)
+    if (ids.length === 0) return
+    setGraphState((prev) => {
+      const boundaryOffsets = { ...prev.boundaryOffsets }
+      let changed = false
+      for (const id of ids) {
+        const next = offsets[id]
+        const current = boundaryOffsets[id]
+        if (current && current.x === next.x && current.y === next.y) continue
+        boundaryOffsets[id] = next
+        changed = true
+      }
+      return changed ? { ...prev, boundaryOffsets } : prev
+    })
+  }
+
   function handleSelectResult(id: string) {
     setQuery("")
     updateSettings({ selectedTabId: id })
@@ -694,6 +726,7 @@ export function GraphView({
           }}
           onNodeMoved={handleNodeMoved}
           onBoundaryMembersMoved={handleBoundaryMembersMoved}
+          onBoundaryOffsetsNormalized={handleBoundaryOffsetsNormalized}
           onHoverChange={setHover}
           onSelectedNodeScreenChange={setSelectedNodeScreen}
         />

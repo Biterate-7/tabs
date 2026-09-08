@@ -182,32 +182,51 @@ export function hitTestBoundaryRects(
   y: number,
   tolerance = 0
 ): string | null {
-  let containedId: string | null = null;
-  let containedArea = Infinity;
-  let nearId: string | null = null;
-  let nearDistance = Infinity;
+  return rankBoundaryRectsAt(tiers, x, y, tolerance)[0] ?? null;
+}
+
+/**
+ * The same rule, as the whole ranked list rather than just its winner:
+ * containing squares innermost-first, then any within `tolerance`,
+ * nearest-border-first.
+ *
+ * Callers that must be able to look PAST the top answer need this. A square
+ * whose members are a slice of somebody else's cluster has no physics body
+ * (see engine.ts's setBoundaryBodies) and so cannot be picked up; it is a
+ * region marker, and like any non-interactive layer it must not swallow the
+ * press meant for the handle it happens to sit inside. Walking outward from
+ * the innermost hit is how graph-canvas finds that handle — and because both
+ * shapes come from this one function, what a press picks up can never be
+ * ranked differently from what a click selects.
+ */
+export function rankBoundaryRectsAt(
+  tiers: readonly ReadonlyMap<string, CollectionBoundaryRect>[],
+  x: number,
+  y: number,
+  tolerance = 0
+): string[] {
+  const contained: { id: string; area: number }[] = [];
+  const near: { id: string; distance: number }[] = [];
 
   for (const rects of tiers) {
     for (const [id, rect] of rects) {
       if (pointInRect(x, y, rect)) {
-        const area = rect.width * rect.height;
-        if (area < containedArea) {
-          containedArea = area;
-          containedId = id;
-        }
+        contained.push({ id, area: rect.width * rect.height });
         continue;
       }
       if (tolerance <= 0) continue;
       const distance = distanceToRect(x, y, rect);
       if (distance > tolerance) continue;
-      if (distance < nearDistance) {
-        nearDistance = distance;
-        nearId = id;
-      }
+      near.push({ id, distance });
     }
   }
 
-  return containedId ?? nearId;
+  // Containment is ranked ahead of tolerance in full, not just at the top:
+  // a cushion must never take a press that landed inside ANY real square,
+  // however deep the caller has to walk to find one it can act on.
+  contained.sort((a, b) => a.area - b.area);
+  near.sort((a, b) => a.distance - b.distance);
+  return [...contained.map((hit) => hit.id), ...near.map((hit) => hit.id)];
 }
 
 export function rectsOverlap(a: CollectionBoundaryRect, b: CollectionBoundaryRect): boolean {

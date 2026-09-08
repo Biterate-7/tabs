@@ -2,6 +2,7 @@ import {
   DEFAULT_CAMERA,
   DEFAULT_CONNECTION_FILTERS,
   DEFAULT_GRAPH_SETTINGS,
+  MAX_GRAPH_COORD,
   type ConnectionFilters,
   type GraphDepth,
   type GraphPersistedState,
@@ -15,13 +16,25 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/**
+ * Saved world coordinates — positions and boundary offsets alike.
+ *
+ * Finiteness alone is not enough: a saved 1e300 is finite, survives the round
+ * trip, and comes back as a node the layout has to drag in from beyond the
+ * world before anything looks right — and, on the way, as a cluster whose
+ * bounding box spans from the origin to wherever that node landed. Anything
+ * past the world's own ceiling is not a position that was ever legitimately
+ * written, so it is dropped here rather than seeded into the simulation.
+ */
 function sanitizePositions(value: unknown): Record<string, { x: number; y: number }> {
   if (!value || typeof value !== "object") return {};
   const out: Record<string, { x: number; y: number }> = {};
   for (const [id, pos] of Object.entries(value as Record<string, unknown>)) {
     if (!pos || typeof pos !== "object") continue;
     const { x, y } = pos as Record<string, unknown>;
-    if (isFiniteNumber(x) && isFiniteNumber(y)) out[id] = { x, y };
+    if (!isFiniteNumber(x) || !isFiniteNumber(y)) continue;
+    if (Math.abs(x) > MAX_GRAPH_COORD || Math.abs(y) > MAX_GRAPH_COORD) continue;
+    out[id] = { x, y };
   }
   return out;
 }

@@ -249,6 +249,30 @@ export type ClusterAnchorAssignment = {
    * builds an assignment by hand keeps working unchanged.
    */
   confineTo?: ClusterRegion | null;
+  /**
+   * Which cluster's disc `confineTo` IS — the tab's *territory* id.
+   *
+   * Two tabs sharing this id share one piece of ground, and the boundary
+   * layer may only ever move that ground as a whole (see engine.ts's
+   * boundary frames). Without an id the engine can only see a per-tab disc
+   * and has no way to tell "these five tabs are one territory" from "these
+   * five tabs happen to have equal numbers in them", which is exactly what
+   * let a boundary square carry an arbitrary SUBSET of a cluster away from
+   * the rest of it and stretch the cluster's box across the gap.
+   */
+  confineToId?: string | null;
+  /**
+   * For a tab confined to a subcategory's sub-disc: its parent category's
+   * confinement disc, and that disc's own territory id. The sub-disc is
+   * nested inside it by construction (see computeSubcategoryRegion), and the
+   * engine keeps it nested when the subcategory is dragged — which is what
+   * bounds the parent category's boundary box to its own territory.
+   *
+   * Null for a tab confined directly to its category's disc (nothing
+   * further out to stay inside of).
+   */
+  confineWithin?: ClusterRegion | null;
+  confineWithinId?: string | null;
 };
 
 /** Small, pure, deterministic hash — used only to jitter anchor placement so it doesn't read as a perfect pie chart, never for anything security-sensitive. */
@@ -305,7 +329,8 @@ function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnch
 
     for (const tabId of category.totalTabIds) {
       const path = tree.clusterPathOfTab.get(tabId);
-      const subRegion = path && path.length > 1 ? subcategoryRegions.get(path[1]) : undefined;
+      const subId = path && path.length > 1 ? path[1] : null;
+      const subRegion = subId ? subcategoryRegions.get(subId) : undefined;
       result.set(tabId, {
         categoryAnchor: { x: region.x, y: region.y },
         subcategoryAnchor: subRegion ? { x: subRegion.x, y: subRegion.y } : null,
@@ -313,6 +338,9 @@ function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnch
         // which sits wholly inside its parent's — so a subcategory's boundary
         // box nests inside its category's instead of merely overlapping it.
         confineTo: subRegion ?? confined,
+        confineToId: subRegion && subId ? subId : category.id,
+        confineWithin: subRegion ? confined : null,
+        confineWithinId: subRegion ? category.id : null,
       });
     }
   }
@@ -356,7 +384,14 @@ function computeRingClusterAnchors(tree: ClusterTree): Map<string, ClusterAnchor
   for (const [tabId, path] of tree.clusterPathOfTab) {
     const categoryAnchor = anchors.get(path[0]) ?? null;
     const subcategoryAnchor = path.length > 1 ? (anchors.get(path[1]) ?? null) : null;
-    result.set(tabId, { categoryAnchor, subcategoryAnchor, confineTo: null });
+    result.set(tabId, {
+      categoryAnchor,
+      subcategoryAnchor,
+      confineTo: null,
+      confineToId: null,
+      confineWithin: null,
+      confineWithinId: null,
+    });
   }
   return result;
 }
