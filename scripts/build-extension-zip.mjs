@@ -98,11 +98,18 @@ const ORIGIN_SUBSTITUTED_FILES = new Set([
   path.join("src", "config.js"),
 ]);
 
+// Any extension source whose name marks it as a test, in any extension the
+// repo might grow into (.test.js today, but .test.mjs/.test.ts/.test.tsx are
+// all one `npm i` away). Matched on the pattern rather than one hardcoded
+// suffix so a future test file can't quietly ship to users inside the
+// downloadable extension.
+const TEST_FILE_PATTERN = /\.(test|spec)\.[cm]?[jt]sx?$/;
+
 function isExcluded(relativePath) {
   const parts = relativePath.split(path.sep);
   if (parts.some((part) => EXCLUDED_DIRS.has(part))) return true;
   if (EXCLUDED_FILES.has(parts[parts.length - 1])) return true;
-  if (relativePath.endsWith(".test.js")) return true;
+  if (TEST_FILE_PATTERN.test(relativePath)) return true;
   return false;
 }
 

@@ -1,8 +1,8 @@
-// Rasterizes the TabDump logo (src/app/icon.svg — the same black-background,
-// white-dumpster mark used for the web app's favicon) into the toolbar icon
-// PNGs Chrome requires (extension icons must be bitmaps; MV3 has no SVG
-// support here). Re-run with `node extension/scripts/generate-icons.mjs` any
-// time the source SVG changes.
+// Rasterizes the TabDump logo (src/app/icon.svg — the same folder mark used
+// for the web app's favicon) into the toolbar icon PNGs Chrome requires
+// (extension icons must be bitmaps; MV3 has no SVG support here). Re-run
+// with `node extension/scripts/generate-icons.mjs` any time the source SVG
+// changes.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";

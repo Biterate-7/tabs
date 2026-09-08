@@ -15,12 +15,53 @@ pipeline. No build step — plain JavaScript, loaded unpacked.
 ## How it works
 
 ```
-popup click → background.js collects + filters tabs
-            → finds or opens the TabDump tab
-            → content-script.js relays the payload into the page
+popup click → background.js collects + filters the named window's tabs
+            → finds an app-route TabDump tab, or opens one
+            → content-script.js posts the payload into the page AND HOLDS
+              THE MESSAGE CHANNEL OPEN
             → src/hooks/use-extension-import.ts feeds the existing
-              parse/categorize/dedupe pipeline
+              parse/categorize/dedupe pipeline, then ACKS with the number
+              of tabs it actually accepted
+            → only that ack completes the delivery; the popup reports it
+popup renders the result → THEN asks background.js to focus the TabDump tab
 ```
+
+Three properties of that flow are load-bearing, each fixing a way the dump
+used to fail silently on a machine that wasn't the developer's:
+
+**Delivery means ingestion, not transport.** `chrome.tabs.sendMessage`
+resolving only ever proved a *content script* was attached. The React app
+behind it attaches its `message` listener strictly after the page's `load`
+event — measured at 1–105ms after `loadEventEnd` against a production build
+over localhost — while background.js delivers at exactly `load` (that's what
+`status: "complete"` means). So on every freshly opened tab the payload was
+posted into a document with nothing listening, was lost, and the dump
+reported success anyway. A machine that already had a warm TabDump tab open
+reused it and never hit this; a fresh install always did. The content script
+now holds the batch until the page announces `TABDUMP_PAGE_READY` and acks
+it, so ordering stops mattering, and a page that never becomes ready
+produces a real error instead of a phantom success.
+
+**Only a route that mounts the app can receive a dump.** `/privacy`,
+`/terms` and `/cookies` are served from the same origin, so they match
+`content_scripts`, `host_permissions` and `chrome.tabs.query`'s url filter
+exactly like the app does — but they never mount `AppShell`. background.js
+prefers an app-route tab and opens one when there isn't any; the ack is the
+backstop if that preference is ever wrong.
+
+**Focus belongs to the popup.** Chrome dismisses an open action popup the
+instant the foreground tab changes, so background.js activating the TabDump
+tab at the end of a dump destroyed the popup before it could paint the
+result — the user saw "Dumping tabs…", then nothing, even when the dump had
+worked. The popup now renders first and requests focus (`TABDUMP_FOCUS`)
+on its way out.
+
+The dump never depends on the popup surviving: every phase is written to
+`chrome.storage.session`, so a popup that Chrome closed mid-dump can be
+reopened to see the live phase or the final outcome. A `running` record found
+at service-worker startup is an orphan by definition (a fresh worker has no
+dump in flight) and is reconciled to `interrupted` rather than left to strand
+the next popup.
 
 Opening the popup also runs a second, read-only round trip so it can show
 "31 new · 16 already imported" instead of a raw count, and so "Dump" only

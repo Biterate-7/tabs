@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "TabDump",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dump your open browser tabs straight into TabDump.",
+  "minimum_chrome_version": "102",
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "Dump tabs into TabDump",
@@ -17,13 +18,13 @@
     "service_worker": "background/background.js",
     "type": "module"
   },
-  "permissions": ["tabs", "history", "storage"],
+  "permissions": ["tabs", "history", "storage", "scripting"],
   "host_permissions": ["http://localhost:3000/*"],
   "content_scripts": [
     {
       "matches": ["http://localhost:3000/*"],
       "js": ["content/content-script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "icons": {

@@ -63,3 +63,27 @@ if (typeof Element !== "undefined" && !Element.prototype.setPointerCapture) {
   Element.prototype.releasePointerCapture = () => {};
   Element.prototype.hasPointerCapture = () => false;
 }
+
+// jsdom implements window.postMessage, but not faithfully: it delivers the
+// event with `origin: ""` and `source: null`, where a real browser sets them
+// to the posting window's origin and the window itself. Every one of the
+// extension bridge's listeners (content-script.js, useExtensionImport,
+// useExtensionWorkspaceQuery, lib/browser/bridge.ts) checks exactly those two
+// fields before trusting a message — that check is the bridge's only sender
+// authentication — so without this shim any test that drives the bridge
+// through its real API silently receives nothing.
+//
+// Delivery stays asynchronous, via a task rather than a microtask, because
+// the ordering between "a payload is posted" and "a listener is attached" is
+// the whole subject of the import-handshake tests; making it synchronous
+// would fake away the race they exist to pin down.
+if (typeof window !== "undefined") {
+  const realOrigin = window.location.origin;
+  window.postMessage = function postMessage(message: unknown) {
+    setTimeout(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: message, origin: realOrigin, source: window })
+      );
+    }, 0);
+  } as typeof window.postMessage;
+}

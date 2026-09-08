@@ -41,14 +41,30 @@ export function isPrivilegedUrl(url) {
  * actually only dump the new ones, through the same payload-building path
  * every other dump already uses, rather than a second filtering step
  * bolted on elsewhere.
+ *
+ * Returns the skip counts alongside `tabs`, split by *why* each tab was
+ * skipped, because those two reasons mean opposite things to the user: an
+ * excluded tab is one they deliberately aren't re-dumping, whereas a
+ * restricted one (chrome://, the Web Store, devtools) is a tab Chrome simply
+ * won't let the extension read and that therefore silently won't arrive.
+ * Reporting the second is what stops "dumped 12 tabs" being a half-truth
+ * when the window actually held 15.
  */
 export function buildImportPayload(chromeTabs, excludeUrls) {
   const exclude = excludeUrls ? new Set(excludeUrls) : null;
   const tabs = [];
+  let skippedRestricted = 0;
+  let skippedAlreadyImported = 0;
 
   for (const tab of chromeTabs ?? []) {
-    if (!tab || !tab.url || isPrivilegedUrl(tab.url)) continue;
-    if (exclude && exclude.has(tab.url)) continue;
+    if (!tab || !tab.url || isPrivilegedUrl(tab.url)) {
+      skippedRestricted += 1;
+      continue;
+    }
+    if (exclude && exclude.has(tab.url)) {
+      skippedAlreadyImported += 1;
+      continue;
+    }
 
     // A tab still mid-navigation (status "loading") hasn't rendered its real
     // <title> yet — chrome.tabs.Tab.title at that moment is a placeholder,
@@ -69,5 +85,5 @@ export function buildImportPayload(chromeTabs, excludeUrls) {
     });
   }
 
-  return { tabs };
+  return { tabs, skippedRestricted, skippedAlreadyImported };
 }

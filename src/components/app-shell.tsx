@@ -485,10 +485,20 @@ export function AppShell() {
     setView("workspace")
   }
 
-  function handleBrowserImport(entries: BrowserImportEntry[]) {
-    if (!store) return
+  /**
+   * Returns how many tabs were actually taken, which the extension acks on
+   * and reports to the user — see useExtensionImport. A silent `return` here
+   * used to become a dump the popup happily called a success, so every exit
+   * path has to answer with a real number.
+   */
+  function handleBrowserImport(entries: BrowserImportEntry[]): number {
+    // Defense in depth: useExtensionImport only forwards a batch once
+    // `extensionCanIngest` below is true, which already implies a hydrated
+    // store. Answering 0 (rather than nothing) keeps even an impossible
+    // ordering honest instead of silently successful.
+    if (!store) return 0
     const incoming = buildTabsFromBrowserImport(entries)
-    if (incoming.length === 0) return
+    if (incoming.length === 0) return 0
 
     const current = getCurrentWorkspace(store)
     undoSnapshotRef.current = store
@@ -504,9 +514,17 @@ export function AppShell() {
     const nextWorkspace = getCurrentWorkspace(synced)
     const incomingIds = new Set(incoming.map((t) => t.id))
     organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => incomingIds.has(t.id)), nextWorkspace.sections ?? [])
+    return incoming.length
   }
 
-  useExtensionImport(handleBrowserImport)
+  // Gates the extension's import handshake on this shell being able to
+  // actually take a batch. The extension delivers the moment Chrome reports
+  // the tab `complete`, which is measurably *before* React finishes
+  // hydrating — so without this signal a dump landing on a freshly opened
+  // tab was posted into a document with nothing listening and silently lost.
+  // The content script holds the payload until this flips true.
+  const extensionCanIngest = hydrated && store !== null && currentWorkspace !== null
+  useExtensionImport(handleBrowserImport, extensionCanIngest)
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [])
 
   function handleClear() {

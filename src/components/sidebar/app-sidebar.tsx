@@ -1,6 +1,7 @@
 "use client"
 
 import { History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
+import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
@@ -99,7 +100,12 @@ export function AppSidebar({
         style={!collapsed || mobileOpen ? { width: "var(--tabdump-sidebar-width)" } : undefined}
       >
         <div className={cn("flex items-center gap-2 px-3 py-3", showLabels ? "justify-between" : "justify-center")}>
-          {showLabels && <p className="text-body font-semibold tracking-tight text-foreground">TabDump</p>}
+          {showLabels && (
+            <span className="flex items-center gap-2 text-foreground">
+              <BrandMark />
+              <p className="text-body font-semibold tracking-tight">TabDump</p>
+            </span>
+          )}
           <IconButton
             aria-label={mobileOpen ? "Close sidebar" : collapsed ? "Expand sidebar" : "Collapse sidebar"}
             onClick={() => (mobileOpen ? onMobileOpenChange(false) : onToggleCollapsed())}

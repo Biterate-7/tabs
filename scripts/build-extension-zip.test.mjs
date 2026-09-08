@@ -109,9 +109,32 @@ describe("build-extension-zip.mjs", () => {
   it("excludes test files, the packaging README, and the icon-generation script", () => {
     const names = entries.map((e) => e.name);
     for (const name of names) {
-      expect(name.endsWith(".test.js")).toBe(false);
+      // Any test-shaped name, not just .test.js: a future .test.mjs/.test.ts
+      // living next to the source it covers must not ship inside the
+      // extension users download.
+      expect(name).not.toMatch(/\.(test|spec)\.[cm]?[jt]sx?$/);
       expect(name).not.toBe("README.md");
       expect(name.startsWith("scripts/")).toBe(false);
+    }
+    // The one that exists today is genuinely on disk next to its source, so
+    // this asserts the exclusion is doing work rather than passing vacuously.
+    expect(existsSync(path.join(REPO_ROOT, "extension", "content", "content-script.test.js"))).toBe(true);
+    expect(names).not.toContain("content/content-script.test.js");
+  });
+
+  // Everything the popup's DOM lookups and the module graph need must be in
+  // the archive: popup.js resolves every element by id at load and throws
+  // outright if one is missing, and each of these modules is imported by
+  // path from another packaged file. A missing entry here is not a degraded
+  // extension, it is one that does nothing at all when clicked.
+  it("packages a popup whose element ids all exist in the packaged HTML", () => {
+    const html = entries.find((e) => e.name === "popup/popup.html").data.toString("utf8");
+    const js = entries.find((e) => e.name === "popup/popup.js").data.toString("utf8");
+    const requestedIds = [...js.matchAll(/getElementById\("([^"]+)"\)/g)].map((m) => m[1]);
+
+    expect(requestedIds.length).toBeGreaterThan(0);
+    for (const id of requestedIds) {
+      expect(html).toContain(`id="${id}"`);
     }
   });
 
@@ -124,6 +147,63 @@ describe("build-extension-zip.mjs", () => {
 
   it("refuses to build an empty ZIP if the extension source can't be found", () => {
     expect(entries.length).toBeGreaterThan(0);
+  });
+
+  // A content script that is registered but never packaged, or packaged
+  // under a path the manifest doesn't name, produces the single least
+  // diagnosable failure this extension has: Chrome's "Could not establish
+  // connection. Receiving end does not exist.", from a ZIP that installs
+  // cleanly and looks correct in chrome://extensions.
+  it("packages every file the content_scripts registration names", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    const names = entries.map((e) => e.name);
+
+    expect(manifest.content_scripts.length).toBeGreaterThan(0);
+    for (const registration of manifest.content_scripts) {
+      expect(registration.js.length).toBeGreaterThan(0);
+      for (const file of registration.js) {
+        expect(names, `manifest registers ${file}, which is not in the ZIP`).toContain(file);
+      }
+    }
+  });
+
+  // document_idle is explicitly documented as injecting anywhere between
+  // document_end and *immediately after* window.onload — i.e. it is allowed
+  // to land after the moment chrome.tabs.onUpdated reports `status:
+  // "complete"`, which is exactly when background.js delivers. On a warm
+  // machine the script won that race; on a cold one (fresh profile, uncached
+  // bundle, slower hardware — a first install, in other words) it lost, and
+  // the dump failed against a tab that had visibly finished loading.
+  // document_start injects before the page's own scripts, removing the race
+  // instead of widening the retry window around it.
+  it("registers the content script at document_start, so it is attached before a tab can report complete", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    for (const registration of manifest.content_scripts) {
+      expect(registration.run_at).toBe("document_start");
+    }
+  });
+
+  // Without this permission chrome.scripting.executeScript is simply absent,
+  // and background.js's repair for a tab that predates the extension's
+  // installation degrades to a no-op — the exact tab onboarding's last step
+  // tells every new user to dump into.
+  it("grants the scripting permission the missing-content-script repair depends on", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    expect(manifest.permissions).toContain("scripting");
+  });
+
+  // background.js injects CONTENT_SCRIPT_FILE by name. If that constant and
+  // the manifest's registration ever name different paths, the repair
+  // injects the wrong file (or nothing) and reports a second, differently
+  // worded failure instead of fixing the first.
+  it("keeps the packaged config's CONTENT_SCRIPT_FILE identical to the packaged manifest's content-script path", () => {
+    const manifest = JSON.parse(entries.find((e) => e.name === "manifest.json").data.toString("utf8"));
+    const config = entries.find((e) => e.name === "src/config.js").data.toString("utf8");
+    const declared = config.match(/CONTENT_SCRIPT_FILE = "([^"]+)"/)?.[1];
+
+    expect(declared).toBeTruthy();
+    expect(manifest.content_scripts[0].js).toContain(declared);
+    expect(entries.map((e) => e.name)).toContain(declared);
   });
 });
 

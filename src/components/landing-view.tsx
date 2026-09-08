@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { PanelLeftOpen } from "lucide-react"
 import { HeroBackground } from "@/components/hero-background"
 import { TabInput } from "@/components/tab-input"
@@ -135,6 +136,18 @@ export function LandingView({
             </div>
           </IntroReveal>
         </main>
+
+        <footer className="relative flex justify-center gap-x-5 gap-y-1 px-6 pb-8 text-body-sm text-tertiary">
+          <Link href="/privacy" className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            Privacy Policy
+          </Link>
+          <Link href="/terms" className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            Terms & Conditions
+          </Link>
+          <Link href="/cookies" className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            Cookie Policy
+          </Link>
+        </footer>
       </div>
   )
 

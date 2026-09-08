@@ -1,7 +1,9 @@
 import {
   MSG_DUMP_TABS,
   MSG_CHECK_IMPORTED,
+  MSG_FOCUS_TABDUMP,
   DUMP_STATE_KEY,
+  DUMP_PHASE,
   DUMP_RUNNING_STALE_MS,
   DUMP_RESULT_FRESH_MS,
 } from "../src/config.js";
@@ -15,21 +17,43 @@ const els = {
   error: document.getElementById("state-error"),
   tabCount: document.getElementById("tab-count"),
   importStatus: document.getElementById("import-status"),
+  dumpingMessage: document.getElementById("dumping-message"),
   successCount: document.getElementById("success-count"),
+  successDetail: document.getElementById("success-detail"),
   errorMessage: document.getElementById("error-message"),
   errorDetail: document.getElementById("error-detail"),
   preview: document.getElementById("tab-preview"),
   dumpButton: document.getElementById("dump-button"),
+  openButton: document.getElementById("open-button"),
   retryButton: document.getElementById("retry-button"),
 };
 
 const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error];
 const PREVIEW_LIMIT = 5;
 
+// How long a rendered success stays on screen before the popup focuses the
+// TabDump tab and closes itself. Focusing is what actually dismisses the
+// popup (Chrome closes an action popup as soon as the foreground tab
+// changes), so this is the window in which the user gets to read the result
+// — which is exactly what a background-initiated focus used to steal.
+const SUCCESS_DWELL_MS = 900;
+
+// The window this popup was opened over. Captured from the very tabs the
+// user is being shown a preview of, so the dump can name that exact window
+// instead of leaving the background service worker to infer a "current"
+// window it does not have one of — see background.js's windowQuery.
+let currentWindowId;
+
 // Populated once detectTabs() has learned which candidate urls are already
 // in the currently selected workspace (undefined until then, or if that
 // couldn't be determined at all — see checkAlreadyImported).
 let alreadyImportedUrls;
+
+// Where to send the user once they're done reading a result: set from
+// whichever dump outcome this popup ends up rendering, whether that came
+// back on this popup's own sendMessage or was recovered from storage after
+// an earlier popup closed.
+let focusTarget;
 
 function showState(state) {
   for (const el of ALL_STATES) el.hidden = el !== state;
@@ -106,6 +130,7 @@ async function detectTabs() {
   alreadyImportedUrls = undefined;
 
   const chromeTabs = await chrome.tabs.query({ currentWindow: true });
+  currentWindowId = chromeTabs.find((tab) => Number.isInteger(tab.windowId))?.windowId;
   const payload = buildImportPayload(chromeTabs);
 
   updateReadyUi(payload.tabs, undefined);
@@ -121,22 +146,68 @@ async function detectTabs() {
   updateReadyUi(payload.tabs, existingUrls);
 }
 
+// What the user sees while a dump is in flight, per background.js's
+// persisted phase. Concrete enough that a dump stuck on one of these is
+// diagnosable from the popup alone, without opening the service worker's
+// console.
+const DUMP_PHASE_LABEL = {
+  [DUMP_PHASE.QUERYING_TABS]: "Reading your open tabs…",
+  [DUMP_PHASE.RESOLVING_TAB]: "Opening TabDump…",
+  [DUMP_PHASE.DELIVERING]: "Handing your tabs to TabDump…",
+  [DUMP_PHASE.RETRYING_IN_NEW_TAB]: "The open TabDump tab didn't respond — retrying in a new one…",
+};
+
+function showDumping(phase) {
+  els.dumpingMessage.textContent = DUMP_PHASE_LABEL[phase] ?? "Dumping tabs…";
+  showState(els.dumping);
+}
+
 // Maps a failed MSG_DUMP_TABS response's `reason` to copy a user can act
 // on. Each reason corresponds to a distinct failure point in the pipeline
 // (see background.js's dumpTabs) so "it didn't work" reports can actually
-// be told apart: a stale/wrong TabDump tab that never got a content script
-// attached looks nothing like TabDump's own tab-open call failing outright.
+// be told apart: a same-origin page that can't mount the app looks nothing
+// like the TabDump origin being unreachable, which looks nothing like
+// TabDump's own tab-open call failing outright.
 function describeDumpFailure(response) {
   switch (response?.reason) {
     case "no-importable-tabs":
       return { message: "No importable tabs in this window." };
+    case "tab-query-failed":
+      return { message: "Chrome wouldn't let TabDump read this window's tabs.", detail: response.detail };
     case "tab-open-failed":
       return { message: "Couldn't open or find the TabDump tab.", detail: response.detail };
+    case "tab-load-timeout":
+      return { message: "TabDump didn't finish loading. Check your connection and try again.", detail: response.detail };
+    // Distinct from every other delivery failure, and the only one with a
+    // cause the user can see: Chrome injects a manifest-declared content
+    // script only as a page loads, so a TabDump tab that was already open
+    // when the extension was installed or reloaded has no receiver in it.
+    // background.js now injects one itself before reporting this, so reaching
+    // this copy means even that was refused — which a reload does fix, and
+    // "TabDump didn't respond" gave no hint of.
+    case "content-script-missing":
+      return {
+        message: "TabDump's extension script isn't running in that tab. Reload the TabDump page and try again.",
+        detail: response.detail,
+      };
     case "delivery-failed":
       return {
         message: "TabDump didn't respond in that tab. Reload the TabDump page and try again.",
         detail: response.detail,
       };
+    case "page-not-ready":
+    case "no-ack":
+      return {
+        message: "TabDump opened but never confirmed the import. Reload the TabDump page and try again.",
+        detail: response.detail,
+      };
+    case "nothing-imported":
+      return {
+        message: "TabDump received the tabs but couldn't import any of them.",
+        detail: response.detail,
+      };
+    case "interrupted":
+      return { message: "The previous dump was interrupted before it finished. Please try again." };
     case "already-running":
       return { message: "A dump is already in progress. Please wait for it to finish." };
     case "unexpected-error":
@@ -163,19 +234,100 @@ async function getPersistedDumpState() {
   }
 }
 
-// Renders a finished (done/error) dump-state record exactly like a direct
-// MSG_DUMP_TABS response would — used both by dumpTabs() below (the popup
-// that actually triggered the dump, when it survives to see the response)
-// and by watchForDumpCompletion() (a freshly reopened popup picking up a
-// dump that finished after its predecessor had already closed).
+/**
+ * Activates the TabDump tab a dump landed in. Sent from here rather than
+ * done by background.js at the end of the dump, because focusing a tab is
+ * what closes this popup — doing it from the background reliably destroyed
+ * the popup before it could render anything, which is exactly what "Dumping
+ * tabs…, then the popup vanished" looked like from the user's side.
+ *
+ * Best-effort: the tab may have been closed in the meantime. The dump
+ * already succeeded either way, so a failure here never becomes an error
+ * state.
+ */
+async function focusTabDump() {
+  if (!focusTarget || !Number.isInteger(focusTarget.tabId)) return;
+  try {
+    await chrome.runtime.sendMessage({ type: MSG_FOCUS_TABDUMP, payload: focusTarget });
+  } catch {
+    // Background worker unreachable (extension reloading). Nothing to do:
+    // the user still has the TabDump tab open, just not in front.
+  }
+}
+
+// Renders a finished dump-state record exactly like a direct MSG_DUMP_TABS
+// response would — used both by dumpTabs() below (the popup that actually
+// triggered the dump, when it survives to see the response) and by
+// watchForDumpCompletion() (a freshly reopened popup picking up a dump that
+// finished after its predecessor had already closed).
 function renderDumpOutcome(state) {
-  if (state.status === "done") {
-    els.successCount.textContent = String(state.count ?? 0);
-    showState(els.success);
-    setTimeout(() => window.close(), 900);
+  if (state.focusTabId !== undefined) {
+    focusTarget = { tabId: state.focusTabId, windowId: state.focusWindowId };
+  }
+
+  if (state.ok) {
+    finishWithSuccess(state);
   } else {
     showError(describeDumpFailure(state));
   }
+}
+
+/**
+ * Reports how many tabs actually landed, plus anything that didn't — a
+ * partial import and a clean one must never look identical, and neither may
+ * quietly hide the browser pages Chrome wouldn't let the extension read.
+ */
+function successDetail(state) {
+  const notes = [];
+  const attempted = state.count ?? 0;
+  const accepted = state.accepted ?? attempted;
+  if (accepted < attempted) notes.push(`${attempted - accepted} couldn't be read as a link`);
+  if (state.skippedRestricted) notes.push(`${state.skippedRestricted} browser page${state.skippedRestricted === 1 ? "" : "s"} skipped`);
+  if (state.skippedAlreadyImported) notes.push(`${state.skippedAlreadyImported} already imported`);
+  return notes.join(" · ");
+}
+
+function finishWithSuccess(state) {
+  els.successCount.textContent = String(state.accepted ?? state.count ?? 0);
+  const detail = successDetail(state);
+  els.successDetail.textContent = detail;
+  els.successDetail.hidden = !detail;
+  showState(els.success);
+  setTimeout(() => {
+    focusTabDump().finally(() => window.close());
+  }, SUCCESS_DWELL_MS);
+}
+
+/**
+ * Subscribes to changes to background.js's persisted dump record, calling
+ * `handler(state)` with each new value. Returns a detach function, or
+ * `undefined` when the API isn't available at all.
+ *
+ * Deliberately the TOP-LEVEL `chrome.storage.onChanged`, not
+ * `chrome.storage.session.onChanged`. A StorageArea's own onChanged passes
+ * its listener a single `changes` argument and no `areaName` (see MDN's
+ * storage.StorageArea.onChanged) — so a listener written against the
+ * two-argument `(changes, areaName)` signature sees `areaName === undefined`,
+ * filters out every event it is handed, and never fires at all in a real
+ * browser. It looks perfectly healthy under a test double that supplies the
+ * second argument anyway, which is exactly how this shipped: the popup's
+ * whole "reopen me to see how the dump ended" recovery path was inert, and a
+ * popup that Chrome closed mid-dump had no way back to the result. The
+ * top-level event genuinely does carry `areaName`, so filtering on it here
+ * is real.
+ */
+function onDumpStateChange(handler) {
+  const onChanged = chrome.storage?.onChanged;
+  if (!onChanged) return undefined;
+
+  function listener(changes, areaName) {
+    if (areaName !== "session") return;
+    const next = changes?.[DUMP_STATE_KEY]?.newValue;
+    if (next) handler(next);
+  }
+
+  onChanged.addListener(listener);
+  return () => onChanged.removeListener(listener);
 }
 
 // Watches for background.js to finish (or fail) a dump that was already
@@ -189,8 +341,19 @@ function renderDumpOutcome(state) {
 // MSG_DUMP_TABS response, e.g. from a double-click racing background.js's
 // own concurrency guard).
 function watchForDumpCompletion(referenceStartedAt) {
-  const session = chrome.storage?.session;
-  if (!session?.onChanged) {
+  let settled = false;
+
+  const detach = onDumpStateChange((state) => {
+    // Still running: keep waiting, but reflect whichever phase it just moved
+    // into so the user can see progress rather than a frozen message.
+    if (state.status === "running") {
+      showDumping(state.phase);
+      return;
+    }
+    finish(state);
+  });
+
+  if (!detach) {
     // No storage.onChanged support to lean on — the dump is still running
     // in the background either way, but this popup instance has no way to
     // learn when it finishes. Reflect that rather than hanging silently.
@@ -198,34 +361,22 @@ function watchForDumpCompletion(referenceStartedAt) {
     return;
   }
 
-  let settled = false;
-
   function finish(state) {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    session.onChanged.removeListener(onChanged);
+    detach();
     renderDumpOutcome(state);
   }
 
-  function onChanged(changes, areaName) {
-    if (areaName !== "session") return;
-    const change = changes[DUMP_STATE_KEY];
-    if (!change?.newValue || change.newValue.status === "running") return;
-    finish(change.newValue);
-  }
-
-  session.onChanged.addListener(onChanged);
-
   // Close the narrow race where the dump already finished (and wrote its
   // result) in the gap between this popup's earlier storage read and the
-  // addListener call just above — onChanged only fires for changes made
-  // *after* a listener is registered, so a completion landing in that gap
-  // would otherwise never be observed by this popup instance, leaving it
-  // stuck on "Dumping tabs…" even though the result is sitting right there
-  // in storage.
-  session.get(DUMP_STATE_KEY).then((data) => {
-    const current = data?.[DUMP_STATE_KEY];
+  // subscription just above — onChanged only fires for changes made *after*
+  // a listener is registered, so a completion landing in that gap would
+  // otherwise never be observed by this popup instance, leaving it stuck on
+  // "Dumping tabs…" even though the result is sitting right there in
+  // storage.
+  getPersistedDumpState().then((current) => {
     if (current && current.status !== "running") finish(current);
   });
 
@@ -239,7 +390,7 @@ function watchForDumpCompletion(referenceStartedAt) {
   const timer = setTimeout(() => {
     if (settled) return;
     settled = true;
-    session.onChanged.removeListener(onChanged);
+    detach();
     showError({ message: "The previous dump didn't finish. Please try again." });
   }, Math.max(0, deadline - Date.now()));
 }
@@ -253,7 +404,7 @@ function showError({ message, detail }) {
 
 // Guards against a genuine double-click (two `click` events dispatched in
 // quick succession against the same button, before the first handler's
-// showState(els.dumping) has actually taken it off-screen) sending two
+// showDumping() has actually taken it off-screen) sending two
 // MSG_DUMP_TABS requests. background.js's own concurrency guard would
 // reject the second one regardless, but without this, that rejection would
 // flip this popup from "Dumping tabs…" to a dead-end error — even though
@@ -263,7 +414,12 @@ let dumpInFlight = false;
 async function dumpTabs() {
   if (dumpInFlight) return;
   dumpInFlight = true;
-  showState(els.dumping);
+  showDumping(DUMP_PHASE.QUERYING_TABS);
+  // Phase updates for the dump this popup started arrive the same way they
+  // do for one it merely inherited: through the persisted record. Attaching
+  // here means the "Opening TabDump…" / "Handing your tabs over…" progress
+  // is visible in the common case too, not only after a popup reopen.
+  const detachPhaseWatch = watchDumpPhase();
   try {
     // Re-collects fresh tabs at click time (rather than reusing the popup's
     // initial snapshot) in case anything changed while the popup was open.
@@ -271,28 +427,30 @@ async function dumpTabs() {
     // learned, so a dump never re-sends tabs already in the workspace.
     const response = await chrome.runtime.sendMessage({
       type: MSG_DUMP_TABS,
-      payload: { excludeUrls: alreadyImportedUrls ? Array.from(alreadyImportedUrls) : undefined },
+      payload: {
+        windowId: currentWindowId,
+        excludeUrls: alreadyImportedUrls ? Array.from(alreadyImportedUrls) : undefined,
+      },
     });
-    if (response?.ok) {
-      els.successCount.textContent = String(response.count);
-      showState(els.success);
-      setTimeout(() => window.close(), 900);
-    } else if (response?.reason === "already-running") {
+    detachPhaseWatch();
+    if (response?.reason === "already-running") {
       // A dump is genuinely already in flight — most likely a narrow race
       // this popup can't otherwise prevent. Attach to its real outcome
       // instead of dead-ending on an error the user has no useful action
       // for; renderDumpOutcome() takes it from here once it resolves.
       watchForDumpCompletion(Date.now());
     } else {
-      showError(describeDumpFailure(response));
+      renderDumpOutcome(response ?? {});
     }
   } catch (err) {
+    detachPhaseWatch();
     // chrome.runtime.sendMessage itself rejected/threw — the background
     // service worker never answered at all (distinct from it answering with
     // an error result, handled above), e.g. right after an extension
-    // reload/update invalidates this popup's connection.
+    // reload/update invalidates this popup's connection. The dump may still
+    // be running, so point at the recovery path rather than implying it died.
     showError({
-      message: "Couldn't reach the TabDump extension's background service.",
+      message: "Lost contact with the TabDump extension. Reopen this popup to see how the dump ended.",
       detail: err instanceof Error ? err.message : String(err),
     });
   } finally {
@@ -300,8 +458,19 @@ async function dumpTabs() {
   }
 }
 
+/** Mirrors background.js's persisted phase into the dumping state. Returns a detach function. */
+function watchDumpPhase() {
+  const detach = onDumpStateChange((state) => {
+    if (state.status === "running") showDumping(state.phase);
+  });
+  return detach ?? (() => {});
+}
+
 els.dumpButton.addEventListener("click", dumpTabs);
 els.retryButton.addEventListener("click", detectTabs);
+els.openButton.addEventListener("click", () => {
+  focusTabDump().finally(() => window.close());
+});
 
 // Runs once on every popup open, before the normal detectTabs() flow, to
 // recover from a dump that's still running (or that already finished)
@@ -314,7 +483,7 @@ async function init() {
 
   if (state?.status === "running") {
     if (Date.now() - state.startedAt < DUMP_RUNNING_STALE_MS) {
-      showState(els.dumping);
+      showDumping(state.phase);
       watchForDumpCompletion(state.startedAt);
       return;
     }
@@ -325,7 +494,7 @@ async function init() {
     return;
   }
 
-  if ((state?.status === "done" || state?.status === "error") && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
+  if (state?.finishedAt !== undefined && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
     renderDumpOutcome(state);
     return;
   }

@@ -99,12 +99,33 @@ describe("buildImportPayload", () => {
   });
 
   it("returns an empty payload for an empty tab set", () => {
-    expect(buildImportPayload([])).toEqual({ tabs: [] });
+    expect(buildImportPayload([])).toEqual({ tabs: [], skippedRestricted: 0, skippedAlreadyImported: 0 });
   });
 
   it("handles undefined/null input defensively", () => {
-    expect(buildImportPayload(undefined)).toEqual({ tabs: [] });
-    expect(buildImportPayload(null)).toEqual({ tabs: [] });
+    const empty = { tabs: [], skippedRestricted: 0, skippedAlreadyImported: 0 };
+    expect(buildImportPayload(undefined)).toEqual(empty);
+    expect(buildImportPayload(null)).toEqual(empty);
+  });
+
+  // A dump that quietly drops the tabs Chrome won't let the extension read
+  // reports "dumped 12" for a window holding 15 — a half-truth the user has
+  // no way to notice. These counts are what lets the popup say so out loud.
+  it("counts restricted tabs it had to skip, separately from ones deliberately excluded", () => {
+    const result = buildImportPayload(
+      [
+        fakeTab({ id: 1, url: "https://a.example" }),
+        fakeTab({ id: 2, url: "chrome://settings" }),
+        fakeTab({ id: 3, url: "devtools://devtools/bundled/x.html" }),
+        fakeTab({ id: 4, url: undefined }),
+        fakeTab({ id: 5, url: "https://b.example" }),
+      ],
+      ["https://b.example"]
+    );
+
+    expect(result.tabs.map((t) => t.tabId)).toEqual([1]);
+    expect(result.skippedRestricted).toBe(3);
+    expect(result.skippedAlreadyImported).toBe(1);
   });
 
   it("handles a large batch (200 tabs) correctly and quickly", () => {
