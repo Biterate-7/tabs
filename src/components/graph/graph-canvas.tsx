@@ -35,6 +35,7 @@ import type { CameraState, GraphDependencyEdge, GraphDisplaySettings, GraphEdge,
 import type { CategoryId } from "@/lib/categories"
 import type { ClusterAnchorAssignment, ClusterNode, ClusterTree } from "@/lib/graph/clusters"
 import { resolveLabelOverlaps, type LabelBox } from "@/lib/graph/label-layout"
+import { assertBoundaryWithinBudget, assertNodeRadius } from "@/lib/graph/dimension-guard"
 import { faviconUrl } from "@/lib/workspace/favicon"
 import { drawNode } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
@@ -135,6 +136,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   onBoundaryMembersMoved: (
     moves: { id: string; x: number; y: number; offset: { x: number; y: number } }[]
   ) => void
+  /** Offsets the engine had to repair because the saved record held a cluster torn in half — see engine.ts's takeNormalizedBoundaryOffsets. Fires only when there was something to repair. */
+  onBoundaryOffsetsNormalized: (offsets: Record<string, { x: number; y: number }>) => void
   onHoverChange: (hover: HoverInfo | null) => void
   /** Fired whenever the selected node's live on-screen anchor changes (selection, pan, zoom, drag, camera animation) — lets the host pin a persistent Tab Peek popup to the node itself rather than to the cursor, so it survives hover moving anywhere else on the canvas. Null whenever nothing is selected or the selected node isn't currently visible. */
   onSelectedNodeScreenChange: (info: HoverInfo | null) => void
@@ -167,6 +170,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     onDependencyEdgeClick,
     onNodeMoved,
     onBoundaryMembersMoved,
+    onBoundaryOffsetsNormalized,
     onHoverChange,
     onSelectedNodeScreenChange,
   },
@@ -247,6 +251,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const clusterTreeRef = useRef<ClusterTree>(clusterTree)
   const selectedClusterIdRef = useRef(selectedClusterId)
   const showClusterBoundariesRef = useRef(showClusterBoundaries)
+  // Read inside draw()'s dev-only dimension assertions, which run from the
+  // requestAnimationFrame chain and so must not close over a stale render.
+  const clusterAnchorsRef = useRef(clusterAnchors)
   // Same "recompute during draw(), reuse for hit-testing" convention as
   // collectionRectsRef above, one map per structural tier.
   const categoryRectsRef = useRef<Map<string, CollectionBoundaryRect>>(new Map())
@@ -275,6 +282,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   clusterTreeRef.current = clusterTree
   selectedClusterIdRef.current = selectedClusterId
   showClusterBoundariesRef.current = showClusterBoundaries
+  clusterAnchorsRef.current = clusterAnchors
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
@@ -761,6 +769,28 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       if (!liveBoundaryIds.has(id)) collectionRectsRef.current.delete(id)
     }
 
+    // Dev-only: does every square still fit inside the ground its members are
+    // confined to? A square is derived geometry, so this is the one place the
+    // "no square ever stretches" invariant can actually be observed — see
+    // lib/graph/dimension-guard.ts. Compiled out of production.
+    if (process.env.NODE_ENV !== "production") {
+      const guardContext = {
+        zoom: camera.zoom,
+        dragging: Boolean(draggedBoundaryId || dragRef.current),
+        settling: !simulation.isSettled(),
+      }
+      for (const [rects, padding] of [
+        [categoryRectsRef.current, CATEGORY_BOUNDARY_PADDING] as const,
+        [subcategoryRectsRef.current, SUBCATEGORY_BOUNDARY_PADDING] as const,
+      ]) {
+        for (const [id, rect] of rects) {
+          const cluster = clusterTreeRef.current.byId.get(id)
+          if (!cluster) continue
+          assertBoundaryWithinBudget(id, cluster.label, rect, cluster.totalTabIds, clusterAnchorsRef.current, padding, guardContext)
+        }
+      }
+    }
+
     // The box being dragged is skipped in its own tier's pass and painted
     // after all three, so it sits above every other boundary while it moves.
     const drawCategoryBoundary = (id: string, rect: CollectionBoundaryRect) => {
@@ -950,6 +980,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     for (const node of nodesRef.current) {
       const physicsNode = simulation.findNode(node.id)
       if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
+      if (process.env.NODE_ENV !== "production") {
+        assertNodeRadius(node.id, node.tab.title ?? node.tab.domain, physicsNode.radius)
+      }
       const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
       if (
         screen.x < -40 ||
@@ -1101,6 +1134,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     simulation.setEdges(physicsEdges, display.edgeStrength)
     simulation.setCollections(collections)
     simulation.setClusterAnchors(clusterAnchors)
+    // Now that the cluster tree is in, the engine knows which saved offsets
+    // described a cluster torn in half and has repaired them. Reporting the
+    // repair is what lets the saved blob converge on a coherent state instead
+    // of being healed from scratch on every load forever.
+    const normalized = simulation.takeNormalizedBoundaryOffsets()
+    if (normalized) onBoundaryOffsetsNormalized(normalized)
     simulation.reheat(0.5)
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1303,20 +1342,47 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    * Reuses the exact rect maps draw() left behind — the live set — so what
    * is grabbable is precisely what is on screen and what has a body.
    */
-  function hitTestBoundary(screenX: number, screenY: number): string | null {
+  function hitTestBoundary(screenX: number, screenY: number): string[] {
     const world = worldPointFromScreen(screenX, screenY)
-    let bestId: string | null = null
-    let bestArea = Infinity
+    const hits: { id: string; area: number }[] = []
     for (const rects of [collectionRectsRef.current, subcategoryRectsRef.current, categoryRectsRef.current]) {
       for (const [id, rect] of rects) {
         if (!pointInRect(world.x, world.y, rect)) continue
-        const area = rect.width * rect.height
-        if (area >= bestArea) continue
-        bestArea = area
-        bestId = id
+        hits.push({ id, area: rect.width * rect.height })
       }
     }
-    return bestId
+    return hits.sort((a, b) => a.area - b.area).map((hit) => hit.id)
+  }
+
+  /**
+   * The innermost square under the pointer that can actually be picked up, or
+   * null when none can.
+   *
+   * Not every drawn square is a handle. A square whose members are a slice of
+   * somebody else's cluster has no body (see engine.ts's setBoundaryBodies),
+   * because there is no way to move it that doesn't tear that cluster in
+   * half. Such a square is a REGION MARKER — it still draws, hit-tests and
+   * selects — and, exactly like any other non-interactive layer in nested hit
+   * testing, it does not block the handle it happens to sit inside.
+   *
+   * This is also what the cursor is driven from, so the affordance and the
+   * gesture can never disagree: `grab` appears over precisely the squares
+   * that will move, and nowhere else.
+   */
+  function draggableBoundaryAt(screenX: number, screenY: number): string | null {
+    const simulation = simulationRef.current!
+    for (const id of hitTestBoundary(screenX, screenY)) {
+      if (simulation.getBoundaryBody(id)) return id
+    }
+    return null
+  }
+
+  /** Keeps the pointer's shape honest about what the next press will do: grab a square, or pan. */
+  function updateBoundaryCursor(screenX: number, screenY: number, overNode: boolean) {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const next = overNode ? "pointer" : draggableBoundaryAt(screenX, screenY) ? "grab" : "default"
+    if (canvas.style.cursor !== next) canvas.style.cursor = next
   }
 
   function hitTestNode(screenX: number, screenY: number): GraphNode | null {
@@ -1420,12 +1486,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // No node under the pointer: grab the boundary square there, if any, and
     // drag it as a physics body. Pressing on bare canvas still pans, and
     // space-drag / middle-drag still pan from anywhere.
-    const boundaryHit = hitTestBoundary(point.x, point.y)
+    // Exactly the square the cursor was promising — see draggableBoundaryAt.
+    const boundaryHit = draggableBoundaryAt(point.x, point.y)
     if (boundaryHit) {
       const { width, height } = sizeRef.current
       const world = screenToWorld(cameraRef.current, point, width, height)
       if (simulationRef.current!.beginBoundaryDrag(boundaryHit, world.x, world.y)) {
         boundaryDragRef.current = { id: boundaryHit, startX: point.x, startY: point.y, pointerId: e.pointerId }
+        canvasRef.current!.style.cursor = "grabbing"
         requestDraw()
         return
       }
@@ -1473,6 +1541,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
     const hit = hitTestNode(point.x, point.y)
     const hitId = hit?.id ?? null
+    // Written straight to the element rather than through React state: this
+    // runs on every pixel of mousemove, and a re-render per pixel is exactly
+    // what the hover check below exists to avoid.
+    updateBoundaryCursor(point.x, point.y, hit !== null)
     // Only cross a React state update (and thus a GraphView re-render) when
     // the hovered node actually changes, not on every pixel of mousemove —
     // otherwise idling the cursor over the canvas would re-render the whole
@@ -1517,6 +1589,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const { startX, startY } = boundaryDragRef.current
       const moved = Math.hypot(point.x - startX, point.y - startY) > CLICK_DRAG_THRESHOLD
       boundaryDragRef.current = null
+      if (canvasRef.current) canvasRef.current.style.cursor = "grab"
       // Hands the box back to the physics with a damped, capped share of the
       // pointer's speed — see boundary-physics.ts's releaseVelocity.
       simulationRef.current!.endBoundaryDrag()

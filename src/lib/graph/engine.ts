@@ -11,8 +11,19 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from "d3-force";
-import type { GraphEdge, GraphNode } from "./types";
+import { MAX_GRAPH_COORD, type GraphEdge, type GraphNode } from "./types";
 import type { ClusterAnchorAssignment } from "./clusters";
+import { clampNodeRadius } from "./node-size";
+import {
+  adoptPersistedOffsets,
+  buildBoundaryFrames,
+  clampFramesWithinParents,
+  emptyBoundaryFrames,
+  rigidMove,
+  translateFrames,
+  type BoundaryFrames,
+  type FrameOffset,
+} from "./boundary-frames";
 import {
   BOUNDARY_SLEEP_SPEED,
   releaseVelocity,
@@ -115,10 +126,16 @@ export type GraphSimulation = {
   isBoundaryLayerSettled: () => boolean;
   /**
    * Restores previously persisted per-tab anchor offsets (see
-   * GraphPersistedState.boundaryOffsets). Only fills in tabs that don't
-   * already carry a live offset, so reloading saved state can never undo a
-   * move made in this session — the same "existing wins" rule setNodes uses
-   * for positions.
+   * GraphPersistedState.boundaryOffsets). Only fills in TERRITORIES that
+   * haven't already been moved this session, so reloading saved state can
+   * never undo a move made in this one — the same "existing wins" rule
+   * setNodes uses for positions.
+   *
+   * Saved offsets are per tab but a territory is what actually moves, so they
+   * are folded into whole-disc offsets on the way in. That is also what heals
+   * a workspace saved by a build that displaced tabs individually: its tabs
+   * come back on one disc rather than held apart across the reload. See
+   * boundary-frames.ts's adoptPersistedOffsets.
    */
   seedBoundaryOffsets: (offsets: Record<string, { x: number; y: number }>) => void;
   /**
@@ -133,6 +150,20 @@ export type GraphSimulation = {
     y: number;
     offset: { x: number; y: number };
   }[];
+  /** Every present tab's current territory offset — the per-tab view the graph persists. Non-destructive. */
+  getBoundaryOffsets: () => Record<string, { x: number; y: number }>;
+  /**
+   * The repaired offsets for tabs whose SAVED displacement disagreed with the
+   * rest of their territory, or null when the saved state was already
+   * coherent. Cleared on read.
+   *
+   * This is what lets a workspace carrying the old per-tab corruption be
+   * written back healed instead of being repaired from scratch on every load
+   * forever. Only the tabs actually normalized are reported, so the caller
+   * merges rather than replaces — tabs filtered out of the current view still
+   * exist and must keep the offsets they have.
+   */
+  takeNormalizedBoundaryOffsets: () => Record<string, { x: number; y: number }> | null;
 };
 
 const ALPHA_MIN = 0.005;
@@ -191,8 +222,16 @@ export function nodeCollisionRadius(radius: number): number {
 const MIN_SANDBOX_HALF_SIZE = 4000;
 const SANDBOX_CONTENT_MARGIN = 1200;
 
-/** Hard ceiling on |x|,|y| for a node, mirroring boundary-physics's BOUNDARY_MAX_COORD. */
-const MAX_NODE_COORD = 1e7;
+/** Hard ceiling on |x|,|y| for a node — the world's own, shared with the boundary layer and with persistence. */
+const MAX_NODE_COORD = MAX_GRAPH_COORD;
+
+/**
+ * How far a repaired offset must sit from the saved one before the saved
+ * record counts as needing rewriting. Sub-pixel: a difference this small is
+ * float noise from the consensus mean, not a territory in the wrong place,
+ * and rewriting on it would make the migration write on every single load.
+ */
+const OFFSET_NORMALIZATION_EPSILON = 0.5;
 
 /**
  * Pulls every node toward a per-node anchor point read fresh each tick from
@@ -266,7 +305,7 @@ export function createGraphSimulation(): GraphSimulation {
   const getAnchorById = () => anchorById;
   /**
    * How far each tab's cluster anchor (and confinement disc) has been carried
-   * by boundary drags, accumulated per tab.
+   * by boundary drags.
    *
    * Without this, dragging a boundary square would be a tug of war it always
    * loses: computeClusterAnchors places a category's anchor and confinement
@@ -275,12 +314,31 @@ export function createGraphSimulation(): GraphSimulation {
    * the pointer let go. Moving a box moves its members, and its members'
    * territory moves with them.
    *
-   * Kept beside the anchors rather than folded into them because the anchor
-   * map is replaced wholesale by setClusterAnchors whenever the cluster tree
-   * is recomputed; the offsets have to survive that.
+   * DERIVED, not authoritative: the offset belongs to the tab's TERRITORY
+   * (see boundary-frames.ts), and this map is only that territory's offset
+   * copied onto each of its tabs, refreshed by syncTabOffsetsFromFrames.
+   * Writing it per tab is what let one boundary square carry part of a
+   * cluster away from the rest and stretch the cluster's box across the gap;
+   * every tab on one disc now moves together or not at all. It stays a
+   * per-tab map because that is what the forces read per node and what the
+   * graph persists (GraphPersistedState.boundaryOffsets).
    */
   const anchorOffsetById = new Map<string, { dx: number; dy: number }>();
   const getAnchorOffsetById = () => anchorOffsetById;
+  /** The territories themselves — the authority behind anchorOffsetById. */
+  let frames: BoundaryFrames = emptyBoundaryFrames();
+  /** Saved per-tab offsets waiting for a cluster tree to fold them into frames. */
+  const pendingSeededOffsets = new Map<string, FrameOffset>();
+  /**
+   * Offsets for tabs the layout reserved no ground for — no confinement disc,
+   * so no territory and nothing they could be torn away from. They keep the
+   * per-tab accumulation frames replaced, because for them it is the same
+   * thing: a tab on its own is a territory of one. Folded into a real frame
+   * the moment one appears for them (see rebuildFrames).
+   */
+  const untetheredOffsetById = new Map<string, FrameOffset>();
+  /** Tabs whose saved offset was repaired on the way in — see takeNormalizedBoundaryOffsets. */
+  const normalizedOffsets = new Map<string, FrameOffset>();
   const categoryAnchorForce = createClusterAnchorForce(
     CATEGORY_ANCHOR_STRENGTH,
     byId,
@@ -353,11 +411,12 @@ export function createGraphSimulation(): GraphSimulation {
     const next: PhysicsNode[] = nodes.map((node) => {
       const existing = byId.get(node.id);
       if (existing) {
-        existing.radius = radiusOf(node);
+        existing.radius = clampNodeRadius(radiusOf(node));
         return existing;
       }
       const saved = initialPositions[node.id];
-      if (saved) return { id: node.id, radius: radiusOf(node), x: saved.x, y: saved.y };
+      const radius = clampNodeRadius(radiusOf(node));
+      if (saved) return { id: node.id, radius, x: saved.x, y: saved.y };
 
       // No saved position: seed near the tab's eventual cluster anchor (small
       // jitter) when one is known, instead of scattering around the world
@@ -370,7 +429,7 @@ export function createGraphSimulation(): GraphSimulation {
       const originY = anchor?.y ?? 0;
       return {
         id: node.id,
-        radius: radiusOf(node),
+        radius,
         x: originX + Math.cos(angle) * dist,
         y: originY + Math.sin(angle) * dist,
       };
@@ -384,10 +443,75 @@ export function createGraphSimulation(): GraphSimulation {
     // more, so its in-memory offset goes with it rather than accumulating for
     // the life of the session. If it comes back, seedBoundaryOffsets restores
     // it from the persisted record, which is the source of truth.
-    for (const id of [...anchorOffsetById.keys()]) if (!byId.has(id)) anchorOffsetById.delete(id);
     for (const id of [...displacedMembers]) if (!byId.has(id)) displacedMembers.delete(id);
     for (const id of [...lastGoodNodePosition.keys()]) if (!byId.has(id)) lastGoodNodePosition.delete(id);
+    rebuildFrames();
     sanitizeNodes();
+  }
+
+  /**
+   * Re-derives the territories from the current anchors and node set, then
+   * restores the invariants that hold over them: every tab on a disc shares
+   * that disc's offset, and no nested disc has been carried outside its
+   * parent's.
+   *
+   * Called whenever either input changes (setNodes, setClusterAnchors) — the
+   * cluster tree is rebuilt on every tab/filter change, and the offsets have
+   * to survive that, which is what buildBoundaryFrames' `previous` argument
+   * carries over.
+   */
+  function rebuildFrames() {
+    frames = buildBoundaryFrames(anchorById, byId.keys(), frames);
+
+    // Both sources of per-tab displacement — what a past session saved, and
+    // what an untethered tab accumulated before it had any ground — become
+    // whole-frame offsets as soon as there is a frame to hold them.
+    const perTabSeeds = new Map(pendingSeededOffsets);
+    for (const [id, offset] of untetheredOffsetById) if (!perTabSeeds.has(id)) perTabSeeds.set(id, offset);
+    if (perTabSeeds.size > 0) adoptPersistedOffsets(frames, perTabSeeds);
+    for (const id of [...untetheredOffsetById.keys()]) {
+      if (frames.frameOfTab.has(id) || !byId.has(id)) untetheredOffsetById.delete(id);
+    }
+
+    clampFramesWithinParents(frames);
+    syncTabOffsetsFromFrames();
+    recordOffsetNormalization();
+  }
+
+  /**
+   * Notes every tab whose SAVED offset disagrees with the territory it turned
+   * out to belong to, so the caller can write the repaired value back instead
+   * of repairing the same corruption on every load for the life of the
+   * workspace. A coherent saved state produces nothing.
+   */
+  function recordOffsetNormalization() {
+    for (const [id, saved] of pendingSeededOffsets) {
+      const resolved = anchorOffsetById.get(id);
+      // Not in the graph right now (filtered out, or gone): its saved offset
+      // is not ours to rewrite — we have no territory to check it against.
+      if (!resolved) continue;
+      if (
+        Math.abs(resolved.dx - saved.dx) <= OFFSET_NORMALIZATION_EPSILON &&
+        Math.abs(resolved.dy - saved.dy) <= OFFSET_NORMALIZATION_EPSILON
+      ) {
+        continue;
+      }
+      normalizedOffsets.set(id, { dx: resolved.dx, dy: resolved.dy });
+    }
+  }
+
+  /** Copies each territory's offset onto its tabs — the per-tab view the forces and persistence read. */
+  function syncTabOffsetsFromFrames() {
+    anchorOffsetById.clear();
+    for (const frame of frames.byId.values()) {
+      for (const tabId of frame.allTabs) {
+        if (!byId.has(tabId)) continue;
+        anchorOffsetById.set(tabId, { dx: frame.offset.dx, dy: frame.offset.dy });
+      }
+    }
+    for (const [tabId, offset] of untetheredOffsetById) {
+      if (byId.has(tabId)) anchorOffsetById.set(tabId, { dx: offset.dx, dy: offset.dy });
+    }
   }
 
   function setEdges(edges: GraphEdge[], strength: number) {
@@ -413,6 +537,7 @@ export function createGraphSimulation(): GraphSimulation {
 
   function setClusterAnchors(assignments: Map<string, ClusterAnchorAssignment>) {
     anchorById = assignments;
+    rebuildFrames();
   }
 
   /**
@@ -463,14 +588,32 @@ export function createGraphSimulation(): GraphSimulation {
   }
 
   function setBoundaryBodies(specs: { id: string; memberIds: string[]; padding: number }[]) {
-    const nextIds = new Set(specs.map((s) => s.id));
+    // Which of the offered squares can be a RIGID BODY at all.
+    //
+    // A body's only power is to translate its members, and translating a set
+    // of tabs is only meaningful when that set is whole ground: every
+    // territory it touches, it holds all of (see boundary-frames.ts). A
+    // square whose members are a slice of somebody else's cluster — the
+    // ordinary shape of a Collection, which cuts across categories by design
+    // — cannot move without leaving the rest of that cluster behind, and the
+    // abandoned cluster's boundary box then stretches across the gap. That
+    // is the stretched-square bug, and this is where it is refused.
+    //
+    // Refused means "not simulated", NOT "not there": the square is still
+    // drawn, still hit-tested and still selectable (graph-canvas.tsx builds
+    // those from the live boundary set, not from the bodies). It simply
+    // cannot be shoved around, because there is no way to shove it that
+    // leaves the graph's clusters intact.
+    const admitted = specs.filter((spec) => rigidMove(frames, new Set(spec.memberIds)).ok);
+
+    const nextIds = new Set(admitted.map((s) => s.id));
     for (const id of [...boundaryBodies.keys()]) {
       if (nextIds.has(id)) continue;
       boundaryBodies.delete(id);
       boundaryPadding.delete(id);
       if (boundaryDrag?.id === id) boundaryDrag = null;
     }
-    for (const spec of specs) {
+    for (const spec of admitted) {
       boundaryPadding.set(spec.id, spec.padding);
       const existing = boundaryBodies.get(spec.id);
       if (existing) {
@@ -656,29 +799,68 @@ export function createGraphSimulation(): GraphSimulation {
   }
 
   /**
-   * Moves a boundary's tabs — and the cluster territory holding them — by the
-   * same rigid delta the box itself moved. This is what makes a boundary drag
-   * a real change to the graph's own node positions rather than a floating
-   * rectangle drawn somewhere else.
+   * Moves a boundary's tabs — and the cluster territories holding them — by
+   * the same rigid delta the box itself moved. This is what makes a boundary
+   * drag a real change to the graph's own node positions rather than a
+   * floating rectangle drawn somewhere else.
+   *
+   * The territories move as WHOLE discs (setBoundaryBodies only admits a body
+   * that covers whole ones), and the nested ones are clamped back inside their
+   * parents afterwards — so however far a square is dragged or shoved, every
+   * tab that shares a disc stays on it, and no cluster's bounding box can
+   * stretch past the disc its members are confined to.
    */
-  function translateBoundaryMembers(memberIds: string[], dx: number, dy: number) {
+  function translateBoundaryMembers(body: BoundaryBody, dx: number, dy: number) {
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
-    for (const id of memberIds) {
+
+    // Ground moves first, tabs follow it. Doing it in that order is what
+    // makes the containment clamp real rather than cosmetic: a subcategory
+    // pushed against the edge of its own category's disc has its offset
+    // pulled back, and the members then move by the SHORTENED delta, so the
+    // square stops at the edge instead of dragging its tabs out and letting
+    // confineToRegions haul them back over the following frames.
+    //
+    // The covered territories are re-derived here rather than reused from
+    // setBoundaryBodies: what a square covers is a fact about the CURRENT
+    // cluster tree, and the tree can be replaced (a tab recategorized, a
+    // filter changed) between the call that admitted the body and this tick.
+    const frameIds = rigidMove(frames, body.members).frameIds;
+    const before = new Map(frameIds.map((id) => [id, { ...frames.byId.get(id)!.offset }]));
+    translateFrames(frames, frameIds, dx, dy);
+    clampFramesWithinParents(frames);
+    const applied = new Map<string, FrameOffset>();
+    for (const id of frameIds) {
+      const frame = frames.byId.get(id);
+      const start = before.get(id);
+      if (!frame || !start) continue;
+      applied.set(id, { dx: frame.offset.dx - start.dx, dy: frame.offset.dy - start.dy });
+    }
+
+    for (const id of body.memberIds) {
       const node = byId.get(id);
       if (!node) continue;
-      if (node.x !== undefined) node.x += dx;
-      if (node.y !== undefined) node.y += dy;
-      if (node.fx !== undefined && node.fx !== null) node.fx += dx;
-      if (node.fy !== undefined && node.fy !== null) node.fy += dy;
-      const offset = anchorOffsetById.get(id);
-      if (offset) {
-        offset.dx += dx;
-        offset.dy += dy;
-      } else {
-        anchorOffsetById.set(id, { dx, dy });
-      }
+      const frameId = frames.frameOfTab.get(id);
+      // A tab whose disc did not move must not move either — that separation
+      // is exactly the tear this whole mechanism exists to prevent. An
+      // untethered tab has no disc, so it simply takes the raw delta.
+      const delta = frameId === undefined ? { dx, dy } : (applied.get(frameId) ?? { dx: 0, dy: 0 });
+      if (delta.dx === 0 && delta.dy === 0) continue;
+      if (node.x !== undefined) node.x += delta.dx;
+      if (node.y !== undefined) node.y += delta.dy;
+      if (node.fx !== undefined && node.fx !== null) node.fx += delta.dx;
+      if (node.fy !== undefined && node.fy !== null) node.fy += delta.dy;
       displacedMembers.add(id);
+      if (frameId !== undefined) continue;
+      const own = untetheredOffsetById.get(id);
+      if (own) {
+        own.dx += delta.dx;
+        own.dy += delta.dy;
+      } else {
+        untetheredOffsetById.set(id, { dx: delta.dx, dy: delta.dy });
+      }
     }
+
+    syncTabOffsetsFromFrames();
   }
 
   function stepBoundaryLayer() {
@@ -698,7 +880,7 @@ export function createGraphSimulation(): GraphSimulation {
     for (const [id, delta] of deltas) {
       const body = boundaryBodies.get(id);
       if (!body) continue;
-      translateBoundaryMembers(body.memberIds, delta.dx, delta.dy);
+      translateBoundaryMembers(body, delta.dx, delta.dy);
     }
   }
 
@@ -770,10 +952,16 @@ export function createGraphSimulation(): GraphSimulation {
     getBoundaryBody: (id) => boundaryBodies.get(id),
     isBoundaryLayerSettled: () => !boundaryDrag && [...boundaryBodies.values()].every((b) => b.asleep),
     seedBoundaryOffsets: (offsets) => {
+      // Saved offsets are per tab; territories are what actually move. They
+      // are held here until a cluster tree arrives (setClusterAnchors runs
+      // after this in graph-canvas.tsx's physics effect) and then folded into
+      // whole-frame offsets — which also heals state saved by a build that
+      // displaced tabs individually. See adoptPersistedOffsets.
       for (const [id, offset] of Object.entries(offsets)) {
-        if (anchorOffsetById.has(id)) continue;
-        anchorOffsetById.set(id, { dx: offset.x, dy: offset.y });
+        if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) continue;
+        pendingSeededOffsets.set(id, { dx: offset.x, dy: offset.y });
       }
+      rebuildFrames();
     },
     takeDisplacedBoundaryMembers: () => {
       const moved: { id: string; x: number; y: number; offset: { x: number; y: number } }[] = [];
@@ -785,6 +973,18 @@ export function createGraphSimulation(): GraphSimulation {
       }
       displacedMembers.clear();
       return moved;
+    },
+    getBoundaryOffsets: () => {
+      const out: Record<string, { x: number; y: number }> = {};
+      for (const [id, offset] of anchorOffsetById) out[id] = { x: offset.dx, y: offset.dy };
+      return out;
+    },
+    takeNormalizedBoundaryOffsets: () => {
+      if (normalizedOffsets.size === 0) return null;
+      const out: Record<string, { x: number; y: number }> = {};
+      for (const [id, offset] of normalizedOffsets) out[id] = { x: offset.dx, y: offset.dy };
+      normalizedOffsets.clear();
+      return out;
     },
   };
 }

@@ -25,6 +25,24 @@ export const DEFAULT_CONNECTION_FILTERS: ConnectionFilters = {
   dependencies: true,
 };
 
+/**
+ * Absolute ceiling on |x| and |y| for anything in the graph's world — a node,
+ * a boundary square's centre, a saved position, a saved boundary offset.
+ *
+ * A last-resort numeric guard, not a layout constraint: the layout's own
+ * territories and the boundary sandbox both sit orders of magnitude inside
+ * it. It exists so a coordinate that has gone bad by some route nobody
+ * anticipated is caught and recovered rather than left to propagate — past
+ * this magnitude the next multiply reaches Infinity, and one Infinity turns
+ * every position derived from it into NaN, which is a node that renders
+ * nowhere and hit-tests nowhere.
+ *
+ * Lives here, with no dependencies of its own, so the physics engine, the
+ * boundary layer and the persistence layer can all agree on one number rather
+ * than each carrying a copy.
+ */
+export const MAX_GRAPH_COORD = 1e7;
+
 export type GraphNode = {
   id: string;
   tab: Tab;
