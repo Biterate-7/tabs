@@ -29,6 +29,8 @@ export function WorkspaceHeader({
   onOpenPalette,
   onOrganize,
   onOpenGraph,
+  graphLocked = false,
+  graphLockedReason,
   onOpenSidebar,
   currentWorkspace,
   allWorkspaces,
@@ -47,6 +49,10 @@ export function WorkspaceHeader({
   /** Manually re-runs Auto-Organize analysis on demand — omitted in standalone/test contexts. */
   onOrganize?: () => void
   onOpenGraph?: () => void
+  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. */
+  graphLocked?: boolean
+  /** What the graph is waiting on, used as the disabled control's tooltip. */
+  graphLockedReason?: string
   /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. Omitted in standalone/test contexts that don't render a shell around this view. */
   onOpenSidebar?: () => void
   currentWorkspace?: Workspace
@@ -100,7 +106,12 @@ export function WorkspaceHeader({
               </IconButton>
             )}
             {onOpenGraph && (
-              <IconButton aria-label="Open Graph view" tooltip="Open visual graph" onClick={onOpenGraph}>
+              <IconButton
+                aria-label="Open Graph view"
+                tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : "Open visual graph"}
+                disabled={graphLocked}
+                onClick={onOpenGraph}
+              >
                 <Waypoints />
               </IconButton>
             )}
@@ -151,7 +162,7 @@ export function WorkspaceHeader({
                 </DropdownMenuItem>
               )}
               {onOpenGraph && (
-                <DropdownMenuItem onClick={onOpenGraph}>
+                <DropdownMenuItem disabled={graphLocked} onClick={onOpenGraph}>
                   <Waypoints /> Graph view
                 </DropdownMenuItem>
               )}

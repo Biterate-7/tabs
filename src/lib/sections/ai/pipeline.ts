@@ -32,6 +32,22 @@ const FOLD_OVERLAP_THRESHOLD = 0.15;
 
 export type PipelineResult = OrganizeResult & { report: OrganizeReport };
 
+/**
+ * The pipeline's own coarse phases, reported as they are ENTERED so the UI
+ * can say what is actually happening instead of showing an undifferentiated
+ * spinner (or, worse, a made-up percentage).
+ *
+ * `"other"` is the one that matters most: it marks Stage F, where the
+ * leftover — overwhelmingly "Other"-category — tabs are folded, re-batched
+ * through the per-tab organizer and finally regrouped. It is by far the
+ * slowest phase on a large dump (Stage F.2 issues one sequential AI request
+ * per 40 tabs, deliberately sequential so later chunks see the sections
+ * earlier ones created), and it is the phase that used to still be running
+ * while the user was already looking at the graph.
+ */
+export type PipelineStage = "classifying" | "grouping" | "other";
+export type PipelineProgress = (stage: PipelineStage) => void;
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -196,13 +212,15 @@ export async function organizeTabsCollectively(
   workspaceId: string,
   workspaceName: string,
   tabsToOrganize: Tab[],
-  sections: Section[]
+  sections: Section[],
+  onStage?: PipelineProgress
 ): Promise<PipelineResult> {
   const unlocked = tabsToOrganize.filter((t) => !t.sectionLocked);
   if (unlocked.length === 0) {
     return { tabs: tabsToOrganize, sections, report: emptyReport(tabsToOrganize.length) };
   }
 
+  onStage?.("classifying");
   let hints: SemanticClusterHint[] = [];
   try {
     hints = await computeSemanticClusterHints([workspaceId]);
@@ -221,6 +239,7 @@ export async function organizeTabsCollectively(
   const placedById = new Map<string, Tab>();
   const placedClusterPaths: { path: string[]; tokens: string[] }[] = [];
 
+  onStage?.("grouping");
   for (const chunk of chunkArray(manifest, MAX_CHUNK_CLUSTERS)) {
     if (chunk.length === 0) continue;
     const promptInput: OrganizeClusterInput[] = chunk.map((c) => ({
@@ -248,6 +267,7 @@ export async function organizeTabsCollectively(
   // via keyword overlap (same trick src/lib/organize/analyze.ts uses to fold
   // leftovers into an existing proposal) before ever spending another AI call.
   const leftAfterClusters = unlocked.filter((t) => !placedById.has(t.id));
+  if (leftAfterClusters.length > 0) onStage?.("other");
   const stillUnresolved: Tab[] = [];
   for (const tab of leftAfterClusters) {
     const tokens = tabTokens(tab);

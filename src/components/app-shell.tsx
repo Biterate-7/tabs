@@ -29,7 +29,7 @@ import {
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
-import type { PipelineResult } from "@/lib/sections/ai/pipeline"
+import type { PipelineResult, PipelineStage } from "@/lib/sections/ai/pipeline"
 import { logOrganizeReport, summarizeReportForToast } from "@/lib/sections/ai/report"
 import type { OrganizeReport } from "@/lib/sections/ai/report"
 import type { Section } from "@/lib/sections/types"
@@ -41,6 +41,12 @@ import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
 import { useAutoOrganize } from "@/hooks/use-auto-organize"
+import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
+import { describeOrganizationStage } from "@/lib/organize/lifecycle"
+import { OrganizationPreparationView, OrganizationStatusBar } from "@/components/organization-preparation"
+import { computeLayoutKey, createLayoutPrecompute, resolveGraphLayoutInput } from "@/lib/graph/precompute"
+import { loadGraphState, pruneGraphState, saveGraphState } from "@/lib/graph/persistence"
+import { computeFitCamera } from "@/lib/graph/layout"
 import { markDuplicates } from "@/lib/tabs"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
 import { applyOrganizationPlan } from "@/lib/organize/apply"
@@ -52,6 +58,14 @@ import { openTab } from "@/lib/browser/open-tab"
 
 const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
 const RECENTLY_ADDED_DURATION_MS = 6000
+
+/**
+ * How many physics ticks the layout precompute runs per macrotask. Small
+ * enough that a 300-tab settle never blocks the main thread long enough to
+ * freeze the preparation UI, large enough that the whole settle (~200 ticks
+ * from a full reheat) takes a handful of yields rather than hundreds.
+ */
+const SETTLE_TICKS_PER_SLICE = 40
 
 function loadSidebarCollapsed(): boolean {
   try {
@@ -68,6 +82,14 @@ function saveSidebarCollapsed(collapsed: boolean): void {
     // Non-critical UI preference — nothing to recover if storage is unavailable.
   }
 }
+
+/**
+ * Whether the organization pipeline ran to completion. Distinguishing this
+ * from "returned no report" matters now that readiness is gated on it: a
+ * pipeline that threw must reach the error state, not quietly hand the user
+ * a graph built from half-organized tabs.
+ */
+type OrganizeOutcome = { ok: true; report: OrganizeReport | undefined } | { ok: false; error: unknown }
 
 const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   "invalid-json": "That file isn't valid JSON.",
@@ -105,6 +127,22 @@ export function AppShell() {
   const organizeUndoSnapshotRef = useRef<WorkspaceStore | null>(null)
   const [applyingOrganize, setApplyingOrganize] = useState(false)
   const autoOrganize = useAutoOrganize()
+  // The dump → classify → "Other" → layout → settle lifecycle, and the only
+  // thing that decides whether the Graph View can be entered. See
+  // lib/organize/lifecycle.ts.
+  const readiness = useOrganizationReadiness()
+  // The last dump's inputs, so the error state's "Try again" can re-run
+  // exactly the same organization rather than asking the user to re-dump.
+  const lastDumpRef = useRef<{ workspaceId: string; tabs: Tab[]; sections: Section[] } | null>(null)
+  // Read by the settle effect, which must see the store as it is AFTER the
+  // pipeline merged its result — not whatever `store` the effect's own
+  // closure was created with, and without re-running every time an unrelated
+  // update (a resolved title) lands mid-settle.
+  const storeRef = useRef<WorkspaceStore | null>(null)
+  // The same "latest ref" idiom the hooks in src/hooks use: a same-render
+  // snapshot assignment, never read back during this render.
+  // eslint-disable-next-line react-hooks/refs
+  storeRef.current = store
 
   useEffect(() => {
     // Hydrating from localStorage: this can only run post-mount (SSR has no
@@ -218,7 +256,8 @@ export function AppShell() {
     // categorized tab, every single dump — starting from the already-synced
     // value means the guard only fires for drift that happens DURING the
     // async window (a genuine concurrent user edit), which is what it's for.
-    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs, nextWorkspace.sections ?? [])
+    const generation = readiness.begin(nextWorkspace.tabs.length)
+    runDumpOrganization(generation, nextWorkspace.id, nextWorkspace.tabs, nextWorkspace.sections ?? [])
   }
 
   function handleTabsChange(tabs: Tab[]) {
@@ -299,8 +338,13 @@ export function AppShell() {
   // fire-and-forget from every call site: this NEVER blocks or fails a dump
   // (spec §28) — organizeTabsIntoSections itself never throws, and this
   // wrapper's own best-effort embedding-hint lookup is wrapped separately.
-  async function organizeNewTabsIntoSections(workspaceId: string, tabsSnapshot: Tab[], sectionsSnapshot: Section[]): Promise<OrganizeReport | undefined> {
-    if (tabsSnapshot.length === 0) return undefined
+  async function organizeNewTabsIntoSections(
+    workspaceId: string,
+    tabsSnapshot: Tab[],
+    sectionsSnapshot: Section[],
+    onStage?: (stage: PipelineStage) => void
+  ): Promise<OrganizeOutcome> {
+    if (tabsSnapshot.length === 0) return { ok: true, report: undefined }
 
     // The pipeline's multi-stage clustering/naming can take several async
     // hops (more than the old single-shot organizeTabsIntoSections), so it's
@@ -314,7 +358,7 @@ export function AppShell() {
     const workspaceName = store?.workspaces.find((w) => w.id === workspaceId)?.name ?? ""
     let result: PipelineResult
     try {
-      result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot)
+      result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot, onStage)
     } catch (err) {
       // organizeTabsCollectively is designed to never throw (every AI/network
       // failure inside it degrades to a deterministic fallback instead) — but
@@ -323,7 +367,7 @@ export function AppShell() {
       // function would silently vanish, leaving every one of these tabs
       // exactly as un-sectioned as they were the moment they were dumped.
       console.error("[organize] pipeline threw unexpectedly — tabs left unorganized:", err)
-      return undefined
+      return { ok: false, error: err }
     }
     logOrganizeReport(result.report)
 
@@ -356,8 +400,140 @@ export function AppShell() {
       return next
     })
 
-    return result.report
+    return { ok: true, report: result.report }
   }
+
+  /**
+   * The whole dump lifecycle for one generation: organization (including the
+   * slow "Other" tail) followed by the layout/settle half, which the effect
+   * below picks up. Every dump entry point goes through here, so there is
+   * exactly one place where a dump can be declared finished — and it is
+   * reached only when the pipeline's promise has actually resolved, never on
+   * a timer.
+   */
+  async function runDumpOrganization(
+    generation: number,
+    workspaceId: string,
+    tabsSnapshot: Tab[],
+    sectionsSnapshot: Section[]
+  ): Promise<OrganizeOutcome> {
+    lastDumpRef.current = { workspaceId, tabs: tabsSnapshot, sections: sectionsSnapshot }
+    const outcome = await organizeNewTabsIntoSections(workspaceId, tabsSnapshot, sectionsSnapshot, (stage) =>
+      readiness.advance(generation, stage)
+    )
+    if (!outcome.ok) {
+      readiness.fail(generation, "Couldn't finish organizing your tabs.")
+      return outcome
+    }
+    // Data organization is done. The graph is still locked: nodes have not
+    // been placed and the physics has not run, and both are part of
+    // readiness — see the settle effect below, which this hands off to.
+    readiness.startSettling(generation)
+    return outcome
+  }
+
+  function retryDumpOrganization() {
+    const last = lastDumpRef.current
+    if (!last) {
+      readiness.dismissError()
+      return
+    }
+    const generation = readiness.begin(last.tabs.length)
+    runDumpOrganization(generation, last.workspaceId, last.tabs, last.sections)
+  }
+
+  /**
+   * The layout/settle half of readiness, run headlessly: the graph's real
+   * simulation is stepped to rest against the FINAL organized store, and the
+   * resulting positions are written to the persisted graph state before the
+   * Graph View is ever allowed to mount. GraphCanvas then adopts them
+   * verbatim (engine.ts's setNodes prefers a saved position over any seed),
+   * so the first frame the user sees is the settled one instead of the start
+   * of a three-second on-screen re-layout.
+   *
+   * Sliced across macrotasks rather than run in one blocking pass, so the
+   * preparation UI keeps painting while a few hundred tabs settle.
+   *
+   * Deliberately keyed on status+generation only: a title resolving (or any
+   * other unrelated store write) mid-settle must not restart the settle,
+   * which is why the store is read through a ref.
+   */
+  useEffect(() => {
+    if (readiness.state.status !== "settling") return
+    const generation = readiness.state.generation
+    const currentStore = storeRef.current
+    if (!currentStore) return
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const validTabIds = new Set(currentStore.workspaces.flatMap((w) => w.tabs.map((t) => t.id)))
+    const validWorkspaceIds = new Set(currentStore.workspaces.map((w) => w.id))
+    const tabWorkspaceOf = new Map<string, string>()
+    for (const w of currentStore.workspaces) for (const t of w.tabs) tabWorkspaceOf.set(t.id, w.id)
+
+    const graphState = pruneGraphState(loadGraphState(), validTabIds)
+    // Same prune the collection store applies on read, so the precompute
+    // clusters exactly the collections GraphView will show.
+    const collections = pruneCollectionState(loadCollectionState(), validWorkspaceIds, tabWorkspaceOf).collections
+    const dependencies = loadDependencyState().dependencies
+
+    const layoutInput = resolveGraphLayoutInput(currentStore.workspaces, dependencies, collections, graphState)
+    const precompute = createLayoutPrecompute(layoutInput)
+    // Physics is actually running now — a distinct, real stage from
+    // "arranging" (deriving nodes/edges/clusters, which the lines above just
+    // did). Reported through startSettling rather than advance() so the
+    // status stays `settling` and this effect doesn't re-enter itself.
+    readiness.startSettling(generation, "settling")
+
+    function runSlice() {
+      if (cancelled) return
+      const done = precompute.step(SETTLE_TICKS_PER_SLICE)
+      if (!done) {
+        timer = setTimeout(runSlice, 0)
+        return
+      }
+      const result = precompute.result()
+      // A dump changes how much world the layout occupies, so the camera
+      // saved before it would frame the wrong part of a graph the user has
+      // not seen yet — the first frame has to show the finished graph, not a
+      // corner of it. Only after a settle: reopening the graph later still
+      // restores wherever the user themselves left the camera.
+      const framed = layoutInput.nodes
+        .map((node) => result.positions[node.id])
+        .filter((p): p is { x: number; y: number } => Boolean(p))
+        .map((p) => ({ ...p, radius: 0 }))
+      const camera =
+        framed.length > 0 && typeof window !== "undefined"
+          ? computeFitCamera(framed, window.innerWidth, window.innerHeight)
+          : graphState.settings.camera
+
+      // The layout key is what tells the canvas these positions are FINISHED
+      // for this exact graph, so it may open static instead of running the
+      // physics all over again in front of the user. Written only here, when
+      // a settle has actually completed.
+      saveGraphState({
+        ...graphState,
+        positions: result.positions,
+        boundaryOffsets: result.boundaryOffsets,
+        settings: { ...graphState.settings, camera },
+        layoutKey: computeLayoutKey(
+          layoutInput.clusterTree,
+          layoutInput.nodes.map((n) => n.id),
+          graphState.settings
+        ),
+      })
+      readiness.complete(generation)
+    }
+
+    runSlice()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readiness.state.status, readiness.state.generation])
 
   function handleCreateSection(parentId: string | null, name: string) {
     if (!store || !currentWorkspace) return
@@ -394,8 +570,16 @@ export function AppShell() {
       return
     }
     toast.info(`Reorganizing ${unlocked.length} tab${unlocked.length === 1 ? "" : "s"}…`)
-    const report = await organizeNewTabsIntoSections(currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
-    toast.success("Reorganized", { description: report ? summarizeReportForToast(report) : undefined })
+    // Goes through the same lifecycle a dump does: a manual reorganize moves
+    // tabs between sections, which restructures the graph exactly as a dump
+    // would, so the graph has to stay shut until it too has settled.
+    const generation = readiness.begin(unlocked.length)
+    const outcome = await runDumpOrganization(generation, currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
+    if (!outcome.ok) {
+      toast.error("Couldn't reorganize these tabs")
+      return
+    }
+    toast.success("Reorganized", { description: outcome.report ? summarizeReportForToast(outcome.report) : undefined })
   }
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
@@ -481,7 +665,9 @@ export function AppShell() {
     // flag survives — organizeNewTabsIntoSections completely replaces each
     // organized tab object with whatever it's given.
     const freshIds = new Set(fresh.map((t) => t.id))
-    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => freshIds.has(t.id)), nextWorkspace.sections ?? [])
+    const dumped = nextWorkspace.tabs.filter((t) => freshIds.has(t.id))
+    const generation = readiness.begin(dumped.length)
+    runDumpOrganization(generation, nextWorkspace.id, dumped, nextWorkspace.sections ?? [])
     setView("workspace")
   }
 
@@ -513,7 +699,13 @@ export function AppShell() {
     autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
     const nextWorkspace = getCurrentWorkspace(synced)
     const incomingIds = new Set(incoming.map((t) => t.id))
-    organizeNewTabsIntoSections(nextWorkspace.id, nextWorkspace.tabs.filter((t) => incomingIds.has(t.id)), nextWorkspace.sections ?? [])
+    const imported = nextWorkspace.tabs.filter((t) => incomingIds.has(t.id))
+    const generation = readiness.begin(imported.length)
+    runDumpOrganization(generation, nextWorkspace.id, imported, nextWorkspace.sections ?? [])
+    // Organization is gated and asynchronous, but the ack is not: the count
+    // answers "how many tabs did this shell take", which is settled the
+    // moment they are merged and persisted above. See this function's
+    // contract — a silent return here is a dump the popup calls a success.
     return incoming.length
   }
 
@@ -613,6 +805,27 @@ export function AppShell() {
     )
   }
 
+  /**
+   * The single funnel every Graph View entry point (sidebar button, header
+   * button, header dropdown, command palette) already went through — now
+   * gated. The buttons are also visibly disabled while a dump runs, but the
+   * check lives here too: disabling a control is a hint, not an enforcement,
+   * and this is the transition that must not happen.
+   *
+   * A failed dump is allowed through to the preparation screen deliberately —
+   * that screen is where the error, "Try again" and "Open graph anyway" live.
+   * It still doesn't render the graph.
+   */
+  function handleOpenGraph() {
+    if (readiness.graphAvailable || readiness.state.status === "error") {
+      setView("graph")
+      return
+    }
+    toast.info(describeOrganizationStage(readiness.state), {
+      description: "The graph opens once your tabs are organized.",
+    })
+  }
+
   function handleRequestOrganize() {
     if (!store || !currentWorkspace) return
     autoOrganize.analyze(currentWorkspace, store.workspaces)
@@ -646,6 +859,23 @@ export function AppShell() {
   if (!hydrated || !store || !currentWorkspace) return null
 
   if (view === "graph") {
+    // The gate, at the transition itself rather than inside the canvas: while
+    // a dump is organizing, laying out or settling, GraphView is not rendered
+    // at all — so there is no partially-organized graph underneath anything,
+    // and nothing for a stray click to reach. Being sent here mid-dump (an
+    // extension import arriving while the graph is already open) parks the
+    // user on the preparation screen and drops them into the finished graph
+    // the moment it is ready.
+    if (!readiness.graphAvailable) {
+      return (
+        <OrganizationPreparationView
+          state={readiness.state}
+          onClose={() => setView("workspace")}
+          onRetry={retryDumpOrganization}
+          onOpenAnyway={readiness.dismissError}
+        />
+      )
+    }
     return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
   }
 
@@ -708,7 +938,9 @@ export function AppShell() {
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}
-        onOpenGraph={() => setView("graph")}
+        onOpenGraph={handleOpenGraph}
+        graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
+        graphLockedReason={readiness.label}
         onOpenSettings={() => setView("settings")}
       />
       <div
@@ -730,7 +962,16 @@ export function AppShell() {
             onClear={handleClear}
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
-            onOpenGraph={() => setView("graph")}
+            onOpenGraph={handleOpenGraph}
+            graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
+            graphLockedReason={readiness.label}
+            organizationStatus={
+              <OrganizationStatusBar
+                state={readiness.state}
+                onRetry={retryDumpOrganization}
+                onDismissError={readiness.dismissError}
+              />
+            }
             onOpenFavorites={() => setView("favorites")}
             onOpenRecents={() => setView("recents")}
             onOpenHistoryDump={() => setView("history-dump")}

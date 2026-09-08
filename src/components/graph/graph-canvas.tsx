@@ -161,6 +161,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   positions: Record<string, { x: number; y: number }>
   /** Persisted per-tab cluster-territory displacement from past boundary drags — see GraphPersistedState.boundaryOffsets. */
   boundaryOffsets: Record<string, { x: number; y: number }>
+  /**
+   * True when `positions` is the FINISHED layout for exactly this graph —
+   * settled headlessly before the view was unlocked (lib/graph/precompute.ts)
+   * and still matching it (GraphPersistedState.layoutKey). The first physics
+   * pass then cools instead of reheating, so the graph opens at its final
+   * layout rather than re-running ~200 ticks of physics in front of the user.
+   */
+  layoutSettled: boolean
   initialCamera: CameraState
   display: GraphDisplaySettings
   selectedTabId: string | null
@@ -198,6 +206,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     dependencyEdges,
     positions,
     boundaryOffsets,
+    layoutSettled,
     initialCamera,
     display,
     selectedTabId,
@@ -284,6 +293,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   )
   const spaceHeldRef = useRef(false)
 
+  // Whether the physics effect below has run yet — see its `cool()` branch.
+  const isFirstPhysicsPassRef = useRef(true)
   const rafRef = useRef<number | null>(null)
   const runningRef = useRef(false)
   const needsDrawRef = useRef(true)
@@ -1214,8 +1225,29 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     const structureChanged = signature !== structureSignatureRef.current
     structureSignatureRef.current = signature
 
+    const everyNodePositioned = nodes.length > 0 && nodes.every((node) => positions[node.id])
+    const firstPass = isFirstPhysicsPassRef.current
+    isFirstPhysicsPassRef.current = false
+
     const arrivals = simulation.lastArrivalCount()
-    if (arrivals >= BULK_ARRIVAL_THRESHOLD) {
+    if (firstPass && layoutSettled && everyNodePositioned) {
+      // A layout that was already settled for exactly this graph has nothing
+      // left to lay out, so the first physics pass after mount cools instead
+      // of reheating: the first frame IS the final frame. That is the whole
+      // point of settling before the Graph View is unlocked
+      // (lib/graph/precompute.ts) — reheating here would re-run ~200 ticks
+      // from those settled positions and move nodes hundreds of world units
+      // (measured), which is exactly the "graph opens, then everything
+      // rearranges" this exists to remove.
+      //
+      // Checked BEFORE the bulk burst below, and only on the FIRST pass: a
+      // matching layoutKey means that burst has already been run, offline,
+      // over this very node set, so running it again would undo the point of
+      // having waited. Every later run of this effect is a real change (a
+      // filter toggled, a workspace switched, tabs added or removed) and
+      // reheats normally, as do drags and boundary moves.
+      simulation.cool()
+    } else if (arrivals >= BULK_ARRIVAL_THRESHOLD) {
       // A bulk dump. The nodes have just been placed deterministically across
       // their clusters (engine.ts's setNodes), so what is left is refinement,
       // not layout — and refinement is exactly the part there is no reason to

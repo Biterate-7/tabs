@@ -45,6 +45,8 @@ export function AppSidebar({
   onOpenRecents,
   onOpenHistoryDump,
   onOpenGraph,
+  graphLocked = false,
+  graphLockedReason,
   onOpenSettings,
 }: {
   workspaces: Workspace[]
@@ -67,6 +69,10 @@ export function AppSidebar({
   onOpenRecents: () => void
   onOpenHistoryDump: () => void
   onOpenGraph: () => void
+  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disabled rather than hidden, so its absence never reads as a missing feature. */
+  graphLocked?: boolean
+  /** What the graph is waiting on, used as the disabled button's tooltip. */
+  graphLockedReason?: string
   onOpenSettings: () => void
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
@@ -203,7 +209,8 @@ export function AppSidebar({
         </IconButton>
         <IconButton
           aria-label="Open Graph View"
-          tooltip="Graph"
+          tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : "Graph"}
+          disabled={graphLocked}
           onClick={onOpenGraph}
           className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
         >

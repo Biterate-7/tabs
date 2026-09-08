@@ -16,6 +16,7 @@ import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { buildClusterTree, computeClusterAnchors } from "@/lib/graph/clusters"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
+import { computeLayoutKey } from "@/lib/graph/precompute"
 import { searchGraphNodes } from "@/lib/graph/search"
 import {
   defaultGraphState,
@@ -169,6 +170,26 @@ export function GraphView({
       allSections,
       clusterAnchors,
     ]
+  )
+
+  /**
+   * Whether the persisted positions are the FINISHED layout for exactly this
+   * graph — written by the pre-open settle (app-shell.tsx) and compared
+   * against what is about to be drawn. Computed once per mount, not per
+   * render, and deliberately from the FIRST cluster tree/node set this view
+   * saw: it answers "may the canvas open static", which is a question about
+   * the initial mount only. Anything the user changes from here on (a
+   * filter, a deleted tab) re-runs the canvas's physics normally.
+   */
+  const [layoutSettled] = useState(
+    () =>
+      Boolean(graphState.layoutKey) &&
+      graphState.layoutKey ===
+        computeLayoutKey(
+          clusterTree,
+          allNodes.map((n) => n.id),
+          graphState.settings
+        )
   )
 
   const allDependencyEdges = useMemo(
@@ -633,6 +654,7 @@ export function GraphView({
           dependencyEdges={visibleDependencyEdges}
           positions={graphState.positions}
           boundaryOffsets={graphState.boundaryOffsets}
+          layoutSettled={layoutSettled}
           initialCamera={graphState.settings.camera}
           display={graphState.settings.display}
           selectedTabId={selectedTabId}

@@ -38,6 +38,20 @@ export type GraphSimulation = {
   /** Bumps alpha back up so the layout reacts to a change (new node, new edge, drag start) instead of staying frozen. */
   reheat: (amount?: number) => void;
   /**
+   * Declares the current positions final: drops alpha to alphaMin so `tick()`
+   * becomes a no-op and the layout stays exactly where it is.
+   *
+   * This exists because a d3 simulation stops when its alpha DECAYS, not when
+   * its forces balance — so a layout that has already been settled once will
+   * happily move hundreds of world units again the next time alpha is raised,
+   * from exactly the same positions (measured: ~225 units on a 160-tab graph
+   * re-run from its own settled output). Adopting settled positions therefore
+   * is not enough on its own to make a graph open static; the simulation has
+   * to be told it is already done. Any interaction (a drag, a filter change,
+   * a new tab) reheats normally afterwards.
+   */
+  cool: () => void;
+  /**
    * Replaces the node set. Nodes that existed before keep their current
    * physics position/velocity (so an edge-filter change doesn't reset
    * everything); brand new nodes seed from `initialPositions` when
@@ -1082,6 +1096,9 @@ export function createGraphSimulation(): GraphSimulation {
       boundaryExcludedId = id;
     },
     getBoundaryExcluded: () => boundaryExcludedId,
+    cool: () => {
+      simulation.alpha(simulation.alphaMin());
+    },
     setNodes,
     setEdges,
     setCollections,

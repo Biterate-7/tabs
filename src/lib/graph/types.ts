@@ -122,6 +122,18 @@ export type GraphPersistedState = {
    * record means "nothing has been moved", which is the correct reading.
    */
   boundaryOffsets: Record<string, { x: number; y: number }>;
+  /**
+   * Which graph the `positions` above are a FINISHED layout for — see
+   * precompute.ts's computeLayoutKey. Written when the pre-open settle
+   * completes (app-shell.tsx), and compared against the live graph when the
+   * canvas mounts: matching means "these positions are final, open static
+   * instead of running physics again".
+   *
+   * Absent (blobs written before the readiness gate existed, or positions
+   * that came from anywhere but a completed settle) means "unknown", which
+   * correctly reads as "lay out normally".
+   */
+  layoutKey?: string;
   manualConnections: ManualConnection[];
   settings: GraphSettings;
 };
