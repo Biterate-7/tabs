@@ -111,6 +111,105 @@ export function pointInRect(x: number, y: number, rect: CollectionBoundaryRect):
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
 }
 
+/**
+ * How far OUTSIDE its drawn border a boundary square still answers to the
+ * pointer, in SCREEN pixels.
+ *
+ * Screen rather than world on purpose. The grab margin exists to absorb human
+ * pointing error, which is a constant number of pixels on the display and has
+ * nothing to do with how far the camera happens to be zoomed out — a world
+ * margin would be an invisible 10px cushion when zoomed in and a 125px
+ * land-grab at 0.08x zoom, where it would start stealing clicks meant for
+ * neighbouring squares. Callers divide by the zoom to reach world units; see
+ * graph-canvas.tsx's `boundaryHitTolerance`.
+ *
+ * 10px is roughly a fingertip's worth of slop at 1x and is deliberately
+ * smaller than the 14-20px world padding each tier already puts between a
+ * cluster's outermost node and its border, so the tolerance band never
+ * reaches the nodes inside a neighbouring box.
+ */
+export const BOUNDARY_HIT_TOLERANCE_PX = 10;
+
+/** `rect` grown by `margin` on every side. Negative margins shrink it; the result is clamped to non-negative extents. */
+export function expandRect(rect: CollectionBoundaryRect, margin: number): CollectionBoundaryRect {
+  return {
+    x: rect.x - margin,
+    y: rect.y - margin,
+    width: Math.max(0, rect.width + margin * 2),
+    height: Math.max(0, rect.height + margin * 2),
+  };
+}
+
+/** Distance from a point to the nearest edge of `rect`; 0 when the point is inside it. */
+export function distanceToRect(x: number, y: number, rect: CollectionBoundaryRect): number {
+  const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.width));
+  const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.height));
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * Which boundary square a pointer at (x, y) is asking for. World space, like
+ * every rect in `tiers`.
+ *
+ * Two passes, in strict priority order, because "the whole interior is
+ * interactive" and "a near miss still counts" are different rules that must
+ * not be allowed to fight:
+ *
+ *   1. CONTAINMENT. Any square whose drawn rect actually contains the point
+ *      wins outright, smallest-area first — so a Subcategory or Collection
+ *      box nested inside a Category box is picked up rather than the Category
+ *      around it, and clicking anywhere in a group's empty interior selects
+ *      that group rather than requiring the user to find its 1px border.
+ *
+ *   2. TOLERANCE. Only if NOTHING contains the point does a square within
+ *      `tolerance` of it get to claim it, and then the CLOSEST border wins.
+ *      Nearest-border, not smallest-area, is what keeps the cushion from
+ *      leaking: a point just outside square A and 2x further from square B
+ *      resolves to A even when B is the smaller box. And because containment
+ *      is checked first and exhaustively, a cushion can never take a click
+ *      that landed inside a real square — which is the "clicking slightly
+ *      outside one group must not select the adjacent group" requirement,
+ *      stated as an ordering rather than as a heuristic.
+ *
+ * `tiers` is a list of id→rect maps rather than one map so callers can hand
+ * over their existing per-tier maps without merging them first; the tier
+ * order carries no priority of its own (both passes rank across all tiers at
+ * once), it is purely a convenience.
+ */
+export function hitTestBoundaryRects(
+  tiers: readonly ReadonlyMap<string, CollectionBoundaryRect>[],
+  x: number,
+  y: number,
+  tolerance = 0
+): string | null {
+  let containedId: string | null = null;
+  let containedArea = Infinity;
+  let nearId: string | null = null;
+  let nearDistance = Infinity;
+
+  for (const rects of tiers) {
+    for (const [id, rect] of rects) {
+      if (pointInRect(x, y, rect)) {
+        const area = rect.width * rect.height;
+        if (area < containedArea) {
+          containedArea = area;
+          containedId = id;
+        }
+        continue;
+      }
+      if (tolerance <= 0) continue;
+      const distance = distanceToRect(x, y, rect);
+      if (distance > tolerance) continue;
+      if (distance < nearDistance) {
+        nearDistance = distance;
+        nearId = id;
+      }
+    }
+  }
+
+  return containedId ?? nearId;
+}
+
 export function rectsOverlap(a: CollectionBoundaryRect, b: CollectionBoundaryRect): boolean {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }

@@ -107,11 +107,85 @@ describe("drawCollectionBoundary", () => {
     expect(alphas).toEqual(alphas2);
   });
 
-  it("multiplies fill/stroke alpha by emphasis", () => {
+  it("emphasis quiets a boundary relative to a Collection's, but never past the legibility floor", () => {
+    const alphaAt = (emphasis?: number) => {
+      const ctx = makeCtx();
+      let fillAlpha = 0
+      let strokeAlpha = 0
+      ctx.fill = () => { fillAlpha = ctx.globalAlpha }
+      ctx.stroke = () => { if (strokeAlpha === 0) strokeAlpha = ctx.globalAlpha }
+      drawCollectionBoundary(ctx, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1, emphasis });
+      return { fillAlpha, strokeAlpha }
+    }
+
+    const full = alphaAt(1);
+    const quiet = alphaAt(0.6);
+
+    // Still ordered: an outer tier reads as quieter than a Collection's own box.
+    expect(quiet.fillAlpha).toBeLessThan(full.fillAlpha);
+    expect(quiet.strokeAlpha).toBeLessThan(full.strokeAlpha);
+
+    // ...but the multiplier is floored, which is the actual fix. Compounding a
+    // 0.6 tier emphasis with an already-low base alpha is what rendered
+    // Category boxes at an effective 0.13 stroke — drawn, and invisible.
+    expect(quiet.strokeAlpha).toBeGreaterThanOrEqual(full.strokeAlpha * 0.7);
+  });
+
+  it("draws a resting boundary at an alpha that is actually visible", () => {
+    // Regression guard for the reported "group boxes blend into the
+    // background" bug. The old renderer stroked an unselected Category box at
+    // 0.22 * 0.6 = 0.132 and filled it at 0.021, which on the app's dark
+    // canvas is under one just-noticeable difference. These bounds are
+    // deliberately loose — they pin the failure mode, not the exact values.
     const ctx = makeCtx();
     let fillAlpha = 0
+    let strokeAlpha = 0
     ctx.fill = () => { fillAlpha = ctx.globalAlpha }
+    ctx.stroke = () => { if (strokeAlpha === 0) strokeAlpha = ctx.globalAlpha }
     drawCollectionBoundary(ctx, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1, emphasis: 0.6 });
-    expect(fillAlpha).toBeCloseTo(0.035 * 0.6);
+
+    expect(strokeAlpha).toBeGreaterThan(0.25);
+    expect(fillAlpha).toBeGreaterThan(0.03);
+    // ...and still quiet enough to sit behind the graph rather than in front
+    // of it: this is a background region, not a UI panel.
+    expect(strokeAlpha).toBeLessThan(0.6);
+    expect(fillAlpha).toBeLessThan(0.12);
+  });
+
+  it("draws a hovered boundary louder than a resting one but quieter than a selected one", () => {
+    const strokeAt = (opts: { isHovered?: boolean; isSelected?: boolean }) => {
+      const ctx = makeCtx();
+      let strokeAlpha = 0
+      ctx.stroke = () => { if (strokeAlpha === 0) strokeAlpha = ctx.globalAlpha }
+      drawCollectionBoundary(ctx, palette, rect, {
+        name: "X",
+        isSelected: opts.isSelected ?? false,
+        isHovered: opts.isHovered,
+        showLabel: false,
+        textSize: 1,
+      });
+      return strokeAlpha
+    }
+
+    expect(strokeAt({ isHovered: true })).toBeGreaterThan(strokeAt({}));
+    expect(strokeAt({ isSelected: true })).toBeGreaterThan(strokeAt({ isHovered: true }));
+  });
+
+  it("marks each corner so the region's extent reads without raising its overall weight", () => {
+    const ctx = makeCtx();
+    drawCollectionBoundary(ctx, palette, rect, { name: "X", isSelected: false, showLabel: false, textSize: 1 });
+    // Outline + brackets: two stroked passes, not one.
+    expect(ctx.calls.filter((c) => c === "stroke").length).toBe(2);
+  });
+
+  it("does not draw corner brackets on a box too small to hold them", () => {
+    const ctx = makeCtx();
+    drawCollectionBoundary(ctx, palette, { x: 0, y: 0, width: 8, height: 8 }, {
+      name: "X",
+      isSelected: false,
+      showLabel: false,
+      textSize: 1,
+    });
+    expect(ctx.calls.filter((c) => c === "stroke").length).toBe(1);
   });
 });

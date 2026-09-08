@@ -13,6 +13,7 @@ import {
 } from "d3-force";
 import type { GraphEdge, GraphNode } from "./types";
 import type { ClusterAnchorAssignment } from "./clusters";
+import { buildBulkSeeds, type SeedRegion } from "./bulk-layout";
 import {
   BOUNDARY_SLEEP_SPEED,
   releaseVelocity,
@@ -47,8 +48,17 @@ export type GraphSimulation = {
     nodes: GraphNode[],
     radiusOf: (node: GraphNode) => number,
     initialPositions: Record<string, { x: number; y: number }>,
-    /** Optional seed for a brand-new node (no saved position): jitters it near this point instead of the world origin, so it appears roughly where its cluster already is instead of having to physically migrate there. */
-    anchorFallback?: (node: GraphNode) => { x: number; y: number } | undefined
+    /**
+     * Optional seed region for a brand-new node (no saved position): its
+     * cluster's territory, so it appears where its cluster already is
+     * instead of having to physically migrate there.
+     *
+     * Nodes sharing a region are seeded TOGETHER, packed across it at
+     * collide spacing rather than jittered individually — see
+     * bulk-layout.ts for why individual jitter is what made a bulk dump
+     * explode.
+     */
+    anchorFallback?: (node: GraphNode) => SeedRegion | undefined
   ) => void;
   setEdges: (edges: GraphEdge[], strength: number) => void;
   /**
@@ -133,6 +143,42 @@ export type GraphSimulation = {
     y: number;
     offset: { x: number; y: number };
   }[];
+
+  /**
+   * How many brand-new nodes the last `setNodes` had to seed from scratch —
+   * i.e. how big an arrival this was. The renderer uses it to decide whether
+   * to run `settleBulk` before painting; see BULK_ARRIVAL_THRESHOLD.
+   */
+  lastArrivalCount: () => number;
+  /** True while the simulation is still inside the post-bulk-arrival settling window (tighter speed cap, heavier damping). */
+  isBulkSettling: () => boolean;
+  /**
+   * Runs up to `maxTicks` ticks immediately, stopping early once the layout
+   * settles or `budgetMs` of wall clock is used up.
+   *
+   * This is the "controlled transition" half of a bulk dump: the deterministic
+   * seeding (see bulk-layout.ts) removes the explosion, and this removes the
+   * long visible crawl afterwards by spending one bounded, interruptible
+   * chunk of time before the first frame is painted rather than animating
+   * several hundred frames of coarse rearrangement the user has no reason to
+   * watch. Returns how many ticks it actually ran.
+   */
+  settleBulk: (maxTicks: number, budgetMs: number) => number;
+  /**
+   * A node that must be left out of every boundary square's geometry — the
+   * one currently under the pointer.
+   *
+   * A boundary box IS the bounding box of its members (see
+   * syncBoundaryBodies), so dragging one member 800px away stretches its
+   * group's box by 800px, and the box's collider along with it: one tab
+   * being dragged visibly resizes and shoves its whole neighbourhood.
+   * Excluding the dragged node makes the box's geometry depend only on the
+   * members that are actually at rest, which is what keeps a group
+   * geometrically stable during a drag. On release the node is re-included,
+   * by which point confineToRegions has it back inside its own region.
+   */
+  setBoundaryExcluded: (id: string | null) => void;
+  getBoundaryExcluded: () => string | null;
 };
 
 const ALPHA_MIN = 0.005;
@@ -210,6 +256,122 @@ const SANDBOX_CONTENT_MARGIN = 1200;
 
 /** Hard ceiling on |x|,|y| for a node, mirroring boundary-physics's BOUNDARY_MAX_COORD. */
 const MAX_NODE_COORD = 1e7;
+
+/**
+ * Ceiling on a node's speed, in world units per tick, enforced INSIDE the
+ * simulation (see `createSpeedLimitForce`) rather than by clamping positions
+ * after the fact.
+ *
+ * This is the difference between a bounded simulation and a bounded picture.
+ * d3-force integrates `x += vx *= velocityDecay` with no bound of any kind, so
+ * one near-coincident pair under charge(-260), or one link stretched across
+ * the graph, produces an unbounded impulse that the next tick then carries
+ * forward. Clamping the RESULT would leave that velocity in the node, so the
+ * node would strain against the clamp every frame and shoot away the instant
+ * anything moved. Clamping the VELOCITY, before integration, means the
+ * excess energy never enters the system: it bounds this frame's displacement
+ * AND the next frame's starting condition.
+ *
+ * 18 is chosen against what legitimate motion actually needs: a settling
+ * layout's fastest honest node moves ~10 units/tick right after a reheat and
+ * under 4 within a dozen ticks (measured on the real 283-tab export), so this
+ * never touches ordinary settling. What it does bound is the pathological
+ * case, which was measured at 161 units/tick on the first frame of a cold
+ * bulk insert — a node crossing a third of the graph between two frames.
+ */
+export const MAX_NODE_SPEED = 18;
+
+/**
+ * The speed cap while a bulk arrival is still settling. Tighter, because
+ * that is exactly the window in which hundreds of nodes are simultaneously
+ * resolving overlaps and the sum of their reactions is what reads as chaos.
+ */
+export const BULK_MAX_NODE_SPEED = 7;
+
+/**
+ * How many brand-new nodes at once counts as a "bulk arrival" — a dump or an
+ * import, as opposed to a tab or two being added by hand.
+ */
+export const BULK_ARRIVAL_THRESHOLD = 24;
+
+/** Ticks the tighter bulk regime stays in force after such an arrival. */
+const BULK_SETTLE_TICKS = 240;
+
+/**
+ * Base link strength, before d3's own degree normalisation.
+ *
+ * The link force used to be a FLAT `edgeStrength * 0.5` for every link. d3's
+ * own default is `1 / min(degree(source), degree(target))` precisely because
+ * a flat strength is unstable on any graph with hubs: a node with 20 links
+ * accumulates 20 springs each pulling at full strength, so its acceleration
+ * scales with its degree and the layout tears it between its neighbours.
+ * TabDump's graphs are exactly that shape — chained domain/workspace/category
+ * groups all meeting at popular tabs. Normalising by degree makes a hub's
+ * total link pull comparable to a leaf's, which is what stops high-degree
+ * nodes from being the ones that fly.
+ *
+ * This is therefore also the CEILING on any single link's strength: the
+ * divisor is at least 1 and the user's edge-strength multiplier at most 1, so
+ * no link can ever pull harder than this — comfortably below collide's 0.9,
+ * which is what keeps a spring from being able to drag nodes through each
+ * other.
+ */
+const LINK_BASE_STRENGTH = 0.55;
+
+/** Rest length of a link. */
+const LINK_DISTANCE = 100;
+
+/**
+ * Per-tick velocity DECAY, in d3's sense: a node keeps `1 - decay` of its
+ * speed each tick. Raised from 0.32 — which kept 68% per tick, i.e. LESS
+ * damping than d3-force's own 0.4 default — to 0.55, keeping 45%.
+ *
+ * A node's total coasting distance after an impulse is
+ * `step / (1 - retention)`: at 68% retention a nudge travels ~3.1x its
+ * per-frame step before stopping, at 45% it travels ~1.8x. That is the
+ * difference between a graph that keeps drifting long after anything caused
+ * it to and one that settles. Deliberately not higher: over-damping makes the
+ * layout crawl into place rather than move to it, which reads as sluggish
+ * rather than calm.
+ */
+const VELOCITY_DECAY = 0.55;
+
+/**
+ * Heavier still (keeping 28%) while a bulk arrival settles — hundreds of
+ * simultaneous overlap resolutions should be absorbed rather than rung.
+ * Restored to VELOCITY_DECAY as soon as the bulk window closes, so ordinary
+ * interaction never inherits the stiffer feel.
+ */
+const BULK_VELOCITY_DECAY = 0.72;
+
+/**
+ * Bounds every node's speed, as a force registered LAST so it runs after
+ * every other force has contributed and before d3 integrates — see
+ * MAX_NODE_SPEED. Scales the velocity vector rather than clamping each axis
+ * independently, so a capped node keeps travelling in the direction the
+ * forces actually pointed it.
+ */
+function createSpeedLimitForce(
+  byId: Map<string, PhysicsNode>,
+  limitOf: () => number
+): Force<PhysicsNode, PhysicsLink> {
+  return (() => {
+    const limit = limitOf();
+    for (const node of byId.values()) {
+      const vx = Number.isFinite(node.vx) ? node.vx! : 0;
+      const vy = Number.isFinite(node.vy) ? node.vy! : 0;
+      const speed = Math.hypot(vx, vy);
+      if (speed <= limit) {
+        node.vx = vx;
+        node.vy = vy;
+        continue;
+      }
+      const scale = limit / speed;
+      node.vx = vx * scale;
+      node.vy = vy * scale;
+    }
+  }) as Force<PhysicsNode, PhysicsLink>;
+}
 
 /**
  * Pulls every node toward a per-node anchor point read fresh each tick from
@@ -342,6 +504,28 @@ export function createGraphSimulation(): GraphSimulation {
    */
   const lastGoodNodePosition = new Map<string, { x: number; y: number }>();
 
+  /**
+   * Ticks left in the tighter post-bulk-arrival regime. Counted down by
+   * tick(), reset by a bulk arrival in setNodes.
+   */
+  let bulkSettleTicks = 0;
+  /** Newcomers seeded by the most recent setNodes call. */
+  let arrivalCount = 0;
+  /** See setBoundaryExcluded — the node under the pointer, left out of boundary geometry. */
+  let boundaryExcludedId: string | null = null;
+  /**
+   * Set once the layout has settled, so the one-off "park the residual
+   * velocity" pass runs exactly once per settle rather than every frame.
+   *
+   * It matters because d3 stops advancing the moment alpha falls below
+   * alphaMin, mid-motion — measured on the real export, the fastest node was
+   * still carrying 10 units/tick at that point. That stored momentum sits in
+   * the node until something reheats the simulation and then discharges in a
+   * single frame, which is why the graph used to lurch when you touched it
+   * after it had apparently come to rest.
+   */
+  let parkedAtSettle = false;
+
   const simulation: Simulation<PhysicsNode, PhysicsLink> = forceSimulation<PhysicsNode>([])
     .force("charge", forceManyBody().strength(-260).distanceMax(600))
     .force(
@@ -356,17 +540,51 @@ export function createGraphSimulation(): GraphSimulation {
     .force("collections", collectionForce)
     .force("categoryAnchor", categoryAnchorForce)
     .force("subcategoryAnchor", subcategoryAnchorForce)
+    // Registered here, empty, purely to reserve its slot in the force map.
+    // d3 runs forces in insertion order and a `.force(name, f)` on an
+    // existing name replaces in place, so setEdges() below can swap the real
+    // link force in without ever landing AFTER the speed limiter.
+    .force("link", forceLink<PhysicsNode, PhysicsLink>([]).id((n) => n.id))
+    // LAST on purpose: every other force has had its say by the time this
+    // runs, and d3 integrates immediately after the last force. See
+    // createSpeedLimitForce.
+    .force("limit", createSpeedLimitForce(byId, () => (bulkSettleTicks > 0 ? BULK_MAX_NODE_SPEED : MAX_NODE_SPEED)))
     .alphaMin(ALPHA_MIN)
     .alphaDecay(0.025)
-    .velocityDecay(0.32)
+    .velocityDecay(VELOCITY_DECAY)
     .stop();
 
   function setNodes(
     nodes: GraphNode[],
     radiusOf: (node: GraphNode) => number,
     initialPositions: Record<string, { x: number; y: number }>,
-    anchorFallback?: (node: GraphNode) => { x: number; y: number } | undefined
+    anchorFallback?: (node: GraphNode) => SeedRegion | undefined
   ) {
+    // PHASE 1 — INSERTION. Work out which nodes are genuinely new (no live
+    // physics node, no saved position) before placing anything, so the whole
+    // arrival can be laid out as one set rather than one node at a time. A
+    // node placed without knowing about its 200 siblings is exactly how they
+    // all end up stacked on the same point.
+    const arrivals: { node: GraphNode; region: SeedRegion | undefined }[] = [];
+    for (const node of nodes) {
+      if (byId.has(node.id) || initialPositions[node.id]) continue;
+      arrivals.push({ node, region: anchorFallback?.(node) });
+    }
+    arrivalCount = arrivals.length;
+
+    // PHASE 2 — INITIAL LAYOUT. Every arrival that shares a cluster territory
+    // is packed across it deterministically at collide spacing, so the set
+    // starts out roughly where it will end up and, critically, already
+    // non-overlapping. Nothing random, nothing stacked. See bulk-layout.ts.
+    const groups = new Map<string, { ids: string[]; region: SeedRegion | undefined }>();
+    for (const { node, region } of arrivals) {
+      const key = region ? `${region.x}:${region.y}:${region.r ?? ""}` : "";
+      const group = groups.get(key);
+      if (group) group.ids.push(node.id);
+      else groups.set(key, { ids: [node.id], region });
+    }
+    const seeds = buildBulkSeeds(groups, NODE_MIN_EDGE_GAP);
+
     const next: PhysicsNode[] = nodes.map((node) => {
       const existing = byId.get(node.id);
       if (existing) {
@@ -375,23 +593,25 @@ export function createGraphSimulation(): GraphSimulation {
       }
       const saved = initialPositions[node.id];
       if (saved) return { id: node.id, radius: radiusOf(node), x: saved.x, y: saved.y };
-
-      // No saved position: seed near the tab's eventual cluster anchor (small
-      // jitter) when one is known, instead of scattering around the world
-      // origin — the anchor forces would otherwise have to drag a new tab
-      // across the whole canvas to reach its cluster.
-      const anchor = anchorFallback?.(node);
-      const angle = Math.random() * Math.PI * 2;
-      const dist = anchor ? 24 * Math.random() : 60 + Math.random() * 160;
-      const originX = anchor?.x ?? 0;
-      const originY = anchor?.y ?? 0;
-      return {
-        id: node.id,
-        radius: radiusOf(node),
-        x: originX + Math.cos(angle) * dist,
-        y: originY + Math.sin(angle) * dist,
-      };
+      const seed = seeds.get(node.id) ?? { x: 0, y: 0 };
+      return { id: node.id, radius: radiusOf(node), x: seed.x, y: seed.y, vx: 0, vy: 0 };
     });
+
+    // PHASE 3 — SETTLE. A bulk arrival puts the simulation into a tighter
+    // regime (lower speed ceiling, heavier damping) for a bounded number of
+    // ticks, so the graph converges to the seeded layout instead of reacting
+    // violently to it. Ordinary one-or-two-tab additions never trigger it.
+    //
+    // A window belonging to an ALREADY-SETTLED arrival is retired first. The
+    // countdown only advances while the simulation is running, so a dump that
+    // converged in fewer ticks than its budget leaves the remainder sitting
+    // there; without retiring it, the next tab added by hand would inherit
+    // the leftover and be damped as though it were part of an import. A
+    // window whose graph is still moving is deliberately left alone — titles
+    // resolving mid-settle re-enter setNodes with zero arrivals, and that
+    // must not cut the dump's own settling short.
+    if (simulation.alpha() <= simulation.alphaMin()) bulkSettleTicks = 0;
+    if (arrivalCount >= BULK_ARRIVAL_THRESHOLD) bulkSettleTicks = BULK_SETTLE_TICKS;
 
     byId.clear();
     for (const n of next) byId.set(n.id, n);
@@ -412,12 +632,30 @@ export function createGraphSimulation(): GraphSimulation {
       .filter((e) => byId.has(e.source) && byId.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
 
+    // Degree normalisation, scaled by the user's edge-strength setting — see
+    // LINK_BASE_STRENGTH for why a flat strength is what tore hubs apart.
+    // Counted here rather than relying on d3's own default so the user's
+    // setting multiplies the normalised value instead of replacing it.
+    const degree = new Map<string, number>();
+    for (const link of links) {
+      const source = link.source as string;
+      const target = link.target as string;
+      degree.set(source, (degree.get(source) ?? 0) + 1);
+      degree.set(target, (degree.get(target) ?? 0) + 1);
+    }
+    const scale = Math.max(0.02, Math.min(1, strength));
+
     simulation.force(
       "link",
       forceLink<PhysicsNode, PhysicsLink>(links)
         .id((n) => n.id)
-        .distance(100)
-        .strength(Math.max(0.02, Math.min(1, strength)) * 0.5)
+        .distance(LINK_DISTANCE)
+        .strength((link) => {
+          const source = typeof link.source === "string" ? link.source : (link.source as PhysicsNode).id;
+          const target = typeof link.target === "string" ? link.target : (link.target as PhysicsNode).id;
+          const shared = Math.max(1, Math.min(degree.get(source) ?? 1, degree.get(target) ?? 1));
+          return (LINK_BASE_STRENGTH / shared) * scale;
+        })
     );
   }
 
@@ -569,6 +807,11 @@ export function createGraphSimulation(): GraphSimulation {
       let maxX = -Infinity;
       let maxY = -Infinity;
       for (const id of body.memberIds) {
+        // The node under the pointer is deliberately not part of any box's
+        // geometry — see setBoundaryExcluded. A box with nothing BUT the
+        // dragged node keeps its previous rect (the minX === Infinity check
+        // below), which is still the right answer: it doesn't collapse.
+        if (id === boundaryExcludedId) continue;
         const node = byId.get(id);
         // Number.isFinite, not just `!== undefined`: one NaN member position
         // would otherwise make every extreme NaN, hand the body a NaN centre,
@@ -751,13 +994,60 @@ export function createGraphSimulation(): GraphSimulation {
     }
   }
 
+  /**
+   * Whether the post-bulk-arrival regime is still in force, expiring it if
+   * not.
+   *
+   * The window ends on WHICHEVER comes first: the tick budget running out, or
+   * the layout settling. The second is the one that matters in practice — a
+   * dump usually converges in fewer than BULK_SETTLE_TICKS ticks, and the
+   * countdown only advances while the simulation is actually running, so
+   * without expiring on settle the tighter regime would latch on
+   * indefinitely and the next tab added by hand would be damped as though it
+   * were part of a bulk import.
+   */
+  function inBulkWindow(): boolean {
+    if (bulkSettleTicks <= 0) return false;
+    if (simulation.alpha() <= simulation.alphaMin()) {
+      bulkSettleTicks = 0;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Zeroes the velocity every node is still carrying at the moment the
+   * simulation stops advancing, so "settled" means at rest rather than
+   * frozen mid-flight. See `parkedAtSettle`.
+   */
+  function parkResidualMotion() {
+    for (const node of byId.values()) {
+      node.vx = 0;
+      node.vy = 0;
+    }
+  }
+
+  function tickOnce() {
+    if (simulation.alpha() > simulation.alphaMin()) {
+      // Damping is a property of the regime, not of the frame, so it is only
+      // written on the transition in or out of the bulk window.
+      const decay = inBulkWindow() ? BULK_VELOCITY_DECAY : VELOCITY_DECAY;
+      if (simulation.velocityDecay() !== decay) simulation.velocityDecay(decay);
+
+      simulation.tick();
+      sanitizeNodes();
+      confineToRegions();
+      if (bulkSettleTicks > 0) bulkSettleTicks--;
+      parkedAtSettle = false;
+    } else if (!parkedAtSettle) {
+      parkResidualMotion();
+      parkedAtSettle = true;
+    }
+  }
+
   return {
     tick: () => {
-      if (simulation.alpha() > simulation.alphaMin()) {
-        simulation.tick();
-        sanitizeNodes();
-        confineToRegions();
-      }
+      tickOnce();
       // Always stepped, even once the node layout has cooled: a boundary drag
       // is direct manipulation and shouldn't depend on alpha. A no-op when
       // every body is asleep and nothing is being dragged.
@@ -766,7 +1056,32 @@ export function createGraphSimulation(): GraphSimulation {
     isSettled: () => simulation.alpha() <= simulation.alphaMin(),
     reheat: (amount = 0.4) => {
       simulation.alpha(Math.max(simulation.alpha(), amount));
+      parkedAtSettle = false;
     },
+    lastArrivalCount: () => arrivalCount,
+    isBulkSettling: () => inBulkWindow(),
+    settleBulk: (maxTicks, budgetMs) => {
+      const start = Date.now();
+      let ran = 0;
+      while (ran < maxTicks && !(simulation.alpha() <= simulation.alphaMin())) {
+        tickOnce();
+        ran++;
+        // Checked every few ticks rather than every tick: Date.now() is
+        // cheap but not free, and the point is a soft budget, not a precise
+        // one. The tick count is the real bound; this only keeps a very
+        // large graph from blocking the frame longer than intended.
+        if (ran % 8 === 0 && Date.now() - start >= budgetMs) break;
+      }
+      // The boundary layer is re-derived from wherever the nodes ended up,
+      // once, so the first painted frame's squares match the settled layout
+      // instead of the seeded one.
+      if (ran > 0) syncBoundaryBodies();
+      return ran;
+    },
+    setBoundaryExcluded: (id) => {
+      boundaryExcludedId = id;
+    },
+    getBoundaryExcluded: () => boundaryExcludedId,
     setNodes,
     setEdges,
     setCollections,
