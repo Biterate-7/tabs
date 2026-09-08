@@ -114,6 +114,7 @@ export function loadGraphState(): GraphPersistedState {
       version: 1,
       positions: sanitizePositions(v.positions),
       boundaryOffsets: sanitizePositions(v.boundaryOffsets),
+      layoutKey: typeof v.layoutKey === "string" ? v.layoutKey : undefined,
       manualConnections: sanitizeManualConnections(v.manualConnections),
       settings: sanitizeSettings(v.settings),
     };
@@ -157,6 +158,11 @@ export function pruneGraphState(state: GraphPersistedState, validTabIds: Set<str
     ...state,
     positions,
     boundaryOffsets,
+    // A prune that actually dropped something means the graph is no longer
+    // the one those positions were settled for, so the "this layout is
+    // finished" claim (see GraphPersistedState.layoutKey) no longer holds.
+    layoutKey:
+      Object.keys(positions).length === Object.keys(state.positions).length ? state.layoutKey : undefined,
     manualConnections,
     settings: { ...state.settings, selectedTabId },
   };

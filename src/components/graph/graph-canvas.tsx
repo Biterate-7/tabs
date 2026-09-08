@@ -108,6 +108,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   positions: Record<string, { x: number; y: number }>
   /** Persisted per-tab cluster-territory displacement from past boundary drags — see GraphPersistedState.boundaryOffsets. */
   boundaryOffsets: Record<string, { x: number; y: number }>
+  /**
+   * True when `positions` is the FINISHED layout for exactly this graph —
+   * settled headlessly before the view was unlocked (lib/graph/precompute.ts)
+   * and still matching it (GraphPersistedState.layoutKey). The first physics
+   * pass then cools instead of reheating, so the graph opens at its final
+   * layout rather than re-running ~200 ticks of physics in front of the user.
+   */
+  layoutSettled: boolean
   initialCamera: CameraState
   display: GraphDisplaySettings
   selectedTabId: string | null
@@ -145,6 +153,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     dependencyEdges,
     positions,
     boundaryOffsets,
+    layoutSettled,
     initialCamera,
     display,
     selectedTabId,
@@ -223,6 +232,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   )
   const spaceHeldRef = useRef(false)
 
+  // Whether the physics effect below has run yet — see its `cool()` branch.
+  const isFirstPhysicsPassRef = useRef(true)
+  // The exact inputs the last physics pass ran with. Identity comparison, not
+  // deep equality: every one of these is memoized in graph-view.tsx from the
+  // things that can actually change the layout, so "same identities" means
+  // "same graph" — and re-running the effect with the same graph (React's
+  // development double-invoke, or a re-render that touched nothing relevant)
+  // must not reheat a settled layout.
+  const lastPhysicsInputsRef = useRef<readonly unknown[] | null>(null)
   const rafRef = useRef<number | null>(null)
   const runningRef = useRef(false)
   const needsDrawRef = useRef(true)
@@ -1101,7 +1119,33 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     simulation.setEdges(physicsEdges, display.edgeStrength)
     simulation.setCollections(collections)
     simulation.setClusterAnchors(clusterAnchors)
-    simulation.reheat(0.5)
+
+    // A layout that was already settled for exactly this graph has nothing
+    // left to lay out, so the first physics pass after mount cools instead of
+    // reheating: the first frame IS the final frame. That is the whole point
+    // of settling before the Graph View is unlocked (lib/graph/precompute.ts)
+    // — reheating here would re-run ~200 ticks from those settled positions
+    // and move nodes hundreds of world units (measured), which is exactly the
+    // "graph opens, then everything rearranges" this exists to remove.
+    //
+    // Only the FIRST pass, and only when `layoutSettled` says the positions
+    // still describe this graph. Every later run of this effect is a real
+    // change (a filter toggled, a workspace switched, tabs added or removed)
+    // and reheats normally, as do drags and boundary moves.
+    const everyNodePositioned = nodes.length > 0 && nodes.every((node) => positions[node.id])
+    const inputs = [nodes, edges, dependencyEdges, collections, clusterTree, clusterAnchors, display.nodeSize, display.edgeStrength, centerDistances] as const
+    const previous = lastPhysicsInputsRef.current
+    const unchanged = previous !== null && previous.length === inputs.length && previous.every((value, i) => value === inputs[i])
+    lastPhysicsInputsRef.current = inputs
+
+    if (unchanged) {
+      // Nothing about the graph changed, so there is nothing to re-settle.
+    } else if (isFirstPhysicsPassRef.current && layoutSettled && everyNodePositioned) {
+      simulation.cool()
+    } else {
+      simulation.reheat(0.5)
+    }
+    isFirstPhysicsPassRef.current = false
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, dependencyEdges, collections, clusterTree, clusterAnchors, display.nodeSize, display.edgeStrength, centerDistances])

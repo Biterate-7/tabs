@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import {
   Search as SearchIcon,
@@ -97,6 +97,9 @@ export function WorkspaceView({
   currentWorkspace,
   allWorkspaces,
   onOpenGraph,
+  graphLocked = false,
+  graphLockedReason,
+  organizationStatus,
   onOpenFavorites,
   onOpenRecents,
   onOpenHistoryDump,
@@ -120,6 +123,12 @@ export function WorkspaceView({
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   onOpenGraph?: () => void
+  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disables every graph affordance this view owns (header button, header dropdown, command palette entry). */
+  graphLocked?: boolean
+  /** What the graph is waiting on, used as the disabled controls' tooltip. */
+  graphLockedReason?: string
+  /** The live dump lifecycle, rendered as a status line above the tabs. Omitted outside AppShell. */
+  organizationStatus?: ReactNode
   /** Backs the command palette's "Go to Favorites"/"Go to Recents" entries — omitted in standalone/test contexts that don't wire up a shell. */
   onOpenFavorites?: () => void
   onOpenRecents?: () => void
@@ -722,7 +731,12 @@ export function WorkspaceView({
         setDuplicatesOnly(true)
       },
     },
-    ...(onOpenGraph
+    // Dropped from the palette entirely while the graph is locked, rather
+     // than listed and inert: a command that does nothing when chosen is
+     // worse than one that isn't offered. The header button stays visible
+     // (disabled, with the reason in its tooltip), so the feature never looks
+     // like it disappeared.
+    ...(onOpenGraph && !graphLocked
       ? [
           {
             id: "nav-open-graph",
@@ -1010,6 +1024,8 @@ export function WorkspaceView({
         onOpenPalette={() => setCommandPaletteOpen(true)}
         onOrganize={onRequestOrganize}
         onOpenGraph={onOpenGraph}
+        graphLocked={graphLocked}
+        graphLockedReason={graphLockedReason}
         onOpenSidebar={onOpenSidebar}
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}
@@ -1024,6 +1040,7 @@ export function WorkspaceView({
           paddingBlock: "calc(2rem * var(--tabdump-density-scale, 1))",
         }}
       >
+        {organizationStatus}
         {autoOrganizePlan && onApplyAutoOrganize && onDismissAutoOrganize && (
           <AutoOrganizePanel
             plan={autoOrganizePlan}
