@@ -182,6 +182,23 @@ export function nodeCollisionRadius(radius: number): number {
 }
 
 /**
+ * Whether the pointer is holding this node at a fixed point — d3's `fx`/`fy`,
+ * which only `pin`/`unpin` below ever set, i.e. exactly "a tab is being
+ * dragged".
+ *
+ * Such a node's position is an INPUT to the simulation, not an output: d3
+ * writes `x = fx` on every tick, and the drag handler rewrites `fx` on every
+ * pointermove. Anything that would otherwise move a node has to leave these
+ * alone — the layout forces do (via d3), `confineToRegions` does, and so does
+ * the boundary layer (see `translateBoundaryMembers` and
+ * `syncBoundaryBodies`), because a "rigid" translation that a member silently
+ * refuses is a deformation.
+ */
+function isPointerHeld(node: PhysicsNode): boolean {
+  return (node.fx !== undefined && node.fx !== null) || (node.fy !== undefined && node.fy !== null);
+}
+
+/**
  * Floor on the half-side of the automatic boundary sandbox, and how much
  * clear world beyond the outermost node it always leaves. Generous on
  * purpose: the walls are there so nothing can be launched irrecoverably far
@@ -442,7 +459,7 @@ export function createGraphSimulation(): GraphSimulation {
       const region = anchorById.get(node.id)?.confineTo;
       if (!region || node.x === undefined || node.y === undefined) continue;
       // A pinned node is under the user's finger — never fight a drag.
-      if (node.fx !== undefined && node.fx !== null) continue;
+      if (isPointerHeld(node)) continue;
       // The region travels with any boundary drag that carried this tab —
       // see anchorOffsetById.
       const offset = anchorOffsetById.get(node.id);
@@ -491,6 +508,10 @@ export function createGraphSimulation(): GraphSimulation {
         halfHeight: 0,
         vx: 0,
         vy: 0,
+        // Provisional: syncBoundaryBodies (called at the end of this function,
+        // and again every tick) is what actually decides this, from whether
+        // the members are ones the physics may move.
+        governed: true,
         // Born AWAKE, with zero velocity — not resting.
         //
         // A new body's rect is simply wherever its members' bounding box
@@ -521,10 +542,25 @@ export function createGraphSimulation(): GraphSimulation {
   }
 
   /**
-   * Re-derives every body's rect from its members' live physics positions —
-   * the box IS its members' padded bounding box, exactly as the renderer
-   * draws it, so the collider and the visible square can never disagree.
-   * A body whose members have no positions yet keeps its previous rect.
+   * Re-derives every body's rect from the live physics positions of the
+   * members the physics may actually move — the box IS its members' padded
+   * bounding box, exactly as the renderer draws it, so the collider and the
+   * visible square agree by construction.
+   *
+   * The one deliberate exception is a member the pointer is holding (see
+   * `isPointerHeld`), which is left out of the collider for as long as the
+   * drag lasts, and which sets `body.governed` false if it was the body's
+   * only member. The renderer keeps drawing the full box — a tab being
+   * dragged away from its cluster genuinely does stretch the square around
+   * it, and hiding that would be a lie — but the COLLIDER may only describe
+   * geometry this layer can move rigidly, and a pinned member is one it
+   * cannot. Including it made the collision response deform the box instead
+   * of translating it: the box grew by the push, the larger box overlapped
+   * its neighbour harder, and the next frame's push grew with it, which is
+   * how dragging a single tab used to fling whole clusters thousands of
+   * units across the graph. See BoundaryBody.governed.
+   *
+   * A body whose members have no usable position yet keeps its previous rect.
    */
   function syncBoundaryBodies() {
     for (const body of boundaryBodies.values()) {
@@ -540,15 +576,23 @@ export function createGraphSimulation(): GraphSimulation {
         // translate. sanitizeNodes below keeps that from arising at all; this
         // is the second line of defence, on the path that would spread it.
         if (!node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) continue;
+        if (isPointerHeld(node)) continue;
         const radius = Number.isFinite(node.radius) ? node.radius : 0;
         minX = Math.min(minX, node.x! - radius);
         maxX = Math.max(maxX, node.x! + radius);
         minY = Math.min(minY, node.y! - radius);
         maxY = Math.max(maxY, node.y! + radius);
       }
-      // No usable member position: the body keeps the rect it already had
-      // rather than collapsing. It stays in the world either way.
-      if (minX === Infinity) continue;
+      // Nothing movable to derive a rect from — every member is under the
+      // pointer, or none is positioned yet. The body keeps the rect it
+      // already had rather than collapsing, but that rect now describes
+      // where its members WERE, so the body sits out the step instead of
+      // colliding against a stale position. It stays in the world either way.
+      if (minX === Infinity) {
+        body.governed = false;
+        continue;
+      }
+      body.governed = true;
       const padding = boundaryPadding.get(body.id) ?? 0;
       const x = (minX + maxX) / 2;
       const y = (minY + maxY) / 2;
@@ -666,10 +710,15 @@ export function createGraphSimulation(): GraphSimulation {
     for (const id of memberIds) {
       const node = byId.get(id);
       if (!node) continue;
+      // A tab the pointer is holding belongs to the pointer, not to this
+      // layer: the next pointermove rewrites its fx/fy regardless, so moving
+      // it here only pretends the translation was rigid. It is excluded from
+      // the body's collider for exactly the same reason, which is what keeps
+      // this skip honest rather than a hole in the invariant — the members
+      // that define the rect are precisely the members that move with it.
+      if (isPointerHeld(node)) continue;
       if (node.x !== undefined) node.x += dx;
       if (node.y !== undefined) node.y += dy;
-      if (node.fx !== undefined && node.fx !== null) node.fx += dx;
-      if (node.fy !== undefined && node.fy !== null) node.fy += dy;
       const offset = anchorOffsetById.get(id);
       if (offset) {
         offset.dx += dx;

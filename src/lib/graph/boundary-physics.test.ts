@@ -27,6 +27,11 @@ function makeBody(
     halfHeight: half,
     vx: 0,
     vy: 0,
+    // These bodies are built directly rather than synced from members, so
+    // they stand in for the ordinary case: a rect the physics fully owns.
+    // engine.ts's syncBoundaryBodies is what clears this in production, and
+    // boundary-node-drag.test.ts covers that path.
+    governed: true,
     asleep: true,
     dragging: false,
     lastGoodX: x,
