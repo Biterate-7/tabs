@@ -1,6 +1,8 @@
 import Link from "next/link"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Mail } from "lucide-react"
 import type { ReactNode } from "react"
+
+export const CONTACT_EMAIL = "tabdump.team@gmail.com"
 
 const LEGAL_LINKS = [
   { href: "/privacy", label: "Privacy Policy" },
@@ -84,5 +86,18 @@ export function ConfigNote({ children }: { children: ReactNode }) {
       <p className="font-medium">Needs configuration</p>
       <div className="mt-1 [&_p]:mt-1.5 [&_p]:leading-relaxed">{children}</div>
     </div>
+  )
+}
+
+/**
+ * The site's one contact address, always paired with a mail icon and a
+ * `mailto:` link so every appearance of it is clickable in the same way.
+ */
+export function ContactEmail() {
+  return (
+    <a href={`mailto:${CONTACT_EMAIL}`} className="inline-flex items-center gap-1.5 align-middle">
+      <Mail className="size-4 shrink-0" aria-hidden="true" />
+      {CONTACT_EMAIL}
+    </a>
   )
 }

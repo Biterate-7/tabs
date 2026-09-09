@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { LegalPage, ConfigNote } from "@/components/legal/legal-page"
+import { LegalPage, ConfigNote, ContactEmail } from "@/components/legal/legal-page"
 
 export const metadata: Metadata = {
   title: "Terms & Conditions — TabDump",
@@ -134,10 +134,9 @@ export default function TermsPage() {
 
       <section>
         <h2>Contact</h2>
-        <ConfigNote>
-          <p>This codebase does not include a support email, company name, or mailing address to publish here.</p>
-          <p>Whoever operates this deployment should replace this note with a real contact method before relying on these terms in production.</p>
-        </ConfigNote>
+        <p>
+          Questions about these terms? Reach us at <ContactEmail />.
+        </p>
       </section>
     </LegalPage>
   )
