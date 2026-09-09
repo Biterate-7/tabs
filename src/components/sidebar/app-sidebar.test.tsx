@@ -87,7 +87,13 @@ describe("AppSidebar", () => {
   it("renders the current workspace name in the switcher when expanded", () => {
     renderSidebar({ collapsed: false });
 
-    expect(screen.getByText("General")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Switch workspace" }).textContent).toContain("General");
+  });
+
+  it("shows every workspace's name in the spaces list, next to its badge", () => {
+    renderSidebar({ collapsed: false });
+
+    expect(screen.getByRole("button", { name: "Switch to Research" }).textContent).toContain("Research");
   });
 
   it("removes the workspace name from the switcher (not just clips it) when collapsed", () => {

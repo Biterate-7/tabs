@@ -17,15 +17,13 @@ import type { Workspace } from "@/lib/workspace/types"
  * only adds the surrounding spatial chrome: brand, collapse state, a
  * per-space compact identity rail, and a Graph nav entry.
  *
- * The rail's rows show an initial-letter badge and tab count only, with the
- * full name in a hover tooltip rather than as inline text — this is a
- * deliberate choice, not just a density preference: WorkspaceSwitcher's own
- * trigger already renders the *current* workspace's name as plain text, and
- * its dropdown renders every workspace's name as plain text while open, so
- * duplicating those names as a second always-visible text node here would
- * make a workspace name resolvable by more than one on-screen element at
- * once — exactly the ambiguity plain-text queries like `getByText(name)`
- * can't tolerate.
+ * Each row shows the workspace's badge, name, and tab count — the name sits
+ * directly beside the badge so a workspace is identifiable without opening
+ * the switcher or waiting for the hover tooltip. This does mean the active
+ * workspace's name is now resolvable by two on-screen elements at once (this
+ * rail's row and WorkspaceSwitcher's trigger); tests that assert on a
+ * workspace name must scope their query to one of the two rather than using
+ * a bare `getByText(name)`.
  */
 export function AppSidebar({
   workspaces,
@@ -164,7 +162,10 @@ export function AppSidebar({
                     >
                       <WorkspaceAvatar workspace={w} size={24} />
                       {showLabels && (
-                        <span className="ml-auto shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
+                        <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{w.name}</span>
+                      )}
+                      {showLabels && (
+                        <span className="shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
                       )}
                     </button>
                   }
