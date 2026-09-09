@@ -4,6 +4,8 @@
  * types.ts): plain data types here, pure logic in sibling files, no React.
  */
 
+import type { HistoryVisitItem } from "@/lib/browser/protocol";
+
 export type HistoryTimeRangeId = "today" | "3d" | "7d" | "30d" | "custom";
 
 export type HistoryTimeRange = {
@@ -35,14 +37,30 @@ export type HistoryCandidateTier = "suggested" | "other";
  * metadata than what's actually dumped).
  */
 export type HistoryCandidate = {
-  /** Stable within one scan session — derived from normalizedUrl, not persisted. */
+  /** Stable within one scan session — derived from `canonicalKey`, not persisted. */
   id: string;
+  /**
+   * The canonical identity every duplicate representation of this page folded
+   * into — see lib/history-dump/canonical.ts. One candidate per canonical
+   * key is the guarantee that keeps duplicate nodes out of the graph.
+   */
+  canonicalKey: string;
+  /** The representative occurrence's raw URL — the most recent, most useful one (see aggregate.ts). */
   url: string;
   normalizedUrl: string;
   domain: string;
   title?: string;
   visitCount: number;
   lastVisitedAt: number;
+  /** How many raw history entries were folded into this one logical page (>= 1; 1 means nothing was deduplicated). */
+  occurrenceCount: number;
+  /**
+   * Every raw history entry behind this candidate, newest first —
+   * deduplication collapses what the user reviews and dumps, never the
+   * underlying history data. In-memory only, like the rest of a candidate:
+   * nothing here is persisted onto the resulting Tab.
+   */
+  occurrences: HistoryVisitItem[];
   /** Deterministic 0-100 relevance score — see score.ts. Never shown to the user directly (AGENTS.md section 8). */
   score: number;
   tier: HistoryCandidateTier;

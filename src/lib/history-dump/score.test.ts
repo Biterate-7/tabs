@@ -13,6 +13,9 @@ function entry(over: Partial<AggregatedHistoryEntry>): AggregatedHistoryEntry {
     visitCount: 1,
     lastVisitedAt: NOW,
     distinctDayCount: 1,
+    canonicalKey: "example.com/article",
+    occurrences: [],
+    occurrenceCount: 1,
     ...over,
   };
 }
