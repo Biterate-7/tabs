@@ -1,11 +1,8 @@
 import {
-  forceCenter,
   forceCollide,
   forceLink,
   forceManyBody,
   forceSimulation,
-  forceX,
-  forceY,
   type Force,
   type Simulation,
   type SimulationLinkDatum,
@@ -245,6 +242,35 @@ const COLLECTION_FORCE_STRENGTH = 0.045;
 const CATEGORY_ANCHOR_STRENGTH = 0.06;
 const SUBCATEGORY_ANCHOR_STRENGTH = 0.12;
 
+/**
+ * The cluster spring — see createClusterCohesionForce. It is what holds a
+ * cluster together now that its confinement disc is wide enough not to, and
+ * it is the strongest of the grouping forces on purpose: the three above pull
+ * toward FIXED points and have to stay weak or they would drag the layout into
+ * their own geometry, while this one pulls toward the group's own centroid and
+ * therefore has no geometry of its own to impose. It still sits below the link
+ * force's 0.55 ceiling and collide's 0.9, so an explicit relationship and
+ * node-overlap both still win.
+ *
+ * Measured on a 300-tab/4-category fixture, over 80 randomised node drags:
+ * at 0.09 the categories keep inflating toward their disc (mean radius 0.55 ->
+ * 0.77 of the disc, 25-48% of members ending in the outer rim, aspect ratios
+ * converging on 0.95-0.99 — four rings); at 0.25 they hold their size (0.50 ->
+ * 0.56, rim 0.04-0.33, aspect 0.90-0.98) with the closest pair of nodes still
+ * 34px apart edge to edge against a 36px target. Stronger only compresses:
+ * at 0.5 the same fixture settles with genuine collide violations.
+ */
+const CLUSTER_COHESION_STRENGTH = 0.25;
+
+/**
+ * The two global "stay near the world origin" strengths, unchanged from the
+ * `forceCenter(0,0).strength(0.015)` / `forceX(0).strength(0.008)` they
+ * replace. See createWorldCentringForce, which now applies them only to nodes
+ * that no cluster region already places.
+ */
+const WORLD_RECENTRE_STRENGTH = 0.015;
+const WORLD_ORIGIN_PULL = 0.008;
+
 // The node body's actual on-screen footprint is a CIRCLE, not a square.
 // node-renderer.ts's drawNode() always does
 // `beginPath(); arc(x, y, radius, 0, 2*PI)` and then either `clip()` before
@@ -460,8 +486,126 @@ function createClusterAnchorForce(
   }) as Force<PhysicsNode, PhysicsLink>;
 }
 
-/** A minimal d3-force-compatible force: pulls each group of nodes toward its own centroid, scaled by alpha like any built-in force. */
-function createCollectionForce(strength: number) {
+/**
+ * Keeps the layout near the world origin — d3's `forceCenter` plus the weak
+ * `forceX(0)`/`forceY(0)` pull, rolled into one force that skips any node
+ * already confined to a cluster region.
+ *
+ * THE EXCLUSION IS THE POINT. `forceCenter` is not a force: it writes
+ * POSITIONS directly (`node.x -= (centroid.x - target.x) * strength`) and,
+ * unlike every real force, is not scaled by alpha — so it translates the whole
+ * node cloud by a fixed fraction of its centroid offset on every single tick,
+ * for as long as the simulation is awake. `confineToRegions` is the other
+ * position write in this engine, and it projects each node back into a disc
+ * that does NOT move. Two opposed position writes do not find an equilibrium
+ * the way two forces do: the cloud slides until the wall stops it, and every
+ * cluster ends up with its members pressed against the same side of its own
+ * disc — the side facing the origin.
+ *
+ * That pile IS the reported "predetermined curve": the rim of a circle is a
+ * smooth arc, the drift direction is global, so every category settled into
+ * the same crescent whatever its contents, and any drag simply re-entered the
+ * same attractor. Measured on a 300-tab/4-category fixture before this
+ * change: each category's members drifted 190px off their disc centre (disc
+ * radius 212), settled at a mean radius of 206 of a possible 212 — i.e. on
+ * the rim — inside a 120° sector, with 711 pairs overlapping past their
+ * collide radius because the two position writes crush them together faster
+ * than an alpha-scaled collide can push them apart. With confined nodes
+ * excluded: drift 3-37px, mean radius 151, members spread over all twelve
+ * 30° sectors, 72-92 overlapping pairs.
+ *
+ * Excluding them costs nothing, because a confined node does not need
+ * centring: `computeClusterRegions` already packs every region into a blob
+ * around the origin, so the layout is centred by construction. Nodes with no
+ * region — "ring" mode, or a tab missing from the anchor map — keep exactly
+ * the behaviour they had, which is what the `forceCenter` here was for.
+ */
+function createWorldCentringForce(
+  byId: Map<string, PhysicsNode>,
+  anchorById: () => Map<string, ClusterAnchorAssignment>,
+  recentre: number,
+  originPull: number
+): Force<PhysicsNode, PhysicsLink> {
+  return ((alpha: number) => {
+    const anchors = anchorById();
+    const free: PhysicsNode[] = [];
+    let sumX = 0;
+    let sumY = 0;
+    for (const [id, node] of byId) {
+      if (node.x === undefined || node.y === undefined) continue;
+      // A region places this node already — see the doc comment.
+      if (anchors.get(id)?.confineTo) continue;
+      // Under the pointer: its position is an input, never an output.
+      if (isPointerHeld(node)) continue;
+      free.push(node);
+      sumX += node.x;
+      sumY += node.y;
+    }
+    if (free.length === 0) return;
+    // forceCenter's translation: shift the free nodes so their centroid moves
+    // `recentre` of the way to the origin. A position write, alpha-independent,
+    // exactly as d3 does it.
+    const shiftX = (sumX / free.length) * recentre;
+    const shiftY = (sumY / free.length) * recentre;
+    for (const node of free) {
+      node.x = node.x! - shiftX;
+      node.y = node.y! - shiftY;
+      // forceX(0)/forceY(0): an ordinary alpha-scaled velocity pull.
+      node.vx = (node.vx ?? 0) - node.x * originPull * alpha;
+      node.vy = (node.vy ?? 0) - node.y * originPull * alpha;
+    }
+  }) as Force<PhysicsNode, PhysicsLink>;
+}
+
+/**
+ * "Members of a cluster stay together", as a FORCE: every member of a
+ * territory is pulled toward that territory's own live centroid, in proportion
+ * to how far from it they are. Same mechanism as the collection force below,
+ * on a different set of groups.
+ *
+ * WHY A FORCE AND NOT THE DISC. Cohesion used to come entirely from
+ * `confineToRegions`' disc, which is a hard positional wall — and a hard wall
+ * is the one confining potential that cannot produce an organic cluster. It is
+ * the classic result for charges in a box: charge(-260) presses every member
+ * outward, nothing anywhere in the interior pushes back, so the members
+ * accumulate ON THE BOUNDARY. Fresh graphs hid it, because alpha decays in
+ * ~180 ticks and a cluster seeded compact never gets there — but every drag
+ * reheats, and the layout creeps toward that equilibrium a little more each
+ * time. Measured on a 300-tab/4-category fixture with only the disc holding
+ * clusters together: fresh, the four categories sat at mean radius 0.58 of
+ * their disc with 19-23% of members in the outer rim and aspect ratios spread
+ * 0.78-0.92; after 40 node drags, ALL FOUR had inflated to mean radius
+ * 0.87-0.89, 59% of members in the rim, and aspect ratios 0.98-0.99 — four
+ * indistinguishable rings. That is the reported "it comes back after you move
+ * things around a lot".
+ *
+ * A spring toward the group's centroid is a SMOOTH confining potential, and a
+ * smooth potential fills: the outward pressure of charge is balanced
+ * everywhere in the interior, not only at a rim, so the cluster settles at a
+ * size of its own and stays filled. Its size scales correctly for free — a
+ * constant spring constant against charge summed over n members gives an
+ * equilibrium radius proportional to sqrt(n), the same way the space n nodes
+ * need does — so one strength works for a 5-tab category and a 90-tab one.
+ *
+ * It says nothing whatsoever about SHAPE. It has no preferred direction, no
+ * target coordinates, and no geometry: the centroid is wherever the members
+ * currently are. What the cluster looks like between "together" and "not
+ * overlapping" is left entirely to charge, collide and the links, which is why
+ * two categories with different contents settle differently.
+ */
+function createClusterCohesionForce(strength: number) {
+  return createCentroidForce(strength);
+}
+
+/**
+ * A minimal d3-force-compatible force: pulls each group of nodes toward its
+ * own centroid, scaled by alpha like any built-in force.
+ *
+ * An INTERNAL force — it moves members relative to each other and leaves the
+ * group's centroid exactly where it was — so it can never drag a cluster off
+ * its own territory, however strong it is.
+ */
+function createCentroidForce(strength: number) {
   let groups: PhysicsNode[][] = [];
   const force = ((alpha: number) => {
     for (const group of groups) {
@@ -491,9 +635,15 @@ function createCollectionForce(strength: number) {
   return force;
 }
 
+/** The "collection members tend to cluster" force — see setCollections and COLLECTION_FORCE_STRENGTH. */
+function createCollectionForce(strength: number) {
+  return createCentroidForce(strength);
+}
+
 export function createGraphSimulation(): GraphSimulation {
   const byId = new Map<string, PhysicsNode>();
   const collectionForce = createCollectionForce(COLLECTION_FORCE_STRENGTH);
+  const clusterCohesionForce = createClusterCohesionForce(CLUSTER_COHESION_STRENGTH);
   let anchorById = new Map<string, ClusterAnchorAssignment>();
   const getAnchorById = () => anchorById;
   /**
@@ -606,10 +756,12 @@ export function createGraphSimulation(): GraphSimulation {
         .radius((n) => nodeCollisionRadius(n.radius))
         .strength(0.9)
     )
-    .force("center", forceCenter(0, 0).strength(0.015))
-    .force("x", forceX(0).strength(0.008))
-    .force("y", forceY(0).strength(0.008))
+    // One force where forceCenter + forceX(0) + forceY(0) used to be, with
+    // the same strengths — see createWorldCentringForce for why it has to
+    // know which nodes a cluster region already places.
+    .force("center", createWorldCentringForce(byId, getAnchorById, WORLD_RECENTRE_STRENGTH, WORLD_ORIGIN_PULL))
     .force("collections", collectionForce)
+    .force("clusterCohesion", clusterCohesionForce)
     .force("categoryAnchor", categoryAnchorForce)
     .force("subcategoryAnchor", subcategoryAnchorForce)
     // Registered here, empty, purely to reserve its slot in the force map.
@@ -649,13 +801,27 @@ export function createGraphSimulation(): GraphSimulation {
     // starts out roughly where it will end up and, critically, already
     // non-overlapping. Nothing random, nothing stacked. See bulk-layout.ts.
     const groups = new Map<string, { ids: string[]; region: SeedRegion | undefined }>();
+    let arrivalCollisionRadius = 0;
     for (const { node, region } of arrivals) {
       const key = region ? `${region.x}:${region.y}:${region.r ?? ""}` : "";
       const group = groups.get(key);
       if (group) group.ids.push(node.id);
       else groups.set(key, { ids: [node.id], region });
+      arrivalCollisionRadius += nodeCollisionRadius(clampNodeRadius(radiusOf(node)));
     }
-    const seeds = buildBulkSeeds(groups, NODE_MIN_EDGE_GAP);
+    // Spacing is the CENTRE-TO-CENTRE distance collide will insist on, not the
+    // edge gap between two bodies: two nodes clear each other at
+    // `2 * nodeCollisionRadius`, which is `2 * radius + NODE_MIN_EDGE_GAP` and
+    // therefore 46-62px, never the 36px NODE_MIN_EDGE_GAP on its own. Seeding
+    // at 36 packs a bulk arrival ~25% tighter than it can possibly settle, and
+    // since alpha decays in ~180 ticks the layout freezes before collide has
+    // finished pushing it apart — measured on a 300-tab fixture, 37-57
+    // overlapping pairs per category still present after 1200 ticks, gone when
+    // the seed uses the real spacing.
+    const seeds = buildBulkSeeds(
+      groups,
+      arrivals.length > 0 ? (2 * arrivalCollisionRadius) / arrivals.length : NODE_MIN_EDGE_GAP
+    );
 
     const next: PhysicsNode[] = nodes.map((node) => {
       const existing = byId.get(node.id);
@@ -697,6 +863,7 @@ export function createGraphSimulation(): GraphSimulation {
     for (const id of [...displacedMembers]) if (!byId.has(id)) displacedMembers.delete(id);
     for (const id of [...lastGoodNodePosition.keys()]) if (!byId.has(id)) lastGoodNodePosition.delete(id);
     rebuildFrames();
+    syncClusterCohesionGroups();
     sanitizeNodes();
   }
 
@@ -807,6 +974,27 @@ export function createGraphSimulation(): GraphSimulation {
   function setClusterAnchors(assignments: Map<string, ClusterAnchorAssignment>) {
     anchorById = assignments;
     rebuildFrames();
+    syncClusterCohesionGroups();
+  }
+
+  /**
+   * Re-derives the cohesion force's groups — one per TERRITORY, keyed exactly
+   * as confineToRegions and the boundary frames key theirs, so "the group that
+   * pulls a stray back" is always "the group that shares its ground". Called
+   * from both sides that can change it: a new anchor map, and a new node set.
+   */
+  function syncClusterCohesionGroups() {
+    const byTerritory = new Map<string, PhysicsNode[]>();
+    for (const [id, node] of byId) {
+      const assignment = anchorById.get(id);
+      const region = assignment?.confineTo;
+      if (!region) continue;
+      const key = assignment?.confineToId ?? `@${region.x}:${region.y}:${region.r}`;
+      const group = byTerritory.get(key);
+      if (group) group.push(node);
+      else byTerritory.set(key, [node]);
+    }
+    clusterCohesionForce.setGroups([...byTerritory.values()]);
   }
 
   /**

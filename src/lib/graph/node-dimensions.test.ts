@@ -111,11 +111,11 @@ describe("node and boundary dimensions", () => {
   });
 
   /**
-   * What the residual overshoot IS, proved by removing the boundary layer.
+   * What any residual overshoot IS, proved by removing the boundary layer.
    *
-   * A settled layout rests with some members a little way outside their disc,
-   * and the question that matters is whether that is the stretching bug in
-   * miniature or an ordinary property of the layout. It is the latter, and
+   * A settled layout can rest with some members a little way outside their
+   * disc, and the question that matters is whether that is the stretching bug
+   * in miniature or an ordinary property of the layout. It is the latter, and
    * this is the control that shows it: the identical pipeline with NO
    * boundary bodies at all — nothing that could translate a member — produces
    * the same residual. Two mechanisms account for it, both by design:
@@ -127,11 +127,19 @@ describe("node and boundary dimensions", () => {
    *     the crescent artifact). Equilibrium is therefore a few px outside,
    *     where the halving balances what charge/collide push out per tick.
    *  2. A small cluster's disc can be narrower than the spacing collide
-   *     insists on. A two-tab subcategory gets a sub-disc of radius ~27
-   *     (computeSubcategoryRegion caps it at 0.42x its parent's), i.e. 54px
-   *     across, while two nodes at nodeCollisionRadius spacing need ~56px
-   *     centre-to-centre plus their own radii. They physically cannot both
-   *     fit inside, so they rest just outside it. That is geometry, not drift.
+   *     insists on. A two-tab subcategory gets a sub-disc capped at 0.42x its
+   *     parent's (computeSubcategoryRegion), while two nodes at
+   *     nodeCollisionRadius spacing need ~56px centre-to-centre plus their own
+   *     radii. They physically cannot both fit inside, so they rest just
+   *     outside it. That is geometry, not drift.
+   *
+   * This fixture no longer exhibits either: since REGION_CONFINE_DISC_SCALE
+   * was derived from the spacing collide actually enforces rather than left at
+   * 1.0, its discs genuinely hold their members and `bare.worst` is 0. That is
+   * the healthy end of the same spectrum, so the control is asserted as a
+   * CEILING on what the boundary layer may add — which is the claim the test
+   * is making — rather than as "there must be a residual to compare".
+   * Mechanism 2 is still checked below on a shape that does exhibit it.
    */
   it("has a settle equilibrium that does not come from the boundary layer", () => {
     const data = buildWorkspace(300);
@@ -143,21 +151,24 @@ describe("node and boundary dimensions", () => {
     const bodied = withBodies.confinementOvershoot();
     const bare = withoutBodies.confinementOvershoot();
 
-    // The control has a residual of its own, so the residual is not the
-    // boundary layer's doing…
-    expect(bare.worst).toBeGreaterThan(0);
-    // …and switching the boundary layer on does not materially add to it.
-    // The pre-fix engine measured 1450px here against the same control.
+    // Whatever the control's residual is — including none — switching the
+    // boundary layer on does not materially add to it. The pre-fix engine
+    // measured 1450px here against the same control.
+    expect(bare.worst).toBeGreaterThanOrEqual(0);
     expect(bodied.worst).toBeLessThan(bare.worst + 30);
     expect(bodied.outside).toBeLessThan(bare.outside * 1.5 + 10);
 
-    // Point 2 above, checked rather than asserted, on the shape that actually
-    // exhibits it: a two-tab category holding a two-tab subcategory. Its
-    // sub-disc is capped at 0.42x its parent's (computeSubcategoryRegion), and
-    // the parent's is only ~65 across for two tabs, so the sub-disc ends up
-    // ~54px wide — narrower than the ~56px two collide-spaced nodes occupy
-    // once their own radii are counted. They cannot both fit inside it, so
-    // they rest fractionally outside. Geometry, not drift.
+    // Mechanism 2 above, on the shape that used to exhibit it and is the
+    // tightest the layout can produce: a two-tab category holding a two-tab
+    // subcategory, whose sub-disc is capped at 0.42x its parent's
+    // (computeSubcategoryRegion). At REGION_CONFINE_DISC_SCALE 1.0 that came
+    // out ~54px across against the ~56px two collide-spaced nodes occupy once
+    // their own radii are counted — the two members physically could not both
+    // fit inside their own disc, so they rested outside it and the disc, not
+    // the forces, decided where they went. Scaling the confinement disc by
+    // what collide actually enforces makes it ~77px, and this asserts the
+    // property that fixed the crescents in the large case: EVERY confinement
+    // disc, down to the smallest, is big enough to hold its own members.
     const tiny = makeGraph(buildWorkspace(2, { categories: 1, subcategoryShare: 1, collections: 0 }));
     const tightestSubDisc = [...tiny.anchors.values()]
       .filter((a) => a.confineWithin && a.confineTo)
@@ -167,9 +178,10 @@ describe("node and boundary dimensions", () => {
     // Centre-to-centre spacing collide insists on, plus the radius each node
     // adds at either end — the span the two members actually occupy.
     const memberSpan = nodeCollisionRadius(BASE_NODE_RADIUS) * 2 + BASE_NODE_RADIUS * 2;
-    expect(tightestSubDisc * 2, `sub-disc ${(tightestSubDisc * 2).toFixed(1)}px vs member span ${memberSpan}px`).toBeLessThan(
-      memberSpan
-    );
+    expect(
+      tightestSubDisc * 2,
+      `sub-disc ${(tightestSubDisc * 2).toFixed(1)}px vs member span ${memberSpan}px`
+    ).toBeGreaterThanOrEqual(memberSpan);
   });
 
   // TEST 4: cluster geometry has no channel into a node's own size, and one

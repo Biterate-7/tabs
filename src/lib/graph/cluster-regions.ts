@@ -1,5 +1,15 @@
 import type { ClusterTree } from "./clusters";
 import { NODE_MIN_EDGE_GAP } from "./engine";
+import { BASE_NODE_RADIUS } from "./node-size";
+
+/**
+ * The per-member cell `baseDiscRadius` bills for. NOT the spacing collide
+ * enforces — that is `2 * radius + NODE_MIN_EDGE_GAP`, larger by the two
+ * bodies' own diameters. See REGION_CONFINE_DISC_SCALE, which is exactly the
+ * ratio between the two, and which exists because conflating them is what made
+ * every confinement disc too small for its own members.
+ */
+const MEMBER_SPACING = NODE_MIN_EDGE_GAP;
 
 /**
  * Category layout mode.
@@ -83,16 +93,61 @@ export const REGION_DISC_SCALE = 2.2;
  * tightly inside an unchanged reservation only ADDS empty space between
  * categories — measured kNN locality 99% -> 100%, purity 0.99 -> 1.00.
  *
- * 1.0 is the tightest setting that leaves the layout uniformly filled rather
- * than rim-piled: the rim share sits at 36%, exactly the uniformly-filled-disc
- * expectation quoted above, with one category (Instagram, 42 tabs) mildly
- * annular. Looser reintroduces the bug (1.2 -> 3 of 33 categories split, worst
- * member 121px; 1.5 -> 11 of 33, 166px); tighter starts genuinely rim-piling
- * (0.9 -> 40% rim share, 2 crescent-shaped categories) for no cohesion gain.
- * The one cost is cross-category edge length, 186px -> 207px, the direct
- * consequence of pulling members away from their shared borders.
+ * WHY IT IS NO LONGER 1.0. At 1.0 the disc is not "exactly big enough" — it
+ * is too small, and the arithmetic says so. `baseDiscRadius` bills each member
+ * for a MEMBER_SPACING (36px) cell at 100% packing efficiency, but the spacing
+ * forceCollide actually enforces is `2 * nodeCollisionRadius`, i.e.
+ * `2 * radius + 36` = 46px for the smallest node and 62px for the largest, and
+ * circles only pack a disc to ~82% of its area. A 75-member category therefore
+ * gets a 212px disc for contents that need at least 258px.
+ *
+ * A cluster that cannot fit inside its own disc does not merely overflow it —
+ * it becomes it. Charge presses every member outward, confineToRegions stops
+ * them all at the same radius, and the settled cluster is the disc: a
+ * uniformly packed circle, identical to every other cluster's, with its
+ * members crushed through each other because two POSITION writes (the
+ * confinement projection, and the world centring this engine used to apply to
+ * confined nodes) overpower an alpha-scaled collide. Measured on a
+ * 300-tab/4-category fixture at 1.0: all four categories settled with their
+ * outermost member at 212-213px against a 211.9px disc, aspect ratios
+ * 0.96-0.99, and 256 pairs overlapping past their collide radius.
+ *
+ * So this is not a free parameter to taste — it is the correction factor from
+ * the spacing baseDiscRadius assumes to the spacing collide enforces, and it
+ * is computed below rather than typed in. At the resulting 1.41 the same
+ * fixture settles with 6 overlapping pairs instead of 256, aspect ratios
+ * spread 0.79-0.97, and no crescents; cohesion is unchanged (0 of 4 categories
+ * split, worst member 69px from its nearest sibling against a 140px guard).
+ *
+ * Cohesion no longer leans on this disc anyway: engine.ts's cluster cohesion
+ * force pulls every member toward its group's own LIVE CENTROID, which is the
+ * thing the old note below was reaching for when it found that a fixed-point
+ * anchor spring could not do the job — a centroid moves with the group, so the
+ * spring never has to fight where the group has got to, only how far apart it
+ * has spread.
+ *
+ * The historical note, kept because it is what this constant was tuned
+ * against: at 1.0 the real 283-tab export had 0 of 33 categories split and a
+ * worst member 97px from its nearest sibling, where the previous behaviour
+ * (members spread across the whole 2.2x reservation, no cohesion force at all)
+ * had 15 of 33 split and a worst member at 316px. Raising the anchor spring
+ * did not fix that (0.06 -> 0.45 moved the worst member only to 291px),
+ * because a fixed-point spring competes against charge from the whole cluster
+ * plus cross-category links far longer, hence far stronger, than it is.
+ *
+ * Kept separate from REGION_DISC_SCALE rather than folded into it, because
+ * the two do different jobs and the 2.2x reservation is load-bearing: it is
+ * what packs the discs into a well-spaced blob (see REGION_GAP), and changing
+ * it would move every category, i.e. redo the whole layout. Widening the
+ * confinement disc inside an unchanged reservation moves nothing — 1.41 of the
+ * base radius still sits far inside the 2.2 reserved for it, so the gap
+ * between neighbouring categories is untouched.
  */
-export const REGION_CONFINE_DISC_SCALE = 1.0;
+const COLLIDE_SPACING = 2 * BASE_NODE_RADIUS + NODE_MIN_EDGE_GAP;
+/** Fraction of a disc's area equal circles actually occupy when packed into it. */
+const CIRCLE_PACKING_DENSITY = 0.82;
+export const REGION_CONFINE_DISC_SCALE =
+  COLLIDE_SPACING / MEMBER_SPACING / Math.sqrt(CIRCLE_PACKING_DENSITY);
 
 /**
  * The disc a category's members are actually held inside, given the territory
@@ -105,10 +160,11 @@ export function confinementRegion(reserved: ClusterRegion): ClusterRegion {
   return { ...reserved, r: (reserved.r / REGION_DISC_SCALE) * REGION_CONFINE_DISC_SCALE };
 }
 
-/** Matches engine.ts's collide spacing, so a disc sized from member count can actually hold them. */
-const MEMBER_SPACING = NODE_MIN_EDGE_GAP;
-
-/** Radius that comfortably holds `weight` members at collide spacing, before REGION_DISC_SCALE. */
+/**
+ * Radius that holds `weight` members at one MEMBER_SPACING cell each, before
+ * REGION_DISC_SCALE. The unit the TERRITORY packer reserves in; what the
+ * members actually need is this times REGION_CONFINE_DISC_SCALE.
+ */
 function baseDiscRadius(weight: number): number {
   return Math.sqrt(Math.max(1, weight) / Math.PI) * MEMBER_SPACING + MEMBER_SPACING;
 }

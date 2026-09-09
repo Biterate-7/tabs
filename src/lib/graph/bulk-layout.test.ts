@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBulkSeeds, packCluster, packedRadius, type SeedRegion } from "./bulk-layout";
+import { buildBulkSeeds, clusterVariation, packCluster, packedRadius, type SeedRegion } from "./bulk-layout";
 
 function nearestNeighbourDistance(points: { x: number; y: number }[]): number {
   let nearest = Infinity;
@@ -33,6 +33,22 @@ describe("packCluster", () => {
       const points = Array.from({ length: count }, (_, i) => packCluster(i, count, region, 36));
       const nearest = nearestNeighbourDistance(points);
       expect(nearest, `count=${count}`).toBeGreaterThan(36 * 0.55);
+    }
+  });
+
+  /**
+   * `spacing` names a DISTANCE, and callers pass the distance forceCollide
+   * will insist on, so the packing has to deliver it. Vogel's model at
+   * `c = spacing / sqrt(pi)` gives one point per `spacing^2` of AREA, which is
+   * a different and smaller thing — its closest pair lands at 0.872 * spacing,
+   * i.e. a bulk arrival seeded 13% inside its own collide radius, to be pushed
+   * apart afterwards by a force that decays to nothing in ~180 ticks. See
+   * VOGEL_NEAREST_NEIGHBOUR_RATIO.
+   */
+  it("treats `spacing` as the nearest-neighbour distance, not the area per point", () => {
+    for (const count of [5, 12, 42, 120, 400]) {
+      const points = Array.from({ length: count }, (_, i) => packCluster(i, count, region, 100));
+      expect(nearestNeighbourDistance(points), `count=${count}`).toBeGreaterThanOrEqual(99.9);
     }
   });
 
@@ -109,6 +125,44 @@ describe("buildBulkSeeds", () => {
   it("handles an empty group without producing a seed", () => {
     const seeds = buildBulkSeeds(new Map([["a", { ids: [], region: { x: 0, y: 0 } }]]), 36);
     expect(seeds.size).toBe(0);
+  });
+
+  /**
+   * The seed must not be the same picture in every cluster. It is what the
+   * layout starts from, the simulation cools in ~180 ticks, and a good part of
+   * what the user finally sees is therefore the seed's ghost — so an identical
+   * spiral everywhere is a large part of why the graph read as drawn by
+   * formula rather than grown. See clusterVariation.
+   */
+  it("gives every cluster its own orientation, without loosening the packing", () => {
+    // Orientation is what stops every cluster being the same picture, so the
+    // property is that it is SPREAD over the circle — not that any particular
+    // pair of keys happens to differ, which is luck.
+    const sectors = new Set<number>();
+    for (let k = 0; k < 40; k++) {
+      const { rotation } = clusterVariation(`cluster-${k}`);
+      expect(rotation).toBeGreaterThanOrEqual(0);
+      expect(rotation).toBeLessThan(Math.PI * 2);
+      sectors.add(Math.floor((rotation / (Math.PI * 2)) * 12));
+    }
+    expect(sectors.size, "30° sectors the cluster rotations fall into").toBeGreaterThanOrEqual(10);
+
+    // And whatever orientation and wobble a cluster draws, its own members
+    // still clear each other at the spacing it was packed for — the property
+    // this whole module exists to hold.
+    const ids = Array.from({ length: 40 }, (_, i) => `t${i}`);
+    for (let k = 0; k < 20; k++) {
+      const seeds = buildBulkSeeds(new Map([[`cluster-${k}`, { ids, region: { x: 0, y: 0, r: 400 } }]]), 36);
+      expect(nearestNeighbourDistance([...seeds.values()]), `cluster-${k}`).toBeGreaterThan(36 * 0.9);
+    }
+  });
+
+  it("is deterministic across calls — the same cluster key always packs the same way", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    const region = { x: 120, y: -40, r: 300 };
+    const first = buildBulkSeeds(new Map([["k", { ids, region }]]), 36);
+    const second = buildBulkSeeds(new Map([["k", { ids, region }]]), 36);
+    expect([...first.entries()]).toEqual([...second.entries()]);
   });
 
   it("produces only finite coordinates", () => {
