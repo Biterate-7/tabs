@@ -17,15 +17,17 @@ import type { Workspace } from "@/lib/workspace/types"
  * only adds the surrounding spatial chrome: brand, collapse state, a
  * per-space compact identity rail, and a Graph nav entry.
  *
- * The rail's rows show an initial-letter badge and tab count only, with the
- * full name in a hover tooltip rather than as inline text — this is a
- * deliberate choice, not just a density preference: WorkspaceSwitcher's own
- * trigger already renders the *current* workspace's name as plain text, and
- * its dropdown renders every workspace's name as plain text while open, so
- * duplicating those names as a second always-visible text node here would
- * make a workspace name resolvable by more than one on-screen element at
- * once — exactly the ambiguity plain-text queries like `getByText(name)`
- * can't tolerate.
+ * An expanded rail row reads `[avatar] [name] … [tab count]`: the name is
+ * the point of the row, so it lives in the row as inline text rather than
+ * only in the hover tooltip. That does mean a workspace name can be on
+ * screen more than once at a time — WorkspaceSwitcher's trigger renders the
+ * *current* name, and its open dropdown renders every name — so tests reach
+ * a specific one through its container or its role rather than through a
+ * bare `getByText(name)`. The row button's `aria-label` ("Switch to <name>")
+ * is unaffected by the inline text and stays the stable click handle.
+ *
+ * The tooltip still earns its place: it carries the untruncated name plus
+ * the relationship count, neither of which the row itself can show.
  */
 export function AppSidebar({
   workspaces,
@@ -164,7 +166,14 @@ export function AppSidebar({
                     >
                       <WorkspaceAvatar workspace={w} size={24} />
                       {showLabels && (
-                        <span className="ml-auto shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
+                        <>
+                          {/* min-w-0 lets this flex child shrink below its
+                              content width, which is what actually lets
+                              `truncate` ellipsize instead of forcing the row
+                              wider than the rail and overflowing it. */}
+                          <span className="min-w-0 flex-1 truncate text-body-sm">{w.name}</span>
+                          <span className="shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
+                        </>
                       )}
                     </button>
                   }

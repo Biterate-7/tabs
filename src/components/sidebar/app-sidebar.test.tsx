@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "./app-sidebar";
 import type { Workspace } from "@/lib/workspace/types";
@@ -87,7 +87,44 @@ describe("AppSidebar", () => {
   it("renders the current workspace name in the switcher when expanded", () => {
     renderSidebar({ collapsed: false });
 
-    expect(screen.getByText("General")).toBeTruthy();
+    const trigger = screen.getByRole("button", { name: "Switch workspace" });
+    expect(within(trigger).getByText("General")).toBeTruthy();
+  });
+
+  it("names every space in the rail, not just the current one", () => {
+    renderSidebar({ collapsed: false });
+
+    for (const w of workspaces) {
+      const row = screen.getByRole("button", { name: `Switch to ${w.name}` });
+      expect(within(row).getByText(w.name)).toBeTruthy();
+      expect(within(row).getByText(String(w.tabs.length))).toBeTruthy();
+    }
+  });
+
+  it("shows a renamed space under its new name without any other state changing", () => {
+    const renamed = workspaces.map((w) =>
+      w.id === "w2" ? { ...w, name: "Reading list" } : w
+    );
+    renderSidebar({ collapsed: false, workspaces: renamed });
+
+    const row = screen.getByRole("button", { name: "Switch to Reading list" });
+    expect(within(row).getByText("Reading list")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Switch to Research" })).toBeNull();
+  });
+
+  it("keeps a long space name from widening the rail, truncating it instead", () => {
+    const long = [
+      makeWorkspace({ id: "w1", name: "A quite unreasonably long workspace name" }),
+    ];
+    renderSidebar({ collapsed: false, workspaces: long, currentId: "w1" });
+
+    const row = screen.getByRole("button", { name: `Switch to ${long[0].name}` });
+    const label = within(row).getByText(long[0].name);
+    // `truncate` only ellipsizes if the flex child is also allowed to shrink
+    // below its content width, which is what min-w-0 does — without it the
+    // name forces the row wider than the rail and overflows it.
+    expect(label.className).toContain("truncate");
+    expect(label.className).toContain("min-w-0");
   });
 
   it("removes the workspace name from the switcher (not just clips it) when collapsed", () => {

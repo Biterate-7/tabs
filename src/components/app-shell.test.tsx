@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
@@ -49,6 +49,29 @@ async function dumpOneTab(user: ReturnType<typeof userEvent.setup>, url = "https
 
 async function openSwitcher(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Switch workspace" }));
+}
+
+/**
+ * A workspace name is deliberately on screen in more than one place at once:
+ * the switcher trigger names the *current* workspace, its open dropdown names
+ * every workspace, and each sidebar rail row names its own. So an assertion
+ * about which workspace is current has to say where it is looking rather than
+ * ask the whole document for the name.
+ */
+async function expectCurrentWorkspace(name: string) {
+  await waitFor(() => {
+    const trigger = screen.getByRole("button", { name: "Switch workspace" });
+    expect(within(trigger).getByText(name)).toBeTruthy();
+  });
+}
+
+/** Picks a workspace from the *open* switcher dropdown, not its rail row. */
+async function pickWorkspaceFromSwitcher(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+) {
+  const menu = await screen.findByRole("menu");
+  await user.click(within(menu).getByText(name));
 }
 
 beforeEach(() => {
@@ -182,7 +205,7 @@ describe("AppShell workspaces", () => {
   it("gives a brand-new user a single clean default workspace", async () => {
     render(<AppShell />);
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("General")).toBeTruthy();
+    await expectCurrentWorkspace("General");
   });
 
   it("migrates existing legacy single-workspace data into the default workspace automatically", async () => {
@@ -191,7 +214,7 @@ describe("AppShell workspaces", () => {
 
     render(<AppShell />);
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    await expectCurrentWorkspace("General");
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
@@ -206,7 +229,7 @@ describe("AppShell workspaces", () => {
     await user.click(screen.getByRole("button", { name: "Create workspace" }));
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("Second")).toBeTruthy();
+    await expectCurrentWorkspace("Second");
   });
 
   it("renames the current workspace", async () => {
@@ -220,7 +243,7 @@ describe("AppShell workspaces", () => {
     await user.type(input, "Renamed");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("Renamed")).toBeTruthy();
+    await expectCurrentWorkspace("Renamed");
   });
 
   it("keeps each workspace's tabs separate when switching between them", async () => {
@@ -239,7 +262,7 @@ describe("AppShell workspaces", () => {
     expect((await screen.findAllByText("arxiv.org")).length).toBeGreaterThan(0);
 
     await openSwitcher(user);
-    await user.click(await screen.findByText("General"));
+    await pickWorkspaceFromSwitcher(user, "General");
 
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
@@ -254,13 +277,13 @@ describe("AppShell workspaces", () => {
     await user.click(await screen.findByText("New workspace"));
     await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
     await user.click(screen.getByRole("button", { name: "Create workspace" }));
-    expect(await screen.findByText("Second")).toBeTruthy();
+    await expectCurrentWorkspace("Second");
 
     await openSwitcher(user);
     await user.click(await screen.findByText(/^Delete/));
     await user.click(await screen.findByRole("button", { name: "Delete workspace" }));
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    await expectCurrentWorkspace("General");
     expect(screen.queryByText("Second")).toBeNull();
   });
 
@@ -277,7 +300,7 @@ describe("AppShell workspaces", () => {
     await user.click(await screen.findByRole("button", { name: "Delete workspace" }));
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("General")).toBeTruthy();
+    await expectCurrentWorkspace("General");
   });
 
   it("persists multiple workspaces across a remount", async () => {
@@ -293,9 +316,9 @@ describe("AppShell workspaces", () => {
     unmount();
     render(<AppShell />);
 
-    expect(await screen.findByText("Second")).toBeTruthy();
+    await expectCurrentWorkspace("Second");
     await openSwitcher(user);
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect(within(await screen.findByRole("menu")).getByText("General")).toBeTruthy();
   });
 
   it("imports a JSON workspace export and switches to it", async () => {
@@ -329,7 +352,7 @@ describe("AppShell workspaces", () => {
     const file = new File([exportedJson], "export.json", { type: "application/json" });
     await user.upload(screen.getByLabelText("Import workspace JSON file"), file);
 
-    expect(await screen.findByText("Imported Notes")).toBeTruthy();
+    await expectCurrentWorkspace("Imported Notes");
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
@@ -343,7 +366,7 @@ describe("AppShell workspaces", () => {
     const file = new File(["{not json"], "export.json", { type: "application/json" });
     await user.upload(screen.getByLabelText("Import workspace JSON file"), file);
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    await expectCurrentWorkspace("General");
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
   });
 });
