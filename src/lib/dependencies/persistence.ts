@@ -1,6 +1,10 @@
+import { scopedKey } from "@/lib/storage/namespace";
 import { DEPENDENCY_TYPE_ORDER } from "./types";
 import type { DependencyPersistedState, DependencyType, TabDependency } from "./types";
 
+// Base key. Signed out this is the literal key used; signed in, scopedKey()
+// prefixes it with the account (see src/lib/storage/namespace.ts), which is what
+// keeps two accounts sharing a browser from sharing each other's data.
 const STORAGE_KEY = "tabdump:dependencies:v1";
 
 function isFiniteNumber(value: unknown): value is number {
@@ -44,7 +48,7 @@ export function defaultDependencyState(): DependencyPersistedState {
 /** Never throws — corrupted or missing dependency state degrades to an empty list rather than blocking the app. */
 export function loadDependencyState(): DependencyPersistedState {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedKey(STORAGE_KEY));
     if (!raw) return defaultDependencyState();
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return defaultDependencyState();
@@ -57,7 +61,7 @@ export function loadDependencyState(): DependencyPersistedState {
 
 export function saveDependencyState(state: DependencyPersistedState): boolean {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(state));
     return true;
   } catch {
     return false;

@@ -1,6 +1,7 @@
 "use client"
 
 import { History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
+import { AccountSection } from "@/components/auth/account-section"
 import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
@@ -220,6 +221,10 @@ export function AppSidebar({
           <Settings />
           {showLabels && <span className="text-body-sm">Settings</span>}
         </IconButton>
+        {/* Renders nothing at all when this deployment has no accounts
+            configured, so the rail is unchanged from before accounts
+            existed. See AccountSection. */}
+        <AccountSection showLabels={showLabels} />
       </div>
       </aside>
     </>

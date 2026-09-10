@@ -1,3 +1,4 @@
+import { scopedKey } from "@/lib/storage/namespace";
 import {
   DEFAULT_CAMERA,
   DEFAULT_CONNECTION_FILTERS,
@@ -9,6 +10,9 @@ import {
   type ManualConnection,
 } from "./types";
 
+// Base key. Signed out this is the literal key used; signed in, scopedKey()
+// prefixes it with the account (see src/lib/storage/namespace.ts), which is what
+// keeps two accounts sharing a browser from sharing each other's data.
 const STORAGE_KEY = "tabdump:graph:v1";
 
 function isFiniteNumber(value: unknown): value is number {
@@ -105,7 +109,7 @@ export function defaultGraphState(): GraphPersistedState {
 /** Never throws — corrupted or missing graph state degrades to sensible defaults rather than blocking the graph from opening. */
 export function loadGraphState(): GraphPersistedState {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedKey(STORAGE_KEY));
     if (!raw) return defaultGraphState();
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return defaultGraphState();
@@ -125,7 +129,7 @@ export function loadGraphState(): GraphPersistedState {
 
 export function saveGraphState(state: GraphPersistedState): boolean {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(state));
     return true;
   } catch {
     return false;
