@@ -365,3 +365,231 @@ describe("organizeTabsCollectively — real-world domain clustering", () => {
     expect(result.report.unclassifiedCount).toBe(0);
   }, 20000);
 });
+
+/**
+ * The reported grouping bug and its general form: a model that has decided a
+ * group is a good home for anything vaguely adjacent to it. These drive the
+ * pipeline end to end with a mock that behaves exactly that way — it names
+ * the real cluster correctly, then tries to sweep every leftover into it —
+ * and assert the membership gate (src/lib/sections/ai/membership.ts) refuses.
+ */
+function makeSiteTab(over: Partial<Tab> & { id: string; domain: string; title: string }): Tab {
+  const url = over.url ?? `https://${over.domain}/${over.id}`;
+  return { url, normalizedUrl: url, category: "other", ...over };
+}
+
+/**
+ * A model that files EVERY tab it is shown into `targetPath` at the given
+ * confidence — the distilled version of "ManageBac is for school, this tab is
+ * school-ish, therefore ManageBac". Confidence is a parameter because the
+ * reported failure happened at "low" too: reusing an existing path used to
+ * bypass every gate regardless of how unsure the model said it was.
+ */
+function installGroupStuffingAi(targetPath: string[], confidence: "high" | "medium" | "low") {
+  vi.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+    const body = JSON.parse(String((init as RequestInit).body));
+    const prompt: string = body.prompt;
+    const isClusterPrompt = /\bsize=\d+/.test(prompt);
+    const key = isClusterPrompt ? "clusterId" : "tabId";
+    const data = prompt
+      .split("\n")
+      .filter((l) => l.startsWith("- id="))
+      .map((line) => ({
+        [key]: /id=(\S+)/.exec(line)![1],
+        path: targetPath,
+        confidence,
+        reason: "Feels related to the rest.",
+      }));
+    return jsonResponse({ data });
+  });
+}
+
+/** Names of the sections each tab id ended up in, for readable assertions. */
+function sectionNamesById(result: Awaited<ReturnType<typeof organizeTabsCollectively>>): Map<string, string | undefined> {
+  const byId = new Map(result.sections.map((s) => [s.id, s.name]));
+  return new Map(result.tabs.map((t) => [t.id, t.sectionId ? byId.get(t.sectionId) : undefined]));
+}
+
+describe("organizeTabsCollectively — group membership is judged per tab", () => {
+  const MANAGEBAC_TABS = [
+    makeSiteTab({ id: "mb1", domain: "managebac.com", title: "ManageBac - Dashboard" }),
+    makeSiteTab({ id: "mb2", domain: "managebac.com", title: "Assignments due this week" }),
+    makeSiteTab({ id: "mb3", domain: "managebac.com", title: "IB Diploma - Class of 2026" }),
+    makeSiteTab({ id: "mb4", domain: "managebac.com", title: "Term grades overview" }),
+  ];
+  /** Every "should NOT be included" case from the report: adjacent in theme, unrelated in fact. */
+  const INTRUDERS = [
+    makeSiteTab({ id: "gen", domain: "genius.com", title: "Kendrick Lamar - Money Trees Lyrics | Genius" }),
+    makeSiteTab({ id: "ais", domain: "aistudio.google.com", title: "Google AI Studio" }),
+    makeSiteTab({ id: "gs", domain: "www.google.com", title: "ib diploma deadlines - Google Search" }),
+    makeSiteTab({ id: "kh", domain: "khanacademy.org", title: "Intro to kinematics | Khan Academy" }),
+    makeSiteTab({ id: "gpt", domain: "chatgpt.com", title: "ChatGPT - help with my essay" }),
+  ];
+
+  it.each([["low"], ["medium"], ["high"]] as const)(
+    "keeps unrelated tabs out of a ManageBac group even when the model insists at %s confidence",
+    async (confidence) => {
+      installGroupStuffingAi(["ManageBac"], confidence);
+
+      const result = await organizeTabsCollectively("w1", "General", [...MANAGEBAC_TABS, ...INTRUDERS], []);
+      const placement = sectionNamesById(result);
+
+      // Casing varies by which namer won (the model's "ManageBac" vs the
+      // deterministic domain namer's "Managebac"); the grouping is the point.
+      const managebacSection = placement.get("mb1");
+      expect(managebacSection?.toLowerCase()).toBe("managebac");
+      for (const tab of MANAGEBAC_TABS) expect(placement.get(tab.id)).toBe(managebacSection);
+      for (const tab of INTRUDERS) expect(placement.get(tab.id)).not.toBe(managebacSection);
+      // Rejected, not lost: the pipeline's own fallback still finds each one a home.
+      assertNoOther(result);
+    }
+  );
+
+  it("keeps unrelated tabs out of an Instagram group", async () => {
+    installGroupStuffingAi(["Instagram"], "high");
+    const instagram = domainTabs("ig", "instagram.com", INSTAGRAM_TITLES.slice(0, 6), INSTAGRAM_HOSTS);
+    const others = [
+      makeSiteTab({ id: "nf", domain: "www.netflix.com", title: "Continue Watching - Netflix" }),
+      makeSiteTab({ id: "az", domain: "www.amazon.com", title: "Amazon.com: desk lamp" }),
+      makeSiteTab({ id: "ar", domain: "arxiv.org", title: "Schwarzschild radius derivation" }),
+    ];
+
+    const result = await organizeTabsCollectively("w1", "General", [...instagram, ...others], []);
+    const placement = sectionNamesById(result);
+
+    for (const tab of instagram) expect(placement.get(tab.id)).toBe("Instagram");
+    for (const tab of others) expect(placement.get(tab.id)).not.toBe("Instagram");
+    assertNoOther(result);
+  });
+
+  it("keeps unrelated tabs out of a named project group (GitHub/TabDump)", async () => {
+    installGroupStuffingAi(["Projects", "TabDump"], "high");
+    const project = [
+      makeSiteTab({ id: "gh1", domain: "github.com", title: "biterate-7/tabdump" }),
+      makeSiteTab({ id: "gh2", domain: "github.com", title: "Issues - biterate-7/tabdump" }),
+      makeSiteTab({ id: "gh3", domain: "github.com", title: "Pull requests - biterate-7/tabdump" }),
+    ];
+    const others = [
+      makeSiteTab({ id: "sp", domain: "open.spotify.com", title: "Discover Weekly - Spotify" }),
+      makeSiteTab({ id: "tw", domain: "www.twitch.tv", title: "Live channel - Twitch" }),
+    ];
+
+    const result = await organizeTabsCollectively("w1", "General", [...project, ...others], []);
+    const placement = sectionNamesById(result);
+
+    for (const tab of project) expect(placement.get(tab.id)).toBe("TabDump");
+    for (const tab of others) expect(placement.get(tab.id)).not.toBe("TabDump");
+    assertNoOther(result);
+  });
+
+  it("still lets a genuine cross-domain topic group hold together — the check rejects strangers, not members", async () => {
+    installGroupStuffingAi(["School", "Physics"], "high");
+    const physics = [
+      makeSiteTab({ id: "ph1", category: "school", domain: "en.wikipedia.org", title: "Schwarzschild metric - physics of black holes" }),
+      makeSiteTab({ id: "ph2", category: "school", domain: "arxiv.org", title: "Schwarzschild geometry near black holes" }),
+      makeSiteTab({ id: "ph3", category: "school", domain: "cern.ch", title: "Black holes and general relativity - physics notes" }),
+      makeSiteTab({ id: "ph4", category: "school", domain: "khanacademy.org", title: "General relativity and curved spacetime" }),
+    ];
+
+    const result = await organizeTabsCollectively("w1", "General", physics, []);
+    const placement = sectionNamesById(result);
+
+    for (const tab of physics) expect(placement.get(tab.id)).toBe("Physics");
+  });
+
+  it("does not let two unrelated tabs legitimise each other inside a group", async () => {
+    // Both genius.com tabs look like each other, so any rule that accepted a
+    // tab for resembling SOME member of the group would keep them both.
+    installGroupStuffingAi(["ManageBac"], "high");
+    const lyrics = [
+      makeSiteTab({ id: "gen1", domain: "genius.com", title: "Kendrick Lamar - Money Trees Lyrics | Genius" }),
+      makeSiteTab({ id: "gen2", domain: "genius.com", title: "SZA - Money Trees verse | Genius lyrics" }),
+    ];
+
+    const result = await organizeTabsCollectively("w1", "General", [...MANAGEBAC_TABS, ...lyrics], []);
+    const placement = sectionNamesById(result);
+
+    const managebacSection = placement.get("mb1");
+    expect(managebacSection?.toLowerCase()).toBe("managebac");
+    for (const tab of MANAGEBAC_TABS) expect(placement.get(tab.id)).toBe(managebacSection);
+    for (const tab of lyrics) expect(placement.get(tab.id)).not.toBe(managebacSection);
+  });
+});
+
+/**
+ * The incremental-dump case: the ManageBac group was built by an EARLIER
+ * session, and this dump contains none of its tabs — only unrelated ones the
+ * model wants to file there. Nothing in the current batch can vouch for the
+ * group, which is precisely when a gate that trusts the model would let
+ * everything through.
+ */
+describe("organizeTabsCollectively — a dump of only unrelated tabs cannot join an existing group", () => {
+  const MANAGEBAC_SECTION: Section = { id: "sec-managebac", parentId: null, name: "ManageBac", source: "ai", createdAt: 0, updatedAt: 0 };
+  /** Already filed by a previous run — passed as read-only context, never re-organized. */
+  const ALREADY_FILED = [
+    makeSiteTab({ id: "old1", domain: "managebac.com", title: "ManageBac - Dashboard", sectionId: MANAGEBAC_SECTION.id, organizationStatus: "classified" }),
+    makeSiteTab({ id: "old2", domain: "managebac.com", title: "Assignments due this week", sectionId: MANAGEBAC_SECTION.id, organizationStatus: "classified" }),
+    makeSiteTab({ id: "old3", domain: "managebac.com", title: "IB Diploma - Class of 2026", sectionId: MANAGEBAC_SECTION.id, organizationStatus: "classified" }),
+  ];
+  const NEW_DUMP = [
+    makeSiteTab({ id: "gen", domain: "genius.com", title: "Kendrick Lamar - Money Trees Lyrics | Genius" }),
+    makeSiteTab({ id: "ais", domain: "aistudio.google.com", title: "Google AI Studio" }),
+    makeSiteTab({ id: "kh", domain: "khanacademy.org", title: "Intro to kinematics | Khan Academy" }),
+  ];
+
+  it.each([["low"], ["medium"], ["high"]] as const)(
+    "rejects them at %s confidence, leaves the existing group untouched, and re-homes them safely",
+    async (confidence) => {
+      installGroupStuffingAi(["ManageBac"], confidence);
+
+      const result = await organizeTabsCollectively(
+        "w1",
+        "General",
+        NEW_DUMP,
+        [MANAGEBAC_SECTION],
+        undefined,
+        [...ALREADY_FILED, ...NEW_DUMP]
+      );
+      const placement = sectionNamesById(result);
+
+      // 4. None of the new tabs got into ManageBac.
+      for (const tab of NEW_DUMP) expect(placement.get(tab.id)).not.toBe("ManageBac");
+      // 6. They are not stranded either — each has a real, safe home.
+      assertNoOther(result);
+
+      // 5. The existing group is exactly as it was: same section, and none of
+      //    its tabs came back changed (they were context, not input).
+      expect(result.sections.find((s) => s.id === MANAGEBAC_SECTION.id)).toEqual(MANAGEBAC_SECTION);
+      expect(result.tabs.map((t) => t.id).sort()).toEqual(["ais", "gen", "kh"]);
+      for (const filed of ALREADY_FILED) expect(result.tabs.some((t) => t.id === filed.id)).toBe(false);
+    }
+  );
+
+  it("accepts a genuine ManageBac tab arriving in that same incremental dump", async () => {
+    installGroupStuffingAi(["ManageBac"], "high");
+    const genuine = makeSiteTab({ id: "new-mb", domain: "managebac.com", title: "ManageBac - Term grades" });
+
+    const result = await organizeTabsCollectively(
+      "w1",
+      "General",
+      [...NEW_DUMP, genuine],
+      [MANAGEBAC_SECTION],
+      undefined,
+      [...ALREADY_FILED, ...NEW_DUMP, genuine]
+    );
+    const placement = sectionNamesById(result);
+
+    expect(placement.get("new-mb")).toBe("ManageBac");
+    for (const tab of NEW_DUMP) expect(placement.get(tab.id)).not.toBe("ManageBac");
+  });
+
+  it("rejects them even with no context at all — an unreadable group is not an open one", async () => {
+    installGroupStuffingAi(["ManageBac"], "high");
+
+    const result = await organizeTabsCollectively("w1", "General", NEW_DUMP, [MANAGEBAC_SECTION]);
+    const placement = sectionNamesById(result);
+
+    for (const tab of NEW_DUMP) expect(placement.get(tab.id)).not.toBe("ManageBac");
+    assertNoOther(result);
+  });
+});

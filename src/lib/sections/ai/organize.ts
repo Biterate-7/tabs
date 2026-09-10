@@ -3,13 +3,15 @@ import type { CategoryId } from "@/lib/categories";
 import { deriveSectionName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
 import type { SemanticClusterHint } from "@/lib/organize/types";
 import type { Tab } from "@/lib/tabs/types";
-import { childrenOf, createSection, rootSections } from "../relations";
+import { childrenOf, createSection, rootSections, sectionPath } from "../relations";
 import { findSimilarSibling } from "../normalize";
 import { MAX_SECTION_DEPTH } from "../types";
 import type { Section, SectionSource } from "../types";
 import { buildOrganizePrompt } from "./prompt";
 import type { OrganizePathAssignment, OrganizePromptTab } from "./prompt";
 import { requestOrganizeCompletion } from "./client";
+import { evictionReason, tabBelongsInSection } from "./membership";
+import type { MembershipTab } from "./membership";
 
 /** One request per chunk; large dumps chunk sequentially (not in parallel) so later chunks see sections earlier chunks in the same dump just created — see spec §27 on batching. */
 const MAX_CHUNK_TABS = 40;
@@ -26,12 +28,14 @@ export type OrganizeResult = { tabs: Tab[]; sections: Section[] };
 
 /**
  * `NEW_SECTION_SCORE_THRESHOLD`, `placeAtPath`, `fullPathAlreadyExists`,
- * `deepestExistingPrefix`, `pathKey`, `categoryNameOf`, and `sanitizeReason`
- * are exported for src/lib/sections/ai/pipeline.ts, which reuses this
- * file's per-tab placement/evidence primitives at the CLUSTER level (a
- * cluster's member tabs are placed together, with the cluster's size taking
- * the place of this file's within-batch tab-agreement count) rather than
- * duplicating them.
+ * `deepestExistingPrefix`, `resolveExistingPrefix`, `pathKey`,
+ * `categoryNameOf`, and `sanitizeReason` are exported for
+ * src/lib/sections/ai/pipeline.ts, which reuses this file's per-tab
+ * placement/evidence primitives at the CLUSTER level (a cluster's member tabs
+ * are placed together, with the cluster's size taking the place of this
+ * file's within-batch tab-agreement count) rather than duplicating them —
+ * membership evidence included, via allowedExistingPrefix here and
+ * clusterFitsPath there.
  */
 export function pathKey(path: string[]): string {
   return path.map((s) => s.trim().toLowerCase()).join(" > ");
@@ -76,10 +80,10 @@ export function placeAtPath(tab: Tab, sections: Section[], path: string[], sourc
   return { tab: { ...tab, sectionId: leafId }, sections: working };
 }
 
-/** Longest prefix of `path` that resolves to sections that already exist (via findSimilarSibling) — never creates anything. Used to downgrade a low-evidence assignment to its nearest safe existing ancestor instead of inventing a brand-new section from a single weak signal. */
-export function deepestExistingPrefix(sections: Section[], path: string[]): string[] {
+/** Longest prefix of `path` that resolves to sections that already exist (via findSimilarSibling), as the Section objects themselves — never creates anything. */
+export function resolveExistingPrefix(sections: Section[], path: string[]): Section[] {
   let parentId: string | null = null;
-  const matched: string[] = [];
+  const matched: Section[] = [];
   for (const rawName of path.slice(0, MAX_SECTION_DEPTH + 1)) {
     const name = rawName.trim();
     if (!name) break;
@@ -87,10 +91,55 @@ export function deepestExistingPrefix(sections: Section[], path: string[]): stri
     const matchName = findSimilarSibling(siblings.map((s) => s.name), name);
     const existing: Section | undefined = matchName ? siblings.find((s) => s.name === matchName) : undefined;
     if (!existing) break;
-    matched.push(existing.name);
+    matched.push(existing);
     parentId = existing.id;
   }
   return matched;
+}
+
+/** Names of resolveExistingPrefix's sections. Used to downgrade a low-evidence assignment to its nearest safe existing ancestor instead of inventing a brand-new section from a single weak signal. */
+export function deepestExistingPrefix(sections: Section[], path: string[]): string[] {
+  return resolveExistingPrefix(sections, path).map((s) => s.name);
+}
+
+export type MembershipGate = {
+  /** Who is already filed in each section, so membership.ts can judge a tab against a group's actual contents and not just its name. */
+  cohortBySectionId?: ReadonlyMap<string, MembershipTab[]>;
+  /**
+   * The sections the gate applies to — in practice the ones that already
+   * existed when this batch started. A section the batch itself just created
+   * is deliberately NOT gated: it exists precisely because these tabs agreed
+   * on it, so re-checking a tab against a group it helped define is circular.
+   * Creating one is governed by the corroboration/evidence rules below, and
+   * the pipeline's final validateSectionMembership pass re-examines the
+   * result once every group's real membership is visible. Omitted = gate
+   * every existing section.
+   */
+  gatedSectionIds?: ReadonlySet<string>;
+};
+
+/**
+ * The longest prefix of `path` this specific tab has actually earned: walks
+ * the segments that already exist and stops at the first gated section
+ * membership.ts finds no evidence for.
+ *
+ * This is the guard against the model filling out a group it likes the look
+ * of — "ManageBac already exists and this tab is school-ish" is not a reason
+ * for a genius.com lyrics page to end up inside ManageBac. A tab rejected at
+ * some segment is filed at the last ancestor it does support (usually a broad
+ * category, which is never gated) or left unplaced for the caller's
+ * deterministic fallback, never deeper.
+ */
+export function allowedExistingPrefix(tab: Tab, sections: Section[], path: string[], gate: MembershipGate = {}): string[] {
+  const allowed: string[] = [];
+  for (const section of resolveExistingPrefix(sections, path)) {
+    if (!gate.gatedSectionIds || gate.gatedSectionIds.has(section.id)) {
+      const cohort = (gate.cohortBySectionId?.get(section.id) ?? []).map((member) => ({ tab: member }));
+      if (!tabBelongsInSection(tab, section.name, cohort)) break;
+    }
+    allowed.push(section.name);
+  }
+  return allowed;
 }
 
 function validateAssignments(data: unknown, validIds: Set<string>): Map<string, OrganizePathAssignment> {
@@ -200,7 +249,8 @@ function applyAssignments(
   tabs: Tab[],
   sections: Section[],
   assignments: Map<string, OrganizePathAssignment>,
-  hintByTabId: Map<string, string>
+  hintByTabId: Map<string, string>,
+  knownMembers: ReadonlyMap<string, MembershipTab[]> = new Map()
 ): OrganizeResult {
   let working = sections;
   const outTabs: Tab[] = [];
@@ -213,11 +263,36 @@ function applyAssignments(
     countByPath.set(key, (countByPath.get(key) ?? 0) + 1);
   }
 
-  /** Shared "no confident placement" landing spot: reuse whatever ancestor of `path` already exists, or leave the tab as-is (falls into Other) if nothing does. Never creates anything. */
+  // Who is already in each section, for membership.ts's peer evidence: the
+  // members this batch was told about, plus the ones this batch itself files
+  // as it goes, so a tab judged late in the batch sees the same cohort a tab
+  // judged after the next run would.
+  const cohortBySectionId = new Map<string, MembershipTab[]>();
+  for (const [sectionId, members] of knownMembers) cohortBySectionId.set(sectionId, [...members]);
+  const gate: MembershipGate = { cohortBySectionId, gatedSectionIds: new Set(sections.map((s) => s.id)) };
+
+  /**
+   * Every placement leaves through here, so the running cohort never drifts
+   * from what actually got filed. A tab counts toward its own section and
+   * every ancestor — a tab in "School > Physics > S2 Orbit Research" is part
+   * of what the Physics group holds.
+   */
+  function emit(tab: Tab): void {
+    if (tab.sectionId) {
+      for (const section of sectionPath(working, tab.sectionId)) {
+        const bucket = cohortBySectionId.get(section.id);
+        if (bucket) bucket.push(tab);
+        else cohortBySectionId.set(section.id, [tab]);
+      }
+    }
+    outTabs.push(tab);
+  }
+
+  /** Shared "no confident placement" landing spot: reuse the deepest ancestor of `path` that already exists AND that this tab has evidence for, or leave the tab as-is (falls into Other) if there is none. Never creates anything. */
   function placeAtSafestExisting(tab: Tab, path: string[], reason: string | undefined): Tab {
-    const existingPrefix = deepestExistingPrefix(working, path);
-    if (existingPrefix.length === 0) return { ...tab, organizationStatus: "uncertain" };
-    const { tab: placed, sections: next } = placeAtPath(tab, working, existingPrefix, "ai");
+    const allowedPrefix = allowedExistingPrefix(tab, working, path, gate);
+    if (allowedPrefix.length === 0) return { ...tab, organizationStatus: "uncertain" };
+    const { tab: placed, sections: next } = placeAtPath(tab, working, allowedPrefix, "ai");
     working = next;
     return { ...placed, organizationStatus: "uncertain", ...(reason ? { organizationReason: reason } : {}) };
   }
@@ -229,11 +304,27 @@ function applyAssignments(
       // The model skipped this tab entirely — treat as low confidence against its legacy category.
       const { tab: placed, sections: next } = placeAtPath(tab, working, [categoryNameOf(tab)], "ai");
       working = next;
-      outTabs.push({ ...placed, organizationStatus: "uncertain" });
+      const skipped = { ...placed, organizationStatus: "uncertain" as const };
+      emit(skipped);
       continue;
     }
 
     const reason = sanitizeReason(a.reason);
+
+    // Membership gate (see membership.ts): the model may only file this tab
+    // into a group that already exists if the TAB ITSELF supports it. Being
+    // in the same dump, or being vaguely about the same broad subject, is not
+    // evidence — that is exactly how unrelated tabs (genius.com,
+    // aistudio.google.com) used to end up inside a ManageBac group. A tab
+    // rejected part-way down the path stops at the last segment it earned,
+    // and the segments beyond it are not created for it either.
+    const existingPrefix = deepestExistingPrefix(working, a.path);
+    const allowedPrefix = allowedExistingPrefix(tab, working, a.path, gate);
+    if (allowedPrefix.length < existingPrefix.length) {
+      const rejected = placeAtSafestExisting(tab, a.path, evictionReason(existingPrefix[allowedPrefix.length]));
+      emit(rejected);
+      continue;
+    }
 
     // Reusing a path that already exists in full always wins, regardless of
     // confidence (spec §8) — no evidence gate needed since nothing is created.
@@ -241,12 +332,12 @@ function applyAssignments(
       const { tab: placed, sections: next } = placeAtPath(tab, working, a.path, "ai");
       working = next;
       const status = a.confidence === "low" ? "uncertain" : placed.sectionId ? "classified" : "uncertain";
-      outTabs.push({ ...placed, organizationStatus: status, ...(reason ? { organizationReason: reason } : {}) });
+      emit({ ...placed, organizationStatus: status, ...(reason ? { organizationReason: reason } : {}) });
       continue;
     }
 
     if (a.confidence === "low") {
-      outTabs.push(placeAtSafestExisting(tab, a.path, reason));
+      emit(placeAtSafestExisting(tab, a.path, reason));
       continue;
     }
 
@@ -261,7 +352,7 @@ function applyAssignments(
       hasHintAgreement(tab, a, tabs, assignments, hintByTabId);
 
     if (!corroborated) {
-      outTabs.push(placeAtSafestExisting(tab, a.path, reason));
+      emit(placeAtSafestExisting(tab, a.path, reason));
       continue;
     }
 
@@ -275,7 +366,7 @@ function applyAssignments(
     if (a.path.length > 1) {
       const score = newSectionEvidenceScore(tab, a, tabs, assignments, hintByTabId, working);
       if (score < NEW_SECTION_SCORE_THRESHOLD) {
-        outTabs.push(placeAtSafestExisting(tab, a.path, reason));
+        emit(placeAtSafestExisting(tab, a.path, reason));
         continue;
       }
     }
@@ -285,7 +376,7 @@ function applyAssignments(
     // placeAtPath can come back empty-handed (e.g. the model proposed a
     // reserved root like "Other" — see createSection) — never claim
     // "classified" for a tab that didn't actually get a sectionId.
-    outTabs.push({ ...placed, organizationStatus: placed.sectionId ? "classified" : "uncertain", ...(reason ? { organizationReason: reason } : {}) });
+    emit({ ...placed, organizationStatus: placed.sectionId ? "classified" : "uncertain", ...(reason ? { organizationReason: reason } : {}) });
   }
 
   return { tabs: outTabs, sections: working };
@@ -301,7 +392,12 @@ function applyAssignments(
  * `deriveClusterName` src/lib/organize/analyze.ts's proposeGroups already
  * relies on for the identical "name a sub-cluster" problem.
  */
-function fallbackOrganize(tabs: Tab[], sections: Section[], hintByTabId: Map<string, string>): OrganizeResult {
+function fallbackOrganize(
+  tabs: Tab[],
+  sections: Section[],
+  hintByTabId: Map<string, string>,
+  knownMembers: ReadonlyMap<string, MembershipTab[]> = new Map()
+): OrganizeResult {
   const groups = new Map<string, Tab[]>();
   for (const tab of tabs) {
     const hint = hintByTabId.get(tab.id);
@@ -321,6 +417,11 @@ function fallbackOrganize(tabs: Tab[], sections: Section[], hintByTabId: Map<str
 
   let working = sections;
   const outTabs: Tab[] = [];
+  // Same gate as the AI path. These names are derived from the tabs
+  // themselves, so they normally pass trivially — but placeAtPath can
+  // normalize a derived name onto a pre-existing section, and no route into
+  // an existing group is exempt.
+  const gate: MembershipGate = { cohortBySectionId: knownMembers, gatedSectionIds: new Set(sections.map((s) => s.id)) };
   for (const tab of tabs) {
     const rootName = categoryNameOf(tab);
     const subName = subNameByTabId.get(tab.id);
@@ -329,7 +430,13 @@ function fallbackOrganize(tabs: Tab[], sections: Section[], hintByTabId: Map<str
     // straight to its own root instead of being nested under a parent that
     // would just fail to create, so a real signal still surfaces rather
     // than silently leaving those tabs unset.
-    const path = subName ? (rootName === "Other" ? [subName] : [rootName, subName]) : [rootName];
+    const desired = subName ? (rootName === "Other" ? [subName] : [rootName, subName]) : [rootName];
+    const allowed = allowedExistingPrefix(tab, working, desired, gate);
+    const path = allowed.length < resolveExistingPrefix(working, desired).length ? allowed : desired;
+    if (path.length === 0) {
+      outTabs.push({ ...tab, organizationStatus: "uncertain" });
+      continue;
+    }
     const { tab: placed, sections: next } = placeAtPath(tab, working, path, "ai");
     working = next;
     if (!placed.sectionId) {
@@ -344,7 +451,12 @@ function fallbackOrganize(tabs: Tab[], sections: Section[], hintByTabId: Map<str
   return { tabs: outTabs, sections: working };
 }
 
-async function organizeChunk(tabs: Tab[], sections: Section[], hintByTabId: Map<string, string>): Promise<OrganizeResult> {
+async function organizeChunk(
+  tabs: Tab[],
+  sections: Section[],
+  hintByTabId: Map<string, string>,
+  knownMembers: ReadonlyMap<string, MembershipTab[]>
+): Promise<OrganizeResult> {
   const promptTabs: OrganizePromptTab[] = tabs.map((t) => ({
     tabId: t.id,
     title: t.title ?? "",
@@ -357,10 +469,10 @@ async function organizeChunk(tabs: Tab[], sections: Section[], hintByTabId: Map<
   const response = await requestOrganizeCompletion(buildOrganizePrompt(sections, promptTabs));
   if (response.ok) {
     const assignments = validateAssignments(response.data, new Set(tabs.map((t) => t.id)));
-    if (assignments.size > 0) return applyAssignments(tabs, sections, assignments, hintByTabId);
+    if (assignments.size > 0) return applyAssignments(tabs, sections, assignments, hintByTabId, knownMembers);
   }
 
-  return fallbackOrganize(tabs, sections, hintByTabId);
+  return fallbackOrganize(tabs, sections, hintByTabId, knownMembers);
 }
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -380,7 +492,8 @@ function chunkArray<T>(items: T[], size: number): T[][] {
 export async function organizeTabsIntoSections(
   tabsToOrganize: Tab[],
   sections: Section[],
-  semanticHints: SemanticClusterHint[] = []
+  semanticHints: SemanticClusterHint[] = [],
+  knownMembers: ReadonlyMap<string, MembershipTab[]> = new Map()
 ): Promise<OrganizeResult> {
   const unlocked = tabsToOrganize.filter((t) => !t.sectionLocked);
   if (unlocked.length === 0) return { tabs: tabsToOrganize, sections };
@@ -391,7 +504,7 @@ export async function organizeTabsIntoSections(
 
   let workingSections = sections;
   for (const chunk of chunkArray(unlocked, MAX_CHUNK_TABS)) {
-    const result = await organizeChunk(chunk, workingSections, hintByTabId);
+    const result = await organizeChunk(chunk, workingSections, hintByTabId, knownMembers);
     workingSections = result.sections;
     for (const t of result.tabs) resultById.set(t.id, t);
   }

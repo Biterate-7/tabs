@@ -78,7 +78,7 @@ describe("organizeTabsIntoSections", () => {
       jsonResponse({ data: [{ tabId: "1", path: ["Physics Research"], confidence: "high", reason: "" }] })
     );
 
-    const result = await organizeTabsIntoSections([makeTab({ id: "1" })], [existing]);
+    const result = await organizeTabsIntoSections([makeTab({ id: "1", title: "Physics problem set 3" })], [existing]);
 
     expect(result.sections).toHaveLength(1); // no new section created
     expect(result.tabs[0].sectionId).toBe("existing-physics");
@@ -301,7 +301,7 @@ describe("organizeTabsIntoSections — duplicate section prevention", () => {
   it("reuses an existing top-level 'Physics' for every naming variant the model proposes, never creating a sibling like 'Physics Research'", async () => {
     const existingPhysics: Section = { id: "root-physics", parentId: null, name: "Physics", source: "user", createdAt: 0, updatedAt: 0 };
     const proposals = ["Physics", "Physics Research", "Physics Resources"];
-    const tabs = proposals.map((_, i) => makeTab({ id: `${i + 1}`, category: "school" }));
+    const tabs = proposals.map((_, i) => makeTab({ id: `${i + 1}`, category: "school", title: `Physics lecture ${i + 1}` }));
     vi.spyOn(global, "fetch").mockResolvedValue(
       jsonResponse({
         data: tabs.map((t, i) => ({ tabId: t.id, path: [proposals[i]], confidence: "high", reason: "" })),
@@ -324,7 +324,7 @@ describe("organizeTabsIntoSections — duplicate section prevention", () => {
       jsonResponse({ data: [{ tabId: "1", path: ["Research", "Physics"], confidence: "high", reason: "" }] })
     );
 
-    const result = await organizeTabsIntoSections([makeTab({ id: "1" })], [school, research, physics]);
+    const result = await organizeTabsIntoSections([makeTab({ id: "1", title: "Physics lab writeup" })], [school, research, physics]);
 
     expect(result.sections).toEqual([school, research, physics]); // nothing new created
     expect(result.tabs[0].sectionId).toBe(physics.id);
@@ -358,8 +358,8 @@ describe("organizeTabsIntoSections — project detection", () => {
     const school: Section = { id: "root-school", parentId: null, name: "School", source: "ai", createdAt: 0, updatedAt: 0 };
     const physics: Section = { id: "physics", parentId: school.id, name: "Physics", source: "ai", createdAt: 0, updatedAt: 0 };
     const tabs = [
-      makeTab({ id: "1", category: "research", title: "S2 star orbit paper" }),
-      makeTab({ id: "2", category: "research", title: "Schwarzschild solution" }),
+      makeTab({ id: "1", category: "research", title: "S2 star orbit paper - physics of Sagittarius A*" }),
+      makeTab({ id: "2", category: "research", title: "Schwarzschild solution - general relativity physics" }),
       makeTab({ id: "3", category: "research", title: "General relativity notes" }),
     ];
     vi.spyOn(global, "fetch").mockResolvedValue(

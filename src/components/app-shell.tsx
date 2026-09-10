@@ -133,7 +133,7 @@ export function AppShell() {
   const readiness = useOrganizationReadiness()
   // The last dump's inputs, so the error state's "Try again" can re-run
   // exactly the same organization rather than asking the user to re-dump.
-  const lastDumpRef = useRef<{ workspaceId: string; tabs: Tab[]; sections: Section[] } | null>(null)
+  const lastDumpRef = useRef<{ workspaceId: string; tabs: Tab[]; sections: Section[]; contextTabs: Tab[] } | null>(null)
   // Read by the settle effect, which must see the store as it is AFTER the
   // pipeline merged its result — not whatever `store` the effect's own
   // closure was created with, and without re-running every time an unrelated
@@ -342,7 +342,8 @@ export function AppShell() {
     workspaceId: string,
     tabsSnapshot: Tab[],
     sectionsSnapshot: Section[],
-    onStage?: (stage: PipelineStage) => void
+    onStage?: (stage: PipelineStage) => void,
+    contextTabs: Tab[] = []
   ): Promise<OrganizeOutcome> {
     if (tabsSnapshot.length === 0) return { ok: true, report: undefined }
 
@@ -358,7 +359,7 @@ export function AppShell() {
     const workspaceName = store?.workspaces.find((w) => w.id === workspaceId)?.name ?? ""
     let result: PipelineResult
     try {
-      result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot, onStage)
+      result = await organizeTabsCollectively(workspaceId, workspaceName, tabsSnapshot, sectionsSnapshot, onStage, contextTabs)
     } catch (err) {
       // organizeTabsCollectively is designed to never throw (every AI/network
       // failure inside it degrades to a deterministic fallback instead) — but
@@ -415,11 +416,23 @@ export function AppShell() {
     generation: number,
     workspaceId: string,
     tabsSnapshot: Tab[],
-    sectionsSnapshot: Section[]
+    sectionsSnapshot: Section[],
+    // The workspace's other tabs, for context only — never organized, never
+    // written back. An incremental dump (History Dump, extension import)
+    // sends just the new tabs, so without this the AI-membership gate in
+    // src/lib/sections/ai/membership.ts cannot see who is already in the
+    // sections those new tabs are being proposed for. Passing them changes
+    // nothing about WHAT gets reorganized; it only lets the gate judge a
+    // proposed (tab, existing group) pair on real membership.
+    contextTabs: Tab[] = []
   ): Promise<OrganizeOutcome> {
-    lastDumpRef.current = { workspaceId, tabs: tabsSnapshot, sections: sectionsSnapshot }
-    const outcome = await organizeNewTabsIntoSections(workspaceId, tabsSnapshot, sectionsSnapshot, (stage) =>
-      readiness.advance(generation, stage)
+    lastDumpRef.current = { workspaceId, tabs: tabsSnapshot, sections: sectionsSnapshot, contextTabs }
+    const outcome = await organizeNewTabsIntoSections(
+      workspaceId,
+      tabsSnapshot,
+      sectionsSnapshot,
+      (stage) => readiness.advance(generation, stage),
+      contextTabs
     )
     if (!outcome.ok) {
       readiness.fail(generation, "Couldn't finish organizing your tabs.")
@@ -439,7 +452,7 @@ export function AppShell() {
       return
     }
     const generation = readiness.begin(last.tabs.length)
-    runDumpOrganization(generation, last.workspaceId, last.tabs, last.sections)
+    runDumpOrganization(generation, last.workspaceId, last.tabs, last.sections, last.contextTabs)
   }
 
   /**
@@ -574,7 +587,7 @@ export function AppShell() {
     // tabs between sections, which restructures the graph exactly as a dump
     // would, so the graph has to stay shut until it too has settled.
     const generation = readiness.begin(unlocked.length)
-    const outcome = await runDumpOrganization(generation, currentWorkspace.id, unlocked, currentWorkspace.sections ?? [])
+    const outcome = await runDumpOrganization(generation, currentWorkspace.id, unlocked, currentWorkspace.sections ?? [], currentWorkspace.tabs)
     if (!outcome.ok) {
       toast.error("Couldn't reorganize these tabs")
       return
@@ -667,7 +680,7 @@ export function AppShell() {
     const freshIds = new Set(fresh.map((t) => t.id))
     const dumped = nextWorkspace.tabs.filter((t) => freshIds.has(t.id))
     const generation = readiness.begin(dumped.length)
-    runDumpOrganization(generation, nextWorkspace.id, dumped, nextWorkspace.sections ?? [])
+    runDumpOrganization(generation, nextWorkspace.id, dumped, nextWorkspace.sections ?? [], nextWorkspace.tabs)
     setView("workspace")
   }
 
@@ -701,7 +714,7 @@ export function AppShell() {
     const incomingIds = new Set(incoming.map((t) => t.id))
     const imported = nextWorkspace.tabs.filter((t) => incomingIds.has(t.id))
     const generation = readiness.begin(imported.length)
-    runDumpOrganization(generation, nextWorkspace.id, imported, nextWorkspace.sections ?? [])
+    runDumpOrganization(generation, nextWorkspace.id, imported, nextWorkspace.sections ?? [], nextWorkspace.tabs)
     // Organization is gated and asynchronous, but the ack is not: the count
     // answers "how many tabs did this shell take", which is settled the
     // moment they are merged and persisted above. See this function's

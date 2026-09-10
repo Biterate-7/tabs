@@ -4,22 +4,27 @@ import { canonicalSiteIdentity, getDomainSectionName, isGenericSiteIdentity } fr
 import { deriveSectionName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
 import type { ScopedTab, SemanticClusterHint } from "@/lib/organize/types";
 import type { Tab } from "@/lib/tabs/types";
+import { sectionPath } from "../relations";
 import type { Section } from "../types";
 import { buildClusterManifest } from "./manifest";
 import type { ClusterManifestEntry } from "./manifest";
 import {
   categoryNameOf,
+  allowedExistingPrefix,
   deepestExistingPrefix,
   fullPathAlreadyExists,
   NEW_SECTION_SCORE_THRESHOLD,
   organizeTabsIntoSections,
   placeAtPath,
+  resolveExistingPrefix,
   sanitizeReason,
 } from "./organize";
 import type { OrganizeResult } from "./organize";
 import { buildClusterOrganizePrompt } from "./prompt";
 import type { OrganizeClusterAssignment, OrganizeClusterInput } from "./prompt";
 import { requestOrganizeCompletion } from "./client";
+import { tabBelongsInSection, validateSectionMembership } from "./membership";
+import type { CohortMember, MembershipTab } from "./membership";
 import { buildOrganizeReport, emptyReport } from "./report";
 import type { OrganizeReport } from "./report";
 
@@ -126,6 +131,34 @@ function clusterEvidenceScore(entry: ClusterManifestEntry, assignment: OrganizeC
 type ClusterApplyResult = { tabs: Tab[]; sections: Section[]; path: string[] };
 
 /**
+ * Whether EVERY tab in this cluster belongs in the groups `path` would file
+ * it into.
+ *
+ * Clustering justifies the members to each other — it says nothing about
+ * where the group as a whole should live, and the model naming it can still
+ * pick a home it doesn't belong in (two genius.com tabs are a perfectly real
+ * cluster, and "ManageBac" is still the wrong place for them). Every segment
+ * that already exists therefore has to hold for every member; one tab that
+ * can't be placed there sends the whole cluster to its own deterministic
+ * name instead, which keeps the cluster together rather than stranding the
+ * odd member. Segments the path would CREATE are left to clusterEvidenceScore
+ * — no existing group is being joined there.
+ */
+function clusterFitsPath(
+  members: Tab[],
+  sections: Section[],
+  path: string[],
+  cohortBySectionId: ReadonlyMap<string, MembershipTab[]>
+): boolean {
+  if (members.length === 0) return true;
+  for (const section of resolveExistingPrefix(sections, path)) {
+    const cohort = (cohortBySectionId.get(section.id) ?? []).map((tab) => ({ tab }));
+    if (!members.every((member) => tabBelongsInSection(member, section.name, cohort))) return false;
+  }
+  return true;
+}
+
+/**
  * Applies one cluster's assignment (or, absent one, the same deterministic
  * naming organize.ts's fallbackOrganize uses) to every member tab at once —
  * the pipeline's Stage E. Reuses placeAtPath/fullPathAlreadyExists/
@@ -135,16 +168,42 @@ type ClusterApplyResult = { tabs: Tab[]; sections: Section[]; path: string[] };
  */
 function applyClusterEntry(
   entry: ClusterManifestEntry,
-  assignment: OrganizeClusterAssignment | undefined,
+  proposed: OrganizeClusterAssignment | undefined,
   tabsById: Map<string, Tab>,
-  sections: Section[]
+  sections: Section[],
+  cohortBySectionId: ReadonlyMap<string, MembershipTab[]> = new Map()
 ): ClusterApplyResult {
   const members = entry.tabIds.map((id) => tabsById.get(id)).filter((t): t is Tab => Boolean(t));
   let working = sections;
 
+  // A path the cluster doesn't belong in is discarded outright rather than
+  // narrowed: the cluster still gets a home below, named from its own tabs.
+  const assignment = proposed && clusterFitsPath(members, working, proposed.path, cohortBySectionId) ? proposed : undefined;
+
+  /**
+   * The single point at which a cluster's tabs are actually filed — so it is
+   * also where the per-tab gate lives, covering the model's path and the
+   * deterministic one alike. `placeAtPath` can normalize a derived name onto
+   * an existing section (a 14-Instagram-tab cluster plus one stray link
+   * shortener still derives the name "Instagram"), so being placed as part
+   * of a cluster is never on its own a licence to enter an existing group:
+   * a member with no evidence for it is left unplaced for Stage F.3.
+   *
+   * Only sections that existed BEFORE this cluster are gated. The first
+   * member to be filed can create the rest of the path, and gating the
+   * others against a section their own cluster just made would split the
+   * cluster on nothing — the same reason organize.ts exempts sections its
+   * batch created.
+   */
   function placeAllAt(path: string[], status: Tab["organizationStatus"], reason: string | undefined): Tab[] {
+    const gatedSectionIds = new Set(working.map((s) => s.id));
     const out: Tab[] = [];
     for (const tab of members) {
+      const gate = { cohortBySectionId, gatedSectionIds };
+      if (allowedExistingPrefix(tab, working, path, gate).length < resolveExistingPrefix(working, path).length) {
+        out.push({ ...tab, sectionId: undefined, organizationStatus: "uncertain" });
+        continue;
+      }
       const { tab: placed, sections: next } = placeAtPath(tab, working, path, "ai");
       working = next;
       out.push({ ...placed, organizationStatus: placed.sectionId ? status : "uncertain", ...(reason ? { organizationReason: reason } : {}) });
@@ -206,14 +265,25 @@ function applyClusterEntry(
  * reuses a matching existing sibling before ever creating one — so
  * duplicate near-identical sections (spec §14) are prevented globally
  * across every stage, not just within one of them, without a separate
- * merge pass.
+ * merge pass. Every placement into a section that ALREADY EXISTS
+ * additionally passes membership.ts's per-tab evidence gate, at each of
+ * those stages, with no exception for cluster membership, model confidence,
+ * or a group this run created itself.
+ *
+ * `contextTabs` is read-only context: the workspace's other tabs, so the
+ * membership gate can see who is already in each existing section. They are
+ * never clustered, never re-filed, and never returned — an incremental dump
+ * of three new tabs stays a dump of three new tabs. Supplying them only ever
+ * makes the gate more permissive (it can find peer evidence it otherwise
+ * couldn't), so omitting them is safe, just stricter.
  */
 export async function organizeTabsCollectively(
   workspaceId: string,
   workspaceName: string,
   tabsToOrganize: Tab[],
   sections: Section[],
-  onStage?: PipelineProgress
+  onStage?: PipelineProgress,
+  contextTabs: Tab[] = []
 ): Promise<PipelineResult> {
   const unlocked = tabsToOrganize.filter((t) => !t.sectionLocked);
   if (unlocked.length === 0) {
@@ -238,6 +308,36 @@ export async function organizeTabsCollectively(
   let workingSections = sections;
   const placedById = new Map<string, Tab>();
   const placedClusterPaths: { path: string[]; tokens: string[] }[] = [];
+  /**
+   * Live section→members index, so each decision sees who is already filed
+   * where. A tab counts toward its own section AND every ancestor: a tab in
+   * "School > Physics > S2 Orbit Research" is part of what the Physics group
+   * contains, and should be able to vouch for a Physics newcomer.
+   */
+  const cohortBySectionId = new Map<string, MembershipTab[]>();
+  function recordMember(tab: Tab): void {
+    if (!tab.sectionId) return;
+    for (const section of sectionPath(workingSections, tab.sectionId)) {
+      const bucket = cohortBySectionId.get(section.id);
+      if (bucket) bucket.push(tab);
+      else cohortBySectionId.set(section.id, [tab]);
+    }
+  }
+  /** Who currently occupies the deepest existing section on `path` — empty when the path would create everything. */
+  function cohortForPath(path: string[]): CohortMember[] {
+    const resolved = resolveExistingPrefix(workingSections, path);
+    const leaf = resolved[resolved.length - 1];
+    return leaf ? (cohortBySectionId.get(leaf.id) ?? []).map((tab) => ({ tab })) : [];
+  }
+  // Seed it with everyone already filed: tabs in this batch that arrived
+  // with a section, plus the workspace's other tabs passed as context. This
+  // is what lets an incremental dump — three new tabs, none of them
+  // ManageBac's — still see who is actually in the ManageBac group it is
+  // being invited to join. Ids already in the batch win, so a tab is never
+  // counted twice.
+  const batchIds = new Set(tabsToOrganize.map((t) => t.id));
+  for (const tab of tabsToOrganize) if (tab.sectionId) recordMember(tab);
+  for (const tab of contextTabs) if (tab.sectionId && !batchIds.has(tab.id)) recordMember(tab);
 
   onStage?.("grouping");
   for (const chunk of chunkArray(manifest, MAX_CHUNK_CLUSTERS)) {
@@ -256,10 +356,16 @@ export async function organizeTabsCollectively(
       : new Map<string, OrganizeClusterAssignment>();
 
     for (const entry of chunk) {
-      const applied = applyClusterEntry(entry, assignments.get(entry.clusterId), tabsById, workingSections);
+      const applied = applyClusterEntry(entry, assignments.get(entry.clusterId), tabsById, workingSections, cohortBySectionId);
       workingSections = applied.sections;
-      for (const t of applied.tabs) placedById.set(t.id, t);
-      placedClusterPaths.push({ path: applied.path, tokens: entry.tabIds.flatMap((id) => tabTokens(tabsById.get(id)!)) });
+      for (const t of applied.tabs) {
+        placedById.set(t.id, t);
+        recordMember(t);
+      }
+      placedClusterPaths.push({
+        path: applied.path,
+        tokens: entry.tabIds.flatMap((id) => tabTokens(tabsById.get(id)!)),
+      });
     }
   }
 
@@ -275,21 +381,28 @@ export async function organizeTabsCollectively(
     let bestScore = 0;
     placedClusterPaths.forEach((info, i) => {
       const score = tokenOverlap(tokens, info.tokens);
-      if (score >= FOLD_OVERLAP_THRESHOLD && score > bestScore) {
-        bestScore = score;
-        bestIndex = i;
-      }
+      if (score < FOLD_OVERLAP_THRESHOLD || score <= bestScore) return;
+      // Aggregate token overlap says this tab looks a bit like the cluster's
+      // vocabulary as a whole; membership.ts asks the sharper question of
+      // whether this tab belongs in THAT group specifically. A leftover only
+      // gets folded in when both agree.
+      const leafName = info.path[info.path.length - 1] ?? "";
+      if (!tabBelongsInSection(tab, leafName, cohortForPath(info.path))) return;
+      bestScore = score;
+      bestIndex = i;
     });
 
     if (bestIndex >= 0) {
       const target = placedClusterPaths[bestIndex];
       const { tab: placed, sections: next } = placeAtPath(tab, workingSections, target.path, "ai");
       workingSections = next;
-      placedById.set(tab.id, {
+      const folded: Tab = {
         ...placed,
         organizationStatus: placed.sectionId ? "classified" : "uncertain",
         organizationReason: `Shares keywords with tabs filed under "${target.path[target.path.length - 1]}".`,
-      });
+      };
+      placedById.set(tab.id, folded);
+      recordMember(folded);
     } else {
       stillUnresolved.push(tab);
     }
@@ -308,10 +421,22 @@ export async function organizeTabsCollectively(
   // deterministic Stage F.3 rather than spend an API call proving that.
   const hasNothingToMatchAgainst = workingSections.length === 0 && stillUnresolved.length === unlocked.length;
   if (stillUnresolved.length > 0 && !hasNothingToMatchAgainst) {
-    const result = await organizeTabsIntoSections(stillUnresolved, workingSections, hints);
+    // The organizer gets the same live section→members index, so its own
+    // membership gate judges "does this tab belong in THIS group" against the
+    // group's actual contents rather than just its name.
+    const result = await organizeTabsIntoSections(stillUnresolved, workingSections, hints, cohortBySectionId);
     workingSections = result.sections;
     for (const t of result.tabs) placedById.set(t.id, t);
   }
+
+  // Final membership validation — the safety net for every stage above.
+  // Re-checks each (tab, section) pair now that the whole tree exists and
+  // each group's real membership is visible, and unfiles anything a group
+  // has no evidence for. An evicted tab loses only its wrong section, not
+  // its place in the dump: it lands in `trulyUnplaced` just below and gets
+  // re-homed by Stage F.3's deterministic site/topic naming.
+  const validated = validateSectionMembership([...placedById.values()], workingSections);
+  for (const tab of validated.tabs) placedById.set(tab.id, tab);
 
   // Stage F.3 — the true last resort: anything STILL without a sectionId
   // (e.g. its legacy category was "other" and Stage F.2 also couldn't place
@@ -343,17 +468,37 @@ export async function organizeTabsCollectively(
       const path = [getDomainSectionName(identity)];
       const reason = `Shares a site with ${members.length - 1} other tab${members.length === 2 ? "" : "s"} left over from earlier organizing.`;
       for (const tab of members) {
+        // These tabs each name this section by their own domain, so the gate
+        // is satisfied by construction — but placeAtPath can normalize the
+        // derived name onto some pre-existing section, so it is still checked
+        // rather than assumed. A refusal just leaves the tab for the generic
+        // bucket below, which is broad and always accepts.
+        if (!tabBelongsInSection(tab, path[0], cohortForPath(path))) continue;
         const { tab: placed, sections: next } = placeAtPath(tab, workingSections, path, "ai");
         workingSections = next;
-        placedById.set(tab.id, { ...placed, organizationStatus: placed.sectionId ? "fallback" : "uncertain", organizationReason: reason });
+        const regrouped: Tab = { ...placed, organizationStatus: placed.sectionId ? "fallback" : "uncertain", organizationReason: reason };
+        placedById.set(tab.id, regrouped);
+        recordMember(regrouped);
         regroupedIds.add(tab.id);
       }
     }
 
     const stillLeftover = trulyUnplaced.filter((t) => !regroupedIds.has(t.id));
     if (stillLeftover.length > 0) {
+      // This bucket holds whatever matched nothing else, so its name is a
+      // claim about every tab in it. Keep the derived one only when each
+      // leftover actually supports it; otherwise say so plainly rather than
+      // naming a mixed bucket after whichever tab happened to win token
+      // frequency (two unrelated leftovers becoming "Kendrick").
       const derivedName = deriveSectionName(stillLeftover);
-      const path = derivedName === "Miscellaneous" ? ["Reference", "General Resources"] : ["Reference", derivedName];
+      // Judged against whoever already occupies that section if it exists —
+      // not against the other leftovers, who are in no position to vouch for
+      // anyone. "General Resources" is broad, so the fallback always accepts
+      // and no tab is left homeless by this check.
+      const nameFitsEveryone =
+        derivedName !== "Miscellaneous" &&
+        stillLeftover.every((tab) => tabBelongsInSection(tab, derivedName, cohortForPath(["Reference", derivedName])));
+      const path = nameFitsEveryone ? ["Reference", derivedName] : ["Reference", "General Resources"];
       for (const tab of stillLeftover) {
         const { tab: placed, sections: next } = placeAtPath(tab, workingSections, path, "ai");
         workingSections = next;
