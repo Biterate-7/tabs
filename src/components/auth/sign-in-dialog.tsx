@@ -1,7 +1,6 @@
 "use client"
 
 import Link from "next/link"
-import { BrandMark } from "@/components/brand-mark"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button"
 import { useAuth } from "@/components/auth/auth-provider"
@@ -45,7 +44,6 @@ export function SignInDialog({
       <DialogContent>
         <DialogHeader>
           <span className="flex items-center gap-2 text-foreground">
-            <BrandMark />
             <span className="text-body font-semibold tracking-tight">TabDump</span>
           </span>
           <DialogTitle>Sign in to TabDump</DialogTitle>
