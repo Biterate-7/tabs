@@ -1,5 +1,9 @@
+import { scopedKey } from "@/lib/storage/namespace";
 import type { Collection, CollectionPersistedState } from "./types";
 
+// Base key. Signed out this is the literal key used; signed in, scopedKey()
+// prefixes it with the account (see src/lib/storage/namespace.ts), which is what
+// keeps two accounts sharing a browser from sharing each other's data.
 const STORAGE_KEY = "tabdump:collections:v1";
 
 function isFiniteNumber(value: unknown): value is number {
@@ -44,7 +48,7 @@ export function defaultCollectionState(): CollectionPersistedState {
 /** Never throws — corrupted or missing collection state degrades to an empty list rather than blocking the app. */
 export function loadCollectionState(): CollectionPersistedState {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedKey(STORAGE_KEY));
     if (!raw) return defaultCollectionState();
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return defaultCollectionState();
@@ -57,7 +61,7 @@ export function loadCollectionState(): CollectionPersistedState {
 
 export function saveCollectionState(state: CollectionPersistedState): boolean {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(state));
     return true;
   } catch {
     return false;
@@ -66,7 +70,7 @@ export function saveCollectionState(state: CollectionPersistedState): boolean {
 
 export function clearCollectionState(): void {
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(scopedKey(STORAGE_KEY));
   } catch {
     // Nothing to clean up if storage is unavailable.
   }

@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate:auth": "node scripts/migrate-auth.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -16,8 +17,10 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "d3-force": "^3.0.0",
+    "google-auth-library": "^11.0.2",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -32,6 +35,7 @@
     "@testing-library/user-event": "^14.6.3",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
