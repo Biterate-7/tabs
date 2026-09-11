@@ -142,14 +142,20 @@ function chipStyle(chip: ChipLayout, stage: Stage): CSSProperties {
 function ChaosChip({ chip, stage }: { chip: ChipLayout; stage: Stage }) {
   return (
     <div style={chipStyle(chip, stage)}>
-      {/* Below `lg` the chip drops to its favicon alone. The stage shrinks with
+      {/* Below `xl` the chip drops to its favicon alone. The stage shrinks with
           the viewport but a titled chip does not, and two dozen 150px chips on
           a narrow stage stop reading as a field of tabs and start reading as
-          a stack of bars — measured at 768px, where titled chips overlapped
-          badly. The favicons alone still say "these are pages". */}
-      <div className="flex max-w-[15ch] items-center gap-1.5 rounded-md border border-subtle bg-card p-1.5 shadow-[0_6px_20px_-12px_rgba(0,0,0,0.9)] lg:px-2">
+          a stack of bars. Measured: 26 titled chips overlap in 56 pairs on the
+          885px stage a 1024 viewport gives, against 41 on a 1440. The favicons
+          alone still say "these are pages". */}
+      {/* Width in rem, not ch. `ch` resolves against *this* element's font
+          size — the inherited 16px, not the 11px of the label inside it — so
+          `max-w-[15ch]` was quietly producing 170px chips and roughly half
+          again the collisions intended. Some overlap is the point here; that
+          much was clutter. */}
+      <div className="flex max-w-[8.75rem] items-center gap-1.5 rounded-md border border-subtle bg-card p-1.5 shadow-[0_6px_20px_-12px_rgba(0,0,0,0.9)] xl:px-2">
         <DemoFavicon domain={chip.tab.domain} size={13} />
-        <span className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground lg:block">{chip.tab.title}</span>
+        <span className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground xl:block">{chip.tab.title}</span>
       </div>
     </div>
   )
@@ -378,7 +384,11 @@ export function HeroDumpDemo() {
         {/* Stage. Fixed aspect ratio so nothing reflows between states, and a
             size container so chip offsets can be written in cqw/cqh. */}
         <div
-          className="relative isolate aspect-[5/6] w-full overflow-hidden sm:aspect-[2.5/1]"
+          // 2.8:1, not 2.5. The organized payoff is eight rows plus a header
+          // and a footer; at 2.5 that left ~100px of empty column under the
+          // last row, and a workspace with a void at the bottom of every
+          // section is the opposite of the point it is making.
+          className="relative isolate aspect-[5/6] w-full overflow-hidden sm:aspect-[2.8/1]"
           style={{ containerType: "size" }}
         >
           <div aria-hidden className="m-grid absolute inset-0 opacity-40" />

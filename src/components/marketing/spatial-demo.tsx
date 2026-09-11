@@ -45,23 +45,28 @@ type Region = {
 }
 
 const REGIONS: Region[] = [
-  { id: "research", name: "Research", section: "Research", category: "research", x1: 2, y1: 11, x2: 46, y2: 61 },
+  { id: "research", name: "Research", section: "Research", category: "research", x1: 2, y1: 10, x2: 46, y2: 58 },
   {
     id: "development",
     name: "Development",
     section: "Development",
     category: "projects",
     x1: 53,
-    y1: 5,
+    y1: 4,
     x2: 98,
-    y2: 55,
+    y2: 52,
   },
-  { id: "personal", name: "Personal", section: "Personal", category: "read-later", x1: 15, y1: 67, x2: 85, y2: 97 },
+  { id: "personal", name: "Personal", section: "Personal", category: "read-later", x1: 15, y1: 62, x2: 85, y2: 98 },
 ]
 
-/** Five tabs per region — enough to read as a populated place, few enough to stay legible. */
+/**
+ * Six tabs per region. Five left the regions measurably under-filled once the
+ * page's container widened — 52–60% of each region's height — and a room with
+ * a few things floating in the middle of it undercuts the only claim this demo
+ * makes, which is that these are places tabs *live* in.
+ */
 const NODES: DemoTab[] = REGIONS.flatMap((r) =>
-  DEMO_UNIQUE_TABS.filter((t) => t.section === r.section).slice(0, 5)
+  DEMO_UNIQUE_TABS.filter((t) => t.section === r.section).slice(0, 6)
 )
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
@@ -84,7 +89,7 @@ function regionAt(p: Point): string | null {
 function homeLayout(): Record<string, Point> {
   const out: Record<string, Point> = {}
   for (const region of REGIONS) {
-    const members = DEMO_UNIQUE_TABS.filter((t) => t.section === region.section).slice(0, 5)
+    const members = DEMO_UNIQUE_TABS.filter((t) => t.section === region.section).slice(0, 6)
     const rw = region.x2 - region.x1
     const rh = region.y2 - region.y1
     // Column count follows the region's shape. A wide, short region packed
@@ -92,15 +97,19 @@ function homeLayout(): Record<string, Point> {
     // spread over three runs its cards off the sides.
     const cols = rw / rh > 1.6 ? 3 : 2
     const rows = Math.ceil(members.length / cols)
-    // All three are percentages of the *canvas*, not of the region — so they
-    // have to be sized against the canvas. The name label is ~16px tall on a
-    // ~590px canvas, hence ~7 and not the 17 this first carried: at 17 the
-    // shortest region had 6% of height left for two rows and stacked them on
-    // top of each other. padX is small for the mirror-image reason — a card is
-    // ~150px and a column has to be wider than that.
+    // All three are percentages of the *canvas*, not of the region, so they
+    // have to be sized against the canvas rather than picked to look right in
+    // the region. padX is small because a card is ~150px and a column has to
+    // be wider than that or neighbours overlap.
     const padX = 4
-    const padTop = 7
-    const padBottom = 5
+    // padTop reserves a band for the region name, which rows now start
+    // immediately below rather than half a row into. It has to clear the label
+    // (~26px) plus half a card (~14px) on the ~430px canvas this renders at,
+    // and the label is proportionally widest on a phone — where a first-row
+    // card would otherwise sit right under "Development". Measured until
+    // labelCovered was 0 at 1440, 1024, 768 and 390.
+    const padTop = 15
+    const padBottom = 6
     const w = rw - padX * 2
     const h = rh - padTop - padBottom
     members.forEach((tab, i) => {
@@ -113,10 +122,15 @@ function homeLayout(): Record<string, Point> {
       // from hanging off one side of the region.
       const inRow = Math.min(cols, members.length - row * cols)
       const rowOffset = (cols - inRow) / 2
+      // Rows span the usable band edge to edge (row / rows-1) rather than
+      // sitting in its middle (row+0.5 / rows). The centred form wastes a
+      // whole row's worth of height — with three rows it used 2/3 of the band
+      // and left the region looking half empty.
+      const rowT = rows > 1 ? row / (rows - 1) : 0.5
       out[tab.id] = {
         // Jitter stays under half a column so it never collides a neighbour.
         x: roundLayout(region.x1 + padX + ((col + rowOffset + 0.5) / cols) * w + (a - 0.5) * 2.5),
-        y: roundLayout(region.y1 + padTop + ((row + 0.5) / Math.max(rows, 1)) * h + (b - 0.5) * 4),
+        y: roundLayout(region.y1 + padTop + rowT * h + (b - 0.5) * 3),
       }
     })
   }

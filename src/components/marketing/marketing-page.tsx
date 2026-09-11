@@ -169,10 +169,13 @@ function ProblemStrip() {
             </p>
           </Reveal>
           <Reveal order={1}>
+            {/* Labels kept to a single line each and parallel in shape. The
+                middle one used to run to two lines while its neighbours ran to
+                one, which made a row of three figures read as ragged. */}
             <div className="grid grid-cols-3 gap-6">
               <Stat value={HERO_TAB_COUNT} label="tabs in one window" />
-              <Stat value={HERO_RESULT.duplicates} label="of them the same page twice" />
-              <Stat value="0" label="of them you can find again" />
+              <Stat value={HERO_RESULT.duplicates} label="are the same page" />
+              <Stat value="0" label="you can find again" />
             </div>
           </Reveal>
         </div>
@@ -306,7 +309,11 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 
         {/* --- Workspaces --- */}
         <SplitSection
-          heading="And Thesis is only one of your rooms."
+          // Not "And Thesis is only one of your rooms." — in the narrow copy
+          // column a 1024 viewport gives, that balanced to "And Thesis is
+          // only / one of your rooms.", stranding "only" from the "one" it
+          // belongs to. This wording keeps the pair together at every width.
+          heading="Thesis is only one of your rooms."
           lead="Thesis reading does not belong in the same space as the work you are shipping. Each workspace keeps its own tabs, sections and layout."
           aside="Switch between them on the left."
         >
