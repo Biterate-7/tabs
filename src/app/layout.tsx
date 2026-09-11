@@ -28,27 +28,44 @@ import { THEME_REGISTRY } from "@/lib/appearance/themes";
 import { siteOrigin } from "@/lib/site-url";
 import "./globals.css";
 
+/*
+ * Only Geist and Geist Mono preload. Everything below them carries
+ * `preload: false`.
+ *
+ * next/font preloads every family a layout instantiates, and this layout
+ * instantiates all 21 so Settings → Appearance → Typography can offer them —
+ * which meant every route shipped 31 <link rel=preload> font files, 792KB, to
+ * render two families. That was invisible while `/` was the only route and
+ * the app was behind a hydration gate; it stopped being invisible when the
+ * statically-served public landing page started paying it on first paint.
+ *
+ * `preload: false` keeps the @font-face rule and the CSS variable, so a font
+ * a user picks in Settings still resolves and still self-hosts — the browser
+ * just fetches it when a rule actually applies it instead of on every load.
+ * The two below stay eager because they are the defaults (see
+ * --tabdump-font-ui/-mono in globals.css) and the marketing page pins them.
+ */
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
-const ibmPlexSans = IBM_Plex_Sans({ variable: "--font-ibm-plex-sans", subsets: ["latin"], weight: ["400", "500", "600", "700"] });
-const ibmPlexMono = IBM_Plex_Mono({ variable: "--font-ibm-plex-mono", subsets: ["latin"], weight: ["400", "500", "600", "700"] });
-const jetbrainsMono = JetBrains_Mono({ variable: "--font-jetbrains-mono", subsets: ["latin"] });
-const robotoMono = Roboto_Mono({ variable: "--font-roboto-mono", subsets: ["latin"] });
-const roboto = Roboto({ variable: "--font-roboto", subsets: ["latin"], weight: ["400", "500", "700"] });
-const spaceMono = Space_Mono({ variable: "--font-space-mono", subsets: ["latin"], weight: ["400", "700"] });
-const sourceCodePro = Source_Code_Pro({ variable: "--font-source-code-pro", subsets: ["latin"] });
-const firaCode = Fira_Code({ variable: "--font-fira-code", subsets: ["latin"] });
-const firaSans = Fira_Sans({ variable: "--font-fira-sans", subsets: ["latin"], weight: ["400", "500", "600", "700"] });
-const cascadiaCode = Cascadia_Code({ variable: "--font-cascadia-code", subsets: ["latin"] });
-const manrope = Manrope({ variable: "--font-manrope", subsets: ["latin"] });
-const dmSans = DM_Sans({ variable: "--font-dm-sans", subsets: ["latin"] });
-const nunito = Nunito({ variable: "--font-nunito", subsets: ["latin"] });
-const plusJakartaSans = Plus_Jakarta_Sans({ variable: "--font-plus-jakarta-sans", subsets: ["latin"] });
-const montserrat = Montserrat({ variable: "--font-montserrat", subsets: ["latin"] });
-const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["400", "500", "600", "700"] });
-const lora = Lora({ variable: "--font-lora", subsets: ["latin"] });
-const merriweather = Merriweather({ variable: "--font-merriweather", subsets: ["latin"], weight: ["400", "700"] });
+const inter = Inter({ variable: "--font-inter", subsets: ["latin"], preload: false });
+const ibmPlexSans = IBM_Plex_Sans({ variable: "--font-ibm-plex-sans", subsets: ["latin"], weight: ["400", "500", "600", "700"], preload: false });
+const ibmPlexMono = IBM_Plex_Mono({ variable: "--font-ibm-plex-mono", subsets: ["latin"], weight: ["400", "500", "600", "700"], preload: false });
+const jetbrainsMono = JetBrains_Mono({ variable: "--font-jetbrains-mono", subsets: ["latin"], preload: false });
+const robotoMono = Roboto_Mono({ variable: "--font-roboto-mono", subsets: ["latin"], preload: false });
+const roboto = Roboto({ variable: "--font-roboto", subsets: ["latin"], weight: ["400", "500", "700"], preload: false });
+const spaceMono = Space_Mono({ variable: "--font-space-mono", subsets: ["latin"], weight: ["400", "700"], preload: false });
+const sourceCodePro = Source_Code_Pro({ variable: "--font-source-code-pro", subsets: ["latin"], preload: false });
+const firaCode = Fira_Code({ variable: "--font-fira-code", subsets: ["latin"], preload: false });
+const firaSans = Fira_Sans({ variable: "--font-fira-sans", subsets: ["latin"], weight: ["400", "500", "600", "700"], preload: false });
+const cascadiaCode = Cascadia_Code({ variable: "--font-cascadia-code", subsets: ["latin"], preload: false });
+const manrope = Manrope({ variable: "--font-manrope", subsets: ["latin"], preload: false });
+const dmSans = DM_Sans({ variable: "--font-dm-sans", subsets: ["latin"], preload: false });
+const nunito = Nunito({ variable: "--font-nunito", subsets: ["latin"], preload: false });
+const plusJakartaSans = Plus_Jakarta_Sans({ variable: "--font-plus-jakarta-sans", subsets: ["latin"], preload: false });
+const montserrat = Montserrat({ variable: "--font-montserrat", subsets: ["latin"], preload: false });
+const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["400", "500", "600", "700"], preload: false });
+const lora = Lora({ variable: "--font-lora", subsets: ["latin"], preload: false });
+const merriweather = Merriweather({ variable: "--font-merriweather", subsets: ["latin"], weight: ["400", "700"], preload: false });
 
 const FONT_VARIABLES = [
   geistSans.variable,
