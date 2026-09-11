@@ -25,6 +25,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { AppearanceProvider } from "@/components/appearance-provider";
 import { THEME_REGISTRY } from "@/lib/appearance/themes";
+import { siteOrigin } from "@/lib/site-url";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -74,6 +75,10 @@ const FONT_VARIABLES = [
 ].join(" ");
 
 export const metadata: Metadata = {
+  // Absolute URLs for every page's canonical/Open Graph entries are resolved
+  // against this, so a route only has to declare its path. See lib/site-url.ts
+  // for how the origin is chosen (and why it matches the extension build's).
+  metadataBase: new URL(siteOrigin()),
   title: "TabDump",
   description: "Paste your browser tabs. Turn the chaos into an organized workspace.",
 };

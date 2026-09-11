@@ -204,6 +204,21 @@ export const DEMO_WORKSPACES: DemoWorkspace[] = [
  * tab's own id through this, so the page looks identical on the server and
  * on every client — `Math.random()` in a render would hydrate mismatched.
  */
+/**
+ * Rounds a computed layout number before it reaches the markup.
+ *
+ * Not cosmetic. `Math.cos`/`Math.sin` are implementation-defined in
+ * ECMAScript, and Node's V8 and Chrome's do not always agree in the last ULP —
+ * so a transform built from them serialises as `8.05984891768965cqw` on the
+ * server and `8.059848917689651cqw` in the browser, which React reports as a
+ * hydration mismatch on every element that uses one. Three decimals is far
+ * finer than a subpixel at these scales and makes the string identical on both
+ * sides (and shorter in the HTML).
+ */
+export function roundLayout(n: number): number {
+  return Math.round(n * 1000) / 1000
+}
+
 export function hashUnit(seed: string, salt = 0): number {
   let h = 2166136261 ^ salt
   for (let i = 0; i < seed.length; i++) {

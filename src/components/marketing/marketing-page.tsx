@@ -3,7 +3,6 @@
 import Link from "next/link"
 import type { CSSProperties, ReactNode } from "react"
 import { ArrowRight } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { DEMO_TABS, DEMO_UNIQUE_TABS, DEMO_SECTIONS, HERO_TAB_COUNT } from "./data"
 import { ExtensionDemo } from "./extension-demo"
@@ -14,10 +13,12 @@ import { MarketingNav } from "./nav"
 import {
   Container,
   DemoCaption,
-  Eyebrow,
+  DemoFavicon,
+  DemoStage,
   MButton,
   Reveal,
   Section,
+  SectionLede,
   SplitSection,
   Stat,
   mButtonClass,
@@ -70,58 +71,53 @@ function Hero({ onInstallExtension, onPasteTabs, storeUrl }: MarketingPageProps 
         }}
       />
 
+      {/* The copy block is deliberately compact — headline, one sentence, two
+          buttons, out of the way in about 280px. The demo below it is the
+          hero; the words are its caption. A tall wall of display type before
+          the product is the tell of a page whose product shot cannot carry
+          the fold on its own. */}
       <Container className="relative">
-        <div className="flex flex-col items-start pt-16 pb-10 sm:pt-24 sm:pb-14">
+        <div className="flex flex-col items-start pt-12 pb-9 sm:pt-16 sm:pb-11">
           <Reveal order={0}>
-            <span className="inline-flex items-center gap-2 rounded-full border border-subtle px-3 py-1 text-[0.6875rem] text-muted-foreground">
-              <span aria-hidden className="size-1.5 rounded-full bg-accent-text" />
-              Chrome extension · free while in beta
-            </span>
-          </Reveal>
-
-          <Reveal order={1}>
-            <h1 className="m-display mt-7 max-w-4xl text-foreground">
+            <h1 className="m-display max-w-[24ch] text-foreground">
               Turn a browser full of tabs into a workspace you can think in.
             </h1>
           </Reveal>
 
-          <Reveal order={2}>
-            <p className="m-lead mt-6 max-w-xl">
+          <Reveal order={1}>
+            <p className="m-sub mt-4 max-w-[46ch]">
               {HERO_TAB_COUNT} open tabs is not a filing system. Dump them into TabDump once and get sections, search,
               and a space worth coming back to.
             </p>
           </Reveal>
 
-          <Reveal order={3}>
-            <div className="mt-9 flex flex-wrap items-center gap-3">
+          <Reveal order={2}>
+            <div className="mt-7 flex flex-wrap items-center gap-2.5">
               {storeUrl ? (
-                <a href={storeUrl} target="_blank" rel="noopener noreferrer" className={mButtonClass("primary", "lg")}>
+                <a href={storeUrl} target="_blank" rel="noopener noreferrer" className={mButtonClass("primary")}>
                   Add to Chrome
                   <ArrowRight />
                 </a>
               ) : (
-                <MButton size="lg" onClick={onInstallExtension}>
+                <MButton onClick={onInstallExtension}>
                   Add to Chrome
                   <ArrowRight />
                 </MButton>
               )}
-              <MButton size="lg" variant="secondary" onClick={onPasteTabs}>
+              <MButton variant="secondary" onClick={onPasteTabs}>
                 Paste tabs instead
               </MButton>
+              <span className="ml-1 text-body-sm text-tertiary">Free while in beta · works offline</span>
             </div>
-          </Reveal>
-
-          <Reveal order={4}>
-            <p className="mt-5 text-body-sm text-tertiary">
-              Works offline. Your tabs stay in your browser until you say otherwise.
-            </p>
           </Reveal>
         </div>
       </Container>
 
-      <Container className="relative pb-16 sm:pb-24">
-        <Reveal order={2}>
-          <HeroDumpDemo />
+      <Container className="relative pb-14 sm:pb-20">
+        <Reveal order={1}>
+          <DemoStage>
+            <HeroDumpDemo />
+          </DemoStage>
         </Reveal>
       </Container>
     </div>
@@ -154,7 +150,7 @@ function ProblemStrip() {
                 key={`${copy}-${t.id}`}
                 className="flex items-center gap-1.5 rounded-md border border-subtle bg-card/60 px-2 py-1.5"
               >
-                <TabFavicon domain={t.domain} size={13} />
+                <DemoFavicon domain={t.domain} size={13} />
                 <span className="max-w-[16ch] truncate text-[0.6875rem] text-tertiary">{t.title}</span>
               </span>
             ))
@@ -163,7 +159,7 @@ function ProblemStrip() {
       </div>
 
       <Container>
-        <div className="mt-14 grid gap-10 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] md:items-end">
+        <div className="mt-10 grid gap-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] md:items-end">
           <Reveal order={0}>
             <p className="m-headline max-w-2xl text-foreground">
               Everything you find in a day ends up in the same place: a strip too small to read.
@@ -188,14 +184,12 @@ function ProblemStrip() {
 
 function WideSection({
   id,
-  eyebrow,
   heading,
   lead,
   caption,
   children,
 }: {
   id?: string
-  eyebrow: string
   heading: string
   lead: string
   caption?: string
@@ -204,22 +198,9 @@ function WideSection({
   return (
     <Section id={id}>
       <Container>
-        <div className="flex flex-col gap-x-16 gap-y-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl">
-            <Reveal order={0}>
-              <Eyebrow>{eyebrow}</Eyebrow>
-            </Reveal>
-            <Reveal order={1}>
-              <h2 className="m-headline mt-5 text-foreground">{heading}</h2>
-            </Reveal>
-          </div>
-          <Reveal order={2}>
-            <p className="m-lead max-w-md lg:pb-1">{lead}</p>
-          </Reveal>
-        </div>
-
-        <Reveal order={1} className="mt-12">
-          {children}
+        <SectionLede heading={heading} lead={lead} />
+        <Reveal order={1} className="mt-8">
+          <DemoStage>{children}</DemoStage>
           {caption && <DemoCaption>{caption}</DemoCaption>}
         </Reveal>
       </Container>
@@ -237,6 +218,15 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 
   return (
     <div className="tabdump-marketing min-h-screen">
+      {/* Scroll reveals rest at opacity 0 and are only ever switched on by an
+          IntersectionObserver. On `/welcome` — which server-renders this whole
+          page — that would otherwise hand a reader without scripting a
+          complete document they cannot see. The demos need JS to mean
+          anything; the writing does not. */}
+      <noscript>
+        <style>{`.tabdump-marketing .m-reveal{opacity:1!important;transform:none!important}`}</style>
+      </noscript>
+
       <MarketingNav
         primaryLabel="Add to Chrome"
         primaryHref={storeUrl}
@@ -249,11 +239,14 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 
         <ProblemStrip />
 
-        {/* --- Structure --- */}
+        {/* --- Structure ---
+            Copy from here on refers back to "that dump" and to the Thesis
+            workspace by name. Every demo on this page runs on one corpus, and
+            saying so out loud is what turns nine widgets into one session
+            being followed from the browser all the way to recall. */}
         <SplitSection
           id="organize"
-          eyebrow="From chaos to structure"
-          heading={`One long pile becomes ${DEMO_SECTIONS.length} clean sections.`}
+          heading={`That pile becomes ${DEMO_SECTIONS.length} clean sections.`}
           lead="TabDump reads what you actually had open — the paper, the problem set, the four GitHub tabs — and builds the hierarchy you would have built yourself, if you had the afternoon."
           aside="Open any branch. The counts are computed from the tabs underneath, not typed in."
         >
@@ -263,30 +256,24 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         {/* --- Intelligence --- */}
         <Section>
           <Container>
-            <div className="max-w-2xl">
-              <Reveal order={0}>
-                <Eyebrow>Intelligent organization</Eyebrow>
-              </Reveal>
-              <Reveal order={1}>
-                <h2 className="m-headline mt-5 text-foreground">It does the filing, and it shows its work.</h2>
-              </Reveal>
-              <Reveal order={2}>
-                <p className="m-lead mt-5">
-                  Every organized tab carries a one-line note explaining where it went and why — so when TabDump gets
-                  something wrong, you can see it at a glance and move it in one drag.
-                </p>
-              </Reveal>
-            </div>
+            <SectionLede
+              heading="It does the filing, and it shows its work."
+              lead="Every tab in that same dump carries a one-line note explaining where it went and why — so when TabDump gets something wrong, you can see it at a glance and move it in one drag."
+            />
 
-            <div className="mt-12 grid gap-6 lg:grid-cols-2">
-              <Reveal order={0}>
-                <ReasoningDemo />
+            <div className="mt-8 grid gap-5 lg:grid-cols-2">
+              <Reveal order={1}>
+                <DemoStage>
+                  <ReasoningDemo />
+                </DemoStage>
                 <DemoCaption>Pick a tab to read its note.</DemoCaption>
               </Reveal>
-              <Reveal order={1}>
-                <DuplicateDemo />
+              <Reveal order={2}>
+                <DemoStage>
+                  <DuplicateDemo />
+                </DemoStage>
                 <DemoCaption>
-                  {HERO_RESULT.duplicates} repeats in this dump, folded into the pages they duplicate.
+                  {HERO_RESULT.duplicates} repeats in that dump, folded into the pages they duplicate.
                 </DemoCaption>
               </Reveal>
             </div>
@@ -296,10 +283,9 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         {/* --- Spatial --- */}
         <WideSection
           id="spatial"
-          eyebrow="Spatial knowledge"
-          heading="Tabs are objects. Not rows in a list."
-          lead="Lay them out the way you think about them. TabDump keeps the arrangement, and keeps showing you what belongs with what."
-          caption="Drag any tab. Hover one to light up everything it sits with. Arrow keys work too."
+          heading="Those sections are places, not folders."
+          lead="The same Thesis workspace, laid out in space. Put a tab where you will look for it and TabDump keeps it there — still showing you what it belongs with."
+          caption="Drag a tab from one section into another — its colour, both counts and the line below all follow."
         >
           <SpatialDemo />
         </WideSection>
@@ -307,9 +293,8 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         {/* --- Search --- */}
         <SplitSection
           id="recall"
-          eyebrow="Recall"
-          heading="Ask for it. Everything else steps back."
-          lead="Search runs across titles, domains and sections at once, and the workspace narrows around what matched instead of throwing away the context around it."
+          heading="Weeks later, ask for it by name."
+          lead="Search that same workspace across titles, domains and sections at once. It narrows around what matched instead of throwing away the context around it."
           aside="This one is real — type anything, including something with no results."
           reverse
         >
@@ -318,8 +303,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 
         {/* --- Workspaces --- */}
         <SplitSection
-          eyebrow="Workspaces"
-          heading="A separate room for every part of your life."
+          heading="And Thesis is only one of your rooms."
           lead="Thesis reading does not belong in the same space as the work you are shipping. Each workspace keeps its own tabs, sections and layout."
           aside="Switch between them on the left."
         >
@@ -328,8 +312,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 
         {/* --- History --- */}
         <SplitSection
-          eyebrow="History Dump"
-          heading="The session you never meant to close."
+          heading="Even the session you never saved."
           lead="TabDump can read back through your browsing history, find the pages that actually mattered in a stretch of time, and bring them back as a workspace."
           aside="Nothing was open. Nothing was bookmarked. It comes back anyway."
           reverse
@@ -340,8 +323,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         {/* --- Extension --- */}
         <WideSection
           id="dump"
-          eyebrow="The dump"
-          heading="One click, from any window."
+          heading="And it starts with one click."
           lead="The extension knows which tabs you have already dumped, so a second dump adds what is new instead of duplicating everything you own."
           caption="Click the TabDump button in the toolbar to run it."
         >
@@ -361,21 +343,18 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
           />
           <Container className="relative">
             <div className="mx-auto max-w-5xl text-center">
-              <Reveal order={0}>
-                <Eyebrow className="text-center">The point</Eyebrow>
-              </Reveal>
               <Reveal order={1}>
                 {/* The line break is the composition here, so balancing is
                     turned off: left on, it re-breaks the second sentence and
                     strands "find." on a line of its own. */}
-                <p className="m-display mt-6 text-foreground [text-wrap:wrap]">
+                <p className="m-display text-foreground [text-wrap:wrap]">
                   Stop managing tabs.
                   <br />
                   Start keeping what you find.
                 </p>
               </Reveal>
               <Reveal order={2}>
-                <p className="m-lead mx-auto mt-7 max-w-xl">
+                <p className="m-sub mx-auto mt-5 max-w-[52ch]">
                   A browser tab is the most fragile place to put something you care about. TabDump gives those pages
                   somewhere to live — organized, searchable, and still yours when the window closes.
                 </p>
@@ -388,24 +367,24 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <Section className="text-center">
           <Container>
             <Reveal order={0}>
-              <h2 className="m-headline mx-auto max-w-2xl text-foreground">
+              <h2 className="m-headline mx-auto max-w-[22ch] text-foreground">
                 You already have the tabs. Give them somewhere to go.
               </h2>
             </Reveal>
             <Reveal order={1}>
-              <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+              <div className="mt-7 flex flex-wrap items-center justify-center gap-2.5">
                 {storeUrl ? (
-                  <a href={storeUrl} target="_blank" rel="noopener noreferrer" className={mButtonClass("primary", "lg")}>
+                  <a href={storeUrl} target="_blank" rel="noopener noreferrer" className={mButtonClass("primary")}>
                     Add to Chrome
                     <ArrowRight />
                   </a>
                 ) : (
-                  <MButton size="lg" onClick={onInstallExtension}>
+                  <MButton onClick={onInstallExtension}>
                     Add to Chrome
                     <ArrowRight />
                   </MButton>
                 )}
-                <MButton size="lg" variant="secondary" onClick={onPasteTabs}>
+                <MButton variant="secondary" onClick={onPasteTabs}>
                   Paste tabs instead
                 </MButton>
               </div>
@@ -442,7 +421,7 @@ function MarketingFooter({ onPasteTabs }: { onPasteTabs: () => void }) {
 
           <div className="grid grid-cols-2 gap-10 sm:gap-16">
             <nav aria-label="Product">
-              <p className="m-eyebrow">Product</p>
+              <p className="m-label">Product</p>
               <ul className="mt-4 flex flex-col gap-2.5 text-body-sm">
                 <li>
                   <a href="#dump" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
@@ -472,7 +451,7 @@ function MarketingFooter({ onPasteTabs }: { onPasteTabs: () => void }) {
             </nav>
 
             <nav aria-label="Legal">
-              <p className="m-eyebrow">Legal</p>
+              <p className="m-label">Legal</p>
               <ul className="mt-4 flex flex-col gap-2.5 text-body-sm">
                 <li>
                   <Link href="/privacy" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">

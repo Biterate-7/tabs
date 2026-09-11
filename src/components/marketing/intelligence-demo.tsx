@@ -2,12 +2,11 @@
 
 import { useEffect, useState, type CSSProperties } from "react"
 import { Copy, Layers } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import { DEMO_TABS, DEMO_UNIQUE_TABS } from "./data"
 import { useInView, useReducedMotion } from "./hooks"
-import { DemoWindow, MButton } from "./primitives"
+import { DemoFavicon, DemoWindow, MButton } from "./primitives"
 
 /**
  * Two demonstrations of TabDump doing the organizing work itself.
@@ -82,7 +81,7 @@ export function ReasoningDemo() {
                 className="h-5 w-0.5 shrink-0 rounded-full"
                 style={{ backgroundColor: `var(${CATEGORIES[entry.tab.category].accentColor})` }}
               />
-              <TabFavicon domain={entry.tab.domain} size={16} />
+              <DemoFavicon domain={entry.tab.domain} size={16} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-body-sm text-foreground">{entry.tab.title}</span>
                 <span className="block truncate text-meta text-tertiary">
@@ -95,10 +94,10 @@ export function ReasoningDemo() {
       </div>
 
       <div className="border-t border-subtle px-3.5 py-3">
-        <p className="m-eyebrow">TabDump&rsquo;s note</p>
+        <p className="m-label">TabDump&rsquo;s note</p>
         {/* Keyed on the selection so the explanation re-enters rather than
             silently swapping text under the reader's eyes. */}
-        <p key={selected} className="mt-2 text-body-sm leading-relaxed text-muted-foreground" style={{ animation: "m-settle-in 380ms var(--m-ease) both" }}>
+        <p key={selected} className="mt-2 text-body-sm leading-relaxed text-muted-foreground" style={{ animation: "m-settle-in 320ms var(--m-ease) both" }}>
           {current.reason}
         </p>
       </div>
@@ -150,7 +149,12 @@ export function DuplicateDemo() {
         label="Interactive demonstration: repeated tabs collapsing into one"
         toolbar={<Copy aria-hidden className="size-3.5 text-tertiary" />}
       >
-        <div className="flex flex-col gap-3 p-3">
+        {/* Fixed height, content pinned to the top. The rows collapse inside
+            this box rather than shrinking it — otherwise the panel loses ~150px
+            the moment it auto-plays, and everything below it on the page jumps
+            up under the reader's eyes. That was the page's entire measured
+            layout shift (CLS 0.11 -> ~0). */}
+        <div className="flex h-[19.5rem] flex-col content-start gap-3 overflow-hidden p-3">
           {DUPLICATE_GROUPS.map((group) => (
             <div key={group.title} className="flex flex-col gap-1">
               {group.ids.map((id, i) => {
@@ -182,7 +186,7 @@ export function DuplicateDemo() {
                           className="h-5 w-0.5 shrink-0 rounded-full"
                           style={{ backgroundColor: `var(${CATEGORIES[group.category].accentColor})` }}
                         />
-                        <TabFavicon domain={group.domain} size={16} />
+                        <DemoFavicon domain={group.domain} size={16} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-body-sm text-foreground">{group.title}</span>
                           <span className="block truncate text-meta text-tertiary">{group.domain}</span>

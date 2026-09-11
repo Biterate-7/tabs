@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { ChevronRight } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import { DEMO_SECTIONS, DEMO_UNIQUE_TABS, hashUnit } from "./data"
 import { useInView, useReducedMotion } from "./hooks"
-import { DemoWindow, MButton } from "./primitives"
+import { DemoFavicon, DemoWindow, MButton } from "./primitives"
 
 /**
  * "From chaos to structure": the same tabs, shown as the flat pile a browser
@@ -38,12 +37,12 @@ function PileRow({ tab, index }: { tab: (typeof PILE)[number]; index: number }) 
   return (
     <div
       className="flex items-center gap-2 rounded-md border border-subtle bg-card/60 px-2 py-1.5"
-      style={{ animation: `m-settle-in 380ms var(--m-ease) ${index * 18}ms both` }}
+      style={{ animation: `m-settle-in 320ms var(--m-ease) ${index * 18}ms both` }}
     >
       {/* Grey spine, not the category color: in the pile nothing has been
           classified yet, and coloring it here would give away the payoff. */}
       <span aria-hidden className="h-4 w-0.5 shrink-0 rounded-full bg-white/12" />
-      <TabFavicon domain={tab.domain} size={14} />
+      <DemoFavicon domain={tab.domain} size={14} />
       <span className="min-w-0 flex-1 truncate text-[0.75rem] leading-4 text-muted-foreground">{tab.title}</span>
       <span className="hidden shrink-0 truncate text-meta text-tertiary sm:block">{tab.domain}</span>
     </div>
@@ -67,7 +66,7 @@ function Branch({
   return (
     <div
       className="m-panel overflow-hidden"
-      style={{ animation: `m-settle-in 480ms var(--m-spring) ${index * 80}ms both` }}
+      style={{ animation: `m-settle-in 400ms var(--m-spring) ${index * 80}ms both` }}
     >
       <button
         type="button"

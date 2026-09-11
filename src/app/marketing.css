@@ -46,7 +46,7 @@
   --muted-foreground: #a3a2ac;
   --text-secondary: #a3a2ac;
   /* Measured, not picked: this is the metadata tier (counts, timestamps,
-     eyebrows, demo captions) and it carries real text, so it has to clear
+     section labels, demo captions) and it carries real text, so it has to clear
      WCAG AA's 4.5:1 against the ground above. The first value tried here,
      #74737e, measured 4.31:1 and failed; this one measures ~5.4:1. Same
      reasoning as --text-tertiary in globals.css, recomputed for this
@@ -88,8 +88,12 @@
   /* ---- Marketing-only rhythm -----------------------------------------
      Prefixed because these have no app-side counterpart to shadow. */
   --m-gutter: clamp(1.25rem, 4vw, 4rem);
-  --m-max: 76rem;
-  --m-section-y: clamp(5rem, 10vw, 9.5rem);
+  --m-max: 78rem;
+  /* Measured against the benchmark rather than guessed: the reference site
+     runs ~67px of section padding at this width, not the ~144px this page
+     started with. Double that rhythm reads as a page padded out to feel
+     substantial; this one lets consecutive sections belong to one document. */
+  --m-section-y: clamp(3.25rem, 4.6vw, 4.5rem);
   /* Springy but without cartoon overshoot — used for demo objects that move
      through space (tabs flying into a workspace, cards settling). */
   --m-spring: cubic-bezier(0.22, 1.12, 0.36, 1);
@@ -105,51 +109,63 @@
   overflow-x: clip;
 }
 
-/* ---- Display type ----------------------------------------------------
-   Large, near-regular weight, tight negative tracking, short leading. The
-   app's own .text-display is a different instrument (it lives inside a
-   product chrome and tracks the user's font scale), so these are separate
+/* ---- Type scale ------------------------------------------------------
+   Four sizes, not six, and all of them far smaller than a marketing page
+   instinctively reaches for.
+
+   That restraint is the point. The benchmark runs a 26px hero headline at
+   this width and lets an enormous, dense product shot carry the page; a 76px
+   headline is what a site reaches for when the product imagery underneath it
+   is not carrying its weight. Every size below came down, and the space it
+   freed went to the demos.
+
+   The app's own .text-display is a different instrument — it lives inside
+   product chrome and tracks the user's font scale — so these are separate
    classes rather than an override of it. */
 .tabdump-marketing .m-display {
-  font-size: clamp(2.4rem, 1.15rem + 5vw, 4.75rem);
-  line-height: 1.02;
-  letter-spacing: -0.035em;
-  font-weight: 450;
+  font-size: clamp(2rem, 1.35rem + 2.1vw, 3.125rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  font-weight: 440;
   text-wrap: balance;
 }
 
 .tabdump-marketing .m-headline {
-  font-size: clamp(1.9rem, 1.1rem + 2.6vw, 3rem);
-  line-height: 1.08;
-  letter-spacing: -0.028em;
-  font-weight: 450;
+  font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.125rem);
+  line-height: 1.16;
+  letter-spacing: -0.02em;
+  font-weight: 440;
   text-wrap: balance;
 }
 
+/* Section heading. Deliberately the same size as .m-lead below it: the two
+   are set as one block, the heading in full-strength text and the sentence
+   after it dimmed, so a section opens like a paragraph rather than like a
+   slide title with a subtitle. */
 .tabdump-marketing .m-title {
-  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.125rem);
-  line-height: 1.14;
-  letter-spacing: -0.022em;
-  font-weight: 450;
+  font-size: clamp(1.1875rem, 1.05rem + 0.42vw, 1.4375rem);
+  line-height: 1.3;
+  letter-spacing: -0.011em;
+  font-weight: 500;
   text-wrap: balance;
 }
 
 .tabdump-marketing .m-lead {
-  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.1875rem);
-  line-height: 1.55;
-  letter-spacing: -0.008em;
+  font-size: clamp(1.1875rem, 1.05rem + 0.42vw, 1.4375rem);
+  line-height: 1.3;
+  letter-spacing: -0.011em;
   color: var(--text-secondary);
   text-wrap: pretty;
 }
 
-/* Small uppercase mono label above a section heading. */
-.tabdump-marketing .m-eyebrow {
-  font-family: var(--tabdump-font-mono);
-  font-size: 0.6875rem;
-  line-height: 1;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+/* Standalone lead — under a display headline, where there is no heading to
+   match and the line needs to sit back rather than compete. */
+.tabdump-marketing .m-sub {
+  font-size: clamp(0.9375rem, 0.9rem + 0.2vw, 1.0625rem);
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: var(--text-secondary);
+  text-wrap: pretty;
 }
 
 /* Tabular mono for every count/metric the demos animate, so a number
@@ -163,19 +179,21 @@
 /* ---- Scroll reveal ---------------------------------------------------
    One shared primitive (see hooks.ts's useInView). Transform + opacity only.
 
-   The resting state is hidden and only JS ever flips data-shown, which would
-   normally be a no-JS trap. It isn't one here only because this page is
-   mounted inside AppShell, which renders nothing at all until it has
-   hydrated — with scripting off the route is blank either way, so a
-   <noscript> override of this rule would have nothing to reveal. If the
-   landing page is ever lifted onto a server-rendered route of its own, this
-   rule becomes the thing hiding it, and that route needs the override. */
+   The resting state is hidden and only JS ever flips data-shown, so on
+   /welcome — where this page is server-rendered — this rule alone would hide
+   a complete document from anyone without scripting. MarketingPage ships a
+   <noscript> override that neutralises it; keep the two together if either
+   changes. (At `/` the point is moot: AppShell renders nothing until it has
+   hydrated, so that route is blank without JS either way.) */
+/* 420ms, not the 620 this started at, and a shorter travel. A reveal is
+   punctuation, not an event: at 620ms a reader scrolling at a normal pace
+   outruns it and spends the page waiting for text to finish arriving. */
 .tabdump-marketing .m-reveal {
   opacity: 0;
-  transform: translateY(14px);
+  transform: translateY(10px);
   transition:
-    opacity 620ms var(--m-ease) var(--m-reveal-delay, 0ms),
-    transform 620ms var(--m-ease) var(--m-reveal-delay, 0ms);
+    opacity 420ms var(--m-ease) var(--m-reveal-delay, 0ms),
+    transform 420ms var(--m-ease) var(--m-reveal-delay, 0ms);
 }
 
 .tabdump-marketing .m-reveal[data-shown="true"] {
@@ -198,11 +216,50 @@
    The recurring "a piece of software, rendered inside the page" frame. */
 .tabdump-marketing .m-window {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: linear-gradient(180deg, #101017 0%, #0b0b10 100%);
   box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
-    0 30px 70px -30px rgba(0, 0, 0, 0.9);
+    0 1px 0 0 rgba(255, 255, 255, 0.045) inset,
+    0 2px 6px -1px rgba(0, 0, 0, 0.7),
+    0 24px 60px -24px rgba(0, 0, 0, 0.95);
+}
+
+/* ---- Demo stage ------------------------------------------------------
+   A backdrop the product window floats on, rather than the window sitting
+   flat on the page ground.
+
+   This is the single biggest thing separating a real product site's demo
+   framing from a screenshot in a card: two planes and a cast shadow read as
+   a photograph of software, one plane reads as a div. The wash is TabDump's
+   accent at very low chroma, so the depth still belongs to this brand
+   rather than being a generic grey tray. */
+.tabdump-marketing .m-stage {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+  /* A generous inset is what sells the second plane. Too tight and the
+     backdrop reads as a stray 2px outline around the window rather than as
+     a surface the window is resting on. */
+  padding: clamp(0.75rem, 2.6vw, 2.5rem);
+  background:
+    radial-gradient(130% 120% at 50% -15%, color-mix(in oklch, var(--primary), transparent 86%) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.022) 55%, rgba(255, 255, 255, 0.01) 100%);
+}
+
+/* The hairline grid, clipped to the stage, so the backdrop has texture at
+   close range instead of being a flat tint. */
+.tabdump-marketing .m-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 80%);
 }
 
 /* A quiet inner panel — one step up from the window's own ground. */
@@ -283,4 +340,17 @@
   100% {
     opacity: 0;
   }
+}
+
+/* Small uppercase mono label — footer column headings and the one or two
+   places a section genuinely needs a category above it. Deliberately rare:
+   an eyebrow over every section is a third typographic voice competing with
+   the heading and the sentence under it. */
+.tabdump-marketing .m-label {
+  font-family: var(--tabdump-font-mono);
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
 }

@@ -2,12 +2,11 @@
 
 import { useState, type CSSProperties } from "react"
 import { ArrowRight, Check } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import { DEMO_UNIQUE_TABS, hashUnit } from "./data"
 import { useReducedMotion, useSequence } from "./hooks"
-import { BrandGlyph, DemoWindow, MButton } from "./primitives"
+import { BrandGlyph, DemoFavicon, DemoWindow, MButton } from "./primitives"
 
 /**
  * The extension workflow, end to end: a browser window, the toolbar button,
@@ -72,7 +71,7 @@ export function ExtensionDemo() {
                   className="flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md border border-subtle bg-card px-1.5"
                   title={tab.title}
                 >
-                  <TabFavicon domain={tab.domain} size={11} />
+                  <DemoFavicon domain={tab.domain} size={11} />
                   <span className="hidden truncate text-[0.625rem] text-tertiary sm:block">
                     {tab.domain.replace(/^www\./, "").split(".")[0]}
                   </span>
@@ -182,7 +181,7 @@ export function ExtensionDemo() {
                       ? ({
                           "--m-from-x": "-22px",
                           "--m-from-y": `${(hashUnit(tab.id, 41) - 0.5) * 10}px`,
-                          animation: `m-settle-in 520ms var(--m-spring) ${i * 90}ms both`,
+                          animation: `m-settle-in 400ms var(--m-spring) ${i * 90}ms both`,
                         } as CSSProperties)
                       : { opacity: 0 }
                   }
@@ -192,7 +191,7 @@ export function ExtensionDemo() {
                     className="h-4 w-0.5 shrink-0 rounded-full"
                     style={{ backgroundColor: `var(${CATEGORIES[tab.category].accentColor})` }}
                   />
-                  <TabFavicon domain={tab.domain} size={13} />
+                  <DemoFavicon domain={tab.domain} size={13} />
                   <span className="min-w-0 flex-1 truncate text-[0.6875rem] leading-4 text-muted-foreground">
                     {tab.title}
                   </span>
@@ -208,7 +207,7 @@ export function ExtensionDemo() {
               {phase === "done" && (
                 <p
                   className="mt-auto flex items-center gap-1.5 px-0.5 pt-1 text-meta text-tertiary"
-                  style={{ animation: "m-settle-in 400ms var(--m-ease) 600ms both" }}
+                  style={{ animation: "m-settle-in 340ms var(--m-ease) 600ms both" }}
                 >
                   <Check aria-hidden className="size-3 text-success" strokeWidth={3} />
                   Sorted and deduplicated on arrival

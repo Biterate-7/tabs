@@ -1,11 +1,10 @@
 "use client"
 
 import { useState, type CSSProperties } from "react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import { DEMO_SECTIONS, DEMO_UNIQUE_TABS, DEMO_WORKSPACES, hashUnit } from "./data"
-import { DemoWindow } from "./primitives"
+import { DemoFavicon, DemoWindow } from "./primitives"
 
 /**
  * Workspace switching.
@@ -41,7 +40,7 @@ export function WorkspaceDemo() {
           aria-orientation="vertical"
           className="flex w-[8.5rem] shrink-0 flex-col gap-1 border-r border-subtle p-2 sm:w-[11rem]"
         >
-          <p className="m-eyebrow px-1.5 pt-1 pb-2">Spaces</p>
+          <p className="m-label px-1.5 pt-1 pb-2">Spaces</p>
           {DEMO_WORKSPACES.map((ws) => {
             const isActive = ws.id === activeId
             const count = WORKSPACE_TABS.get(ws.id)!.length
@@ -91,7 +90,7 @@ export function WorkspaceDemo() {
                     {
                       "--m-from-y": "14px",
                       "--m-from-x": "10px",
-                      animation: `m-settle-in 480ms var(--m-spring) ${si * 80}ms both`,
+                      animation: `m-settle-in 400ms var(--m-spring) ${si * 80}ms both`,
                     } as CSSProperties
                   }
                 >
@@ -117,11 +116,11 @@ export function WorkspaceDemo() {
                           {
                             "--m-from-y": "10px",
                             "--m-from-x": `${(hashUnit(tab.id, 21) - 0.5) * 12}px`,
-                            animation: `m-settle-in 440ms var(--m-spring) ${si * 80 + 110 + ti * 55}ms both`,
+                            animation: `m-settle-in 380ms var(--m-spring) ${si * 80 + 110 + ti * 55}ms both`,
                           } as CSSProperties
                         }
                       >
-                        <TabFavicon domain={tab.domain} size={14} />
+                        <DemoFavicon domain={tab.domain} size={14} />
                         <span className="min-w-0 flex-1 truncate text-[0.75rem] leading-4 text-muted-foreground">
                           {tab.title}
                         </span>

@@ -2,11 +2,10 @@
 
 import { useState, type CSSProperties } from "react"
 import { Check, History, RotateCcw } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { cn } from "@/lib/utils"
 import { DEMO_SESSIONS, DEMO_UNIQUE_TABS, hashUnit } from "./data"
 import { useReducedMotion, useSequence } from "./hooks"
-import { DemoWindow, MButton } from "./primitives"
+import { DemoFavicon, DemoWindow, MButton } from "./primitives"
 
 /**
  * History Dump: a browsing session you never saved, recovered.
@@ -75,7 +74,7 @@ export function HistoryDemo() {
           aria-label="Past sessions"
           className="flex shrink-0 flex-col gap-1 border-b border-subtle p-2 sm:w-[14rem] sm:border-r sm:border-b-0"
         >
-          <p className="m-eyebrow px-1.5 pt-1 pb-2">Sessions</p>
+          <p className="m-label px-1.5 pt-1 pb-2">Sessions</p>
           {DEMO_SESSIONS.map((s) => {
             const isActive = s.id === sessionId
             return (
@@ -101,7 +100,7 @@ export function HistoryDemo() {
                 </span>
                 <span className="mt-1 flex items-center gap-1.5">
                   {s.domains.slice(0, 4).map((d) => (
-                    <TabFavicon key={d} domain={d} size={12} />
+                    <DemoFavicon key={d} domain={d} size={12} />
                   ))}
                   <span className="truncate text-meta text-tertiary">{s.when}</span>
                 </span>
@@ -164,7 +163,7 @@ export function HistoryDemo() {
                       }
                       className="size-3.5 shrink-0 accent-[var(--primary)]"
                     />
-                    <TabFavicon domain={tab.domain} size={16} />
+                    <DemoFavicon domain={tab.domain} size={16} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-body-sm text-muted-foreground">{tab.title}</span>
                       <span className="block truncate text-meta text-tertiary">

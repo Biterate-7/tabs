@@ -1,7 +1,7 @@
 "use client"
 
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { avatarFallback, faviconUrl } from "@/lib/workspace/favicon"
 import { CATEGORIES } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { cn } from "@/lib/utils"
@@ -38,31 +38,58 @@ export function Section({
   id,
   className,
   children,
-  /** Hairline above the section. The page's sections are separated by rules, not by color changes. */
-  divided = true,
 }: {
   id?: string
   className?: string
   children: ReactNode
-  divided?: boolean
 }) {
   return (
-    <section
-      id={id}
-      className={cn("relative", divided && "border-t border-subtle", className)}
-      style={{ paddingBlock: "var(--m-section-y)" }}
-    >
+    // No rule between sections. A hairline under every one turns the page
+    // into a stack of slides; the ground and the rhythm are enough to say
+    // where a section ends, and the demos read as one continuous document.
+    <section id={id} className={cn("relative", className)} style={{ paddingBlock: "var(--m-section-y)" }}>
       {children}
     </section>
   )
 }
 
 /**
+ * A section's opening block: heading and the sentence after it, set at the
+ * same size with only weight and color separating them.
+ *
+ * Deliberately not heading-gap-subtitle. Two sizes plus an eyebrow above them
+ * makes three competing typographic voices before a reader has learned
+ * anything; one paragraph where the first clause happens to be the <h2> reads
+ * as writing rather than as a slide, and it is what the benchmark does.
+ */
+export function SectionLede({
+  heading,
+  lead,
+  className,
+}: {
+  heading: ReactNode
+  lead: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("max-w-[36rem]", className)}>
+      <Reveal order={0}>
+        <h2 className="m-title text-foreground">{heading}</h2>
+      </Reveal>
+      <Reveal order={1}>
+        <p className="m-lead">{lead}</p>
+      </Reveal>
+    </div>
+  )
+}
+
+/**
  * Reveals its children on first scroll into view.
  *
- * `order` staggers siblings by a fixed 90ms step rather than taking a raw
+ * `order` staggers siblings by a fixed 70ms step rather than taking a raw
  * delay, so a section's entrance rhythm is declared as "first, second, third"
- * and stays consistent with every other section on the page.
+ * and stays consistent with every other section on the page. Short enough
+ * that three staggered items still land inside a quarter second.
  */
 export function Reveal({
   order = 0,
@@ -81,15 +108,11 @@ export function Reveal({
       ref={ref as never}
       data-shown={shown}
       className={cn("m-reveal", className)}
-      style={{ "--m-reveal-delay": `${order * 90}ms` } as CSSProperties}
+      style={{ "--m-reveal-delay": `${order * 70}ms` } as CSSProperties}
     >
       {children}
     </Tag>
   )
-}
-
-export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn("m-eyebrow", className)}>{children}</p>
 }
 
 /**
@@ -99,7 +122,6 @@ export function Eyebrow({ children, className }: { children: ReactNode; classNam
  */
 export function SplitSection({
   id,
-  eyebrow,
   heading,
   lead,
   aside,
@@ -107,10 +129,9 @@ export function SplitSection({
   reverse = false,
 }: {
   id?: string
-  eyebrow: string
   heading: ReactNode
   lead: ReactNode
-  /** Optional small print under the lead — a hint about what the demo can do. */
+  /** Small print under the lead — the invitation to touch the demo. */
   aside?: ReactNode
   children: ReactNode
   reverse?: boolean
@@ -118,35 +139,36 @@ export function SplitSection({
   return (
     <Section id={id}>
       <Container>
-        {/* The track sizes swap with `reverse`, not just the order: `order`
+        {/* Demo-dominant, ~62/38. The demo is the argument and the copy is the
+            caption, so the copy column is sized to a comfortable 34rem measure
+            and the demo takes everything else.
+
+            The track sizes swap with `reverse`, not just the order: `order`
             moves an item into the *other track*, so reversing without this
-            would hand the demo the narrow column and the copy the wide one. */}
+            would hand the demo the narrow column. */}
         <div
           className={cn(
-            "grid items-center gap-x-16 gap-y-12",
+            // Top-aligned, not centred: the copy is a caption on the demo
+            // beside it, and centring a 200px block against a 500px one
+            // strands it in the middle of a column of nothing.
+            "grid items-start gap-x-14 gap-y-10",
             reverse
-              ? "lg:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)]"
-              : "lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]"
+              ? "lg:grid-cols-[minmax(0,1.62fr)_minmax(0,1fr)]"
+              : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.62fr)]"
           )}
         >
-          <div className={cn("max-w-xl", reverse && "lg:order-2")}>
-            <Reveal order={0}>
-              <Eyebrow>{eyebrow}</Eyebrow>
-            </Reveal>
-            <Reveal order={1}>
-              <h2 className="m-title mt-5 text-foreground">{heading}</h2>
-            </Reveal>
-            <Reveal order={2}>
-              <p className="m-lead mt-5">{lead}</p>
-            </Reveal>
+          <div className={cn("lg:pt-2", reverse && "lg:order-2")}>
+            <SectionLede heading={heading} lead={lead} />
             {aside && (
-              <Reveal order={3}>
-                <p className="mt-6 text-body-sm text-tertiary">{aside}</p>
+              <Reveal order={2}>
+                <p className="mt-5 max-w-[30rem] text-body-sm text-tertiary">{aside}</p>
               </Reveal>
             )}
           </div>
           <Reveal order={1} className={cn("min-w-0", reverse && "lg:order-1")}>
-            {children}
+            {/* Staged here rather than at each call site so every demo on the
+                page floats on the same backdrop at the same inset. */}
+            <DemoStage>{children}</DemoStage>
           </Reveal>
         </div>
       </Container>
@@ -261,6 +283,79 @@ export function DemoWindow({
   )
 }
 
+/**
+ * The backdrop a demo window floats on.
+ *
+ * Two planes instead of one: the window gets a cast shadow onto a lit
+ * surface, which is what makes it read as a photograph of software rather
+ * than as a bordered div. Purely presentational — it never wraps the demo's
+ * own interaction surface, so nothing here can intercept a drag or a click.
+ */
+export function DemoStage({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn("m-stage", className)}>{children}</div>
+}
+
+/**
+ * A tab's favicon, drawn exactly the way the app draws it — same favicon
+ * service, same letter fallback, same palette, same rounded geometry — but
+ * server-renderable.
+ *
+ * The app's own `TabFavicon` wraps Base UI's Avatar, which cannot know on the
+ * server whether an image will load and so emits only the fallback; the client
+ * then mounts an <img> in its place. Inside the app that is invisible, because
+ * nothing there is server-rendered. On /welcome it is a structural hydration
+ * mismatch repeated 246 times.
+ *
+ * So this reproduces the treatment with a plain <img> over a coloured letter:
+ * identical markup on both sides, the letter showing through until (or unless)
+ * the icon loads. It still imports `faviconUrl` and `avatarFallback` from the
+ * app rather than re-deriving them, so the colour a domain gets here is the
+ * colour it gets in a real workspace.
+ */
+export function DemoFavicon({ domain, size = 16 }: { domain: string; size?: number }) {
+  const { letter, colorVar } = avatarFallback(domain)
+  return (
+    <span
+      className="relative inline-flex shrink-0 overflow-hidden rounded-md"
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      {/* The coloured letter sits *behind* the icon and is removed once the
+          icon actually loads — many favicons have transparent corners, and a
+          fallback left painted underneath shows through as a coloured ring
+          around every one of them. */}
+      <span
+        data-favicon-fallback
+        className="absolute inset-0 flex items-center justify-center font-semibold text-white"
+        style={{ backgroundColor: `var(${colorVar})`, fontSize: Math.round(size * 0.62) }}
+      >
+        {letter}
+      </span>
+      {/* Not next/image: these are third-party icons at 13–18px from a URL
+          pattern, where the optimiser would add a proxy hop and gain nothing.
+          alt="" keeps a failed load silent rather than showing broken-image
+          chrome over the letter. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={faviconUrl(domain)}
+        alt=""
+        width={size}
+        height={size}
+        loading="lazy"
+        decoding="async"
+        className="relative size-full rounded-md object-cover"
+        onLoad={(e) => {
+          const fallback = e.currentTarget.previousElementSibling
+          if (fallback instanceof HTMLElement) fallback.style.opacity = "0"
+        }}
+        onError={(e) => {
+          e.currentTarget.style.display = "none"
+        }}
+      />
+    </span>
+  )
+}
+
 /** The TabDump mark, inlined here so demo chrome doesn't depend on app layout. */
 export function BrandGlyph({ className }: { className?: string }) {
   return (
@@ -339,7 +434,7 @@ export function DemoTabRow({
         className="h-5 w-0.5 shrink-0 rounded-full"
         style={{ backgroundColor: `var(${CATEGORIES[category].accentColor})`, opacity: 0.85 }}
       />
-      <TabFavicon domain={domain} size={size === "sm" ? 14 : 18} />
+      <DemoFavicon domain={domain} size={size === "sm" ? 14 : 18} />
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-foreground", size === "sm" ? "text-[0.75rem] leading-4" : "text-body-sm")}>
           {title}

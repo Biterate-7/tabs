@@ -61,7 +61,8 @@ export function MarketingNav({
     >
       <nav
         aria-label="Primary"
-        className="mx-auto flex h-14 w-full items-center gap-3"
+        // `relative` anchors the absolutely-centred link list above.
+        className="relative mx-auto flex h-[3.25rem] w-full items-center gap-3"
         style={{ maxWidth: "var(--m-max)", paddingInline: "var(--m-gutter)" }}
       >
         <a
@@ -72,12 +73,21 @@ export function MarketingNav({
           <span className="text-[0.9375rem] font-medium tracking-[-0.01em]">TabDump</span>
         </a>
 
-        <ul className="ml-6 hidden items-center gap-1 md:flex">
+        {/* Shown from `lg`, not `md`: the list is absolutely centred, so it does
+            not participate in the flex row and at ~768px it silently overlapped
+            the buttons on the right. Below that the hamburger carries it.
+
+            Centred rather than tucked beside the wordmark: at this width a
+            left-clustered nav leaves a conspicuous empty middle, and centring
+            is what reads as a product site rather than a docs header. The
+            absolute positioning keeps it optically centred on the viewport
+            regardless of how wide the wordmark or the buttons get. */}
+        <ul className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 lg:flex">
           {LINKS.map((link) => (
             <li key={link.href}>
               <a
                 href={link.href}
-                className="inline-flex h-8 items-center rounded-full px-3 text-body-sm text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                className="inline-flex h-8 items-center rounded-full px-3 text-[0.875rem] text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-white/[0.06] hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
               >
                 {link.label}
               </a>
@@ -107,7 +117,7 @@ export function MarketingNav({
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((v) => !v)}
-            className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:hidden"
+            className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none lg:hidden"
           >
             {menuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
           </button>
@@ -115,7 +125,7 @@ export function MarketingNav({
       </nav>
 
       {menuOpen && (
-        <div className="border-t border-subtle bg-background/95 backdrop-blur-xl md:hidden">
+        <div className="border-t border-subtle bg-background/95 backdrop-blur-xl lg:hidden">
           <ul className="flex flex-col py-2" style={{ paddingInline: "var(--m-gutter)" }}>
             {LINKS.map((link) => (
               <li key={link.href}>

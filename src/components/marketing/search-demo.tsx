@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Search, X } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import { DEMO_SECTIONS, DEMO_UNIQUE_TABS } from "./data"
 import { useInView, useReducedMotion } from "./hooks"
-import { DemoWindow } from "./primitives"
+import { DemoFavicon, DemoWindow } from "./primitives"
 
 /**
  * Search, as a real input over the real corpus.
@@ -192,7 +191,7 @@ export function SearchDemo() {
                               )}
                               style={{ opacity: searching && !hit ? 0.22 : 1 }}
                             >
-                              <TabFavicon domain={tab.domain} size={14} />
+                              <DemoFavicon domain={tab.domain} size={14} />
                               <span className="min-w-0 flex-1 truncate text-[0.75rem] leading-4 text-muted-foreground">
                                 {tab.title}
                               </span>

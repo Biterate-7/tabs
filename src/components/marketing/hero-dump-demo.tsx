@@ -2,7 +2,6 @@
 
 import { useMemo, useState, type CSSProperties } from "react"
 import { Check, RotateCcw } from "lucide-react"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { CATEGORIES } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import {
@@ -12,10 +11,11 @@ import {
   DEMO_UNIQUE_TABS,
   HERO_TAB_COUNT,
   hashUnit,
+  roundLayout,
   type DemoTab,
 } from "./data"
-import { useCountUp, useReducedMotion, useSequence } from "./hooks"
-import { DemoWindow, MButton } from "./primitives"
+import { useReducedMotion, useSequence } from "./hooks"
+import { DemoFavicon, DemoWindow, MButton } from "./primitives"
 
 /**
  * The hero demonstration: a browser full of tabs becomes a TabDump workspace,
@@ -40,10 +40,14 @@ type Stage = "idle" | "dumping" | "processing" | "organized"
 /** How many of the corpus's tabs get drawn as chips. A dense field, not all 142 — see HERO_TAB_COUNT. */
 const CHIP_COUNT = 26
 
+// Tightened from a 2.56s run. The sequence has a job — read, dedupe,
+// categorise, land — and every stage has to be legible, but a visitor should
+// not feel they are waiting for a progress bar. 2.0s total, with the four
+// readout lines landing ~280ms apart.
 const SEQUENCE = {
-  processing: 820,
-  steps: [980, 1320, 1660, 2000],
-  organized: 2560,
+  processing: 680,
+  steps: [800, 1080, 1360, 1640],
+  organized: 2040,
 } as const
 
 type ChipLayout = {
@@ -53,6 +57,8 @@ type ChipLayout = {
   y: number
   rotate: number
   scale: number
+  /** Near/far falloff — see buildChips. */
+  opacity: number
   z: number
   enterDelay: number
   dumpDelay: number
@@ -70,13 +76,23 @@ function buildChips(tabs: DemoTab[]): ChipLayout[] {
     const angle = i * 2.39996
     const radius = Math.sqrt((i + 0.6) / tabs.length)
 
+    // Depth. A scatter where every chip is the same size reads as a pattern
+    // printed on one plane; giving each a position on a near/far axis and
+    // fading the far ones makes the same chips read as objects in a volume,
+    // which is the whole claim this page is making about tabs. Derived from
+    // the hash, so depth is stable and the z-order below agrees with it.
+    const depth = a
     return {
       tab,
-      x: Math.cos(angle) * radius * 43 + (a - 0.5) * 7,
-      y: Math.sin(angle) * radius * 39 + (b - 0.5) * 9,
-      rotate: (c - 0.5) * 11,
-      scale: 0.9 + a * 0.16,
-      z: Math.round(a * 20),
+      x: roundLayout(Math.cos(angle) * radius * 43 + (a - 0.5) * 7),
+      y: roundLayout(Math.sin(angle) * radius * 39 + (b - 0.5) * 9),
+      rotate: roundLayout((c - 0.5) * 11),
+      scale: roundLayout(0.82 + depth * 0.34),
+      // Far chips sit back rather than blurring: a real blur would force a
+      // separate composited layer for every one of them, and this reads the
+      // same at a fraction of the cost.
+      opacity: roundLayout(0.5 + depth * 0.5),
+      z: Math.round(depth * 20),
       enterDelay: Math.round(b * 420),
       // Chips further from the centre leave later, so the field collapses
       // inward rather than every chip starting at once.
@@ -98,7 +114,7 @@ function chipStyle(chip: ChipLayout, stage: Stage): CSSProperties {
   if (scattered) {
     return {
       ...base,
-      opacity: 1,
+      opacity: chip.opacity,
       transform: `translate(calc(-50% + ${chip.x}cqw), calc(-50% + ${chip.y}cqh)) rotate(${chip.rotate}deg) scale(${chip.scale})`,
       transition: `transform 620ms var(--m-spring) ${chip.enterDelay}ms, opacity 420ms var(--m-ease) ${chip.enterDelay}ms`,
     }
@@ -118,13 +134,14 @@ function chipStyle(chip: ChipLayout, stage: Stage): CSSProperties {
 function ChaosChip({ chip, stage }: { chip: ChipLayout; stage: Stage }) {
   return (
     <div style={chipStyle(chip, stage)}>
-      {/* Below `sm` the chip drops to its favicon alone. The stage shrinks with
+      {/* Below `lg` the chip drops to its favicon alone. The stage shrinks with
           the viewport but a titled chip does not, and two dozen 150px chips on
-          a 340px stage stop reading as a field of tabs and start reading as a
-          stack of bars. The favicons alone still say "these are pages". */}
-      <div className="flex max-w-[15ch] items-center gap-1.5 rounded-md border border-subtle bg-card p-1.5 shadow-[0_6px_20px_-12px_rgba(0,0,0,0.9)] sm:px-2">
-        <TabFavicon domain={chip.tab.domain} size={13} />
-        <span className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground sm:block">{chip.tab.title}</span>
+          a narrow stage stop reading as a field of tabs and start reading as
+          a stack of bars — measured at 768px, where titled chips overlapped
+          badly. The favicons alone still say "these are pages". */}
+      <div className="flex max-w-[15ch] items-center gap-1.5 rounded-md border border-subtle bg-card p-1.5 shadow-[0_6px_20px_-12px_rgba(0,0,0,0.9)] lg:px-2">
+        <DemoFavicon domain={chip.tab.domain} size={13} />
+        <span className="hidden truncate text-[0.6875rem] leading-4 text-muted-foreground lg:block">{chip.tab.title}</span>
       </div>
     </div>
   )
@@ -188,7 +205,7 @@ function OrganizedWorkspace({ active }: { active: boolean }) {
             active
               ? ({
                   "--m-from-y": "16px",
-                  animation: `m-settle-in 560ms var(--m-spring) ${ci * 90}ms both`,
+                  animation: `m-settle-in 380ms var(--m-spring) ${ci * 90}ms both`,
                 } as CSSProperties)
               : { opacity: 0 }
           }
@@ -223,12 +240,12 @@ function OrganizedWorkspace({ active }: { active: boolean }) {
                   ? ({
                       "--m-from-y": "14px",
                       "--m-from-x": `${(hashUnit(tab.id, 4) - 0.5) * 10}px`,
-                      animation: `m-settle-in 520ms var(--m-spring) ${ci * 90 + 140 + ti * 70}ms both`,
+                      animation: `m-settle-in 400ms var(--m-spring) ${ci * 90 + 140 + ti * 70}ms both`,
                     } as CSSProperties)
                   : { opacity: 0 }
               }
             >
-              <TabFavicon domain={tab.domain} size={14} />
+              <DemoFavicon domain={tab.domain} size={14} />
               <span className="min-w-0 flex-1 truncate text-[0.6875rem] leading-4 text-muted-foreground">{tab.title}</span>
             </div>
           ))}
@@ -239,7 +256,7 @@ function OrganizedWorkspace({ active }: { active: boolean }) {
             className="mt-auto shrink-0 truncate px-0.5 pt-1.5 text-meta text-tertiary"
             style={
               active
-                ? { animation: `m-settle-in 460ms var(--m-ease) ${ci * 90 + 480}ms both` }
+                ? { animation: `m-settle-in 320ms var(--m-ease) ${ci * 90 + 480}ms both` }
                 : { opacity: 0 }
             }
           >
@@ -262,7 +279,6 @@ export function HeroDumpDemo() {
   const { run, clear } = useSequence()
 
   const chips = useMemo(() => buildChips(DEMO_TABS.slice(0, CHIP_COUNT)), [])
-  const counted = useCountUp(HERO_TAB_COUNT, stage === "idle", 1100)
 
   const uniqueCount = HERO_TAB_COUNT - DEMO_DUPLICATE_COUNT
   const stepLabels = [
@@ -318,7 +334,7 @@ export function HeroDumpDemo() {
               <span className="size-2.5 rounded-full bg-white/12" />
             </div>
             <span className="text-meta text-tertiary">
-              <span className="m-num">{stage === "idle" ? counted : HERO_TAB_COUNT}</span> open tabs
+              <span className="m-num">{HERO_TAB_COUNT}</span> open tabs
             </span>
           </div>
 
