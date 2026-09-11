@@ -28,6 +28,36 @@ describe("aggregateHistoryEntries", () => {
     expect(result[0].normalizedUrl).toBe("https://example.com/article");
   });
 
+  it("merges www/protocol/fragment variants of the same page into one entry", () => {
+    const result = aggregateHistoryEntries([
+      item({ url: "https://www.example.com/article", visitCount: 1 }),
+      item({ url: "http://example.com/article/", visitCount: 1 }),
+      item({ url: "https://example.com/article#notes", visitCount: 1 }),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].visitCount).toBe(3);
+  });
+
+  it("merges one video watched at different timestamps, and keeps a different video apart", () => {
+    const result = aggregateHistoryEntries([
+      item({ url: "https://www.youtube.com/watch?v=AAA&t=30", visitCount: 1 }),
+      item({ url: "https://youtu.be/AAA", visitCount: 1 }),
+      item({ url: "https://www.youtube.com/watch?v=BBB", visitCount: 1 }),
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.find((e) => e.resourceKey === "youtube.com/video/AAA")?.visitCount).toBe(2);
+    expect(result.find((e) => e.resourceKey === "youtube.com/video/BBB")?.visitCount).toBe(1);
+  });
+
+  it("reports the most recently visited variant as the entry's own url", () => {
+    const result = aggregateHistoryEntries([
+      item({ url: "https://example.com/article?utm_source=x", lastVisitTime: 1000 }),
+      item({ url: "https://www.example.com/article", lastVisitTime: 5000 }),
+    ]);
+    expect(result[0].url).toBe("https://www.example.com/article");
+    expect(result[0].normalizedUrl).toBe("https://www.example.com/article");
+  });
+
   it("keeps distinct pages as separate entries", () => {
     const result = aggregateHistoryEntries([
       item({ url: "https://example.com/a" }),

@@ -39,6 +39,8 @@ export type HistoryCandidate = {
   id: string;
   url: string;
   normalizedUrl: string;
+  /** Canonical "which resource is this" key (see resource-key.ts) — every URL variant of one page shares it. Scan-session-only, like `score`; never persisted onto a Tab. */
+  resourceKey: string;
   domain: string;
   title?: string;
   visitCount: number;
@@ -48,7 +50,7 @@ export type HistoryCandidate = {
   tier: HistoryCandidateTier;
   /** Short human-readable signals backing the score, e.g. "Visited 8 times", "Last visited today" — see score.ts's describeCandidate. */
   reasons: string[];
-  /** True when this normalized URL already exists somewhere in the current workspace — see candidates.ts. Such candidates are always informational-only, never selectable for dumping. */
+  /** True when the current workspace already holds this resource — the same normalized URL, or any other URL variant of the same page (see candidates.ts). Such candidates are always informational-only, never selectable for dumping. */
   alreadyInWorkspace: boolean;
 };
 

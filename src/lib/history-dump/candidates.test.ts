@@ -70,9 +70,42 @@ describe("buildHistoryCandidates", () => {
     expect(result.candidates[0].alreadyInWorkspace).toBe(true);
   });
 
+  it("flags a candidate the workspace already holds under a different URL variant", () => {
+    const result = buildHistoryCandidates(
+      [item({ url: "https://www.youtube.com/watch?v=AAA&t=120", title: "Lecture" })],
+      new Set(["https://youtube.com/watch?v=AAA"]),
+      NOW
+    );
+    expect(result.candidates[0].alreadyInWorkspace).toBe(true);
+  });
+
   it("does not flag a candidate not present in the workspace", () => {
     const result = buildHistoryCandidates([item({ url: "https://example.com/article" })], new Set(["https://other.example/"]), NOW);
     expect(result.candidates[0].alreadyInWorkspace).toBe(false);
+  });
+
+  it("reviews one row per resource, not one per URL variant", () => {
+    const result = buildHistoryCandidates(
+      [
+        item({ url: "https://example.com/article", visitCount: 2 }),
+        item({ url: "https://www.example.com/article/?utm_source=x", visitCount: 3 }),
+        item({ url: "https://example.com/article#notes", visitCount: 1 }),
+      ],
+      new Set(),
+      NOW
+    );
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].visitCount).toBe(6);
+    expect(result.scannedCount).toBe(3);
+  });
+
+  it("still reviews two distinct resources on one domain separately", () => {
+    const result = buildHistoryCandidates(
+      [item({ url: "https://youtube.com/watch?v=AAA" }), item({ url: "https://youtube.com/watch?v=BBB" })],
+      new Set(),
+      NOW
+    );
+    expect(result.candidates).toHaveLength(2);
   });
 
   it("returns an empty candidate list for empty input", () => {

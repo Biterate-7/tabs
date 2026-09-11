@@ -8,6 +8,7 @@ function entry(over: Partial<AggregatedHistoryEntry>): AggregatedHistoryEntry {
   return {
     url: "https://example.com/article",
     normalizedUrl: "https://example.com/article",
+    resourceKey: "example.com/article",
     domain: "example.com",
     title: "A Meaningful Article Title",
     visitCount: 1,

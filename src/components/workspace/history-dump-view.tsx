@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { SearchBar } from "@/components/workspace/search-bar"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { useHistoryDump } from "@/hooks/use-history-dump"
+import { selectDiverseSuggestions } from "@/lib/history-dump/select"
 import { HISTORY_TIME_RANGES, DEFAULT_HISTORY_TIME_RANGE } from "@/lib/history-dump/types"
 import type { HistoryCandidate, HistoryTimeRangeId } from "@/lib/history-dump/types"
 import type { CustomHistoryRange } from "@/lib/history-dump/time-range"
@@ -53,14 +54,18 @@ function tabsLabel(n: number): string {
 function HistoryCandidateRow({
   candidate,
   selected,
+  note,
   onToggle,
 }: {
   candidate: HistoryCandidate
   selected: boolean
+  /** Why "Select suggested" passed this row over, when it did — replaces the usual score signals, since "why not" is the more useful thing to read on a row you expected to be ticked. */
+  note?: string
   onToggle: () => void
 }) {
   const primaryLine = candidate.title?.trim() || candidate.domain
   const [label, ...detail] = candidate.reasons
+  const secondaryLine = note ?? detail.join(" · ")
 
   return (
     <div
@@ -85,14 +90,14 @@ function HistoryCandidateRow({
       >
         <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
         <p className="truncate text-body-sm text-tertiary">{candidate.domain}</p>
-        <p className="mt-0.5 truncate text-meta text-tertiary sm:hidden">{detail.join(" · ")}</p>
+        <p className="mt-0.5 truncate text-meta text-tertiary sm:hidden">{secondaryLine}</p>
       </button>
 
       <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex">
         <Badge variant={candidate.alreadyInWorkspace ? "secondary" : "accent"}>
           {candidate.alreadyInWorkspace ? "Already in TabDump" : label}
         </Badge>
-        <p className="text-meta text-tertiary">{detail.join(" · ")}</p>
+        <p className="text-meta text-tertiary">{secondaryLine}</p>
       </div>
     </div>
   )
@@ -195,6 +200,8 @@ export function HistoryDumpView({
   const [filter, setFilter] = useState<ReviewFilter>("all")
   const [search, setSearch] = useState("")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  /** Per-candidate "why this wasn't ticked" notes from the last Select suggested — cleared whenever the selection stops being that one's result. */
+  const [skipNotes, setSkipNotes] = useState<Map<string, string>>(new Map())
   const [visibleOtherLimit, setVisibleOtherLimit] = useState(INITIAL_VISIBLE_LIMIT)
 
   function customRange(): CustomHistoryRange | undefined {
@@ -206,6 +213,7 @@ export function HistoryDumpView({
 
   function runScan() {
     setSelectedIds(new Set())
+    setSkipNotes(new Map())
     setSearch("")
     setFilter("all")
     setVisibleOtherLimit(INITIAL_VISIBLE_LIMIT)
@@ -226,6 +234,35 @@ export function HistoryDumpView({
       else next.add(id)
       return next
     })
+    setSkipNotes((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  /**
+   * Suggested-tier candidates, minus the ones that would add nothing to the
+   * set already being selected — so one afternoon's browsing yields the
+   * resources it produced rather than every step of getting there. Anything
+   * passed over stays visible and manually selectable, with a note saying
+   * why; this only decides the default tick, never what the user may keep.
+   */
+  function selectSuggested() {
+    const { selectedIds: ids, skipped } = selectDiverseSuggestions(suggested)
+    setSelectedIds(new Set(ids))
+    setSkipNotes(new Map(skipped.map((s) => [s.id, s.note])))
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(selectable.map((c) => c.id)))
+    setSkipNotes(new Map())
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set())
+    setSkipNotes(new Map())
   }
 
   function handleDump() {
@@ -339,13 +376,13 @@ export function HistoryDumpView({
                   </div>
                   <SearchBar value={search} onChange={setSearch} className="w-40 sm:w-56" />
                   <div className="ml-auto flex items-center gap-1.5">
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(suggested.map((c) => c.id)))}>
+                    <Button variant="ghost" size="sm" onClick={selectSuggested}>
                       Select suggested
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(selectable.map((c) => c.id)))}>
+                    <Button variant="ghost" size="sm" onClick={selectAll}>
                       Select all
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>
+                    <Button variant="ghost" size="sm" onClick={deselectAll} disabled={selectedIds.size === 0}>
                       Deselect all
                     </Button>
                   </div>
@@ -359,7 +396,13 @@ export function HistoryDumpView({
                       <p className="mb-2 px-1 text-label text-tertiary">HIGH CONFIDENCE</p>
                       <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
                         {filteredSuggested.map((c) => (
-                          <HistoryCandidateRow key={c.id} candidate={c} selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} />
+                          <HistoryCandidateRow
+                            key={c.id}
+                            candidate={c}
+                            selected={selectedIds.has(c.id)}
+                            note={skipNotes.get(c.id)}
+                            onToggle={() => toggleSelected(c.id)}
+                          />
                         ))}
                       </div>
                     </section>
@@ -370,7 +413,13 @@ export function HistoryDumpView({
                       <p className="mb-2 px-1 text-label text-tertiary">OTHER POTENTIAL TABS</p>
                       <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
                         {filteredOther.map((c) => (
-                          <HistoryCandidateRow key={c.id} candidate={c} selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} />
+                          <HistoryCandidateRow
+                            key={c.id}
+                            candidate={c}
+                            selected={selectedIds.has(c.id)}
+                            note={skipNotes.get(c.id)}
+                            onToggle={() => toggleSelected(c.id)}
+                          />
                         ))}
                       </div>
                       {filteredOtherAll.length > filteredOther.length && (
