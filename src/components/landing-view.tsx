@@ -18,10 +18,21 @@ import type { Tab } from "@/lib/tabs/types"
 export function LandingView({
   onDump,
   onOpenSidebar,
+  skipIntro = false,
 }: {
   onDump: (tabs: Tab[]) => void
   /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. Omitted in standalone/test contexts that don't render a shell around this view. */
   onOpenSidebar?: () => void
+  /**
+   * Suppresses the cinematic intro for this mount, regardless of the user's
+   * "Play intro animation" setting. Set only when the visitor has just come
+   * through the public landing page (see AppShell): that page already walks
+   * them through chaos → dump → organized workspace, interactively, and
+   * replaying the same story as a non-interactive cutscene the moment they
+   * ask for the paste box is a delay dressed up as a welcome. The setting
+   * itself is left untouched — the next ordinary visit still plays it.
+   */
+  skipIntro?: boolean
 }) {
   // Lazy initializer only ever runs on a client-side render (AppShell holds
   // this component back behind its own post-mount `hydrated` gate), so
@@ -35,7 +46,7 @@ export function LandingView({
   // above. When this is false, TabDumpIntro is never even mounted below —
   // not mounted-then-hidden — so a disabled intro carries no timers, no
   // audio, and no extra DOM at all.
-  const [playIntro] = useState(shouldPlayIntro)
+  const [playIntro] = useState(() => !skipIntro && shouldPlayIntro())
 
   function handleDismiss() {
     dismissOnboarding()

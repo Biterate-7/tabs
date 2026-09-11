@@ -1,0 +1,286 @@
+/*
+ * TabDump marketing surface (src/components/marketing/*).
+ *
+ * Everything here is scoped to `.tabdump-marketing`, and the scope works by
+ * REDEFINING the app's own semantic tokens rather than inventing a parallel
+ * `--marketing-*` set. That choice is deliberate:
+ *
+ *  1. Real app components (TabFavicon, Badge, the category palette) can be
+ *     dropped straight into a demo and pick up the marketing palette with no
+ *     per-component overrides — the landing page shows the actual product UI,
+ *     not a redrawn lookalike.
+ *  2. The page is brand-controlled. AppearanceProvider writes the user's
+ *     chosen theme onto :root as inline styles; a descendant rule redefining
+ *     the same custom properties wins for its own subtree, so a visitor whose
+ *     app is set to a light/custom theme still sees the intended landing page
+ *     — and nothing here can leak back out into the app.
+ *
+ * The typography/density/motion scales are pinned to their neutral values for
+ * the same reason: a user's "font scale 1.3 / density compact" app preference
+ * must not reflow a marketing layout that was composed at 1.0.
+ */
+
+.tabdump-marketing {
+  /* ---- Ground ---------------------------------------------------------
+     A cool near-black with a faint indigo cast (TabDump's accent hue at very
+     low chroma), against a slightly warm off-white. The warm/cool tension is
+     what keeps the page feeling editorial rather than clinical. */
+  --background: #07070a;
+  --background-secondary: #0a0a0e;
+  --background-tertiary: #101016;
+
+  --foreground: #f2f1ee;
+  --card: #101015;
+  --card-foreground: #f2f1ee;
+  --popover: #16161d;
+  --popover-foreground: #f2f1ee;
+
+  --surface: #101015;
+  --surface-hover: #17171f;
+  --surface-active: #1c1c25;
+  --surface-selected: color-mix(in oklch, #101015, var(--primary) 20%);
+
+  --secondary: #14141a;
+  --secondary-foreground: #f2f1ee;
+  --muted: #101015;
+  --muted-foreground: #a3a2ac;
+  --text-secondary: #a3a2ac;
+  /* Measured, not picked: this is the metadata tier (counts, timestamps,
+     eyebrows, demo captions) and it carries real text, so it has to clear
+     WCAG AA's 4.5:1 against the ground above. The first value tried here,
+     #74737e, measured 4.31:1 and failed; this one measures ~5.4:1. Same
+     reasoning as --text-tertiary in globals.css, recomputed for this
+     darker background. */
+  --text-tertiary: #85848f;
+  --text-disabled: #56555f;
+
+  --accent: #17171f;
+  --accent-foreground: #f2f1ee;
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --input: rgba(255, 255, 255, 0.1);
+
+  --primary: #4361ff;
+  --primary-foreground: #ffffff;
+  --accent-text: #93a4ff;
+  --accent-hover: #5a74ff;
+  --accent-subtle: color-mix(in oklch, #4361ff, #07070a 86%);
+  --ring: #4361ff;
+  --focus: #4361ff;
+
+  /* ---- Type -----------------------------------------------------------
+     Pinned to the shipped Geist pair. The marketing page is not a surface the
+     Typography settings panel is allowed to restyle. */
+  --tabdump-font-ui: var(--font-geist-sans);
+  --tabdump-font-content: var(--font-geist-sans);
+  --tabdump-font-mono: var(--font-geist-mono);
+  --tabdump-font-scale: 1;
+  --tabdump-font-weight: 400;
+  --tabdump-line-height: 1.6;
+  --tabdump-letter-spacing: 0px;
+  --tabdump-density-scale: 1;
+  --tabdump-card-density-scale: 1;
+
+  --radius: 0.75rem;
+
+  /* ---- Marketing-only rhythm -----------------------------------------
+     Prefixed because these have no app-side counterpart to shadow. */
+  --m-gutter: clamp(1.25rem, 4vw, 4rem);
+  --m-max: 76rem;
+  --m-section-y: clamp(5rem, 10vw, 9.5rem);
+  /* Springy but without cartoon overshoot — used for demo objects that move
+     through space (tabs flying into a workspace, cards settling). */
+  --m-spring: cubic-bezier(0.22, 1.12, 0.36, 1);
+  /* The restrained default: everything that is not "an object travelling". */
+  --m-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--tabdump-font-ui);
+  /* Demo panels animate children beyond their own bounds during transitions;
+     containing that here means no section can ever produce a horizontal
+     scrollbar on the document. */
+  overflow-x: clip;
+}
+
+/* ---- Display type ----------------------------------------------------
+   Large, near-regular weight, tight negative tracking, short leading. The
+   app's own .text-display is a different instrument (it lives inside a
+   product chrome and tracks the user's font scale), so these are separate
+   classes rather than an override of it. */
+.tabdump-marketing .m-display {
+  font-size: clamp(2.4rem, 1.15rem + 5vw, 4.75rem);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  font-weight: 450;
+  text-wrap: balance;
+}
+
+.tabdump-marketing .m-headline {
+  font-size: clamp(1.9rem, 1.1rem + 2.6vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.028em;
+  font-weight: 450;
+  text-wrap: balance;
+}
+
+.tabdump-marketing .m-title {
+  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.125rem);
+  line-height: 1.14;
+  letter-spacing: -0.022em;
+  font-weight: 450;
+  text-wrap: balance;
+}
+
+.tabdump-marketing .m-lead {
+  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.1875rem);
+  line-height: 1.55;
+  letter-spacing: -0.008em;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+/* Small uppercase mono label above a section heading. */
+.tabdump-marketing .m-eyebrow {
+  font-family: var(--tabdump-font-mono);
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Tabular mono for every count/metric the demos animate, so a number
+   changing from 142 to 7 never shifts the glyphs around it. */
+.tabdump-marketing .m-num {
+  font-family: var(--tabdump-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ---- Scroll reveal ---------------------------------------------------
+   One shared primitive (see hooks.ts's useInView). Transform + opacity only.
+
+   The resting state is hidden and only JS ever flips data-shown, which would
+   normally be a no-JS trap. It isn't one here only because this page is
+   mounted inside AppShell, which renders nothing at all until it has
+   hydrated — with scripting off the route is blank either way, so a
+   <noscript> override of this rule would have nothing to reveal. If the
+   landing page is ever lifted onto a server-rendered route of its own, this
+   rule becomes the thing hiding it, and that route needs the override. */
+.tabdump-marketing .m-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 620ms var(--m-ease) var(--m-reveal-delay, 0ms),
+    transform 620ms var(--m-ease) var(--m-reveal-delay, 0ms);
+}
+
+.tabdump-marketing .m-reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Hairline grid ---------------------------------------------------
+   The faint technical grid behind the hero and the closing section. Kept as
+   a background-image on a single element (not a mesh of divs) so it costs
+   one paint and zero DOM. */
+.tabdump-marketing .m-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* ---- Demo chrome -----------------------------------------------------
+   The recurring "a piece of software, rendered inside the page" frame. */
+.tabdump-marketing .m-window {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #101017 0%, #0b0b10 100%);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 30px 70px -30px rgba(0, 0, 0, 0.9);
+}
+
+/* A quiet inner panel — one step up from the window's own ground. */
+.tabdump-marketing .m-panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.022);
+}
+
+/* ---- Marquee ---------------------------------------------------------
+   Duplicated track, translated by exactly -50% so the seam is invisible.
+   Paused on hover and for reduced motion (the global rule in globals.css
+   already neutralises the duration; this keeps it from jumping). */
+.tabdump-marketing .m-marquee-track {
+  animation: m-marquee var(--m-marquee-duration, 44s) linear infinite;
+  will-change: transform;
+}
+
+.tabdump-marketing .m-marquee:hover .m-marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes m-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* A tab chip arriving in a workspace after the dump. Per-instance delay and
+   travel are set inline from a deterministic hash, so a batch of 20 reads as
+   20 objects rather than one animation played 20 times. */
+@keyframes m-settle-in {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--m-from-x, 0px), var(--m-from-y, 18px), 0) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* The processing sweep. Transform-only; deliberately no glow or blur. */
+@keyframes m-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@keyframes m-pulse-ring {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+
+/* Caret for the search demo's simulated typing. */
+@keyframes m-caret {
+  0%,
+  48% {
+    opacity: 1;
+  }
+  49%,
+  100% {
+    opacity: 0;
+  }
+}

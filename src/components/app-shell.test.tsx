@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { AppShell } from "./app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
+import { dismissOnboarding } from "@/lib/onboarding";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
@@ -53,6 +54,13 @@ async function openSwitcher(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // Every test in this file is about the app, not about how a first-time
+  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // which AppShell answers with the public landing page instead of the app
+  // shell (see the FirstRunLanding branch) — so mark onboarding as already
+  // handled here and let the one test that cares about the landing page opt
+  // back out by clearing it again.
+  dismissOnboarding();
   // sonner's toast queue is a module-level singleton independent of any
   // particular <Toaster/> instance, so a toast fired by one test (even one
   // that never renders <Toaster/> at all) would otherwise still be sitting
@@ -62,6 +70,39 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("AppShell first run", () => {
+  it("greets a visitor who has never used TabDump with the public landing page", async () => {
+    // Undo the shared beforeEach: this is the one case that wants the
+    // genuinely-untouched state a brand-new visitor arrives in.
+    window.localStorage.clear();
+    render(<AppShell />);
+
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading.textContent).toMatch(/Turn a browser full of tabs/);
+    // The app shell itself must not be mounted underneath it — no sidebar, no
+    // paste box, nothing for a stray click to reach.
+    expect(screen.queryByPlaceholderText(/Paste your tabs/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Switch workspace" })).toBeNull();
+  });
+
+  it("hands over to the app once the visitor chooses to paste tabs instead", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click((await screen.findAllByRole("button", { name: /Paste tabs instead/ }))[0]);
+
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+  });
+
+  it("sends a returning visitor straight to the app, landing page skipped", async () => {
+    // Onboarding already handled (the shared beforeEach), nothing persisted:
+    // the empty-workspace state belongs to the app, not to marketing.
+    render(<AppShell />);
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+  });
 });
 
 describe("AppShell persistence", () => {
