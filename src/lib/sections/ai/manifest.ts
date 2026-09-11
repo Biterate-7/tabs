@@ -12,6 +12,8 @@ export type ClusterManifestEntry = {
   dominantDomains: string[];
   categoryDistribution: string[];
   dominantJoinReason: JoinReason;
+  /** Why each member ended up in this cluster — carried through so Stage E can tell a member with content-level evidence from one riding on a shared platform (see membership.ts). */
+  joinReasons: ReadonlyMap<string, JoinReason>;
   /** Canonical site identity (domain-identity.ts) shared by a majority of this cluster's members, if any — see RawCluster.dominantDomain. */
   dominantDomain?: string;
   /** Share (0-1) of members whose canonical identity is `dominantDomain`. */
@@ -76,6 +78,7 @@ export function buildClusterManifest(clusters: RawCluster[], tabsById: Map<strin
       dominantDomains,
       categoryDistribution,
       dominantJoinReason: dominantJoinReason(cluster),
+      joinReasons: cluster.joinReasons,
       dominantDomain: cluster.dominantDomain,
       domainShare: cluster.domainShare,
     };

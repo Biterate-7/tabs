@@ -268,18 +268,31 @@ export function makeGraph(
     return drawn;
   }
 
-  /** How far each tab sits outside the confinement disc its category owns. */
+  /**
+   * How far each tab sits outside the disc it is actually confined to —
+   * `confineTo`, which is what engine.ts's confineToRegions projects against,
+   * so this measures the engine's own rule rather than a proxy for it.
+   *
+   * It used to measure every tab against its CATEGORY's confinement disc. That
+   * was an upper bound only while a subcategory's sub-disc was forced to sit
+   * well inside its parent's (the 0.42x cap that made large subsections
+   * 2.4-5.3x over-dense — see cluster-regions.ts's layoutCategoryGround). With
+   * sub-discs sized to their own members, a category's ground grows with its
+   * children, and a tab correctly inside its own sub-disc can sit outside the
+   * smaller disc its parent's DIRECT members use — which the old measurement
+   * reported as an overshoot of up to 129px on the 300-tab fixture.
+   */
   function confinementOvershoot(): { worst: number; outside: number } {
     let worst = 0;
     let outside = 0;
     for (const category of tree.roots) {
       const region = regions.get(category.id);
       if (!region) continue;
-      const confined = confinementRegion(region);
       for (const id of category.totalTabIds) {
         const physicsNode = simulation.findNode(id);
         if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue;
-        const distance = Math.hypot(physicsNode.x - confined.x, physicsNode.y - confined.y) - confined.r;
+        const disc = anchors.get(id)?.confineTo ?? confinementRegion(region);
+        const distance = Math.hypot(physicsNode.x - disc.x, physicsNode.y - disc.y) - disc.r;
         if (distance > 1) {
           outside++;
           worst = Math.max(worst, distance);

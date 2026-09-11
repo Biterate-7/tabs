@@ -107,7 +107,15 @@ describe("node and boundary dimensions", () => {
 
     const { worst, outside } = graph.confinementOvershoot();
     expect(worst, "worst confinement overshoot (px)").toBeLessThan(60);
-    expect(outside / graph.nodes.length, "share of tabs outside their own disc").toBeLessThan(0.35);
+    // Counted against each tab's OWN disc now, not its category's — see the
+    // harness's confinementOvershoot. That is a tighter target, and it counts
+    // anything more than 1px out, so the share it reports is dominated by tabs
+    // resting a hair past their own rim: confineToRegions is a partial
+    // pullback by design (see the next test), and the same fixture with the
+    // boundary layer switched off entirely measures 0.413 here with a worst
+    // overshoot of 2.8px. The bound is on the stretching bug — which put 238
+    // of 300 tabs outside, the worst by 1450px — not on the rim equilibrium.
+    expect(outside / graph.nodes.length, "share of tabs outside their own disc").toBeLessThan(0.45);
   });
 
   /**
@@ -118,20 +126,17 @@ describe("node and boundary dimensions", () => {
    * miniature or an ordinary property of the layout. It is the latter, and
    * this is the control that shows it: the identical pipeline with NO
    * boundary bodies at all — nothing that could translate a member — produces
-   * the same residual. Two mechanisms account for it, both by design:
+   * the same residual. One mechanism accounts for it, by design:
+   * confineToRegions is a PARTIAL pullback, not a wall. It moves a node half
+   * of its overshoot back per tick and cancels only its outward radial
+   * velocity, deliberately, so members settle inside the disc rather than
+   * piling against its rim (see REGION_DISC_SCALE's note on the crescent
+   * artifact). Equilibrium is therefore a few px outside, where the halving
+   * balances what charge/collide push out per tick.
    *
-   *  1. confineToRegions is a PARTIAL pullback, not a wall. It moves a node
-   *     half of its overshoot back per tick and cancels only its outward
-   *     radial velocity, deliberately, so members settle inside the disc
-   *     rather than piling against its rim (see REGION_DISC_SCALE's note on
-   *     the crescent artifact). Equilibrium is therefore a few px outside,
-   *     where the halving balances what charge/collide push out per tick.
-   *  2. A small cluster's disc can be narrower than the spacing collide
-   *     insists on. A two-tab subcategory gets a sub-disc of radius ~27
-   *     (computeSubcategoryRegion caps it at 0.42x its parent's), i.e. 54px
-   *     across, while two nodes at nodeCollisionRadius spacing need ~56px
-   *     centre-to-centre plus their own radii. They physically cannot both
-   *     fit inside, so they rest just outside it. That is geometry, not drift.
+   * There used to be a second mechanism, and it was a defect rather than
+   * geometry — see the assertion at the end, which is the one that used to
+   * document it, inverted.
    */
   it("has a settle equilibrium that does not come from the boundary layer", () => {
     const data = buildWorkspace(300);
@@ -151,13 +156,20 @@ describe("node and boundary dimensions", () => {
     expect(bodied.worst).toBeLessThan(bare.worst + 30);
     expect(bodied.outside).toBeLessThan(bare.outside * 1.5 + 10);
 
-    // Point 2 above, checked rather than asserted, on the shape that actually
-    // exhibits it: a two-tab category holding a two-tab subcategory. Its
-    // sub-disc is capped at 0.42x its parent's (computeSubcategoryRegion), and
-    // the parent's is only ~65 across for two tabs, so the sub-disc ends up
+    // The mechanism that is NOT in the list above any more, on the shape that
+    // used to exhibit it worst: a two-tab category holding a two-tab
+    // subcategory. Its sub-disc was capped at 0.42x its parent's, and the
+    // parent's is only ~65px across for two tabs, so the sub-disc came out
     // ~54px wide — narrower than the ~56px two collide-spaced nodes occupy
-    // once their own radii are counted. They cannot both fit inside it, so
-    // they rest fractionally outside. Geometry, not drift.
+    // once their own radii are counted. The two members could not both fit
+    // inside the disc they were being held in, so they rested outside it, and
+    // the same cap made a 60-tab subsection 5.3x over-dense (measured: the
+    // closest pair settling 12px inside each other) with charge/collide and
+    // confineToRegions then fighting every tick forever.
+    //
+    // A disc that cannot hold its own members is not geometry to be documented
+    // — it is the layout half of the large-subsection drag bug. The smallest
+    // sub-disc a workspace can produce now holds its members.
     const tiny = makeGraph(buildWorkspace(2, { categories: 1, subcategoryShare: 1, collections: 0 }));
     const tightestSubDisc = [...tiny.anchors.values()]
       .filter((a) => a.confineWithin && a.confineTo)
@@ -167,9 +179,10 @@ describe("node and boundary dimensions", () => {
     // Centre-to-centre spacing collide insists on, plus the radius each node
     // adds at either end — the span the two members actually occupy.
     const memberSpan = nodeCollisionRadius(BASE_NODE_RADIUS) * 2 + BASE_NODE_RADIUS * 2;
-    expect(tightestSubDisc * 2, `sub-disc ${(tightestSubDisc * 2).toFixed(1)}px vs member span ${memberSpan}px`).toBeLessThan(
-      memberSpan
-    );
+    expect(
+      tightestSubDisc * 2,
+      `sub-disc ${(tightestSubDisc * 2).toFixed(1)}px vs member span ${memberSpan}px`
+    ).toBeGreaterThanOrEqual(memberSpan);
   });
 
   // TEST 4: cluster geometry has no channel into a node's own size, and one

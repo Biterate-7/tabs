@@ -91,15 +91,35 @@ const MAX_KEYWORD_DOC_FRACTION = 0.75;
 const MIN_KEYWORD_DOC_COUNT = 2;
 
 /**
+ * Splits one same-site bucket by the semantic identity its members already
+ * carry, so the domain stage can join within each part without fusing parts
+ * the embedding clustering has already told apart. Tabs with no key share the
+ * single "unkeyed" part — absence of a signal is not disagreement, and on a
+ * library with nothing indexed that part is the whole bucket.
+ */
+function bySemanticIdentity(ids: readonly string[], semanticKeyByTab: ReadonlyMap<string, string>): Map<string, string[]> {
+  const parts = new Map<string, string[]>();
+  for (const id of ids) {
+    const key = semanticKeyByTab.get(id) ?? "";
+    const bucket = parts.get(key);
+    if (bucket) bucket.push(id);
+    else parts.set(key, [id]);
+  }
+  return parts;
+}
+
+/**
  * Groups tabs into raw candidate clusters using, in order of strength:
  * (1) a shared semantic-cluster key from client-side embedding clustering
  *     (see src/lib/ai/cluster.ts) — the strongest signal, since it reflects
  *     actual page meaning even across differently-worded titles (AGENTS.md's
  *     "General Relativity Notes" / "Schwarzschild Metric" / "S2 Star Orbit
  *     Data" example);
- * (2) a shared canonical site identity (domain-identity.ts) — a HARD signal:
+ * (2) a shared canonical site identity (domain-identity.ts), WITHIN one
+ *     semantic identity — a hard signal, but strictly weaker than (1) and
+ *     never allowed to overrule it (see the note at the stage itself):
  *     www.instagram.com / m.instagram.com / instagram.com all count as the
- *     same site, and once 2+ tabs share one, they're locked to that cluster
+ *     same site, and once 2+ such tabs share one, they're locked to that cluster
  *     and taken out of the keyword pool below (see domainLockedIds) so a
  *     single incidental shared word (e.g. two different projects both
  *     mentioning "notes") can never transitively bridge two unrelated site
@@ -146,9 +166,28 @@ export function buildRawClusters(scopedTabs: ScopedTab[], semanticHints: Semanti
   }
   const domainLockedIds = new Set<string>();
   for (const ids of byIdentity.values()) {
-    if (ids.length < 2) continue;
-    for (const id of ids) domainLockedIds.add(id);
-    for (let i = 1; i < ids.length; i++) uf.union(ids[0], ids[i], "domain");
+    // Same site, but NOT necessarily the same topic. A shared site identity
+    // says where a page is hosted, not what it is about, and the difference
+    // matters on a platform that hosts arbitrary unrelated content: a
+    // projectile-motion lecture and a gaming montage are both youtube.com.
+    // Unioning the whole bucket regardless let the platform bridge topics that
+    // the semantic stage above had just told us apart — and because union-find
+    // is transitive, one YouTube tab correctly grouped with a Wikipedia and a
+    // Khan Academy page on projectile motion dragged every OTHER YouTube tab
+    // in the dump into that same cluster, which the section pipeline then
+    // filed wholesale under "Physics > Projectile Motion".
+    //
+    // So the domain stage may only ever join tabs the semantic stage has not
+    // already distinguished: tabs carrying different cluster keys are left
+    // apart, and a tab with a key is never fused to one without. Where there
+    // is no embedding signal at all (nothing indexed yet) every tab is
+    // keyless, one bucket, and this is exactly the hard domain clustering it
+    // has always been — 14 Instagram tabs still become one Instagram cluster.
+    for (const sub of bySemanticIdentity(ids, semanticKeyByTab).values()) {
+      if (sub.length < 2) continue;
+      for (const id of sub) domainLockedIds.add(id);
+      for (let i = 1; i < sub.length; i++) uf.union(sub[0], sub[i], "domain");
+    }
   }
 
   const keywordPool = scopedTabs.filter((st) => !domainLockedIds.has(st.tab.id));

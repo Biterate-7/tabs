@@ -116,6 +116,52 @@ describe("buildRawClusters", () => {
     }
   });
 
+  it("does not let a shared platform bridge two topics the embeddings have told apart", () => {
+    // The reported YouTube failure, at the clustering level. Two
+    // projectile-motion videos are semantically clustered with a Wikipedia and
+    // a Khan Academy page on the same subject; three unrelated videos sit on
+    // the same site. Unioning the whole youtube.com bucket regardless made
+    // union-find's transitivity fuse all seven into one cluster, which the
+    // section pipeline then filed wholesale under one topical path.
+    const tabs = [
+      scoped(makeTab({ id: "p1", url: "https://youtube.com/1", domain: "youtube.com", title: "Projectile Motion Explained" })),
+      scoped(makeTab({ id: "p2", url: "https://youtube.com/2", domain: "youtube.com", title: "Projectile Motion Practice" })),
+      scoped(makeTab({ id: "c1", url: "https://youtube.com/3", domain: "youtube.com", title: "Organic Chemistry Basics" })),
+      scoped(makeTab({ id: "e1", url: "https://youtube.com/4", domain: "youtube.com", title: "Economics Inflation" })),
+      scoped(makeTab({ id: "g1", url: "https://youtube.com/5", domain: "youtube.com", title: "Gaming Highlights" })),
+      scoped(makeTab({ id: "w1", url: "https://wikipedia.org/a", domain: "en.wikipedia.org", title: "Projectile motion" })),
+      scoped(makeTab({ id: "k1", url: "https://khanacademy.org/a", domain: "khanacademy.org", title: "Projectile motion review" })),
+    ];
+    const hints = ["p1", "p2", "w1", "k1"].map((tabId) => ({ tabId, clusterKey: "sem-0" }));
+
+    const clusters = buildRawClusters(tabs, hints);
+    const topical = clusters.find((c) => c.tabIds.includes("p1"))!;
+    expect(new Set(topical.tabIds)).toEqual(new Set(["p1", "p2", "w1", "k1"]));
+    for (const id of ["c1", "e1", "g1"]) {
+      expect(topical.tabIds, `${id} must not ride into the topic cluster on youtube.com`).not.toContain(id);
+    }
+    // The tabs the embeddings said nothing about are still a site cluster of
+    // their own — domain clustering is not disabled, only kept out of a topic
+    // it has no claim on.
+    const platform = clusters.find((c) => c.tabIds.includes("g1"))!;
+    expect(new Set(platform.tabIds)).toEqual(new Set(["c1", "e1", "g1"]));
+    expect(platform.dominantDomain).toBe("youtube.com");
+  });
+
+  it("still hard-clusters a whole site when nothing has been embedded yet", () => {
+    // No hints at all is the ordinary case for a fresh dump, and there the
+    // domain stage must behave exactly as it always has — one bucket, one
+    // cluster — or every site cluster in a library with no index would
+    // fragment.
+    const tabs = ["a", "b", "c", "d"].map((id) =>
+      scoped(makeTab({ id, url: `https://youtube.com/${id}`, domain: "youtube.com", title: `Video ${id}` }))
+    );
+    const clusters = buildRawClusters(tabs, []);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].tabIds).toHaveLength(4);
+    expect(clusters[0].joinReasons.get("a")).toBe("domain");
+  });
+
   it("does not let a keyword shared between two unrelated pairs transitively bridge two different site clusters", () => {
     // Regression for the reported 139/185 "Other" failure: two GitHub tabs
     // and two Notion tabs, individually unrelated, but one GitHub tab and one

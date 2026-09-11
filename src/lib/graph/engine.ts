@@ -1110,9 +1110,16 @@ export function createGraphSimulation(): GraphSimulation {
    * parents afterwards — so however far a square is dragged or shoved, every
    * tab that shares a disc stays on it, and no cluster's bounding box can
    * stretch past the disc its members are confined to.
+   *
+   * Returns how much of `(dx, dy)` the ground ACTUALLY took, which is less than
+   * what was asked for whenever clampFramesWithinParents held a territory back.
+   * The caller needs that number: a body's position is re-derived from its
+   * members every frame, so a drag that keeps commanding a move the members
+   * cannot make has nothing pulling its target back towards them — see
+   * stepBoundaryLayer.
    */
-  function translateBoundaryMembers(body: BoundaryBody, dx: number, dy: number) {
-    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  function translateBoundaryMembers(body: BoundaryBody, dx: number, dy: number): FrameOffset {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return { dx: 0, dy: 0 };
 
     // Ground moves first, tabs follow it. Doing it in that order is what
     // makes the containment clamp real rather than cosmetic: a subcategory
@@ -1172,6 +1179,21 @@ export function createGraphSimulation(): GraphSimulation {
     }
 
     syncTabOffsetsFromFrames();
+
+    // The most-blocked territory decides, per axis. A body covering several
+    // discs has moved rigidly only as far as the one that moved least; claiming
+    // more would let the caller's drag creep past its own box one frame at a
+    // time. A body covering no territory at all (every member untethered) took
+    // the whole delta, which is what `dx`/`dy` still hold here.
+    let appliedDx = dx;
+    let appliedDy = dy;
+    for (const id of frameIds) {
+      const moved = applied.get(id);
+      if (!moved) continue;
+      if (Math.abs(moved.dx) < Math.abs(appliedDx)) appliedDx = moved.dx;
+      if (Math.abs(moved.dy) < Math.abs(appliedDy)) appliedDy = moved.dy;
+    }
+    return { dx: appliedDx, dy: appliedDy };
   }
 
   function stepBoundaryLayer() {
@@ -1191,7 +1213,31 @@ export function createGraphSimulation(): GraphSimulation {
     for (const [id, delta] of deltas) {
       const body = boundaryBodies.get(id);
       if (!body) continue;
-      translateBoundaryMembers(body, delta.dx, delta.dy);
+      const applied = translateBoundaryMembers(body, delta.dx, delta.dy);
+      if (!boundaryDrag || boundaryDrag.id !== id) continue;
+
+      // Keep the pointer's target honest about where the box actually got to.
+      //
+      // A body has no position of its own — syncBoundaryBodies re-derives it
+      // from its members at the top of every frame — while the drag target is
+      // anchored to the POINTER. So when the members cannot follow (a
+      // subcategory pressed against the edge of its parent category's disc:
+      // clampFramesWithinParents refuses the move), the two diverge without
+      // limit, and every subsequent frame asks stepBoundaryBodies for the whole
+      // accumulated distance at once. It obliges: it substeps the dragged body
+      // — which has infinite mass and pushes everything it meets — clear across
+      // the graph to the pointer, and the next frame's sync snaps it back to
+      // its members. Measured on a 5-category fixture, dragging a subsection
+      // 600px: the box itself reached 7px, and all 62 non-member tabs were
+      // shoved, the worst by 97px. On a 300-tab workspace, 229 of 276.
+      //
+      // Absorbing the shortfall into the grab offset makes the target follow
+      // the box instead of running away from it: what the ground refused is
+      // simply not commanded again next frame, so a blocked drag behaves like
+      // any other clamped drag — the box rests at the edge and moves again the
+      // instant the pointer comes back towards it.
+      boundaryDrag.grabDx -= delta.dx - applied.dx;
+      boundaryDrag.grabDy -= delta.dy - applied.dy;
     }
   }
 

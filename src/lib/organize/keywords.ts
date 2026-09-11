@@ -56,6 +56,26 @@ export function tabTokens(tab: { title?: string; domain: string }): string[] {
   return [...new Set([...fromTitle, ...fromDomain, ...boosted])];
 }
 
+/**
+ * The tokens that say what a tab is ABOUT, with everything that only says
+ * where it is hosted removed — the site's own name, however it reaches the
+ * token set (from the hostname, and from the title, where nearly every page
+ * on a branded site repeats it: "Projectile Motion Explained - YouTube").
+ *
+ * The distinction is the whole of Bug 1's scoring half. `tabTokens` is the
+ * right input when the question is "which tabs go together at all", where a
+ * shared site is real evidence. It is the wrong input when the question is
+ * "does this tab belong to THIS topic", because there the platform token is a
+ * free pass: every youtube.com tab overlaps every other one on "youtube"
+ * whatever it is about, which is enough to fold an unrelated video into a
+ * topical section on keyword overlap alone.
+ */
+export function contentTokens(tab: { title?: string; domain: string }): string[] {
+  const identity = canonicalSiteIdentity(tab.domain);
+  const siteTokens = new Set([...domainTokens(tab.domain), ...tokenize(getDomainSectionName(tab.domain)), ...tokenize(identity)]);
+  return tokenize(tab.title?.trim() || "").filter((t) => !siteTokens.has(t));
+}
+
 /** Best-cased display form for a token — preserves a short all-caps acronym exactly as first seen (e.g. "MUN"), Title-Cases everything else. */
 function caseToken(original: string): string {
   if (original.length <= 4 && original === original.toUpperCase() && /[A-Z]/.test(original)) {

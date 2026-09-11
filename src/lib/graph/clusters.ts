@@ -7,8 +7,9 @@ import { CATEGORIES, type CategoryId } from "@/lib/categories";
 import {
   CLUSTER_LAYOUT_MODE,
   computeClusterRegions,
-  computeSubcategoryRegion,
   confinementRegion,
+  layoutCategoryGround,
+  OWN_MEMBERS_TERRITORY_SUFFIX,
   type ClusterRegion,
 } from "./cluster-regions";
 
@@ -318,29 +319,41 @@ function computePackedClusterAnchors(tree: ClusterTree): Map<string, ClusterAnch
     if (!region) continue;
 
     // Members are held inside a disc sized to what they need, not the whole
-    // reserved territory — see confinementRegion. Subcategory regions are laid
-    // out inside that same confined disc so they stay nested within it.
+    // reserved territory — see confinementRegion. `ground` is that disc, grown
+    // (never past the reserved territory) to whatever this category's
+    // subcategories and direct members need side by side, and every disc below
+    // is laid out inside it — see layoutCategoryGround.
     const confined = confinementRegion(region);
     const subcategories = category.children.filter((child) => child.kind === "subcategory");
-    const subcategoryRegions = new Map<string, ClusterRegion>();
-    subcategories.forEach((sub, index) => {
-      subcategoryRegions.set(sub.id, computeSubcategoryRegion(confined, index, subcategories.length, sub.weight));
-    });
+    const { ground, own, subcategories: subcategoryRegions } = layoutCategoryGround(
+      category.id,
+      confined,
+      region,
+      category.memberTabIds.length,
+      subcategories.map((sub) => ({ id: sub.id, weight: sub.weight }))
+    );
+    const ownRegion = own ?? ground;
+    const ownId = own && own !== ground ? `${category.id}${OWN_MEMBERS_TERRITORY_SUFFIX}` : category.id;
 
     for (const tabId of category.totalTabIds) {
       const path = tree.clusterPathOfTab.get(tabId);
       const subId = path && path.length > 1 ? path[1] : null;
       const subRegion = subId ? subcategoryRegions.get(subId) : undefined;
+      // A tab in a subcategory is confined to that subcategory's own disc,
+      // which sits wholly inside its parent's — so a subcategory's boundary
+      // box nests inside its category's instead of merely overlapping it. A
+      // tab held directly by the category gets ground of its own inside the
+      // same parent, for the same reason (see OWN_MEMBERS_TERRITORY_SUFFIX);
+      // in a category with no subcategories that ground IS the parent, and
+      // this collapses back to one disc exactly as before.
+      const nested = subRegion ?? (ownRegion !== ground ? ownRegion : null);
       result.set(tabId, {
         categoryAnchor: { x: region.x, y: region.y },
         subcategoryAnchor: subRegion ? { x: subRegion.x, y: subRegion.y } : null,
-        // A tab in a subcategory is confined to that subcategory's own disc,
-        // which sits wholly inside its parent's — so a subcategory's boundary
-        // box nests inside its category's instead of merely overlapping it.
-        confineTo: subRegion ?? confined,
-        confineToId: subRegion && subId ? subId : category.id,
-        confineWithin: subRegion ? confined : null,
-        confineWithinId: subRegion ? category.id : null,
+        confineTo: nested ?? ground,
+        confineToId: subRegion && subId ? subId : nested ? ownId : category.id,
+        confineWithin: nested ? ground : null,
+        confineWithinId: nested ? category.id : null,
       });
     }
   }

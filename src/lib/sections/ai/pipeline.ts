@@ -1,11 +1,12 @@
 import { computeSemanticClusterHints } from "@/lib/ai/cluster";
 import { buildRawClusters } from "@/lib/organize/cluster";
 import { canonicalSiteIdentity, getDomainSectionName, isGenericSiteIdentity } from "@/lib/organize/domain-identity";
-import { deriveSectionName, tabTokens, tokenOverlap, tokenize } from "@/lib/organize/keywords";
+import { contentTokens, deriveSectionName, tokenOverlap, tokenize } from "@/lib/organize/keywords";
 import type { ScopedTab, SemanticClusterHint } from "@/lib/organize/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "../types";
 import { buildClusterManifest } from "./manifest";
+import { partitionClusterMembers, pathNamesPlatform } from "./membership";
 import type { ClusterManifestEntry } from "./manifest";
 import {
   categoryNameOf,
@@ -100,6 +101,7 @@ function deterministicPath(members: Tab[]): string[] {
  * from the model's confidence.
  */
 function clusterEvidenceScore(entry: ClusterManifestEntry, assignment: OrganizeClusterAssignment, sections: Section[]): number {
+  const leaf = assignment.path[assignment.path.length - 1] ?? "";
   let score = entry.size >= MIN_CONFIDENT_CLUSTER_SIZE ? 4 : 1;
   if (entry.dominantJoinReason === "semantic") score += 2;
   // A cluster with strong, majority domain coherence (AGENTS.md's LEVEL 1/2
@@ -107,23 +109,35 @@ function clusterEvidenceScore(entry: ClusterManifestEntry, assignment: OrganizeC
   // identity" or "4+ sharing a clear topic") is at least as strong evidence
   // for creating a section as semantic agreement — a real website cluster
   // doesn't need semantic similarity between individual pages to be valid.
-  else if (entry.dominantJoinReason === "domain") score += (entry.domainShare ?? 0) >= 0.6 ? 2 : 1;
+  //
+  // But only for the section that website IS. Carried over to a section naming
+  // a TOPIC, this bonus is a domain match paying for the topical evidence the
+  // cluster does not have, which is precisely the "domainMatch +
+  // weak-semanticSimilarity clears the bar" path: a pair of same-site tabs
+  // scores 4 on size alone and another 2 here, enough to spawn a brand-new
+  // subsection about a subject nothing in the cluster is actually about.
+  else if (entry.dominantJoinReason === "domain" && pathNamesPlatform(leaf, entry.dominantDomain)) {
+    score += (entry.domainShare ?? 0) >= 0.6 ? 2 : 1;
+  }
 
   if (assignment.path.length > 1) {
     const existingPrefixLen = deepestExistingPrefix(sections, assignment.path).length;
     if (existingPrefixLen >= assignment.path.length - 1) score += 1;
   }
 
-  const leafName = assignment.path[assignment.path.length - 1] ?? "";
   const sampleTokens = entry.sampleTitles.flatMap((t) => tokenize(t));
-  if (tokenOverlap(tokenize(leafName), sampleTokens) >= 0.2) score += 1;
+  if (tokenOverlap(tokenize(leaf), sampleTokens) >= 0.2) score += 1;
 
   if (assignment.confidence === "high") score += 1;
 
   return score;
 }
 
-type ClusterApplyResult = { tabs: Tab[]; sections: Section[]; path: string[] };
+type ClusterApplyResult = {
+  tabs: Tab[];
+  sections: Section[];
+  path: string[];
+};
 
 /**
  * Applies one cluster's assignment (or, absent one, the same deterministic
@@ -137,14 +151,22 @@ function applyClusterEntry(
   entry: ClusterManifestEntry,
   assignment: OrganizeClusterAssignment | undefined,
   tabsById: Map<string, Tab>,
-  sections: Section[]
+  sections: Section[],
+  semanticKeyByTabId: ReadonlyMap<string, string>
 ): ClusterApplyResult {
   const members = entry.tabIds.map((id) => tabsById.get(id)).filter((t): t is Tab => Boolean(t));
   let working = sections;
 
+  /**
+   * Places the members that belong at `path` — which is not always all of
+   * them. A cluster is a set of tabs that go TOGETHER; a path is a claim about
+   * what they are about, and the two only coincide while nothing joined the
+   * cluster on a signal the path cannot support. See membership.ts.
+   */
   function placeAllAt(path: string[], status: Tab["organizationStatus"], reason: string | undefined): Tab[] {
+    const partition = partitionClusterMembers({ members, path, joinReasons: entry.joinReasons, semanticKeyByTabId });
     const out: Tab[] = [];
-    for (const tab of members) {
+    for (const tab of partition.belong) {
       const { tab: placed, sections: next } = placeAtPath(tab, working, path, "ai");
       working = next;
       out.push({ ...placed, organizationStatus: placed.sectionId ? status : "uncertain", ...(reason ? { organizationReason: reason } : {}) });
@@ -155,19 +177,22 @@ function applyClusterEntry(
   if (!assignment) {
     const path = deterministicPath(members);
     const reason = `Shares a topic with ${members.length - 1} other tab${members.length === 2 ? "" : "s"} in this dump.`;
-    return { tabs: placeAllAt(path, "fallback", members.length > 1 ? reason : undefined), sections: working, path };
+    const tabs = placeAllAt(path, "fallback", members.length > 1 ? reason : undefined);
+    return { tabs, sections: working, path };
   }
 
   const reason = sanitizeReason(assignment.reason);
 
   if (fullPathAlreadyExists(working, assignment.path)) {
-    return { tabs: placeAllAt(assignment.path, "classified", reason), sections: working, path: assignment.path };
+    const tabs = placeAllAt(assignment.path, "classified", reason);
+    return { tabs, sections: working, path: assignment.path };
   }
 
   if (assignment.confidence !== "low") {
     const score = assignment.path.length > 1 ? clusterEvidenceScore(entry, assignment, working) : NEW_SECTION_SCORE_THRESHOLD;
     if (score >= NEW_SECTION_SCORE_THRESHOLD) {
-      return { tabs: placeAllAt(assignment.path, "classified", reason), sections: working, path: assignment.path };
+      const tabs = placeAllAt(assignment.path, "classified", reason);
+      return { tabs, sections: working, path: assignment.path };
     }
   }
 
@@ -178,10 +203,12 @@ function applyClusterEntry(
   // no-assignment branch uses rather than ever leaving the cluster unplaced.
   const existingPrefix = deepestExistingPrefix(working, assignment.path);
   if (existingPrefix.length > 0) {
-    return { tabs: placeAllAt(existingPrefix, "uncertain", reason), sections: working, path: existingPrefix };
+    const tabs = placeAllAt(existingPrefix, "uncertain", reason);
+    return { tabs, sections: working, path: existingPrefix };
   }
   const path = deterministicPath(members);
-  return { tabs: placeAllAt(path, "fallback", reason), sections: working, path };
+  const tabs = placeAllAt(path, "fallback", reason);
+  return { tabs, sections: working, path };
 }
 
 /**
@@ -231,6 +258,7 @@ export async function organizeTabsCollectively(
   const scopedTabs: ScopedTab[] = unlocked.map((tab) => ({ tab, workspaceId, workspaceName }));
   const rawClusters = buildRawClusters(scopedTabs, hints);
   const tabsById = new Map(unlocked.map((t) => [t.id, t]));
+  const hintByTabId = new Map(hints.map((h) => [h.tabId, h.clusterKey]));
 
   const confidentClusters = rawClusters.filter((c) => c.tabIds.length >= MIN_CONFIDENT_CLUSTER_SIZE);
   const manifest = buildClusterManifest(confidentClusters, tabsById);
@@ -256,21 +284,32 @@ export async function organizeTabsCollectively(
       : new Map<string, OrganizeClusterAssignment>();
 
     for (const entry of chunk) {
-      const applied = applyClusterEntry(entry, assignments.get(entry.clusterId), tabsById, workingSections);
+      const applied = applyClusterEntry(entry, assignments.get(entry.clusterId), tabsById, workingSections, hintByTabId);
       workingSections = applied.sections;
       for (const t of applied.tabs) placedById.set(t.id, t);
-      placedClusterPaths.push({ path: applied.path, tokens: entry.tabIds.flatMap((id) => tabTokens(tabsById.get(id)!)) });
+      // The fold below scores a leftover against these tokens, so they describe
+      // the tabs actually FILED here — a member released for not belonging must
+      // not go on advertising this path to its own kind. Content tokens, for
+      // the same reason the released member was released: see contentTokens.
+      placedClusterPaths.push({
+        path: applied.path,
+        tokens: applied.tabs.flatMap((t) => contentTokens(t)),
+      });
     }
   }
 
   // Stage F.1 — fold singleton/unplaced tabs into an already-placed cluster
   // via keyword overlap (same trick src/lib/organize/analyze.ts uses to fold
   // leftovers into an existing proposal) before ever spending another AI call.
+  // Singletons the clustering never grouped, PLUS the members Stage E declined
+  // to file at their cluster's path (membership.ts) — a tab that was only in
+  // that cluster because it shared a website with somebody who belonged there.
+  // Both arrive the same way: never placed, so never in placedById.
   const leftAfterClusters = unlocked.filter((t) => !placedById.has(t.id));
   if (leftAfterClusters.length > 0) onStage?.("other");
   const stillUnresolved: Tab[] = [];
   for (const tab of leftAfterClusters) {
-    const tokens = tabTokens(tab);
+    const tokens = contentTokens(tab);
     let bestIndex = -1;
     let bestScore = 0;
     placedClusterPaths.forEach((info, i) => {
