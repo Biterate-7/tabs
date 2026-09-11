@@ -77,7 +77,7 @@ function Hero({ onInstallExtension, onPasteTabs, storeUrl }: MarketingPageProps 
           the product is the tell of a page whose product shot cannot carry
           the fold on its own. */}
       <Container className="relative">
-        <div className="flex flex-col items-start pt-12 pb-9 sm:pt-16 sm:pb-11">
+        <div className="flex flex-col items-start pt-11 pb-7 sm:pt-14 sm:pb-8">
           <Reveal order={0}>
             <h1 className="m-display max-w-[24ch] text-foreground">
               Turn a browser full of tabs into a workspace you can think in.
@@ -85,14 +85,17 @@ function Hero({ onInstallExtension, onPasteTabs, storeUrl }: MarketingPageProps 
           </Reveal>
 
           <Reveal order={1}>
-            <p className="m-sub mt-4 max-w-[46ch]">
+            {/* 54ch, not 46: at the narrower measure this broke as "Dump them
+                into TabDump / once", splitting the product name from its verb
+                across a line. */}
+            <p className="m-sub mt-3.5 max-w-[54ch]">
               {HERO_TAB_COUNT} open tabs is not a filing system. Dump them into TabDump once and get sections, search,
               and a space worth coming back to.
             </p>
           </Reveal>
 
           <Reveal order={2}>
-            <div className="mt-7 flex flex-wrap items-center gap-2.5">
+            <div className="mt-6 flex flex-wrap items-center gap-2.5">
               {storeUrl ? (
                 <a href={storeUrl} target="_blank" rel="noopener noreferrer" className={mButtonClass("primary")}>
                   Add to Chrome

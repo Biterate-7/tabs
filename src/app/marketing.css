@@ -88,7 +88,12 @@
   /* ---- Marketing-only rhythm -----------------------------------------
      Prefixed because these have no app-side counterpart to shadow. */
   --m-gutter: clamp(1.25rem, 4vw, 4rem);
-  --m-max: 78rem;
+  /* Measured: the benchmark's hero media runs 1300px at a 1440 viewport; this
+     page was giving its demos 1133px. The demos are the argument, so they get
+     the same presence — 88rem less the gutters lands at ~1280px. Reading
+     measure is unaffected: every text block is capped separately (.m-lead at
+     36rem, the hero sub in ch), so widening the shell widens only the product. */
+  --m-max: 88rem;
   /* Measured against the benchmark rather than guessed: the reference site
      runs ~67px of section padding at this width, not the ~144px this page
      started with. Double that rhythm reads as a page padded out to feel
@@ -124,9 +129,13 @@
    classes rather than an override of it. */
 .tabdump-marketing .m-display {
   font-size: clamp(2rem, 1.35rem + 2.1vw, 3.125rem);
-  line-height: 1.1;
+  /* 1.14 and weight 420, not 1.1/440. Side by side at this size the tighter,
+     heavier setting read as a poster headline where the benchmark's reads as a
+     sentence — the extra leading and the lighter stem are most of what makes a
+     large line feel composed rather than shouted. */
+  line-height: 1.14;
   letter-spacing: -0.025em;
-  font-weight: 440;
+  font-weight: 420;
   text-wrap: balance;
 }
 
@@ -241,9 +250,13 @@
      backdrop reads as a stray 2px outline around the window rather than as
      a surface the window is resting on. */
   padding: clamp(0.75rem, 2.6vw, 2.5rem);
+  /* The backdrop has to be clearly a *different surface* from the window
+     resting on it. The benchmark gets that separation for free by using a
+     photograph; without one, the tint has to work harder — at half these
+     values the two planes read as one slightly-outlined card. */
   background:
-    radial-gradient(130% 120% at 50% -15%, color-mix(in oklch, var(--primary), transparent 86%) 0%, transparent 62%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.022) 55%, rgba(255, 255, 255, 0.01) 100%);
+    radial-gradient(130% 120% at 50% -15%, color-mix(in oklch, var(--primary), transparent 80%) 0%, transparent 64%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.105) 0%, rgba(255, 255, 255, 0.032) 55%, rgba(255, 255, 255, 0.014) 100%);
 }
 
 /* The hairline grid, clipped to the stage, so the backdrop has texture at

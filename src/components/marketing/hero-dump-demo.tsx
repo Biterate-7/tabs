@@ -74,7 +74,12 @@ function buildChips(tabs: DemoTab[]): ChipLayout[] {
     // rows a grid would produce, then the hash nudges each chip off its ideal
     // spot so the result reads as scatter rather than a spiral.
     const angle = i * 2.39996
-    const radius = Math.sqrt((i + 0.6) / tabs.length)
+    // Exponent 0.38, not the 0.5 of a true sunflower spiral. sqrt spreads
+    // points with uniform *area* density, which puts the mean chip at ~0.67 of
+    // the radius and leaves the frame looking half empty; a smaller exponent
+    // pushes the population outward so the field reads full — without raising
+    // the maximum, which is what clips chips against the frame edge.
+    const radius = Math.pow((i + 0.6) / tabs.length, 0.38)
 
     // Depth. A scatter where every chip is the same size reads as a pattern
     // printed on one plane; giving each a position on a near/far axis and
@@ -84,8 +89,11 @@ function buildChips(tabs: DemoTab[]): ChipLayout[] {
     const depth = a
     return {
       tab,
-      x: roundLayout(Math.cos(angle) * radius * 43 + (a - 0.5) * 7),
-      y: roundLayout(Math.sin(angle) * radius * 39 + (b - 0.5) * 9),
+      // Capped so an outermost chip plus its jitter still clears the frame: a
+      // chip is ~150px on a ~1220px stage, so its centre cannot exceed ~44% of
+      // the half-width before the card itself is clipped.
+      x: roundLayout(Math.cos(angle) * radius * 40 + (a - 0.5) * 6),
+      y: roundLayout(Math.sin(angle) * radius * 40 + (b - 0.5) * 8),
       rotate: roundLayout((c - 0.5) * 11),
       scale: roundLayout(0.82 + depth * 0.34),
       // Far chips sit back rather than blurring: a real blur would force a

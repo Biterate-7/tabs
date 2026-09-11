@@ -59,7 +59,10 @@ export function ReasoningDemo() {
       label="Interactive demonstration: TabDump's explanation for where each tab was filed"
       toolbar={<Layers aria-hidden className="size-3.5 text-tertiary" />}
     >
-      <div className="flex flex-col gap-1 p-3">
+      {/* Fixed height, matched to the duplicates panel beside it so the two
+          captions under them land on the same baseline instead of ~50px
+          apart. */}
+      <div className="flex h-[16.25rem] flex-col content-start gap-1 overflow-hidden p-3">
         {REASONED.map((entry, i) => {
           const isSelected = i === selected
           return (
@@ -93,11 +96,18 @@ export function ReasoningDemo() {
         })}
       </div>
 
-      <div className="border-t border-subtle px-3.5 py-3">
+      {/* The notes are different lengths, so without a floor the panel — and
+          everything under it — resizes each time you pick a different tab.
+          Three lines is the longest of them. */}
+      <div className="min-h-[7.25rem] border-t border-subtle px-3.5 py-3">
         <p className="m-label">TabDump&rsquo;s note</p>
         {/* Keyed on the selection so the explanation re-enters rather than
             silently swapping text under the reader's eyes. */}
-        <p key={selected} className="mt-2 text-body-sm leading-relaxed text-muted-foreground" style={{ animation: "m-settle-in 320ms var(--m-ease) both" }}>
+        <p
+          key={selected}
+          className="mt-2 text-body-sm leading-relaxed text-muted-foreground"
+          style={{ animation: "m-settle-in 320ms var(--m-ease) both" }}
+        >
           {current.reason}
         </p>
       </div>
