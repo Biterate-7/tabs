@@ -99,7 +99,7 @@ export function createSection(
   }
 
   const section: Section = {
-    id: createId("section"),
+    id: createId(),
     parentId,
     name: trimmed,
     source,

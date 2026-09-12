@@ -15,7 +15,11 @@ export type SectionTreeNode = {
   children: SectionTreeNode[];
 };
 
-/** Synthetic id for the "Other" bucket — never produced by createId("section"), which always includes a timestamp. */
+/**
+ * Synthetic id for the "Other" bucket. Safe to hard-code because createId()
+ * only ever returns a v4 UUID, and no UUID is the string "other" — the same
+ * guarantee the old timestamped id format gave, from a different direction.
+ */
 export const OTHER_SECTION_ID = "other";
 
 const OTHER_SECTION: Section = {

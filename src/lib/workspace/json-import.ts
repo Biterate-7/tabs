@@ -83,7 +83,7 @@ function sanitizeTabs(
     }
 
     const rawId = typeof entry.id === "string" ? entry.id : undefined;
-    const id = !rawId || seenIds.has(rawId) ? createId("tab") : rawId;
+    const id = !rawId || seenIds.has(rawId) ? createId() : rawId;
     seenIds.add(id);
     if (rawId && !idMap.has(rawId)) idMap.set(rawId, id);
 
@@ -143,7 +143,7 @@ function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: n
     }
 
     const rawId = typeof entry.id === "string" ? entry.id : undefined;
-    const id = !rawId || seenIds.has(rawId) ? createId("group") : rawId;
+    const id = !rawId || seenIds.has(rawId) ? createId() : rawId;
     seenIds.add(id);
     // Only the FIRST entry claiming a given raw id gets to own that id in
     // the map — a later entry that collided with it (and so got a freshly
@@ -193,7 +193,7 @@ function sanitizeSections(raw: unknown, now: number = Date.now()): { sections: S
     }
 
     const rawId = typeof entry.id === "string" ? entry.id : undefined;
-    const id = !rawId || seenIds.has(rawId) ? createId("section") : rawId;
+    const id = !rawId || seenIds.has(rawId) ? createId() : rawId;
     seenIds.add(id);
     if (rawId && !idMap.has(rawId)) idMap.set(rawId, id);
 
@@ -245,7 +245,7 @@ function sanitizeWorkspace(
   const logo = typeof raw.logo === "string" && isValidLogoDataUrl(raw.logo) ? raw.logo : undefined;
 
   const workspace: Workspace = {
-    id: createId("workspace"),
+    id: createId(),
     name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "Untitled",
     tabs,
     ...(groups !== undefined ? { groups } : {}),
@@ -387,7 +387,7 @@ function sanitizeCollections(
       ),
     ];
     collections.push({
-      id: createId("collection"),
+      id: createId(),
       workspaceId,
       name: entry.name.trim(),
       tabIds,

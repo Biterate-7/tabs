@@ -1008,3 +1008,150 @@ describe("import cannot pollute Object.prototype", () => {
     expect(Object.keys(Object.prototype).length).toBe(before);
   });
 });
+
+/**
+ * Id generation moved to crypto.randomUUID(). The import contract is
+ * unchanged — ids that arrive intact are preserved, ids that are missing or
+ * collide are re-minted, and every reference is remapped — but the re-minted
+ * ones are now UUIDs. These pin both halves: old ids keep working, new ones
+ * are globally unique.
+ */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+describe("id minting during import", () => {
+  it("preserves a legacy timestamp-counter id that arrives intact", () => {
+    // Phase 6 compatibility: nothing is rewritten just for being old.
+    const result = importTabs([
+      {
+        id: "tab-1789193670715-1",
+        url: "https://example.com/a",
+        normalizedUrl: "https://example.com/a",
+        domain: "example.com",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].tabs[0].id).toBe("tab-1789193670715-1");
+  });
+
+  it("mints a UUID when a tab id is missing", () => {
+    const result = importTabs([
+      { url: "https://example.com/a", normalizedUrl: "https://example.com/a", domain: "example.com" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].tabs[0].id).toMatch(UUID_V4);
+  });
+
+  it("mints a UUID for the loser of an id collision, keeping the first", () => {
+    const result = importTabs([
+      { id: "dup", url: "https://example.com/a", normalizedUrl: "https://example.com/a", domain: "example.com" },
+      { id: "dup", url: "https://example.com/b", normalizedUrl: "https://example.com/b", domain: "example.com" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [first, second] = result.workspaces[0].tabs;
+    expect(first.id).toBe("dup");
+    expect(second.id).toMatch(UUID_V4);
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it("always mints a fresh UUID workspace id, so an import cannot overwrite", () => {
+    const result = importTabs([
+      { id: "t", url: "https://example.com/a", normalizedUrl: "https://example.com/a", domain: "example.com" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].id).toMatch(UUID_V4);
+    expect(result.workspaces[0].id).not.toBe("w1");
+  });
+
+  it("remaps every reference when ids are re-minted", () => {
+    // A collision forces a new id for the second tab; the dependency and the
+    // collection that point at it must follow it to its new id.
+    const raw = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspaces: [
+        {
+          id: "w1",
+          name: "W",
+          createdAt: 1,
+          updatedAt: 2,
+          groups: [{ id: "g1", name: "Group", createdAt: 1, updatedAt: 2 }],
+          sections: [{ id: "s1", parentId: null, name: "Sec", source: "user", createdAt: 1, updatedAt: 2 }],
+          tabs: [
+            {
+              id: "shared",
+              url: "https://example.com/a",
+              normalizedUrl: "https://example.com/a",
+              domain: "example.com",
+              groupId: "g1",
+              sectionId: "s1",
+            },
+            {
+              id: "shared",
+              url: "https://example.com/b",
+              normalizedUrl: "https://example.com/b",
+              domain: "example.com",
+            },
+          ],
+        },
+      ],
+      dependencies: [{ id: "d1", parentTabId: "shared", childTabId: "shared", createdAt: 1 }],
+      collections: [{ id: "c1", workspaceId: "w1", name: "Coll", tabIds: ["shared"], createdAt: 1, updatedAt: 2 }],
+    });
+
+    const result = parseWorkspaceExport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const workspace = result.workspaces[0];
+    const [kept, reminted] = workspace.tabs;
+    expect(kept.id).toBe("shared");
+    expect(reminted.id).toMatch(UUID_V4);
+
+    // group/section references survive and still point at real rows
+    expect(kept.groupId).toBe("g1");
+    expect(kept.sectionId).toBe("s1");
+    expect(workspace.groups?.[0].id).toBe("g1");
+    expect(workspace.sections?.[0].id).toBe("s1");
+
+    // the collection's workspaceId followed the freshly minted workspace id
+    expect(result.collections[0].workspaceId).toBe(workspace.id);
+    expect(result.collections[0].id).toMatch(UUID_V4);
+    expect(result.collections[0].tabIds).toEqual(["shared"]);
+
+    // a self-referencing dependency is still dropped, exactly as before
+    expect(result.dependencies).toHaveLength(0);
+    expect(result.skippedDependencies).toBe(1);
+  });
+
+  it("keeps a dependency pointing at the right tabs after a re-mint", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspaces: [
+        {
+          id: "w1",
+          name: "W",
+          createdAt: 1,
+          updatedAt: 2,
+          tabs: [
+            { id: "p", url: "https://example.com/p", normalizedUrl: "https://example.com/p", domain: "example.com" },
+            { id: "c", url: "https://example.com/c", normalizedUrl: "https://example.com/c", domain: "example.com" },
+          ],
+        },
+      ],
+      dependencies: [{ id: "d1", parentTabId: "p", childTabId: "c", createdAt: 1 }],
+      collections: [],
+    });
+
+    const result = parseWorkspaceExport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.dependencies).toHaveLength(1);
+    expect(result.dependencies[0].parentTabId).toBe("p");
+    expect(result.dependencies[0].childTabId).toBe("c");
+  });
+});

@@ -32,7 +32,7 @@ export function ensureSectionsSeeded(workspace: Workspace): Workspace {
   const sectionIdByCategory = new Map<CategoryId, string>();
   for (const categoryId of ordered) {
     const section: Section = {
-      id: createId("section"),
+      id: createId(),
       parentId: null,
       name: CATEGORIES[categoryId].name,
       source: "ai",
@@ -122,7 +122,7 @@ export function syncSectionsWithCategories(workspace: Workspace): Workspace {
     const name = CATEGORIES[categoryId].name;
     let section = rootByName.get(name.toLowerCase());
     if (!section) {
-      section = { id: createId("section"), parentId: null, name, source: "ai", createdAt: now, updatedAt: now };
+      section = { id: createId(), parentId: null, name, source: "ai", createdAt: now, updatedAt: now };
       sections.push(section);
       rootByName.set(name.toLowerCase(), section);
       validIds.add(section.id);

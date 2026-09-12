@@ -24,7 +24,7 @@ export function createWorkspace(store: WorkspaceStore, name: string): WorkspaceS
   const trimmed = name.trim();
   const now = Date.now();
   const workspace: Workspace = {
-    id: createId("workspace"),
+    id: createId(),
     name: trimmed || "Untitled",
     tabs: [],
     // Defined (empty) rather than omitted: `sections === undefined` means
@@ -194,7 +194,7 @@ export function moveTabsBetweenWorkspaces(
 
 export function createGroup(store: WorkspaceStore, workspaceId: string, name: string): { store: WorkspaceStore; group: Group } {
   const now = Date.now();
-  const group: Group = { id: createId("group"), name, createdAt: now, updatedAt: now };
+  const group: Group = { id: createId(), name, createdAt: now, updatedAt: now };
   const workspaces = store.workspaces.map((w) =>
     w.id === workspaceId ? { ...w, groups: [...(w.groups ?? []), group], updatedAt: now } : w
   );

@@ -1,5 +1,6 @@
 import type { ParseResult, Tab } from "./types";
 import { normalizeUrl } from "./normalize";
+import { createId } from "@/lib/id";
 import { isSafeOpenUrl } from "@/lib/browser/protocol";
 
 export function splitInput(raw: string): string[] {
@@ -13,15 +14,13 @@ function ensureProtocol(token: string): string {
   return /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(token) ? token : `https://${token}`;
 }
 
-let counter = 0;
-function nextId(): string {
-  counter += 1;
-  return `tab-${Date.now()}-${counter}`;
-}
-
 function toTab(candidateUrl: string, parsed: URL): Tab {
   return {
-    id: nextId(),
+    // Deliberately the shared generator, not a local one. This file used to
+    // keep its own `let counter = 0` emitting the same `tab-<ms>-<n>` shape
+    // as src/lib/id.ts, so two independent sequences were minting ids into
+    // one namespace and could collide on a single device.
+    id: createId(),
     url: candidateUrl,
     normalizedUrl: normalizeUrl(parsed),
     domain: parsed.hostname.replace(/^www\./, ""),

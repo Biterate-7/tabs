@@ -84,7 +84,7 @@ function ensureListening() {
 
 function postPing() {
   window.postMessage(
-    { source: BROWSER_MESSAGE_SOURCE, type: MSG_EXTENSION_PING, payload: { requestId: createId("ping") } },
+    { source: BROWSER_MESSAGE_SOURCE, type: MSG_EXTENSION_PING, payload: { requestId: createId() } },
     window.location.origin
   )
 }
@@ -144,7 +144,7 @@ export function sendBrowserCommand<Args, Data>(
   opts?: { timeoutMs?: number }
 ): Promise<BrowserCommandResult<Data>> {
   ensureListening()
-  const id = createId("cmd")
+  const id = createId()
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_BROWSER_COMMAND_TIMEOUT_MS
 
   return new Promise((resolve) => {

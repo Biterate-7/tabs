@@ -12,7 +12,7 @@ export const DEFAULT_WORKSPACE_NAME = "General";
 export function createDefaultWorkspace(tabs: Workspace["tabs"] = []): Workspace {
   const now = Date.now();
   return {
-    id: createId("workspace"),
+    id: createId(),
     name: DEFAULT_WORKSPACE_NAME,
     tabs,
     createdAt: now,

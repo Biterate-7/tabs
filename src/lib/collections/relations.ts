@@ -39,7 +39,7 @@ export function createCollection(
   const dedupedTabIds = [...new Set(tabIds)];
   const stripped = stripFromAllCollections(collections, new Set(dedupedTabIds), now);
   const collection: Collection = {
-    id: createId("collection"),
+    id: createId(),
     workspaceId,
     name: name.trim() || DEFAULT_NAME,
     tabIds: dedupedTabIds,
