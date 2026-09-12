@@ -57,8 +57,8 @@ function makeWorkspace(over: Partial<Workspace> & { id: string }): Workspace {
 describe("ExportMenu", () => {
   beforeEach(() => {
     vi.mocked(exportLib.copyText).mockReset().mockResolvedValue(true);
-    vi.mocked(exportLib.downloadTextFile).mockReset().mockReturnValue(true);
-    vi.mocked(jsonExportLib.downloadJsonFile).mockReset().mockReturnValue(true);
+    vi.mocked(exportLib.downloadTextFile).mockReset().mockResolvedValue(true);
+    vi.mocked(jsonExportLib.downloadJsonFile).mockReset().mockResolvedValue(true);
   });
 
   it("Copy all URLs copies every tab and shows the exact toast copy", async () => {
@@ -136,7 +136,7 @@ describe("ExportMenu", () => {
   });
 
   it("shows an error toast when export fails", async () => {
-    vi.mocked(exportLib.downloadTextFile).mockReturnValue(false);
+    vi.mocked(exportLib.downloadTextFile).mockResolvedValue(false);
     const toastSpy = vi.spyOn(toast, "error");
     const user = userEvent.setup();
 
@@ -156,7 +156,7 @@ describe("ExportMenu", () => {
   });
 
   it("Export workspace (JSON) downloads just the current workspace", async () => {
-    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(true);
+    vi.mocked(jsonExportLib.downloadJsonFile).mockResolvedValue(true);
     const toastSpy = vi.spyOn(toast, "success");
     const user = userEvent.setup();
     const workspace = makeWorkspace({ id: "a", name: "General" });
@@ -185,7 +185,7 @@ describe("ExportMenu", () => {
   });
 
   it("Export all workspaces (JSON) downloads every workspace", async () => {
-    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(true);
+    vi.mocked(jsonExportLib.downloadJsonFile).mockResolvedValue(true);
     const toastSpy = vi.spyOn(toast, "success");
     const user = userEvent.setup();
     const workspaceA = makeWorkspace({ id: "a", name: "General" });
@@ -205,7 +205,7 @@ describe("ExportMenu", () => {
   });
 
   it("shows an error toast when a JSON export fails", async () => {
-    vi.mocked(jsonExportLib.downloadJsonFile).mockReturnValue(false);
+    vi.mocked(jsonExportLib.downloadJsonFile).mockResolvedValue(false);
     const toastSpy = vi.spyOn(toast, "error");
     const user = userEvent.setup();
     const workspace = makeWorkspace({ id: "a" });

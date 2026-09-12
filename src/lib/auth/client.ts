@@ -1,3 +1,5 @@
+import { isDesktop } from "@/lib/platform/detect";
+import { apiUrl } from "@/lib/platform/api-base";
 import type { PublicUser } from "./types";
 
 /**
@@ -55,8 +57,22 @@ const UNKNOWN_AUTH_STATE: AuthStateResponse = { authenticated: false, user: null
  * cancelled can tell that from a real answer.)
  */
 export async function fetchAuthState(signal?: AbortSignal): Promise<AuthStateResponse> {
+  // The desktop app is signed-out by design in v1, and this is where that
+  // is decided. It has no session cookie to present (the cookie is
+  // HttpOnly + SameSite=Lax and same-origin, and a packaged build is served
+  // from tauri://localhost), and Google Identity Services will not accept
+  // that origin either. Answering locally instead of firing a request that
+  // can only fail is what keeps the desktop build from offering a sign-in
+  // button that cannot work — `configured: false` hides the auth UI
+  // entirely, exactly as it does on a deployment with no Google client ID.
+  //
+  // Giving desktop a real account means the pairing flow in
+  // docs/auth-architecture.md, not a relaxed cookie. See
+  // docs/desktop-architecture.md.
+  if (isDesktop()) return UNKNOWN_AUTH_STATE;
+
   try {
-    const response = await fetch("/api/auth/me", { ...FETCH_OPTIONS, signal });
+    const response = await fetch(apiUrl("/api/auth/me"), { ...FETCH_OPTIONS, signal });
     // /me answers 200 for signed-out too, so a non-200 here is a transport
     // or server problem rather than an answer.
     if (!response.ok) return UNKNOWN_AUTH_STATE;
@@ -82,7 +98,7 @@ function offlineError(fallback: string): AuthRequestError {
 export async function requestLoginNonce(): Promise<{ ok: true; nonce: string } | { ok: false; error: AuthRequestError }> {
   const failure = "Couldn't start sign-in. Check your connection and try again.";
   try {
-    const response = await fetch("/api/auth/nonce", { ...FETCH_OPTIONS, method: "POST" });
+    const response = await fetch(apiUrl("/api/auth/nonce"), { ...FETCH_OPTIONS, method: "POST" });
     if (!response.ok) return { ok: false, error: await readError(response, failure) };
 
     const body = (await response.json()) as { nonce?: unknown };
@@ -99,7 +115,7 @@ export async function exchangeGoogleCredential(
 ): Promise<{ ok: true; user: PublicUser; created: boolean } | { ok: false; error: AuthRequestError }> {
   const failure = "Couldn't complete sign-in. Check your connection and try again.";
   try {
-    const response = await fetch("/api/auth/google", {
+    const response = await fetch(apiUrl("/api/auth/google"), {
       ...FETCH_OPTIONS,
       method: "POST",
       headers: JSON_HEADERS,
@@ -120,7 +136,7 @@ export async function exchangeGoogleCredential(
 export async function signOutRequest(): Promise<{ ok: true } | { ok: false; error: AuthRequestError }> {
   const failure = "Couldn't sign you out. Check your connection and try again.";
   try {
-    const response = await fetch("/api/auth/logout", { ...FETCH_OPTIONS, method: "POST" });
+    const response = await fetch(apiUrl("/api/auth/logout"), { ...FETCH_OPTIONS, method: "POST" });
     if (!response.ok) return { ok: false, error: await readError(response, failure) };
     return { ok: true };
   } catch {

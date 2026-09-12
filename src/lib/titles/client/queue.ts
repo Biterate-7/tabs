@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/platform/api-base";
 import type { TitleApiResult } from "@/lib/titles/types";
 import { runWithConcurrency } from "@/lib/titles/concurrency";
 
@@ -33,7 +34,7 @@ async function fetchBatch(urls: string[]): Promise<Map<string, TitleApiResult>> 
   const byUrl = new Map<string, TitleApiResult>();
 
   try {
-    const response = await fetch("/api/titles", {
+    const response = await fetch(apiUrl("/api/titles"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ urls }),

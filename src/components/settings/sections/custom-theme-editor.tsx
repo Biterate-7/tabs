@@ -153,9 +153,9 @@ export function CustomThemeEditor({ colors, onChange }: { colors: ThemeColors; o
     onChange(deriveSubtleFields({ ...colors, [key]: value }))
   }
 
-  function handleExport() {
+  async function handleExport() {
     const json = serializeCustomTheme("My TabDump theme", colors)
-    downloadTextFile("tabdump-theme.json", json)
+    await downloadTextFile("tabdump-theme.json", json)
   }
 
   function handleImportClick() {

@@ -1,3 +1,4 @@
+import { saveTextFile } from "@/lib/platform";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Collection } from "@/lib/collections/types";
 import type { Workspace } from "./types";
@@ -51,19 +52,11 @@ export function serializeWorkspaceExport(data: WorkspaceExport): string {
   return JSON.stringify(data, null, 2);
 }
 
-export function downloadJsonFile(filename: string, text: string): boolean {
-  try {
-    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * Saves a workspace export as JSON. Web: a browser download. Desktop: a
+ * native "Save as…" dialog. See downloadTextFile in ./export.ts for why
+ * this is async and what `false` covers.
+ */
+export function downloadJsonFile(filename: string, text: string): Promise<boolean> {
+  return saveTextFile(filename, text, "application/json;charset=utf-8");
 }

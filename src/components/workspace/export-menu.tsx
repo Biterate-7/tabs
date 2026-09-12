@@ -62,24 +62,24 @@ export function ExportMenu({
     else toast.error("Couldn't copy to clipboard")
   }
 
-  function handleExportTxt() {
-    const ok = downloadTextFile("tabdump-export.txt", buildExportText(tabs))
+  async function handleExportTxt() {
+    const ok = await downloadTextFile("tabdump-export.txt", buildExportText(tabs))
     if (ok) toast.success("Workspace exported")
     else toast.error("Couldn't export workspace")
   }
 
-  function handleExportWorkspaceJson() {
+  async function handleExportWorkspaceJson() {
     if (!currentWorkspace) return
     const text = serializeWorkspaceExport(buildWorkspaceExport([currentWorkspace], dependencies, collections))
-    const ok = downloadJsonFile(jsonFilename(currentWorkspace.name.toLowerCase().replace(/\s+/g, "-")), text)
+    const ok = await downloadJsonFile(jsonFilename(currentWorkspace.name.toLowerCase().replace(/\s+/g, "-")), text)
     if (ok) toast.success("Workspace exported as JSON")
     else toast.error("Couldn't export workspace")
   }
 
-  function handleExportAllJson() {
+  async function handleExportAllJson() {
     if (!allWorkspaces) return
     const text = serializeWorkspaceExport(buildWorkspaceExport(allWorkspaces, dependencies, collections))
-    const ok = downloadJsonFile(jsonFilename("all-workspaces"), text)
+    const ok = await downloadJsonFile(jsonFilename("all-workspaces"), text)
     if (ok) toast.success("All workspaces exported as JSON")
     else toast.error("Couldn't export workspaces")
   }

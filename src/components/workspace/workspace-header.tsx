@@ -62,8 +62,8 @@ export function WorkspaceHeader({
 }) {
   const tabCount = tabs.length
 
-  function handleExportTxt() {
-    const ok = downloadTextFile("tabdump-export.txt", buildExportText(tabs))
+  async function handleExportTxt() {
+    const ok = await downloadTextFile("tabdump-export.txt", buildExportText(tabs))
     if (ok) toast.success("Workspace exported")
     else toast.error("Couldn't export workspace")
   }

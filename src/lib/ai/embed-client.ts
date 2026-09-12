@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/platform/api-base";
 import { formatApiError } from "./types";
 
 export type EmbedBatchResult = { ok: true; embeddings: number[][] } | { ok: false; error: string };
@@ -9,7 +10,7 @@ export async function embedTexts(texts: string[]): Promise<EmbedBatchResult> {
   if (texts.length === 0) return { ok: true, embeddings: [] };
 
   try {
-    const response = await fetch("/api/ai/embed", {
+    const response = await fetch(apiUrl("/api/ai/embed"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ texts: texts.slice(0, MAX_BATCH) }),

@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/platform/api-base";
 import { runWithConcurrency } from "@/lib/titles/concurrency";
 import type { ContentApiResult } from "./types";
 
@@ -13,7 +14,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 async function fetchBatch(urls: string[]): Promise<Map<string, ContentApiResult>> {
   const byUrl = new Map<string, ContentApiResult>();
   try {
-    const response = await fetch("/api/ai/content", {
+    const response = await fetch(apiUrl("/api/ai/content"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ urls }),

@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/platform/api-base";
 import { formatApiError } from "@/lib/ai/types";
 
 export type OrganizeApiResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -5,7 +6,7 @@ export type OrganizeApiResult = { ok: true; data: unknown } | { ok: false; error
 /** Posts one organize prompt to /api/ai/organize. Callers (src/lib/sections/ai/organize.ts) handle chunking, validation, and the deterministic fallback — this only handles the network round trip. */
 export async function requestOrganizeCompletion(prompt: string): Promise<OrganizeApiResult> {
   try {
-    const response = await fetch("/api/ai/organize", {
+    const response = await fetch(apiUrl("/api/ai/organize"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt }),

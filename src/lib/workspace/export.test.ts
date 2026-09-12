@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { urlsText, buildExportText, copyText, downloadTextFile } from "./export";
+import { urlsText, buildExportText, copyText } from "./export";
 import type { Tab } from "@/lib/tabs/types";
 
 function makeTab(over: Partial<Tab> & { id: string; url: string }): Tab {
@@ -71,31 +71,5 @@ describe("copyText", () => {
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
     Object.assign(navigator, { clipboard: { writeText } });
     expect(await copyText("hello")).toBe(false);
-  });
-});
-
-describe("downloadTextFile", () => {
-  it("creates a blob, triggers a download, and cleans up the object URL", () => {
-    const createObjectURL = vi.fn().mockReturnValue("blob:mock");
-    const revokeObjectURL = vi.fn();
-    window.URL.createObjectURL = createObjectURL;
-    window.URL.revokeObjectURL = revokeObjectURL;
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {});
-
-    expect(downloadTextFile("test.txt", "hello world")).toBe(true);
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
-
-    clickSpy.mockRestore();
-  });
-
-  it("returns false if the download sequence throws", () => {
-    window.URL.createObjectURL = () => {
-      throw new Error("nope");
-    };
-    expect(downloadTextFile("test.txt", "hello")).toBe(false);
   });
 });

@@ -10,6 +10,16 @@ vi.mock("./bridge", () => ({
 const toastInfoMock = vi.hoisted(() => vi.fn())
 vi.mock("sonner", () => ({ toast: { info: toastInfoMock } }))
 
+// `isDesktop` defaults to falsy under mockReset(), so every case below that
+// doesn't opt in exercises the web paths exactly as it did before the
+// desktop app existed.
+const isDesktopMock = vi.hoisted(() => vi.fn())
+const openExternalMock = vi.hoisted(() => vi.fn())
+vi.mock("@/lib/platform", () => ({
+  isDesktop: isDesktopMock,
+  openExternal: openExternalMock,
+}))
+
 const { openTab } = await import("./open-tab")
 
 const windowOpenMock = vi.fn()
@@ -31,6 +41,8 @@ afterEach(() => {
   toastInfoMock.mockReset()
   windowOpenMock.mockReset()
   locationAssignMock.mockReset()
+  isDesktopMock.mockReset()
+  openExternalMock.mockReset()
 })
 
 describe("openTab", () => {
@@ -103,5 +115,41 @@ describe("openTab", () => {
       expect(windowOpenMock).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer")
       expect(locationAssignMock).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe("on the desktop app", () => {
+  it("opens a saved tab in the default browser instead of navigating the app window", async () => {
+    isDesktopMock.mockReturnValue(true)
+    isBrowserConnectedMock.mockReturnValue(false)
+
+    await openTab("https://example.com/saved")
+
+    expect(openExternalMock).toHaveBeenCalledWith("https://example.com/saved")
+    // The three things that would turn the desktop window into a browser.
+    expect(locationAssignMock).not.toHaveBeenCalled()
+    expect(windowOpenMock).not.toHaveBeenCalled()
+    expect(sendBrowserCommandMock).not.toHaveBeenCalled()
+  })
+
+  it("does the same for newTab flows like 'open selected'", async () => {
+    isDesktopMock.mockReturnValue(true)
+
+    await openTab("https://example.com/one", { newTab: true })
+
+    expect(openExternalMock).toHaveBeenCalledWith("https://example.com/one")
+    expect(windowOpenMock).not.toHaveBeenCalled()
+    expect(locationAssignMock).not.toHaveBeenCalled()
+  })
+
+  it("ignores the extension bridge entirely, which cannot reach a Tauri webview anyway", async () => {
+    isDesktopMock.mockReturnValue(true)
+    // Even if something claimed a connection, desktop must not route through it.
+    isBrowserConnectedMock.mockReturnValue(true)
+
+    await openTab("https://example.com/x")
+
+    expect(sendBrowserCommandMock).not.toHaveBeenCalled()
+    expect(openExternalMock).toHaveBeenCalledTimes(1)
   })
 })
