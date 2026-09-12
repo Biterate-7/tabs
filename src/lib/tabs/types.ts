@@ -3,6 +3,27 @@ export type Tab = {
   url: string;
   normalizedUrl: string;
   domain: string;
+  /**
+   * When this tab was first created, epoch ms. Immutable once set.
+   *
+   * Optional for the same reason `groups`/`sections` are: a tab saved before
+   * timestamps existed simply doesn't have one, and absent is the honest
+   * answer. Nothing backfills it on load — inventing a creation time would
+   * be a lie, and writing one during hydration would make every tab in an
+   * old workspace look freshly touched. Every tab created from here on has
+   * it (see toTab in ./parse.ts, the one place tabs are constructed).
+   */
+  createdAt?: number;
+  /**
+   * When this tab's own persisted state last materially changed, epoch ms.
+   *
+   * Distinct from `lastAccessedAt` below and never a substitute for it:
+   * `lastAccessedAt` answers "when did the user last open this", while this
+   * answers "when did this record last change" — which is what a later sync
+   * pass compares to decide whose copy is newer. Absent on tabs that predate
+   * timestamps, and set the first time such a tab is modified.
+   */
+  updatedAt?: number;
   category?: string;
   confidence?: number;
   title?: string;

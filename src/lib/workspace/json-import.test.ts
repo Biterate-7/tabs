@@ -1155,3 +1155,179 @@ describe("id minting during import", () => {
     expect(result.dependencies[0].childTabId).toBe("c");
   });
 });
+
+/**
+ * Timestamps are the sync metadata a later phase compares, so an export must
+ * carry them through untouched. The rule at this boundary: a file that
+ * already states a valid timestamp keeps it; only a missing or malformed one
+ * falls back to the import's own clock.
+ */
+describe("timestamps survive import", () => {
+  const T_CREATED = 1_600_000_000_000;
+  const T_UPDATED = 1_700_000_000_000;
+
+  it("preserves valid tab timestamps exactly", () => {
+    const result = importTabs([
+      {
+        id: "t1",
+        url: "https://example.com/a",
+        normalizedUrl: "https://example.com/a",
+        domain: "example.com",
+        createdAt: T_CREATED,
+        updatedAt: T_UPDATED,
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tab = result.workspaces[0].tabs[0];
+    expect(tab.createdAt).toBe(T_CREATED);
+    expect(tab.updatedAt).toBe(T_UPDATED);
+  });
+
+  it("imports a legacy tab with no timestamps without inventing any", () => {
+    const result = importTabs([
+      { id: "t1", url: "https://example.com/a", normalizedUrl: "https://example.com/a", domain: "example.com" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tab = result.workspaces[0].tabs[0];
+    expect(tab.createdAt).toBeUndefined();
+    expect(tab.updatedAt).toBeUndefined();
+    expect(tab.url).toBe("https://example.com/a");
+  });
+
+  it.each([NaN, Infinity, "yesterday", null, {}, [], true])(
+    "drops a malformed tab timestamp of %s rather than failing the import",
+    (bad) => {
+      const result = importTabs([
+        {
+          id: "t1",
+          url: "https://example.com/a",
+          normalizedUrl: "https://example.com/a",
+          domain: "example.com",
+          createdAt: bad,
+          updatedAt: bad,
+        },
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.workspaces[0].tabs).toHaveLength(1);
+      expect(result.workspaces[0].tabs[0].createdAt).toBeUndefined();
+      expect(result.workspaces[0].tabs[0].updatedAt).toBeUndefined();
+    }
+  );
+
+  it("preserves workspace, group and section timestamps", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspaces: [
+        {
+          id: "w1",
+          name: "W",
+          createdAt: T_CREATED,
+          updatedAt: T_UPDATED,
+          groups: [{ id: "g1", name: "G", createdAt: T_CREATED, updatedAt: T_UPDATED }],
+          sections: [
+            { id: "s1", parentId: null, name: "S", source: "user", createdAt: T_CREATED, updatedAt: T_UPDATED },
+          ],
+          tabs: [
+            { id: "t1", url: "https://example.com/a", normalizedUrl: "https://example.com/a", domain: "example.com" },
+          ],
+        },
+      ],
+      dependencies: [],
+      collections: [],
+    });
+
+    const result = parseWorkspaceExport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const w = result.workspaces[0];
+    expect(w.createdAt).toBe(T_CREATED);
+    expect(w.updatedAt).toBe(T_UPDATED);
+    expect(w.groups?.[0].createdAt).toBe(T_CREATED);
+    expect(w.groups?.[0].updatedAt).toBe(T_UPDATED);
+    expect(w.sections?.[0].createdAt).toBe(T_CREATED);
+    expect(w.sections?.[0].updatedAt).toBe(T_UPDATED);
+  });
+
+  it("preserves dependency and collection timestamps", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspaces: [
+        {
+          id: "w1",
+          name: "W",
+          createdAt: 1,
+          updatedAt: 2,
+          tabs: [
+            { id: "p", url: "https://example.com/p", normalizedUrl: "https://example.com/p", domain: "example.com" },
+            { id: "c", url: "https://example.com/c", normalizedUrl: "https://example.com/c", domain: "example.com" },
+          ],
+        },
+      ],
+      dependencies: [
+        { id: "d1", parentTabId: "p", childTabId: "c", createdAt: T_CREATED, updatedAt: T_UPDATED },
+      ],
+      collections: [
+        { id: "c1", workspaceId: "w1", name: "Coll", tabIds: ["p"], createdAt: T_CREATED, updatedAt: T_UPDATED },
+      ],
+    });
+
+    const result = parseWorkspaceExport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.dependencies[0].createdAt).toBe(T_CREATED);
+    expect(result.dependencies[0].updatedAt).toBe(T_UPDATED);
+    expect(result.collections[0].createdAt).toBe(T_CREATED);
+    expect(result.collections[0].updatedAt).toBe(T_UPDATED);
+  });
+
+  it("round-trips create → export → import with timestamps and references intact", () => {
+    const exported = serializeWorkspaceExport(
+      buildWorkspaceExport(
+        [
+          {
+            id: "w1",
+            name: "Round",
+            createdAt: T_CREATED,
+            updatedAt: T_UPDATED,
+            sections: [
+              { id: "s1", parentId: null, name: "S", source: "user", createdAt: T_CREATED, updatedAt: T_UPDATED },
+            ],
+            tabs: [
+              {
+                id: "t1",
+                url: "https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events",
+                normalizedUrl: "https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events",
+                domain: "developer.mozilla.org",
+                sectionId: "s1",
+                createdAt: T_CREATED,
+                updatedAt: T_UPDATED,
+              },
+            ],
+          },
+        ],
+        [],
+        []
+      )
+    );
+
+    const result = parseWorkspaceExport(exported);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const w = result.workspaces[0];
+    const t = w.tabs[0];
+
+    expect(t.id).toBe("t1");
+    expect(t.url).toBe("https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events");
+    expect(t.createdAt).toBe(T_CREATED);
+    expect(t.updatedAt).toBe(T_UPDATED);
+    expect(t.sectionId).toBe("s1");
+    expect(w.sections?.some((s) => s.id === t.sectionId)).toBe(true);
+    expect(w.createdAt).toBe(T_CREATED);
+    expect(w.updatedAt).toBe(T_UPDATED);
+  });
+});

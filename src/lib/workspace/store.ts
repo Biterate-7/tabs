@@ -1,4 +1,6 @@
 import { createId } from "@/lib/id";
+import { createTimestamp } from "@/lib/timestamps";
+import { stampChangedTabs } from "@/lib/tabs/touch";
 import { createDefaultWorkspace } from "./migration";
 import { markDuplicates } from "@/lib/tabs";
 import {
@@ -109,11 +111,21 @@ export function deleteWorkspace(store: WorkspaceStore, id: string): WorkspaceSto
   return { ...store, currentId, workspaces: remaining };
 }
 
+/**
+ * The bulk tab setter every per-tab edit funnels through — a note, a
+ * category change, a reorder and a whole re-import all arrive here as a
+ * replacement array.
+ *
+ * `stampChangedTabs` is what keeps `updatedAt` honest: it diffs the incoming
+ * array against the stored one and stamps only the tabs that genuinely
+ * differ, so re-saving an unchanged workspace marks nothing as modified.
+ */
 export function updateWorkspaceTabs(store: WorkspaceStore, id: string, tabs: Tab[]): WorkspaceStore {
+  const now = createTimestamp();
   return {
     ...store,
     workspaces: store.workspaces.map((w) =>
-      w.id === id ? { ...w, tabs, updatedAt: Date.now() } : w
+      w.id === id ? { ...w, tabs: stampChangedTabs(w.tabs, tabs, now), updatedAt: now } : w
     ),
   };
 }
@@ -177,9 +189,11 @@ export function moveTabsBetweenWorkspaces(
   // membership; the caller can re-assign a group in the destination
   // afterward via assignTabsToGroup.
   const now = Date.now();
+  // Every moved tab is stamped, not just the ones that had a group: moving a
+  // tab changes which workspace owns it, and that ownership is part of the
+  // tab's own persisted state once tabs carry a workspace reference.
   const ungrouped = moved.map((t) => {
-    if (t.groupId === undefined) return t;
-    const copy = { ...t };
+    const copy = { ...t, updatedAt: now };
     delete copy.groupId;
     return copy;
   });
@@ -233,7 +247,7 @@ export function assignTabsToGroup(store: WorkspaceStore, workspaceId: string, ta
     const tabs = w.tabs.map((t) => {
       if (!wanted.has(t.id) || t.groupId === groupId) return t;
       changed = true;
-      return { ...t, groupId };
+      return { ...t, groupId, updatedAt: now };
     });
     return changed ? { ...w, tabs, updatedAt: now } : w;
   });
@@ -252,7 +266,7 @@ export function removeTabsFromGroup(store: WorkspaceStore, workspaceId: string, 
     const tabs = w.tabs.map((t) => {
       if (!wanted.has(t.id) || t.groupId === undefined) return t;
       changed = true;
-      const copy = { ...t };
+      const copy = { ...t, updatedAt: now };
       delete copy.groupId;
       return copy;
     });
@@ -353,12 +367,12 @@ export function assignTabsToSection(
     const tabs = w.tabs.map((t) => {
       if (!wanted.has(t.id) || (t.sectionId === sectionId && (!locked || t.sectionLocked))) return t;
       changed = true;
-      if (!locked) return { ...t, sectionId };
+      if (!locked) return { ...t, sectionId, updatedAt: now };
       // A manual move (the only current caller path with locked=true) makes
       // any AI-era reason/status stale and actively misleading — a future
       // "Why here?" UI should say "you moved this here," not repeat an
       // explanation for a placement the user just overrode.
-      const copy = { ...t, sectionId, sectionLocked: true as const, organizationStatus: "manual" as const };
+      const copy = { ...t, sectionId, sectionLocked: true as const, organizationStatus: "manual" as const, updatedAt: now };
       delete copy.organizationReason;
       return copy;
     });

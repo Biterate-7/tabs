@@ -417,7 +417,14 @@ describe("removeTabsFromGroup", () => {
   it("clearing a group leaves the tab valid and simply ungrouped", () => {
     const store = makeStore([makeWorkspace({ id: "a", tabs: [{ ...makeTab("1"), groupId: "g1" }] })], "a");
     const next = removeTabsFromGroup(store, "a", ["1"]);
-    expect(next.workspaces[0].tabs[0]).toEqual(makeTab("1"));
+    const tab = next.workspaces[0].tabs[0];
+
+    // Ungrouping IS a modification, so the tab now also carries an
+    // `updatedAt` it did not have before timestamps existed — everything
+    // else about it is unchanged.
+    const { updatedAt, ...rest } = tab;
+    expect(rest).toEqual(makeTab("1"));
+    expect(updatedAt).toBeTypeOf("number");
   });
 });
 

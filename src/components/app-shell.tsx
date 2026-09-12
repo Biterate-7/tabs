@@ -48,6 +48,8 @@ import { computeLayoutKey, createLayoutPrecompute, resolveGraphLayoutInput } fro
 import { loadGraphState, pruneGraphState, saveGraphState } from "@/lib/graph/persistence"
 import { computeFitCamera } from "@/lib/graph/layout"
 import { markDuplicates } from "@/lib/tabs"
+import { stampChangedTabs } from "@/lib/tabs/touch"
+import { createTimestamp } from "@/lib/timestamps"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
 import { applyOrganizationPlan } from "@/lib/organize/apply"
 import type { OrganizationPlan } from "@/lib/organize/types"
@@ -392,8 +394,17 @@ export function AppShell() {
         return organized
       })
 
+      // Organization is a real mutation of the tabs it places: it writes
+      // sectionId, organizationStatus and organizationReason. Those have to go
+      // through stampChangedTabs like every other bulk tab write, or a tab that
+      // the pipeline just filed would sync as older than its own placement.
+      // One clock read for the workspace and its tabs, so a tab stamped by this
+      // pass carries exactly the workspace's updatedAt.
+      const now = createTimestamp()
       const workspaces = prev.workspaces.map((w) =>
-        w.id === workspaceId ? { ...w, sections, tabs, updatedAt: Date.now() } : w
+        w.id === workspaceId
+          ? { ...w, sections, tabs: stampChangedTabs(workspace.tabs, tabs, now), updatedAt: now }
+          : w
       )
       const next = { ...prev, workspaces }
       if (canPersist) saveWorkspaceStore(next)

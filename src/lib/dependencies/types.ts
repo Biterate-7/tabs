@@ -40,6 +40,16 @@ export type TabDependency = {
   /** Optional — a dependency without a type is still a valid dependency. */
   type?: DependencyType;
   createdAt: number;
+  /**
+   * When this dependency last materially changed, epoch ms. The only
+   * mutable state it has is `type` (see updateDependencyType), since its
+   * identity is the parent/child pair itself.
+   *
+   * Optional because dependencies saved before timestamps existed don't have
+   * one; absent means "unknown", never "changed at epoch zero". Set on every
+   * dependency created or retyped from here on.
+   */
+  updatedAt?: number;
 };
 
 export type DependencyPersistedState = {

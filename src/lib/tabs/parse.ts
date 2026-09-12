@@ -1,6 +1,7 @@
 import type { ParseResult, Tab } from "./types";
 import { normalizeUrl } from "./normalize";
 import { createId } from "@/lib/id";
+import { createTimestamp } from "@/lib/timestamps";
 import { isSafeOpenUrl } from "@/lib/browser/protocol";
 
 export function splitInput(raw: string): string[] {
@@ -15,6 +16,10 @@ function ensureProtocol(token: string): string {
 }
 
 function toTab(candidateUrl: string, parsed: URL): Tab {
+  // One clock read for both fields: a freshly created entity must satisfy
+  // createdAt === updatedAt, and two Date.now() calls can straddle a
+  // millisecond boundary and quietly break that.
+  const now = createTimestamp();
   return {
     // Deliberately the shared generator, not a local one. This file used to
     // keep its own `let counter = 0` emitting the same `tab-<ms>-<n>` shape
@@ -24,6 +29,8 @@ function toTab(candidateUrl: string, parsed: URL): Tab {
     url: candidateUrl,
     normalizedUrl: normalizeUrl(parsed),
     domain: parsed.hostname.replace(/^www\./, ""),
+    createdAt: now,
+    updatedAt: now,
   };
 }
 

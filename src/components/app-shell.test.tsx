@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
 import { Toaster } from "@/components/ui/sonner";
-import { saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
+import { loadWorkspaceStore, saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
@@ -563,5 +563,48 @@ describe("AppShell section/category sync", () => {
 
     await user.clear(screen.getByPlaceholderText("Search tabs..."));
     expect(await screen.findByRole("button", { name: /Open News/ })).toBeTruthy();
+  });
+});
+
+describe("AppShell timestamp stamping", () => {
+  // Regression: the dump's organization pass writes sectionId,
+  // organizationStatus and organizationReason straight into the persisted
+  // workspace. It used to do that with an inline object spread that bumped
+  // only the workspace's updatedAt, so a tab the pipeline had just filed was
+  // persisted still carrying its creation-time updatedAt — a real mutation
+  // that a later sync would have treated as unmodified.
+  it("stamps updatedAt on tabs that organization actually places", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await dumpOneTab(user, "https://github.com/torvalds/linux");
+
+    const store = loadWorkspaceStore();
+    const workspace = store?.workspaces.find((w) => w.id === store.currentId);
+    const placed = (workspace?.tabs ?? []).filter((t) => t.sectionId !== undefined);
+    expect(placed.length).toBeGreaterThan(0);
+
+    for (const tab of placed) {
+      expect(typeof tab.createdAt).toBe("number");
+      expect(typeof tab.updatedAt).toBe("number");
+      // Placement is a modification, so updatedAt must have moved past the
+      // creation stamp — while createdAt stays exactly where it was.
+      expect(tab.updatedAt!).toBeGreaterThan(tab.createdAt!);
+    }
+  });
+
+  it("keeps the workspace and its freshly placed tabs on the same clock read", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await dumpOneTab(user, "https://github.com/torvalds/linux");
+
+    const store = loadWorkspaceStore();
+    const workspace = store?.workspaces.find((w) => w.id === store.currentId);
+    const placed = (workspace?.tabs ?? []).filter((t) => t.sectionId !== undefined);
+
+    // One createTimestamp() feeds both the workspace bump and the tabs it
+    // stamped, so a placed tab never looks newer than the workspace holding it.
+    for (const tab of placed) {
+      expect(tab.updatedAt!).toBeLessThanOrEqual(workspace!.updatedAt);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { createTimestamp } from "@/lib/timestamps";
 import type { DependencyType, TabDependency } from "./types";
 
 /**
@@ -35,11 +36,24 @@ export function addDependency(
   parentTabId: string,
   childTabId: string,
   type?: DependencyType,
-  createdAt: number = Date.now()
+  createdAt: number = createTimestamp(),
+  /**
+   * Defaults to `createdAt` so a freshly created dependency satisfies
+   * createdAt === updatedAt without reading the clock twice. Passed
+   * explicitly only by mergeDependencies, which is carrying a value that
+   * already exists (an import) and must not overwrite it.
+   */
+  updatedAt: number = createdAt
 ): TabDependency[] {
   if (isSelfDependency(parentTabId, childTabId)) return dependencies;
   if (findDependency(dependencies, parentTabId, childTabId)) return dependencies;
-  const next: TabDependency = { id: dependencyId(parentTabId, childTabId), parentTabId, childTabId, createdAt };
+  const next: TabDependency = {
+    id: dependencyId(parentTabId, childTabId),
+    parentTabId,
+    childTabId,
+    createdAt,
+    updatedAt,
+  };
   if (type) next.type = type;
   return [...dependencies, next];
 }
@@ -51,16 +65,20 @@ export function removeDependency(dependencies: TabDependency[], id: string): Tab
 export function updateDependencyType(
   dependencies: TabDependency[],
   id: string,
-  type: DependencyType | undefined
+  type: DependencyType | undefined,
+  now: number = createTimestamp()
 ): TabDependency[] {
   return dependencies.map((d) => {
+    // Untouched dependencies are returned by reference and keep their own
+    // `updatedAt` — only the one that actually changed is stamped.
     if (d.id !== id) return d;
+    if (d.type === type) return d;
     if (type === undefined) {
       const { type: _drop, ...rest } = d;
       void _drop;
-      return rest;
+      return { ...rest, updatedAt: now };
     }
-    return { ...d, type };
+    return { ...d, type, updatedAt: now };
   });
 }
 
@@ -123,7 +141,10 @@ export function groupDependenciesByChild(dependencies: TabDependency[]): Map<str
 export function mergeDependencies(existing: TabDependency[], incoming: TabDependency[]): TabDependency[] {
   let next = existing;
   for (const dep of incoming) {
-    next = addDependency(next, dep.parentTabId, dep.childTabId, dep.type, dep.createdAt);
+    // `dep.updatedAt` is carried through rather than defaulted: an imported
+    // dependency already knows when it last changed, and resetting that to
+    // its creation time would lose real information.
+    next = addDependency(next, dep.parentTabId, dep.childTabId, dep.type, dep.createdAt, dep.updatedAt);
   }
   return next;
 }

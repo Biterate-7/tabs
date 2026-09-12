@@ -1,3 +1,4 @@
+import { isValidTimestamp } from "@/lib/timestamps";
 import type { Tab } from "./types";
 
 /**
@@ -21,7 +22,21 @@ export const OPTIONAL_STRING_TAB_FIELDS = [
 ] as const;
 
 /**
- * Strips the fields above from `tab` when they are not strings.
+ * Timestamp fields on a `Tab`. Both optional (a tab may predate them), both
+ * epoch-ms numbers when present.
+ *
+ * These get the same repair-don't-reject treatment as the string fields
+ * above, for the same reason: a hand-edited file carrying
+ * `"updatedAt": "yesterday"` or `{}` would otherwise be compared against a
+ * real number by every later sync decision. Dropping the field leaves the
+ * tab in the honest "unknown" state it would have had before timestamps
+ * existed, which the rest of the code already handles.
+ */
+const TIMESTAMP_TAB_FIELDS = ["createdAt", "updatedAt"] as const;
+
+/**
+ * Strips the fields above from `tab` when they are not strings, and any
+ * timestamp field that is not a finite number.
  *
  * Both places that turn outside data into `Tab`s use this, so they cannot
  * drift apart:
@@ -45,6 +60,9 @@ export function stripWrongTypedTabFields(tab: Tab): Tab {
   const raw = tab as unknown as Record<string, unknown>;
   for (const field of OPTIONAL_STRING_TAB_FIELDS) {
     if (field in raw && typeof raw[field] !== "string") delete raw[field];
+  }
+  for (const field of TIMESTAMP_TAB_FIELDS) {
+    if (field in raw && !isValidTimestamp(raw[field])) delete raw[field];
   }
   return tab;
 }

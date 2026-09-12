@@ -1,4 +1,5 @@
 import { createId } from "@/lib/id";
+import { isValidTimestamp } from "@/lib/timestamps";
 import { isSafeOpenUrl } from "@/lib/browser/protocol";
 import { stripWrongTypedTabFields } from "@/lib/tabs/sanitize";
 import { dependencyId, mergeDependencies } from "@/lib/dependencies/relations";
@@ -154,8 +155,8 @@ function sanitizeGroups(raw: unknown): { groups: Group[] | undefined; skipped: n
     groups.push({
       id,
       name: typeof entry.name === "string" ? entry.name.trim() : "",
-      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
-      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+      createdAt: isValidTimestamp(entry.createdAt) ? entry.createdAt : now,
+      updatedAt: isValidTimestamp(entry.updatedAt) ? entry.updatedAt : now,
     });
   }
 
@@ -202,8 +203,8 @@ function sanitizeSections(raw: unknown, now: number = Date.now()): { sections: S
       rawParentId: typeof entry.parentId === "string" ? entry.parentId : undefined,
       name: typeof entry.name === "string" ? entry.name.trim() : "",
       source: entry.source === "user" ? "user" : "ai",
-      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
-      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+      createdAt: isValidTimestamp(entry.createdAt) ? entry.createdAt : now,
+      updatedAt: isValidTimestamp(entry.updatedAt) ? entry.updatedAt : now,
     });
   }
 
@@ -251,8 +252,8 @@ function sanitizeWorkspace(
     ...(groups !== undefined ? { groups } : {}),
     ...(sections !== undefined ? { sections } : {}),
     ...(logo !== undefined ? { logo } : {}),
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
-    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
+    createdAt: isValidTimestamp(raw.createdAt) ? raw.createdAt : now,
+    updatedAt: isValidTimestamp(raw.updatedAt) ? raw.updatedAt : now,
   };
 
   return {
@@ -320,7 +321,10 @@ function sanitizeDependencies(
         parentTabId,
         childTabId,
         type: sanitizeType(entry.type),
-        createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
+        createdAt: isValidTimestamp(entry.createdAt) ? entry.createdAt : now,
+        // A file that already carries a real `updatedAt` keeps it; only a
+        // missing or malformed one falls back to this import's clock.
+        updatedAt: isValidTimestamp(entry.updatedAt) ? entry.updatedAt : undefined,
       },
     ]);
     if (merged.length === dependencies.length) {
@@ -391,8 +395,8 @@ function sanitizeCollections(
       workspaceId,
       name: entry.name.trim(),
       tabIds,
-      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,
-      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : now,
+      createdAt: isValidTimestamp(entry.createdAt) ? entry.createdAt : now,
+      updatedAt: isValidTimestamp(entry.updatedAt) ? entry.updatedAt : now,
     });
   }
 
