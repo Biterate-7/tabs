@@ -1,5 +1,7 @@
 import "server-only";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
+import { readEntityVersions } from "./changes";
+import type { EntityVersions } from "./changes";
 import type {
   CollectionSyncPayload,
   DependencySyncPayload,
@@ -154,6 +156,18 @@ export type WorkspaceMutation = {
   readonly workspaceId: string;
   /** The version every row written through this handle receives. */
   readonly version: bigint;
+  /**
+   * The server's current version for every entity in this workspace, read
+   * INSIDE this transaction.
+   *
+   * Conflict detection has to share the transaction that holds the
+   * workspace's row lock: reading versions on another connection would let a
+   * second push commit between the check and the write, which is precisely
+   * the race the lock exists to close.
+   */
+  readEntityVersions(): Promise<EntityVersions>;
+  /** Updates the workspace's own user-owned fields (name, logo). Creation is createWorkspace; this never changes ownership. */
+  upsertWorkspace(workspace: WorkspaceSyncPayload): Promise<void>;
   upsertTab(tab: TabSyncPayload): Promise<void>;
   upsertSection(section: SectionSyncPayload): Promise<void>;
   upsertGroup(group: GroupSyncPayload): Promise<void>;
@@ -346,6 +360,26 @@ function createMutation(client: PoolClient, workspaceId: string, version: bigint
   return {
     workspaceId,
     version,
+
+    async readEntityVersions() {
+      return readEntityVersions(client, workspaceId);
+    },
+
+    /**
+     * Only name and logo. `user_id` is deliberately absent from the SET
+     * list: a push must never be able to change who owns a workspace, and
+     * the safest way to guarantee that is for no write path to mention the
+     * column at all.
+     */
+    async upsertWorkspace(workspace) {
+      await client.query(
+        `UPDATE tabdump_workspaces
+            SET name = $2, logo = $3, created_at = $4, updated_at = $5,
+                deleted_at = NULL, sync_version = $6
+          WHERE id = $1`,
+        [workspaceId, workspace.name, workspace.logo ?? null, workspace.createdAt, workspace.updatedAt, v]
+      );
+    },
 
     async upsertTab(tab) {
       await upsert(

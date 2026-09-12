@@ -205,8 +205,14 @@ let poolPromise: Promise<Pool> | undefined;
  * TLS is left entirely to the connection string (`?sslmode=require`) rather
  * than overridden here — hard-coding `rejectUnauthorized: false` in code is
  * how a deployment silently loses certificate verification.
+ *
+ * Exported so the workspace sync layer (src/lib/sync/store.ts) shares this
+ * one pool rather than opening a second one against the same database.
+ * Sharing is the point: two pools of three would double this instance's
+ * connection footprint for no benefit, and the reasoning about `max` above
+ * assumes one. Nothing about the auth store's behaviour changes.
  */
-function getPool(connectionString: string): Promise<Pool> {
+export function getPool(connectionString: string): Promise<Pool> {
   poolPromise ??= (async () => {
     const { Pool: PgPool } = await import("pg");
     const created = new PgPool({
