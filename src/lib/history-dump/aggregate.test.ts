@@ -93,3 +93,38 @@ describe("aggregateHistoryEntries", () => {
     expect(aggregateHistoryEntries([])).toEqual([]);
   });
 });
+
+/**
+ * History rows come from chrome.history via the extension bridge, so they are
+ * untrusted the same way an extension batch is — and a real profile genuinely
+ * does contain file:// and chrome:// entries. aggregateHistoryEntries runs
+ * every row through parseSingleUrl, which is what keeps History Dump from
+ * being a way back in for a scheme the parser and opener both refuse.
+ */
+describe("History Dump cannot reintroduce an unsafe URL", () => {
+  const UNSAFE = [
+    "javascript:alert(1)",
+    "javascript://example.com/%0aalert(1)",
+    "data://example.com/x",
+    "file:///C:/Users/me/secrets.txt",
+    "file://example.com/share",
+    "vbscript://example.com/x",
+    "about:blank",
+    "chrome://settings",
+    "chrome-extension://abcdefghijklmnop/page.html",
+  ];
+
+  it.each(UNSAFE)("drops a history row for %s", (url) => {
+    expect(aggregateHistoryEntries([item({ url })])).toEqual([]);
+  });
+
+  it("keeps ordinary http(s) history rows, underscores intact", () => {
+    const result = aggregateHistoryEntries([
+      item({ url: "https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events" }),
+      item({ url: "file:///etc/passwd", historyItemId: "2" }),
+    ]);
+    expect(result.map((r) => r.url)).toEqual([
+      "https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events",
+    ]);
+  });
+})

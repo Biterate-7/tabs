@@ -1,4 +1,6 @@
 import { createId } from "@/lib/id";
+import { isSafeOpenUrl } from "@/lib/browser/protocol";
+import { stripWrongTypedTabFields } from "@/lib/tabs/sanitize";
 import { dependencyId, mergeDependencies } from "@/lib/dependencies/relations";
 import { DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
@@ -28,11 +30,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isValidRawTab(value: unknown): value is Record<string, unknown> {
   if (!isPlainObject(value)) return false;
-  return (
-    typeof value.url === "string" &&
-    typeof value.normalizedUrl === "string" &&
-    typeof value.domain === "string"
-  );
+  if (
+    typeof value.url !== "string" ||
+    typeof value.normalizedUrl !== "string" ||
+    typeof value.domain !== "string"
+  ) {
+    return false;
+  }
+  // An export file is untrusted — it is a plain .json someone can send you,
+  // or edit before re-importing — so it gets the same scheme safelist as
+  // pasted text (parseSingleUrl) and the extension path. Without this, a
+  // file could put `javascript:` back into a workspace that the parser
+  // hardening had just kept out. `normalizedUrl` is checked too: it is what
+  // dedupe compares and what several views read, so a safe `url` paired with
+  // an unsafe `normalizedUrl` must not slip through either.
+  return isSafeOpenUrl(value.url) && isSafeOpenUrl(value.normalizedUrl);
 }
 
 /**
@@ -81,7 +93,12 @@ function sanitizeTabs(
     const rawSectionId = typeof entry.sectionId === "string" ? entry.sectionId : undefined;
     const sectionId = rawSectionId ? sectionIdMap.get(rawSectionId) : undefined;
 
-    const tab: Tab = { ...(entry as unknown as Tab), id };
+    // The spread is kept on purpose: an export written by a NEWER TabDump
+    // may carry fields this build has never heard of, and passing them
+    // through means a round trip through an older version doesn't silently
+    // strip them. The cost is that it also copies wrong-typed values, so the
+    // fields that are read as strings are normalised back out below.
+    const tab: Tab = stripWrongTypedTabFields({ ...(entry as unknown as Tab), id });
     if (groupId) tab.groupId = groupId;
     else delete tab.groupId;
     if (sectionId) tab.sectionId = sectionId;

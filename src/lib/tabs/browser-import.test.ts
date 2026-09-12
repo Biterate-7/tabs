@@ -116,3 +116,45 @@ describe("buildTabsFromBrowserImport", () => {
     expect(tabs[1].historyLastVisitedAt).toBeUndefined();
   });
 });
+
+/**
+ * The extension relays its payload through `window.postMessage` into this
+ * page, so the receiver cannot cryptographically prove the sender: any script
+ * already running on TabDump's own origin could post the same shape.
+ * useExtensionImport checks origin, event.source, message source/type and
+ * entry shape, and caps the batch — and this is the layer below it, where the
+ * URL itself is finally decided on. It defers to parseSingleUrl, so the
+ * scheme safelist applies to an extension batch exactly as it does to pasted
+ * text.
+ */
+describe("an extension batch cannot introduce an unsafe URL", () => {
+  const UNSAFE = [
+    "javascript:alert(1)",
+    "javascript://example.com/%0aalert(1)",
+    "data://example.com/x",
+    "data:text/html,<h1>x</h1>",
+    "file:///etc/passwd",
+    "file://example.com/share",
+    "vbscript://example.com/x",
+    "about:blank",
+    "blob:https://example.com/9b7a-1",
+    "chrome://settings",
+  ];
+
+  it.each(UNSAFE)("drops %s", (url) => {
+    expect(buildTabsFromBrowserImport([{ url }])).toEqual([]);
+  });
+
+  it("keeps the safe entries in a mixed batch", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "javascript://example.com/%0aalert(1)" },
+      { url: "https://example.com/path_with_underscores", title: "ok" },
+      { url: "file:///etc/passwd" },
+      { url: "http://example.com/a?x=1" },
+    ]);
+    expect(tabs.map((t) => t.url)).toEqual([
+      "https://example.com/path_with_underscores",
+      "http://example.com/a?x=1",
+    ]);
+  });
+})

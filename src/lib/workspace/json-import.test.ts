@@ -860,3 +860,151 @@ describe("parseWorkspaceExport collections", () => {
     expect(result.skippedCollections).toBe(0);
   });
 });
+
+/**
+ * An export file is untrusted input: it is a plain .json someone can hand
+ * you, or edit by hand before re-importing. These cover the two things that
+ * a file could previously smuggle past sanitizeTabs, which validated that
+ * `url`/`normalizedUrl`/`domain` were *strings* and then spread the rest of
+ * the entry through verbatim.
+ */
+function importTabs(tabs: unknown[]) {
+  return parseWorkspaceExport(
+    JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspaces: [{ id: "w1", name: "W", tabs, createdAt: 1, updatedAt: 2 }],
+      dependencies: [],
+      collections: [],
+    })
+  );
+}
+
+describe("import cannot reintroduce an unsafe URL scheme", () => {
+  const UNSAFE = [
+    "javascript:alert(1)",
+    "javascript://example.com/%0aalert(1)",
+    "JavaScript://example.com/%0aalert(1)",
+    "data:text/html,<h1>x</h1>",
+    "data://example.com/x",
+    "file:///etc/passwd",
+    "file://example.com/share",
+    "vbscript://example.com/x",
+    "about:blank",
+    "blob:https://example.com/9b7a-1",
+    "chrome://settings",
+  ];
+
+  it.each(UNSAFE)("drops a tab whose url is %s", (url) => {
+    const result = importTabs([{ id: "t1", url, normalizedUrl: url, domain: "example.com" }]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].tabs).toHaveLength(0);
+    expect(result.skippedTabs).toBe(1);
+  });
+
+  it("drops a tab whose normalizedUrl is unsafe even when url looks fine", () => {
+    // normalizedUrl is what dedupe compares and what several views read.
+    const result = importTabs([
+      {
+        id: "t1",
+        url: "https://example.com/ok",
+        normalizedUrl: "javascript://example.com/%0aalert(1)",
+        domain: "example.com",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].tabs).toHaveLength(0);
+    expect(result.skippedTabs).toBe(1);
+  });
+
+  it("keeps the safe tabs in a mixed file and counts the rest as skipped", () => {
+    const result = importTabs([
+      { id: "t1", url: "javascript://example.com/%0aalert(1)", normalizedUrl: "javascript://example.com/%0aalert(1)", domain: "example.com" },
+      { id: "t2", url: "https://example.com/path_with_underscores", normalizedUrl: "https://example.com/path_with_underscores", domain: "example.com" },
+      { id: "t3", url: "file:///etc/passwd", normalizedUrl: "file:///etc/passwd", domain: "" },
+      { id: "t4", url: "http://example.com/a?x=1&y=2#frag_1", normalizedUrl: "http://example.com/a?x=1&y=2", domain: "example.com" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].tabs.map((t) => t.url)).toEqual([
+      "https://example.com/path_with_underscores",
+      "http://example.com/a?x=1&y=2#frag_1",
+    ]);
+    expect(result.skippedTabs).toBe(2);
+  });
+});
+
+describe("import normalises wrong-typed tab fields", () => {
+  // Every one of these is read somewhere as a string — `title?.trim()` alone
+  // appears in a dozen render paths, and `?.` guards null, not a number. A
+  // hand-edited file could therefore crash the graph and workspace views.
+  it.each(["title", "category", "favicon", "notes", "organizationReason"])(
+    "drops a non-string %s rather than storing it",
+    (field) => {
+      const result = importTabs([
+        {
+          id: "t1",
+          url: "https://example.com",
+          normalizedUrl: "https://example.com",
+          domain: "example.com",
+          [field]: 12345,
+        },
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const tab = result.workspaces[0].tabs[0] as unknown as Record<string, unknown>;
+      expect(tab[field]).toBeUndefined();
+    }
+  );
+
+  it("survives the exact expression the graph renders with", () => {
+    const result = importTabs([
+      { id: "t1", url: "https://example.com", normalizedUrl: "https://example.com", domain: "example.com", title: 12345 },
+      { id: "t2", url: "https://example.org", normalizedUrl: "https://example.org", domain: "example.org", title: { evil: true } },
+      { id: "t3", url: "https://example.net", normalizedUrl: "https://example.net", domain: "example.net", title: ["a"] },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const tab of result.workspaces[0].tabs) {
+      // graph-canvas.tsx:1116 and ~12 other sites do exactly this.
+      expect(() => tab.title?.trim() || tab.domain).not.toThrow();
+    }
+  });
+
+  it("keeps well-typed optional fields untouched", () => {
+    const result = importTabs([
+      {
+        id: "t1",
+        url: "https://example.com",
+        normalizedUrl: "https://example.com",
+        domain: "example.com",
+        title: "  Real Title  ",
+        category: "research",
+        notes: "a note",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const tab = result.workspaces[0].tabs[0];
+    expect(tab.title).toBe("  Real Title  ");
+    expect(tab.category).toBe("research");
+    expect(tab.notes).toBe("a note");
+  });
+});
+
+describe("import cannot pollute Object.prototype", () => {
+  it("leaves the prototype clean for __proto__/constructor/prototype keys", () => {
+    const before = Object.keys(Object.prototype).length;
+    parseWorkspaceExport(
+      '{"version":1,"workspaces":[{"id":"w","name":"W","tabs":[' +
+        '{"id":"t1","url":"https://a.com","normalizedUrl":"https://a.com","domain":"a.com","__proto__":{"polluted":"yes"}},' +
+        '{"id":"t2","url":"https://b.com","normalizedUrl":"https://b.com","domain":"b.com","constructor":{"polluted":"yes"}}' +
+        '],"createdAt":1,"updatedAt":2}],"dependencies":[],"collections":[]}'
+    );
+    expect((({} as Record<string, unknown>).polluted)).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.keys(Object.prototype).length).toBe(before);
+  });
+});
