@@ -17,6 +17,7 @@ import {
   pruneCollectionState,
   saveCollectionState,
 } from "@/lib/collections/persistence"
+import { createTimestamp } from "@/lib/timestamps"
 import type { Collection } from "@/lib/collections/types"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -80,22 +81,41 @@ export function useCollectionStore(workspaces: Workspace[]) {
       // reading this render's already-current `collections` and calling
       // setCollections with the computed array is what makes that safe.
       createCollection: (workspaceId: string, name: string, tabIds: string[] = []) => {
-        const result = createCollection(collections, workspaceId, name, tabIds)
+        const result = createCollection(collections, workspaceId, name, tabIds, createTimestamp())
         setCollections(result.collections)
         return result.collection
       },
-      renameCollection: (id: string, name: string) => setCollections((prev) => renameCollection(prev, id, name)),
+      // Each of these reads the clock once, here, where the user's mutation
+      // actually happens, and passes it into the reducer. Letting the reducer
+      // default it would put the read inside the updater, which React may
+      // evaluate more than once (twice per update under StrictMode) — minting
+      // a timestamp that is then thrown away. The updater stays a pure
+      // reducer call, so "apply to the latest state" still holds.
+      renameCollection: (id: string, name: string) => {
+        const now = createTimestamp()
+        setCollections((prev) => renameCollection(prev, id, name, now))
+      },
       deleteCollection: (id: string) => setCollections((prev) => deleteCollection(prev, id)),
-      addTabToCollection: (collectionId: string, tabId: string) =>
-        setCollections((prev) => addTabToCollection(prev, collectionId, tabId)),
-      addTabsToCollection: (collectionId: string, tabIds: string[]) =>
-        setCollections((prev) => addTabsToCollection(prev, collectionId, tabIds)),
-      removeTabFromCollection: (collectionId: string, tabId: string) =>
-        setCollections((prev) => removeTabFromCollection(prev, collectionId, tabId)),
-      removeTabsFromCollection: (collectionId: string, tabIds: string[]) =>
-        setCollections((prev) => removeTabsFromCollection(prev, collectionId, tabIds)),
-      moveTabToCollection: (tabId: string, targetCollectionId: string) =>
-        setCollections((prev) => moveTabToCollection(prev, tabId, targetCollectionId)),
+      addTabToCollection: (collectionId: string, tabId: string) => {
+        const now = createTimestamp()
+        setCollections((prev) => addTabToCollection(prev, collectionId, tabId, now))
+      },
+      addTabsToCollection: (collectionId: string, tabIds: string[]) => {
+        const now = createTimestamp()
+        setCollections((prev) => addTabsToCollection(prev, collectionId, tabIds, now))
+      },
+      removeTabFromCollection: (collectionId: string, tabId: string) => {
+        const now = createTimestamp()
+        setCollections((prev) => removeTabFromCollection(prev, collectionId, tabId, now))
+      },
+      removeTabsFromCollection: (collectionId: string, tabIds: string[]) => {
+        const now = createTimestamp()
+        setCollections((prev) => removeTabsFromCollection(prev, collectionId, tabIds, now))
+      },
+      moveTabToCollection: (tabId: string, targetCollectionId: string) => {
+        const now = createTimestamp()
+        setCollections((prev) => moveTabToCollection(prev, tabId, targetCollectionId, now))
+      },
     }),
     [collections]
   )

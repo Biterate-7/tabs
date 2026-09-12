@@ -6,6 +6,7 @@ import {
   removeDependency,
   updateDependencyType,
 } from "@/lib/dependencies/relations"
+import { createTimestamp } from "@/lib/timestamps"
 import {
   defaultDependencyState,
   loadDependencyState,
@@ -54,11 +55,21 @@ export function useDependencyStore(validTabIds: Set<string>) {
     () => ({
       dependencies,
       setDependencies,
-      addDependency: (parentTabId: string, childTabId: string, type?: DependencyType) =>
-        setDependencies((prev) => addDependency(prev, parentTabId, childTabId, type)),
+      // The clock is read here, once, where the user's mutation actually
+      // happens — then passed in. Letting the reducer default it would move
+      // the read inside the updater, which React may evaluate more than once
+      // (twice per update under StrictMode), minting a timestamp that is then
+      // discarded. The updater itself stays a pure reducer call so React's
+      // "apply to the latest state" semantics are preserved.
+      addDependency: (parentTabId: string, childTabId: string, type?: DependencyType) => {
+        const now = createTimestamp()
+        setDependencies((prev) => addDependency(prev, parentTabId, childTabId, type, now, now))
+      },
       removeDependency: (id: string) => setDependencies((prev) => removeDependency(prev, id)),
-      updateDependencyType: (id: string, type: DependencyType | undefined) =>
-        setDependencies((prev) => updateDependencyType(prev, id, type)),
+      updateDependencyType: (id: string, type: DependencyType | undefined) => {
+        const now = createTimestamp()
+        setDependencies((prev) => updateDependencyType(prev, id, type, now))
+      },
     }),
     [dependencies]
   )

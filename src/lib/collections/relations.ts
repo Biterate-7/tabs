@@ -1,4 +1,5 @@
 import { createId } from "@/lib/id";
+import { createTimestamp } from "@/lib/timestamps";
 import type { Collection } from "./types";
 
 const DEFAULT_NAME = "New Collection";
@@ -34,7 +35,7 @@ export function createCollection(
   workspaceId: string,
   name: string,
   tabIds: string[] = [],
-  now: number = Date.now()
+  now: number = createTimestamp()
 ): { collections: Collection[]; collection: Collection } {
   const dedupedTabIds = [...new Set(tabIds)];
   const stripped = stripFromAllCollections(collections, new Set(dedupedTabIds), now);
@@ -49,10 +50,14 @@ export function createCollection(
   return { collections: [...stripped, collection], collection };
 }
 
-export function renameCollection(collections: Collection[], id: string, name: string): Collection[] {
+export function renameCollection(
+  collections: Collection[],
+  id: string,
+  name: string,
+  now: number = createTimestamp()
+): Collection[] {
   const trimmed = name.trim();
   if (!trimmed) return collections;
-  const now = Date.now();
   return collections.map((c) => (c.id === id ? { ...c, name: trimmed, updatedAt: now } : c));
 }
 
@@ -69,12 +74,16 @@ export function deleteCollection(collections: Collection[], id: string): Collect
  * collection doesn't exist or already contains the tab, so callers can
  * cheaply detect a no-op via `===`.
  */
-export function addTabToCollection(collections: Collection[], collectionId: string, tabId: string): Collection[] {
+export function addTabToCollection(
+  collections: Collection[],
+  collectionId: string,
+  tabId: string,
+  now: number = createTimestamp()
+): Collection[] {
   const target = collections.find((c) => c.id === collectionId);
   if (!target) return collections;
   if (target.tabIds.includes(tabId)) return collections;
 
-  const now = Date.now();
   const stripped = stripFromAllCollections(collections, new Set([tabId]), now);
   return stripped.map((c) =>
     c.id === collectionId ? { ...c, tabIds: [...c.tabIds, tabId], updatedAt: now } : c
@@ -82,26 +91,39 @@ export function addTabToCollection(collections: Collection[], collectionId: stri
 }
 
 /** Adding one or more tabs already in `collectionId` to any other collection — same exclusivity rule as addTabToCollection, batched. */
-export function moveTabToCollection(collections: Collection[], tabId: string, targetCollectionId: string): Collection[] {
-  return addTabToCollection(collections, targetCollectionId, tabId);
+export function moveTabToCollection(
+  collections: Collection[],
+  tabId: string,
+  targetCollectionId: string,
+  now: number = createTimestamp()
+): Collection[] {
+  return addTabToCollection(collections, targetCollectionId, tabId, now);
 }
 
 /** Bulk form of addTabToCollection — the selection toolbar's "Add to collection" action. Same exclusivity guarantee, applied to every tab in one pass. */
-export function addTabsToCollection(collections: Collection[], collectionId: string, tabIds: string[]): Collection[] {
+export function addTabsToCollection(
+  collections: Collection[],
+  collectionId: string,
+  tabIds: string[],
+  now: number = createTimestamp()
+): Collection[] {
   const target = collections.find((c) => c.id === collectionId);
   if (!target) return collections;
   const toAdd = [...new Set(tabIds)].filter((id) => !target.tabIds.includes(id));
   if (toAdd.length === 0) return collections;
 
-  const now = Date.now();
   const stripped = stripFromAllCollections(collections, new Set(toAdd), now);
   return stripped.map((c) =>
     c.id === collectionId ? { ...c, tabIds: [...c.tabIds, ...toAdd], updatedAt: now } : c
   );
 }
 
-export function removeTabFromCollection(collections: Collection[], collectionId: string, tabId: string): Collection[] {
-  const now = Date.now();
+export function removeTabFromCollection(
+  collections: Collection[],
+  collectionId: string,
+  tabId: string,
+  now: number = createTimestamp()
+): Collection[] {
   let changed = false;
   const next = collections.map((c) => {
     if (c.id !== collectionId || !c.tabIds.includes(tabId)) return c;
@@ -111,10 +133,14 @@ export function removeTabFromCollection(collections: Collection[], collectionId:
   return changed ? next : collections;
 }
 
-export function removeTabsFromCollection(collections: Collection[], collectionId: string, tabIds: string[]): Collection[] {
+export function removeTabsFromCollection(
+  collections: Collection[],
+  collectionId: string,
+  tabIds: string[],
+  now: number = createTimestamp()
+): Collection[] {
   if (tabIds.length === 0) return collections;
   const wanted = new Set(tabIds);
-  const now = Date.now();
   let changed = false;
   const next = collections.map((c) => {
     if (c.id !== collectionId || !c.tabIds.some((id) => wanted.has(id))) return c;

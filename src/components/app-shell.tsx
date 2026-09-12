@@ -136,15 +136,24 @@ export function AppShell() {
   // The last dump's inputs, so the error state's "Try again" can re-run
   // exactly the same organization rather than asking the user to re-dump.
   const lastDumpRef = useRef<{ workspaceId: string; tabs: Tab[]; sections: Section[] } | null>(null)
-  // Read by the settle effect, which must see the store as it is AFTER the
-  // pipeline merged its result — not whatever `store` the effect's own
-  // closure was created with, and without re-running every time an unrelated
-  // update (a resolved title) lands mid-settle.
+  // The latest COMMITTED store — the value most recently handed to
+  // `commitStore`, or hydrated on mount. Deliberately not a snapshot of
+  // whatever `store` this render happens to see:
+  //
+  //  - the settle effect must read the store as it is AFTER the pipeline
+  //    merged its result, without re-running every time an unrelated update
+  //    (a resolved title) lands mid-settle;
+  //  - async callbacks that resolve out of order need "today's latest
+  //    store", which is exactly what a functional setState updater gave
+  //    them — and this ref is how they keep that guarantee now that they no
+  //    longer run inside one (see commitStore).
+  //
+  // Assigning it during render instead would reintroduce a stale read: a
+  // re-render triggered by some OTHER piece of state between a commit and
+  // the store's own re-render would write the pre-commit `store` back over
+  // it. Only commitStore and hydration touch it, and they are the only two
+  // places that call setStore, so it cannot drift.
   const storeRef = useRef<WorkspaceStore | null>(null)
-  // The same "latest ref" idiom the hooks in src/hooks use: a same-render
-  // snapshot assignment, never read back during this render.
-  // eslint-disable-next-line react-hooks/refs
-  storeRef.current = store
 
   useEffect(() => {
     // Hydrating from localStorage: this can only run post-mount (SSR has no
@@ -167,7 +176,14 @@ export function AppShell() {
     // syncSectionsWithCategories's doc comment for why that drift happens.
     const synced = syncSectionsWithCategoriesInStore(seeded)
     const changedOnLoad = synced.workspaces.some((w, i) => w !== migrated.workspaces[i])
+    // Seeds the committed-store ref alongside the state itself; see
+    // storeRef's comment for why nothing assigns it during render.
+    storeRef.current = synced
     setStore(synced)
+    // Deliberately NOT commitStore: this is load-time migration, not a user
+    // mutation, so it writes only when a workspace actually changed and it
+    // reads `available` directly rather than the `canPersist` state this
+    // same effect is still in the middle of setting.
     if (available && changedOnLoad) saveWorkspaceStore(synced)
     setSidebarCollapsed(loadSidebarCollapsed())
     if (!available) {
@@ -192,18 +208,41 @@ export function AppShell() {
   // Idempotent and referentially stable per-workspace when nothing needs
   // fixing, so this adds no meaningful overhead to the common case.
   function persist(next: WorkspaceStore): WorkspaceStore {
-    const synced = syncSectionsWithCategoriesInStore(next)
-    setStore(synced)
-    if (canPersist) saveWorkspaceStore(synced)
-    return synced
+    return commitStore(syncSectionsWithCategoriesInStore(next))
   }
 
+  /**
+   * Commits an already-computed store: records it, hands it to React, and
+   * writes it to localStorage exactly once.
+   *
+   * This is the whole persistence seam. It takes a finished value rather
+   * than a reducer, so nothing here ever runs inside a React state updater.
+   * That matters because React invokes updaters an unpredictable number of
+   * times — twice per update under StrictMode in development — and an
+   * updater that persists or reads the clock therefore writes to
+   * localStorage twice and can mint two different timestamps, keeping the
+   * one React happens to retain. Phase 2 saw exactly that as a 1ms drift
+   * between committed state and stored state.
+   *
+   * Callers that need "the latest store" rather than the one their closure
+   * captured read `storeRef.current`, which this keeps current
+   * synchronously — so two async callbacks resolving in the same tick still
+   * compose, the way nesting them in functional updaters used to guarantee.
+   */
+  function commitStore(next: WorkspaceStore): WorkspaceStore {
+    storeRef.current = next
+    setStore(next)
+    if (canPersist) saveWorkspaceStore(next)
+    return next
+  }
+
+  // Device-local UI state rather than workspace data, but the same rule
+  // applies: compute the next value, then set and save it — never save from
+  // inside the updater, where React is free to evaluate more than once.
   function toggleSidebarCollapsed() {
-    setSidebarCollapsed((prev) => {
-      const next = !prev
-      saveSidebarCollapsed(next)
-      return next
-    })
+    const next = !sidebarCollapsed
+    setSidebarCollapsed(next)
+    saveSidebarCollapsed(next)
   }
 
   function markRecentlyAdded(ids: string[]) {
@@ -299,10 +338,10 @@ export function AppShell() {
 
   // Title resolution runs asynchronously and may still be in flight if the
   // user switches workspaces before it resolves. Binding to the workspace
-  // id captured when resolution *started*, and applying it through a
-  // functional update (today's latest store, not whatever `store` this
-  // closure was created with), means a resolved title always lands back in
-  // the workspace it was actually resolved for — never wherever the user
+  // id captured when resolution *started*, and applying it to the latest
+  // committed store (`storeRef.current`, not whatever `store` this closure
+  // was created with), means a resolved title always lands back in the
+  // workspace it was actually resolved for — never wherever the user
   // happens to be looking by the time the fetch completes.
   //
   // `tabs` is useTitleResolution's own snapshot, built from whatever tabs
@@ -313,25 +352,22 @@ export function AppShell() {
   // notes, ...) that landed while resolution was in flight survives instead
   // of being silently reverted by an unrelated title update.
   function handleTitlesResolved(workspaceId: string, tabs: Tab[]) {
-    setStore((prev) => {
-      if (!prev) return prev
-      const workspace = prev.workspaces.find((w) => w.id === workspaceId)
-      if (!workspace) return prev
-      const resolvedById = new Map(tabs.map((t) => [t.id, t]))
-      const mergedTabs = workspace.tabs.map((t) => {
-        const resolved = resolvedById.get(t.id)
-        return resolved && resolved.title !== t.title ? { ...t, title: resolved.title } : t
-      })
-      const next = updateWorkspaceTabs(prev, workspaceId, mergedTabs)
-      if (canPersist) saveWorkspaceStore(next)
-      return next
+    const prev = storeRef.current
+    if (!prev) return
+    const workspace = prev.workspaces.find((w) => w.id === workspaceId)
+    if (!workspace) return
+    const resolvedById = new Map(tabs.map((t) => [t.id, t]))
+    const mergedTabs = workspace.tabs.map((t) => {
+      const resolved = resolvedById.get(t.id)
+      return resolved && resolved.title !== t.title ? { ...t, title: resolved.title } : t
     })
+    commitStore(updateWorkspaceTabs(prev, workspaceId, mergedTabs))
   }
 
   // Runs the AI section-organization engine (src/lib/sections/ai/organize.ts)
   // over `tabsSnapshot` and merges the result back into whichever workspace
-  // matching `workspaceId` looks like BY THE TIME THE CALL RESOLVES (a
-  // functional setStore update, same "always merge into the latest state"
+  // matching `workspaceId` looks like BY THE TIME THE CALL RESOLVES (read
+  // from storeRef, same "always merge into the latest committed state"
   // pattern handleTitlesResolved uses) — never the stale `store` this
   // function's caller closed over. New sections are unioned in rather than
   // overwriting the workspace's current list, so a section the user created
@@ -373,43 +409,42 @@ export function AppShell() {
     }
     logOrganizeReport(result.report)
 
-    setStore((prev) => {
-      if (!prev) return prev
-      const workspace = prev.workspaces.find((w) => w.id === workspaceId)
-      if (!workspace) return prev
+    const prev = storeRef.current
+    if (!prev) return { ok: true, report: result.report }
+    const workspace = prev.workspaces.find((w) => w.id === workspaceId)
+    if (!workspace) return { ok: true, report: result.report }
 
-      const existingSectionIds = new Set((workspace.sections ?? []).map((s) => s.id))
-      const newSections = result.sections.filter((s) => !existingSectionIds.has(s.id))
-      const sections = [...(workspace.sections ?? []), ...newSections]
+    const existingSectionIds = new Set((workspace.sections ?? []).map((s) => s.id))
+    const newSections = result.sections.filter((s) => !existingSectionIds.has(s.id))
+    const sections = [...(workspace.sections ?? []), ...newSections]
 
-      const organizedById = new Map(result.tabs.map((t) => [t.id, t]))
-      const tabs = workspace.tabs.map((t) => {
-        const organized = organizedById.get(t.id)
-        if (!organized) return t
-        // sectionIdBeforeById always has an entry for any id also in
-        // organizedById (both derive from the same tabsSnapshot), so a plain
-        // !== comparison correctly treats "was undefined" as a real value
-        // rather than "missing key".
-        if (t.sectionId !== sectionIdBeforeById.get(t.id)) return t
-        return organized
-      })
-
-      // Organization is a real mutation of the tabs it places: it writes
-      // sectionId, organizationStatus and organizationReason. Those have to go
-      // through stampChangedTabs like every other bulk tab write, or a tab that
-      // the pipeline just filed would sync as older than its own placement.
-      // One clock read for the workspace and its tabs, so a tab stamped by this
-      // pass carries exactly the workspace's updatedAt.
-      const now = createTimestamp()
-      const workspaces = prev.workspaces.map((w) =>
-        w.id === workspaceId
-          ? { ...w, sections, tabs: stampChangedTabs(workspace.tabs, tabs, now), updatedAt: now }
-          : w
-      )
-      const next = { ...prev, workspaces }
-      if (canPersist) saveWorkspaceStore(next)
-      return next
+    const organizedById = new Map(result.tabs.map((t) => [t.id, t]))
+    const tabs = workspace.tabs.map((t) => {
+      const organized = organizedById.get(t.id)
+      if (!organized) return t
+      // sectionIdBeforeById always has an entry for any id also in
+      // organizedById (both derive from the same tabsSnapshot), so a plain
+      // !== comparison correctly treats "was undefined" as a real value
+      // rather than "missing key".
+      if (t.sectionId !== sectionIdBeforeById.get(t.id)) return t
+      return organized
     })
+
+    // Organization is a real mutation of the tabs it places: it writes
+    // sectionId, organizationStatus and organizationReason. Those have to go
+    // through stampChangedTabs like every other bulk tab write, or a tab that
+    // the pipeline just filed would sync as older than its own placement.
+    // One clock read for the workspace and its tabs, so a tab stamped by this
+    // pass carries exactly the workspace's updatedAt — and it is read here,
+    // at the point the mutation is actually performed, rather than inside a
+    // state updater React may evaluate more than once.
+    const now = createTimestamp()
+    const workspaces = prev.workspaces.map((w) =>
+      w.id === workspaceId
+        ? { ...w, sections, tabs: stampChangedTabs(workspace.tabs, tabs, now), updatedAt: now }
+        : w
+    )
+    commitStore({ ...prev, workspaces })
 
     return { ok: true, report: result.report }
   }

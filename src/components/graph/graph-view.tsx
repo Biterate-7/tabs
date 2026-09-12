@@ -16,6 +16,7 @@ import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { buildClusterTree, computeClusterAnchors } from "@/lib/graph/clusters"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
+import { createTimestamp } from "@/lib/timestamps"
 import { computeLayoutKey } from "@/lib/graph/precompute"
 import { searchGraphNodes } from "@/lib/graph/search"
 import {
@@ -468,9 +469,13 @@ export function GraphView({
       toast.info("Already linked")
       return
     }
+    // Clock read here, at the mutation, rather than inside the updater React
+    // may evaluate more than once — the link's createdAt is persisted graph
+    // state, so a discarded second reading would be a real (if small) lie.
+    const createdAt = createTimestamp()
     setGraphState((prev) => ({
       ...prev,
-      manualConnections: [...prev.manualConnections, { a, b, createdAt: Date.now() }],
+      manualConnections: [...prev.manualConnections, { a, b, createdAt }],
     }))
     toast.success("Tabs linked")
   }
