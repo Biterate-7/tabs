@@ -1,3 +1,4 @@
+import { isSafeOpenUrl } from "@/lib/browser/protocol";
 import type { PlatformAdapter } from "./types";
 
 /**
@@ -37,8 +38,14 @@ export const webPlatform: PlatformAdapter = {
    * its own, richer web behaviour (reuse the current tab, or let the
    * extension activate an already-open one). This is the plain fallback for
    * any other caller that just wants a URL opened.
+   *
+   * It enforces the http(s) safelist itself rather than trusting callers to
+   * have done it: this is a navigation sink, and the desktop adapter's
+   * equivalent is checked in Rust, so the web one should not be the weaker
+   * half of the same interface.
    */
   async openExternal(url: string): Promise<void> {
+    if (!isSafeOpenUrl(url)) return;
     window.open(url, "_blank", "noopener,noreferrer");
   },
 

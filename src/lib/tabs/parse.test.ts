@@ -229,3 +229,70 @@ describe("URL safety is not widened", () => {
     }
   });
 });
+
+/**
+ * A `Tab` in TabDump is a saved web page the user expects to re-open, and
+ * every opening path — web (openTab), desktop (Rust open_external) and the
+ * extension (browser-commands.js) — already refuses anything that isn't
+ * http(s). A non-http(s) Tab is therefore one that can never be opened
+ * anywhere, so accepting it only means storing an un-openable row and, in
+ * the `javascript:` case, carrying a payload around in local storage.
+ *
+ * `javascript://example.com/%0aalert(1)` is the case that matters: it is a
+ * structurally valid URL with a dotted hostname, so a "does it parse and
+ * have a dot" check waves it through.
+ */
+describe("parseSingleUrl only accepts web-openable schemes", () => {
+  const UNSAFE = [
+    "javascript:alert(1)",
+    "javascript://example.com/%0aalert(1)",
+    "JavaScript://example.com/%0aalert(1)",
+    "data:text/html,<h1>x</h1>",
+    "data://example.com/x",
+    "file:///etc/passwd",
+    "file://example.com/share",
+    "vbscript:msgbox(1)",
+    "vbscript://example.com/x",
+    "about:blank",
+    "blob:https://example.com/9b7a-1",
+    "chrome://settings",
+    "chrome-extension://abcdefghijklmnop/page.html",
+    "ftp://example.com/file.txt",
+  ];
+
+  it.each(UNSAFE)("rejects %s", (url) => {
+    expect(parseSingleUrl(url)).toBeNull();
+  });
+
+  it("counts them as invalid in a batch rather than storing them", () => {
+    const { tabs, invalidCount } = parseUrls(
+      ["javascript://example.com/%0aalert(1)", "https://example.com/ok_path", "file://example.com/share"].join("\n")
+    );
+    expect(tabs.map((t) => t.url)).toEqual(["https://example.com/ok_path"]);
+    expect(invalidCount).toBe(2);
+  });
+
+  it("still accepts http and https, including odd-but-legal shapes", () => {
+    for (const url of [
+      "https://example.com",
+      "http://example.com",
+      "https://example.com/",
+      "https://example.com:8443/path",
+      "https://example.com/path_with_underscores",
+      "https://example.com/search?q=hello_world",
+      "https://example.com/#section_name",
+    ]) {
+      expect(parseSingleUrl(url), url).not.toBeNull();
+    }
+  });
+
+  it("normalises a shouty scheme rather than rejecting it", () => {
+    // `new URL` lowercases the protocol, so casing is not a bypass either way.
+    expect(parseSingleUrl("HTTPS://example.com")?.url).toBe("HTTPS://example.com");
+    expect(parseSingleUrl("HTTP://example.com")?.url).toBe("HTTP://example.com");
+  });
+
+  it("keeps prefixing https:// to bare domains", () => {
+    expect(parseSingleUrl("example.com/foo_bar")?.url).toBe("https://example.com/foo_bar");
+  });
+});

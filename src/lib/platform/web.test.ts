@@ -76,3 +76,35 @@ describe("webPlatform", () => {
     expect(openSpy).toHaveBeenCalledWith("https://example.com/a", "_blank", "noopener,noreferrer");
   });
 });
+
+describe("webPlatform.openExternal is a guarded navigation sink", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("refuses non-http(s) schemes", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    for (const unsafe of [
+      "javascript://example.com/%0aalert(1)",
+      "data://example.com/x",
+      "file://example.com/share",
+      "about:blank",
+      "not a url",
+    ]) {
+      await webPlatform.openExternal(unsafe);
+    }
+
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("still opens ordinary http(s) URLs", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    await webPlatform.openExternal("https://example.com/path_with_underscores");
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://example.com/path_with_underscores",
+      "_blank",
+      "noopener,noreferrer"
+    );
+  });
+});

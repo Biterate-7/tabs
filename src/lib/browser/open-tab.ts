@@ -3,6 +3,7 @@
 import { toast } from "sonner"
 import { isDesktop, openExternal } from "@/lib/platform"
 import { isBrowserConnected, sendBrowserCommand } from "./bridge"
+import { isSafeOpenUrl } from "./protocol"
 import type { BrowserTabInfo } from "./protocol"
 
 /**
@@ -37,6 +38,26 @@ import type { BrowserTabInfo } from "./protocol"
  * `window.open` for `newTab`.
  */
 export async function openTab(url: string, options?: { newTab?: boolean }): Promise<void> {
+  // Nothing below this line may run for a URL that isn't http(s).
+  //
+  // The web fallback navigates the page itself, and
+  // `javascript://example.com/%0aalert(1)` is a valid URL with a dotted
+  // hostname — `//…` comments out the rest of the line, `%0a` is a newline —
+  // so handing it to location.assign() would execute script in TabDump's own
+  // origin. Checking here rather than in front of each sink means this also
+  // covers tabs already saved in a user's local storage from before the
+  // parser started rejecting these (see parseSingleUrl), which is the case
+  // input validation alone cannot reach.
+  //
+  // Desktop still re-checks in Rust and the extension still re-checks in
+  // browser-commands.js; this is a third layer, not a replacement for either.
+  if (!isSafeOpenUrl(url)) {
+    toast.error("Can't open this tab", {
+      description: "Only http and https links can be opened.",
+    })
+    return
+  }
+
   if (isDesktop()) {
     await openExternal(url)
     return

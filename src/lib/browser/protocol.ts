@@ -123,12 +123,27 @@ export type HistoryVisitItem = {
 const MAX_OPEN_URL_LENGTH = 4000;
 
 /**
- * Safelist (not a blocklist) of URL schemes an AI-originated command may
- * ever open — mirrors extension/src/browser-commands.js's isSafeOpenUrl
- * exactly. Validated here too (server-side, before Gemini's args are even
- * accepted) so a `javascript:`/`data:` URL is rejected as a bad *argument*
- * with a clear error, rather than only being silently dropped much later by
- * the extension's own defense-in-depth check.
+ * The one definition of "a URL TabDump may open", and the rule every layer
+ * defers to rather than restating:
+ *
+ * - `parseSingleUrl` (src/lib/tabs/parse.ts) — so an unsafe scheme never
+ *   becomes a saved tab in the first place.
+ * - `openTab` (./open-tab.ts) — so one already saved, from before that
+ *   check existed, still cannot be opened.
+ * - `webPlatform.openExternal` (src/lib/platform/web.ts) — the other
+ *   window.open sink.
+ * - extension/src/browser-commands.js keeps its own copy (no build step
+ *   there, so it cannot import this one), and src-tauri/src/commands.rs
+ *   keeps the equivalent match in Rust. Both are deliberate duplication at a
+ *   process boundary: a content script is a transport, never a trust
+ *   boundary, and the native layer should not trust the webview either.
+ *
+ * A safelist, not a blocklist, and a *structural* one — `new URL` then an
+ * explicit protocol comparison. Substring checks are not enough:
+ * `javascript://example.com/%0aalert(1)` parses cleanly, has a dotted
+ * hostname, and contains "://", yet `//…` comments out the rest of the line
+ * and `%0a` starts a new one, so it executes if it ever reaches a navigation
+ * API. Malformed input throws out of `new URL` and fails closed.
  */
 export function isSafeOpenUrl(url: unknown): url is string {
   if (typeof url !== "string" || url.length === 0 || url.length > MAX_OPEN_URL_LENGTH) return false;
