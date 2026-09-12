@@ -73,11 +73,30 @@ describe("tauri.conf.json", () => {
       }
     });
 
-    it("allows only the favicon host as a remote image source", () => {
+    it("allows only the favicon hosts as remote image sources", () => {
       // src/lib/workspace/favicon.ts resolves favicons through Google's s2
       // service; nothing else remote is loaded.
       expect(csp["img-src"]).toContain("https://www.google.com");
       expect(csp["img-src"]).toContain("'self'");
+    });
+
+    it("allows the gstatic host that s2/favicons redirects to", () => {
+      // Verified against the running desktop app: a request to
+      // www.google.com/s2/favicons 302s to t[0-3].gstatic.com/faviconV2, and
+      // CSP is enforced against the REDIRECT TARGET. Without this entry every
+      // favicon in the app is blocked — which is exactly what happened on the
+      // first Windows build.
+      expect(csp["img-src"]).toContain("https://*.gstatic.com");
+    });
+
+    it("never allows images from an unrestricted wildcard source", () => {
+      // Guards against someone "fixing" a blocked asset with a blanket `*`
+      // or `https:`. A host-scoped wildcard (https://*.gstatic.com) is fine;
+      // a bare one is not.
+      const sources = String(csp["img-src"]).split(/\s+/).filter(Boolean);
+      expect(sources).not.toContain("*");
+      expect(sources).not.toContain("https:");
+      expect(sources).not.toContain("http:");
     });
   });
 });

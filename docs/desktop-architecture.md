@@ -111,6 +111,33 @@ navigation to a non-app origin is cancelled, and an `http(s)` one is handed
 to the default browser instead. So even a link that never reaches
 `openTab()` cannot strand the window on a foreign page.
 
+Verified against the running Windows build: clicking a saved tab opened the
+URL in the default browser and left the window on `http://tauri.localhost/`,
+and a direct `window.location.assign("https://example.com/")` from inside the
+page was refused by the guard rather than navigating.
+
+### Content Security Policy
+
+The desktop build ships a CSP (`app.security.csp` in `tauri.conf.json`) that
+the website does not have, because a packaged app serves its own origin and
+should not be able to reach arbitrary hosts. It is `default-src 'self'` with
+`object-src`/`frame-src`/`form-action` set to `'none'` and no `unsafe-eval`.
+
+Two allowances are deliberate and worth knowing about:
+
+- **`script-src` includes `'unsafe-inline'`.** The pre-hydration theme script
+  in `src/app/layout.tsx` is inline by design (it exists to avoid a flash of
+  the wrong theme, and must run before any bundle loads). This is the one
+  meaningful relaxation.
+- **`img-src` includes `https://*.gstatic.com`** alongside
+  `https://www.google.com`. `src/lib/workspace/favicon.ts` requests
+  `www.google.com/s2/favicons`, which **302-redirects to
+  `t[0-3].gstatic.com/faviconV2`** — and CSP is enforced against the redirect
+  target, not the URL the app asked for. Without this entry every favicon in
+  the app is blocked, which is exactly what the first Windows build did.
+  `desktop-config.test.ts` pins both hosts, and also asserts that no bare `*`
+  or `https:` wildcard creeps into `img-src`.
+
 ## Authentication: signed-out by design in v1
 
 The desktop app does not sign in, and that is a deliberate security
@@ -257,3 +284,27 @@ which only the `desktop:*` scripts set.
   macOS build has been produced or signed from this repository.
 
 `npx tauri info` reports whether the local toolchain is complete.
+
+### What has actually been built and run
+
+The Windows app has been compiled, packaged, installed and exercised —
+not just configured:
+
+| | |
+| --- | --- |
+| Toolchain | Rust 1.98.1 (stable-x86_64-pc-windows-msvc), VS Build Tools 2022 (MSVC 14.44, Windows SDK 10.0.26100), WebView2 152 |
+| Artifacts | `tabdump.exe` (x64), `TabDump_0.1.0_x64_en-US.msi`, `TabDump_0.1.0_x64-setup.exe` |
+| Installed via | The MSI, per-user to `%LOCALAPPDATA%\Programs\TabDump` (no admin needed) |
+| Exercised | 60-tab workspace, spatial graph pan/zoom/drag, export through the native Save dialog, import through the native Open dialog, saved tabs opening in the default browser, clipboard, window resize, all four routes |
+
+Two Windows-specific notes for whoever ships this:
+
+- The bundles are **unsigned**. On a machine with Smart App Control
+  enforcing, the NSIS installer is blocked outright while the MSI installs
+  fine — so the MSI is the more reliable channel until there is a code
+  signing certificate.
+- Windows Installer will not replace the binary on a same-version
+  reinstall. Bump `version` in `tauri.conf.json` (and `package.json`, which
+  `desktop-config.test.ts` keeps in sync) for every build you distribute.
+
+macOS and Linux remain unbuilt from this repository.

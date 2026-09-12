@@ -18,7 +18,7 @@
         "script-src": "'self' 'unsafe-inline'",
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
-        "img-src": "'self' data: blob: https://www.google.com",
+        "img-src": "'self' data: blob: https://www.google.com https://*.gstatic.com",
         "connect-src": "'self' ipc: http://ipc.localhost https://tabsdump.vercel.app",
         "frame-src": "'none'",
         "object-src": "'none'",

@@ -12,6 +12,13 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Rust build output. `cargo`/`tauri build` writes generated JS in here
+    // (Tauri's codegen assets and its global API shim), which is machine
+    // output, sometimes not even valid UTF-8 — linting it produces parse
+    // errors for code nobody wrote. src-tauri/.gitignore already keeps it out
+    // of git; this keeps it out of eslint, which does not read that file.
+    "src-tauri/target/**",
+    "src-tauri/gen/**",
   ]),
 ]);
 

@@ -10,7 +10,7 @@
 
 mod commands;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 /// Origins the app window is allowed to *stay on*.
