@@ -52,6 +52,41 @@ Sessions are server-side rows, so production needs that database — a serverles
 
 Signing in doesn't upload anything. TabDump stays local-first — an account partitions this browser's storage so two people sharing a browser don't see each other's workspaces, and your signed-out workspaces stay exactly where they are.
 
+## Desktop app (Tauri)
+
+TabDump also builds as a downloadable desktop app. It is the **same**
+frontend as the website — one `src/` tree, packaged as a static export
+inside a Tauri 2 shell — not a separate product.
+
+Working on the website needs no Rust: the desktop configuration is gated
+behind an environment variable only the `desktop:*` scripts set, so
+`npm run dev` and `npm run build` are untouched.
+
+```bash
+npm run desktop:dev     # Tauri window against the Next dev server (hot reload)
+npm run desktop:build   # packaged app -> src-tauri/target/release/bundle/
+npm run desktop:export  # just the static frontend -> out/
+npm run desktop:icons   # regenerate app icons from src/app/icon.svg
+```
+
+Building the desktop app (not the website) additionally needs [Rust](https://rustup.rs/)
+and your platform's build tools — on Windows, Visual Studio Build Tools with
+MSVC and the Windows SDK. Run `npx tauri info` to check. Windows packaging
+(MSI/NSIS) is configured; macOS targets can be added without changing any
+application code.
+
+Because TabDump is local-first, the desktop app works offline and keeps
+workspaces on that device. Two things are web-only by nature, and the UI
+already handles both: **Sign in with Google** (Google will not authorize a
+`tauri://localhost` origin, so desktop v1 runs signed-out) and anything
+needing the **browser extension**, including History Dump's scan — a Chrome
+extension cannot inject into a desktop webview. Move a workspace between
+web and desktop with the built-in JSON export/import.
+
+See [docs/desktop-architecture.md](docs/desktop-architecture.md) for the
+full design, the security model, and the planned pairing flow for desktop
+accounts.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
