@@ -1,0 +1,35 @@
+[package]
+name = "tabdump"
+version = "0.1.0"
+description = "TabDump — turn browser-tab chaos into an organized workspace."
+edition = "2021"
+rust-version = "1.77.2"
+# Not published; the desktop app is distributed as a bundle, not a crate.
+publish = false
+
+[lib]
+# `_lib` suffix avoids a name collision with the binary target on Windows.
+name = "tabdump_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Opens saved tabs in the user's DEFAULT BROWSER. Used only from Rust (see
+# src/commands.rs); the JS-side opener plugin is deliberately not enabled, so
+# the frontend cannot ask to open anything this app hasn't validated first.
+tauri-plugin-opener = "2"
+# Native "Save as…" dialog for workspace export. Also Rust-only: the frontend
+# never supplies a filesystem path, it only supplies a suggested filename.
+tauri-plugin-dialog = "2"
+# Restores window size/position between launches. Purely local window
+# geometry — no content, no network.
+tauri-plugin-window-state = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Used by `tauri build --debug` / CI to keep devtools available.
+custom-protocol = ["tauri/custom-protocol"]

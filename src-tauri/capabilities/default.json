@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "TabDump's entire IPC surface. Intentionally just Tauri's core baseline: every native capability this app has (opening a saved tab in the default browser, saving an export) is an app-defined command in src/commands.rs, which validates its own input and is therefore not exposed as a general-purpose permission. No opener, fs, shell, http or process plugin permission is granted to the frontend.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
