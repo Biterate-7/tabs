@@ -814,7 +814,10 @@ describe("workspace deletion", () => {
 
     // Still here, and still holding its tabs.
     expect(first.host.workspaces.get(WS)!.tabs).toHaveLength(2);
-    expect(first.state().conflicts.some((c) => c.entityType === "workspace")).toBe(true);
+    // Surfaced as a lifecycle state the user can understand, not as a
+    // conflict over an entity called "workspace" with nothing to choose.
+    expect(first.state().status).toBe("remote-deleted");
+    expect(first.state().conflicts).toHaveLength(0);
   });
 
   it("does not touch other workspaces when one is deleted remotely", async () => {
@@ -832,6 +835,50 @@ describe("workspace deletion", () => {
 
     expect(first.host.workspaces.get(WS_TWO)!.tabs).toHaveLength(2);
     expect(first.state(WS_TWO).status).not.toBe("conflict");
+  });
+});
+
+describe("deleting a synced workspace", () => {
+  /**
+   * The dialog promises the workspace is gone and that it cannot be undone.
+   * If the server keeps it, discovery finds it again and onboarding installs
+   * it straight back — the user deletes a workspace and watches it return.
+   */
+  it("does not offer a deleted workspace back through discovery", async () => {
+    const first = await seedServer();
+
+    // The user deletes it on this device, exactly as deleteWorkspace does.
+    await first.act(async (engine, host) => {
+      host.workspaces.delete(WS);
+      engine.markDirty(WS, [{ ref: { entityType: "workspace", entityId: WS }, deleted: true }]);
+      await engine.syncWorkspace(WS);
+      await engine.syncWorkspace(WS);
+    });
+
+    const found = await first.act((engine) => engine.listRemoteWorkspaces());
+    if (!found.ok) throw new Error("expected discovery to succeed");
+    expect(found.workspaces.map((w) => w.id)).not.toContain(WS);
+  });
+
+  it("does not resurrect it when the device onboards again", async () => {
+    const first = await seedServer();
+
+    await first.act(async (engine, host) => {
+      host.workspaces.delete(WS);
+      engine.markDirty(WS, [{ ref: { entityType: "workspace", entityId: WS }, deleted: true }]);
+      await engine.syncWorkspace(WS);
+      await engine.syncWorkspace(WS);
+    });
+
+    // What the onboarding effect does on the next start.
+    const found = await first.act((engine) => engine.listRemoteWorkspaces());
+    if (!found.ok) throw new Error("expected discovery to succeed");
+    for (const remote of found.workspaces) {
+      if (first.host.workspaces.has(remote.id)) continue;
+      await first.act((engine) => engine.adoptWorkspace(remote.id));
+    }
+
+    expect(first.host.workspaces.has(WS)).toBe(false);
   });
 });
 

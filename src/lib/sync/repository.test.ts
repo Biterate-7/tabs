@@ -336,6 +336,39 @@ describe("deletes are tombstones", () => {
     expect(pool.client.sql.some((s) => s.startsWith("DELETE FROM tabdump_tabs"))).toBe(false);
   });
 
+  /**
+   * The workspace row is keyed by its own id, not by workspace_id, so it
+   * cannot go through the shared tombstone helper. Ownership is already
+   * settled by the FOR UPDATE lock this mutation was handed out under.
+   */
+  it("tombstones the workspace row itself without deleting it", async () => {
+    await repo.mutateWorkspace(WORKSPACE, USER, {}, async (m) => {
+      await m.deleteWorkspace(T0);
+    });
+
+    const sql = pool.client.sql.find((s) => s.startsWith("UPDATE tabdump_workspaces SET deleted_at"))!;
+    expect(sql).toContain("SET deleted_at = $1, sync_version = $2");
+    expect(sql).toContain("WHERE id = $3");
+    expect(pool.client.sql.some((s) => s.startsWith("DELETE FROM tabdump_workspaces"))).toBe(false);
+  });
+
+  /**
+   * Its children are deliberately left alone: nothing can reach them once
+   * listWorkspaces excludes the workspace, and tombstoning every row would
+   * turn one deletion into a whole-workspace write — and flood the change
+   * stream of any device that had not yet heard about it.
+   */
+  it("leaves the workspace's children alone when the workspace goes", async () => {
+    await repo.mutateWorkspace(WORKSPACE, USER, {}, async (m) => {
+      await m.deleteWorkspace(T0);
+    });
+
+    const childWrites = pool.client.sql.filter((s) =>
+      /UPDATE tabdump_(tabs|sections|groups|collections|dependencies) SET deleted_at/.test(s)
+    );
+    expect(childWrites).toHaveLength(0);
+  });
+
   it("scopes every tombstone to the workspace", async () => {
     await repo.mutateWorkspace(WORKSPACE, USER, {}, async (m) => {
       await m.deleteTab(TAB, T0);

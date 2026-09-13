@@ -175,6 +175,18 @@ export type WorkspaceMutation = {
   upsertDependency(dependency: DependencySyncPayload): Promise<void>;
   /** Tombstones rather than deletes. `entityType` "dependency" uses the pair. */
   deleteTab(id: string, deletedAt: number): Promise<void>;
+  /**
+   * Tombstones the workspace row itself.
+   *
+   * Its children are deliberately left alone. They become unreachable —
+   * `listWorkspaces` excludes a tombstoned workspace — and tombstoning
+   * every row beneath it would turn one deletion into a write across the
+   * whole workspace for no gain, since nothing can reach them anyway. It
+   * also keeps the change stream small: a device that has not yet heard
+   * about the deletion receives one workspace tombstone rather than every
+   * entity it already had.
+   */
+  deleteWorkspace(deletedAt: number): Promise<void>;
   deleteSection(id: string, deletedAt: number): Promise<void>;
   deleteGroup(id: string, deletedAt: number): Promise<void>;
   deleteCollection(id: string, deletedAt: number): Promise<void>;
@@ -506,6 +518,16 @@ function createMutation(client: PoolClient, workspaceId: string, version: bigint
 
     async deleteTab(id, deletedAt) {
       await tombstone("tabdump_tabs", "id = $4", [deletedAt, v, workspaceId, id]);
+    },
+    async deleteWorkspace(deletedAt) {
+      // Not through `tombstone`: that helper scopes by workspace_id, and
+      // the workspaces table is keyed by its own id. Ownership is already
+      // settled — mutateWorkspace took this row's FOR UPDATE lock with
+      // `user_id = $2` before handing this mutation out.
+      await client.query(
+        `UPDATE tabdump_workspaces SET deleted_at = $1, sync_version = $2 WHERE id = $3`,
+        [deletedAt, v, workspaceId]
+      );
     },
     async deleteSection(id, deletedAt) {
       await tombstone("tabdump_sections", "id = $4", [deletedAt, v, workspaceId, id]);

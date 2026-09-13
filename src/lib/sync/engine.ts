@@ -47,6 +47,7 @@ import {
   addDirty,
   backoffDelayMs,
   clearDirty,
+  forgetJournal,
   getJournal,
   loadJournalStore,
   saveJournalStore,
@@ -335,12 +336,41 @@ export class SyncEngine {
    * must not block the others.
    */
   syncAll(): void {
-    for (const workspaceId of this.host.getWorkspaceIds()) {
+    for (const workspaceId of this.workspacesWithWork()) {
       const state = this.getState(workspaceId);
       if (state.status === "never-synced" || state.status === "conflict" || state.status === "paused") continue;
+      if (state.status === "remote-deleted") continue;
       if (state.retryAfter !== undefined && this.now() < state.retryAfter) continue;
       void this.syncWorkspace(workspaceId);
     }
+  }
+
+  /**
+   * Every workspace a pass should consider.
+   *
+   * The local ones, plus any the journal still holds a pending DELETION
+   * for. A deleted workspace is no longer in the local list, so without
+   * this a deletion interrupted by a reload would never be sent — the
+   * workspace would stay on the server and come back through discovery.
+   * Only deletions qualify: every other kind of pending work needs a local
+   * workspace to read, and there is none.
+   */
+  private workspacesWithWork(): string[] {
+    // Copied rather than appended to: the array came from the host, and
+    // growing something it handed over is not this method's business.
+    const ids = [...this.host.getWorkspaceIds()];
+    const userId = this.host.getUserId();
+    if (!userId || this.store.userId !== userId) return ids;
+
+    const seen = new Set(ids);
+    for (const [workspaceId, journal] of Object.entries(this.store.workspaces)) {
+      if (seen.has(workspaceId)) continue;
+      const pendingDeletion = journal.dirty.some(
+        (entry) => entry.ref.entityType === "workspace" && entry.deleted
+      );
+      if (pendingDeletion) ids.push(workspaceId);
+    }
+    return ids;
   }
 
   /**
@@ -362,7 +392,7 @@ export class SyncEngine {
       this.inFlight.delete(workspaceId);
       if (this.rerun.delete(workspaceId)) {
         const journal = this.getState(workspaceId);
-        if (journal.dirty.length > 0 && journal.status !== "conflict" && journal.status !== "paused") {
+        if (journal.dirty.length > 0 && journal.status !== "conflict" && journal.status !== "paused" && journal.status !== "remote-deleted") {
           void this.syncWorkspace(workspaceId);
         }
       }
@@ -405,7 +435,17 @@ export class SyncEngine {
     }
 
     const workspace = this.host.getWorkspace(workspaceId);
-    if (!workspace) return { ok: false, status: journal.status, reason: "Workspace not found locally." };
+    if (!workspace) {
+      // Gone from this device. There is nothing left to push or apply for
+      // it EXCEPT the deletion itself, if that is what removed it — and
+      // refusing to run at all was how a deleted workspace stayed on the
+      // server, to be rediscovered and reinstalled later.
+      const deletion = journal.dirty.find(
+        (entry) => entry.ref.entityType === "workspace" && entry.deleted
+      );
+      if (deletion) return await this.pushWorkspaceDeletion(workspaceId, journal);
+      return { ok: false, status: journal.status, reason: "Workspace not found locally." };
+    }
 
     this.update(workspaceId, (current) => ({ ...current, status: "syncing" }));
     this.host.log?.("sync:start", { workspaceId, dirty: journal.dirty.length });
@@ -474,6 +514,8 @@ export class SyncEngine {
 
     // ---- pull ----
     let pulled = 0;
+    /** Set when the pull carried this workspace's own tombstone. */
+    let remoteDeleted = false;
     let cursor = journal.cursor;
     const journalCursorBeforePull = journal.cursor;
     let hasMore = true;
@@ -502,6 +544,13 @@ export class SyncEngine {
             status: "conflict",
           }));
         }
+        if (applied.workspaceDeleted) {
+          // A fact about the workspace, not a disagreement inside it. The
+          // local copy is untouched and stays that way until the user says
+          // otherwise; this pass stops here rather than continuing to sync
+          // a workspace the account no longer has.
+          remoteDeleted = true;
+        }
       }
 
       // Only now, with the remote state incorporated and committed, does the
@@ -513,7 +562,13 @@ export class SyncEngine {
 
     const final = this.update(workspaceId, (current) => ({
       ...current,
-      status: current.conflicts.length > 0 ? "conflict" : current.dirty.length > 0 ? "queued" : "idle",
+      status: remoteDeleted
+        ? "remote-deleted"
+        : current.conflicts.length > 0
+          ? "conflict"
+          : current.dirty.length > 0
+            ? "queued"
+            : "idle",
       failureCount: 0,
       retryAfter: undefined,
       lastError: undefined,
@@ -555,7 +610,7 @@ export class SyncEngine {
   private applyRemote(
     workspaceId: string,
     changes: readonly SyncChange[]
-  ): { ok: true; applied: number; conflicts: LocalSyncConflict[] } | { ok: false; reason: string } {
+  ): { ok: true; applied: number; conflicts: LocalSyncConflict[]; workspaceDeleted: boolean } | { ok: false; reason: string } {
     const workspace = this.host.getWorkspace(workspaceId);
     if (!workspace) return { ok: false, reason: "Workspace not found locally." };
 
@@ -608,7 +663,7 @@ export class SyncEngine {
         });
       });
 
-      return { ok: true, applied: result.applied, conflicts };
+      return { ok: true, applied: result.applied, conflicts, workspaceDeleted: result.workspaceDeleted };
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : "Couldn't apply remote changes." };
     }
@@ -626,13 +681,14 @@ export class SyncEngine {
   private handleFailure(
     workspaceId: string,
     failure: SyncFailure,
-    workspace: Workspace,
+    /** Null when the workspace is gone from this device — a pending deletion has no local side to conflict with. */
+    workspace: Workspace | null,
     journal: WorkspaceJournal,
     sent: readonly DirtyRef[]
   ): SyncOutcome {
     const status = statusFor(failure);
 
-    if (failure.kind === "conflict") {
+    if (failure.kind === "conflict" && workspace !== null) {
       const conflicts = (failure.conflicts as ServerConflict[]).flatMap((entry) => {
         if (typeof entry?.entityId !== "string" || typeof entry?.entityType !== "string") return [];
         if (entry.entityType === "collection" || entry.entityType === "dependency") return [];
@@ -686,6 +742,15 @@ export class SyncEngine {
     });
     this.host.log?.("sync:error", { workspaceId, kind: failure.kind, retryable });
     return { ok: false, status, reason: failure.message };
+  }
+
+  /** Drops a workspace's journal entry, for one that no longer exists on either side. */
+  private forget(workspaceId: string): void {
+    const userId = this.host.getUserId();
+    if (!userId) return;
+    this.store = forgetJournal(this.store, userId, workspaceId);
+    saveJournalStore(this.store);
+    this.emit();
   }
 
   private fail(workspaceId: string, status: SyncStatus, reason: string): SyncOutcome {
@@ -756,6 +821,67 @@ export class SyncEngine {
 
     this.host.log?.("sync:migrated", { workspaceId, created: result.value.created });
     return { ok: true, status: final.status, cursor: final.cursor, pushed: 1, pulled: 0, conflicts: 0 };
+  }
+
+  /**
+   * Tells the server about a workspace the user deleted on this device.
+   *
+   * Separate from the ordinary pass because every other part of it needs a
+   * local workspace to read, and this one deliberately has none. There is no
+   * pull either: nothing here could apply a change to a workspace that no
+   * longer exists locally.
+   *
+   * The deletion ref stays pending until the server confirms, so closing the
+   * tab mid-delete leaves the work to be finished on the next start rather
+   * than losing it.
+   */
+  private async pushWorkspaceDeletion(workspaceId: string, journal: WorkspaceJournal): Promise<SyncOutcome> {
+    // Never uploaded, so there is nothing on the server to delete. Keeping
+    // the ref would mean carrying a mutation that can never apply.
+    if (journal.status === "never-synced") {
+      this.forget(workspaceId);
+      return { ok: true, status: "never-synced", cursor: journal.cursor, pushed: 0, pulled: 0, conflicts: 0 };
+    }
+
+    this.update(workspaceId, (current) => ({ ...current, status: "syncing" }));
+    this.host.log?.("sync:delete-workspace", { workspaceId });
+
+    const result = await pushChanges(workspaceId, journal.cursor, [], [
+      { entityType: "workspace", entityId: workspaceId },
+    ]);
+
+    if (!result.ok) {
+      // Already gone server-side: the outcome the user asked for is the
+      // outcome that holds, so stop asking for it.
+      if (result.failure.kind === "not-found") {
+        this.update(workspaceId, (current) => ({ ...current, dirty: [], status: "idle", lastError: undefined }));
+        return { ok: true, status: "idle", cursor: journal.cursor, pushed: 1, pulled: 0, conflicts: 0 };
+      }
+      // Someone else moved the workspace on. Take their cursor and let the
+      // next pass re-send the deletion against it. Not a pull-and-apply:
+      // there is no local workspace left to apply anything to, and the user
+      // has already said this workspace should not exist.
+      if (result.failure.kind === "stale-base") {
+        const serverCursor = result.failure.serverCursor;
+        this.update(workspaceId, (current) => ({
+          ...current,
+          cursor: serverCursor,
+          status: "queued",
+          lastError: undefined,
+        }));
+        return { ok: false, status: "queued", reason: result.failure.message };
+      }
+      // Everything else keeps the pending deletion and retries on the
+      // ordinary schedule.
+      return this.handleFailure(workspaceId, result.failure, null, journal, []);
+    }
+
+    // Gone from this device and gone from the server, so the bookkeeping
+    // has nothing left to describe.
+    this.forget(workspaceId);
+
+    this.host.log?.("sync:deleted-workspace", { workspaceId });
+    return { ok: true, status: "idle", cursor: result.value.cursor, pushed: 1, pulled: 0, conflicts: 0 };
   }
 
   // ---- discovery and adoption ---------------------------------------------
@@ -850,6 +976,17 @@ export class SyncEngine {
     let pages = 0;
     /** The server has to describe the workspace itself, or there is nothing to adopt. */
     let described = existing !== null;
+    /**
+     * Every entity the server mentioned, so that what it did NOT mention can
+     * be told apart afterwards. Anything left over is local-only.
+     */
+    const seen = {
+      tabs: new Set<string>(),
+      sections: new Set<string>(),
+      groups: new Set<string>(),
+      collections: new Set<string>(),
+      dependencies: new Set<string>(),
+    };
     const conflicts: LocalSyncConflict[] = [];
 
     while (hasMore) {
@@ -867,6 +1004,25 @@ export class SyncEngine {
       if (changes.some((change) => change.entityType === "workspace" && change.operation === "upsert")) {
         described = true;
       }
+      for (const change of changes) {
+        switch (change.entityType) {
+          case "tab":
+            seen.tabs.add(change.entityId);
+            break;
+          case "section":
+            seen.sections.add(change.entityId);
+            break;
+          case "group":
+            seen.groups.add(change.entityId);
+            break;
+          case "collection":
+            seen.collections.add(change.entityId);
+            break;
+          case "dependency":
+            seen.dependencies.add(`${change.parentTabId}::${change.childTabId}`);
+            break;
+        }
+      }
 
       let result;
       try {
@@ -881,6 +1037,9 @@ export class SyncEngine {
 
       state = result.state;
       applied += result.applied;
+      // The server describing this workspace's own tombstone means there
+      // is nothing here to adopt.
+      if (result.workspaceDeleted) described = false;
       for (const conflict of result.conflicts) {
         if (conflict.entityType === "collection" || conflict.entityType === "dependency") continue;
         conflicts.push(
@@ -922,19 +1081,89 @@ export class SyncEngine {
       dependencies: state.dependencies,
     });
 
-    const final = this.update(workspaceId, (current) => ({
-      ...current,
-      cursor,
-      conflicts: mergeConflicts(current.conflicts, conflicts),
-      status: conflicts.length > 0 ? "conflict" : current.dirty.length > 0 ? "queued" : "idle",
-      failureCount: 0,
-      retryAfter: undefined,
-      lastError: undefined,
-      lastSyncedAt: this.now(),
-    }));
+    // Anything the server never mentioned exists only on this device. It is
+    // not a conflict and it is not remote data — it is local work that has
+    // never been uploaded, so it becomes pending and goes up on the next
+    // ordinary pass. Without this it would sit in an adopted workspace
+    // forever, present locally and invisible everywhere else.
+    //
+    // Empty for a device adopting onto nothing, which is what keeps a fresh
+    // adoption from pushing back everything it just downloaded.
+    const localOnly = this.localOnlyRefs(workspaceId, state, seen);
+
+    const final = this.update(workspaceId, (current) => {
+      const withPending = localOnly.length > 0 ? addDirty(current, localOnly) : current;
+      return {
+        ...withPending,
+        cursor,
+        conflicts: mergeConflicts(withPending.conflicts, conflicts),
+        status: conflicts.length > 0 ? "conflict" : withPending.dirty.length > 0 ? "queued" : "idle",
+        failureCount: 0,
+        retryAfter: undefined,
+        lastError: undefined,
+        lastSyncedAt: this.now(),
+      };
+    });
 
     this.host.log?.("sync:adopted", { workspaceId, applied, pages, conflicts: final.conflicts.length });
     return { ok: true, status: final.status, cursor: final.cursor, pushed: 0, pulled: applied, conflicts: final.conflicts.length };
+  }
+
+  /**
+   * The entities present locally that the server never described.
+   *
+   * Deliberately identity-based: "the server did not mention this id" is the
+   * only question asked. Nothing is matched by name, URL or content, and
+   * nothing is invented — a relationship that was already dangling locally
+   * stays exactly as dangling as it was.
+   *
+   * Dependencies are filtered to this workspace by their parent tab, because
+   * their store is flat and global while everything else here is scoped.
+   */
+  private localOnlyRefs(
+    workspaceId: string,
+    state: LocalSyncState,
+    seen: {
+      tabs: Set<string>;
+      sections: Set<string>;
+      groups: Set<string>;
+      collections: Set<string>;
+      dependencies: Set<string>;
+    }
+  ): DirtyRef[] {
+    const refs: DirtyRef[] = [];
+    const add = (ref: DirtyRef["ref"]) => refs.push({ ref, deleted: false });
+
+    for (const section of state.workspace.sections ?? []) {
+      if (!seen.sections.has(section.id)) add({ entityType: "section", entityId: section.id });
+    }
+    for (const group of state.workspace.groups ?? []) {
+      if (!seen.groups.has(group.id)) add({ entityType: "group", entityId: group.id });
+    }
+    for (const tab of state.workspace.tabs) {
+      if (!seen.tabs.has(tab.id)) add({ entityType: "tab", entityId: tab.id });
+    }
+    for (const collection of state.collections) {
+      if (collection.workspaceId !== workspaceId) continue;
+      if (!seen.collections.has(collection.id)) add({ entityType: "collection", entityId: collection.id });
+    }
+
+    const tabIds = new Set(state.workspace.tabs.map((tab) => tab.id));
+    for (const dependency of state.dependencies) {
+      // A dependency whose parent is not in this workspace belongs to another
+      // one; pushing it here would put a relationship in a workspace that
+      // does not own it.
+      if (!tabIds.has(dependency.parentTabId)) continue;
+      const key = `${dependency.parentTabId}::${dependency.childTabId}`;
+      if (seen.dependencies.has(key)) continue;
+      add({
+        entityType: "dependency",
+        parentTabId: dependency.parentTabId,
+        childTabId: dependency.childTabId,
+      });
+    }
+
+    return refs;
   }
 
   // ---- conflict resolution ------------------------------------------------

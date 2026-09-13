@@ -311,9 +311,15 @@ async function applyDeletes(
           await mutation.deleteSection(ref.entityId, deletedAt);
           break;
         case "workspace":
-          // Workspace deletion is not part of this phase's push surface:
-          // tombstoning a whole workspace needs a decision about its
-          // children that belongs with the deletion UX, not here.
+          // The workspace row is tombstoned; its children are left as they
+          // are. Nothing can reach them once the workspace is gone from
+          // listWorkspaces, and writing a tombstone across every row would
+          // turn one deletion into a whole-workspace write — and flood the
+          // change stream of any device that had not yet heard about it.
+          //
+          // Ordered last (see the reversed order above) so the workspace
+          // outlives every child write in the same transaction.
+          await mutation.deleteWorkspace(deletedAt);
           break;
       }
     }

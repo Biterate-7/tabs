@@ -46,6 +46,14 @@ const STORAGE_KEY = "tabdump:sync-journal:v1";
  *  - `paused`        authentication expired. Retrying would be pointless and
  *                    noisy; pending work is kept untouched until sign-in.
  *  - `conflict`      at least one unresolved conflict. Local state is intact.
+ *  - `remote-deleted` this workspace was deleted on another device. Local
+ *                    state is intact and untouched — a deletion elsewhere
+ *                    is reported, never applied, because removing a user's
+ *                    workspace as a side effect of a background read is
+ *                    the one thing this design will not do. Distinct from
+ *                    `conflict` because nothing disagrees and there are no
+ *                    two versions to choose between; it is a fact about
+ *                    the workspace, not about an entity in it.
  */
 export type SyncStatus =
   | "never-synced"
@@ -55,7 +63,8 @@ export type SyncStatus =
   | "offline"
   | "error"
   | "paused"
-  | "conflict";
+  | "conflict"
+  | "remote-deleted";
 
 export type WorkspaceJournal = {
   workspaceId: string;
@@ -110,6 +119,7 @@ const STATUSES: readonly SyncStatus[] = [
   "error",
   "paused",
   "conflict",
+  "remote-deleted",
 ];
 
 /**
@@ -229,6 +239,23 @@ export function setJournal(
   // dirty refs and conflicts are all account-scoped.
   const base = store.userId === userId ? store : { version: 1 as const, userId, workspaces: {} };
   return { version: 1, userId, workspaces: { ...base.workspaces, [journal.workspaceId]: journal } };
+}
+
+/**
+ * Forgets one workspace's entry entirely.
+ *
+ * For a workspace that is gone from both sides: keeping a cursor and an
+ * empty dirty set for something that no longer exists anywhere would grow
+ * the blob without bound as a user creates and deletes workspaces over
+ * time. Safe precisely because both sides are gone — there is nothing left
+ * for the entry to describe.
+ */
+export function forgetJournal(store: SyncJournalStore, userId: string, workspaceId: string): SyncJournalStore {
+  if (store.userId !== userId) return store;
+  if (!(workspaceId in store.workspaces)) return store;
+  const workspaces = { ...store.workspaces };
+  delete workspaces[workspaceId];
+  return { version: 1, userId, workspaces };
 }
 
 /**

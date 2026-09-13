@@ -102,13 +102,13 @@ describe("absence is never deletion", () => {
     const result = applyChanges(state(), [workspaceTombstone]);
     // Reported for the caller to surface, never acted on silently: removing
     // someone's whole workspace during a background pull is the one outcome
-    // this phase exists to prevent.
+    // this design exists to prevent.
     expect(result.state.workspace.tabs).toHaveLength(2);
-    expect(result.conflicts).toContainEqual({
-      entityType: "workspace",
-      entityId: WS,
-      reason: "local-unsynced-change",
-    });
+    // Reported as its own lifecycle fact, NOT as a conflict over an entity
+    // called `workspace`. Nothing disagrees and there is no second version
+    // to choose between, so there is nothing for a user to resolve.
+    expect(result.workspaceDeleted).toBe(true);
+    expect(result.conflicts).toHaveLength(0);
   });
 });
 

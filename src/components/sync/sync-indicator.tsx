@@ -49,6 +49,15 @@ function describe(state: WorkspaceJournal): { label: string; icon: React.ReactNo
         icon: <TriangleAlert className="size-3.5" />,
         tone: "text-amber-600 dark:text-amber-500",
       }
+    case "remote-deleted":
+      // A fact about the workspace, not a disagreement inside it. Naming it
+      // "conflict" would ask the user to resolve something that has no two
+      // sides.
+      return {
+        label: "Deleted elsewhere",
+        icon: <CloudOff className="size-3.5" />,
+        tone: "text-amber-600 dark:text-amber-500",
+      }
     case "error":
       return { label: "Sync failed", icon: <TriangleAlert className="size-3.5" />, tone: "text-tertiary" }
     default:
@@ -99,6 +108,13 @@ export function SyncIndicator({ state, disabled, onSyncNow, onMigrate, onResolve
             </div>
           ) : null}
 
+          {state.status === "remote-deleted" ? (
+            <p className="text-xs text-secondary">
+              This workspace was deleted on another device. Your copy here is untouched — nothing has
+              been removed from this device, and nothing will be unless you delete it yourself.
+            </p>
+          ) : null}
+
           {state.lastError && !hasConflicts ? (
             <p className="text-xs text-secondary">{state.lastError}</p>
           ) : null}
@@ -115,7 +131,7 @@ export function SyncIndicator({ state, disabled, onSyncNow, onMigrate, onResolve
             </div>
           ) : null}
 
-          {state.status !== "never-synced" && !hasConflicts ? (
+          {state.status !== "never-synced" && state.status !== "remote-deleted" && !hasConflicts ? (
             <button
               type="button"
               onClick={() => {

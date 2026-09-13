@@ -332,6 +332,12 @@ Four situations, and which way the data moves in each:
 | nothing | a workspace | **adoption** — `adoptWorkspace`, installs it here |
 | a workspace | the same workspace | **adoption as a merge** — see below |
 | a workspace | nothing yet reachable | **offline** — local editing continues, unchanged |
+| deleted here | the workspace | **deletion** — tombstoned on the server too |
+| a workspace | tombstoned there | **deleted elsewhere** — reported, never applied |
+
+Throughout, **the workspace UUID is the identity**. A name is a field like any
+other: two workspaces may share one, renaming never re-identifies anything, and
+no path matches on name, URL or content.
 
 ### Discovery
 
@@ -370,13 +376,38 @@ Adoption **cannot become an upload**. `commitRemote` is remote-origin and the
 entity channel is the remote channel, so neither marks anything dirty — the
 device does not push back what it just downloaded.
 
-Onto a device that **already has the workspace**, adoption is a merge, not a
-replacement, following the same rules an ordinary pull does: entities arrive by
-identity, absence is never deletion, and anything with a pending local edit is
-withheld and reported as a conflict rather than overwritten. Local-only
-entities survive. This is why adoption onto an existing workspace is only ever
-user-initiated: automatic adoption could merge server state over pending work
-the user has not seen, and that is their decision.
+### Merging onto a device that already has the workspace
+
+Adoption there is a merge, not a replacement, and it is decided entirely by
+identity — never by name, URL or content:
+
+| the entity is | what happens |
+|---|---|
+| on both sides, unchanged locally | the remote version is applied |
+| on both sides, edited locally and not yet pushed | withheld and reported as a conflict; the local edit stands until the user chooses |
+| only on the server | imported |
+| only on this device | kept **and marked pending**, so the next ordinary pass uploads it |
+
+That last row is the one that used to leak. A local-only entity survived the
+merge but nothing ever scheduled it, so it existed on exactly one device
+forever — present locally and invisible everywhere else. Adoption now records
+what the server actually described and marks whatever is left over as pending
+work.
+
+It only ever applies to a device that already held the workspace: one adopting
+onto nothing has no local-only entities by construction, so a fresh adoption
+still pushes nothing.
+
+Relationships are reconciled, never invented. A local-only tab filed in a
+section that exists only on the server uploads as a tab and keeps its
+`sectionId`; the section comes down rather than going back up. `buildPush`
+already orders sections and groups before the tabs that reference them. A
+dependency whose parent tab is not in this workspace is skipped rather than
+pushed into a workspace that does not own it.
+
+This is why adoption onto an existing workspace is only ever user-initiated:
+automatic adoption could merge server state over pending work the user has not
+seen, and that is their decision.
 
 ## "Already on the server" is not a conflict
 
@@ -406,6 +437,18 @@ Authorization failures stay 404 (indistinguishable from "no such workspace"),
 malformed requests stay 400, and oversized ones stay 413 — none of those are
 conflicts either.
 
+### Three things that are not the same
+
+| | what it means | what the user sees | what they do |
+|---|---|---|---|
+| **entity conflict** | two versions of one entity, both real | "2 conflicts", with both sides | choose Keep mine or Keep theirs |
+| **workspace already exists** | this account owns it and it is already on the server | "Syncing…" | nothing — it adopts |
+| **workspace lifecycle event** | the workspace itself was deleted elsewhere | "Deleted elsewhere" | nothing is forced; the local copy stays |
+
+Only the first has two sides to choose between. The other two are facts, and
+presenting either as something to resolve asks the user a question with no
+answer — which is exactly what "0 conflicts" in the status bar used to be.
+
 ## Account switching
 
 Cursors, dirty refs and conflicts are all account-scoped. A different `userId`
@@ -430,6 +473,47 @@ No WebSockets, SSE or BroadcastChannel. No CRDTs, vector clocks, operational
 transforms or event sourcing. No realtime collaboration or presence. No
 desktop authentication. No extension synchronization.
 
+## Deleting a workspace
+
+The two directions are deliberately asymmetric, because they are different
+statements.
+
+**Deleting it here deletes it everywhere.** The action already tells the user
+it removes the workspace and cannot be undone, so the server is told: the push
+carries a workspace tombstone and `applyDeletes` sets `deleted_at` on the
+workspace row. Without that the workspace stayed on the server after the user
+deleted it, discovery kept listing it, and onboarding reinstalled it — the
+user deleted a workspace and watched it come back.
+
+The row's **children are left alone**. Nothing can reach them once
+`listWorkspaces` excludes the workspace, and tombstoning every row would turn
+one deletion into a whole-workspace write and flood the change stream of any
+device that had not yet heard about it.
+
+Three details make the deletion durable rather than best-effort:
+
+- The pending deletion is an ordinary journal entry, so it survives a reload.
+- A workspace gone from this device is no longer in the local list, so
+  `syncAll` also considers workspaces the journal still holds a *deletion*
+  for. Only deletions — every other kind of pending work needs a local
+  workspace to read, and there is none.
+- The ordinary pass refuses to run without a local workspace; the deletion
+  takes its own path, which needs no local state and performs no pull.
+
+Once both sides are gone the journal entry is dropped, so creating and
+deleting workspaces over time does not grow the blob without bound.
+
+**Deleting it elsewhere does not delete it here.** A workspace tombstone
+arriving in a pull moves the workspace to the `remote-deleted` status and
+changes nothing else. The local copy, its tabs, its collections and its
+dependencies are all exactly as they were. Syncing stops for that workspace —
+there is nothing left to agree about — and the control says "Deleted
+elsewhere" and explains that nothing has been removed from this device.
+
+Removing a user's workspace as a side effect of a background read is the one
+destructive act this design will not perform, so there is no automatic
+deletion and no restore flow to need: the local copy simply never left.
+
 ## Deletes
 
 A delete must produce a tombstone, never a quiet disappearance from the dirty
@@ -446,6 +530,18 @@ Two things make this work with a set-based journal:
   resurrect the entity server-side.
 
 Both survive a reload: the journal is persisted, including the `deleted` flag.
+
+## The journal's own lifecycle
+
+An entry is created when a workspace first has something to record, updated in
+place as work is queued and retired, and **dropped entirely** once the
+workspace is gone from both this device and the server. Nothing else removes
+one: a workspace that merely has no pending work keeps its cursor, because
+that cursor is what makes the next sync incremental.
+
+A different `userId` starts a clean blob rather than merging, so an account's
+cursors, pending work, conflicts and pending deletions are invisible to the
+next account and intact when the first one returns.
 
 ## The remote-entity channel is workspace-scoped
 
@@ -501,12 +597,11 @@ rule it implements names the production code it mirrors, so drift is visible.
   adoption are verified by the test harness above, not by driving two signed-in
   browsers: that needs a session store and a database, and neither exists here.
   No claim is made that a live two-client exchange was observed.
-- **Adoption onto a device that already holds the workspace does not upload
-  local-only entities.** They survive locally (absence is never deletion) but
-  are not dirty, so nothing schedules them. Editing one marks it dirty and it
-  goes up normally. Uploading them wholesale would be an upload the user did
-  not ask for, on top of a workspace the server already owns.
-- **Workspace deletion is surfaced, never applied.** A workspace tombstone
-  arriving in a pull is reported as a conflict rather than removing the user's
-  workspace as a side effect of a background read; there is no local
-  "delete this workspace everywhere" action yet.
+- **A workspace deleted on another device is never removed from this one.**
+  That is deliberate, not a gap — but it does mean a user who deletes a
+  workspace on one device still has to remove it on each other device. There
+  is no "apply this deletion here" button; the status explains the situation
+  and the copy stays until they delete it themselves.
+- **Deleting a workspace is not reversible from inside the app.** The action
+  says so. There is no trash or restore flow, and this phase deliberately did
+  not build one; the protection is that a deletion is never automatic.

@@ -363,7 +363,12 @@ export class FakeSyncServer {
     }
 
     for (const ref of deletes) {
-      if (ref.entityType === "workspace") continue;
+      if (ref.entityType === "workspace") {
+        // Tombstones the workspace row and leaves its children, mirroring
+        // service.ts's applyDeletes.
+        stored.workspace = { ...stored.workspace, version, deletedAt };
+        continue;
+      }
       if (ref.entityType === "dependency") {
         const key = dependencyKey(ref.parentTabId, ref.childTabId);
         const existing = stored.dependencies.get(key);

@@ -66,6 +66,15 @@ export type ApplyResult = {
   applied: number;
   /** Remote tabs dropped because their URL is not http(s). Should be zero against our own server. */
   rejected: number;
+  /**
+   * The workspace itself was tombstoned on the server.
+   *
+   * Reported as its own fact rather than as a conflict over an entity
+   * called `workspace`: nothing disagrees and there is no second version
+   * to choose between. The caller decides what to tell the user; nothing
+   * here removes anything.
+   */
+  workspaceDeleted: boolean;
 };
 
 function dependencyId(parentTabId: string, childTabId: string): string {
@@ -135,6 +144,7 @@ export function applyChanges(
   let dependencies = state.dependencies;
 
   const conflicts: ApplyConflict[] = [];
+  let workspaceDeleted = false;
   let applied = 0;
   let rejected = 0;
 
@@ -178,8 +188,8 @@ export function applyChanges(
         case "workspace":
           // A tombstoned workspace is not deleted here. Removing the user's
           // whole workspace as a side effect of a background pull is exactly
-          // the destructive action this phase forbids; the caller surfaces it.
-          conflicts.push({ entityType: "workspace", entityId: id, reason: "local-unsynced-change" });
+          // the destructive action this design forbids; the caller surfaces it.
+          workspaceDeleted = true;
           break;
         case "tab":
           tabs = tabs.filter((tab) => tab.id !== id);
@@ -271,5 +281,6 @@ export function applyChanges(
     conflicts,
     applied,
     rejected,
+    workspaceDeleted,
   };
 }
