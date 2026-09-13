@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { SyncEngine } from "@/lib/sync/engine"
 import type { SyncEngineHost } from "@/lib/sync/engine"
 import { installSyncTriggers } from "@/lib/sync/triggers"
@@ -90,6 +90,54 @@ export function useSyncEngine(input: SyncEngineInput): SyncEngineBinding {
   // src/lib/sync/notify.ts. This is the one place those events reach the
   // engine, and it unsubscribes on unmount so a remount does not double up.
   useEffect(() => subscribeSyncDirty((events) => engine.markEntitiesDirty(events)), [engine])
+
+  /**
+   * Onboarding: a device signed into an account that already has workspaces
+   * has no way to know that until it asks.
+   *
+   * Runs once per account, after render, and never blocks startup — the UI
+   * has already drawn whatever is on this device by the time this fires, and
+   * an account with nothing to adopt simply does nothing.
+   *
+   * Adopts ONLY workspaces this device does not already have. A workspace
+   * that exists on both sides is not touched: automatic adoption there could
+   * merge server state over pending local work the user has not seen, and
+   * that decision belongs to them (the sync control offers it explicitly).
+   *
+   * A failure clears the guard rather than latching, so a device that was
+   * offline at sign-in still onboards once it can reach the server.
+   */
+  const onboardedFor = useRef<string | null>(null)
+  useEffect(() => {
+    const userId = input.userId
+    // Signed out, or the local store has not hydrated yet — in both cases
+    // there is nothing to compare against and nothing to ask for.
+    if (!userId || !input.store) return
+    if (onboardedFor.current === userId) return
+    onboardedFor.current = userId
+
+    let cancelled = false
+    void (async () => {
+      const found = await engine.listRemoteWorkspaces()
+      if (cancelled) return
+      if (!found.ok) {
+        onboardedFor.current = null
+        return
+      }
+      const local = new Set((input.store?.workspaces ?? []).map((w) => w.id))
+      for (const remote of found.workspaces) {
+        if (cancelled) return
+        if (local.has(remote.id)) continue
+        // Sequential on purpose: each adoption commits through the store, and
+        // firing every one at once would be a burst of full-workspace reads.
+        await engine.adoptWorkspace(remote.id)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [engine, input.userId, input.store])
 
   return useMemo<SyncEngineBinding>(
     () => ({

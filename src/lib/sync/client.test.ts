@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialSync, pullChanges, pushChanges } from "./client";
+import { discoverWorkspaces, initialSync, pullChanges, pushChanges } from "./client";
 import { buildWorkspaceUpserts, fromTabPayload, toTabPayload, toWorkspacePayload } from "./serialize";
 import {
   clearSyncMeta,
@@ -183,6 +183,9 @@ describe("network failure never costs local data", () => {
       [400, { error: "Invalid.", errors: ["id: must be a UUID"] }, "invalid"],
       [409, { error: "Stale.", reason: "stale-base", serverCursor: "18" }, "stale-base"],
       [409, { error: "Conflict.", conflicts: [] }, "conflict"],
+      // A 409 whose reason says the account already owns the workspace is
+      // not a disagreement: the caller adopts rather than resolving.
+      [409, { error: "Already there.", reason: "already-exists", serverCursor: "7" }, "already-exists"],
     ];
     for (const [status, body, kind] of cases) {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respond(status, body)));
@@ -191,6 +194,16 @@ describe("network failure never costs local data", () => {
       if (result.ok) continue;
       expect(result.failure.kind).toBe(kind);
     }
+  });
+
+  it("surfaces the server cursor when the workspace already exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(respond(409, { error: "Already there.", reason: "already-exists", serverCursor: "7" }))
+    );
+    const result = await initialSync({ workspace: workspace(), collections: [], dependencies: [] }, null);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.failure).toMatchObject({ kind: "already-exists", serverCursor: "7" });
   });
 
   it("surfaces the server cursor on a stale base so the caller can pull", async () => {
@@ -227,6 +240,55 @@ describe("requests", () => {
     await initialSync({ workspace: workspace(), collections: [], dependencies: [] }, "5");
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
     expect(body.knownCursor).toBe("5");
+  });
+
+  it("discovers workspaces with a bare authenticated GET", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      respond(200, { workspaces: [{ id: WS, name: "W", createdAt: 1, updatedAt: 2 }], truncated: false })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await discoverWorkspaces();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([{ id: WS, name: "W", createdAt: 1, updatedAt: 2 }]);
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/sync/workspaces");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    // Identity rides the HttpOnly cookie; nothing here names a user.
+    expect(init.credentials).toBe("same-origin");
+    expect(JSON.stringify(init)).not.toContain(USER);
+  });
+
+  it("drops a malformed discovery row rather than losing the whole list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        respond(200, {
+          workspaces: [{ id: WS, name: "Good", createdAt: 1, updatedAt: 2 }, { name: "no id" }, null, "nonsense"],
+        })
+      )
+    );
+
+    const result = await discoverWorkspaces();
+    if (!result.ok) throw new Error("expected success");
+    expect(result.value.map((w) => w.id)).toEqual([WS]);
+  });
+
+  it("reports a discovery failure rather than pretending the account is empty", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network error")));
+
+    const result = await discoverWorkspaces();
+
+    // Emphatically not `{ ok: true, value: [] }` — "I could not ask" and
+    // "you own nothing" must never look the same to a caller deciding
+    // whether to offer adoption.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.kind).toBe("offline");
   });
 
   it("pulls with a query string and never a body", async () => {

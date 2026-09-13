@@ -110,6 +110,14 @@ export class FakeSyncServer {
     this.dropNext = count;
   }
 
+  /** Tombstones a whole workspace, the way a deletion on another device would. */
+  tombstoneWorkspace(workspaceId: string): void {
+    const stored = this.workspaces.get(workspaceId);
+    if (!stored) return;
+    stored.counter += 1;
+    stored.workspace = { ...stored.workspace, version: stored.counter, deletedAt: this.now() };
+  }
+
   /** Current server-side cursor for a workspace, for asserting monotonicity. */
   cursorOf(workspaceId: string): string | null {
     const stored = this.workspaces.get(workspaceId);
@@ -187,10 +195,26 @@ export class FakeSyncServer {
   }
 
   private route(path: string, method: string, body: Record<string, unknown> | null): Response {
+    if (path.startsWith("/api/sync/workspaces")) return this.discover();
     if (path.startsWith("/api/sync/initial") && method === "POST") return this.initial(body);
     if (path.startsWith("/api/sync/push") && method === "POST") return this.push(body);
     if (path.startsWith("/api/sync/pull")) return this.pull(path);
     return json(404, { error: "Not found." });
+  }
+
+  // ---- discovery ----------------------------------------------------------
+
+  /** Metadata for the caller's own workspaces, mirroring /api/sync/workspaces. */
+  private discover(): Response {
+    const workspaces: WorkspaceSyncPayload[] = [];
+    for (const stored of this.workspaces.values()) {
+      // Someone else's workspaces are not merely hidden from the list —
+      // they are not represented in it at all.
+      if (stored.userId !== this.currentUserId) continue;
+      if (stored.workspace.deletedAt !== undefined) continue;
+      workspaces.push(stored.workspace.payload as WorkspaceSyncPayload);
+    }
+    return json(200, { workspaces, truncated: false });
   }
 
   // ---- initial ------------------------------------------------------------
@@ -210,9 +234,11 @@ export class FakeSyncServer {
       // A retry proves itself by sending the cursor it last saw; anything
       // else is refused rather than overwriting (service.ts initial()).
       if (knownCursor === null || knownCursor !== String(existing.counter)) {
+        // `already-exists`, not `conflict`: this account owns it and the
+        // client's next move is adoption, not resolution.
         return json(409, {
-          error: "That workspace already exists on the server.",
-          reason: "conflict",
+          error: "That workspace is already on the server. Sync it to this device instead.",
+          reason: "already-exists",
           serverCursor: String(existing.counter),
         });
       }
@@ -392,14 +418,25 @@ export class FakeSyncServer {
       collected.push({ version: record.version, change: build(String(record.version)) });
     };
 
-    add(stored.workspace, (c) => ({
-      operation: "upsert",
-      workspaceId,
-      cursor: c,
-      entityType: "workspace",
-      entityId: (stored.workspace.payload as WorkspaceSyncPayload).id,
-      entity: stored.workspace.payload as WorkspaceSyncPayload,
-    }));
+    add(stored.workspace, (c) =>
+      stored.workspace.deletedAt !== undefined
+        ? ({
+            operation: "delete",
+            workspaceId,
+            cursor: c,
+            deletedAt: stored.workspace.deletedAt,
+            entityType: "workspace",
+            entityId: (stored.workspace.payload as WorkspaceSyncPayload).id,
+          } as SyncChange)
+        : ({
+            operation: "upsert",
+            workspaceId,
+            cursor: c,
+            entityType: "workspace",
+            entityId: (stored.workspace.payload as WorkspaceSyncPayload).id,
+            entity: stored.workspace.payload as WorkspaceSyncPayload,
+          } as SyncChange)
+    );
 
     const simple = [
       { map: stored.sections, entityType: "section" as const },

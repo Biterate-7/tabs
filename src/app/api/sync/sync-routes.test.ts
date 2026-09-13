@@ -28,10 +28,14 @@ class FakeSyncService {
   initialCalls: { userId: string; workspaceId: string; knownCursor: string | null }[] = [];
   pushCalls: { userId: string; workspaceId: string; baseCursor: string }[] = [];
   pullCalls: { userId: string; workspaceId: string; cursor: string }[] = [];
+  listCalls: { userId: string }[] = [];
 
   initialResult: unknown = { ok: true, workspace: { id: WS }, cursor: "1", created: true };
   pushResult: unknown = { ok: true, cursor: "2", accepted: [] };
   pullResult: unknown = { workspaceId: WS, changes: [], nextCursor: "0", hasMore: false };
+  listResult: { id: string; name: string; createdAt: number; updatedAt: number }[] = [
+    { id: WS, name: "W", createdAt: T0, updatedAt: T0 },
+  ];
 
   async initial(payload: { workspace: { id: string } }, userId: string, knownCursor: string | null) {
     this.initialCalls.push({ userId, workspaceId: payload.workspace.id, knownCursor });
@@ -44,6 +48,10 @@ class FakeSyncService {
   async pull(workspaceId: string, userId: string, cursor: string) {
     this.pullCalls.push({ userId, workspaceId, cursor });
     return this.pullResult;
+  }
+  async listWorkspaces(userId: string) {
+    this.listCalls.push({ userId });
+    return this.listResult;
   }
 }
 
@@ -136,6 +144,132 @@ describe("authentication", () => {
     );
     expect(response.status).toBe(200);
     expect(service.pushCalls[0].userId).toBe(USER_A);
+  });
+});
+
+describe("workspace discovery", () => {
+  it("refuses an unauthenticated request and never reaches the service", async () => {
+    const { GET } = await import("./workspaces/route");
+    const response = await GET(get("/api/sync/workspaces"));
+    expect(response.status).toBe(401);
+    expect(service.listCalls).toHaveLength(0);
+  });
+
+  it("lists for the session's user, never one named by the request", async () => {
+    const { GET } = await import("./workspaces/route");
+    const response = await GET(
+      get("/api/sync/workspaces?userId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", { cookie: sessionCookie })
+    );
+
+    expect(response.status).toBe(200);
+    // The query parameter is not merely rejected — it is never consulted.
+    expect(service.listCalls).toEqual([{ userId: USER_A }]);
+    const body = (await response.json()) as { workspaces: { id: string }[] };
+    expect(body.workspaces.map((w) => w.id)).toEqual([WS]);
+  });
+
+  it("refuses an expired session", async () => {
+    const { SESSION_TTL_MS } = await import("@/lib/auth/config");
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + SESSION_TTL_MS + 1000);
+    try {
+      const { GET } = await import("./workspaces/route");
+      const response = await GET(get("/api/sync/workspaces", { cookie: sessionCookie }));
+      expect(response.status).toBe(401);
+      expect(service.listCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** Bounded: a list endpoint must not become an unbounded response. */
+  it("caps how many workspaces it will return", async () => {
+    const { MAX_DISCOVERED_WORKSPACES, GET } = await import("./workspaces/route");
+    service.listResult = Array.from({ length: MAX_DISCOVERED_WORKSPACES + 5 }, (_, i) => ({
+      id: WS,
+      name: `W${i}`,
+      createdAt: T0,
+      updatedAt: T0,
+    }));
+
+    const response = await GET(get("/api/sync/workspaces", { cookie: sessionCookie }));
+    const body = (await response.json()) as { workspaces: unknown[]; truncated: boolean };
+
+    expect(body.workspaces).toHaveLength(MAX_DISCOVERED_WORKSPACES);
+    expect(body.truncated).toBe(true);
+  });
+
+  it("answers 500 without leaking the internal error", async () => {
+    const { GET } = await import("./workspaces/route");
+    service.listWorkspaces = async () => {
+      throw new Error("connection to 10.0.0.5:5432 refused");
+    };
+
+    const response = await GET(get("/api/sync/workspaces", { cookie: sessionCookie }));
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain("5432");
+  });
+
+  it("shares the rate limiter the other sync routes use", async () => {
+    const { AUTH_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
+    const { GET } = await import("./workspaces/route");
+
+    const request = () =>
+      new Request("http://localhost:3000/api/sync/workspaces", {
+        method: "GET",
+        headers: {
+          origin: "http://localhost:3000",
+          host: "localhost:3000",
+          cookie: sessionCookie,
+          "x-forwarded-for": "203.0.113.44",
+        },
+      });
+
+    let limited: Response | null = null;
+    for (let i = 0; i < AUTH_RATE_LIMIT.limit + 1; i++) {
+      const response = await GET(request());
+      if (response.status === 429) {
+        limited = response;
+        break;
+      }
+    }
+
+    expect(limited).not.toBeNull();
+    expect(limited!.headers.get("retry-after")).toMatch(/^\d+$/);
+  });
+});
+
+describe("an existing workspace is not a conflict", () => {
+  /**
+   * The distinction the client depends on: `already-exists` means "this
+   * account owns it, adopt it", while `conflict` means "something
+   * disagrees". Collapsing them sent a second device into conflict handling
+   * with nothing to resolve.
+   */
+  it("answers already-exists rather than conflict when the workspace is there", async () => {
+    service.initialResult = { ok: false, reason: "already-exists", serverCursor: "7" };
+    const { POST } = await import("./initial/route");
+
+    const response = await POST(
+      post("/api/sync/initial", { workspace: workspacePayload() }, { cookie: sessionCookie })
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { reason: string; serverCursor: string };
+    expect(body.reason).toBe("already-exists");
+    expect(body.serverCursor).toBe("7");
+  });
+
+  it("still answers conflict for a genuine one", async () => {
+    service.initialResult = { ok: false, reason: "conflict", serverCursor: "7" };
+    const { POST } = await import("./initial/route");
+
+    const response = await POST(
+      post("/api/sync/initial", { workspace: workspacePayload() }, { cookie: sessionCookie })
+    );
+
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { reason: string }).reason).toBe("conflict");
   });
 });
 

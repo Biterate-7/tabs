@@ -194,7 +194,14 @@ export function AppShell() {
     onRemoteWorkspace: (workspace) => {
       const current = storeRef.current
       if (!current) return
-      const workspaces = current.workspaces.map((w) => (w.id === workspace.id ? workspace : w))
+      // Appended when this device has never seen it — which is exactly what
+      // adopting a workspace from another device does. Replacing in place
+      // only would have quietly dropped it, leaving adoption reporting
+      // success with nothing to show for it.
+      const known = current.workspaces.some((w) => w.id === workspace.id)
+      const workspaces = known
+        ? current.workspaces.map((w) => (w.id === workspace.id ? workspace : w))
+        : [...current.workspaces, workspace]
       // Through the ordinary seam, flagged remote so it is not re-uploaded.
       commitStore({ ...current, workspaces }, "remote")
     },

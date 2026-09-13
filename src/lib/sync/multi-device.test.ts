@@ -141,7 +141,13 @@ class Device {
       // imports (see CollectionLike there); the values the engine publishes
       // are the real objects, so the owning store casts back — exactly what
       // the production hooks do.
-      if (event.collections) this.host.collections = [...event.collections] as Collection[];
+      if (event.collections) {
+        const { workspaceId, items } = event.collections;
+        this.host.collections = [
+          ...this.host.collections.filter((c) => c.workspaceId !== workspaceId),
+          ...(items as Collection[]),
+        ];
+      }
       if (event.dependencies) this.host.dependencies = [...event.dependencies] as TabDependency[];
     });
   }
@@ -831,6 +837,46 @@ describe("collections across devices", () => {
     // B must not be left thinking TAB_1 is still in the first collection.
     expect(b.host.collections.find((c) => c.id === COLL_1)?.tabIds).toEqual([]);
     expect(b.host.collections.find((c) => c.id === COLL_2)?.tabIds).toEqual([TAB_1]);
+  });
+});
+
+describe("a pull must not disturb another workspace's collections", () => {
+  /**
+   * The collection store is a single flat localStorage key covering every
+   * workspace, but the engine reads and applies only the syncing workspace's
+   * slice. If what it publishes is treated as the whole store, every other
+   * workspace's collections are dropped — and the hook's persist effect then
+   * writes that loss to disk.
+   */
+  it("keeps a second workspace's collections when the first one pulls", async () => {
+    const { a, b } = await twoSyncedDevices();
+
+    // A second workspace on device A, with its own collection.
+    await a.act(async (engine, host) => {
+      host.workspaces.set(WS_OTHER, baseWorkspace(WS_OTHER));
+      host.collections = [
+        { id: COLL_2, workspaceId: WS_OTHER, name: "Other workspace's list", tabIds: [], createdAt: T0, updatedAt: T0 },
+      ];
+      await engine.migrateWorkspace(WS_OTHER);
+    });
+
+    // B changes a collection in the FIRST workspace and pushes it.
+    await b.act(async (engine, host) => {
+      host.collections = [
+        { id: COLL_1, workspaceId: WS, name: "From B", tabIds: [TAB_1], createdAt: T0, updatedAt: T0 },
+      ];
+      engine.markDirty(WS, [{ ref: { entityType: "collection", entityId: COLL_1 }, deleted: false }]);
+      await engine.syncWorkspace(WS);
+      await engine.syncWorkspace(WS);
+    });
+
+    // A pulls that change into the first workspace.
+    await a.act((engine) => engine.syncWorkspace(WS));
+
+    // It arrived...
+    expect(a.host.collections.find((c) => c.id === COLL_1)?.name).toBe("From B");
+    // ...and the unrelated workspace's collection is still here.
+    expect(a.host.collections.find((c) => c.id === COLL_2)?.name).toBe("Other workspace's list");
   });
 });
 

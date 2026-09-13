@@ -37,6 +37,14 @@ export type SyncFailure =
   | { kind: "not-configured"; message: string }
   | { kind: "not-found"; message: string }
   | { kind: "invalid"; message: string; errors: string[] }
+  /**
+   * The account already owns this workspace on the server.
+   *
+   * Separate from `conflict` because it is not a disagreement and the
+   * caller's next move is different: adopt what is there, rather than ask
+   * the user to choose between two versions of something.
+   */
+  | { kind: "already-exists"; message: string; serverCursor: SyncCursor }
   | { kind: "conflict"; message: string; serverCursor: SyncCursor; conflicts: unknown[] }
   | { kind: "stale-base"; message: string; serverCursor: SyncCursor }
   | { kind: "server"; message: string; status: number };
@@ -117,6 +125,12 @@ async function request(path: string, init: RequestInit): Promise<SyncResult<Json
           failure: { kind: "stale-base", message, serverCursor: String(body.serverCursor ?? "0") },
         };
       }
+      if (body.reason === "already-exists") {
+        return {
+          ok: false,
+          failure: { kind: "already-exists", message, serverCursor: String(body.serverCursor ?? "0") },
+        };
+      }
       return {
         ok: false,
         failure: {
@@ -160,6 +174,41 @@ export async function initialSync(
     ok: true,
     value: { cursor: String(result.value.cursor ?? "0"), created: result.value.created === true },
   };
+}
+
+/** One workspace as discovery reports it: enough to name it and adopt it, and nothing else. */
+export type DiscoveredWorkspace = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/**
+ * The workspaces this account owns on the server.
+ *
+ * Metadata only — the contents arrive through the ordinary paged pull
+ * during adoption. A malformed row is dropped rather than failing the
+ * whole list: one bad record must not stop a user seeing the rest.
+ */
+export async function discoverWorkspaces(): Promise<SyncResult<DiscoveredWorkspace[]>> {
+  const result = await request("/api/sync/workspaces", { method: "GET" });
+  if (!result.ok) return result;
+
+  const rows = Array.isArray(result.value.workspaces) ? result.value.workspaces : [];
+  const workspaces: DiscoveredWorkspace[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const entry = row as Record<string, unknown>;
+    if (typeof entry.id !== "string") continue;
+    workspaces.push({
+      id: entry.id,
+      name: typeof entry.name === "string" ? entry.name : "",
+      createdAt: typeof entry.createdAt === "number" ? entry.createdAt : 0,
+      updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
+    });
+  }
+  return { ok: true, value: workspaces };
 }
 
 export async function pushChanges(

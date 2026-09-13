@@ -189,6 +189,10 @@ describe("a workspace is never uploaded without being asked", () => {
     // syncAll is what the reconnect/focus/timer triggers call.
     engine.syncAll();
     await engine.migrateWorkspace(WS);
+    // The onboarding entry points added for workspace adoption are held to
+    // the same rule: a signed-out device asks the network nothing at all.
+    await engine.listRemoteWorkspaces();
+    await engine.adoptWorkspace(WS);
     await Promise.resolve();
 
     expect(server.calls).toHaveLength(0);

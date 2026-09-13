@@ -36,6 +36,14 @@ function describe(state: WorkspaceJournal): { label: string; icon: React.ReactNo
     case "paused":
       return { label: "Sign in to sync", icon: <CloudOff className="size-3.5" />, tone: "text-tertiary" }
     case "conflict":
+      // A conflict status with nothing in it is not something to show a
+      // person — "0 conflicts" reads as a fault when nothing is wrong.
+      // The status itself should no longer be reachable while empty (the
+      // second-device case that produced it now adopts instead), but the
+      // label must not depend on that being true everywhere.
+      if (state.conflicts.length === 0) {
+        return { label: "Syncing…", icon: <RefreshCw className="size-3.5 animate-spin" />, tone: "text-tertiary" }
+      }
       return {
         label: `${state.conflicts.length} conflict${state.conflicts.length === 1 ? "" : "s"}`,
         icon: <TriangleAlert className="size-3.5" />,

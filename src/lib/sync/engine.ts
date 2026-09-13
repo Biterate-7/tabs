@@ -35,9 +35,10 @@
  * someone has to remember, and it is pinned by a test.
  */
 
-import { initialSync, pullChanges, pushChanges } from "./client";
-import type { SyncFailure } from "./client";
+import { discoverWorkspaces, initialSync, pullChanges, pushChanges } from "./client";
+import type { DiscoveredWorkspace, SyncFailure } from "./client";
 import { applyChanges } from "./apply";
+import type { LocalSyncState } from "./apply";
 import { buildPush, refKey } from "./diff";
 import type { DirtyRef } from "./diff";
 import { buildConflict, resolveKeepRemote } from "./conflicts";
@@ -56,6 +57,7 @@ import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Workspace } from "@/lib/workspace/types";
 import type { SyncChange, SyncCursor } from "./types";
+import { SYNC_CURSOR_START } from "./types";
 import { publishRemoteEntities } from "./notify";
 import type { SyncDirtyEvent } from "./notify";
 
@@ -127,6 +129,13 @@ function statusFor(failure: SyncFailure): SyncStatus {
       return "paused";
     case "conflict":
       return "conflict";
+    // The server already holds this workspace. Nothing disagrees and
+    // nothing failed — there is simply work to do, and it is adoption
+    // rather than upload. `migrateWorkspace` normally intercepts this
+    // before it reaches here; the case exists so that no path can ever
+    // turn it into a conflict by falling through to the default.
+    case "already-exists":
+      return "queued";
     default:
       return "error";
   }
@@ -579,7 +588,7 @@ export class SyncEngine {
       const dependenciesChanged = result.state.dependencies !== dependencies;
       if (collectionsChanged || dependenciesChanged) {
         publishRemoteEntities({
-          ...(collectionsChanged ? { collections: result.state.collections } : {}),
+          ...(collectionsChanged ? { collections: { workspaceId, items: result.state.collections } } : {}),
           ...(dependenciesChanged ? { dependencies: result.state.dependencies } : {}),
         });
       }
@@ -722,6 +731,15 @@ export class SyncEngine {
     );
 
     if (!result.ok) {
+      // The server already has this workspace under this account. That is
+      // not a refusal to be reported — it is the second-device case, and
+      // the right operation is the opposite one. Adopting here keeps the
+      // single visible action ("sync this workspace") doing the right
+      // thing whichever side happens to already hold the data.
+      if (result.failure.kind === "already-exists") {
+        this.host.log?.("sync:adopting", { workspaceId });
+        return this.adoptWorkspace(workspaceId);
+      }
       return this.handleFailure(workspaceId, result.failure, workspace, journal, []);
     }
 
@@ -738,6 +756,185 @@ export class SyncEngine {
 
     this.host.log?.("sync:migrated", { workspaceId, created: result.value.created });
     return { ok: true, status: final.status, cursor: final.cursor, pushed: 1, pulled: 0, conflicts: 0 };
+  }
+
+  // ---- discovery and adoption ---------------------------------------------
+
+  /**
+   * The workspaces this account owns on the server.
+   *
+   * Read-only and side-effect free: it records nothing, adopts nothing and
+   * touches no journal. A device with no local data uses it to find out
+   * there is something to adopt; everything else ignores it.
+   */
+  async listRemoteWorkspaces(): Promise<{ ok: true; workspaces: DiscoveredWorkspace[] } | { ok: false; reason: string }> {
+    if (!this.host.getUserId()) return { ok: false, reason: "Not signed in." };
+    const result = await discoverWorkspaces();
+    if (!result.ok) return { ok: false, reason: result.failure.message };
+    return { ok: true, workspaces: result.value };
+  }
+
+  /**
+   * Installs a workspace that already exists on the server onto this device.
+   *
+   * The second-device path. Reads the whole change stream from the start,
+   * applies it in memory, and only then touches anything durable:
+   *
+   *   pull every page -> apply in memory -> commit workspace
+   *   -> publish collections/dependencies -> persist cursor
+   *
+   * ## Why nothing is committed until every page has arrived
+   *
+   * A half-installed workspace is worse than none: the user sees a workspace
+   * that looks real, missing tabs they cannot tell are missing. So a failure
+   * on page three leaves the device exactly as it was — no workspace, no
+   * cursor, nothing to clean up — and the operation simply runs again. The
+   * cursor moves last, for the same reason it does in `runSync`: it is a
+   * promise that everything up to it has been incorporated.
+   *
+   * ## What it does NOT do
+   *
+   * It does not overwrite local data. Entities arrive by identity, absence is
+   * never deletion, and anything with a pending local edit is withheld and
+   * reported as a conflict rather than replaced — the same rules an ordinary
+   * pull follows. Adopting onto a device that already has this workspace is
+   * therefore a merge, not a replacement.
+   *
+   * It also does not mark anything dirty. Everything here came from the
+   * server, and `commitRemote` plus the remote-entity channel are both
+   * remote-origin, so adoption cannot become an upload of what was just
+   * downloaded.
+   */
+  async adoptWorkspace(workspaceId: string): Promise<SyncOutcome> {
+    const userId = this.host.getUserId();
+    if (!userId) return { ok: false, status: "paused", reason: "Not signed in." };
+
+    const journal = this.getState(workspaceId);
+    const existing = this.host.getWorkspace(workspaceId);
+
+    // Pending local work is never discarded by adoption. These ids are
+    // withheld from the apply and come back as conflicts, exactly as they
+    // would on an ordinary pull.
+    const dirtyIds = new Set(
+      journal.dirty.map((entry) =>
+        entry.ref.entityType === "dependency"
+          ? `dep-${entry.ref.parentTabId}::${entry.ref.childTabId}`
+          : entry.ref.entityId
+      )
+    );
+
+    // Dependencies are one flat store spanning every workspace, so the whole
+    // list goes in and the whole list comes out. Collections are read per
+    // workspace and republished per workspace — see notify.ts.
+    let state: LocalSyncState = {
+      workspace:
+        existing ?? {
+          id: workspaceId,
+          name: "",
+          tabs: [],
+          sections: [],
+          groups: [],
+          createdAt: this.now(),
+          updatedAt: this.now(),
+        },
+      collections: [...this.host.getCollections(workspaceId)],
+      dependencies: [...this.host.getDependencies(workspaceId)],
+    };
+
+    this.update(workspaceId, (current) => ({ ...current, status: "syncing" }));
+    this.host.log?.("sync:adopt-start", { workspaceId, hadLocalCopy: existing !== null });
+
+    let cursor: SyncCursor = SYNC_CURSOR_START;
+    let hasMore = true;
+    let applied = 0;
+    let pages = 0;
+    /** The server has to describe the workspace itself, or there is nothing to adopt. */
+    let described = existing !== null;
+    const conflicts: LocalSyncConflict[] = [];
+
+    while (hasMore) {
+      const page = await pullChanges(workspaceId, cursor);
+      if (!page.ok) {
+        // Nothing durable has happened: no workspace installed, no cursor
+        // moved, no store published. The device is untouched.
+        return this.handleFailure(workspaceId, page.failure, state.workspace, journal, []);
+      }
+
+      const { changes, nextCursor } = page.value;
+      hasMore = page.value.hasMore;
+      pages++;
+
+      if (changes.some((change) => change.entityType === "workspace" && change.operation === "upsert")) {
+        described = true;
+      }
+
+      let result;
+      try {
+        result = applyChanges(state, changes, dirtyIds);
+      } catch (error) {
+        return this.fail(
+          workspaceId,
+          "error",
+          error instanceof Error ? error.message : "Couldn't apply that workspace."
+        );
+      }
+
+      state = result.state;
+      applied += result.applied;
+      for (const conflict of result.conflicts) {
+        if (conflict.entityType === "collection" || conflict.entityType === "dependency") continue;
+        conflicts.push(
+          buildConflict({
+            workspaceId,
+            entityType: conflict.entityType as LocalSyncConflict["entityType"],
+            entityId: conflict.entityId,
+            reason: "changed-since-base",
+            workspace: state.workspace,
+            remote: null,
+            baseCursor: cursor,
+            serverCursor: nextCursor,
+            now: this.now(),
+          })
+        );
+      }
+
+      cursor = nextCursor;
+      if (changes.length === 0) break;
+    }
+
+    if (!described) {
+      // The account owns no such workspace, or it has been tombstoned. Not an
+      // error worth retrying, and emphatically not a reason to install an
+      // empty workspace named after an id.
+      this.update(workspaceId, (current) => ({
+        ...current,
+        status: current.dirty.length > 0 ? "queued" : "never-synced",
+        lastError: "That workspace isn't on the server.",
+      }));
+      return { ok: false, status: "never-synced", reason: "That workspace isn't on the server." };
+    }
+
+    // Everything arrived. Commit once, in the order runSync uses: local state
+    // first, then the cursor that describes it.
+    this.host.commitRemote(state.workspace);
+    publishRemoteEntities({
+      collections: { workspaceId, items: state.collections },
+      dependencies: state.dependencies,
+    });
+
+    const final = this.update(workspaceId, (current) => ({
+      ...current,
+      cursor,
+      conflicts: mergeConflicts(current.conflicts, conflicts),
+      status: conflicts.length > 0 ? "conflict" : current.dirty.length > 0 ? "queued" : "idle",
+      failureCount: 0,
+      retryAfter: undefined,
+      lastError: undefined,
+      lastSyncedAt: this.now(),
+    }));
+
+    this.host.log?.("sync:adopted", { workspaceId, applied, pages, conflicts: final.conflicts.length });
+    return { ok: true, status: final.status, cursor: final.cursor, pushed: 0, pulled: applied, conflicts: final.conflicts.length };
   }
 
   // ---- conflict resolution ------------------------------------------------

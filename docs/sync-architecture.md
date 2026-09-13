@@ -322,12 +322,101 @@ sync. Absence on the server is not permission to upload, and signing in must
 not turn into a silent migration. Only `migrateWorkspace` — behind a user
 action — moves a workspace out of that state.
 
+## A workspace's lifecycle
+
+Four situations, and which way the data moves in each:
+
+| this device has | the server has | what happens |
+|---|---|---|
+| a workspace | nothing | **initial upload** — `migrateWorkspace`, user-initiated |
+| nothing | a workspace | **adoption** — `adoptWorkspace`, installs it here |
+| a workspace | the same workspace | **adoption as a merge** — see below |
+| a workspace | nothing yet reachable | **offline** — local editing continues, unchanged |
+
+### Discovery
+
+`GET /api/sync/workspaces` lists the workspaces the session's account owns,
+**metadata only**. It exists for exactly one situation: a device that is
+signed in and holds nothing locally has no other way to learn that a workspace
+is waiting. Contents are not returned — hydration is the ordinary paged pull —
+and the response is capped, because "a user has few workspaces" is an
+expectation, not a guarantee.
+
+Ownership is the repository's `WHERE user_id = $1`; nothing reads an identity
+from the request. A signed-out device asks nothing at all.
+
+The client runs it **once per account**, after render, and adopts only
+workspaces this device does not already have. A failure clears the guard
+rather than latching, so a device that was offline at sign-in still onboards
+later. Startup never waits for it.
+
+### Adoption
+
+```
+pull every page from cursor 0 -> apply in memory
+  -> commit the workspace -> publish collections/dependencies
+  -> persist the cursor
+```
+
+**Nothing durable happens until every page has arrived.** A half-installed
+workspace is worse than none: it looks real while missing tabs the user cannot
+tell are missing. A failure on page three therefore leaves the device exactly
+as it was — no workspace, no cursor, nothing to clean up — and the operation
+simply runs again. The cursor moves last, for the same reason it does
+everywhere else: it is a promise that everything up to it has been
+incorporated.
+
+Adoption **cannot become an upload**. `commitRemote` is remote-origin and the
+entity channel is the remote channel, so neither marks anything dirty — the
+device does not push back what it just downloaded.
+
+Onto a device that **already has the workspace**, adoption is a merge, not a
+replacement, following the same rules an ordinary pull does: entities arrive by
+identity, absence is never deletion, and anything with a pending local edit is
+withheld and reported as a conflict rather than overwritten. Local-only
+entities survive. This is why adoption onto an existing workspace is only ever
+user-initiated: automatic adoption could merge server state over pending work
+the user has not seen, and that is their decision.
+
+## "Already on the server" is not a conflict
+
+The distinction this phase exists to draw.
+
+When a device asks to upload a workspace the account already owns, the server
+answers 409 with `reason: "already-exists"`, and the client classifies it as
+its own failure kind. It is **not** a conflict: nothing is contended, no entity
+disagrees, and there is nothing for a user to choose between. The client's
+correct next move is adoption, so `migrateWorkspace` performs it — the single
+visible action does the right thing whichever side happens to hold the data.
+
+Previously this shared the entity-conflict response, which sent the workspace
+into `conflict` status carrying **zero conflict records** until a later sync
+happened to clear it. The status bar read "0 conflicts" and the panel offered
+nothing to resolve.
+
+The 409 reasons are now three, and they mean different things:
+
+| `reason` | meaning | client's move |
+|---|---|---|
+| `already-exists` | this account owns it and it is already here | adopt it |
+| `stale-base` | the workspace moved since you last read | pull, then retry |
+| `conflict` | named entities disagree, or a locked placement was moved | surface it; the user chooses |
+
+Authorization failures stay 404 (indistinguishable from "no such workspace"),
+malformed requests stay 400, and oversized ones stay 413 — none of those are
+conflicts either.
+
 ## Account switching
 
 Cursors, dirty refs and conflicts are all account-scoped. A different `userId`
 reads as a fresh `never-synced` entry rather than inheriting the previous
 account's state, which would otherwise push one user's edits at another user's
-workspace.
+workspace — or replay a cursor from A against B's stream, asking for changes
+that never happened to B.
+
+The journal blob records which account it belongs to, so the isolation is a
+property of the stored data rather than of remembering to clear something.
+Signing back in as the first account finds that account's pending work intact.
 
 ## Device-local, and staying that way
 
@@ -357,6 +446,19 @@ Two things make this work with a set-based journal:
   resurrect the entity server-side.
 
 Both survive a reload: the journal is persisted, including the `deleted` flag.
+
+## The remote-entity channel is workspace-scoped
+
+Collections live in one flat localStorage key spanning every workspace, but
+the engine only ever reads and applies the syncing workspace's share of it. The
+channel event therefore names its workspace (`{ workspaceId, items }`) and the
+owning hook replaces only that slice.
+
+It used to publish the slice as though it were the whole store, so a pull in
+one workspace dropped every other workspace's collections — and the hook's
+persist effect then wrote that loss to disk. Dependencies never had the problem:
+the engine reads that store whole, so what it publishes genuinely is the whole
+list.
 
 ## Observability
 
@@ -395,10 +497,16 @@ rule it implements names the production code it mirrors, so drift is visible.
 - Workspace deletion is still not part of the push surface; tombstoning a
   whole workspace needs a decision about its children that belongs with the
   deletion UX.
-- **No authenticated runtime verification.** Two-device behaviour is verified
-  by the test harness above, not by driving two signed-in browsers: that needs
-  a session store and a database, and neither exists here. No claim is made
-  that a live two-client exchange was observed.
-- **A second device joining shows a spurious `conflict` status** between the
-  refused upload and the sync that follows. Harmless and self-clearing, but the
-  status is misleading while it lasts.
+- **No authenticated runtime verification.** Two-device behaviour and workspace
+  adoption are verified by the test harness above, not by driving two signed-in
+  browsers: that needs a session store and a database, and neither exists here.
+  No claim is made that a live two-client exchange was observed.
+- **Adoption onto a device that already holds the workspace does not upload
+  local-only entities.** They survive locally (absence is never deletion) but
+  are not dirty, so nothing schedules them. Editing one marks it dirty and it
+  goes up normally. Uploading them wholesale would be an upload the user did
+  not ask for, on top of a workspace the server already owns.
+- **Workspace deletion is surfaced, never applied.** A workspace tombstone
+  arriving in a pull is reported as a conflict rather than removing the user's
+  workspace as a side effect of a background read; there is no local
+  "delete this workspace everywhere" action yet.

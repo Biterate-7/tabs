@@ -500,7 +500,7 @@ describe("no sync loop for remote collections and dependencies", () => {
     const dirtyEvents: unknown[] = [];
     const offDirty = subscribeSyncDirty((events) => dirtyEvents.push(...events));
 
-    publishRemoteEntities({ collections: [{ id: COLL_A, workspaceId: WS }] });
+    publishRemoteEntities({ collections: { workspaceId: WS, items: [{ id: COLL_A, workspaceId: WS }] } });
 
     // The two channels are separate by construction; a remote publish can
     // never enqueue an upload.

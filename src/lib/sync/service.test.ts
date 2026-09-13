@@ -318,14 +318,21 @@ describe("initial sync", () => {
     void result;
   });
 
-  it("refuses an existing workspace when the client cannot prove it has seen it", async () => {
+  /**
+   * Reported as `already-exists`, NOT `conflict`. Nothing is contended:
+   * this account owns the workspace and the client simply asked to create
+   * something that is already there — the ordinary second-device case.
+   * Naming it a conflict sent the client into conflict handling with no
+   * conflicts to show.
+   */
+  it("reports an existing workspace as already-exists rather than a conflict", async () => {
     pool.counter = "7";
     const result = await service.initial(
       { workspace: { id: WS, name: "W", createdAt: T0, updatedAt: T0 }, upserts: [] },
       USER,
       null
     );
-    expect(result).toEqual({ ok: false, reason: "conflict", serverCursor: "7" });
+    expect(result).toEqual({ ok: false, reason: "already-exists", serverCursor: "7" });
     // Nothing overwritten: the server's copy stands and the client keeps its own.
     expect(pool.entityWrites).toHaveLength(0);
   });

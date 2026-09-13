@@ -63,6 +63,16 @@ export type PushOutcome =
 
 export type InitialOutcome =
   | { ok: true; workspace: WorkspaceSyncPayload; cursor: SyncCursor; created: boolean }
+  /**
+   * The caller owns this workspace and the server already has it.
+   *
+   * Deliberately NOT `conflict`. Nothing is contended and no entity
+   * disagrees — the client simply asked to create something that exists,
+   * which is the ordinary situation for a second device. The answer is
+   * adoption, not resolution, so it must not be reported through the
+   * machinery a real disagreement uses.
+   */
+  | { ok: false; reason: "already-exists"; serverCursor: SyncCursor }
   | { ok: false; reason: "conflict"; serverCursor: SyncCursor }
   | { ok: false; reason: "too-large"; detail: string };
 
@@ -370,8 +380,11 @@ export class SyncService {
     // Already there. A retry says so by sending the cursor it last saw; a
     // client that has never synced sends null and is told the workspace
     // exists rather than having it overwritten.
+    //
+    // `already-exists` rather than `conflict`: this is the second-device
+    // case, and the client's correct next move is to adopt what is here.
     if (knownCursor === null || knownCursor !== existing) {
-      return { ok: false, reason: "conflict", serverCursor: existing };
+      return { ok: false, reason: "already-exists", serverCursor: existing };
     }
 
     const result = await this.repository.mutateWorkspace(
@@ -468,6 +481,17 @@ export class SyncService {
     ];
 
     return { ok: true, cursor: result.cursor, accepted };
+  }
+
+  /**
+   * Every workspace this user owns — metadata only.
+   *
+   * What a device with no local copy needs in order to know there is
+   * anything to adopt. Deliberately no contents: discovery answers
+   * "what exists", and hydration is a separate, paged read.
+   */
+  async listWorkspaces(userId: string): Promise<WorkspaceSyncPayload[]> {
+    return this.repository.listWorkspaces(userId);
   }
 
   /** Changes since `cursor`, or null when this user does not own the workspace. */

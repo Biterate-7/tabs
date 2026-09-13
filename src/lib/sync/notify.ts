@@ -91,7 +91,18 @@ export function subscribeSyncDirty(listener: Listener): () => void {
  * expressed here as "the remote channel never feeds the local channel".
  */
 export type RemoteEntitiesEvent = {
-  collections?: readonly CollectionLike[];
+  /**
+   * The collections of ONE workspace, replacing that workspace's slice of
+   * the store and leaving every other workspace's alone.
+   *
+   * Scoped because the collection store is a single flat key covering all
+   * workspaces while the engine only ever reads and applies the syncing
+   * workspace's share of it. Publishing that share as though it were the
+   * whole store dropped every other workspace's collections, and the
+   * owning hook's persist effect then wrote the loss to disk.
+   */
+  collections?: { workspaceId: string; items: readonly CollectionLike[] };
+  /** Dependencies are one flat store the engine reads whole, so this IS the complete list. */
   dependencies?: readonly DependencyLike[];
 };
 

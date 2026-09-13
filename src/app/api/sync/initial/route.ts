@@ -47,13 +47,22 @@ export async function POST(request: Request): Promise<Response> {
       if (result.reason === "too-large") {
         return Response.json({ error: result.detail }, { status: 413 });
       }
-      // The workspace exists and has moved on, or the client never had it.
-      // Either way the server's copy stands and the client still holds its
-      // own — nothing has been lost on either side.
+      // Both remaining refusals leave the server's copy standing and the
+      // client's own untouched — nothing is lost on either side. They are
+      // reported separately because the client's next move differs:
+      //
+      //   already-exists  this account owns it; adopt what is here.
+      //   conflict        the write could not be placed; re-read and decide.
+      //
+      // Collapsing them, as this once did, made a second device's first
+      // upload look like a data disagreement when nothing disagreed.
+      const alreadyExists = result.reason === "already-exists";
       return Response.json(
         {
-          error: "That workspace already exists on the server.",
-          reason: "conflict",
+          error: alreadyExists
+            ? "That workspace is already on the server. Sync it to this device instead."
+            : "Couldn't create that workspace right now.",
+          reason: result.reason,
           serverCursor: result.serverCursor,
         },
         { status: 409 }

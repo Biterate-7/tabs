@@ -95,7 +95,14 @@ export function useCollectionStore(workspaces: Workspace[]) {
     () =>
       subscribeRemoteEntities((event) => {
         if (!event.collections) return
-        setCollections(event.collections as Collection[])
+        const { workspaceId, items } = event.collections
+        // Replaces only the named workspace's slice. The event carries one
+        // workspace's collections, not the whole store, so assigning it
+        // wholesale would drop every other workspace's.
+        setCollections((current) => [
+          ...current.filter((c) => c.workspaceId !== workspaceId),
+          ...(items as Collection[]),
+        ])
       }),
     []
   )
