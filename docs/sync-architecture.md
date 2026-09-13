@@ -1,289 +1,223 @@
 # Workspace synchronization
 
-How TabDump's local-first workspace data reaches a server and comes back.
+How TabDump's local-first application talks to the server, and — mostly —
+what it deliberately refuses to do.
 
-TabDump remains local-first. localStorage is the source of truth, every
-mutation still goes `reducer → commitStore → local persistence`, and nothing
-on that path touches the network. Synchronization sits beside it and is
-initiated explicitly.
+The governing rule, from which nearly everything else follows:
 
-```
-DOMAIN REDUCERS   pure
-      ↓
-LOCAL PERSISTENCE deterministic (commitStore)
-      ↓
-SYNC SERVICE      network-aware, outside React      src/lib/sync/client.ts
-      ↓
-SERVER API        authenticated                     src/app/api/sync/*
-      ↓
-REPOSITORY        transactional                     src/lib/sync/repository.ts
-      ↓
-POSTGRES                                            src/lib/sync/schema.sql
-```
+> A server response must never silently destroy or replace local workspace
+> data.
 
-## The one invariant
-
-**A server response can refuse, but it must never destroy.**
-
-Everything below follows from that. No response empties a workspace, no
-failure discards a local edit, and no absence is read as a deletion.
-
-## Identity
-
-An entity is its UUID, minted on the device by `src/lib/id.ts` before the
-server has ever heard of it. The server stores exactly what it is given: no
-column has a generating default, and nothing is remapped on upload. A tab
-created offline uploads, downloads and round-trips as itself.
-
-A dependency is the exception, and deliberately: its identity is the
-`(parentTabId, childTabId)` pair, because that is how the client derives its
-id. The wire carries the pair; no separate id is invented.
-
-URL equality is **not** identity. Two tabs with the same URL are two tabs —
-TabDump has first-class duplicate semantics — and nothing in migration,
-serialization or apply ever merges by URL.
-
-### Legacy ids
-
-Entities saved before the UUID migration kept ids like `ws-1699…-1`. Those
-are not valid UUIDs and the server rejects them with a distinct `legacy`
-error rather than a generic "malformed".
-
-`src/lib/sync/legacy-migration.ts` rewrites such a workspace:
-
-1. build a complete `old → new` map for the workspace, sections, groups,
-   tabs and collections — everything, before anything is rewritten;
-2. rewrite every reference: `tab.sectionId`, `tab.groupId`,
-   `section.parentId`, `collection.workspaceId`, `collection.tabIds`,
-   `dependency.parentTabId`/`childTabId` (and the dependency's derived id),
-   and the tab/workspace ids embedded in device-local graph state
-   (`positions`, `boundaryOffsets`, `manualConnections`, `workspaceFilter`,
-   `selectedTabId`);
-3. return a **new** representation — the input is never mutated.
-
-The caller keeps the original until the server confirms, so a failed upload
-leaves local data exactly as it was. Ids that are already UUIDs map to
-themselves, so running it twice is a no-op and a mixed workspace keeps its
-good ids unchanged.
-
-## Ownership
+## The layers
 
 ```
-HttpOnly session cookie → session row → userId → workspace.user_id → entities
+DOMAIN REDUCERS          pure: (state, args) -> state
+        |
+LOCAL COMMIT             commitStore: React state + localStorage
+        |                 |
+        |                 +-- mark dirty (notification only)
+        v
+SYNC ENGINE              scheduling, queue, cursor, retry, conflicts
+        |
+SERVER API               /api/sync/{initial,push,pull}, authenticated
+        |
+REPOSITORY               transactional, ownership-scoped
+        |
+POSTGRES
 ```
 
-Identity comes only from the session. No payload type has an owner field, so
-there is nothing for a client to forge; a body containing `userId` is
-ignored. Every repository method takes `userId` and every statement is
-constrained by it — there is no method that accepts a workspace id alone.
-
-Child entities are never checked against the user directly. They are reached
-only through a workspace the user owns, and the schema's composite foreign
-keys make a child of another workspace unrepresentable.
-
-"Not yours" and "does not exist" both answer **404** with identical wording,
-so a guessed id is not an existence oracle.
-
-## API
-
-| Route | Method | Auth | Purpose |
-| --- | --- | --- | --- |
-| `/api/sync/initial` | POST | session | Upload one workspace for the first time |
-| `/api/sync/push` | POST | session | Apply a batch of local changes |
-| `/api/sync/pull` | GET | session | Changes since a cursor |
-
-All three go through `gateSyncRequest`, which applies the same model as the
-existing `/api/auth/google` route: same-origin, `application/json` (POST
-only), authenticated session, shared rate limiter. `pull` is a GET and is
-genuinely read-only — it writes nothing and advances no server state.
-
-Bodies are capped at 8 MB, measured as read rather than trusted from
-`Content-Length`; a push carries at most 2000 changes and an initial
-migration at most 10 000 entities.
-
-## Cursor
-
-An opaque string naming a position in one workspace's change stream. It comes
-from the workspace's `sync_counter`, incremented once per mutating
-transaction under a row lock on the workspace row.
-
-That last detail is the reason a cursor works at all. A bare Postgres
-`SEQUENCE` is unsafe here: `nextval()` is handed out *before* commit, so a
-transaction holding version 5 can commit after one holding 6, and a client
-that read past 6 would never see 5. The row lock makes version order equal
-commit order.
-
-Every row written by one transaction shares one version, so a bulk operation
-— organize, move twenty tabs, import — is one indivisible step in the stream.
-A pull page is therefore cut at a version **boundary**, never mid-version.
-
-Cursors are **device-local** (`src/lib/sync/metadata.ts`, its own
-localStorage key, scoped by account). A laptop at 42 and a desktop at 57 are
-both correct. Nothing stores a single "last synced cursor" on the workspace,
-and no cursor reaches an export.
-
-## Initial migration
-
-Explicit and user-initiated. Signing in never uploads anything.
+Each layer only knows about the one below it. In particular the engine is
+handed state that has **already been committed locally**; it is never part of
+the path that makes an edit durable.
 
 ```
-local workspace → validate → migrate legacy ids if needed
-                → upload atomically → server confirms → record cursor
+                 +--------------+
+                 | Local Store  |
+                 +------+-------+
+                        |
+                  local mutation
+                        v
+                 +--------------+
+                 | commitStore  |   <- synchronous, deterministic, local
+                 +------+-------+
+                        |
+                   mark dirty        <- notification; cannot fail the commit
+                        v
+                 +--------------+
+                 | Sync Engine  |
+                 +------+-------+
+                        |
+                +-------+--------+
+                v                v
+             PUSH              PULL
+                |                |
+                +-------+--------+
+                        v
+                 Conflict layer
+                        v
+                  Local apply       <- back through commitStore, origin=remote
 ```
 
-The whole workspace is written in one transaction, so the database never
-holds half of it. If anything fails, it rolls back and the local copy is
-untouched.
+## commitStore and CommitOrigin
 
-**Idempotency.** A retry after a lost response sends `knownCursor` — the
-cursor the client recorded. The server recognises it and updates in place
-using the client's own ids, so no duplicate workspace, tab or section can
-appear. A client that sends no `knownCursor` for a workspace that already
-exists gets **409**, not an overwrite. There is no force flag.
+`commitStore(next, origin)` stays exactly what Phase 2.5 made it: synchronous,
+non-async, and local. It sets React state, writes localStorage, and only then
+notifies sync — inside a `try/catch`, because bookkeeping must never be able
+to fail an edit that is already persisted.
 
-## Push
+`origin` is the loop prevention, and it is structural rather than a flag
+someone has to remember:
+
+| origin | meaning | marks dirty? |
+|---|---|---|
+| `"local"` (default) | a user action | yes |
+| `"remote"` | data the server just sent | **no** |
+
+Hydration does not call `commitStore` at all — it sets state directly — so
+startup never enqueues anything either.
+
+Without this, applying a pulled change would mark it dirty, push it back,
+pull it again, and loop forever. `engine.test.ts` pins that it does not.
+
+## What counts as dirty
+
+`diff.ts` compares the **syncable projection** of two committed stores, not
+the objects themselves. Fields Phase 3 decided not to sync — `normalizedUrl`,
+`domain`, `isDuplicate`, `favicon` — are absent from the projection, so
+recomputing them schedules nothing. An identical re-commit produces an empty
+diff. This is the same discipline Phase 2 applied to `updatedAt`, for the same
+reason: a render is not an edit.
+
+## The queue is a set, not a log
+
+A push carries the **current state** of an entity rather than a delta, so the
+only durable record needed is *which* entities changed and whether they were
+deleted. That gives three properties for free:
+
+- **Coalescing.** Twenty edits to one tab are one entry, so one upsert.
+- **Idempotency.** Replaying sends whatever the workspace holds now, however
+  many times it runs — which is what makes a lost response safe.
+- **Bounded size.** The journal cannot grow with edit count.
+
+An event log would need ordering, compaction and replay to produce exactly the
+same request.
+
+Journal state lives in `tabdump:sync-journal:v1` — its own key, account-scoped,
+never part of a workspace export.
+
+## The cursor
+
+The cursor is this device's promise that it has *incorporated* everything up
+to that point. So it advances **last**:
 
 ```
-authenticate → validate → lock workspace → check base cursor
-             → check per-entity conflicts → apply → advance version → commit
+push -> retire what the server accepted
+     -> pull -> apply locally -> commit workspace
+     -> only then persist the cursor
 ```
 
-All or nothing. Every refusal happens before any write, and the conflict
-check runs inside the transaction holding the row lock, so no other push can
-interleave between checking and writing.
+It specifically does **not** advance because a push succeeded, or because a
+pull returned 200. If the local apply throws, the cursor stays where it was
+and the same page is fetched again. Repeating work is safe; skipping it is
+not — a skipped change is gone forever, because the next pull starts after it.
 
-The response echoes `accepted` — what the server actually stored — so the
-client establishes its new baseline from fact rather than assumption.
+## Conflicts
 
-## Pull
+Detection is the server's (Phase 4, per-entity against `baseCursor`).
+Phase 5 makes conflicts **durable and actionable**, and keeps both sides:
 
-Returns changes above the cursor, in version order, with `nextCursor` and
-`hasMore`. Never the whole workspace.
+- `local` — captured at detection time, so it survives later local edits
+- `remote` — filled from the pull that follows
+- deterministic id, so re-detecting one updates a record rather than piling up
 
-Tombstones travel with updates. That is the entire reason deletions are
-stored rather than removed: a client can distinguish *deleted* from *never
-heard of*, and absence never implies deletion.
+| choice | local state | queue |
+|---|---|---|
+| Keep mine | unchanged | entity re-marked dirty — the resolution becomes a real mutation pushed against the server's *new* cursor |
+| Keep theirs | server value applied | nothing — re-pushing the server's own value is the loop above |
 
-## Tombstones
+There is no automatic field-level merge. Two devices that both changed a tab
+since their shared base have genuinely conflicting versions, and without
+per-field base information there is no honest way to distinguish "they changed
+the title, I changed the favourite" from "we both changed the title". Guessing
+would silently discard an edit.
 
-Deletion sets `deleted_at`; no row is removed. Nothing purges tombstones —
-retention is deliberately unaddressed in this phase. The only hard deletion
-in the schema is the account-erasure cascade from `tabdump_users`, where
-there is no client left to inform.
+**Manual organization has standing.** `sectionLocked` means a human placed a
+tab. The server refuses an automatic placement that would move a locked tab
+(Phase 4), and the UI says so rather than offering two equivalent-looking
+buttons. `lastAccessedAt` is deliberately *not* a conflict field — opening a
+tab is not a content mutation.
 
-The deletion timestamp is stamped by the server. A client-supplied one would
-let a wrong clock place a tombstone in the past, where a device reading
-forward from its cursor would never see it.
+## Retry
 
-## Conflict detection
+| failure | classification | behaviour |
+|---|---|---|
+| network / offline | retryable | exponential backoff, jittered, capped at 5 min |
+| 5xx (incl. a bare 503) | retryable | same |
+| 503 with `reason: "not-configured"` | permanent | `paused` — this deployment has no database |
+| 401 | permanent | `paused`, pending work kept for after sign-in |
+| 409 | conflict | recorded; not retried blindly |
+| 400 / 413 | permanent | `error`, no retry armed |
 
-**Detection is implemented. Resolution is not.** A conflict is reported with
-enough detail to explain it, and nothing is overwritten.
+A bare 503 is treated as transient on purpose: only *our* 503 carries
+`reason`, and a proxy's 503 must not pause sync forever.
 
-Two levels:
-
-- **Stale base** — the workspace moved since the client last read. `409`,
-  `reason: "stale-base"`, with the server's cursor. Pull, then retry.
-- **Per-entity** — the specific object's `sync_version` is above the client's
-  base. `409`, `reason: "conflict"`, naming each entity.
-
-Per-entity matters: two devices editing *different* tabs in the same
-workspace do not conflict and are not told they do.
-
-### Manual organization
-
-`sectionLocked` means a human placed that tab, and the local organizer
-already refuses to move such a tab. That guarantee holds across devices too:
-an incoming write that would move a locked tab to a different section
-**without itself being a manual placement** is refused, even when versions
-agree (`reason: "locked-section"`). A genuine manual move from another device
-arrives with `sectionLocked: true` and is accepted.
-
-Deliberately conservative. A conflict prompt costs the user a moment;
-silently discarding their organization costs them work.
-
-### Not a conflict signal
-
-`lastAccessedAt` is not `updatedAt`. Opening a tab is not a content
-mutation, and sync introduces no timestamp churn.
-
-Timestamp comparison alone does **not** resolve any of this, and nothing here
-applies last-writer-wins.
-
-## Applying pulled changes
-
-By entity identity, never wholesale (`src/lib/sync/apply.ts`, a pure
-reducer). A change names one entity and only that entity is touched.
-
-- Absence removes nothing. Only an explicit tombstone deletes.
-- A workspace tombstone is **reported, not applied** — removing someone's
-  whole workspace during a background pull is not something this layer does.
-- If an entity has an unsynced local edit, the remote change is withheld and
-  returned as a conflict rather than overwriting it.
-- `normalizedUrl`, `domain` and `isDuplicate` are recomputed locally; a tab
-  that round-trips is indistinguishable from one that never left.
+Nothing about a failure discards a dirty ref. An outage costs latency, never
+an edit.
 
 ## Offline
 
-Every client function returns a discriminated result; none throws. Offline, a
-500, a timeout and a 503 all become a recorded `error`/`pending` state. The
-workspace stays fully editable — sync failure is never application failure,
-and nothing blocks a local mutation.
+`navigator.onLine` is a hint that a request is worth *attempting*; a captive
+portal reports "online". The authority is an actual failed request, which the
+engine records as `offline`. Local editing is unaffected throughout.
 
-Retries are safe because ids are stable and writes are upserts. Retry is
-bounded and manual in this phase; there is no aggressive background loop.
+## Scheduling
 
-## Sequence
+- **Debounce** (~800 ms) so rapid edits become one push.
+- **Per-workspace lock.** A second request while one is running returns the
+  same in-flight promise and schedules one rerun afterwards — never a second
+  concurrent sync.
+- **Bounded concurrency** (3) across workspaces, so twenty workspaces are not
+  twenty simultaneous requests.
+- **Triggers**: reconnect, focus, tab becoming visible, and a 60 s timer,
+  coalesced to at most one pass per 2 s. Hidden tabs do not poll.
+- Every listener and timer is removed on teardown, so a StrictMode
+  mount/unmount/remount leaves exactly one of each.
 
-```
-Client                              Server
+## Initial migration is explicit
 
-  | POST /api/sync/initial            |
-  |---------------------------------->|
-  |            validate + transaction |
-  |                        cursor = 42|
-  |<----------------------------------|
-  | local cursor = 42                 |
-  |                                   |
-  | POST /api/sync/push (base = 42)   |
-  |---------------------------------->|
-  |              apply in transaction |
-  |                        cursor = 43|
-  |<----------------------------------|
-  |                                   |
-  | GET /api/sync/pull?cursor=43      |
-  |---------------------------------->|
-  |                        no changes |
-  |<----------------------------------|
-```
+A `never-synced` workspace is marked dirty but **never uploaded** by ordinary
+sync. Absence on the server is not permission to upload, and signing in must
+not turn into a silent migration. Only `migrateWorkspace` — behind a user
+action — moves a workspace out of that state.
 
-Conflict:
+## Account switching
 
-```
-Client A cursor 42          Client B cursor 42
+Cursors, dirty refs and conflicts are all account-scoped. A different `userId`
+reads as a fresh `never-synced` entry rather than inheriting the previous
+account's state, which would otherwise push one user's edits at another user's
+workspace.
 
-A pushes ─────────────────► server cursor 43
+## Device-local, and staying that way
 
-                            B pushes base = 42
-                                     │
-                            stale base detected
-                                     │
-                            409 + serverCursor 43
-                                     │
-                            B pulls, reconciles, retries
-```
+Never synchronized: camera, viewport, selection, sidebar state, graph
+positions, boundary offsets, layout cache, the sync journal itself. The graph
+store keeps its own key and its own prune; the engine does not touch it.
 
-## What is not here
+## Out of scope, deliberately
 
-Automatic sync, background/realtime sync, websockets, polling, conflict
-*resolution*, CRDTs, desktop authentication, extension sync. Local mutations
-make no network requests. The desktop app runs unchanged and needs no server.
+No WebSockets, SSE or BroadcastChannel. No CRDTs, vector clocks, operational
+transforms or event sourcing. No realtime collaboration or presence. No
+desktop authentication. No extension synchronization.
 
-## Verification status
+## Known limitations
 
-Structural, contract and API-level behaviour is tested. **Postgres semantics
-are not verified**: this environment has no Postgres, psql or Docker, so
-foreign-key enforcement, composite-FK cross-workspace rejection, `FOR UPDATE`
-serialization, real transaction rollback and concurrent-push ordering have
-been designed and reviewed but not executed. Applying `schema.sql` and
-exercising these against a real database remains a required manual step.
+- **Collections and dependencies are not incrementally dirty-tracked.** They
+  live in their own stores behind a debounced effect rather than
+  `commitStore`, so a change to one does not currently schedule a push. They
+  *are* uploaded in full by the initial migration, and they are applied from
+  pulls. Wiring their seam is deferred rather than bolted on here.
+- **Desktop sync is inert**, because the static export ships no API routes and
+  therefore has no session. This is the intended Phase 5 state.
+- **No real Postgres** in the development environment, so transaction,
+  `FOR UPDATE` and foreign-key behaviour remain verified structurally and
+  against a recording fake rather than executed.

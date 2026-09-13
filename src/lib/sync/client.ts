@@ -91,7 +91,14 @@ async function request(path: string, init: RequestInit): Promise<SyncResult<Json
     case 401:
       return { ok: false, failure: { kind: "unauthenticated", message } };
     case 503:
-      return { ok: false, failure: { kind: "not-configured", message } };
+      // Only OUR 503 says the deployment has no database, and it says so
+      // explicitly. A 503 from a proxy or load balancer is transient and must
+      // stay retryable — treating every 503 as "not configured" would pause
+      // sync permanently over a momentary upstream hiccup.
+      if (body.reason === "not-configured") {
+        return { ok: false, failure: { kind: "not-configured", message } };
+      }
+      return { ok: false, failure: { kind: "server", message, status: 503 } };
     case 404:
       return { ok: false, failure: { kind: "not-found", message } };
     case 400:

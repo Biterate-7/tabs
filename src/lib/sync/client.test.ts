@@ -174,7 +174,11 @@ describe("network failure never costs local data", () => {
   it("distinguishes the failures a caller must handle differently", async () => {
     const cases: [number, unknown, string][] = [
       [401, { error: "Sign in." }, "unauthenticated"],
-      [503, { error: "Not configured." }, "not-configured"],
+      // Only OUR 503 carries `reason`, and only that one means "this
+      // deployment has no database". A bare 503 is a proxy or load balancer
+      // hiccup and stays retryable — see the switch in ./client.ts.
+      [503, { error: "Not configured.", reason: "not-configured" }, "not-configured"],
+      [503, { error: "Service Unavailable" }, "server"],
       [404, { error: "Workspace not found." }, "not-found"],
       [400, { error: "Invalid.", errors: ["id: must be a UUID"] }, "invalid"],
       [409, { error: "Stale.", reason: "stale-base", serverCursor: "18" }, "stale-base"],

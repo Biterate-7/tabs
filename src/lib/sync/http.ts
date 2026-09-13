@@ -63,7 +63,15 @@ export async function gateSyncRequest(request: Request, mutating: boolean): Prom
   if (!service.ok) {
     // `detail` names environment variables and was already logged once per
     // process; the browser gets the plain message only.
-    return { ok: false, response: json({ error: "Sync isn't available on this deployment yet." }, 503) };
+    // `reason` discriminates OUR 503 from a transient one produced by a
+    // proxy or load balancer. Without it a client cannot tell "this
+    // deployment has no database" (retrying forever is pointless) from "the
+    // upstream hiccuped" (retrying is exactly right), and would have to
+    // guess from the message text.
+    return {
+      ok: false,
+      response: json({ error: "Sync isn't available on this deployment yet.", reason: "not-configured" }, 503),
+    };
   }
 
   return { ok: true, context: { user: auth.user, service: service.service } };

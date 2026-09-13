@@ -47,6 +47,9 @@ import { OrganizationPreparationView, OrganizationStatusBar } from "@/components
 import { computeLayoutKey, createLayoutPrecompute, resolveGraphLayoutInput } from "@/lib/graph/precompute"
 import { loadGraphState, pruneGraphState, saveGraphState } from "@/lib/graph/persistence"
 import { computeFitCamera } from "@/lib/graph/layout"
+import { useOptionalAuth } from "@/components/auth/auth-provider"
+import { useSyncEngine, useWorkspaceSyncState } from "@/hooks/use-sync-engine"
+import { SyncIndicator } from "@/components/sync/sync-indicator"
 import { markDuplicates } from "@/lib/tabs"
 import { stampChangedTabs } from "@/lib/tabs/touch"
 import { createTimestamp } from "@/lib/timestamps"
@@ -57,6 +60,16 @@ import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
+
+/**
+ * Where a committed store came from.
+ *
+ * "local" is a user action and is reported to the sync engine. "remote" is
+ * data the server just sent, already synchronized by definition — reporting
+ * it would push it straight back, which is the loop the engine is built to
+ * avoid.
+ */
+type CommitOrigin = "local" | "remote"
 
 const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
 const RECENTLY_ADDED_DURATION_MS = 6000
@@ -155,6 +168,38 @@ export function AppShell() {
   // places that call setStore, so it cannot drift.
   const storeRef = useRef<WorkspaceStore | null>(null)
 
+  // Optional rather than required: this component renders in unit tests that
+  // mount it without an AuthProvider, and signed-out is a normal state.
+  // A null user disables sync entirely — see the engine's markDirty.
+  const auth = useOptionalAuth()
+
+  /**
+   * The sync engine.
+   *
+   * Sits ALONGSIDE the local architecture, not inside it: it is handed
+   * already-committed state and decides on its own when to talk to the
+   * server. `commitStore` stays synchronous, deterministic and local, and
+   * nothing below can fail it.
+   *
+   * Collections and dependencies are read from their own localStorage stores
+   * rather than from React state, because they live in hooks mounted further
+   * down the tree (WorkspaceView/GraphView) and are not available here.
+   */
+  const sync = useSyncEngine({
+    userId: auth?.user?.id ?? null,
+    store,
+    getCollections: (workspaceId) =>
+      loadCollectionState().collections.filter((c) => c.workspaceId === workspaceId),
+    getDependencies: () => loadDependencyState().dependencies,
+    onRemoteWorkspace: (workspace) => {
+      const current = storeRef.current
+      if (!current) return
+      const workspaces = current.workspaces.map((w) => (w.id === workspace.id ? workspace : w))
+      // Through the ordinary seam, flagged remote so it is not re-uploaded.
+      commitStore({ ...current, workspaces }, "remote")
+    },
+  })
+
   useEffect(() => {
     // Hydrating from localStorage: this can only run post-mount (SSR has no
     // access to it, and reading it during render would cause a hydration
@@ -229,10 +274,29 @@ export function AppShell() {
    * synchronously — so two async callbacks resolving in the same tick still
    * compose, the way nesting them in functional updaters used to guarantee.
    */
-  function commitStore(next: WorkspaceStore): WorkspaceStore {
+  function commitStore(next: WorkspaceStore, origin: CommitOrigin = "local"): WorkspaceStore {
+    const previous = storeRef.current
     storeRef.current = next
     setStore(next)
     if (canPersist) saveWorkspaceStore(next)
+
+    // Synchronization is notified AFTER the commit has already succeeded,
+    // and cannot affect it. Still synchronous and still not async: this
+    // records what changed and schedules work on a timer, it does not make
+    // a request. `commitStore` stays the deterministic local seam Phase 2.5
+    // established.
+    //
+    // `origin` is what stops a pull from becoming a push. A commit carrying
+    // remote data marks nothing dirty, so applying a remote change can never
+    // enqueue that same change for upload.
+    if (origin === "local") {
+      try {
+        sync.notifyLocalCommit(previous, next)
+      } catch {
+        // A failure in bookkeeping must never cost the user their edit: the
+        // workspace is already persisted by the time this runs.
+      }
+    }
     return next
   }
 
@@ -629,6 +693,9 @@ export function AppShell() {
   }
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
+  // Subscribes to the engine rather than mirroring its state into React —
+  // the engine stays the single source of truth for sync status.
+  const syncState = useWorkspaceSyncState(sync, currentWorkspace?.id ?? null)
 
   // Read-only snapshot for the sidebar's per-space metadata line — recomputed
   // whenever `store` changes identity (dump, switch, clear, import, category
@@ -1012,11 +1079,22 @@ export function AppShell() {
             graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
             graphLockedReason={readiness.label}
             organizationStatus={
-              <OrganizationStatusBar
-                state={readiness.state}
-                onRetry={retryDumpOrganization}
-                onDismissError={readiness.dismissError}
-              />
+              <div className="flex items-center gap-2">
+                <OrganizationStatusBar
+                  state={readiness.state}
+                  onRetry={retryDumpOrganization}
+                  onDismissError={readiness.dismissError}
+                />
+                <SyncIndicator
+                  state={syncState}
+                  // Hidden entirely when there is no account to sync to,
+                  // rather than offering a control that cannot work.
+                  disabled={!auth?.user}
+                  onSyncNow={() => sync.syncNow(currentWorkspace.id)}
+                  onMigrate={() => void sync.migrate(currentWorkspace.id)}
+                  onResolve={(conflictId, choice) => sync.resolve(currentWorkspace.id, conflictId, choice)}
+                />
+              </div>
             }
             onOpenFavorites={() => setView("favorites")}
             onOpenRecents={() => setView("recents")}
