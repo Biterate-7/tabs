@@ -285,6 +285,88 @@ describe("moveTabsBetweenWorkspaces", () => {
     expect(result.store.workspaces[0].tabs).toEqual([]);
   });
 
+  /**
+   * The production defect this pins down (found by authenticated E2E against
+   * the deployed app, not by a unit test): a moved tab kept the `sectionId`
+   * of a section in its OLD workspace. Locally that is an invisible dangling
+   * reference; on the server it is a foreign key violation —
+   *
+   *   insert or update on table "tabdump_tabs" violates foreign key
+   *   constraint "tabdump_tabs_section_same_workspace"
+   *
+   * which is DEFERRABLE INITIALLY DEFERRED, so it fired at COMMIT and took
+   * the whole push down with a 500. Every tab in the workspace then sat
+   * undeliverable while sync retried.
+   *
+   * `groupId` was already dropped for exactly this reason. `sectionId`
+   * carries the same same-workspace invariant (see Tab.sectionId) and the
+   * same composite FK, and was simply missed.
+   */
+  it("clears a moved tab's sectionId — a section only ever belongs to the workspace it was created in", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({
+          id: "a",
+          sections: [{ id: "s-in-a", parentId: null, name: "Reading", source: "user", createdAt: 1, updatedAt: 1 }],
+          tabs: [{ ...makeTab("1"), sectionId: "s-in-a" }],
+        }),
+        makeWorkspace({ id: "b", tabs: [] }),
+      ],
+      "a"
+    );
+
+    const result = moveTabsBetweenWorkspaces(store, ["1"], "b", "a");
+
+    expect(result.moved[0].sectionId).toBeUndefined();
+    expect(result.store.workspaces[1].tabs[0].sectionId).toBeUndefined();
+  });
+
+  /** A lock naming a section the tab is no longer in protects nothing; it would only pin it out of organization in its new home. */
+  it("clears sectionLocked along with the section it referred to", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({
+          id: "a",
+          sections: [{ id: "s-in-a", parentId: null, name: "Reading", source: "user", createdAt: 1, updatedAt: 1 }],
+          tabs: [{ ...makeTab("1"), sectionId: "s-in-a", sectionLocked: true }],
+        }),
+        makeWorkspace({ id: "b", tabs: [] }),
+      ],
+      "a"
+    );
+
+    const moved = moveTabsBetweenWorkspaces(store, ["1"], "b", "a").store.workspaces[1].tabs[0];
+
+    expect(moved.sectionId).toBeUndefined();
+    expect(moved.sectionLocked).toBeFalsy();
+  });
+
+  /** The end-to-end shape of the production failure: no tab may reference a section outside its own workspace. */
+  it("leaves no tab referencing a section outside its own workspace", () => {
+    const store = makeStore(
+      [
+        makeWorkspace({
+          id: "a",
+          sections: [{ id: "s-in-a", parentId: null, name: "Reading", source: "user", createdAt: 1, updatedAt: 1 }],
+          tabs: [
+            { ...makeTab("1"), sectionId: "s-in-a" },
+            { ...makeTab("2"), sectionId: "s-in-a" },
+          ],
+        }),
+        makeWorkspace({ id: "b", tabs: [] }),
+      ],
+      "a"
+    );
+
+    const next = moveTabsBetweenWorkspaces(store, ["1", "2"], "b", "a").store;
+
+    for (const workspace of next.workspaces) {
+      const owned = new Set((workspace.sections ?? []).map((s) => s.id));
+      const dangling = workspace.tabs.filter((t) => t.sectionId && !owned.has(t.sectionId));
+      expect(dangling).toEqual([]);
+    }
+  });
+
   it("clears a moved tab's groupId — a group only ever belongs to the workspace it was created in", () => {
     const store = makeStore(
       [

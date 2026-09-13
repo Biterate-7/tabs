@@ -181,13 +181,21 @@ export function moveTabsBetweenWorkspaces(
     return { store, moved: [], notFound };
   }
 
-  // A moved tab's groupId (if any) belonged to a group in its OLD workspace
-  // — carrying it across would violate the "a tab's group must live in the
-  // tab's own workspace" invariant (a stray groupId string that happens to
-  // collide with nothing, or worse, with an unrelated group of the same id
-  // shape, in the destination). Moving workspaces always drops group
-  // membership; the caller can re-assign a group in the destination
-  // afterward via assignTabsToGroup.
+  // A moved tab's groupId and sectionId (if any) belonged to a group and a
+  // section in its OLD workspace — carrying either across would violate the
+  // "a tab's group and section must live in the tab's own workspace"
+  // invariant (a stray id that happens to collide with nothing, or worse,
+  // with an unrelated entity of the same id shape, in the destination).
+  // Moving workspaces always drops both; the caller can re-assign in the
+  // destination afterward via assignTabsToGroup / assignTabsToSection.
+  //
+  // sectionId was once left in place here, and locally that only ever looked
+  // like a tab quietly missing from its section. It became visible when the
+  // workspace was synced: the server enforces this invariant with a composite
+  // foreign key (tabdump_tabs_section_same_workspace), and because that
+  // constraint is DEFERRABLE INITIALLY DEFERRED it fired at COMMIT and failed
+  // the entire push with a 500 — leaving every tab in the workspace stuck
+  // undeliverable. See store.test.ts for the regression tests.
   const now = Date.now();
   // Every moved tab is stamped, not just the ones that had a group: moving a
   // tab changes which workspace owns it, and that ownership is part of the
@@ -195,6 +203,10 @@ export function moveTabsBetweenWorkspaces(
   const ungrouped = moved.map((t) => {
     const copy = { ...t, updatedAt: now };
     delete copy.groupId;
+    delete copy.sectionId;
+    // A lock naming a section this tab is no longer in protects nothing, and
+    // would only hold it out of organization in its new workspace.
+    delete copy.sectionLocked;
     return copy;
   });
   const withTarget = withoutMoved.map((w) =>
