@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { SyncEngine } from "@/lib/sync/engine"
 import type { SyncEngineHost } from "@/lib/sync/engine"
 import { installSyncTriggers } from "@/lib/sync/triggers"
+import { subscribeSyncDirty } from "@/lib/sync/notify"
 import { diffStores } from "@/lib/sync/diff"
 import type { WorkspaceJournal } from "@/lib/sync/journal"
 import { defaultJournal } from "@/lib/sync/journal"
@@ -83,6 +84,12 @@ export function useSyncEngine(input: SyncEngineInput): SyncEngineBinding {
       engine.dispose()
     }
   }, [engine])
+
+  // Collections and dependencies live in their own stores, mounted further
+  // down the tree, and publish rather than being diffed at commitStore — see
+  // src/lib/sync/notify.ts. This is the one place those events reach the
+  // engine, and it unsubscribes on unmount so a remount does not double up.
+  useEffect(() => subscribeSyncDirty((events) => engine.markEntitiesDirty(events)), [engine])
 
   return useMemo<SyncEngineBinding>(
     () => ({

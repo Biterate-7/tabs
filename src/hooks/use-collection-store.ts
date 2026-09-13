@@ -18,10 +18,25 @@ import {
   saveCollectionState,
 } from "@/lib/collections/persistence"
 import { createTimestamp } from "@/lib/timestamps"
+import { publishSyncDirty, subscribeRemoteEntities } from "@/lib/sync/notify"
 import type { Collection } from "@/lib/collections/types"
 import type { Workspace } from "@/lib/workspace/types"
 
 const SAVE_DEBOUNCE_MS = 400
+
+/**
+ * Which collections currently hold any of `tabIds`.
+ *
+ * A tab belongs to at most one collection, so adding it somewhere new
+ * silently removes it from wherever it was (stripFromAllCollections). That
+ * second collection changed too, and reporting only the named one would
+ * leave the other's membership stale on every other device.
+ */
+function holdersOf(collections: readonly Collection[], tabIds: readonly string[]): string[] {
+  if (tabIds.length === 0) return []
+  const wanted = new Set(tabIds)
+  return collections.filter((c) => c.tabIds.some((id) => wanted.has(id))).map((c) => c.id)
+}
 
 /**
  * Loads the collection store from localStorage once on mount and keeps it
@@ -69,8 +84,52 @@ export function useCollectionStore(workspaces: Workspace[]) {
     return () => clearTimeout(timer)
   }, [collections])
 
-  return useMemo(
-    () => ({
+  // Collections the engine pulled from the server. Applied through this hook
+  // rather than written to localStorage by the engine, because this hook is
+  // the single writer of that key — the effect above would otherwise clobber
+  // the engine's write with stale React state.
+  //
+  // Deliberately does NOT publish a dirty event: the value came from the
+  // server, and re-marking it would push it straight back.
+  useEffect(
+    () =>
+      subscribeRemoteEntities((event) => {
+        if (!event.collections) return
+        setCollections(event.collections as Collection[])
+      }),
+    []
+  )
+
+  return useMemo(() => {
+    /**
+     * Announces changed collections to the sync engine.
+     *
+     * Called from action handlers, never from inside a `setCollections`
+     * updater — React may evaluate an updater more than once, and publishing
+     * there would report a mutation twice.
+     *
+     * The workspace is resolved from current state because the event has to
+     * name one: the engine schedules per workspace. A deletion passes the id
+     * explicitly since the row is about to be gone from local state.
+     */
+    const publishCollections = (ids: readonly string[], workspaceId?: string, deleted = false) => {
+      const byId = new Map(collections.map((c) => [c.id, c]))
+      const seen = new Set<string>()
+      const events = []
+      for (const id of ids) {
+        if (seen.has(id)) continue
+        seen.add(id)
+        const resolved = workspaceId ?? byId.get(id)?.workspaceId
+        // An id whose workspace cannot be resolved is dropped rather than
+        // guessed: the engine keys work by workspace, and a wrong one would
+        // schedule a push against the wrong workspace.
+        if (!resolved) continue
+        events.push({ entityType: "collection" as const, entityId: id, workspaceId: resolved, deleted })
+      }
+      publishSyncDirty(events)
+    }
+
+    return {
       collections,
       setCollections,
       // Computed from `collections` directly (not via a setState updater
@@ -83,6 +142,10 @@ export function useCollectionStore(workspaces: Workspace[]) {
       createCollection: (workspaceId: string, name: string, tabIds: string[] = []) => {
         const result = createCollection(collections, workspaceId, name, tabIds, createTimestamp())
         setCollections(result.collections)
+        // Seeding a new collection pulls each tab out of whatever collection
+        // held it (the "a tab belongs to at most one collection" rule), so
+        // those are dirty too.
+        publishCollections([result.collection.id, ...holdersOf(collections, tabIds)], workspaceId)
         return result.collection
       },
       // Each of these reads the clock once, here, where the user's mutation
@@ -94,29 +157,40 @@ export function useCollectionStore(workspaces: Workspace[]) {
       renameCollection: (id: string, name: string) => {
         const now = createTimestamp()
         setCollections((prev) => renameCollection(prev, id, name, now))
+        publishCollections([id])
       },
-      deleteCollection: (id: string) => setCollections((prev) => deleteCollection(prev, id)),
+      deleteCollection: (id: string) => {
+        setCollections((prev) => deleteCollection(prev, id))
+        // Published as a deletion so the server receives a tombstone. A
+        // collection that merely vanished from the dirty set would live on
+        // forever on every other device.
+        publishCollections([id], undefined, true)
+      },
       addTabToCollection: (collectionId: string, tabId: string) => {
         const now = createTimestamp()
         setCollections((prev) => addTabToCollection(prev, collectionId, tabId, now))
+        publishCollections([collectionId, ...holdersOf(collections, [tabId])])
       },
       addTabsToCollection: (collectionId: string, tabIds: string[]) => {
         const now = createTimestamp()
         setCollections((prev) => addTabsToCollection(prev, collectionId, tabIds, now))
+        publishCollections([collectionId, ...holdersOf(collections, tabIds)])
       },
       removeTabFromCollection: (collectionId: string, tabId: string) => {
         const now = createTimestamp()
         setCollections((prev) => removeTabFromCollection(prev, collectionId, tabId, now))
+        publishCollections([collectionId])
       },
       removeTabsFromCollection: (collectionId: string, tabIds: string[]) => {
         const now = createTimestamp()
         setCollections((prev) => removeTabsFromCollection(prev, collectionId, tabIds, now))
+        publishCollections([collectionId])
       },
       moveTabToCollection: (tabId: string, targetCollectionId: string) => {
         const now = createTimestamp()
         setCollections((prev) => moveTabToCollection(prev, tabId, targetCollectionId, now))
+        publishCollections([targetCollectionId, ...holdersOf(collections, [tabId])])
       },
-    }),
-    [collections]
-  )
+    }
+  }, [collections])
 }

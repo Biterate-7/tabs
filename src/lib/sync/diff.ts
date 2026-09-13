@@ -22,11 +22,20 @@
  * recompute must not look like a user edit.
  */
 
-import { toGroupPayload, toSectionPayload, toTabPayload, toWorkspacePayload } from "./serialize";
+import {
+  toCollectionPayload,
+  toDependencyPayload,
+  toGroupPayload,
+  toSectionPayload,
+  toTabPayload,
+  toWorkspacePayload,
+} from "./serialize";
 import type { Section } from "@/lib/sections/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Group, Workspace, WorkspaceStore } from "@/lib/workspace/types";
-import type { SyncEntityRef } from "./types";
+import type { Collection } from "@/lib/collections/types";
+import type { TabDependency } from "@/lib/dependencies/types";
+import type { SyncEntityRef, SyncUpsert } from "./types";
 
 /** One entity that differs, and whether it is gone. */
 export type DirtyRef = { ref: SyncEntityRef; deleted: boolean };
@@ -170,22 +179,42 @@ export function diffStores(
  */
 export function buildPush(
   workspace: Workspace,
-  dirty: readonly DirtyRef[]
-): { upserts: import("./types").SyncUpsert[]; deletes: SyncEntityRef[] } {
-  const upserts: import("./types").SyncUpsert[] = [];
+  dirty: readonly DirtyRef[],
+  /** This workspace's collections. Their own store, so they arrive separately. */
+  collections: readonly Collection[] = [],
+  /** The flat dependency store. Filtered to this workspace's tabs below. */
+  dependencies: readonly TabDependency[] = []
+): { upserts: SyncUpsert[]; deletes: SyncEntityRef[] } {
+  const upserts: SyncUpsert[] = [];
   const deletes: SyncEntityRef[] = [];
 
   const sections = indexById(workspace.sections);
   const groups = indexById(workspace.groups);
   const tabs = indexById(workspace.tabs);
+  const collectionsById = indexById(collections);
+  const dependenciesByPair = new Map(
+    dependencies.map((dependency) => [`${dependency.parentTabId}::${dependency.childTabId}`, dependency])
+  );
 
   for (const entry of dirty) {
     const { ref } = entry;
     if (ref.entityType === "dependency") {
-      // Dependency dirty-tracking is not wired in this phase (their store
-      // has its own persistence seam); a ref that arrives here is passed
-      // through as a delete only if the caller marked it so.
-      if (entry.deleted) deletes.push(ref);
+      // Identity is the pair, so the lookup is by pair rather than by id.
+      // Absent from current state means it was removed, whatever the event
+      // said — current state is what the push describes.
+      const dependency = dependenciesByPair.get(`${ref.parentTabId}::${ref.childTabId}`);
+      if (!dependency || entry.deleted) deletes.push(ref);
+      else upserts.push({ entityType: "dependency", entity: toDependencyPayload(dependency) });
+      continue;
+    }
+
+    if (ref.entityType === "collection") {
+      const collection = collectionsById.get(ref.entityId);
+      if (!collection || entry.deleted) deletes.push(ref);
+      // Membership travels inside the collection's payload — it is not
+      // separately versioned (see schema.sql), so sending the collection
+      // sends its current tab list.
+      else upserts.push({ entityType: "collection", entity: toCollectionPayload(collection) });
       continue;
     }
 

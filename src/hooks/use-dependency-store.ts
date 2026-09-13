@@ -7,6 +7,7 @@ import {
   updateDependencyType,
 } from "@/lib/dependencies/relations"
 import { createTimestamp } from "@/lib/timestamps"
+import { publishSyncDirty, subscribeRemoteEntities } from "@/lib/sync/notify"
 import {
   defaultDependencyState,
   loadDependencyState,
@@ -51,8 +52,48 @@ export function useDependencyStore(validTabIds: Set<string>) {
     return () => clearTimeout(timer)
   }, [dependencies])
 
-  return useMemo(
-    () => ({
+  // Dependencies the engine pulled from the server. Applied through this
+  // hook rather than written to localStorage by the engine, because this
+  // hook is the single writer of that key — the effect above would otherwise
+  // clobber the engine's write with stale React state.
+  //
+  // Deliberately does NOT publish a dirty event: the value came from the
+  // server, and re-marking it would push it straight back.
+  useEffect(
+    () =>
+      subscribeRemoteEntities((event) => {
+        if (!event.dependencies) return
+        setDependencies(event.dependencies as TabDependency[])
+      }),
+    []
+  )
+
+  return useMemo(() => {
+    /**
+     * Announces a changed dependency to the sync engine.
+     *
+     * A dependency's identity is its (parentTabId, childTabId) pair — the id
+     * is derived from it, never minted — so that is what travels. The
+     * remove/retype actions take an id, so the pair is looked up in current
+     * state before the mutation; afterwards the row is gone and the pair
+     * would be unrecoverable.
+     *
+     * Called from action handlers, never inside a `setDependencies` updater.
+     */
+    const publishDependency = (id: string, deleted: boolean) => {
+      const found = dependencies.find((d) => d.id === id)
+      if (!found) return
+      publishSyncDirty([
+        {
+          entityType: "dependency",
+          parentTabId: found.parentTabId,
+          childTabId: found.childTabId,
+          deleted,
+        },
+      ])
+    }
+
+    return {
       dependencies,
       setDependencies,
       // The clock is read here, once, where the user's mutation actually
@@ -64,13 +105,21 @@ export function useDependencyStore(validTabIds: Set<string>) {
       addDependency: (parentTabId: string, childTabId: string, type?: DependencyType) => {
         const now = createTimestamp()
         setDependencies((prev) => addDependency(prev, parentTabId, childTabId, type, now, now))
+        // The pair is known directly here, so no lookup is needed — and a
+        // brand-new dependency is not in `dependencies` yet anyway.
+        publishSyncDirty([{ entityType: "dependency", parentTabId, childTabId, deleted: false }])
       },
-      removeDependency: (id: string) => setDependencies((prev) => removeDependency(prev, id)),
+      removeDependency: (id: string) => {
+        // Published BEFORE the mutation: afterwards the row is gone and its
+        // pair — the only identity a dependency has — could not be recovered.
+        publishDependency(id, true)
+        setDependencies((prev) => removeDependency(prev, id))
+      },
       updateDependencyType: (id: string, type: DependencyType | undefined) => {
         const now = createTimestamp()
         setDependencies((prev) => updateDependencyType(prev, id, type, now))
+        publishDependency(id, false)
       },
-    }),
-    [dependencies]
-  )
+    }
+  }, [dependencies])
 }

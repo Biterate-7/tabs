@@ -56,6 +56,8 @@ import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Workspace } from "@/lib/workspace/types";
 import type { SyncChange, SyncCursor } from "./types";
+import { publishRemoteEntities } from "./notify";
+import type { SyncDirtyEvent } from "./notify";
 
 /** What the engine needs from the application, so it never reaches into React or storage itself. */
 export type SyncEngineHost = {
@@ -238,6 +240,59 @@ export class SyncEngine {
     this.scheduleDebounced(workspaceId);
   }
 
+  /**
+   * Records collection and dependency mutations published by their stores.
+   *
+   * Those two live outside `WorkspaceStore` and so never pass through
+   * `commitStore`'s diff — see src/lib/sync/notify.ts for why hoisting their
+   * hooks was not an option. The events carry identity and intent only; the
+   * payload is read from the stores at push time like everything else, which
+   * is what keeps repeated edits to one entity collapsing into one upsert.
+   *
+   * A dependency names no workspace (its store is flat and global), so the
+   * owning workspace is resolved from its parent tab. An unresolvable one is
+   * dropped rather than guessed: scheduling against the wrong workspace would
+   * push a relationship into a workspace that does not own it.
+   */
+  markEntitiesDirty(events: readonly SyncDirtyEvent[]): void {
+    if (events.length === 0) return;
+    if (!this.host.getUserId()) return;
+
+    const byWorkspace = new Map<string, DirtyRef[]>();
+    const add = (workspaceId: string, ref: DirtyRef) => {
+      const list = byWorkspace.get(workspaceId);
+      if (list) list.push(ref);
+      else byWorkspace.set(workspaceId, [ref]);
+    };
+
+    for (const event of events) {
+      if (event.entityType === "collection") {
+        add(event.workspaceId, {
+          ref: { entityType: "collection", entityId: event.entityId },
+          deleted: event.deleted,
+        });
+        continue;
+      }
+      const workspaceId = this.workspaceOfTab(event.parentTabId);
+      if (!workspaceId) continue;
+      add(workspaceId, {
+        ref: { entityType: "dependency", parentTabId: event.parentTabId, childTabId: event.childTabId },
+        deleted: event.deleted,
+      });
+    }
+
+    for (const [workspaceId, refs] of byWorkspace) this.markDirty(workspaceId, refs);
+  }
+
+  /** Which workspace holds this tab, if any. Dependencies are workspace-scoped server-side but not locally. */
+  private workspaceOfTab(tabId: string): string | null {
+    for (const workspaceId of this.host.getWorkspaceIds()) {
+      const workspace = this.host.getWorkspace(workspaceId);
+      if (workspace?.tabs.some((tab) => tab.id === tabId)) return workspaceId;
+    }
+    return null;
+  }
+
   private scheduleDebounced(workspaceId: string): void {
     const existing = this.debounceTimers.get(workspaceId);
     if (existing) this.clearTimeoutFn(existing);
@@ -337,7 +392,15 @@ export class SyncEngine {
     let pushed = 0;
     if (journal.dirty.length > 0) {
       const sent = journal.dirty;
-      const { upserts, deletes } = buildPush(workspace, sent);
+      // Collections and dependencies are read from their own stores at push
+      // time, exactly like the workspace: the payload is always current
+      // state, never a recorded delta, which is what keeps a retry idempotent.
+      const { upserts, deletes } = buildPush(
+        workspace,
+        sent,
+        this.host.getCollections(workspaceId),
+        this.host.getDependencies(workspaceId)
+      );
       this.host.log?.("sync:push", { workspaceId, upserts: upserts.length, deletes: deletes.length });
 
       const result = await pushChanges(workspaceId, journal.cursor, upserts, deletes);
@@ -443,19 +506,29 @@ export class SyncEngine {
     );
 
     try {
-      const result = applyChanges(
-        {
-          workspace,
-          collections: this.host.getCollections(workspaceId),
-          dependencies: this.host.getDependencies(workspaceId),
-        },
-        changes,
-        dirtyIds
-      );
+      // Captured so the apply's output can be compared against what went in:
+      // applyChanges returns the same array reference when it changed nothing,
+      // which is how an untouched store is left alone.
+      const collections = this.host.getCollections(workspaceId);
+      const dependencies = this.host.getDependencies(workspaceId);
+      const result = applyChanges({ workspace, collections, dependencies }, changes, dirtyIds);
 
       // Remote-origin: committed through the app's own seam, and explicitly
       // not marked dirty. This is what stops a pull from becoming a push.
       this.host.commitRemote(result.state.workspace);
+
+      // Collections and dependencies live in their own stores, so they are
+      // handed back to whichever hook owns them rather than written here —
+      // see notify.ts. Published only when the apply actually changed them,
+      // so an ordinary tab-only pull does not disturb those stores at all.
+      const collectionsChanged = result.state.collections !== collections;
+      const dependenciesChanged = result.state.dependencies !== dependencies;
+      if (collectionsChanged || dependenciesChanged) {
+        publishRemoteEntities({
+          ...(collectionsChanged ? { collections: result.state.collections } : {}),
+          ...(dependenciesChanged ? { dependencies: result.state.dependencies } : {}),
+        });
+      }
 
       const conflicts = result.conflicts.map((conflict) => {
         const remote = remotePayloadFor(changes, conflict.entityType, conflict.entityId);

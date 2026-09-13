@@ -79,6 +79,58 @@ startup never enqueues anything either.
 Without this, applying a pulled change would mark it dirty, push it back,
 pull it again, and loop forever. `engine.test.ts` pins that it does not.
 
+## Coverage
+
+| Entity | Reaches the engine via | Dirty tracking |
+|---|---|---|
+| Workspace | `commitStore` diff | yes |
+| Section | `commitStore` diff | yes |
+| Group | `commitStore` diff | yes |
+| Tab | `commitStore` diff | yes |
+| Collection | published event | yes |
+| Collection membership | inside its collection's payload | via the collection |
+| Dependency | published event | yes |
+
+Two routes, because the entities live in two places. Tabs, sections and
+groups are inside `WorkspaceStore` and therefore pass through `commitStore`,
+where they are diffed. Collections and dependencies have their own
+localStorage blobs behind `useCollectionStore` / `useDependencyStore`, which
+are mounted deep in the tree (WorkspaceView or GraphView) and are documented
+to have **exactly one live instance at a time** — a second reactive instance
+would race on the same key through its own debounced writer.
+
+So rather than hoisting those stores (creating that race) or threading a
+callback through two large components, a mutation publishes a small event on
+`src/lib/sync/notify.ts` and the engine subscribes. The event carries
+identity and intent only; the payload is read from the store at push time,
+exactly as the workspace's is.
+
+A dependency names no workspace — its store is flat and global — so the
+engine resolves the owning workspace from the parent tab. An unresolvable one
+is dropped rather than guessed, since scheduling against the wrong workspace
+would push a relationship into one that does not own it.
+
+Collection membership is not separately versioned (see `schema.sql`): it
+travels inside the collection's payload, so a membership change marks the
+collection dirty and the push carries its current tab list.
+
+**Adding a tab to a collection marks two collections dirty.** A tab belongs
+to at most one collection, so the add silently removes it from wherever it
+was. Reporting only the named collection would leave the other's membership
+stale on every other device.
+
+### Remote changes for these two
+
+The engine cannot write those blobs itself — each hook is the single writer
+of its key, and its debounced effect would clobber an external write with
+stale React state. So pulled collections and dependencies travel back on a
+second channel (`publishRemoteEntities`) and the hooks apply them.
+
+That channel **never feeds the dirty channel**: a store applying a remote
+value does not publish. It is the same no-loop rule `CommitOrigin` enforces
+for workspace data, expressed here as two separate channels rather than a
+flag, and pinned by tests for both entity types.
+
 ## What counts as dirty
 
 `diff.ts` compares the **syncable projection** of two committed stores, not
@@ -209,15 +261,33 @@ No WebSockets, SSE or BroadcastChannel. No CRDTs, vector clocks, operational
 transforms or event sourcing. No realtime collaboration or presence. No
 desktop authentication. No extension synchronization.
 
+## Deletes
+
+A delete must produce a tombstone, never a quiet disappearance from the dirty
+set — a collection or dependency that merely vanished locally would live on
+forever on every other device.
+
+Two things make this work with a set-based journal:
+
+- The dirty entry records `deleted`, and the **last intent wins**. An entity
+  edited then deleted is a deletion; one deleted then re-created is an upsert.
+- `buildPush` reads **current state** regardless. An entity marked dirty that
+  is no longer in its store becomes a delete whatever the event said, so a
+  create→delete before the first push sends only the tombstone and cannot
+  resurrect the entity server-side.
+
+Both survive a reload: the journal is persisted, including the `deleted` flag.
+
 ## Known limitations
 
-- **Collections and dependencies are not incrementally dirty-tracked.** They
-  live in their own stores behind a debounced effect rather than
-  `commitStore`, so a change to one does not currently schedule a push. They
-  *are* uploaded in full by the initial migration, and they are applied from
-  pulls. Wiring their seam is deferred rather than bolted on here.
 - **Desktop sync is inert**, because the static export ships no API routes and
-  therefore has no session. This is the intended Phase 5 state.
-- **No real Postgres** in the development environment, so transaction,
-  `FOR UPDATE` and foreign-key behaviour remain verified structurally and
-  against a recording fake rather than executed.
+  therefore has no session. This is the intended state.
+- **No real Postgres** in this environment — no `POSTGRES_URL`, no `psql`, no
+  Docker, nothing on 5432, and only the `pg` client driver is installed. So
+  transactions, `FOR UPDATE`, cascade behaviour and foreign-key enforcement
+  remain verified structurally and against a recording fake rather than
+  executed. **Real Postgres integration is environment-blocked**, and no
+  claim is made that those behaviours were runtime verified.
+- Workspace deletion is still not part of the push surface; tombstoning a
+  whole workspace needs a decision about its children that belongs with the
+  deletion UX.
