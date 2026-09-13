@@ -52,6 +52,22 @@ Sessions are server-side rows, so production needs that database — a serverles
 
 Signing in doesn't upload anything. TabDump stays local-first — an account partitions this browser's storage so two people sharing a browser don't see each other's workspaces, and your signed-out workspaces stay exactly where they are.
 
+## Tests
+
+```bash
+npm test
+```
+
+Most of the suite needs nothing installed. The workspace-sync integration suites (`*.pg.test.ts`) additionally run against a **real PostgreSQL server**: `npm test` starts one automatically from the `embedded-postgres` dev dependency, which ships the official binaries and needs no Docker, no `psql` on your PATH and no administrator rights.
+
+It is entirely self-contained — a temporary data directory, a free port, a password generated per run, and every test in its own throwaway database. It never reads `POSTGRES_URL` or `DATABASE_URL`, so it cannot touch a database of yours. On a host where those binaries won't run, the integration suites skip with the reason printed and the rest of the suite runs as usual.
+
+To skip them deliberately (and save the few seconds `initdb` costs):
+
+```bash
+TABDUMP_SKIP_PG_TESTS=1 npm test
+```
+
 ## Desktop app (Tauri)
 
 TabDump also builds as a downloadable desktop app. It is the **same**

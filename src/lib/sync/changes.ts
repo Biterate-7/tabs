@@ -131,21 +131,31 @@ function rowToDependency(row: Row): DependencySyncPayload {
 }
 
 /**
- * Every change in one workspace above `cursor`, ordered, cut at a version
- * boundary.
+ * Which slice of the change stream to read.
  *
- * `limit` bounds the rows fetched, not the rows returned: once the rows are
- * in hand the page is truncated to the last COMPLETE version, so a caller
- * never sees part of one transaction. The `+1` overfetch is what makes
- * `hasMore` truthful without a second count query.
+ * `since` is the ordinary paged read. `version` reads ONE version in full
+ * with no row limit, which is how a transaction larger than a page is
+ * delivered — see readChangesSince.
  */
-export async function readChangesSince(
+type Selection =
+  | { kind: "since"; cursor: SyncCursor; limit: number }
+  | { kind: "version"; version: bigint };
+
+async function collectChanges(
   client: PoolClient,
   workspaceId: string,
-  cursor: SyncCursor,
-  limit: number
-): Promise<{ changes: SyncChange[]; nextCursor: SyncCursor; hasMore: boolean }> {
+  selection: Selection
+): Promise<{ version: bigint; change: SyncChange }[]> {
   const collected: { version: bigint; change: SyncChange }[] = [];
+
+  // Both values come from this file's own closed union, never from a caller
+  // or a request — the comparison is a fixed operator and the bound is a
+  // number this module chose. Every user-controlled value below is still
+  // passed as a parameter.
+  const op = selection.kind === "since" ? ">" : "=";
+  const bound = selection.kind === "since" ? selection.cursor : selection.version.toString();
+  const limitSql = selection.kind === "since" ? " LIMIT $3" : "";
+  const limitParams = selection.kind === "since" ? [selection.limit + 1] : [];
 
   const push = (row: Row, build: () => SyncChange) => {
     collected.push({ version: BigInt(String(row.sync_version)), change: build() });
@@ -154,8 +164,8 @@ export async function readChangesSince(
   const workspaceRows = await client.query<Row>(
     `SELECT id, name, logo, created_at, updated_at, deleted_at, sync_version
        FROM tabdump_workspaces
-      WHERE id = $1 AND sync_version > $2`,
-    [workspaceId, cursor]
+      WHERE id = $1 AND sync_version ${op} $2`,
+    [workspaceId, bound]
   );
   for (const row of workspaceRows.rows) {
     const deletedAt = toOptionalNumber(row.deleted_at);
@@ -204,10 +214,9 @@ export async function readChangesSince(
   for (const spec of simple) {
     const result = await client.query<Row>(
       `SELECT ${spec.columns} FROM ${spec.table}
-        WHERE workspace_id = $1 AND sync_version > $2
-        ORDER BY sync_version
-        LIMIT $3`,
-      [workspaceId, cursor, limit + 1]
+        WHERE workspace_id = $1 AND sync_version ${op} $2
+        ORDER BY sync_version${limitSql}`,
+      [workspaceId, bound, ...limitParams]
     );
     for (const row of result.rows) {
       const deletedAt = toOptionalNumber(row.deleted_at);
@@ -243,10 +252,9 @@ export async function readChangesSince(
   const collectionRows = await client.query<Row>(
     `SELECT id, name, created_at, updated_at, deleted_at, sync_version
        FROM tabdump_collections
-      WHERE workspace_id = $1 AND sync_version > $2
-      ORDER BY sync_version
-      LIMIT $3`,
-    [workspaceId, cursor, limit + 1]
+      WHERE workspace_id = $1 AND sync_version ${op} $2
+      ORDER BY sync_version${limitSql}`,
+    [workspaceId, bound, ...limitParams]
   );
   for (const row of collectionRows.rows) {
     const deletedAt = toOptionalNumber(row.deleted_at);
@@ -285,10 +293,9 @@ export async function readChangesSince(
   const dependencyRows = await client.query<Row>(
     `SELECT parent_tab_id, child_tab_id, type, created_at, updated_at, deleted_at, sync_version
        FROM tabdump_dependencies
-      WHERE workspace_id = $1 AND sync_version > $2
-      ORDER BY sync_version
-      LIMIT $3`,
-    [workspaceId, cursor, limit + 1]
+      WHERE workspace_id = $1 AND sync_version ${op} $2
+      ORDER BY sync_version${limitSql}`,
+    [workspaceId, bound, ...limitParams]
   );
   for (const row of dependencyRows.rows) {
     const deletedAt = toOptionalNumber(row.deleted_at);
@@ -316,6 +323,40 @@ export async function readChangesSince(
   }
 
   collected.sort((a, b) => (a.version === b.version ? 0 : a.version < b.version ? -1 : 1));
+  return collected;
+}
+
+/**
+ * Every change in one workspace above `cursor`, ordered, cut at a version
+ * boundary.
+ *
+ * `limit` bounds the rows fetched, not the rows returned: once the rows are
+ * in hand the page is truncated to the last COMPLETE version, so a caller
+ * never sees part of one transaction. The `+1` overfetch is what makes
+ * `hasMore` truthful without a second count query.
+ *
+ * ## Why a version can need a second read
+ *
+ * The page limit and the per-push limit are independent: one push may write
+ * up to SYNC_LIMITS.entitiesPerPush rows under a single version, which is
+ * far more than a page. When such a version is the FIRST thing a page meets,
+ * the overfetch cannot have collected all of it — the per-table reads
+ * stopped at `limit + 1` rows.
+ *
+ * Returning what was fetched would be silent data loss rather than slow
+ * paging: every row of that version shares its number, so the page's
+ * `nextCursor` lands ON the version, and the client's next request asks only
+ * for changes ABOVE it. The rows that were never fetched become permanently
+ * unreachable. So that version is re-read in full, without a limit, and
+ * delivered whole — atomicity wins over the page size, which is advisory.
+ */
+export async function readChangesSince(
+  client: PoolClient,
+  workspaceId: string,
+  cursor: SyncCursor,
+  limit: number
+): Promise<{ changes: SyncChange[]; nextCursor: SyncCursor; hasMore: boolean }> {
+  const collected = await collectChanges(client, workspaceId, { kind: "since", cursor, limit });
 
   if (collected.length === 0) {
     return { changes: [], nextCursor: cursor, hasMore: false };
@@ -332,18 +373,44 @@ export async function readChangesSince(
     cut = collected.findIndex((entry) => entry.version === boundary);
     hasMore = true;
     if (cut === 0) {
-      // One transaction alone exceeds the limit. Returning an empty page
-      // would stall the client forever, so the whole version is returned —
-      // atomicity wins over the page size, which is advisory.
-      cut = collected.findIndex((entry) => entry.version !== boundary);
-      if (cut === -1) cut = collected.length;
-      hasMore = cut < collected.length;
+      // The first version alone fills the page. It may also have been
+      // truncated by the per-table limit, so read it completely.
+      const whole = await collectChanges(client, workspaceId, { kind: "version", version: boundary });
+      return {
+        changes: whole.map((entry) => entry.change),
+        nextCursor: boundary.toString(),
+        // There is more only if something sits above this version. The
+        // overfetch cannot answer that once it was saturated by this one, so
+        // ask directly rather than guessing.
+        hasMore: await hasChangesAbove(client, workspaceId, boundary),
+      };
     }
   }
 
   const page = collected.slice(0, cut);
   const nextCursor = page.length > 0 ? page[page.length - 1].version.toString() : cursor;
   return { changes: page.map((entry) => entry.change), nextCursor, hasMore };
+}
+
+/** Whether any row in this workspace carries a version above `version`. */
+async function hasChangesAbove(client: PoolClient, workspaceId: string, version: bigint): Promise<boolean> {
+  const { rows } = await client.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM tabdump_workspaces  WHERE id = $1           AND sync_version > $2
+       UNION ALL
+       SELECT 1 FROM tabdump_sections    WHERE workspace_id = $1 AND sync_version > $2
+       UNION ALL
+       SELECT 1 FROM tabdump_groups      WHERE workspace_id = $1 AND sync_version > $2
+       UNION ALL
+       SELECT 1 FROM tabdump_tabs        WHERE workspace_id = $1 AND sync_version > $2
+       UNION ALL
+       SELECT 1 FROM tabdump_collections WHERE workspace_id = $1 AND sync_version > $2
+       UNION ALL
+       SELECT 1 FROM tabdump_dependencies WHERE workspace_id = $1 AND sync_version > $2
+     ) AS present`,
+    [workspaceId, version.toString()]
+  );
+  return rows[0]?.present === true;
 }
 
 /**
@@ -372,20 +439,38 @@ export async function readEntityVersions(
   client: PoolClient,
   workspaceId: string
 ): Promise<EntityVersions> {
-  const [workspace, tabs, sections, groups, collections, dependencies] = await Promise.all([
-    client.query<Row>(`SELECT sync_version FROM tabdump_workspaces WHERE id = $1`, [workspaceId]),
-    client.query<Row>(
-      `SELECT id, sync_version, section_locked, section_id FROM tabdump_tabs WHERE workspace_id = $1`,
-      [workspaceId]
-    ),
-    client.query<Row>(`SELECT id, sync_version FROM tabdump_sections WHERE workspace_id = $1`, [workspaceId]),
-    client.query<Row>(`SELECT id, sync_version FROM tabdump_groups WHERE workspace_id = $1`, [workspaceId]),
-    client.query<Row>(`SELECT id, sync_version FROM tabdump_collections WHERE workspace_id = $1`, [workspaceId]),
-    client.query<Row>(
-      `SELECT parent_tab_id, child_tab_id, sync_version FROM tabdump_dependencies WHERE workspace_id = $1`,
-      [workspaceId]
-    ),
-  ]);
+  // Sequential, NOT Promise.all.
+  //
+  // These six run on one PoolClient inside the push transaction, and a
+  // single connection cannot execute queries in parallel — `pg` quietly
+  // serializes overlapping calls today, warns that it is deprecated, and
+  // removes the behaviour in pg@9. Issuing them in order costs nothing here
+  // (they were being serialized regardless) and keeps every statement
+  // unambiguously inside the transaction that holds the workspace's lock.
+  const workspace = await client.query<Row>(
+    `SELECT sync_version FROM tabdump_workspaces WHERE id = $1`,
+    [workspaceId]
+  );
+  const tabs = await client.query<Row>(
+    `SELECT id, sync_version, section_locked, section_id FROM tabdump_tabs WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const sections = await client.query<Row>(
+    `SELECT id, sync_version FROM tabdump_sections WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const groups = await client.query<Row>(
+    `SELECT id, sync_version FROM tabdump_groups WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const collections = await client.query<Row>(
+    `SELECT id, sync_version FROM tabdump_collections WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const dependencies = await client.query<Row>(
+    `SELECT parent_tab_id, child_tab_id, sync_version FROM tabdump_dependencies WHERE workspace_id = $1`,
+    [workspaceId]
+  );
 
   return {
     workspace: workspace.rows[0] ? BigInt(String(workspace.rows[0].sync_version)) : null,

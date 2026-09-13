@@ -7,12 +7,14 @@ import type { SyncEntityRef, SyncUpsert } from "./types";
 /**
  * Conflict detection and transactional behaviour, against a recording fake.
  *
- * There is no Postgres here (the limit recorded in
- * src/lib/auth/store/postgres.test.ts still holds), so these do not prove
- * that FOR UPDATE serializes anything or that a transaction rolls back in
- * the database. What they do prove is the decision layer: which incoming
- * writes are refused, which are accepted, and that a refusal reaches the
- * database as a rollback with no writes rather than as a partial apply.
+ * The fake records statements instead of executing them, so these do not
+ * prove that FOR UPDATE serializes anything or that a transaction rolls back
+ * in the database — ./concurrency.pg.test.ts does that against a real
+ * server, with real concurrent connections. What these prove is the decision
+ * layer: which incoming writes are refused, which are accepted, and that a
+ * refusal reaches the database as a rollback with no writes rather than as a
+ * partial apply. Cheap, exhaustive over the branches, and independent of
+ * whether a database is present.
  */
 
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

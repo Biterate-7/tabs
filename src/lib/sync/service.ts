@@ -1,6 +1,6 @@
 import "server-only";
 import type { Pool } from "pg";
-import { SyncRepository } from "./repository";
+import { isUniqueViolation, SyncRepository } from "./repository";
 import type { WorkspaceMutation } from "./repository";
 import { dependencyKey, readChangesSince } from "./changes";
 import type { EntityVersions } from "./changes";
@@ -362,10 +362,38 @@ export class SyncService {
 
     if (existing === null) {
       // Either brand new, or owned by someone else. createWorkspace binds
-      // user_id from the session; if the id belongs to another account the
-      // insert violates the primary key and the error surfaces rather than
-      // silently attaching to their row.
-      await this.repository.createWorkspace(payload.workspace, userId);
+      // user_id from the session, so an id that belongs to another account
+      // violates the primary key rather than silently attaching to their
+      // row.
+      //
+      // That violation is an expected outcome, not a fault, and it has two
+      // causes which need different answers. The check above and this insert
+      // are two statements, so a second device uploading the same workspace
+      // at the same moment can pass the check and then lose the insert;
+      // letting the raw error escape would turn that ordinary race into a
+      // 500 and make `already-exists` depend on timing. Re-reading the
+      // cursor afterwards distinguishes the two cases using the same
+      // ownership predicate as everything else.
+      try {
+        await this.repository.createWorkspace(payload.workspace, userId);
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+
+        const owned = await this.repository.getCursor(payload.workspace.id, userId);
+        if (owned !== null) {
+          // This account owns it: we lost a creation race with our own other
+          // device. Exactly the second-device case, so give the second-device
+          // answer — adopt what is already here.
+          return { ok: false, reason: "already-exists", serverCursor: owned };
+        }
+
+        // Another account owns this id. Refuse without confirming anything
+        // about their workspace — not even its cursor, and not the
+        // "it's already on the server, sync it here" wording, which would
+        // both leak its existence and instruct the client to chase a
+        // workspace it can never read.
+        return { ok: false, reason: "conflict", serverCursor: "0" };
+      }
       const result = await this.repository.mutateWorkspace(
         payload.workspace.id,
         userId,
@@ -505,15 +533,39 @@ export class SyncService {
     workspaceId: string,
     userId: string,
     cursor: SyncCursor,
-    limit = SYNC_REQUEST_LIMITS.pullPageSize
+    // Annotated `number` rather than left to inference: SYNC_REQUEST_LIMITS
+    // is `as const`, so an inferred default would type this parameter as the
+    // literal 500 and no caller could pass any other page size.
+    limit: number = SYNC_REQUEST_LIMITS.pullPageSize
   ): Promise<SyncChangesPage | null> {
     const owns = await this.repository.getCursor(workspaceId, userId);
     if (owns === null) return null;
 
     const client = await this.pool.connect();
     try {
+      // One snapshot for all six table reads.
+      //
+      // Without this each read runs in its own implicit transaction and sees
+      // whatever was committed at that instant, so a push landing midway
+      // through a pull is invisible to the earlier reads and visible to the
+      // later ones. The page would then carry PART of that push — say its
+      // dependency but not its tab — while `nextCursor` advanced past the
+      // version, and the client, asking only for changes above its cursor,
+      // would never be offered the missing half again. That is silent,
+      // permanent divergence, which is the one failure a sync engine must
+      // not have.
+      //
+      // REPEATABLE READ pins every read to the state at the first one, so a
+      // page either contains a version entirely or not at all. READ ONLY
+      // says what this is and lets Postgres treat it accordingly; it also
+      // makes a stray write here an error rather than a surprise.
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const page = await readChangesSince(client, workspaceId, cursor, limit);
+      await client.query("COMMIT");
       return { workspaceId, ...page };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
     } finally {
       client.release();
     }

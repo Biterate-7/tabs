@@ -55,6 +55,20 @@ import type {
  *    global Postgres SEQUENCE — see the long note in schema.sql.
  */
 
+/**
+ * Postgres' `unique_violation`.
+ *
+ * The one database error code the sync service has to tell apart from a
+ * genuine failure: losing an insert race is an expected outcome with a
+ * defined answer in the contract, not a fault. Matching on the code rather
+ * than the message keeps that decision independent of server locale and
+ * wording — and keeps the message itself, which names tables and
+ * constraints, from ever reaching a client.
+ */
+export function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "23505";
+}
+
 /** Epoch-ms and version columns arrive from `pg` as strings because they are BIGINT. Same reasoning as src/lib/auth/store/postgres.ts. */
 function toNumber(value: unknown): number {
   return typeof value === "number" ? value : Number(value);

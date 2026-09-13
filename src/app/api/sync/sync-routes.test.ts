@@ -8,9 +8,10 @@ import type { SyncService } from "@/lib/sync/service";
  * The security matrix for the sync API, exercised through the real route
  * handlers.
  *
- * The database is faked — there is no Postgres in this environment, the
- * limit src/lib/auth/store/postgres.test.ts already records — so these do
- * NOT prove SQL behaviour. What they DO prove is everything that happens
+ * The database is faked here, so these do NOT prove SQL behaviour —
+ * ./sync-routes.pg.test.ts drives the same handlers against a real
+ * PostgreSQL server with real session rows for that. What they DO prove is
+ * everything that happens
  * before and around it: that an unauthenticated request never reaches the
  * service, that a body-supplied user id is ignored, that ownership decides
  * 404, that oversized and malformed payloads are refused, and that the CSRF

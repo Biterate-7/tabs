@@ -7,15 +7,20 @@ import { describe, expect, it } from "vitest";
  *
  * ## What these can and cannot prove
  *
- * There is no Postgres in this environment (no server, no psql, no Docker),
- * and src/lib/auth/store/postgres.test.ts already records that constraint
- * for the auth adapter. So these do NOT prove the schema applies, that a
- * foreign key rejects a bad row, or that a CHECK fires. Applying the schema
- * against a real database remains a required manual step.
+ * These read schema.sql as TEXT. They do NOT prove the schema applies, that
+ * a foreign key rejects a bad row, or that a CHECK fires — that is
+ * ./migration.pg.test.ts and ./repository.pg.test.ts, which run the real
+ * migration scripts against a real PostgreSQL server and then execute
+ * operations that must succeed and operations that must fail.
+ *
+ * Both layers are kept deliberately. This one states the intended structure
+ * in one readable place and catches a weakening at review time; the
+ * integration suites confirm Postgres agrees. Neither substitutes for the
+ * other.
  *
  * What they DO prove is that the security-critical structure is present and
- * has not been quietly weakened — which is worth pinning precisely because a
- * reviewer cannot run the database either. The defects these catch are real
+ * has not been quietly weakened, stated where a reviewer can check it
+ * without running anything. The defects these catch are real
  * ones: a composite foreign key silently downgraded to a single-column
  * reference (which would let a relationship cross a workspace boundary), a
  * CASCADE appearing where tombstones are supposed to be, timestamps drifting

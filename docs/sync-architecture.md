@@ -575,28 +575,158 @@ workspace the caller does not own. Each device keeps its own journal blob, so
 "device reloads" restores that device's own durable state.
 
 That server is **not a database**. It proves nothing about transactions,
-`FOR UPDATE`, foreign keys or cascades — see the limitation below. What it
-proves is the client half: that two devices converge, that conflicts surface
-instead of resolving themselves, and that no path silently drops an edit. Every
-rule it implements names the production code it mirrors, so drift is visible.
+`FOR UPDATE`, foreign keys or cascades. What it proves is the client half:
+that two devices converge, that conflicts surface instead of resolving
+themselves, and that no path silently drops an edit. Every rule it implements
+names the production code it mirrors, so drift is visible.
+
+## Four kinds of verification, kept apart
+
+These are not interchangeable, and this document never uses one word for
+another.
+
+| Tier | What it means | Where |
+| --- | --- | --- |
+| **Structural** | Source or config read as text and asserted against | `schema.test.ts`, `desktop-no-sync.test.ts` |
+| **Recording-fake** | Production code run against a fake that records statements instead of executing them | `repository.test.ts`, `service.test.ts`, `multi-device.test.ts`, `sync-routes.test.ts` |
+| **Real PostgreSQL** | Production code executed against a genuine PostgreSQL server | the `*.pg.test.ts` suites |
+| **Authenticated runtime** | A signed-in browser driving the deployed app | **not done — see limitations** |
+
+## Real PostgreSQL integration
+
+**Real PostgreSQL integration is available and is part of the test suite.**
+
+The earlier "no Postgres in this environment" limitation is gone. There is
+still no `psql`, Docker, Podman or WSL on the development machine, but the
+`embedded-postgres` dev dependency ships the official PostgreSQL binaries for
+the host platform, and they run as an ordinary user process with no
+administrator rights. `test/pg/` boots one real server per test run:
+
+- `cluster.ts` — `initdb`, start on an OS-assigned free port, apply both
+  schemas to a template database. The data directory is a temp directory
+  discarded on stop, and the superuser password is generated per run, so there
+  is no credential in the repository. It never reads `POSTGRES_URL` or
+  `DATABASE_URL` and so **cannot** reach a real or production database.
+- `global-setup.ts` — boots the cluster once for the whole suite. It **fails
+  soft**: a machine that cannot host a server gets a normal run with the
+  integration suites skipped and the reason printed, rather than a broken one.
+- `database.ts` — `describePostgres` (skips the block, loudly, when no cluster
+  booted) and `freshDatabase()` / `emptyDatabase()`, which clone a fresh
+  database per test from the migrated template. Every test gets its own
+  database, which is what lets the concurrency suites run genuinely
+  independent connections against the same rows.
+
+### What is now verified against a real server
+
+- **Migration.** `npm run migrate:auth` and `npm run migrate:sync` are run as
+  child processes against an empty database — the real scripts, not a copy.
+  All expected tables, indexes and constraints exist afterwards; the
+  auth-before-sync ordering guard fires and leaves nothing behind.
+- **Idempotency.** A second run of both scripts changes no table, index or
+  constraint, adds no duplicate under a generated name, and preserves existing
+  rows.
+- **Ownership and the same-workspace invariant.** The composite foreign keys
+  really do make a cross-workspace section, group, collection member or
+  dependency unrepresentable, and re-upserting a foreign id is a no-op rather
+  than a workspace-transfer primitive.
+- **Deferred constraints.** A tab may reference a section written later in the
+  same transaction.
+- **Transactions.** A failure late in a multi-entity push rolls back every
+  earlier write *and* the counter bump; a successful one commits under a
+  single shared version.
+- **The workspace lock.** Two concurrent pushes serialize on `FOR UPDATE`: the
+  second is observably parked until the first commits. A burst of six
+  concurrent pushes yields six distinct, gapless versions with no lost update.
+- **Creation races.** Several simultaneous first uploads produce exactly one
+  creation and deterministic `already-exists` answers for the rest.
+- **Deletion races.** An update racing a workspace deletion never resurrects
+  it, and a stale push is refused as `stale-base`.
+- **Tombstones.** Every entity type's deletion survives as a row, reaches a
+  second device through a pull, and is not undone by a stale push.
+- **Cursors and paging.** Boundaries at `0`, `current`, `current - 1` and
+  beyond `current`; no change skipped, duplicated or out of order; a
+  transaction is never split across pages; a dropped page resumes safely.
+- **Account isolation.** Discovery, pull, push and deletion are all
+  indistinguishable-not-found for another account — byte-identical responses —
+  and a foreign id cannot be smuggled through a nested entity.
+- **Sessions.** Expired, revoked and forged tokens are rejected against real
+  session rows, an expired row is deleted on sight, and only the SHA-256 hash
+  is ever stored.
+- **Error semantics.** `already-exists`, `stale-base`, `conflict`,
+  `not-configured` and a sanitized 500 are all distinguishable, and a real
+  constraint violation leaks no SQL, table name, constraint name or connection
+  detail.
+- **Connections.** Success, rollback, ownership refusal, stale base and failing
+  pulls all return the client; a pool of two survives eight of each, and no
+  connection is handed back `idle in transaction`.
+
+### Four defects this found
+
+Each was a real fault in code that passed the fake-backed suites.
+
+1. **A creation race returned a 500.** `initial()` checked ownership and then
+   inserted, as two statements. A second device uploading the same workspace
+   concurrently — or any upload naming an id another account owns — lost the
+   insert and the raw `unique_violation` escaped as an internal error. Now
+   caught and resolved into the existing contract: `already-exists` with the
+   real cursor when the caller owns it, and a bare `conflict` when another
+   account does, which refuses without confirming that workspace exists or
+   leaking its cursor.
+2. **A pull could tear across a commit.** `pull()` read six tables on a pooled
+   connection with no transaction, so each read saw its own snapshot. A push
+   landing mid-pull was invisible to the earlier reads and visible to the
+   later ones, so a page could carry a version's dependency but not its tab
+   while `nextCursor` advanced past it — silent, permanent loss of the missing
+   half. The reads now share one `REPEATABLE READ READ ONLY` snapshot.
+3. **A version larger than a page was truncated.** One push may write up to
+   `SYNC_LIMITS.entitiesPerPush` (10,000) rows under a single version, while a
+   page is 500 and each table was read with `LIMIT limit + 1`. When such a
+   version opened a page it could never be collected whole, yet the page ended
+   at it and `nextCursor` moved past — so an initial upload of a 600-tab
+   workspace silently lost 99 tabs on the second device. Such a version is now
+   re-read in full without a limit.
+4. **Six queries raced on one connection.** `readEntityVersions` issued its
+   reads with `Promise.all` on a single `PoolClient` inside the push
+   transaction. `pg` serialized them with a deprecation warning and removes
+   that behaviour in `pg@9`. They are now sequential.
+
+A fifth, smaller one: `pull`'s `limit` parameter inferred the literal type
+`500` from its `as const` default, so no caller could legally pass another
+page size.
 
 ## Known limitations
 
 - **Desktop sync is inert**, because the static export ships no API routes and
-  therefore has no session. This is the intended state.
-- **No real Postgres** in this environment — no `POSTGRES_URL`, no `psql`, no
-  Docker, nothing on 5432, and only the `pg` client driver is installed. So
-  transactions, `FOR UPDATE`, cascade behaviour and foreign-key enforcement
-  remain verified structurally and against a recording fake rather than
-  executed. **Real Postgres integration is environment-blocked**, and no
-  claim is made that those behaviours were runtime verified.
+  therefore has no session. This is the intended state, and it is now
+  confirmed by building rather than by reasoning: `npm run desktop:export`
+  emits only the six static routes with no `api/` directory at all, while the
+  web build serves all four `/api/sync/*` handlers, and `cargo check` on
+  `src-tauri` compiles clean. (Cargo runs on this machine after all — the
+  "Application Control blocks Cargo" note from earlier phases is out of date.
+  A full `tauri build` producing an installer was still not run.) The client
+  sync module is bundled but can never activate: `auth/client.ts` returns the
+  signed-out-by-design state on desktop, so `useSyncEngine` receives a null
+  user and short-circuits before any request.
+- **The integration suites need a host that can run the PostgreSQL binaries.**
+  Where they cannot, the suites skip with a printed reason and the rest of the
+  suite runs normally. A skipped run proves nothing about the database — read
+  the output, not this document, to know which happened.
+- **`embedded-postgres` is pinned to a beta** (18.4.0-beta.17), the current
+  release for this platform. It is a test-only dependency and never ships.
+- **The integration suites run against PostgreSQL 18.4.** Behaviour that
+  differs by major version is verified only for that one; a deployment on a
+  different major is not covered by these tests.
 - Workspace deletion is still not part of the push surface; tombstoning a
   whole workspace needs a decision about its children that belongs with the
   deletion UX.
-- **No authenticated runtime verification.** Two-device behaviour and workspace
-  adoption are verified by the test harness above, not by driving two signed-in
-  browsers: that needs a session store and a database, and neither exists here.
-  No claim is made that a live two-client exchange was observed.
+- **No authenticated runtime verification.** This is still true, and the real
+  database does not change it. The `*.pg.test.ts` suites drive the real route
+  handlers with real Postgres-backed sessions, which is strictly more than
+  before — but nobody has signed in through a browser with a Google client ID
+  and watched two devices exchange a workspace. That needs Google OAuth
+  credentials and a deployed origin, neither of which exists here. **Sign-in →
+  create → sync → reload → edit → sync → delete was not runtime verified**, and
+  no claim is made that a live two-client exchange was observed.
 - **A workspace deleted on another device is never removed from this one.**
   That is deliberate, not a gap — but it does mean a user who deletes a
   workspace on one device still has to remove it on each other device. There

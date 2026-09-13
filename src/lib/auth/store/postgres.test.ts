@@ -4,12 +4,16 @@ import { PostgresAuthStore, postgresConnectionString } from "./postgres";
 
 /**
  * These exercise the adapter against a recording fake rather than a real
- * Postgres — there is no database in this environment. That bounds what
- * they can prove: they pin the SQL shape, the parameterization, and the
- * row-to-object mapping (the defect class that actually bites — snake_case
- * columns and BIGINT-as-string), but they do NOT prove the schema applies
- * or that the queries run. Applying schema.sql and signing in once against
- * a real database is still a required manual step.
+ * Postgres. That bounds what they can prove: they pin the SQL shape, the
+ * parameterization, and the row-to-object mapping (the defect class that
+ * actually bites — snake_case columns and BIGINT-as-string), but they do
+ * NOT prove the schema applies or that the queries run.
+ *
+ * Those now ARE proven elsewhere: src/lib/sync/migration.pg.test.ts applies
+ * this schema through the real `npm run migrate:auth` script against a real
+ * server, and src/app/api/sync/sync-routes.pg.test.ts resolves real sessions
+ * through this adapter against real rows (expired, revoked and forged tokens
+ * included).
  */
 
 type Recorded = { text: string; values: unknown[] };
