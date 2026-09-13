@@ -930,3 +930,52 @@ describe("tombstones", () => {
     expect(host.workspaces.get(WS)?.tabs.find((t) => t.id === TAB_A)).toBeUndefined();
   });
 });
+
+/**
+ * Browsers refuse `setTimeout` called on the wrong receiver.
+ *
+ * `window.setTimeout` is a WebIDL operation: its receiver must be the
+ * window. The engine used to keep the raw function on the instance and call
+ * it as `this.setTimeoutFn(...)`, which passes the ENGINE as `this` — and a
+ * real browser answers "TypeError: Illegal invocation".
+ *
+ * Nothing caught it, because Node and jsdom both expose `setTimeout` as an
+ * ordinary function that ignores its receiver. It failed only in production,
+ * where it escaped scheduleDebounced as an unhandled rejection and killed
+ * the sync it was scheduling — including the retry after a 409.
+ *
+ * The stubs below restore the browser rule so this environment can express
+ * the bug at all: reject any call whose `this` is not the global.
+ */
+describe("timers are called with the global as their receiver", () => {
+  it("schedules and re-schedules a debounced sync without an Illegal invocation", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    const guard = (real: (...args: never[]) => unknown) =>
+      function (this: unknown, ...args: unknown[]) {
+        if (this !== globalThis && this !== undefined) throw new TypeError("Illegal invocation");
+        return real(...(args as never[]));
+      };
+    globalThis.setTimeout = guard(realSetTimeout) as unknown as typeof setTimeout;
+    globalThis.clearTimeout = guard(realClearTimeout) as unknown as typeof clearTimeout;
+
+    try {
+      // Constructed INSIDE the guard so it captures the strict globals, the
+      // way a browser-constructed engine captures the real ones. Default
+      // debounce rather than the suite's zero: that is what production runs.
+      const engine = new SyncEngine(host, { now: () => clock });
+      await migrate(engine);
+      const dirty = [{ ref: { entityType: "tab" as const, entityId: TAB_A }, deleted: false }];
+
+      // The first call takes the setTimeout path...
+      expect(() => engine.markDirty(WS, dirty)).not.toThrow();
+      // ...the second also takes clearTimeout, for the timer already pending.
+      expect(() => engine.markDirty(WS, dirty)).not.toThrow();
+
+      engine.dispose();
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+});

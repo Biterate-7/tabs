@@ -166,8 +166,17 @@ export class SyncEngine {
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
     this.now = options.now ?? Date.now;
-    this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
-    this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+    // Bound to the global, not stored bare. `window.setTimeout` is a WebIDL
+    // operation whose receiver must be the window: called as
+    // `this.setTimeoutFn(...)` it would run with the engine as `this` and a
+    // real browser throws "TypeError: Illegal invocation". Node and jsdom
+    // expose plain functions that do not check, so this failed only in
+    // production — it surfaced as an unhandled rejection out of
+    // scheduleDebounced, which silently killed the retry it was scheduling.
+    // An injected fake is used as given: a test double is already a plain
+    // function and binding it would discard a bound `this` a test chose.
+    this.setTimeoutFn = options.setTimeoutFn ?? globalThis.setTimeout.bind(globalThis);
+    this.clearTimeoutFn = options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
     this.store = loadJournalStore();
   }
 
