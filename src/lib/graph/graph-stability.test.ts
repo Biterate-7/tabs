@@ -21,7 +21,7 @@
  * to satisfy them today, so ordinary re-tuning does not make this suite red.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildGraphEdges, buildGraphNodes, buildWorkspaceLookup } from "./relations";
 import { buildClusterTree, computeClusterAnchors, type ClusterTree } from "./clusters";
@@ -456,9 +456,18 @@ describe("dragging does not mutate group geometry", () => {
   });
 });
 
-describe("the real 283-tab export", () => {
+/**
+ * The fixture is a real personal workspace export and is deliberately never
+ * committed (see .gitignore), so it is present only on a machine that has
+ * one. Its sibling suites — g-verification, boundary-stress — already guard
+ * on that; this one did not, and failed for everyone else instead.
+ */
+const EXPORT_PATH = join(process.cwd(), "tabdump-export.json");
+const HAS_FIXTURE = existsSync(EXPORT_PATH);
+
+describe.skipIf(!HAS_FIXTURE)("the real 283-tab export", () => {
   function loadExport() {
-    const raw = JSON.parse(readFileSync(join(process.cwd(), "tabdump-export.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(EXPORT_PATH, "utf8"));
     const workspaces: Workspace[] = raw.workspaces ?? [];
     return {
       tabs: workspaces.flatMap((w) => w.tabs ?? []) as Tab[],

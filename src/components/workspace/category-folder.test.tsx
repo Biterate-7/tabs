@@ -112,7 +112,7 @@ describe("CategoryFolder", () => {
     const tabs = [makeTab({ id: "1", title: "Tab 1" })];
     render(<CategoryFolder categoryId="other" tabs={tabs} presence="compact" onViewAll={onViewAll} />);
 
-    await user.click(screen.getByRole("button", { name: /view all 1 other tab/i }));
+    await user.click(screen.getByRole("button", { name: /open other, 1 tab/i }));
     expect(onViewAll).toHaveBeenCalledOnce();
   });
 });

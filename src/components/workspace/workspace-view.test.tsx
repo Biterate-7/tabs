@@ -6,6 +6,17 @@ import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
 import type { Workspace } from "@/lib/workspace/types";
 
+/**
+ * A folder tile in the category grid, matched by the accessible name
+ * FolderTile actually renders: "Open Projects, 3 tabs".
+ *
+ * These assertions used to look for a "View all" button, which the grid
+ * stopped rendering when the tiles became whole-card buttons. The positive
+ * ones failed; the negative ones quietly passed against a string no longer
+ * present anywhere, which is the worse half of the same drift.
+ */
+const CATEGORY_CARD = /^Open .+, [0-9]+ tabs?$/
+
 function makeTab(over: Partial<Tab>): Tab {
   return {
     id: over.id ?? "id",
@@ -57,7 +68,7 @@ describe("WorkspaceView search/filter/sort", () => {
   it("shows the category grid by default (no query, filter, or sort active)", () => {
     renderWorkspace();
     expect(
-      screen.getAllByRole("button", { name: /^View all/ }).length
+      screen.getAllByRole("button", { name: CATEGORY_CARD }).length
     ).toBeGreaterThan(0);
   });
 
@@ -103,7 +114,7 @@ describe("WorkspaceView search/filter/sort", () => {
 
     expect((input as HTMLInputElement).value).toBe("");
     expect(
-      screen.getAllByRole("button", { name: /^View all/ }).length
+      screen.getAllByRole("button", { name: CATEGORY_CARD }).length
     ).toBeGreaterThan(0);
   });
 
@@ -129,13 +140,13 @@ describe("WorkspaceView search/filter/sort", () => {
 
     const input = screen.getByPlaceholderText("Search tabs...");
     await user.type(input, "github");
-    expect(screen.queryByText("View all")).toBeFalsy();
+    expect(screen.queryAllByRole("button", { name: CATEGORY_CARD })).toHaveLength(0);
 
     await user.keyboard("{Escape}");
 
     expect((input as HTMLInputElement).value).toBe("");
     expect(
-      screen.getAllByRole("button", { name: /^View all/ }).length
+      screen.getAllByRole("button", { name: CATEGORY_CARD }).length
     ).toBeGreaterThan(0);
   });
 
