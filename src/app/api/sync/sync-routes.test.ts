@@ -212,7 +212,7 @@ describe("workspace discovery", () => {
   });
 
   it("shares the rate limiter the other sync routes use", async () => {
-    const { AUTH_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
+    const { SYNC_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
     const { GET } = await import("./workspaces/route");
 
     const request = () =>
@@ -227,7 +227,7 @@ describe("workspace discovery", () => {
       });
 
     let limited: Response | null = null;
-    for (let i = 0; i < AUTH_RATE_LIMIT.limit + 1; i++) {
+    for (let i = 0; i < SYNC_RATE_LIMIT.limit + 1; i++) {
       const response = await GET(request());
       if (response.status === 429) {
         limited = response;
@@ -237,6 +237,31 @@ describe("workspace discovery", () => {
 
     expect(limited).not.toBeNull();
     expect(limited!.headers.get("retry-after")).toMatch(/^\d+$/);
+  });
+
+  /**
+   * Regression guard for a limit that was tight enough to stop sync working.
+   *
+   * Sync is polled, not user-driven: src/lib/sync/triggers.ts fires every
+   * 60s and each pass issues at least one pull PER WORKSPACE, because the
+   * engine's pull loop runs whether or not anything is dirty. So an idle
+   * open tab spends `workspaces * passesPerWindow` requests per window
+   * before the user touches anything.
+   *
+   * Sharing the 30-request sign-in ceiling put three workspaces exactly at
+   * the limit and four permanently past it, and a real account was found in
+   * production sitting in an endless 429/backoff cycle with sync stopped.
+   * The assertion is the arithmetic, so shrinking the budget back below what
+   * ordinary polling costs fails here rather than in someone's browser.
+   */
+  it("gives sync a budget that idle polling cannot exhaust on its own", async () => {
+    const { SYNC_RATE_LIMIT, AUTH_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
+
+    const passesPerWindow = SYNC_RATE_LIMIT.windowMs / 60_000;
+    const idleSpendForTenWorkspaces = passesPerWindow * 10;
+
+    expect(idleSpendForTenWorkspaces).toBeLessThan(SYNC_RATE_LIMIT.limit);
+    expect(SYNC_RATE_LIMIT.limit).toBeGreaterThan(AUTH_RATE_LIMIT.limit);
   });
 });
 
@@ -354,7 +379,7 @@ describe("rate limiting", () => {
    * treat as permanent.
    */
   it("answers 429 with a retry-after once the window is exhausted", async () => {
-    const { AUTH_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
+    const { SYNC_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
     const { GET } = await import("./pull/route");
     const ip = { "x-forwarded-for": "203.0.113.9" };
 
@@ -372,7 +397,7 @@ describe("rate limiting", () => {
     };
 
     let limited: Response | null = null;
-    for (let i = 0; i < AUTH_RATE_LIMIT.limit + 1; i++) {
+    for (let i = 0; i < SYNC_RATE_LIMIT.limit + 1; i++) {
       const response = await GET(request());
       if (response.status === 429) {
         limited = response;

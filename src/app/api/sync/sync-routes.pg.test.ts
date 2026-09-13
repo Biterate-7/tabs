@@ -373,16 +373,20 @@ describePostgres("the sync API against real PostgreSQL", () => {
   it("returns 429 with retry-after and writes nothing while limited", async () => {
     const ws = await createWorkspace();
     const { POST } = await import("./push/route");
-    const { checkAuthRateLimit } = await import("@/lib/auth/rate-limit");
+    const { checkAuthRateLimit, SYNC_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
 
     // Exhaust the shared limiter the same way a flood of requests would.
+    // It has to be exhausted against the SAME ceiling the sync routes use:
+    // filling the bucket to the smaller sign-in limit would leave the route
+    // itself still under its own limit, and nothing would be refused.
     let limited = false;
-    for (let i = 0; i < 200 && !limited; i += 1) {
+    for (let i = 0; i < SYNC_RATE_LIMIT.limit + 1 && !limited; i += 1) {
       limited = !checkAuthRateLimit(
         new Request(`${ORIGIN}/api/sync/push`, {
           headers: { origin: ORIGIN, "x-forwarded-for": CLIENT_IP },
         }),
-        "sync"
+        "sync",
+        SYNC_RATE_LIMIT
       ).allowed;
     }
     expect(limited).toBe(true);

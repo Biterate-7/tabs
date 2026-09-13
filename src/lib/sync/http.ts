@@ -1,6 +1,6 @@
 import "server-only";
 import { hasJsonContentType, isSameOrigin } from "@/lib/auth/origin";
-import { checkAuthRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthRateLimit, SYNC_RATE_LIMIT } from "@/lib/auth/rate-limit";
 import { requireUser } from "@/lib/auth/guard";
 import type { PublicUser } from "@/lib/auth/types";
 import { getSyncService } from "./store";
@@ -45,7 +45,7 @@ export async function gateSyncRequest(request: Request, mutating: boolean): Prom
     return { ok: false, response: json({ error: "Request rejected." }, 403) };
   }
 
-  const rate = checkAuthRateLimit(request, "sync");
+  const rate = checkAuthRateLimit(request, "sync", SYNC_RATE_LIMIT);
   if (!rate.allowed) {
     return {
       ok: false,
