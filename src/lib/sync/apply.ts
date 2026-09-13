@@ -30,7 +30,15 @@
  * phase is built to prevent.
  */
 
-import { fromTabPayload } from "./serialize";
+import {
+  fromTabPayload,
+  toCollectionPayload,
+  toDependencyPayload,
+  toGroupPayload,
+  toSectionPayload,
+  toTabPayload,
+  toWorkspacePayload,
+} from "./serialize";
 import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Section } from "@/lib/sections/types";
@@ -62,6 +70,56 @@ export type ApplyResult = {
 
 function dependencyId(parentTabId: string, childTabId: string): string {
   return `dep-${parentTabId}::${childTabId}`;
+}
+
+/**
+ * Whether an incoming upsert is exactly what this device already holds.
+ *
+ * The case this exists for: a push commits, the reply is lost, and the
+ * retry pulls the device's OWN write straight back. The entity is still
+ * marked dirty, so without this it would be reported as a conflict between
+ * two identical values — a question the user cannot meaningfully answer,
+ * raised by nothing worse than a dropped packet.
+ *
+ * Compared through the serializers for the same reason diff.ts does it:
+ * derived fields (normalizedUrl, domain, isDuplicate, favicon) are
+ * recomputed locally and never cross the wire, so comparing the domain
+ * objects would report a difference that does not exist on the server.
+ *
+ * Deliberately exact. A remote value that differs in ANY syncable field is
+ * still a genuine conflict, and this must never be the thing that decides
+ * one silently.
+ */
+function matchesLocal(state: LocalSyncState, change: SyncChange): boolean {
+  if (change.operation !== "upsert") return false;
+  const same = (local: unknown) => JSON.stringify(local) === JSON.stringify(change.entity);
+
+  switch (change.entityType) {
+    case "workspace":
+      return state.workspace.id === change.entityId && same(toWorkspacePayload(state.workspace));
+    case "tab": {
+      const tab = state.workspace.tabs.find((item) => item.id === change.entityId);
+      return tab !== undefined && same(toTabPayload(tab));
+    }
+    case "section": {
+      const section = (state.workspace.sections ?? []).find((item) => item.id === change.entityId);
+      return section !== undefined && same(toSectionPayload(section));
+    }
+    case "group": {
+      const group = (state.workspace.groups ?? []).find((item) => item.id === change.entityId);
+      return group !== undefined && same(toGroupPayload(group));
+    }
+    case "collection": {
+      const collection = state.collections.find((item) => item.id === change.entityId);
+      return collection !== undefined && same(toCollectionPayload(collection));
+    }
+    case "dependency": {
+      const dependency = state.dependencies.find(
+        (item) => item.parentTabId === change.parentTabId && item.childTabId === change.childTabId
+      );
+      return dependency !== undefined && same(toDependencyPayload(dependency));
+    }
+  }
 }
 
 export function applyChanges(
@@ -103,7 +161,15 @@ export function applyChanges(
         : change.entityId;
 
     if (dirtyEntityIds.has(id)) {
-      conflicts.push({ entityType: change.entityType, entityId: id, reason: "local-unsynced-change" });
+      // Withheld either way — a pending local edit is never overwritten by
+      // a remote one. But the server may just be echoing this device's own
+      // value back, after a push that committed before its reply was lost.
+      // That is not contention, and asking the user to choose between two
+      // identical values would be noise. It stays dirty and is re-sent,
+      // which is idempotent because the push carries current state anyway.
+      if (!matchesLocal(state, change)) {
+        conflicts.push({ entityType: change.entityType, entityId: id, reason: "local-unsynced-change" });
+      }
       continue;
     }
 

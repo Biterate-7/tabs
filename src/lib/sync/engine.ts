@@ -99,9 +99,22 @@ export type SyncEngineOptions = {
 const DEFAULT_DEBOUNCE_MS = 800;
 const DEFAULT_CONCURRENCY = 3;
 
-/** Failures worth trying again. A 400 or a 401 will fail identically forever, so retrying them is only noise. */
+/**
+ * Failures worth trying again. A 400 or a 401 will fail identically forever,
+ * so retrying them is only noise.
+ *
+ * 429 is retryable, deliberately. The sync gate shares the auth rate
+ * limiter, so a device holding several workspaces can rate-limit itself on a
+ * reconnect burst. A 429 means "later", never "never" — treating it as
+ * permanent would strand a pending edit in `error` until some unrelated
+ * trigger happened to fire. It arms the same bounded, jittered backoff a 5xx
+ * gets, so a rate-limited client backs further off each time rather than
+ * hammering the limit that just rejected it.
+ */
 function isRetryable(failure: SyncFailure): boolean {
-  return failure.kind === "offline" || (failure.kind === "server" && failure.status >= 500);
+  if (failure.kind === "offline") return true;
+  if (failure.kind !== "server") return false;
+  return failure.status === 429 || failure.status >= 500;
 }
 
 function statusFor(failure: SyncFailure): SyncStatus {
@@ -390,8 +403,23 @@ export class SyncEngine {
 
     // ---- push ----
     let pushed = 0;
-    if (journal.dirty.length > 0) {
-      const sent = journal.dirty;
+    /** Set when the push was refused as stale, so this pass becomes a catch-up read. */
+    let staleBase = false;
+    // An entity with an unresolved conflict is deliberately NOT pushed.
+    // Its dirty ref is kept so keep-mine can re-send it later, but sending
+    // it now would overwrite the server copy the user has not chosen yet —
+    // last-writer-wins by the back door, and a direct contradiction of what
+    // the conflict UI promises. Everything else in the workspace still goes
+    // up, so one contested tab does not hold unrelated edits hostage.
+    const held = new Set(
+      journal.conflicts.map((conflict) =>
+        refKey({ entityType: conflict.entityType, entityId: conflict.entityId })
+      )
+    );
+    const sendable = held.size === 0 ? journal.dirty : journal.dirty.filter((entry) => !held.has(refKey(entry.ref)));
+
+    if (sendable.length > 0) {
+      const sent = sendable;
       // Collections and dependencies are read from their own stores at push
       // time, exactly like the workspace: the payload is always current
       // state, never a recorded delta, which is what keeps a retry idempotent.
@@ -406,26 +434,39 @@ export class SyncEngine {
       const result = await pushChanges(workspaceId, journal.cursor, upserts, deletes);
 
       if (!result.ok) {
-        return this.handleFailure(workspaceId, result.failure, workspace, journal, sent);
+        // A stale base is the one failure that reading FIXES: this device
+        // is simply behind. Ending the pass here would skip the very pull
+        // that unblocks it, and the next pass would push the same stale
+        // cursor again — so a device that fell behind while holding an
+        // edit could never catch up. Record it, then fall through to the
+        // pull. The pending work is untouched and goes up on the next
+        // pass, against a base this device has actually seen.
+        if (result.failure.kind !== "stale-base") {
+          return this.handleFailure(workspaceId, result.failure, workspace, journal, sent);
+        }
+        this.handleFailure(workspaceId, result.failure, workspace, journal, sent);
+        staleBase = true;
+        journal = this.getState(workspaceId);
+      } else {
+        pushed = upserts.length + deletes.length;
+        // Retire exactly what was sent. Anything the user changed while the
+        // request was in flight is still dirty and syncs on the next pass.
+        journal = this.update(workspaceId, (current) => ({
+          ...clearDirty(current, sent),
+          // NOT the cursor yet — see the note at the top of this file. The
+          // push moved the server forward, but this device has not yet read
+          // and applied whatever else changed.
+          failureCount: 0,
+          retryAfter: undefined,
+          lastError: undefined,
+        }));
       }
-
-      pushed = upserts.length + deletes.length;
-      // Retire exactly what was sent. Anything the user changed while the
-      // request was in flight is still dirty and syncs on the next pass.
-      journal = this.update(workspaceId, (current) => ({
-        ...clearDirty(current, sent),
-        // NOT the cursor yet — see the note at the top of this file. The
-        // push moved the server forward, but this device has not yet read
-        // and applied whatever else changed.
-        failureCount: 0,
-        retryAfter: undefined,
-        lastError: undefined,
-      }));
     }
 
     // ---- pull ----
     let pulled = 0;
     let cursor = journal.cursor;
+    const journalCursorBeforePull = journal.cursor;
     let hasMore = true;
 
     while (hasMore) {
@@ -469,6 +510,19 @@ export class SyncEngine {
       lastError: undefined,
       lastSyncedAt: this.now(),
     }));
+
+    // A pass that caught up from a stale base still has the work that was
+    // refused. Waiting for a focus or the slow timer to send it would
+    // leave an edit sitting unsent for up to a minute, so schedule the
+    // follow-up here.
+    //
+    // This terminates: it only re-arms when the catch-up actually moved
+    // the cursor, so each repeat requires real progress, and a conflict
+    // stops it outright rather than looping against a decision only the
+    // user can make.
+    if (staleBase && final.status === "queued" && cursor !== journalCursorBeforePull) {
+      this.scheduleDebounced(workspaceId);
+    }
 
     this.host.log?.("sync:success", { workspaceId, pushed, pulled, conflicts: final.conflicts.length });
     return {

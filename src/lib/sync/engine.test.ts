@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SyncEngine } from "./engine";
 import type { SyncEngineHost } from "./engine";
 import { loadJournalStore } from "./journal";
+import type { SyncStatus } from "./journal";
 import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Tab } from "@/lib/tabs/types";
@@ -409,6 +410,30 @@ describe("local-first under failure", () => {
     expect(state.dirty).toHaveLength(1);
   });
 
+  /**
+   * The rate limiter the sync gate itself uses answers 429, so this is not a
+   * hypothetical status: a burst of workspaces reconnecting at once can
+   * genuinely hit it. A 429 says "later", never "never", so it has to arm
+   * the same bounded backoff a 5xx does. Parking in `error` with no
+   * retryAfter would leave the workspace waiting on an external trigger with
+   * its pending edit unsent.
+   */
+  it("backs off after being rate limited rather than giving up", async () => {
+    const engine = makeEngine();
+    await migrate(engine);
+    engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_A }, deleted: false }]);
+
+    server.queue(() => json(429, { error: "Too many requests. Try again shortly." }));
+    await engine.syncWorkspace(WS);
+
+    const state = engine.getState(WS);
+    expect(state.status).toBe("error");
+    expect(state.failureCount).toBe(1);
+    expect(state.retryAfter).toBeGreaterThan(T0);
+    // The edit that could not be sent is still pending.
+    expect(state.dirty).toHaveLength(1);
+  });
+
   it("does not arm a retry for a validation error", async () => {
     const engine = makeEngine();
     await migrate(engine);
@@ -434,6 +459,123 @@ describe("local-first under failure", () => {
 
     await engine.syncWorkspace(WS);
     expect(server.calls).toHaveLength(0);
+  });
+});
+
+describe("what each failure status does to a workspace", () => {
+  /**
+   * The whole classification in one place, because the cost of getting a
+   * single row wrong is invisible: a status wrongly marked permanent strands
+   * a pending edit, and one wrongly marked transient retries forever against
+   * something that will never change its mind.
+   *
+   * "retries" means a backoff window was armed. Everything keeps its dirty
+   * work either way — no failure path may discard a pending edit.
+   */
+  const cases: { label: string; status: number; body: unknown; expect: SyncStatus; retries: boolean }[] = [
+    { label: "401 expired session", status: 401, body: { error: "Sign in." }, expect: "paused", retries: false },
+    { label: "403 rejected", status: 403, body: { error: "Request rejected." }, expect: "error", retries: false },
+    { label: "404 not yours", status: 404, body: { error: "Workspace not found." }, expect: "error", retries: false },
+    { label: "413 too large", status: 413, body: { error: "Too large." }, expect: "error", retries: false },
+    { label: "400 malformed", status: 400, body: { error: "Invalid.", errors: [] }, expect: "error", retries: false },
+    // Rate limiting says "later", so it must back off rather than give up.
+    { label: "429 rate limited", status: 429, body: { error: "Too many requests." }, expect: "error", retries: true },
+    { label: "500 server fault", status: 500, body: { error: "Server error." }, expect: "error", retries: true },
+    { label: "502 bad gateway", status: 502, body: { error: "Bad gateway." }, expect: "error", retries: true },
+    // A bare 503 is a proxy hiccup and stays retryable...
+    { label: "503 transient", status: 503, body: { error: "Unavailable." }, expect: "error", retries: true },
+    // ...but OUR 503 says this deployment has no database at all, and
+    // retrying that forever is pointless. Pinning the Phase 5 fix.
+    {
+      label: "503 not configured",
+      status: 503,
+      body: { error: "Sync isn't available.", reason: "not-configured" },
+      expect: "paused",
+      retries: false,
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`treats ${testCase.label} as ${testCase.expect}${testCase.retries ? " with backoff" : " without retrying"}`, async () => {
+      const engine = makeEngine();
+      await migrate(engine);
+      engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_A }, deleted: false }]);
+
+      server.queue(() => json(testCase.status, testCase.body));
+      await engine.syncWorkspace(WS);
+
+      const state = engine.getState(WS);
+      expect(state.status, testCase.label).toBe(testCase.expect);
+      expect(state.retryAfter !== undefined, testCase.label).toBe(testCase.retries);
+      // Whatever happened, the user's pending edit is still here.
+      expect(state.dirty, testCase.label).toHaveLength(1);
+    });
+  }
+
+  it("treats an unreachable server as offline, with backoff and nothing lost", async () => {
+    const engine = makeEngine();
+    await migrate(engine);
+    engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_A }, deleted: false }]);
+
+    server.queue(() => {
+      throw new TypeError("network error");
+    });
+    await engine.syncWorkspace(WS);
+
+    const state = engine.getState(WS);
+    expect(state.status).toBe("offline");
+    expect(state.retryAfter).toBeGreaterThan(T0);
+    expect(state.dirty).toHaveLength(1);
+  });
+});
+
+describe("a stale base is recoverable", () => {
+  /**
+   * The sequence a second device hits constantly: it fell behind while
+   * holding a local edit. The push is refused as stale, and the ONLY way out
+   * is to read what it missed — so a refused push must not end the pass
+   * before the pull that fixes it.
+   */
+  it("pulls after a refused push instead of retrying the same stale cursor", async () => {
+    const engine = makeEngine();
+    await migrate(engine);
+    engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_A }, deleted: false }]);
+
+    server.queue(() =>
+      json(409, { error: "Workspace changed.", reason: "stale-base", serverCursor: "11" })
+    );
+    server.queue(() =>
+      json(200, { workspaceId: WS, changes: [tabChange(TAB_B, "11", { title: "From the other device" })], nextCursor: "11", hasMore: false })
+    );
+    await engine.syncWorkspace(WS);
+
+    // The refused push was followed by a pull in the same pass.
+    expect(server.pulls).toHaveLength(1);
+    expect(engine.getState(WS).cursor).toBe("11");
+    // The local edit is still pending, ready to go up against the new base.
+    expect(engine.getState(WS).dirty).toHaveLength(1);
+  });
+
+  it("converges on the retry rather than refusing forever", async () => {
+    const engine = makeEngine();
+    await migrate(engine);
+    engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_A }, deleted: false }]);
+
+    // Pass one: stale, then catch up to 11.
+    server.queue(() => json(409, { error: "stale", reason: "stale-base", serverCursor: "11" }));
+    server.queue(() => json(200, { workspaceId: WS, changes: [], nextCursor: "11", hasMore: false }));
+    await engine.syncWorkspace(WS);
+
+    // Pass two: the push now carries the fresh base and is accepted.
+    server.queue(() => json(200, { cursor: "12", accepted: [] }));
+    server.queue(() => json(200, { workspaceId: WS, changes: [], nextCursor: "12", hasMore: false }));
+    await engine.syncWorkspace(WS);
+
+    const state = engine.getState(WS);
+    expect(state.dirty).toHaveLength(0);
+    expect(state.status).toBe("idle");
+    const lastPush = server.pushes[server.pushes.length - 1];
+    expect(lastPush.body?.baseCursor).toBe("11");
   });
 });
 

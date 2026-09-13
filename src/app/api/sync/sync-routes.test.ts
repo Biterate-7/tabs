@@ -139,6 +139,117 @@ describe("authentication", () => {
   });
 });
 
+describe("a session that is no longer good", () => {
+  /**
+   * Expiry is decided server-side from the stored session, never from
+   * anything the client sends, so this is the real check rather than a
+   * cookie attribute a browser could be talked out of honouring.
+   */
+  it("refuses an expired session and never reaches the service", async () => {
+    const { SESSION_TTL_MS } = await import("@/lib/auth/config");
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + SESSION_TTL_MS + 1000);
+    try {
+      const { POST } = await import("./push/route");
+      const response = await POST(
+        post("/api/sync/push", { workspaceId: WS, baseCursor: "1" }, { cookie: sessionCookie })
+      );
+      expect(response.status).toBe(401);
+      expect(service.pushCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The property that matters is not that every 401 is byte-identical — a
+   * caller always knows whether it sent a cookie at all. It is that a
+   * cookie which WAS presented and refused reveals nothing about WHY:
+   * forged, expired and revoked must be indistinguishable, or the endpoint
+   * becomes an oracle for which tokens once existed.
+   */
+  it("does not say whether a presented session was forged, expired or revoked", async () => {
+    const { SESSION_COOKIE, SESSION_TTL_MS } = await import("@/lib/auth/config");
+    const { createSession } = await import("@/lib/auth/session");
+    const { POST } = await import("./push/route");
+
+    const attempt = async (cookie: string) => {
+      const response = await POST(post("/api/sync/push", { workspaceId: WS, baseCursor: "1" }, { cookie }));
+      expect(response.status).toBe(401);
+      return JSON.stringify(await response.json());
+    };
+
+    const forged = await attempt(`${SESSION_COOKIE}=not-a-real-token`);
+
+    // A genuine token whose session was revoked elsewhere.
+    const revokedSession = await createSession(store, USER_A);
+    await store.deleteSessionsForUser(USER_A);
+    const revoked = await attempt(`${SESSION_COOKIE}=${revokedSession.token}`);
+
+    // A genuine token that simply ran out.
+    const expiringSession = await createSession(store, USER_A);
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + SESSION_TTL_MS + 1000);
+    let expired: string;
+    try {
+      expired = await attempt(`${SESSION_COOKIE}=${expiringSession.token}`);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(new Set([forged, revoked, expired]).size).toBe(1);
+    expect(service.pushCalls).toHaveLength(0);
+  });
+
+  /** Signing out on another device revokes the session this one is holding. */
+  it("refuses a session revoked from another device", async () => {
+    await store.deleteSessionsForUser(USER_A);
+    const { GET } = await import("./pull/route");
+    const response = await GET(get(`/api/sync/pull?workspaceId=${WS}&cursor=0`, { cookie: sessionCookie }));
+    expect(response.status).toBe(401);
+    expect(service.pullCalls).toHaveLength(0);
+  });
+});
+
+describe("rate limiting", () => {
+  /**
+   * The sync gate shares the auth limiter, so a client CAN rate-limit
+   * itself. What matters is that the refusal is a 429 carrying retry-after —
+   * the shape a client can back off from — rather than something it would
+   * treat as permanent.
+   */
+  it("answers 429 with a retry-after once the window is exhausted", async () => {
+    const { AUTH_RATE_LIMIT } = await import("@/lib/auth/rate-limit");
+    const { GET } = await import("./pull/route");
+    const ip = { "x-forwarded-for": "203.0.113.9" };
+
+    const request = () => {
+      const headers: Record<string, string> = {
+        origin: "http://localhost:3000",
+        host: "localhost:3000",
+        cookie: sessionCookie,
+        ...ip,
+      };
+      return new Request(`http://localhost:3000/api/sync/pull?workspaceId=${WS}&cursor=0`, {
+        method: "GET",
+        headers,
+      });
+    };
+
+    let limited: Response | null = null;
+    for (let i = 0; i < AUTH_RATE_LIMIT.limit + 1; i++) {
+      const response = await GET(request());
+      if (response.status === 429) {
+        limited = response;
+        break;
+      }
+    }
+
+    expect(limited).not.toBeNull();
+    expect(limited!.headers.get("retry-after")).toMatch(/^\d+$/);
+  });
+});
+
 describe("identity comes from the session, never the body", () => {
   it("ignores a forged userId in a push body", async () => {
     const { POST } = await import("./push/route");

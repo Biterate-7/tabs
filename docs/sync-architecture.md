@@ -173,6 +173,36 @@ pull returned 200. If the local apply throws, the cursor stays where it was
 and the same page is fetched again. Repeating work is safe; skipping it is
 not — a skipped change is gone forever, because the next pull starts after it.
 
+## A stale base is a read, not an error
+
+The server gates a push on strict equality: `baseCursor` must equal the
+workspace's current counter (`repository.mutateWorkspace`). So **any**
+server-side movement makes the next push stale, whether or not the entities
+overlap.
+
+A refused push therefore does **not** end the pass. The engine records the
+refusal, keeps every dirty ref, and falls through to the pull — because
+reading is the only thing that fixes being behind. The pending work goes up on
+the following pass, against a base the device has actually seen:
+
+```
+push (409 stale-base) -> pull -> apply -> cursor advances
+                      -> next pass: push against the new base -> accepted
+```
+
+Returning at the refusal instead would skip the pull that unblocks it, and the
+next pass would resend the same stale cursor — a device that fell behind while
+holding an edit could never catch up. The follow-up pass is scheduled only when
+the catch-up actually moved the cursor, so each repeat requires real progress
+and the loop terminates.
+
+One consequence worth stating plainly: because the workspace-level gate fires
+first, the server's *per-entity* `changed-since-base` report is not what
+surfaces same-entity contention in practice. Contention surfaces on the client,
+when the catch-up pull brings back a change to an entity this device has
+pending. The per-entity check still stands as the server's own guard, and the
+`locked-section` half of it fires independently of staleness.
+
 ## Conflicts
 
 Detection is the server's (Phase 4, per-entity against `baseCursor`).
@@ -187,6 +217,22 @@ Phase 5 makes conflicts **durable and actionable**, and keeps both sides:
 | Keep mine | unchanged | entity re-marked dirty — the resolution becomes a real mutation pushed against the server's *new* cursor |
 | Keep theirs | server value applied | nothing — re-pushing the server's own value is the loop above |
 
+**An unresolved conflict is held out of the push.** Its dirty ref is kept so
+Keep mine can re-send it, but the entity is excluded from the next push until
+the user chooses. Without that, the following pass would send the local version
+against a now-current base and quietly win — last-writer-wins by the back door,
+and the opposite of what the conflict UI promises. Everything *else* in the
+workspace still goes up, so one contested tab does not hold unrelated edits
+hostage.
+
+**A device's own echoed write is not a conflict.** If a push commits and the
+reply is lost, the retry pulls that same write back while the entity is still
+marked dirty. Comparing the incoming payload against the local one through the
+serializers (`apply.ts`'s `matchesLocal`) keeps that from being reported as a
+conflict between two identical values — a question the user cannot answer,
+raised by nothing worse than a dropped packet. The comparison is exact: any
+difference in a syncable field is still a genuine conflict.
+
 There is no automatic field-level merge. Two devices that both changed a tab
 since their shared base have genuinely conflicting versions, and without
 per-field base information there is no honest way to distinguish "they changed
@@ -199,12 +245,46 @@ tab. The server refuses an automatic placement that would move a locked tab
 buttons. `lastAccessedAt` is deliberately *not* a conflict field — opening a
 tab is not a content mutation.
 
+## Two devices, one account
+
+Identity is the server-side session, always. No sync route reads a `userId`
+from a body or query string — the payload types have no such field — so a
+client cannot choose who it is. Ownership is enforced in SQL (`WHERE id = $1
+AND user_id = $2`), and "not yours" and "doesn't exist" both answer 404 so a
+guessed id is not an existence oracle.
+
+What two devices are guaranteed:
+
+- **Different entities converge.** A editing tab 1 and B editing tab 2 both
+  survive. The second pusher pays one extra round trip to the stale-base
+  catch-up; neither edit is lost and neither is reported as a conflict.
+- **The same entity produces an observable conflict**, never a silent winner.
+  One push lands; the other device catches up, finds the remote change on an
+  entity it has pending, and records a durable conflict. Both versions exist
+  until the user picks.
+- **Deletes do not resurrect.** A tombstone is a row, not an absence, so a
+  device that never saw the delete still learns about it and does not push its
+  stale copy back.
+- **Dependencies stay single.** Identity is the `(parentTabId, childTabId)`
+  pair, so two devices creating the same logical dependency converge on one row.
+- **Collection membership is one object.** Membership travels inside the
+  collection payload, so "A added tab X" and "B removed tab X" are two writes to
+  the same entity and behave like any other same-entity contention.
+
+A **second device joining an already-synced workspace** goes through the
+ordinary path rather than a special one: the explicit upload is refused (the
+workspace exists), and the sync that follows pulls the server's stream from
+cursor 0. The refusal is not destructive — nothing local changes — but it does
+leave the workspace briefly in `conflict` with no conflict records until the
+next sync clears it. Smoothing that is a UX question, not a correctness one.
+
 ## Retry
 
 | failure | classification | behaviour |
 |---|---|---|
 | network / offline | retryable | exponential backoff, jittered, capped at 5 min |
 | 5xx (incl. a bare 503) | retryable | same |
+| 429 | retryable | same — the gate shares the auth rate limiter, so a device with several workspaces can rate-limit itself; "too many" means later, not never |
 | 503 with `reason: "not-configured"` | permanent | `paused` — this deployment has no database |
 | 401 | permanent | `paused`, pending work kept for after sign-in |
 | 409 | conflict | recorded; not retried blindly |
@@ -278,6 +358,30 @@ Two things make this work with a set-based journal:
 
 Both survive a reload: the journal is persisted, including the `deleted` flag.
 
+## Observability
+
+The engine takes an optional `log(event, detail)` host hook and calls it at
+`sync:start`, `sync:push`, `sync:success`, `sync:conflict` and `sync:error`.
+`detail` carries only scalars — workspace id, counts, retry/failure counts,
+error *category* — and never a payload, a URL, a cookie, a token or an
+authorization header. There is no logging framework; the point is debugging a
+sync failure, not analytics.
+
+## How multi-device behaviour is tested
+
+`src/lib/sync/multi-device.test.ts` drives **two real `SyncEngine` instances**
+against one shared in-memory server (`multi-device-server.ts`) that implements
+the wire contract: cursor semantics, the strict stale-base gate, the
+locked-section rule, tombstones, version-boundary paging, and 404 for a
+workspace the caller does not own. Each device keeps its own journal blob, so
+"device reloads" restores that device's own durable state.
+
+That server is **not a database**. It proves nothing about transactions,
+`FOR UPDATE`, foreign keys or cascades — see the limitation below. What it
+proves is the client half: that two devices converge, that conflicts surface
+instead of resolving themselves, and that no path silently drops an edit. Every
+rule it implements names the production code it mirrors, so drift is visible.
+
 ## Known limitations
 
 - **Desktop sync is inert**, because the static export ships no API routes and
@@ -291,3 +395,10 @@ Both survive a reload: the journal is persisted, including the `deleted` flag.
 - Workspace deletion is still not part of the push surface; tombstoning a
   whole workspace needs a decision about its children that belongs with the
   deletion UX.
+- **No authenticated runtime verification.** Two-device behaviour is verified
+  by the test harness above, not by driving two signed-in browsers: that needs
+  a session store and a database, and neither exists here. No claim is made
+  that a live two-client exchange was observed.
+- **A second device joining shows a spurious `conflict` status** between the
+  refused upload and the sync that follows. Harmless and self-clearing, but the
+  status is misleading while it lasts.
