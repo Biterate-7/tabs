@@ -37,14 +37,28 @@ describe("LandingView onboarding", () => {
     vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: false })
     render(<LandingView onDump={vi.fn()} />)
 
-    expect(screen.getByText("Dump your Chrome tabs in one click.")).toBeTruthy()
+    expect(screen.getByText("Your tabs, turned into a workspace you can see.")).toBeTruthy()
     expect(
-      screen.getByText("Install the TabDump Chrome extension to instantly bring your open tabs into TabDump.")
+      screen.getByText(/Dump every open tab in one click/)
     ).toBeTruthy()
     expect(screen.getByRole("button", { name: "Download Extension" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Paste URLs manually" })).toBeTruthy()
     // Manual pasting is still available even when the extension is the primary path.
     expect(screen.getByLabelText("Paste your tabs")).toBeTruthy()
+  })
+
+  /**
+   * The headline says what TabDump produces; this says what you do with it.
+   * A first-time visitor who reads only the hero should still come away
+   * knowing the product is a loop rather than a one-shot import, so the
+   * steps are asserted in order rather than merely present.
+   */
+  it("spells out the core loop for a brand-new visitor", () => {
+    vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: false })
+    render(<LandingView onDump={vi.fn()} />)
+
+    const steps = screen.getAllByRole("listitem").map((node) => node.textContent?.replace(/[^A-Za-z]/g, ""))
+    expect(steps).toEqual(["Dump", "Organize", "Explore", "Find", "Reuse"])
   })
 
   it("opens the install guide when 'Download Extension' is clicked", async () => {
@@ -71,7 +85,7 @@ describe("LandingView onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Download Extension" }))
     await user.click(screen.getByRole("button", { name: "Back" }))
 
-    expect(screen.getByText("Dump your Chrome tabs in one click.")).toBeTruthy()
+    expect(screen.getByText("Your tabs, turned into a workspace you can see.")).toBeTruthy()
     expect(screen.queryByText("Install TabDump for Chrome")).toBeNull()
   })
 
@@ -123,7 +137,7 @@ describe("LandingView onboarding", () => {
     render(<LandingView onDump={vi.fn()} />)
 
     expect(screen.getByText(/Your tabs are a mess/)).toBeTruthy()
-    expect(screen.queryByText("Dump your Chrome tabs in one click.")).toBeNull()
+    expect(screen.queryByText("Your tabs, turned into a workspace you can see.")).toBeNull()
     expect(screen.queryByRole("button", { name: "Paste URLs manually" })).toBeNull()
   })
 
@@ -135,7 +149,7 @@ describe("LandingView onboarding", () => {
     expect(
       screen.getByText("Click the TabDump extension whenever you want to dump your open tabs.")
     ).toBeTruthy()
-    expect(screen.queryByText("Dump your Chrome tabs in one click.")).toBeNull()
+    expect(screen.queryByText("Your tabs, turned into a workspace you can see.")).toBeNull()
     // Manual pasting remains available in every state.
     expect(screen.getByLabelText("Paste your tabs")).toBeTruthy()
   })

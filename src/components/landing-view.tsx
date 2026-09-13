@@ -15,6 +15,26 @@ import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { shouldPlayIntro } from "@/lib/intro"
 import type { Tab } from "@/lib/tabs/types"
 
+/** The five steps of TabDump, in order, so a first-time visitor can see the whole shape of the product before signing up for any of it. Text only and deliberately static — it sits directly under the headline, where an animation would compete with the call to action rather than support it. */
+const CORE_LOOP = ["Dump", "Organize", "Explore", "Find", "Reuse"] as const
+
+function CoreLoop() {
+  return (
+    <ol className="mt-8 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+      {CORE_LOOP.map((step, index) => (
+        <li key={step} className="flex items-center gap-2">
+          {index > 0 && (
+            <span aria-hidden className="text-muted-foreground/50">
+              →
+            </span>
+          )}
+          <span>{step}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 export function LandingView({
   onDump,
   onOpenSidebar,
@@ -93,16 +113,21 @@ export function LandingView({
             <>
               <IntroReveal order={0}>
                 <h1 className="text-4xl font-semibold tracking-tight text-balance text-foreground sm:text-6xl">
-                  Dump your Chrome tabs in one click.
+                  Your tabs, turned into a workspace you can see.
                 </h1>
               </IntroReveal>
               <IntroReveal order={1}>
                 <p className="mt-5 max-w-xl text-base text-balance text-muted-foreground sm:text-lg">
-                  Install the TabDump Chrome extension to instantly bring your open tabs into TabDump.
+                  Dump every open tab in one click. TabDump sorts them into categories and lays them out as a
+                  map you can explore — so the tab you saved last month is still findable.
                 </p>
               </IntroReveal>
 
               <IntroReveal order={2}>
+                <CoreLoop />
+              </IntroReveal>
+
+              <IntroReveal order={3}>
                 <div className="mt-8 flex flex-col items-center gap-3">
                   {installInfo.mode === "store" ? (
                     // A real anchor, not a Button-rendered-as-anchor: this
