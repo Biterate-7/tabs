@@ -156,7 +156,30 @@ export function loadWorkspaceStore(): WorkspaceStore | null {
     const raw = window.localStorage.getItem(scopedKey(WORKSPACE_STORE_KEY));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return isValidWorkspaceStore(parsed) ? repairWorkspaceStore(parsed) : null;
+    if (!isValidWorkspaceStore(parsed)) return null;
+
+    // Repair is best-effort, and its failure is not the store's failure.
+    //
+    // `null` from here does not mean "unusable" to the caller — it means "no
+    // store", and migrateToWorkspaceStore answers that by REPLACING
+    // everything with a fresh default workspace. So letting a throw in the
+    // repair pass escape turned one bad field into the user losing every
+    // workspace they had, which is precisely the outcome the note above
+    // repairWorkspaceStore says must never happen.
+    //
+    // It is reachable, not theoretical: isValidWorkspaceStore checks id,
+    // name, tabs, createdAt and updatedAt and says nothing about `sections`,
+    // so a workspace whose sections is not an array passes validation and
+    // then throws while being repaired.
+    //
+    // An unrepaired store is still a valid one — repair only ever removes
+    // values that were already unusable — so returning it keeps the user's
+    // data at the cost of leaving a field the repair would have tidied.
+    try {
+      return repairWorkspaceStore(parsed);
+    } catch {
+      return parsed;
+    }
   } catch {
     return null;
   }
