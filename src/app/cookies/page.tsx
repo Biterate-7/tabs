@@ -3,30 +3,56 @@ import { LegalPage } from "@/components/legal/legal-page"
 
 export const metadata: Metadata = {
   title: "Cookie Policy — TabDump",
-  description: "TabDump does not use cookies. Here is what it stores locally instead, and why.",
+  description: "The two sign-in cookies TabDump sets, and what it stores in your browser instead of cookies.",
 }
 
 export default function CookiePolicyPage() {
   return (
-    <LegalPage title="Cookie Policy" lastUpdated="September 6, 2026">
+    <LegalPage title="Cookie Policy" lastUpdated="September 14, 2026">
       <section>
-        <h2>TabDump does not use cookies</h2>
+        <h2>TabDump uses cookies only to sign you in</h2>
         <p>
-          TabDump does not set any HTTP cookies — no session cookies, no analytics cookies, no advertising or
-          marketing cookies. There is no cookie-consent banner on this site because there is nothing
-          non-essential to ask consent for: every piece of local storage described below is strictly
-          necessary for TabDump&apos;s core function (it is how your workspace is saved at all, since TabDump
-          has no server-side database), not tracking or advertising. If that ever changes, this page — and a
-          consent mechanism — will change with it.
+          TabDump sets no analytics cookies, no advertising or marketing cookies, and nothing that follows you
+          across other sites. The only cookies it sets at all are the two below, and it sets them only if you
+          choose to sign in. Browse TabDump without signing in and no cookie is set.
+        </p>
+        <p>
+          There is no cookie-consent banner here because there is nothing non-essential to ask consent for:
+          the sign-in cookies are strictly necessary to keep you signed in, and every piece of local storage
+          described further down is strictly necessary for the app to work at all. If that ever changes, this
+          page — and a consent mechanism — will change with it.
         </p>
       </section>
 
       <section>
-        <h2>What TabDump stores instead</h2>
+        <h2>The cookies TabDump sets</h2>
+        <ul>
+          <li>
+            <strong><code>tabdump_session</code></strong> — keeps you signed in after you sign in with
+            Google. It holds a random token, not your personal details. It is marked HttpOnly so page scripts
+            cannot read it, restricted to this site, sent only over HTTPS in production, and lasts up to 30
+            days, extending as you keep using TabDump. Signing out deletes the matching session on the server
+            and clears the cookie.
+          </li>
+          <li>
+            <strong><code>tabdump_login_nonce</code></strong> — a short-lived cookie used once, during the
+            sign-in exchange, to confirm the sign-in came from the page you started on. It expires within
+            minutes and is not used to identify you afterwards.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>What TabDump stores outside cookies</h2>
         <p>
-          TabDump uses two browser storage mechanisms that are not cookies and are never sent to a server:
-          <code> localStorage</code> and <code>IndexedDB</code>. Both are scoped to this site&apos;s origin,
-          stay on your device, and are readable only by TabDump.
+          Almost everything TabDump keeps in your browser is not a cookie. It uses two other browser storage
+          mechanisms, <code>localStorage</code> and <code>IndexedDB</code>, which are never attached to
+          network requests the way a cookie is. Both are scoped to this site&apos;s origin, stay on your
+          device, and are readable only by TabDump.
+        </p>
+        <p>
+          If you sign in, your workspaces can also be synced to our server — that is described in the{" "}
+          <a href="/privacy">Privacy Policy</a> rather than here, because it is not browser storage.
         </p>
       </section>
 
@@ -70,6 +96,13 @@ export default function CookiePolicyPage() {
           your browser. Fonts are self-hosted at build time rather than loaded from Google Fonts at runtime,
           so no font-related cookie or tracking request happens either.
         </p>
+        <p>
+          There is one exception, and it belongs to Google rather than to us. When the Sign in with Google
+          button is shown, your browser loads Google&apos;s sign-in script from{" "}
+          <code>accounts.google.com</code>. That is a request from your browser to Google, so Google may set
+          or read its own cookies for its domain as part of signing you in — governed by Google&apos;s
+          privacy and cookie policies, not this one. TabDump cannot read those cookies.
+        </p>
       </section>
 
       <section>
@@ -79,16 +112,17 @@ export default function CookiePolicyPage() {
           <li>Use TabDump&apos;s own delete/clear-workspace actions to remove specific data.</li>
           <li>Clear this site&apos;s data from your browser&apos;s settings to remove everything TabDump has stored at once (this also resets your appearance preferences).</li>
           <li>Uninstall the TabDump browser extension to stop it from being able to read your tabs or history.</li>
+          <li>Sign out to clear the session cookie and delete that session on our server.</li>
         </ul>
-        <p>Clearing local storage will remove your saved workspaces — export them first if you want to keep a copy.</p>
+        <p>Clearing local storage will remove your saved workspaces from this browser — export them first if you want to keep a copy. If you are signed in and have synced them, the copy on our server is not removed by clearing your browser.</p>
       </section>
 
       <section>
         <h2>Changes to This Cookie Policy</h2>
         <p>
-          If TabDump ever introduces cookies, analytics, or other tracking, this page will be updated to
-          describe them accurately, and a consent mechanism will be added before any non-essential tracking
-          loads.
+          If the cookies TabDump sets change, or if analytics or other tracking is ever introduced, this page
+          will be updated to describe them accurately, and a consent mechanism will be added before any
+          non-essential tracking loads.
         </p>
       </section>
     </LegalPage>
