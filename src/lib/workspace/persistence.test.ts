@@ -174,3 +174,93 @@ describe("loadWorkspaceStore tolerates wrong-typed tab fields", () => {
     expect(store!.workspaces[0].tabs).toHaveLength(1);
   });
 })
+
+/**
+ * Repairing references that point outside their own workspace.
+ *
+ * A tab whose sectionId names a section in a DIFFERENT workspace is a
+ * dangling reference. Locally it is nearly invisible — the tab just looks
+ * unsectioned. On the server it is a foreign key violation
+ * (tabdump_tabs_section_same_workspace), and because that constraint is
+ * deferred it fails the whole push at COMMIT with a 500, stranding every
+ * tab in the workspace.
+ *
+ * moveTabsBetweenWorkspaces no longer creates these (see store.test.ts).
+ * This is the other half: data already written by the version that did must
+ * heal on load, or an affected browser retries a doomed push forever. The
+ * tab itself is always kept — only the unresolvable reference is dropped.
+ */
+describe("loadWorkspaceStore repairs cross-workspace references", () => {
+  function seedTwoWorkspaces(tab: Record<string, unknown>) {
+    window.localStorage.setItem(
+      "tabdump:workspaces:v1",
+      JSON.stringify({
+        version: 1,
+        currentId: "w2",
+        workspaces: [
+          {
+            id: "w1",
+            name: "Origin",
+            createdAt: 1,
+            updatedAt: 2,
+            sections: [{ id: "s-in-w1", parentId: null, name: "Reading", source: "user", createdAt: 1, updatedAt: 1 }],
+            groups: [{ id: "g-in-w1", name: "Papers", createdAt: 1, updatedAt: 1 }],
+            tabs: [],
+          },
+          {
+            id: "w2",
+            name: "Destination",
+            createdAt: 1,
+            updatedAt: 2,
+            sections: [{ id: "s-in-w2", parentId: null, name: "Own", source: "user", createdAt: 1, updatedAt: 1 }],
+            tabs: [{ id: "t1", url: "https://a.com", normalizedUrl: "https://a.com", domain: "a.com", ...tab }],
+          },
+        ],
+      })
+    );
+  }
+
+  function destinationTab() {
+    const store = loadWorkspaceStore();
+    expect(store).not.toBeNull();
+    const w2 = store!.workspaces.find((w) => w.id === "w2")!;
+    expect(w2.tabs).toHaveLength(1);
+    return w2.tabs[0];
+  }
+
+  it("drops a sectionId belonging to another workspace", () => {
+    seedTwoWorkspaces({ sectionId: "s-in-w1" });
+    expect(destinationTab().sectionId).toBeUndefined();
+  });
+
+  it("drops a groupId belonging to another workspace", () => {
+    seedTwoWorkspaces({ groupId: "g-in-w1" });
+    expect(destinationTab().groupId).toBeUndefined();
+  });
+
+  it("drops a sectionId that names no section anywhere", () => {
+    seedTwoWorkspaces({ sectionId: "s-does-not-exist" });
+    expect(destinationTab().sectionId).toBeUndefined();
+  });
+
+  it("keeps a sectionId that does belong to this workspace", () => {
+    seedTwoWorkspaces({ sectionId: "s-in-w2" });
+    expect(destinationTab().sectionId).toBe("s-in-w2");
+  });
+
+  it("keeps the tab and its other fields when it drops the reference", () => {
+    seedTwoWorkspaces({ sectionId: "s-in-w1", notes: "keep me", category: "research" });
+    const tab = destinationTab();
+    expect(tab.sectionId).toBeUndefined();
+    expect(tab.notes).toBe("keep me");
+    expect(tab.category).toBe("research");
+    expect(tab.url).toBe("https://a.com");
+  });
+
+  it("clears sectionLocked when the section it referred to is dropped", () => {
+    seedTwoWorkspaces({ sectionId: "s-in-w1", sectionLocked: true });
+    const tab = destinationTab();
+    expect(tab.sectionId).toBeUndefined();
+    expect(tab.sectionLocked).toBeFalsy();
+  });
+});

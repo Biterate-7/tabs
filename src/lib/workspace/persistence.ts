@@ -108,9 +108,45 @@ export function isValidWorkspaceStore(value: unknown): value is WorkspaceStore {
  * deleting rows a previous version legitimately stored would be destroying
  * the user's own data to fix a problem that is already contained.
  */
+/**
+ * Drops a tab's section/group reference when it does not name something in
+ * the tab's OWN workspace.
+ *
+ * A version of moveTabsBetweenWorkspaces carried `sectionId` across a move,
+ * so a tab could end up pointing at a section in the workspace it came from.
+ * Locally that is almost invisible — the tab simply reads as unsectioned.
+ * The server enforces the same invariant with a composite foreign key
+ * (tabdump_tabs_section_same_workspace), and since that constraint is
+ * deferred it fails at COMMIT, taking the whole push down with it and
+ * stranding every tab in the workspace behind a retrying 500.
+ *
+ * Fixing the move stops new ones; this heals the rows already written, so an
+ * affected browser recovers by loading the app rather than needing the user
+ * to delete and rebuild a workspace. The tab is never removed — only the
+ * reference that cannot resolve, which is what the UI already renders as
+ * "no section" anyway.
+ */
+function dropDanglingEntityRefs(workspace: WorkspaceStore["workspaces"][number]): void {
+  const sections = new Set((workspace.sections ?? []).map((section) => section.id));
+  const groups = new Set((workspace.groups ?? []).map((group) => group.id));
+
+  for (const tab of workspace.tabs) {
+    if (tab.sectionId !== undefined && !sections.has(tab.sectionId)) {
+      delete tab.sectionId;
+      // The lock named that section. Keeping it would hold the tab out of
+      // organization in a workspace whose sections it has no claim on.
+      delete tab.sectionLocked;
+    }
+    if (tab.groupId !== undefined && !groups.has(tab.groupId)) {
+      delete tab.groupId;
+    }
+  }
+}
+
 function repairWorkspaceStore(store: WorkspaceStore): WorkspaceStore {
   for (const workspace of store.workspaces) {
     for (const tab of workspace.tabs) stripWrongTypedTabFields(tab);
+    dropDanglingEntityRefs(workspace);
   }
   return store;
 }
