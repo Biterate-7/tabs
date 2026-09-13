@@ -880,3 +880,111 @@ describe("workspace identity is the id", () => {
     expect(second.host.workspaces.get(WS)!.name).toBe("Second's name");
   });
 });
+
+/**
+ * An expired session parks pending work; signing back in has to pick it up.
+ *
+ * The bug these pin down: a 401 leaves the workspace `paused` with its edits
+ * still in the journal, and every background trigger (`syncAll`) skips that
+ * status on purpose. Nothing cleared it, so after the user signed back in
+ * the edit sat there indefinitely — reaching the server only if they later
+ * touched that workspace again or pressed sync by hand. Local data was never
+ * lost, but "sync it again yourself" is precisely what sync is for.
+ */
+describe("an expired session, then signing back in", () => {
+  /** Edits a tab and records it, as a local commit does. */
+  function editTab(engine: SyncEngine, host: DeviceHost, title: string): void {
+    const workspace = host.workspaces.get(WS)!;
+    host.workspaces.set(WS, {
+      ...workspace,
+      tabs: workspace.tabs.map((t) => (t.id === TAB_1 ? { ...t, title } : t)),
+    });
+    engine.markDirty(WS, [{ ref: { entityType: "tab", entityId: TAB_1 }, deleted: false }]);
+  }
+
+  it("pauses on a 401 and keeps the pending edit", async () => {
+    const device = await seedServer();
+
+    server.failNextRequests(1, 401, { error: "Not signed in." });
+    await device.act(async (engine, host) => {
+      editTab(engine, host, "Edited after expiry");
+      await engine.syncWorkspace(WS);
+    });
+
+    expect(device.state().status).toBe("paused");
+    // The edit is still owed to the server, not discarded.
+    expect(device.state().dirty.some((d) => d.ref.entityType === "tab" && d.ref.entityId === TAB_1)).toBe(true);
+    expect(server.tabOf(WS, TAB_1)?.title).not.toBe("Edited after expiry");
+  });
+
+  it("leaves the pause alone while the session is still dead", async () => {
+    const device = await seedServer();
+
+    server.failNextRequests(1, 401, { error: "Not signed in." });
+    await device.act(async (engine, host) => {
+      editTab(engine, host, "Edited after expiry");
+      await engine.syncWorkspace(WS);
+    });
+
+    // A background pass must not retry a dead session.
+    const before = server.calls.length;
+    await device.act((engine) => engine.syncAll());
+    expect(server.calls.length).toBe(before);
+    expect(device.state().status).toBe("paused");
+  });
+
+  it("sends the pending edit once the user signs back in", async () => {
+    const device = await seedServer();
+
+    server.failNextRequests(1, 401, { error: "Not signed in." });
+    await device.act(async (engine, host) => {
+      editTab(engine, host, "Edited after expiry");
+      await engine.syncWorkspace(WS);
+    });
+    expect(device.state().status).toBe("paused");
+
+    // Re-authenticating remounts the shell, so the engine is rebuilt from
+    // the persisted journal before anything resumes.
+    device.reload();
+    expect(device.state().status).toBe("paused");
+
+    // Exactly what the hook does on sign-in, and nothing more: no direct
+    // syncWorkspace, because that bypasses the very skip being tested.
+    await device.act(async (engine) => {
+      engine.resumeAuthPaused();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(server.tabOf(WS, TAB_1)?.title).toBe("Edited after expiry");
+    expect(device.state().status).toBe("idle");
+    expect(device.state().dirty).toHaveLength(0);
+  });
+
+  it("does not resume a workspace paused because the deployment has no database", async () => {
+    const device = await seedServer();
+
+    server.failNextRequests(1, 503, { error: "Sync isnt available on this deployment yet.", reason: "not-configured" });
+    await device.act(async (engine, host) => {
+      editTab(engine, host, "Edited with no database");
+      await engine.syncWorkspace(WS);
+    });
+    expect(device.state().status).toBe("paused");
+
+    // Signing in changes nothing about a deployment with no database, so
+    // this must stay put rather than becoming a request per sign-in.
+    const before = server.calls.length;
+    await device.act((engine) => engine.resumeAuthPaused());
+    expect(server.calls.length).toBe(before);
+    expect(device.state().status).toBe("paused");
+    // And the edit is still owed, not dropped.
+    expect(device.state().dirty.some((d) => d.ref.entityType === "tab" && d.ref.entityId === TAB_1)).toBe(true);
+  });
+
+  it("resumes nothing when there is no pending work", async () => {
+    const device = await seedServer();
+
+    const before = server.calls.length;
+    await device.act((engine) => engine.resumeAuthPaused());
+    expect(server.calls.length).toBe(before);
+  });
+});

@@ -41,6 +41,7 @@ import { applyChanges } from "./apply";
 import type { LocalSyncState } from "./apply";
 import { buildPush, refKey } from "./diff";
 import type { DirtyRef } from "./diff";
+import type { PausedReason } from "./journal";
 import { buildConflict, resolveKeepRemote } from "./conflicts";
 import type { ConflictPayload, LocalSyncConflict } from "./conflicts";
 import {
@@ -327,6 +328,39 @@ export class SyncEngine {
   }
 
   /**
+   * Picks work back up after a sign-in.
+   *
+   * A 401 parks a workspace in `paused` with its pending edits intact, and
+   * `syncAll` deliberately skips that status — retrying while the session is
+   * still dead is pointless noise. But nothing else cleared it, so once the
+   * user signed back in the pending work sat there until they happened to
+   * edit that workspace again or pressed sync by hand. This is the "until
+   * sign-in" half of that promise.
+   *
+   * Only the authentication pause is lifted. A workspace paused because the
+   * deployment has no database configured is left alone: signing in changes
+   * nothing about it, and retrying it here is the retry loop that `paused`
+   * exists to prevent.
+   *
+   * Called on sign-in rather than on every trigger, so a session that is
+   * still expired produces one attempt per sign-in, never a poll.
+   */
+  resumeAuthPaused(): void {
+    const userId = this.host.getUserId();
+    if (!userId || this.store.userId !== userId) return;
+
+    let resumed = false;
+    for (const [workspaceId, journal] of Object.entries(this.store.workspaces)) {
+      if (journal.status !== "paused") continue;
+      if (journal.pausedReason === "not-configured") continue;
+      if (journal.dirty.length === 0) continue;
+      this.update(workspaceId, (current) => ({ ...current, status: "queued", pausedReason: undefined }));
+      resumed = true;
+    }
+    if (resumed) this.syncAll();
+  }
+
+  /**
    * Syncs every workspace that has work to do.
    *
    * What a reconnect, a focus or the timer calls. Deliberately not a burst:
@@ -507,6 +541,7 @@ export class SyncEngine {
           // and applied whatever else changed.
           failureCount: 0,
           retryAfter: undefined,
+          pausedReason: undefined,
           lastError: undefined,
         }));
       }
@@ -571,6 +606,7 @@ export class SyncEngine {
             : "idle",
       failureCount: 0,
       retryAfter: undefined,
+      pausedReason: undefined,
       lastError: undefined,
       lastSyncedAt: this.now(),
     }));
@@ -730,6 +766,11 @@ export class SyncEngine {
     }
 
     const retryable = isRetryable(failure);
+    // Which of the two pauses this is. Kept so a later sign-in can pick up
+    // the work behind an expired session without also re-attempting a
+    // deployment that has no database to talk to.
+    const pausedReason: PausedReason | undefined =
+      status === "paused" ? (failure.kind === "not-configured" ? "not-configured" : "unauthenticated") : undefined;
     this.update(workspaceId, (current) => {
       const failureCount = retryable ? current.failureCount + 1 : current.failureCount;
       return {
@@ -737,6 +778,7 @@ export class SyncEngine {
         status,
         failureCount,
         ...(retryable ? { retryAfter: this.now() + backoffDelayMs(failureCount, Math.random) } : {}),
+        pausedReason,
         lastError: failure.message,
       };
     });
@@ -815,6 +857,7 @@ export class SyncEngine {
       dirty: [],
       failureCount: 0,
       retryAfter: undefined,
+      pausedReason: undefined,
       lastError: undefined,
       lastSyncedAt: this.now(),
     }));
@@ -1100,6 +1143,7 @@ export class SyncEngine {
         status: conflicts.length > 0 ? "conflict" : withPending.dirty.length > 0 ? "queued" : "idle",
         failureCount: 0,
         retryAfter: undefined,
+        pausedReason: undefined,
         lastError: undefined,
         lastSyncedAt: this.now(),
       };

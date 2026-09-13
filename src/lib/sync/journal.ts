@@ -66,6 +66,9 @@ export type SyncStatus =
   | "conflict"
   | "remote-deleted";
 
+/** Why a workspace is `paused`. See WorkspaceJournal.pausedReason. */
+export type PausedReason = "unauthenticated" | "not-configured";
+
 export type WorkspaceJournal = {
   workspaceId: string;
   status: SyncStatus;
@@ -82,6 +85,16 @@ export type WorkspaceJournal = {
   lastSyncedAt?: number;
   /** Short, user-facing reason. Never a stack trace or a server internal. */
   lastError?: string;
+  /**
+   * Why this workspace is `paused`, when it is.
+   *
+   * The two reasons need different handling and the status alone cannot
+   * tell them apart. `unauthenticated` ends at the next sign-in, so the
+   * pending work behind it must be picked back up then. `not-configured`
+   * is a property of the deployment, where retrying changes nothing, so it
+   * stays put until the deployment does.
+   */
+  pausedReason?: PausedReason;
 };
 
 export type SyncJournalStore = {
@@ -173,6 +186,9 @@ function readJournal(value: unknown): WorkspaceJournal | null {
       ? { lastSyncedAt: value.lastSyncedAt }
       : {}),
     ...(typeof value.lastError === "string" ? { lastError: value.lastError } : {}),
+    ...(value.pausedReason === "unauthenticated" || value.pausedReason === "not-configured"
+      ? { pausedReason: value.pausedReason }
+      : {}),
   };
 }
 

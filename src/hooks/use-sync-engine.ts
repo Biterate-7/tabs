@@ -92,6 +92,22 @@ export function useSyncEngine(input: SyncEngineInput): SyncEngineBinding {
   useEffect(() => subscribeSyncDirty((events) => engine.markEntitiesDirty(events)), [engine])
 
   /**
+   * Picks up work that an expired session parked.
+   *
+   * A 401 leaves a workspace `paused` with its edits still pending, and the
+   * background triggers skip that status on purpose. Signing back in is the
+   * event that makes those edits sendable again, so it is the event that
+   * has to say so — otherwise they wait for the user to touch the workspace
+   * again, which is exactly the "repeat your edits" outcome sync exists to
+   * avoid. Keyed on the user id, so it runs once per sign-in and once on a
+   * mount that is already signed in (the remount a re-authentication does).
+   */
+  useEffect(() => {
+    if (!input.userId) return
+    engine.resumeAuthPaused()
+  }, [engine, input.userId])
+
+  /**
    * Onboarding: a device signed into an account that already has workspaces
    * has no way to know that until it asks.
    *

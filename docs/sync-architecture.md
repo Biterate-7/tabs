@@ -580,17 +580,58 @@ that two devices converge, that conflicts surface instead of resolving
 themselves, and that no path silently drops an edit. Every rule it implements
 names the production code it mirrors, so drift is visible.
 
-## Four kinds of verification, kept apart
+## Five kinds of verification, kept apart
 
 These are not interchangeable, and this document never uses one word for
-another.
+another. The last two are separate on purpose: running the real app in a
+real browser on localhost says nothing about what is deployed.
 
-| Tier | What it means | Where |
+| Tier | What it means | Where | Status |
+| --- | --- | --- | --- |
+| **Structural** | Source or config read as text and asserted against | `schema.test.ts`, `desktop-no-sync.test.ts` | done |
+| **Recording-fake** | Production code run against a fake that records statements instead of executing them | `repository.test.ts`, `service.test.ts`, `multi-device.test.ts`, `lifecycle.test.ts`, `sync-routes.test.ts` | done |
+| **Real PostgreSQL** | Production code executed against a genuine PostgreSQL server | the `*.pg.test.ts` suites | done |
+| **Authenticated runtime** | A signed-in browser driving the app and exchanging real data | — | **not done** — no OAuth credentials; see below |
+| **Production deployment** | The deployed build at the canonical domain | — | **not possible today** — sync is not deployed; see below |
+
+### Anonymous runtime IS verified
+
+One runtime tier that does exist, and should not be confused with the two
+above: the signed-out browser. Phase 11 drove `next dev` in a real browser —
+imported five tabs, let Auto-Organize section them, reloaded, and read back
+both the network log and `localStorage`:
+
+- five tabs and five sections survived the reload;
+- **zero** `/api/sync/*` requests were made, before or after;
+- **zero** sync keys were created — neither `tabdump:sync-meta:v1` nor
+  `tabdump:sync-journal:v1` existed in `localStorage` at any point.
+
+The only API traffic was `/api/titles` and `/api/ai/*`, which are not sync.
+So "an authenticated database environment must not change anonymous
+behaviour" is verified by observation rather than by argument.
+
+The route gate was exercised directly against the running server as well:
+`/api/sync/workspaces`, `/api/sync/pull` and `/api/sync/push` all answer
+`401 Sign in to continue.` unauthenticated, and a POST carrying a foreign
+`Origin` or a non-JSON content type is refused `403` before authentication is
+even considered.
+
+### The deployed app has no sync at all
+
+Worth stating plainly, because it is easy to assume otherwise: as of this
+phase the sync system has never been deployed. `main` contains no
+`src/lib/sync/` files, and the production deployment is built from `main`.
+Probing it directly:
+
+| Endpoint | Production | Local `next dev` |
 | --- | --- | --- |
-| **Structural** | Source or config read as text and asserted against | `schema.test.ts`, `desktop-no-sync.test.ts` |
-| **Recording-fake** | Production code run against a fake that records statements instead of executing them | `repository.test.ts`, `service.test.ts`, `multi-device.test.ts`, `sync-routes.test.ts` |
-| **Real PostgreSQL** | Production code executed against a genuine PostgreSQL server | the `*.pg.test.ts` suites |
-| **Authenticated runtime** | A signed-in browser driving the deployed app | **not done — see limitations** |
+| `/api/auth/me` | `200 {"authenticated":false,"configured":true}` | not configured locally |
+| `/api/sync/workspaces` | `404` (HTML — no such route) | `401` |
+| `/api/sync/pull` | `404` (HTML — no such route) | `401` |
+
+Accounts are live in production; sync is not. Until this branch merges,
+"production sync verification" has nothing to verify, and no such claim is
+made anywhere in this document.
 
 ## Real PostgreSQL integration
 
@@ -694,6 +735,34 @@ A fifth, smaller one: `pull`'s `limit` parameter inferred the literal type
 `500` from its `as const` default, so no caller could legally pass another
 page size.
 
+## The defect authenticated-runtime review found
+
+One real bug, found by auditing the sign-in path rather than by a test
+failure, and now pinned by `lifecycle.test.ts`:
+
+**Pending work stayed parked after signing back in.** A 401 puts a workspace
+in `paused` with its edits still in the journal — correct, and deliberately
+non-retryable, since hammering a dead session is pointless noise. But every
+background trigger goes through `syncAll`, which skips `paused` by design,
+and *nothing cleared it*. So after the user signed back in, the pending edit
+sat there indefinitely. It reached the server only if they happened to edit
+that workspace again (which flips `paused` → `queued`) or pressed sync by
+hand. Local data was never at risk, and nothing was lost — but "sync it
+again yourself" is the outcome sync exists to prevent.
+
+The fix is `SyncEngine.resumeAuthPaused()`, called from `useSyncEngine` on
+the user id becoming known — so once per sign-in, and once on the remount
+that re-authentication performs. It lifts only the authentication pause.
+
+That distinction needed a new field. `paused` had two causes that the status
+alone could not tell apart: an expired session, and a deployment with no
+database (`503 not-configured`). Reviving the second on every sign-in would
+re-introduce exactly the pointless retry `paused` exists to stop, so the
+journal now records `pausedReason`, and `not-configured` stays put.
+
+Both halves are regression-tested, and both tests were confirmed to fail
+without their respective guard.
+
 ## Known limitations
 
 - **Desktop sync is inert**, because the static export ships no API routes and
@@ -719,14 +788,32 @@ page size.
 - Workspace deletion is still not part of the push surface; tombstoning a
   whole workspace needs a decision about its children that belongs with the
   deletion UX.
-- **No authenticated runtime verification.** This is still true, and the real
-  database does not change it. The `*.pg.test.ts` suites drive the real route
-  handlers with real Postgres-backed sessions, which is strictly more than
-  before — but nobody has signed in through a browser with a Google client ID
-  and watched two devices exchange a workspace. That needs Google OAuth
-  credentials and a deployed origin, neither of which exists here. **Sign-in →
-  create → sync → reload → edit → sync → delete was not runtime verified**, and
-  no claim is made that a live two-client exchange was observed.
+- **No authenticated runtime verification.** Still true, and neither the real
+  database nor the anonymous browser run changes it. The `*.pg.test.ts` suites
+  drive the real route handlers with real Postgres-backed sessions, and the
+  browser run above proves the signed-out half — but nobody has signed in
+  through a browser and watched two devices exchange a workspace.
+
+  The blocker is specific, and it is not shyness about the work: signing in
+  requires Google OAuth credentials for a real Google account. No test account
+  exists for this project, and the local dev server has no
+  `NEXT_PUBLIC_GOOGLE_CLIENT_ID` set, so the sign-in UI does not render at all
+  — `publicGoogleClientId()` returns undefined and the provider goes straight
+  to signed-out. Both would have to be solved before any of it is testable,
+  and the second cannot be solved by an agent holding someone else's credentials.
+
+  Concretely **not** runtime verified: sign-in; two-device discovery and
+  adoption; bidirectional edits; a real conflict and its keep-mine/keep-theirs
+  resolution; collection and dependency propagation across devices; offline
+  edit-and-reconnect; logout/login account isolation; workspace deletion
+  propagating to a second device. Every one of those is covered at the
+  recording-fake tier and, where it touches the database, at the real-Postgres
+  tier — which is not the same thing and is not presented as such.
+
+- **Nothing is verified against the deployed production build**, because the
+  deployed build has no sync in it (see "The deployed app has no sync at all").
+  The web production build compiles clean here and emits all four `/api/sync/*`
+  handlers, so the code is deployable; it simply has not been deployed.
 - **A workspace deleted on another device is never removed from this one.**
   That is deliberate, not a gap — but it does mean a user who deletes a
   workspace on one device still has to remove it on each other device. There
