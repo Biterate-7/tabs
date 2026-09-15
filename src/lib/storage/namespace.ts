@@ -39,6 +39,21 @@ export const SCOPED_STORAGE_KEYS = [
   "tabdump:collections:v1",
   "tabdump:dependencies:v1",
   "tabdump:graph:v1",
+  // Agent identities, runs, their tab links and their activity logs (see
+  // src/lib/agents/persistence.ts). Personal content by the same test as the
+  // keys above — it records what was worked on and when — so it partitions
+  // with them rather than staying global.
+  "tabdump:agents:v1",
+  // Which local Claude Code project belongs to which workspace (see
+  // src/lib/agents/claude-code/mapping.ts). Scoped for the same reason as the
+  // rest: it names the user's own directories, and one account's project
+  // layout is not another's business.
+  "tabdump:claude-code-mapping:v1",
+  // Where the user has dragged agent nodes on the canvas, and which agent
+  // filter they last used (see src/lib/agents/spatial/persistence.ts). Layout
+  // state, but personal layout state — it describes their workspace, so it
+  // partitions with the rest rather than staying global.
+  "tabdump:agent-layout:v1",
 ] as const;
 
 /**

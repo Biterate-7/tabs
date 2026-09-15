@@ -64,6 +64,7 @@ export function GraphSidebar({
   onRenameCollection,
   onOpenAllInCollection,
   onDeleteCollection,
+  agentPanel,
 }: {
   open: boolean
   onToggle: () => void
@@ -97,6 +98,14 @@ export function GraphSidebar({
   onRemoveDependency: (depId: string) => void
   onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
   onOpenNotes: (id: string) => void
+  /**
+   * The AGENT section, supplied by the host rather than built here.
+   *
+   * Passed as a node so the sidebar stays a layout component: it does not
+   * need to know about agent state, selectors or the spatial scene, and the
+   * agent panel can evolve without touching this file.
+   */
+  agentPanel?: React.ReactNode
   /** The currently-selected collection region's detail — omitted (undefined) when nothing is selected. Mutually exclusive with selectedNode (see graph-canvas.tsx). */
   selectedCollection?: Collection | null
   onFocusCollection: () => void
@@ -190,6 +199,13 @@ export function GraphSidebar({
                 onOpenAll={onOpenAllInCollection}
                 onDelete={onDeleteCollection}
               />
+            </>
+          )}
+
+          {agentPanel && (
+            <>
+              <div className="h-px bg-border" />
+              {agentPanel}
             </>
           )}
 

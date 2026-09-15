@@ -51,6 +51,13 @@ import { GatherDialog } from "@/components/workspace/gather-dialog"
 import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
 import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
 
+import { useAgentStore } from "@/hooks/use-agent-store"
+import { useAgentSpatial } from "@/hooks/use-agent-spatial"
+import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
+import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
+import { searchAgentWork } from "@/lib/agents/spatial/search"
+import { GraphAgentPanel } from "./graph-agent-panel"
+
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
 
@@ -214,6 +221,144 @@ export function GraphView({
   const selectedTabId = graphState.settings.selectedTabId
   const centerTabId = view === "local" ? selectedTabId : null
   const hasCenter = Boolean(centerTabId && nodeById.has(centerTabId))
+
+  /**
+   * The agent work layer.
+   *
+   * Reads the agent store, which the Phase 12 observer feeds — this view owns
+   * no polling and makes no request of its own. It is also strictly a reader:
+   * nothing here can change a run, a status or a relationship.
+   */
+  const agentStore = useAgentStore()
+  const agentTabBounds = useMemo(() => {
+    const points = Object.values(graphState.positions)
+    if (points.length === 0) return null
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const point of points) {
+      if (point.x < minX) minX = point.x
+      if (point.x > maxX) maxX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.y > maxY) maxY = point.y
+    }
+    return Number.isFinite(minX) ? { minX, maxX, minY, maxY } : null
+  }, [graphState.positions])
+
+  /**
+   * Per-workspace tab index for exact-match URL linking, keyed by TabDump's
+   * own normalized URL so an agent visiting a saved page links to the same tab
+   * the user would have opened.
+   */
+  const agentTabIndexes = useMemo(
+    () =>
+      store.workspaces.map((workspace) => {
+        const tabsByNormalizedUrl = new Map<string, string>()
+        for (const tab of workspace.tabs) {
+          if (!tabsByNormalizedUrl.has(tab.normalizedUrl)) {
+            tabsByNormalizedUrl.set(tab.normalizedUrl, tab.id)
+          }
+        }
+        return { workspaceId: workspace.id, tabsByNormalizedUrl }
+      }),
+    [store.workspaces]
+  )
+
+  /**
+   * THE observer. Mounted exactly once, here, beside the store it feeds.
+   *
+   * Phase 12 owns observation; every other consumer — the canvas, the panel,
+   * search — reads the store this fills. Mounting it anywhere else as well
+   * would double the polling done against the user's machine, which is why
+   * there is one call site and an architectural test guarding it.
+   */
+  const agentObserver = useClaudeCodeObserver({
+    store: agentStore,
+    enabled: true,
+    tabIndexes: agentTabIndexes,
+  })
+
+  const agentSpatial = useAgentSpatial({
+    state: agentStore.state,
+    workspaceId: store.currentId,
+    tabBounds: agentTabBounds,
+  })
+
+  const agentLayer = useMemo(
+    () => ({
+      scene: agentSpatial.scene,
+      positions: agentSpatial.positions,
+      emphasized: agentSpatial.emphasized,
+      selectedId: agentSpatial.selectedId,
+    }),
+    [agentSpatial.scene, agentSpatial.positions, agentSpatial.emphasized, agentSpatial.selectedId]
+  )
+
+  /** Tab titles for the inspector, so it can name a run's context tabs without importing the tab store. */
+  const agentTabTitles = useMemo(() => {
+    const titles = new Map<string, string>()
+    for (const workspace of store.workspaces) {
+      for (const tab of workspace.tabs) {
+        titles.set(tab.id, tab.title?.trim() || tab.domain)
+      }
+    }
+    return titles
+  }, [store.workspaces])
+
+  const agentInspection = useMemo(
+    () =>
+      buildInspectorSelection({
+        state: agentStore.state,
+        scene: agentSpatial.scene,
+        selectedId: agentSpatial.selectedId,
+        tabTitles: agentTabTitles,
+      }),
+    [agentStore.state, agentSpatial.scene, agentSpatial.selectedId, agentTabTitles]
+  )
+
+  /**
+   * Agent search results.
+   *
+   * Scoped to the current scene, which means they inherit the active filter
+   * and the current workspace — a result always corresponds to something the
+   * user can then be shown.
+   */
+  const agentSearchResults = useMemo(
+    () =>
+      searchAgentWork(
+        agentSpatial.scene,
+        {
+          artifacts: agentStore.state.artifacts,
+          artifactLinks: agentStore.state.artifactLinks,
+          workspaceId: store.currentId,
+          visibleRunIds: new Set(
+            agentSpatial.scene.nodes.filter((n) => n.kind === "run").map((n) => n.runId)
+          ),
+        },
+        query
+      ),
+    [agentSpatial.scene, agentStore.state.artifacts, agentStore.state.artifactLinks, store.currentId, query]
+  )
+
+  const workspaceAgentRunCount = useMemo(
+    () => agentStore.state.runs.filter((run) => run.workspaceId === store.currentId).length,
+    [agentStore.state.runs, store.currentId]
+  )
+
+  /**
+   * Selecting a search result.
+   *
+   * Selects the entity and focuses its spatial node, reusing the canvas's
+   * existing focus mechanism rather than introducing a second viewport
+   * controller. Purely presentational — nothing about the agent domain
+   * changes.
+   */
+  function handleSelectAgentResult(id: string) {
+    agentSpatial.select(id)
+    const point = agentSpatial.positions.get(id)
+    if (point) canvasHandleRef.current?.focusPoint(point.x, point.y)
+  }
 
   const { visibleNodes, visibleEdges, visibleDependencyEdges, centerDistances } = useMemo(() => {
     if (hasCenter && centerTabId) {
@@ -734,6 +879,9 @@ export function GraphView({
           onBoundaryOffsetsNormalized={handleBoundaryOffsetsNormalized}
           onHoverChange={setHover}
           onSelectedNodeScreenChange={setSelectedNodeScreen}
+          agentLayer={agentLayer}
+          onSelectAgentNode={agentSpatial.select}
+          onAgentNodeMoved={(id, x, y) => agentSpatial.moveNode(id, { x, y })}
         />
       )}
 
@@ -769,6 +917,21 @@ export function GraphView({
         workspaceFilter={graphState.settings.workspaceFilter}
         onWorkspaceFilterChange={handleWorkspaceFilterChange}
         onFit={handleFit}
+        agentPanel={
+          <GraphAgentPanel
+            available={agentObserver.available}
+            filter={agentSpatial.filter}
+            onFilterChange={agentSpatial.setFilter}
+            selection={agentInspection}
+            hiddenRunCount={agentSpatial.hiddenRunCount}
+            hasAnyAgentData={workspaceAgentRunCount > 0}
+            hasVisibleRuns={agentSpatial.scene.nodes.some((node) => node.kind === "run")}
+            searchQuery={query}
+            searchResults={agentSearchResults}
+            onSelectResult={handleSelectAgentResult}
+            onSelectRun={(runId) => agentSpatial.select(`run:${runId}`)}
+          />
+        }
         selectedNode={selectedNode}
         dependenciesOfSelected={dependenciesOfSelected}
         usedByOfSelected={usedByOfSelected}
