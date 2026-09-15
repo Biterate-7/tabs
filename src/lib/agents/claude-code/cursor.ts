@@ -38,6 +38,11 @@ export function encodeCursor(entries: CursorState): string {
       s: entry.sessionId,
       o: entry.offset,
       z: entry.size,
+      // Added after v1 shipped, and additive on purpose: a cursor written
+      // before this field existed decodes with the ordinal defaulting to 0,
+      // so an in-flight client is not forced to restart its whole sweep just
+      // because work items arrived.
+      t: entry.taskOrdinal,
     })),
   };
 
@@ -78,7 +83,20 @@ export function decodeCursor(value: unknown): CursorState {
     if (typeof entry.o !== "number" || !Number.isFinite(entry.o) || entry.o < 0) continue;
     if (typeof entry.z !== "number" || !Number.isFinite(entry.z) || entry.z < 0) continue;
 
-    entries.push({ sessionId: entry.s, offset: Math.floor(entry.o), size: Math.floor(entry.z) });
+    // An absent, negative or non-finite ordinal degrades to 0 rather than
+    // dropping the entry: losing a session's read position over a bad counter
+    // would cost far more than renumbering its tasks.
+    const taskOrdinal =
+      typeof entry.t === "number" && Number.isFinite(entry.t) && entry.t >= 0
+        ? Math.floor(entry.t)
+        : 0;
+
+    entries.push({
+      sessionId: entry.s,
+      offset: Math.floor(entry.o),
+      size: Math.floor(entry.z),
+      taskOrdinal,
+    });
   }
 
   return entries;

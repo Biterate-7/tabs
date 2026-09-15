@@ -3,6 +3,7 @@ import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isValidSessionId, resolveReadStart } from "./cursor";
+import { countCreatedTasks } from "./normalizer";
 import { parseTranscriptLine } from "./parser";
 import { CLAUDE_LIMITS, mapClaudeStatus } from "./types";
 import type { CursorState } from "./cursor";
@@ -212,13 +213,23 @@ export async function readSessionActivity(
     lastObservedAt: entry.statusUpdatedAt ?? now,
   };
 
+  // How many tasks this session had already created when the last poll
+  // stopped. Every early return below carries it forward unchanged: a poll
+  // that reads no records must not reset the count, or the next batch of
+  // creations would be numbered from zero and collide with the existing ones.
+  const carriedOrdinal = previous?.taskOrdinal ?? 0;
+
   const status = mapClaudeStatus(entry.status);
   if (status) session.status = status;
   if (entry.name) session.title = entry.name;
 
   const located = await locateSession(entry.sessionId);
   if (!located) {
-    return { session, records: [], cursor: { sessionId: entry.sessionId, offset: 0, size: 0 } };
+    return {
+      session,
+      records: [],
+      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal },
+    };
   }
 
   const terminal = await readTerminalSignal(located.released);
@@ -228,7 +239,11 @@ export async function readSessionActivity(
   try {
     size = (await stat(/*turbopackIgnore: true*/ located.transcript)).size;
   } catch {
-    return { session, records: [], cursor: { sessionId: entry.sessionId, offset: 0, size: 0 } };
+    return {
+      session,
+      records: [],
+      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal },
+    };
   }
 
   const start = resolveReadStart(previous, size, CLAUDE_LIMITS.initialTailBytes);
@@ -239,7 +254,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
     };
   }
 
@@ -256,7 +271,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
     };
   }
 
@@ -273,7 +288,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
     };
   }
 
@@ -295,7 +310,14 @@ export async function readSessionActivity(
   return {
     session,
     records,
-    cursor: { sessionId: entry.sessionId, offset: start.offset + lastNewline + 1, size },
+    cursor: {
+      sessionId: entry.sessionId,
+      offset: start.offset + lastNewline + 1,
+      size,
+      // Advanced by however many tasks these records created, so the next
+      // poll numbers its own creations from the right place.
+      taskOrdinal: carriedOrdinal + countCreatedTasks(records),
+    },
   };
 }
 

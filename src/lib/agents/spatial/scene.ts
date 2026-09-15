@@ -6,8 +6,10 @@ import {
   agentSpatialId,
   artifactSpatialId,
   emptyAgentSpatialScene,
+  isWorkItemSpatialId,
   runSpatialId,
   tabSpatialId,
+  workItemSpatialId,
 } from "./types";
 import type {
   AgentSpatialEdge,
@@ -17,6 +19,7 @@ import type {
   ArtifactSpatialNode,
   BuildSceneInput,
   RunSpatialNode,
+  WorkItemSummary,
   SpatialId,
 } from "./types";
 import type {
@@ -25,6 +28,8 @@ import type {
   AgentRunLink,
   AgentState,
   AgentRunStatus,
+  AgentWorkItem,
+  AgentWorkItemStatus,
 } from "@/lib/agents/types";
 
 /**
@@ -183,6 +188,18 @@ export function buildAgentSpatialScene(
     (link) => link.runId
   );
 
+  // Work items of visible runs only, grouped once. A run hidden by the filter
+  // contributes none — visibility is inherited, never independent, so an item
+  // can never outlive the run it explains.
+  const workItemsByRun = new Map<string, AgentWorkItem[]>();
+  for (const item of state.workItems) {
+    if (!visibleRunIds.has(item.runId)) continue;
+    const bucket = workItemsByRun.get(item.runId);
+    if (bucket) bucket.push(item);
+    else workItemsByRun.set(item.runId, [item]);
+  }
+  for (const bucket of workItemsByRun.values()) bucket.sort(byOldestWorkItem);
+
   const nodes: AgentSpatialNodeUnion[] = [];
   const edges: AgentSpatialEdge[] = [];
 
@@ -228,10 +245,23 @@ export function buildAgentSpatialScene(
       status: run.status,
       tabCount: tabCounts.get(run.id)?.size ?? 0,
       artifactCount: artifactCounts.get(run.id)?.size ?? 0,
+      workItemCount: workItemsByRun.get(run.id)?.length ?? 0,
       updatedAt: run.updatedAt,
       createdAt: run.createdAt,
     };
     if (run.currentActivity) node.activity = run.currentActivity;
+
+    // Progress and the primary title are derived from the run's real items.
+    // Both are omitted entirely when the run has none — a run nobody reported
+    // a plan for shows no ring and no subtitle, rather than an empty ring and
+    // a placeholder, because "0 of 0" reads as a measurement and there was no
+    // measurement.
+    const progress = runWorkProgress(workItemsByRun.get(run.id));
+    if (progress) node.workProgress = progress;
+
+    const primary = primaryWorkItem(workItemsByRun.get(run.id));
+    if (primary) node.primaryWorkItemTitle = primary.title;
+
     nodes.push(node);
 
     if (agentsById.has(run.agentId)) {
@@ -284,7 +314,106 @@ export function buildAgentSpatialScene(
     });
   }
 
-  return { nodes, edges, hiddenRunCount };
+  // Flattened last, in run order, so the list reads the way the canvas does.
+  const workItems: WorkItemSummary[] = [];
+  for (const run of visibleRuns) {
+    for (const item of workItemsByRun.get(run.id) ?? []) {
+      const summary: WorkItemSummary = {
+        id: workItemSpatialId(item.id),
+        workItemId: item.id,
+        runId: item.runId,
+        runSpatialId: runSpatialId(item.runId),
+        title: item.title,
+        status: item.status,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      };
+      if (item.summary) summary.summary = item.summary;
+      if (item.progress) summary.progress = item.progress;
+      if (item.startedAt !== undefined) summary.startedAt = item.startedAt;
+      if (item.completedAt !== undefined) summary.completedAt = item.completedAt;
+      workItems.push(summary);
+    }
+  }
+
+  return { nodes, edges, workItems, hiddenRunCount };
+}
+
+/**
+ * Oldest first, id breaking ties — a plan read in the order it was made.
+ *
+ * Duplicated from selectors.ts rather than imported because that one is
+ * private to its module and this one orders scene-side copies; keeping them
+ * separate avoids exporting an ordering primitive that neither module owns.
+ */
+function byOldestWorkItem(a: AgentWorkItem, b: AgentWorkItem): number {
+  return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * How far a set of work items has got.
+ *
+ * The scene-side twin of `getRunWorkProgress`, operating on the already
+ * grouped-and-filtered bucket so the scene builder stays single-pass. Same
+ * rules: cancelled items count toward neither side, and a run with nothing
+ * countable gets undefined rather than 0 / 0.
+ */
+function runWorkProgress(
+  items: AgentWorkItem[] | undefined
+): { completed: number; total: number } | undefined {
+  if (!items?.length) return undefined;
+
+  let completed = 0;
+  let total = 0;
+  for (const item of items) {
+    if (item.status === "cancelled") continue;
+    total += 1;
+    if (item.status === "completed") completed += 1;
+  }
+
+  return total === 0 ? undefined : { completed, total };
+}
+
+/**
+ * The item that best represents what a run is doing.
+ *
+ * Same attention ordering as the domain's `getPrimaryWorkItem`: active work
+ * outranks blocked, which outranks not-yet-started, which outranks finished.
+ * Items arrive already sorted oldest-first, so a stable scan suffices.
+ */
+function primaryWorkItem(items: AgentWorkItem[] | undefined): AgentWorkItem | undefined {
+  if (!items?.length) return undefined;
+
+  const rank: Record<AgentWorkItemStatus, number> = {
+    active: 0,
+    blocked: 1,
+    pending: 2,
+    completed: 3,
+    cancelled: 4,
+  };
+
+  let best = items[0];
+  for (const item of items) {
+    if (rank[item.status] < rank[best.status]) best = item;
+  }
+  return best;
+}
+
+/**
+ * The run a work-item selection should focus.
+ *
+ * Work items have no body on the canvas, so "focus this work item" means
+ * "focus the run that owns it" — the existing focus abstraction, reached with
+ * a run spatial id, rather than a second camera path for a node that does not
+ * exist. Returns null when the selection is not a work item, or names one the
+ * current scene does not contain.
+ */
+export function runIdForWorkItemSelection(
+  scene: AgentSpatialScene,
+  selectedId: SpatialId | null | undefined
+): SpatialId | null {
+  if (!isWorkItemSpatialId(selectedId)) return null;
+  return scene.workItems.find((item) => item.id === selectedId)?.runSpatialId ?? null;
 }
 
 /**

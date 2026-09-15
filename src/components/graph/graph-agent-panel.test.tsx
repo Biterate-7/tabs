@@ -12,7 +12,9 @@ import type { AgentSearchResult } from "@/lib/agents/spatial/search"
 
 const T0 = 1_700_000_000_000
 
-function runSelection(over: Partial<Extract<AgentInspectorSelection, { kind: "run" }>> = {}): AgentInspectorSelection {
+function runSelection(
+  over: Partial<Extract<AgentInspectorSelection, { kind: "run" }>> = {}
+): Extract<AgentInspectorSelection, { kind: "run" }> {
   return {
     kind: "run",
     node: {
@@ -26,6 +28,7 @@ function runSelection(over: Partial<Extract<AgentInspectorSelection, { kind: "ru
       activity: "Edited sidebar.tsx",
       tabCount: 1,
       artifactCount: 2,
+      workItemCount: 0,
       updatedAt: T0,
       createdAt: T0,
     },
@@ -39,6 +42,7 @@ function runSelection(over: Partial<Extract<AgentInspectorSelection, { kind: "ru
       { id: "e1", runId: "r1", timestamp: T0, kind: "activity", summary: "Edited artifacts.ts" },
       { id: "e2", runId: "r1", timestamp: T0 - 1, kind: "activity", summary: "Ran the tests" },
     ],
+    workItems: [],
     startedAt: T0 - 10_000,
     ...over,
   }

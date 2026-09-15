@@ -274,6 +274,173 @@ export type AgentRunArtifactLink = {
   createdAt: number;
 };
 
+/**
+ * Where a unit of work is in its life.
+ *
+ * Deliberately NOT the same vocabulary as AgentRunStatus, and the difference
+ * is the point: `blocked` here is *not* terminal. A run that blocked has
+ * stopped — the session is over and a new one will be needed. A work item
+ * that blocked is waiting on something, and the very next observation may
+ * unblock it. Collapsing the two vocabularies would force one of those two
+ * truths to be wrong.
+ *
+ * `pending` has no run-level equivalent at all: a run exists because a
+ * session started, whereas a work item can be known about before anything
+ * has been done toward it.
+ */
+export type AgentWorkItemStatus = "pending" | "active" | "blocked" | "completed" | "cancelled";
+
+export const AGENT_WORK_ITEM_STATUSES: readonly AgentWorkItemStatus[] = [
+  "pending",
+  "active",
+  "blocked",
+  "completed",
+  "cancelled",
+] as const;
+
+/**
+ * The two statuses a work item never leaves.
+ *
+ * `blocked` is absent, and that absence is the whole reason this constant is
+ * separate from TERMINAL_AGENT_RUN_STATUSES rather than shared with it.
+ */
+export const TERMINAL_AGENT_WORK_ITEM_STATUSES: readonly AgentWorkItemStatus[] = [
+  "completed",
+  "cancelled",
+] as const;
+
+export function isAgentWorkItemStatus(value: unknown): value is AgentWorkItemStatus {
+  return (
+    typeof value === "string" && (AGENT_WORK_ITEM_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+export function isTerminalWorkItemStatus(status: AgentWorkItemStatus): boolean {
+  return (TERMINAL_AGENT_WORK_ITEM_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Explicit, structured progress through one work item.
+ *
+ * Exists only for providers that actually count something. It is never
+ * derived from event volume, tool-call counts, elapsed time, or how far
+ * through a transcript a poll has read — all of which would produce a number
+ * that looks measured and is invented. A provider that cannot count leaves
+ * this undefined, and every consumer omits the indicator rather than
+ * rendering a fabricated ratio. See docs/phase-15-agent-work-tracking.md.
+ */
+export type AgentWorkItemProgress = {
+  completed: number;
+  total: number;
+};
+
+/**
+ * A meaningful unit of work belonging to one agent run.
+ *
+ * "Implement authentication", "Investigate failing test" — a project-
+ * management object, not a command. Nothing here is executable and nothing
+ * downstream will execute it: there is no field for a prompt, an argument
+ * list, a command or a script, and the absence is structural rather than
+ * enforced by convention.
+ *
+ * A run may have many; a work item belongs to exactly one run and therefore
+ * to exactly one workspace. `workspaceId` is denormalised from the run rather
+ * than looked up, for the same reason AgentRun carries one: every
+ * relationship is checked against it, and a selector that had to join through
+ * the run to know which workspace an item belongs to would be one join away
+ * from leaking across the boundary.
+ */
+export type AgentWorkItem = {
+  id: string;
+  workspaceId: string;
+  runId: string;
+  /**
+   * The provider's own identity for this item, opaque here.
+   *
+   * What makes repeated observation idempotent: the same task seen on three
+   * consecutive polls updates one work item instead of minting three. Scoped
+   * per run, never parsed, and never rendered.
+   */
+  externalId?: string;
+  title: string;
+  summary?: string;
+  status: AgentWorkItemStatus;
+  createdAt: number;
+  updatedAt: number;
+  /** Stamped the first time the item becomes `active`, and never rewritten after. */
+  startedAt?: number;
+  /** Stamped when the item reaches `completed` or `cancelled`. Absent otherwise. */
+  completedAt?: number;
+  progress?: AgentWorkItemProgress;
+};
+
+/**
+ * Cap on a work item title, in characters.
+ *
+ * Titles come from provider-authored prose, so they are bounded for the same
+ * reason summaries are: to keep one observation from turning a list row into
+ * a wall of text, and to deny a payload a wide channel to travel through.
+ */
+export const MAX_WORK_ITEM_TITLE_LENGTH = 120;
+
+/** Cap on a work item summary. Wider than a title, still bounded. */
+export const MAX_WORK_ITEM_SUMMARY_LENGTH = 400;
+
+/**
+ * Hard cap on work items per run.
+ *
+ * The same bounded-growth argument as MAX_EVENTS_PER_RUN: this array is
+ * persisted to localStorage, and a provider that emitted an item per tool
+ * call would otherwise grow it until a quota error took the user's whole
+ * state down. Unlike events, the OLDEST items win here — a plan's first
+ * tasks are its structure, and dropping them to make room for later ones
+ * would leave a list that starts in the middle.
+ */
+export const MAX_WORK_ITEMS_PER_RUN = 100;
+
+/**
+ * Normalises a work item title: collapsed whitespace, trimmed, truncated.
+ *
+ * Same treatment as normalizeSummary and for the same reasons, with a
+ * narrower bound.
+ */
+export function normalizeWorkItemTitle(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > MAX_WORK_ITEM_TITLE_LENGTH
+    ? `${collapsed.slice(0, MAX_WORK_ITEM_TITLE_LENGTH - 1)}…`
+    : collapsed;
+}
+
+/** As normalizeWorkItemTitle, at summary width. */
+export function normalizeWorkItemSummary(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > MAX_WORK_ITEM_SUMMARY_LENGTH
+    ? `${collapsed.slice(0, MAX_WORK_ITEM_SUMMARY_LENGTH - 1)}…`
+    : collapsed;
+}
+
+/**
+ * Validates explicit progress, returning undefined for anything unusable.
+ *
+ * Refuses a zero `total` (a ratio out of nothing is not progress), negative
+ * or non-integer values, and `completed > total`. Returning undefined rather
+ * than clamping is deliberate: a provider that sent 12/10 has a bug, and
+ * silently rendering 10/10 would turn its bug into a false claim that the
+ * work is finished.
+ */
+export function normalizeWorkItemProgress(value: unknown): AgentWorkItemProgress | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { completed, total } = value as Record<string, unknown>;
+
+  if (typeof completed !== "number" || !Number.isInteger(completed) || completed < 0) {
+    return undefined;
+  }
+  if (typeof total !== "number" || !Number.isInteger(total) || total <= 0) return undefined;
+  if (completed > total) return undefined;
+
+  return { completed, total };
+}
+
 export const AGENT_STATE_VERSION = 1;
 
 /**
@@ -293,6 +460,14 @@ export type AgentState = {
   events: AgentEvent[];
   artifacts: WorkArtifact[];
   artifactLinks: AgentRunArtifactLink[];
+  /**
+   * Added after the six above were in use, and additive in exactly the way
+   * `artifacts` was: state written before work items existed simply has no
+   * such key, and loading defaults it to empty rather than rejecting the
+   * record. No existing agent history is invalidated by the upgrade, and no
+   * version bump is needed to read it.
+   */
+  workItems: AgentWorkItem[];
 };
 
 /**
@@ -311,7 +486,8 @@ export type AgentFailureReason =
   | "terminal-run"
   | "cross-workspace"
   | "artifact-not-found"
-  | "invalid-path";
+  | "invalid-path"
+  | "work-item-not-found";
 
 export type AgentFailure = { ok: false; reason: AgentFailureReason };
 
@@ -329,6 +505,7 @@ export function emptyAgentState(): AgentState {
     events: [],
     artifacts: [],
     artifactLinks: [],
+    workItems: [],
   };
 }
 

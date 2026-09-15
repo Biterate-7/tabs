@@ -11,8 +11,14 @@ import {
   isAgentRunLinkRole,
   isAgentRunStatus,
   isTerminalRunStatus,
+  isAgentWorkItemStatus,
+  isTerminalWorkItemStatus,
   isWorkArtifactKind,
+  MAX_WORK_ITEMS_PER_RUN,
   normalizeSummary,
+  normalizeWorkItemProgress,
+  normalizeWorkItemSummary,
+  normalizeWorkItemTitle,
 } from "./types";
 import type {
   Agent,
@@ -21,6 +27,7 @@ import type {
   AgentRunArtifactLink,
   AgentRunLink,
   AgentState,
+  AgentWorkItem,
   WorkArtifact,
 } from "./types";
 
@@ -249,6 +256,91 @@ function sanitizeArtifactLinks(
   return out;
 }
 
+/**
+ * Work items, validated against the runs they claim to belong to.
+ *
+ * Three invariants are re-established rather than trusted, because storage is
+ * not a trust boundary:
+ *
+ *   - a work item whose run is gone is dropped, like a link whose run is gone;
+ *   - its `workspaceId` must equal its run's. A mismatch could only have got
+ *     there by editing the file, and honouring it would put one workspace's
+ *     work in another's selectors — the exact leak Phase 15 must not have;
+ *   - its timestamps are reconciled with its status, so a `completed` item
+ *     always has a `completedAt` and a live one never does.
+ */
+function sanitizeWorkItems(
+  value: unknown,
+  runsById: Map<string, AgentRun>
+): AgentWorkItem[] {
+  if (!Array.isArray(value)) return [];
+  const out: AgentWorkItem[] = [];
+  const seen = new Set<string>();
+  const perRun = new Map<string, number>();
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const raw = entry as Record<string, unknown>;
+    const { id, runId, workspaceId, title, status, createdAt, updatedAt } = raw;
+
+    if (typeof id !== "string" || !id || seen.has(id)) continue;
+    if (typeof runId !== "string") continue;
+    if (typeof workspaceId !== "string" || !workspaceId) continue;
+    if (typeof title !== "string") continue;
+    if (!isAgentWorkItemStatus(status)) continue;
+    if (!isValidTimestamp(createdAt)) continue;
+
+    const run = runsById.get(runId);
+    if (!run) continue;
+    // The workspace invariant, re-enforced on read.
+    if (run.workspaceId !== workspaceId) continue;
+
+    const normalizedTitle = normalizeWorkItemTitle(title);
+    // A titleless item is a row that says nothing; dropped rather than
+    // rendered as a blank or given an invented name.
+    if (!normalizedTitle) continue;
+
+    // The same per-run bound the write path enforces, re-applied to state this
+    // build did not write. Oldest wins, matching createWorkItem.
+    const count = perRun.get(runId) ?? 0;
+    if (count >= MAX_WORK_ITEMS_PER_RUN) continue;
+    perRun.set(runId, count + 1);
+
+    seen.add(id);
+    const item: AgentWorkItem = {
+      id,
+      workspaceId,
+      runId,
+      title: normalizedTitle,
+      status,
+      createdAt,
+      updatedAt: isValidTimestamp(updatedAt) ? updatedAt : createdAt,
+    };
+
+    if (typeof raw.externalId === "string" && raw.externalId) item.externalId = raw.externalId;
+
+    if (typeof raw.summary === "string") {
+      const summary = normalizeWorkItemSummary(raw.summary);
+      if (summary) item.summary = summary;
+    }
+
+    const progress = normalizeWorkItemProgress(raw.progress);
+    if (progress) item.progress = progress;
+
+    // A started item keeps whatever start it recorded; one that never claimed
+    // a start is not given one here, because nothing observed it starting.
+    if (isValidTimestamp(raw.startedAt)) item.startedAt = raw.startedAt;
+
+    if (isTerminalWorkItemStatus(status)) {
+      item.completedAt = isValidTimestamp(raw.completedAt) ? raw.completedAt : item.updatedAt;
+    }
+
+    out.push(item);
+  }
+
+  return out;
+}
+
 function capEventsPerRun(events: AgentEvent[]): AgentEvent[] {
   const byRun = new Map<string, AgentEvent[]>();
   for (const event of events) {
@@ -328,9 +420,23 @@ export function loadAgentState(): AgentStateLoad {
       new Map(artifacts.map((artifact) => [artifact.id, artifact]))
     );
 
+    // Absent in state written before work items existed, sanitizing to empty
+    // for exactly the same reason artifacts do: the upgrade is additive and
+    // must not cost anyone their agent history.
+    const workItems = sanitizeWorkItems(record.workItems, runsById);
+
     return {
       status: "loaded",
-      state: { version: AGENT_STATE_VERSION, agents, runs, links, events, artifacts, artifactLinks },
+      state: {
+        version: AGENT_STATE_VERSION,
+        agents,
+        runs,
+        links,
+        events,
+        artifacts,
+        artifactLinks,
+        workItems,
+      },
     };
   } catch {
     return { status: "empty", state: defaultAgentState() };

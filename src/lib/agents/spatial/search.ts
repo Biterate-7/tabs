@@ -1,6 +1,11 @@
 import { relativePathBasename } from "@/lib/agents/paths";
 import { artifactSpatialId } from "./types";
-import type { AgentSpatialNodeUnion, AgentSpatialScene, SpatialId } from "./types";
+import type {
+  AgentSpatialNodeUnion,
+  AgentSpatialScene,
+  SpatialId,
+  WorkItemSummary,
+} from "./types";
 
 /**
  * Searching agent work.
@@ -16,7 +21,7 @@ import type { AgentSpatialNodeUnion, AgentSpatialScene, SpatialId } from "./type
  * because none of those exist in the data being searched.
  */
 
-export type AgentSearchResultKind = "agent" | "run" | "artifact";
+export type AgentSearchResultKind = "agent" | "run" | "artifact" | "workItem";
 
 export type AgentSearchResult = {
   id: SpatialId;
@@ -33,6 +38,7 @@ const TYPE_LABELS: Record<AgentSearchResultKind, string> = {
   agent: "Agent",
   run: "Agent run",
   artifact: "File",
+  workItem: "Work item",
 };
 
 /**
@@ -93,12 +99,60 @@ export function searchAgentScene(scene: AgentSpatialScene, query: string): Agent
     results.push(result);
   }
 
-  // Runs first: they are the operational object, and someone searching agent
-  // work usually wants the work rather than the file or the provider.
-  const rank: Record<AgentSearchResultKind, number> = { run: 0, artifact: 1, agent: 2 };
+  for (const item of scene.workItems) {
+    if (!workItemHaystack(item).some((value) => value.toLowerCase().includes(q))) continue;
+
+    const result: AgentSearchResult = {
+      id: item.id,
+      kind: "workItem",
+      label: item.title,
+      typeLabel: TYPE_LABELS.workItem,
+    };
+    // The summary is the more informative second line when there is one; the
+    // status is the honest fallback, and never nothing.
+    result.detail = item.summary ?? WORK_ITEM_STATUS_LABELS[item.status];
+    results.push(result);
+  }
+
+  // Work items first, then runs: someone searching agent work is usually
+  // looking for *what is being done* before *which session is doing it*.
+  const rank: Record<AgentSearchResultKind, number> = {
+    workItem: 0,
+    run: 1,
+    artifact: 2,
+    agent: 3,
+  };
   results.sort((a, b) => rank[a.kind] - rank[b.kind] || a.label.localeCompare(b.label));
 
   return results;
+}
+
+/**
+ * Human labels for a work item's status.
+ *
+ * Here rather than in the component because search matches against them: a
+ * user typing "blocked" should find blocked work, which only works if the
+ * word being matched is the word being shown.
+ */
+export const WORK_ITEM_STATUS_LABELS: Record<WorkItemSummary["status"], string> = {
+  pending: "Pending",
+  active: "Active",
+  blocked: "Blocked",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+/**
+ * The fields of a work item a query is matched against.
+ *
+ * An allowlist, for the same reason `haystack` is one. Note the omissions:
+ * `workItemId`, `runId` and both spatial ids are absent, so no opaque
+ * identifier can be surfaced by searching for it — and `externalId`, the
+ * provider's own task id, is not even present on the scene-side summary, so
+ * there is nothing here to exclude.
+ */
+function workItemHaystack(item: WorkItemSummary): string[] {
+  return [item.title, item.summary ?? "", WORK_ITEM_STATUS_LABELS[item.status], item.status];
 }
 
 export type HiddenArtifactInput = {

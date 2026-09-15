@@ -72,7 +72,7 @@ function build(
 
 describe("an empty workspace", () => {
   it("produces nothing when there are no runs", () => {
-    expect(build(emptyAgentState())).toEqual({ nodes: [], edges: [], hiddenRunCount: 0 });
+    expect(build(emptyAgentState())).toEqual({ nodes: [], edges: [], workItems: [], hiddenRunCount: 0 });
   });
 
   it("produces nothing when no workspace is selected", () => {

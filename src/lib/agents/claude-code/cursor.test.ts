@@ -33,15 +33,15 @@ describe("session id validation", () => {
 describe("cursor round trip", () => {
   it("survives encode and decode", () => {
     const entries = [
-      { sessionId: SESSION, offset: 1234, size: 9999 },
-      { sessionId: OTHER, offset: 0, size: 0 },
+      { sessionId: SESSION, offset: 1234, size: 9999, taskOrdinal: 0 },
+      { sessionId: OTHER, offset: 0, size: 0, taskOrdinal: 0 },
     ];
 
     expect(decodeCursor(encodeCursor(entries))).toEqual(entries);
   });
 
   it("carries no filesystem path in the encoded form", () => {
-    const encoded = encodeCursor([{ sessionId: SESSION, offset: 10, size: 20 }]);
+    const encoded = encodeCursor([{ sessionId: SESSION, offset: 10, size: 20, taskOrdinal: 0 }]);
     const decoded = Buffer.from(encoded, "base64url").toString("utf8");
 
     expect(decoded).not.toContain("/");
@@ -76,7 +76,7 @@ describe("hostile cursors", () => {
       { s: SESSION, o: 5, z: 10 },
     ]);
 
-    expect(decodeCursor(forged)).toEqual([{ sessionId: SESSION, offset: 5, size: 10 }]);
+    expect(decodeCursor(forged)).toEqual([{ sessionId: SESSION, offset: 5, size: 10, taskOrdinal: 0 }]);
   });
 
   it("drops entries with impossible offsets or sizes", () => {
@@ -87,7 +87,7 @@ describe("hostile cursors", () => {
       { s: OTHER, o: 1, z: 2 },
     ]);
 
-    expect(decodeCursor(forged)).toEqual([{ sessionId: OTHER, offset: 1, size: 2 }]);
+    expect(decodeCursor(forged)).toEqual([{ sessionId: OTHER, offset: 1, size: 2, taskOrdinal: 0 }]);
   });
 
   it("caps how many sessions a forged cursor can fan out to", () => {
@@ -98,7 +98,7 @@ describe("hostile cursors", () => {
 
   it("floors fractional offsets rather than seeking mid-byte", () => {
     expect(decodeCursor(forge([{ s: SESSION, o: 10.7, z: 20.9 }]))).toEqual([
-      { sessionId: SESSION, offset: 10, size: 20 },
+      { sessionId: SESSION, offset: 10, size: 20, taskOrdinal: 0 },
     ]);
   });
 });
@@ -123,7 +123,7 @@ describe("resolveReadStart", () => {
   });
 
   it("resumes at the stored offset when the file has grown", () => {
-    const previous = { sessionId: SESSION, offset: 500, size: 500 };
+    const previous = { sessionId: SESSION, offset: 500, size: 500, taskOrdinal: 0 };
 
     expect(resolveReadStart(previous, 900, TAIL)).toEqual({
       offset: 500,
@@ -133,13 +133,13 @@ describe("resolveReadStart", () => {
   });
 
   it("resumes at the stored offset when nothing changed", () => {
-    const previous = { sessionId: SESSION, offset: 500, size: 500 };
+    const previous = { sessionId: SESSION, offset: 500, size: 500, taskOrdinal: 0 };
 
     expect(resolveReadStart(previous, 500, TAIL).offset).toBe(500);
   });
 
   it("restarts from zero when the file shrank, which means it is a different file", () => {
-    const previous = { sessionId: SESSION, offset: 5_000, size: 5_000 };
+    const previous = { sessionId: SESSION, offset: 5_000, size: 5_000, taskOrdinal: 0 };
 
     expect(resolveReadStart(previous, 120, TAIL)).toEqual({
       offset: 0,
@@ -149,7 +149,7 @@ describe("resolveReadStart", () => {
   });
 
   it("restarts from zero when the file was emptied", () => {
-    const previous = { sessionId: SESSION, offset: 5_000, size: 5_000 };
+    const previous = { sessionId: SESSION, offset: 5_000, size: 5_000, taskOrdinal: 0 };
 
     expect(resolveReadStart(previous, 0, TAIL).reset).toBe(true);
   });

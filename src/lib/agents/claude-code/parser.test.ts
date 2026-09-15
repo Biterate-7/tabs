@@ -29,6 +29,7 @@ describe("record parsing", () => {
       timestamp: Date.parse("2026-09-15T08:00:00.000Z"),
       gitBranch: "main",
       tools: [],
+      tasks: [],
     });
     // sessionId and message are not carried forward.
     expect(parsed).not.toHaveProperty("sessionId");

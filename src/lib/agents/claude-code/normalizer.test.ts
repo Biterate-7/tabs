@@ -16,7 +16,7 @@ function session(over: Partial<ClaudeDiscoveredSession> = {}): ClaudeDiscoveredS
 }
 
 function record(tools: ClaudeParsedRecord["tools"], over: Partial<ClaudeParsedRecord> = {}): ClaudeParsedRecord {
-  return { type: "assistant", tools, timestamp: T0, ...over };
+  return { type: "assistant", tools, tasks: [], timestamp: T0, ...over };
 }
 
 describe("activity summaries", () => {

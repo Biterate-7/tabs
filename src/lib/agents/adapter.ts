@@ -2,12 +2,20 @@ import { recordArtifactWork } from "./artifacts";
 import { appendRunEvent } from "./events";
 import { createRun, findRunByExternalId, transitionRunStatus, updateRun } from "./runs";
 import { agentFailure, isTerminalRunStatus, normalizeSummary } from "./types";
+import {
+  createWorkItem,
+  findWorkItemByExternalId,
+  transitionWorkItem,
+  updateWorkItem,
+} from "./work-items";
 import type {
   AgentFailure,
   AgentRun,
   AgentRunArtifactRole,
   AgentRunStatus,
   AgentState,
+  AgentWorkItemProgress,
+  AgentWorkItemStatus,
 } from "./types";
 
 /**
@@ -98,6 +106,16 @@ export type AgentAdapterObservation = {
    */
   artifacts?: AgentArtifactObservation[];
   /**
+   * Units of work this observation says the run is doing.
+   *
+   * Optional, and absent far more often than present: most providers cannot
+   * express work-item semantics at all, and most observations from one that
+   * can carry none. An absent list means "no news about work items" — never
+   * "this run has no work", and never an occasion to close the ones already
+   * known. See applyWorkItems.
+   */
+  workItems?: ObservedWorkItem[];
+  /**
    * A URL the session referenced.
    *
    * Left as a URL rather than a tab id because resolving one to an existing
@@ -107,6 +125,47 @@ export type AgentAdapterObservation = {
   url?: string;
   /** When the observation happened, epoch ms. Falls back to the ingest clock if absent. */
   observedAt?: number;
+};
+
+/**
+ * One unit of work an observation says the run is doing.
+ *
+ * Provider-neutral, and small on purpose. What is NOT here is the design:
+ * there is no field for a prompt, a command, an argument list, a tool input,
+ * a plan's raw text or a model's reasoning, so a provider integration has
+ * nowhere to put one even by accident.
+ *
+ * `title` is optional, and the rule around it is the important part: an
+ * observation with no title can only ever *update* an item that already
+ * exists — it can never create one. That is what lets a provider report
+ * "task 3 is now complete" on a later poll than the one that named task 3,
+ * without either inventing a placeholder name or losing the update. An entry
+ * with neither a title nor a match is dropped, which is the fail-closed
+ * behaviour: no evidence, no work item.
+ */
+export type ObservedWorkItem = {
+  /**
+   * The provider's own id for this item, scoped to the session.
+   *
+   * What makes repeated observation idempotent: the same task seen on three
+   * polls updates one work item rather than minting three. A provider that
+   * cannot supply a stable id omits it — and then each observation is treated
+   * as a fresh item, which is why every provider that can, should.
+   */
+  externalId?: string;
+  /** Absent means "no name in this observation" — see the note above. */
+  title?: string;
+  summary?: string;
+  status?: AgentWorkItemStatus;
+  /**
+   * Explicit, counted progress — never a guess.
+   *
+   * A provider that does not literally count something leaves this undefined.
+   * See normalizeWorkItemProgress: a ratio that fails validation is dropped
+   * rather than clamped, so a provider bug cannot become a false claim that
+   * work is finished.
+   */
+  progress?: AgentWorkItemProgress;
 };
 
 export type AgentObserver = (observations: AgentAdapterObservation[]) => void;
@@ -201,6 +260,7 @@ export function ingestObservation(
 
     next = applyActivity(next, created.run.id, observation, observedAt, now);
     next = applyArtifacts(next, created.run.id, observation, now);
+    next = applyWorkItems(next, created.run.id, observation, now);
     return { ok: true, state: next, run: findRun(next, created.run.id), outcome: "created" };
   }
 
@@ -236,7 +296,103 @@ export function ingestObservation(
 
   next = applyActivity(next, existing.id, observation, observedAt, now);
   next = applyArtifacts(next, existing.id, observation, now);
+  next = applyWorkItems(next, existing.id, observation, now);
   return { ok: true, state: next, run: findRun(next, existing.id), outcome: "updated" };
+}
+
+/**
+ * Folds an observation's work items into the domain.
+ *
+ * The rules that matter here are all about NOT inventing things:
+ *
+ *   - **Identity is (runId, externalId).** Re-observing the same task updates
+ *     one item rather than minting another. An observation with no externalId
+ *     can only ever create, which is why a provider that has stable ids
+ *     should always send them.
+ *   - **An absent field is no news.** A poll that reports a title and no
+ *     status leaves the status alone; `updateWorkItem` already treats absent
+ *     as "keep what you know".
+ *   - **A refused transition is not an ingest failure.** A finished item
+ *     re-reported as active is a stale observation, not a corrupt one. The
+ *     existing state is preserved and the rest of the observation still
+ *     applies — the same tolerance the run status path above shows.
+ *   - **Nothing is ever closed by omission.** An item missing from this poll's
+ *     list is simply an item this poll said nothing about. Completion is
+ *     recorded only when a provider explicitly reports it, which is the
+ *     Phase 12 rule restated at the work-item level: a session going quiet,
+ *     a transcript ending or a task falling out of a list is not evidence
+ *     that anything finished.
+ */
+function applyWorkItems(
+  state: AgentState,
+  runId: string,
+  observation: AgentAdapterObservation,
+  now: number
+): AgentState {
+  if (!observation.workItems?.length) return state;
+
+  let next = state;
+  const seen = new Set<string>();
+
+  for (const entry of observation.workItems) {
+    const title = entry.title?.trim();
+    const externalId = entry.externalId?.trim();
+
+    // One observation naming the same task twice costs one fold, not two.
+    if (externalId) {
+      if (seen.has(externalId)) continue;
+      seen.add(externalId);
+    }
+
+    const existing = externalId ? findWorkItemByExternalId(next, runId, externalId) : undefined;
+
+    if (!existing) {
+      // Fail closed. An entry with no title and nothing to match is a status
+      // for a task this domain has never heard of — most often because the
+      // observation that named it fell outside the window a poll read. The
+      // honest response is to record nothing, not to mint an item called
+      // "Untitled" whose status is the only thing known about it.
+      if (!title) continue;
+
+      const created = createWorkItem(
+        next,
+        {
+          runId,
+          title,
+          summary: entry.summary,
+          status: entry.status,
+          externalId,
+          progress: entry.progress,
+        },
+        now
+      );
+      // A refused creation (a run that vanished, a per-run cap reached) costs
+      // this item and not the observation.
+      if (created.ok) next = created.state;
+      continue;
+    }
+
+    const patched = updateWorkItem(
+      next,
+      existing.id,
+      {
+        title,
+        summary: entry.summary,
+        // Explicitly undefined rather than null: "this poll carried no
+        // progress" must not erase a count an earlier poll established.
+        progress: entry.progress,
+      },
+      now
+    );
+    if (patched.ok) next = patched.state;
+
+    if (entry.status && entry.status !== existing.status) {
+      const moved = transitionWorkItem(next, existing.id, entry.status, now);
+      if (moved.ok) next = moved.state;
+    }
+  }
+
+  return next;
 }
 
 /**

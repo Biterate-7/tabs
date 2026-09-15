@@ -211,6 +211,10 @@ export type DeleteRunResult = { ok: true; state: AgentState } | AgentFailure;
  * not: a file worked on by two runs outlives the deletion of one of them.
  * Artifacts left referenced by nothing are collected by
  * pruneOrphanedArtifacts, which the caller applies when it wants that.
+ *
+ * Work items go with the run unconditionally, and unlike artifacts there is
+ * no shared-ownership case to consider: a work item belongs to exactly one
+ * run, so nothing else can still refer to it once that run is gone.
  */
 export function deleteRun(state: AgentState, runId: string): DeleteRunResult {
   if (!findRun(state, runId)) return agentFailure("run-not-found");
@@ -223,6 +227,7 @@ export function deleteRun(state: AgentState, runId: string): DeleteRunResult {
       links: state.links.filter((link) => link.runId !== runId),
       events: state.events.filter((event) => event.runId !== runId),
       artifactLinks: state.artifactLinks.filter((link) => link.runId !== runId),
+      workItems: state.workItems.filter((item) => item.runId !== runId),
     },
   };
 }

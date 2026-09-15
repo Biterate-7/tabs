@@ -84,6 +84,15 @@ export type AgentNodeVisual = {
   status?: AgentRunStatus | "idle";
   /** e.g. "4 files · 2 tabs". Already assembled — this module composes no counts. */
   meta?: string;
+  /**
+   * Work-item progress, drawn as a ring in the card's top-right corner.
+   *
+   * Present only when the run actually has countable work items — the scene
+   * omits it otherwise, and this module draws nothing rather than an empty
+   * ring. An empty ring would read as "0% done", which is a measurement; the
+   * truth in that case is that nothing was measured.
+   */
+  progress?: { completed: number; total: number };
   isSelected: boolean;
   isHovered: boolean;
   isDimmed: boolean;
@@ -228,7 +237,82 @@ export function drawAgentNode(ctx: DrawContext, node: AgentNodeVisual): void {
     ctx.fillText(truncateToWidth(ctx, node.meta, node.width - padding * 2), left + padding, cursorY);
   }
 
+  // Work progress, last so it sits over the card rather than in the text flow.
+  if (node.progress) drawProgressRing(ctx, node, left, top, padding);
+
   ctx.restore();
+}
+
+/** Radius of the work-progress ring, in screen pixels before scaling. */
+const PROGRESS_RING_RADIUS = 9;
+
+/**
+ * A small ring in the card's top-right corner showing how much of a run's
+ * work is done.
+ *
+ * Three deliberate properties:
+ *
+ *   - **It adds nothing to the layout.** The ring is drawn inside the card's
+ *     existing bounds, over the corner the text flow does not reach, so a run
+ *     that gains work items does not grow, does not reflow, and — because
+ *     placement reads only `kind` and `createdAt` — does not move itself or
+ *     anything near it.
+ *   - **It is never the only signal.** The fraction is written beside it as
+ *     text ("3/7"), and the inspector states it in words. A ring alone would
+ *     put the information in geometry and colour, which is exactly what the
+ *     accessibility rule for this layer forbids.
+ *   - **It does not animate.** Progress changes when work completes, not
+ *     continuously, so there is nothing for motion to express. The only
+ *     moving thing on this canvas stays the working-status dot.
+ */
+function drawProgressRing(
+  ctx: DrawContext,
+  node: AgentNodeVisual,
+  left: number,
+  top: number,
+  padding: number
+): void {
+  const progress = node.progress;
+  if (!progress || progress.total <= 0) return;
+
+  const { colors } = node;
+  const centerX = left + node.width - padding - PROGRESS_RING_RADIUS;
+  const centerY = top + padding + PROGRESS_RING_RADIUS;
+  const fraction = Math.max(0, Math.min(1, progress.completed / progress.total));
+
+  // Track.
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, PROGRESS_RING_RADIUS, 0, Math.PI * 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = colors.border;
+  ctx.stroke();
+
+  // Completed arc, from twelve o'clock clockwise. A run with nothing finished
+  // draws no arc at all, which reads as "not started" rather than as an error.
+  if (fraction > 0) {
+    ctx.beginPath();
+    ctx.arc(
+      centerX,
+      centerY,
+      PROGRESS_RING_RADIUS,
+      -Math.PI / 2,
+      -Math.PI / 2 + Math.PI * 2 * fraction
+    );
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = fraction >= 1 ? colors.good : colors.live;
+    ctx.stroke();
+  }
+
+  // The same fact as text, immediately left of the ring.
+  ctx.fillStyle = colors.mutedText;
+  ctx.font = `600 9px ui-sans-serif, system-ui, sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(
+    `${progress.completed}/${progress.total}`,
+    centerX - PROGRESS_RING_RADIUS - 3,
+    centerY
+  );
 }
 
 export type AgentEdgeVisualInput = {

@@ -1262,16 +1262,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         const isSelected = layer.selectedId === node.id
         let detail: string | undefined
         let meta: string | undefined
+        let progress: { completed: number; total: number } | undefined
         let status: (typeof AGENT_STATUS_VISUALS) extends Record<infer K, unknown> ? K : never
         status = "idle" as typeof status
 
         if (node.kind === "run") {
-          detail = node.activity
+          // The primary work item, when there is one, says what is being
+          // worked on; the activity line says what the agent is doing this
+          // second. The former is the more useful of the two at a glance.
+          detail = node.primaryWorkItemTitle ?? node.activity
           const parts: string[] = []
+          if (node.workItemCount > 0) {
+            parts.push(`${node.workItemCount} item${node.workItemCount === 1 ? "" : "s"}`)
+          }
           if (node.artifactCount > 0) parts.push(`${node.artifactCount} file${node.artifactCount === 1 ? "" : "s"}`)
           if (node.tabCount > 0) parts.push(`${node.tabCount} tab${node.tabCount === 1 ? "" : "s"}`)
           meta = parts.join(" · ") || undefined
           status = node.status
+          progress = node.workProgress
         } else if (node.kind === "agent") {
           detail = node.provider
           meta = `${node.activeRunCount} active · ${node.totalRunCount} total`
@@ -1290,6 +1298,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
           label: node.label,
           detail,
           meta,
+          progress,
           status: node.kind === "artifact" ? undefined : status,
           isSelected,
           isHovered: agentHoverIdRef.current === node.id,

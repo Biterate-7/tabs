@@ -4,6 +4,7 @@ import type {
   AgentRunArtifactRole,
   AgentRunLinkRole,
   AgentRunStatus,
+  AgentWorkItemStatus,
   WorkArtifact,
 } from "@/lib/agents/types";
 
@@ -48,6 +49,60 @@ export function tabSpatialId(tabId: string): SpatialId {
   return `tab:${tabId}`;
 }
 
+/**
+ * A work item's selection id.
+ *
+ * Namespaced like the rest, but note what it is *not*: a work item is never
+ * an entry in `AgentSpatialScene.nodes`, so nothing ever places it, draws it
+ * as a card, or hit-tests it on the canvas. This id exists purely so a work
+ * item can be **selected** — from the inspector list or from a search result
+ * — and so that selection can be told apart from a run's.
+ *
+ * That is the whole of Phase 15's spatial footprint, and it is deliberately
+ * this small. Work items are numerous (a plan can be dozens), they are
+ * meaningful only in relation to their run, and giving each one a body on the
+ * canvas would bury the runs it is supposed to explain. Selecting one focuses
+ * its owning run instead — see `runIdForWorkItemSelection`.
+ */
+export function workItemSpatialId(workItemId: string): SpatialId {
+  return `workitem:${workItemId}`;
+}
+
+export function isWorkItemSpatialId(id: SpatialId | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith("workitem:");
+}
+
+/** The domain id inside a work item selection id, or null if it is not one. */
+export function workItemIdFromSpatialId(id: SpatialId | null | undefined): string | null {
+  if (!isWorkItemSpatialId(id)) return null;
+  const value = (id as string).slice("workitem:".length);
+  return value || null;
+}
+
+/**
+ * What the inspector and search need to know about one work item.
+ *
+ * Carried on the scene rather than in `nodes`, because it is presentation
+ * data for a *list*, not a body with a position. Everything here is already
+ * sanitised domain state; there is no field that could hold provider text.
+ */
+export type WorkItemSummary = {
+  id: SpatialId;
+  workItemId: string;
+  runId: string;
+  /** The owning run's spatial id, so selecting this can focus that. */
+  runSpatialId: SpatialId;
+  title: string;
+  summary?: string;
+  status: AgentWorkItemStatus;
+  /** Explicit provider-counted progress only. Usually absent — see the domain notes. */
+  progress?: { completed: number; total: number };
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+};
+
 export type AgentSpatialNodeKind = "agent" | "run" | "artifact";
 
 /** The agent identity itself — one per provider, however many runs it has. */
@@ -79,6 +134,23 @@ export type RunSpatialNode = {
   activity?: string;
   tabCount: number;
   artifactCount: number;
+  /** How many work items this run has. 0 when none have been observed. */
+  workItemCount: number;
+  /**
+   * How far the run has got through them, when it has any.
+   *
+   * Derived from real per-item statuses by `getRunWorkProgress` — never from
+   * event volume or elapsed time. Undefined when the run has no work items,
+   * and the renderer then draws no ring at all rather than an empty one.
+   */
+  workProgress?: { completed: number; total: number };
+  /**
+   * The work item that best represents what this run is doing right now.
+   *
+   * A label only. The canvas shows it under the run's own title so a glance
+   * says *what* is being worked on, not merely that something is.
+   */
+  primaryWorkItemTitle?: string;
   updatedAt: number;
   /**
    * Immutable, and the key layout orders by.
@@ -134,6 +206,20 @@ export type AgentSpatialScene = {
   nodes: AgentSpatialNodeUnion[];
   edges: AgentSpatialEdge[];
   /**
+   * The work items of every visible run, oldest first.
+   *
+   * Deliberately NOT in `nodes`. Placement, hit-testing and the force-free
+   * invariant all operate on `nodes`, and keeping work items out of it is
+   * what guarantees — structurally, not by convention — that adding a work
+   * item cannot move anything already on screen.
+   *
+   * Visibility is inherited from the owning run: a work item is listed when
+   * its run passes the current filter, and hidden when it does not. There is
+   * no separate work-item filter, because an item detached from its run's
+   * visibility would be a row the user cannot navigate to.
+   */
+  workItems: WorkItemSummary[];
+  /**
    * Runs that exist in this workspace but are filtered out of view.
    *
    * Kept as a count rather than dropped silently: "3 completed runs hidden" is
@@ -145,7 +231,7 @@ export type AgentSpatialScene = {
 };
 
 export function emptyAgentSpatialScene(): AgentSpatialScene {
-  return { nodes: [], edges: [], hiddenRunCount: 0 };
+  return { nodes: [], edges: [], workItems: [], hiddenRunCount: 0 };
 }
 
 /**

@@ -1,6 +1,6 @@
 import "server-only";
 import { decodeCursor, encodeCursor } from "@/lib/agents/claude-code/cursor";
-import { normalizeSession } from "@/lib/agents/claude-code/normalizer";
+import { countCreatedTasks, normalizeSession } from "@/lib/agents/claude-code/normalizer";
 import { sweepSessions } from "@/lib/agents/claude-code/reader";
 import type { ClaudeObservationResponse } from "@/lib/agents/claude-code/contract";
 
@@ -59,7 +59,16 @@ export async function POST(request: Request): Promise<Response> {
     available: true,
     sessions: sweep.results.map((result) => result.session),
     observations: sweep.results.flatMap((result) =>
-      normalizeSession({ session: result.session, records: result.records, now })
+      normalizeSession({
+        session: result.session,
+        records: result.records,
+        now,
+        // The cursor returned by the sweep has ALREADY been advanced past this
+        // batch's creations, so the base for numbering them is that total
+        // minus what this batch itself created — the count the previous poll
+        // left behind.
+        taskOrdinalBase: result.cursor.taskOrdinal - countCreatedTasks(result.records),
+      })
     ),
     cursor: encodeCursor(sweep.results.map((result) => result.cursor)),
   };

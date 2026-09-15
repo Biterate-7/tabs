@@ -364,11 +364,128 @@ describe("path safety", () => {
     // Cursors are validated before they get here; this asserts the reader
     // still only ever looks up the registry's own session ids.
     const sweep = await sweepSessions(
-      [{ sessionId: SESSION, offset: 0, size: 0 }],
+      [{ sessionId: SESSION, offset: 0, size: 0, taskOrdinal: 0 }],
       T0
     );
 
     const ids = sweep.results.flatMap((r) => r.records.flatMap((rec) => rec.tools.map((t) => t.id)));
     expect(ids).not.toContain("toolu_secret");
+  });
+});
+
+/** A TaskCreate line, the evidence a work item is derived from. */
+function taskCreateLine(id: string, subject: string): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    uuid: `uuid-${id}`,
+    timestamp: new Date(T0).toISOString(),
+    message: {
+      content: [{ type: "tool_use", id, name: "TaskCreate", input: { subject } }],
+    },
+  })}\n`;
+}
+
+describe("task ordinals across polls", () => {
+  /**
+   * The counter that gives a Claude Code task its identity lives in the
+   * cursor, because the cursor is the only per-session state that survives a
+   * poll. These pin that it survives one — a session whose tasks were
+   * renumbered from zero on every poll would collide every plan with itself.
+   */
+  it("starts at zero for a session never seen before", async () => {
+    writeRegistry();
+    writeFileSync(transcriptPath(), assistantLine("toolu_1"));
+
+    const { sweepSessions } = await reader();
+    const sweep = await sweepSessions([], T0);
+
+    expect(sweep.results[0].cursor.taskOrdinal).toBe(0);
+  });
+
+  it("advances by the number of tasks a batch created", async () => {
+    writeRegistry();
+    writeFileSync(
+      transcriptPath(),
+      taskCreateLine("toolu_1", "First") + taskCreateLine("toolu_2", "Second")
+    );
+
+    const { sweepSessions } = await reader();
+    const sweep = await sweepSessions([], T0);
+
+    expect(sweep.results[0].cursor.taskOrdinal).toBe(2);
+  });
+
+  it("carries the count forward and keeps advancing on the next poll", async () => {
+    writeRegistry();
+    writeFileSync(transcriptPath(), taskCreateLine("toolu_1", "First"));
+
+    const { sweepSessions } = await reader();
+    const first = await sweepSessions([], T0);
+    expect(first.results[0].cursor.taskOrdinal).toBe(1);
+
+    // The session plans two more tasks.
+    appendFileSync(
+      transcriptPath(),
+      taskCreateLine("toolu_2", "Second") + taskCreateLine("toolu_3", "Third")
+    );
+
+    const second = await sweepSessions(
+      first.results.map((entry) => entry.cursor),
+      T0
+    );
+
+    // 1 + 2, not 2 — the third task is task three, not task two.
+    expect(second.results[0].cursor.taskOrdinal).toBe(3);
+  });
+
+  it("preserves the carried count on a poll that reads nothing new", async () => {
+    writeRegistry();
+    writeFileSync(transcriptPath(), taskCreateLine("toolu_1", "First"));
+
+    const { sweepSessions } = await reader();
+    const first = await sweepSessions([], T0);
+
+    // Nothing appended between polls.
+    const second = await sweepSessions(
+      first.results.map((entry) => entry.cursor),
+      T0
+    );
+
+    expect(second.results[0].records).toEqual([]);
+    // A quiet poll must not reset the counter, or the next batch of
+    // creations would be numbered from zero and collide with the existing.
+    expect(second.results[0].cursor.taskOrdinal).toBe(1);
+  });
+
+  it("preserves the carried count when the transcript cannot be located", async () => {
+    writeRegistry();
+    writeFileSync(transcriptPath(), taskCreateLine("toolu_1", "First"));
+
+    const { sweepSessions } = await reader();
+    const first = await sweepSessions([], T0);
+
+    // The transcript disappears — the reader's early-return path.
+    unlinkSync(transcriptPath());
+    const second = await sweepSessions(
+      first.results.map((entry) => entry.cursor),
+      T0
+    );
+
+    expect(second.results[0].cursor.taskOrdinal).toBe(1);
+  });
+
+  it("counts only TaskCreate, not other tool use", async () => {
+    writeRegistry();
+    writeFileSync(
+      transcriptPath(),
+      assistantLine("toolu_1") +
+        taskCreateLine("toolu_2", "Only real task") +
+        assistantLine("toolu_3")
+    );
+
+    const { sweepSessions } = await reader();
+    const sweep = await sweepSessions([], T0);
+
+    expect(sweep.results[0].cursor.taskOrdinal).toBe(1);
   });
 });

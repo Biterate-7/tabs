@@ -48,7 +48,79 @@ export type ClaudeParsedRecord = {
   gitBranch?: string;
   /** Tool invocations extracted from an `assistant` record's content blocks. */
   tools: ClaudeToolUse[];
+  /**
+   * Task-list activity extracted from the same content blocks.
+   *
+   * Separate from `tools` because it feeds an entirely different thing: tools
+   * become activity summaries and artifacts, task events become work items.
+   * Keeping them apart means neither pipeline has to filter the other's
+   * records out.
+   */
+  tasks: ClaudeTaskEvent[];
 };
+
+/**
+ * One entry in Claude Code's own task list, reduced to allowlisted fields.
+ *
+ * **Why this is safe to read.** These come from the structured input of the
+ * `TaskCreate` / `TaskUpdate` tools, exactly as `file_path` and a shell tool's
+ * `description` already do — the established Phase 12 pattern of reading a
+ * *named, structured* input key rather than scraping prose. `subject` and
+ * `description` are the human-readable task text Claude Code renders in its
+ * own UI: they are not a prompt, not a command, not a tool result and not
+ * hidden reasoning, all of which live in fields this parser has no branch for.
+ *
+ * **What is deliberately not read.** `mcp__ccd_session__spawn_task` carries a
+ * `prompt` field holding raw instructions and frequently code; it is not in
+ * the tool allowlist below and must never be added. The distinction is that
+ * `subject` is a label *about* work, while `prompt` is the work's input.
+ *
+ * Observed live against the transcripts on the survey machine: of 148
+ * transcripts, 2 used these tools; `TodoWrite` never fired at all (its 146
+ * textual occurrences are the tool listing inside system prompts, and the
+ * `todos` key appears zero times). See
+ * docs/phase-15-agent-work-tracking.md for the full survey.
+ */
+export type ClaudeTaskEvent =
+  | {
+      kind: "create";
+      /** The task's human-readable title, from `subject`. */
+      subject: string;
+      /** Longer human-readable detail, from `description`. */
+      description?: string;
+    }
+  | {
+      kind: "update";
+      /** Claude Code's own id for the task, scoped to the session. */
+      taskId: string;
+      status: ClaudeTaskStatus;
+    };
+
+/**
+ * Task statuses Claude Code actually writes.
+ *
+ * Only these two were observed across every `TaskUpdate` on the survey
+ * machine (15 `completed`, 13 `in_progress`). Anything else is unrecognised
+ * and means *no status change* — never a guessed one.
+ */
+export type ClaudeTaskStatus = "in_progress" | "completed";
+
+export function isClaudeTaskStatus(value: unknown): value is ClaudeTaskStatus {
+  return value === "in_progress" || value === "completed";
+}
+
+/**
+ * Raw task status -> TabDump work item status.
+ *
+ * `in_progress` maps to `active` and `completed` to `completed`. There is no
+ * mapping onto `blocked` or `cancelled`, because Claude Code writes neither —
+ * inventing one would manufacture states that were never observed.
+ */
+export function mapClaudeTaskStatus(raw: unknown): "active" | "completed" | undefined {
+  if (raw === "in_progress") return "active";
+  if (raw === "completed") return "completed";
+  return undefined;
+}
 
 /**
  * One `tool_use` block, reduced to what a safe summary needs.
@@ -98,6 +170,20 @@ export type ClaudeTranscriptCursor = {
   offset: number;
   /** File size when the offset was taken, used to detect truncation or replacement. */
   size: number;
+  /**
+   * How many tasks this session has created so far, across every poll.
+   *
+   * The running counter that gives a task its identity — see `taskExternalId`
+   * in ./normalizer.ts. It lives in the cursor because the cursor is the only
+   * per-session state that survives a poll, and it is server-owned for the
+   * same reason the offset is: the browser has no business constructing it.
+   *
+   * A forged or absent value costs correctness nothing that matters: task
+   * numbering shifts, updates stop matching creations, and the domain records
+   * fewer work items. It can never attach a status to the wrong *existing*
+   * item, because an item is only ever matched within its own run.
+   */
+  taskOrdinal: number;
 };
 
 /** A session the reader found, with everything the client needs to decide what to do with it. */

@@ -146,6 +146,9 @@ export function deleteAgentAndRuns(state: AgentState, agentId: string): DeleteAg
       // be referenced by another agent's runs, so they are left for
       // pruneOrphanedArtifacts to collect if nothing reaches them.
       artifactLinks: state.artifactLinks.filter((link) => !doomedRunIds.has(link.runId)),
+      // Work items belong to exactly one run, so they go unconditionally —
+      // there is no shared-ownership case of the kind artifacts have.
+      workItems: state.workItems.filter((item) => !doomedRunIds.has(item.runId)),
     },
   };
 }

@@ -1,5 +1,5 @@
 import { toProjectRelative } from "@/lib/agents/paths";
-import { CLAUDE_CODE_PROVIDER, CLAUDE_LIMITS } from "./types";
+import { CLAUDE_CODE_PROVIDER, CLAUDE_LIMITS, mapClaudeTaskStatus } from "./types";
 import type {
   ClaudeDiscoveredSession,
   ClaudeParsedRecord,
@@ -8,6 +8,7 @@ import type {
 import type {
   AgentAdapterObservation,
   AgentArtifactObservation,
+  ObservedWorkItem,
 } from "@/lib/agents/adapter";
 import type { AgentRunArtifactRole } from "@/lib/agents/types";
 
@@ -94,7 +95,155 @@ export type NormalizeInput = {
   records: ClaudeParsedRecord[];
   /** Clock for records that carry no usable timestamp of their own. */
   now: number;
+  /**
+   * How many tasks this session had already created before these records.
+   *
+   * Carried across polls in the server-owned cursor. See `taskExternalId`
+   * for why an ordinal is the identity, and `countCreatedTasks` for how the
+   * caller advances it.
+   */
+  taskOrdinalBase?: number;
 };
+
+/**
+ * Patterns that mean "this text names a place on someone's disk".
+ *
+ * Task subjects and descriptions are prose a model wrote, so unlike a
+ * `file_path` they cannot simply be resolved against a project root — they
+ * may contain no path, or a path in the middle of a sentence. What they must
+ * never do is carry the machine's own directory layout into stored,
+ * searchable, displayed state.
+ *
+ * The patterns are deliberately narrow: a drive letter, a UNC share, or one
+ * of the well-known user/system roots. A bare `/api/users` is left alone,
+ * because it is overwhelmingly an API route rather than a filesystem path,
+ * and redacting it would mangle ordinary task text to guard against nothing.
+ */
+const ABSOLUTE_PATH_PATTERNS: readonly RegExp[] = [
+  // C:\Users\someone\project or C:/Users/someone/project
+  /\b[A-Za-z]:[\\/][^\s"']*/g,
+  // \\server\share
+  /\\\\[^\s"']+/g,
+  // /home/x, /Users/x, /root/..., /var/..., /tmp/...
+  /(?:^|\s)(\/(?:home|Users|root|var|tmp|opt|etc)\/[^\s"']*)/g,
+];
+
+/**
+ * Removes anything that looks like an absolute local path from task text.
+ *
+ * Replaced with a marker rather than deleted, so a reader can see that
+ * something was removed instead of reading a sentence with a hole in it.
+ * Applied to every piece of task prose before it leaves this module — which
+ * is the same boundary `artifactsForTool` enforces for structured paths, just
+ * expressed differently because the input is prose rather than a path field.
+ */
+export function redactAbsolutePaths(value: string): string {
+  let out = value;
+  for (const pattern of ABSOLUTE_PATH_PATTERNS) {
+    out = out.replace(pattern, (match, captured?: string) => {
+      // The POSIX pattern captures the path without its leading separator so
+      // the preceding space survives; the others match the whole thing.
+      if (typeof captured === "string") return match.replace(captured, "[path]");
+      return "[path]";
+    });
+  }
+  return out;
+}
+
+/**
+ * The stable identity of one task within one session.
+ *
+ * Claude Code's `TaskUpdate` refers to tasks by a small integer that it never
+ * writes into `TaskCreate`'s input — the id is assigned by the tool and comes
+ * back in its *result*, which this feature does not read. So the id is
+ * re-derived from creation order instead: the Nth `TaskCreate` in a session
+ * is task N, 1-based.
+ *
+ * That correspondence is not assumed, it was verified against real
+ * transcripts: a session with 11 `TaskCreate` calls produced exactly
+ * `taskId` 1 through 11, each moving `in_progress` then `completed` in
+ * creation order. See docs/phase-15-agent-work-tracking.md for the trace.
+ *
+ * It is also fail-safe rather than fail-wrong. When a session is first seen
+ * mid-transcript, the early creations are simply not in the window, the
+ * ordinal starts behind, and updates for tasks that were never observed match
+ * nothing — so the domain records nothing for them, rather than attaching a
+ * status to the wrong title.
+ */
+function taskExternalId(ordinal: number): string {
+  return String(ordinal);
+}
+
+/** How many tasks a batch of records created, so a caller can advance its ordinal. */
+export function countCreatedTasks(records: ClaudeParsedRecord[]): number {
+  let count = 0;
+  for (const record of records) {
+    for (const task of record.tasks) {
+      if (task.kind === "create") count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Turns a poll's task events into work-item observations.
+ *
+ * One entry per task touched in this batch, carrying the *final* state the
+ * batch left it in — a task created and completed within one poll yields a
+ * single observation, not three. Entries are keyed by the task's ordinal
+ * identity, so re-reading the same records produces the same observations and
+ * ingestion is idempotent.
+ *
+ * An update for a task with no creation in scope still produces an entry, but
+ * a titleless one. Phase 11's ingestion treats that as "update only, never
+ * create", so it lands on an item an earlier poll named and is dropped
+ * entirely if no such item exists.
+ */
+function workItemsForRecords(
+  records: ClaudeParsedRecord[],
+  ordinalBase: number
+): ObservedWorkItem[] {
+  const byExternalId = new Map<string, ObservedWorkItem>();
+  let ordinal = ordinalBase;
+
+  for (const record of records) {
+    for (const task of record.tasks) {
+      if (task.kind === "create") {
+        ordinal += 1;
+        const externalId = taskExternalId(ordinal);
+
+        const item: ObservedWorkItem = {
+          externalId,
+          title: redactAbsolutePaths(task.subject),
+          // A newly created task has not been started — Claude Code emits a
+          // separate `in_progress` update when work on it actually begins.
+          status: "pending",
+        };
+        if (task.description) item.summary = redactAbsolutePaths(task.description);
+
+        byExternalId.set(externalId, item);
+        continue;
+      }
+
+      const status = mapClaudeTaskStatus(task.status);
+      if (!status) continue;
+
+      const existing = byExternalId.get(task.taskId);
+      if (existing) {
+        // Created earlier in this same batch: fold the status into the entry
+        // that already carries the title.
+        existing.status = status;
+        continue;
+      }
+
+      // Created in an earlier poll. Title-less on purpose — see the note on
+      // ObservedWorkItem.title.
+      byExternalId.set(task.taskId, { externalId: task.taskId, status });
+    }
+  }
+
+  return [...byExternalId.values()];
+}
 
 /**
  * Produces the observations for one session in one poll.
@@ -105,7 +254,7 @@ export type NormalizeInput = {
  * observation carrying its own summary and `sourceId`.
  */
 export function normalizeSession(input: NormalizeInput): AgentAdapterObservation[] {
-  const { session, records, now } = input;
+  const { session, records, now, taskOrdinalBase = 0 } = input;
 
   const base: AgentAdapterObservation = {
     provider: CLAUDE_CODE_PROVIDER,
@@ -131,6 +280,13 @@ export function normalizeSession(input: NormalizeInput): AgentAdapterObservation
   // No `else`. An unrecognised provider status means *no status change*, not
   // a guess — mapping the unknown onto "failed" would manufacture failures
   // that never happened.
+
+  // Work items ride on the base observation because they are session-level
+  // facts rather than per-tool ones: a task's life spans many tool calls, and
+  // attaching it to whichever call happened to be nearby would make its
+  // arrival depend on unrelated activity.
+  const workItems = workItemsForRecords(records, taskOrdinalBase);
+  if (workItems.length > 0) base.workItems = workItems;
 
   const observations: AgentAdapterObservation[] = [base];
 
@@ -229,6 +385,7 @@ export const OBSERVATION_ALLOWLIST = [
   "url",
   "observedAt",
   "artifacts",
+  "workItems",
 ] as const;
 
 /** The fields one artifact observation may carry. Asserted against in the security suite. */

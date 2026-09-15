@@ -10,8 +10,15 @@ import type {
   AgentSpatialFilter,
   AgentSpatialNodeUnion,
   SpatialId,
+  WorkItemSummary,
 } from "@/lib/agents/spatial/types"
-import type { AgentEvent, AgentRunArtifactRole, AgentRunLinkRole } from "@/lib/agents/types"
+import type {
+  AgentEvent,
+  AgentRunArtifactRole,
+  AgentRunLinkRole,
+  AgentRunStatus,
+  AgentWorkItemStatus,
+} from "@/lib/agents/types"
 
 /**
  * The Graph sidebar's "AGENT" section.
@@ -39,6 +46,8 @@ export type AgentInspectorSelection =
       files: { artifactId: string; relativePath: string; role: AgentRunArtifactRole }[]
       tabs: { tabId: string; title: string; role: AgentRunLinkRole }[]
       events: AgentEvent[]
+      /** This run's work items, in plan order. Empty when none were observed. */
+      workItems: WorkItemSummary[]
       startedAt: number
       endedAt?: number
     }
@@ -47,11 +56,136 @@ export type AgentInspectorSelection =
       node: Extract<AgentSpatialNodeUnion, { kind: "artifact" }>
       touchedBy: { runId: string; runTitle: string; agentName: string; role: AgentRunArtifactRole }[]
     }
+  | {
+      /**
+       * One unit of work, selected in its own right.
+       *
+       * Carries its run's context — files, tabs, events — rather than linking
+       * away to it, because "what was touched while doing this" is the
+       * question a selected work item raises, and making the user select the
+       * run to answer it would lose the item they were looking at.
+       */
+      kind: "workItem"
+      item: WorkItemSummary
+      runTitle: string
+      runSpatialId: SpatialId
+      runStatus?: AgentRunStatus
+      agentName: string
+      provider: string
+      files: { artifactId: string; relativePath: string; role: AgentRunArtifactRole }[]
+      tabs: { tabId: string; title: string; role: AgentRunLinkRole }[]
+      events: AgentEvent[]
+    }
 
 export type InspectorRun = {
   runId: string
   title: string
   status: keyof typeof AGENT_STATUS_VISUALS
+}
+
+/**
+ * Work item status presentation.
+ *
+ * A glyph *and* a word for each, mirroring AGENT_STATUS_VISUALS: status must
+ * never be carried by colour alone, and a screen reader must be able to read
+ * the state out as a word rather than announce a coloured dot.
+ *
+ * The glyphs deliberately differ from the run glyphs — an active work item is
+ * not the same kind of thing as a working run, and reusing the same mark would
+ * suggest they are interchangeable.
+ */
+export const WORK_ITEM_STATUS_VISUALS: Record<
+  AgentWorkItemStatus,
+  { glyph: string; label: string }
+> = {
+  pending: { glyph: "○", label: "Pending" },
+  active: { glyph: "◐", label: "Active" },
+  blocked: { glyph: "▲", label: "Blocked" },
+  completed: { glyph: "✓", label: "Completed" },
+  cancelled: { glyph: "—", label: "Cancelled" },
+}
+
+/**
+ * Progress as text, or nothing at all.
+ *
+ * Returns null when there is no progress to report, which is the common case.
+ * The caller renders nothing rather than an empty bar — a 0% indicator is a
+ * claim that nothing has been done, when the truth is that nothing was
+ * counted. See the domain notes on evidence-based progress.
+ */
+function progressLabel(progress: { completed: number; total: number } | undefined): string | null {
+  if (!progress || progress.total <= 0) return null
+  return `${progress.completed} of ${progress.total} done`
+}
+
+/** One work item row: glyph, title, and its state in words. */
+function WorkItemRow({
+  item,
+  onSelect,
+}: {
+  item: WorkItemSummary
+  onSelect: (id: SpatialId) => void
+}) {
+  const visual = WORK_ITEM_STATUS_VISUALS[item.status]
+  const progress = progressLabel(item.progress)
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(item.id)}
+        // The accessible name carries the state in words, so the row does not
+        // depend on the glyph (or its colour) being perceived.
+        aria-label={`${item.title} — ${visual.label}${progress ? `, ${progress}` : ""}`}
+        className="block w-full rounded-md px-1.5 py-1 text-left transition-colors duration-(--duration-fast) hover:bg-accent"
+      >
+        <span className="block truncate text-body-sm text-foreground">
+          <span aria-hidden>{visual.glyph} </span>
+          {item.title}
+        </span>
+        <span className="block truncate text-meta text-tertiary">
+          {visual.label}
+          {progress ? ` · ${progress}` : ""}
+        </span>
+      </button>
+    </li>
+  )
+}
+
+/**
+ * A run's work items, with a heading that states the tally.
+ *
+ * Renders nothing when there are none — §17's "run exists but has no work
+ * item" state is an absence, not a message, because a run legitimately has no
+ * observed plan and saying so on every run would be noise.
+ */
+function WorkItemList({
+  items,
+  onSelect,
+}: {
+  items: WorkItemSummary[]
+  onSelect: (id: SpatialId) => void
+}) {
+  if (items.length === 0) return null
+
+  // Counted from the items actually shown, so the heading can never disagree
+  // with the list under it.
+  const done = items.filter((item) => item.status === "completed").length
+  const countable = items.filter((item) => item.status !== "cancelled").length
+
+  return (
+    <div className="space-y-1">
+      <p className="text-label text-tertiary">WORK</p>
+      {countable > 0 && (
+        <p className="text-meta text-tertiary">{done} of {countable} done</p>
+      )}
+      <ul className="space-y-0.5" aria-label="Work items">
+        {items.map((item) => (
+          <WorkItemRow key={item.id} item={item} onSelect={onSelect} />
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 /** Status as text plus a glyph — never colour alone, and readable by a screen reader. */
@@ -157,6 +291,7 @@ export function GraphAgentPanel({
         hasVisibleRuns={hasVisibleRuns}
         hiddenRunCount={hiddenRunCount}
         onSelectRun={onSelectRun}
+        onSelectSpatial={onSelectResult}
       />
     </section>
   )
@@ -169,6 +304,7 @@ function AgentPanelBody({
   hasVisibleRuns,
   hiddenRunCount,
   onSelectRun,
+  onSelectSpatial,
 }: {
   available: boolean
   selection: AgentInspectorSelection | null
@@ -176,8 +312,9 @@ function AgentPanelBody({
   hasVisibleRuns: boolean
   hiddenRunCount: number
   onSelectRun: (runId: string) => void
+  onSelectSpatial: (id: SpatialId) => void
 }) {
-  if (selection) return <AgentInspector selection={selection} onSelectRun={onSelectRun} />
+  if (selection) return <AgentInspector selection={selection} onSelectRun={onSelectRun} onSelectSpatial={onSelectSpatial} />
 
   // Unavailable and empty are genuinely different states and must not collapse
   // into one message: one says "we cannot look right now", the other says "we
@@ -231,9 +368,12 @@ function AgentPanelBody({
 function AgentInspector({
   selection,
   onSelectRun,
+  onSelectSpatial,
 }: {
   selection: AgentInspectorSelection
   onSelectRun: (runId: string) => void
+  /** Selects any spatial entity by id — used for work items and for the owning run. */
+  onSelectSpatial: (id: SpatialId) => void
 }) {
   if (selection.kind === "agent") {
     const { node, recentRuns } = selection
@@ -269,6 +409,77 @@ function AgentInspector({
             </ul>
           </div>
         )}
+      </div>
+    )
+  }
+
+  if (selection.kind === "workItem") {
+    const { item, runTitle, runSpatialId, runStatus, agentName, files, tabs, events } = selection
+    const visual = WORK_ITEM_STATUS_VISUALS[item.status]
+    const progress = progressLabel(item.progress)
+    const started = formatWhen(item.startedAt)
+    const updated = formatWhen(item.updatedAt)
+    const completed = formatWhen(item.completedAt)
+
+    return (
+      <div className="space-y-3">
+        <div>
+          <p className="text-body font-medium text-foreground">{item.title}</p>
+          <p className="text-meta text-tertiary">Work item</p>
+        </div>
+
+        <p className="text-meta text-tertiary">
+          <span aria-hidden>{visual.glyph} </span>
+          <span>{visual.label}</span>
+          {/* Only when a provider actually counted something. */}
+          {progress && <span> · {progress}</span>}
+        </p>
+
+        {item.summary && <p className="text-body-sm text-muted-foreground">{item.summary}</p>}
+
+        {/* The owning run, as a control rather than a caption: a work item is
+            only meaningful in relation to its run, so getting back to it must
+            be one keystroke away. */}
+        <div className="space-y-1">
+          <p className="text-label text-tertiary">RUN</p>
+          <button
+            type="button"
+            onClick={() => onSelectSpatial(runSpatialId)}
+            aria-label={`Select run ${runTitle}`}
+            className="block w-full rounded-md px-1.5 py-1 text-left transition-colors duration-(--duration-fast) hover:bg-accent"
+          >
+            <span className="block truncate text-body-sm text-foreground">{runTitle}</span>
+            <span className="block text-meta text-tertiary">
+              {agentName}
+              {runStatus ? ` · ${AGENT_STATUS_VISUALS[runStatus].label}` : ""}
+            </span>
+          </button>
+        </div>
+
+        {(started || updated || completed) && (
+          <dl className="space-y-0.5 text-meta text-tertiary">
+            {started && (
+              <div className="flex gap-2">
+                <dt>Started</dt>
+                <dd>{started}</dd>
+              </div>
+            )}
+            {updated && (
+              <div className="flex gap-2">
+                <dt>Updated</dt>
+                <dd>{updated}</dd>
+              </div>
+            )}
+            {completed && (
+              <div className="flex gap-2">
+                <dt>Completed</dt>
+                <dd>{completed}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+
+        <RunContext files={files} tabs={tabs} events={events} />
       </div>
     )
   }
@@ -309,7 +520,7 @@ function AgentInspector({
     )
   }
 
-  const { node, agentName, files, tabs, events, startedAt, endedAt } = selection
+  const { node, agentName, files, tabs, events, workItems, startedAt, endedAt } = selection
   const started = formatWhen(startedAt)
   const ended = formatWhen(endedAt)
   const lastActivity = formatWhen(node.updatedAt)
@@ -361,6 +572,31 @@ function AgentInspector({
         </dl>
       )}
 
+      <WorkItemList items={workItems} onSelect={onSelectSpatial} />
+
+      <RunContext files={files} tabs={tabs} events={events} />
+    </div>
+  )
+}
+
+/**
+ * The files, tabs and recent activity of one run.
+ *
+ * Shared by the run and work-item inspectors so both describe a run the same
+ * way. Each section renders nothing when empty, rather than a heading over an
+ * empty list.
+ */
+function RunContext({
+  files,
+  tabs,
+  events,
+}: {
+  files: { artifactId: string; relativePath: string; role: AgentRunArtifactRole }[]
+  tabs: { tabId: string; title: string; role: AgentRunLinkRole }[]
+  events: AgentEvent[]
+}) {
+  return (
+    <>
       {files.length > 0 && (
         <div className="space-y-1">
           <p className="text-label text-tertiary">FILES</p>
@@ -417,6 +653,6 @@ function AgentInspector({
           </ul>
         </div>
       )}
-    </div>
+    </>
   )
 }

@@ -55,6 +55,7 @@ import { useAgentStore } from "@/hooks/use-agent-store"
 import { useAgentSpatial } from "@/hooks/use-agent-spatial"
 import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
 import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
+import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
 import { searchAgentWork } from "@/lib/agents/spatial/search"
 import { GraphAgentPanel } from "./graph-agent-panel"
 
@@ -356,7 +357,13 @@ export function GraphView({
    */
   function handleSelectAgentResult(id: string) {
     agentSpatial.select(id)
-    const point = agentSpatial.positions.get(id)
+
+    // A work item has no body on the canvas, so "focus it" means focus the run
+    // that owns it. Resolved through the scene rather than by parsing the id,
+    // so an item whose run is no longer visible focuses nothing instead of
+    // sending the camera to a node that is not there.
+    const focusId = runIdForWorkItemSelection(agentSpatial.scene, id) ?? id
+    const point = agentSpatial.positions.get(focusId)
     if (point) canvasHandleRef.current?.focusPoint(point.x, point.y)
   }
 

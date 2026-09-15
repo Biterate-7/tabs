@@ -22,6 +22,12 @@ import {
   transitionRunStatus,
   updateRun,
 } from "@/lib/agents/runs"
+import {
+  createWorkItem,
+  deleteWorkItem,
+  transitionWorkItem,
+  updateWorkItem,
+} from "@/lib/agents/work-items"
 import { createTimestamp } from "@/lib/timestamps"
 import type { AgentAdapterObservation } from "@/lib/agents/adapter"
 import type { RecordArtifactWorkInput } from "@/lib/agents/artifacts"
@@ -29,7 +35,13 @@ import type { AppendRunEventInput } from "@/lib/agents/events"
 import type { AddRunLinkInput } from "@/lib/agents/links"
 import type { CreateAgentInput, UpdateAgentPatch } from "@/lib/agents/registry"
 import type { CreateRunInput, UpdateRunPatch } from "@/lib/agents/runs"
-import type { AgentFailureReason, AgentRunStatus, AgentState } from "@/lib/agents/types"
+import type { CreateWorkItemInput, UpdateWorkItemPatch } from "@/lib/agents/work-items"
+import type {
+  AgentFailureReason,
+  AgentRunStatus,
+  AgentState,
+  AgentWorkItemStatus,
+} from "@/lib/agents/types"
 
 const SAVE_DEBOUNCE_MS = 400
 
@@ -135,6 +147,7 @@ export function useAgentStore(validTabIds?: Set<string>) {
       events: visible.events,
       artifacts: visible.artifacts,
       artifactLinks: visible.artifactLinks,
+      workItems: visible.workItems,
 
       createAgent: (input: CreateAgentInput) => {
         const now = createTimestamp()
@@ -182,6 +195,31 @@ export function useAgentStore(validTabIds?: Set<string>) {
 
       /** Drops artifacts no run refers to any more. Explicit: pruning discards real history. */
       pruneOrphanedArtifacts: () => commit(pruneOrphanedArtifacts(stateRef.current)),
+
+      /**
+       * Work items.
+       *
+       * Read-write over the *record* of work, never over the work itself:
+       * these create, describe, re-state and delete TabDump's knowledge of a
+       * unit of work. None of them reaches the agent, and there is
+       * deliberately no operation here that would — no run, no retry, no
+       * assign. Transitions go through `transitionWorkItem` alone, which is
+       * the only thing that enforces the lifecycle.
+       */
+      createWorkItem: (input: CreateWorkItemInput) => {
+        const now = createTimestamp()
+        return apply((current) => createWorkItem(current, input, now))
+      },
+      updateWorkItem: (workItemId: string, patch: UpdateWorkItemPatch) => {
+        const now = createTimestamp()
+        return apply((current) => updateWorkItem(current, workItemId, patch, now))
+      },
+      transitionWorkItem: (workItemId: string, next: AgentWorkItemStatus) => {
+        const now = createTimestamp()
+        return apply((current) => transitionWorkItem(current, workItemId, next, now))
+      },
+      deleteWorkItem: (workItemId: string) =>
+        apply((current) => deleteWorkItem(current, workItemId)),
 
       appendRunEvent: (input: Omit<AppendRunEventInput, "timestamp"> & { timestamp?: number }) => {
         const timestamp = input.timestamp ?? createTimestamp()

@@ -279,6 +279,11 @@ describe("nothing sensitive reaches the picture", () => {
       "relativePath",
       "tabCount",
       "artifactCount",
+      // Phase 15. Counts and a title, all derived from already-sanitised
+      // domain state — no provider text, no identifier, no path.
+      "workItemCount",
+      "workProgress",
+      "primaryWorkItemTitle",
       "runCount",
       "activeRunCount",
       "totalRunCount",

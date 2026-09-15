@@ -1,4 +1,5 @@
-import type { ClaudeParsedRecord, ClaudeToolUse } from "./types";
+import { isClaudeTaskStatus } from "./types";
+import type { ClaudeParsedRecord, ClaudeTaskEvent, ClaudeToolUse } from "./types";
 
 /**
  * Pure parsing of Claude Code transcript lines.
@@ -48,7 +49,7 @@ export function parseTranscriptLine(line: string): ClaudeParsedRecord | null {
   const record = raw as Record<string, unknown>;
   if (typeof record.type !== "string" || !record.type) return null;
 
-  const parsed: ClaudeParsedRecord = { type: record.type, tools: [] };
+  const parsed: ClaudeParsedRecord = { type: record.type, tools: [], tasks: [] };
 
   if (typeof record.uuid === "string" && record.uuid) parsed.uuid = record.uuid;
   if (typeof record.gitBranch === "string" && record.gitBranch) {
@@ -66,9 +67,73 @@ export function parseTranscriptLine(line: string): ClaudeParsedRecord | null {
   // type: ignored, not fatal.
   if (record.type === "assistant") {
     parsed.tools = extractToolUses(record.message);
+    parsed.tasks = extractTaskEvents(record.message);
   }
 
   return parsed;
+}
+
+/**
+ * The two tools whose structured input describes a unit of work.
+ *
+ * An allowlist of exactly two names, and the reason it is a list rather than a
+ * pattern is that a pattern would match `spawn_task` and `dismiss_task` — the
+ * first of which carries a raw `prompt`. Nothing is read from any tool not
+ * named here.
+ */
+const TASK_CREATE_TOOL = "TaskCreate";
+const TASK_UPDATE_TOOL = "TaskUpdate";
+
+/**
+ * Pulls task-list activity out of an assistant message.
+ *
+ * Walks the same `tool_use` blocks `extractToolUses` does, and reads exactly
+ * four keys across two tools: `subject` and `description` from TaskCreate,
+ * `taskId` and `status` from TaskUpdate. Every other key of those tools, and
+ * every other tool, contributes nothing.
+ */
+function extractTaskEvents(message: unknown): ClaudeTaskEvent[] {
+  if (!message || typeof message !== "object") return [];
+  const content = (message as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return [];
+
+  const events: ClaudeTaskEvent[] = [];
+  for (const entry of content) {
+    if (!entry || typeof entry !== "object") continue;
+    const block = entry as Record<string, unknown>;
+    if (block.type !== "tool_use") continue;
+    if (typeof block.name !== "string") continue;
+    if (block.name !== TASK_CREATE_TOOL && block.name !== TASK_UPDATE_TOOL) continue;
+
+    const input = block.input;
+    if (!input || typeof input !== "object" || Array.isArray(input)) continue;
+    const fields = input as Record<string, unknown>;
+
+    if (block.name === TASK_CREATE_TOOL) {
+      const subject = fields.subject;
+      // No subject, no work item. A task with no name is not something that
+      // can be shown, and there is no second field to fall back to.
+      if (typeof subject !== "string" || !subject.trim()) continue;
+
+      const event: ClaudeTaskEvent = { kind: "create", subject: subject.trim() };
+      const description = fields.description;
+      if (typeof description === "string" && description.trim()) {
+        event.description = description.trim();
+      }
+      events.push(event);
+      continue;
+    }
+
+    const taskId = fields.taskId;
+    if (typeof taskId !== "string" || !taskId.trim()) continue;
+    // An unrecognised status means no status change, so the event is not
+    // worth carrying — the same rule the session status mapping follows.
+    if (!isClaudeTaskStatus(fields.status)) continue;
+
+    events.push({ kind: "update", taskId: taskId.trim(), status: fields.status });
+  }
+
+  return events;
 }
 
 /**
