@@ -45,6 +45,7 @@ import {
   AGENT_STATUS_VISUALS,
   drawAgentEdge,
   drawAgentNode,
+  drawAgentTabHighlight,
   hitTestAgentNode,
   type AgentCanvasLayer,
   type AgentNodeColors,
@@ -1234,6 +1235,25 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
           // dash pattern and width, which stays legible without colour.
           color: layer.emphasized.has(edge.id) ? palette.edgeHighlighted : palette.edgeDim,
         })
+      }
+
+      // Tabs the selected run touched, ringed where the tab layer already
+      // drew them. Drawn after the edges so the ring sits over the line, and
+      // only while a run is selected — see drawAgentTabHighlight.
+      const highlightedTabs = layer.highlighted?.tabIds
+      if (highlightedTabs && highlightedTabs.size > 0) {
+        for (const tabId of highlightedTabs) {
+          const body = simulation.findNode(tabId)
+          if (body?.x === undefined || body?.y === undefined) continue
+          const at = worldToScreen(camera, { x: body.x, y: body.y }, width, height)
+          drawAgentTabHighlight(ctx, {
+            at,
+            // Tracks the node's own drawn radius, so the ring sits just
+            // outside it at every zoom level rather than at a fixed offset.
+            radius: (body.radius ?? 12) * camera.zoom + 5,
+            color: palette.edgeHighlighted,
+          })
+        }
       }
 
       // A single phase for every working indicator, so live runs pulse

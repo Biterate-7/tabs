@@ -6,6 +6,7 @@ import { Pill } from "@/components/workspace/category-filter-bar"
 import { AGENT_STATUS_VISUALS } from "./agent-node-renderer"
 import { AGENT_FILTER_LABELS, AGENT_SPATIAL_FILTERS } from "@/lib/agents/spatial/types"
 import type { AgentSearchResult } from "@/lib/agents/spatial/search"
+import type { AgentRunSummary } from "@/lib/agents/intelligence/types"
 import type {
   AgentSpatialFilter,
   AgentSpatialNodeUnion,
@@ -48,6 +49,13 @@ export type AgentInspectorSelection =
       events: AgentEvent[]
       /** This run's work items, in plan order. Empty when none were observed. */
       workItems: WorkItemSummary[]
+      /**
+       * Phase 16's derived summary of the run.
+       *
+       * Optional: a caller that does not build the intelligence index renders
+       * exactly the Phase 15 inspector, with no derived section at all.
+       */
+      summary?: AgentRunSummary
       startedAt: number
       endedAt?: number
     }
@@ -75,6 +83,8 @@ export type AgentInspectorSelection =
       files: { artifactId: string; relativePath: string; role: AgentRunArtifactRole }[]
       tabs: { tabId: string; title: string; role: AgentRunLinkRole }[]
       events: AgentEvent[]
+      /** The owning run's derived summary, when the caller built an index. */
+      runSummary?: AgentRunSummary
     }
 
 export type InspectorRun = {
@@ -184,6 +194,70 @@ function WorkItemList({
           <WorkItemRow key={item.id} item={item} onSelect={onSelect} />
         ))}
       </ul>
+    </div>
+  )
+}
+
+/**
+ * A run's derived summary.
+ *
+ * Phase 16's contribution to the inspector: the per-status breakdown of the
+ * run's work, its reach across files and tabs split by role, and a progress
+ * line that is always a count of real items.
+ *
+ * Every figure is omitted when there is nothing to report, rather than shown
+ * as zero. "0 files" reads as a measurement; the honest reading is that there
+ * are none to mention. The whole section disappears for a run nothing has
+ * been observed about, which is the common case for Claude Code.
+ */
+function RunSummarySection({ summary }: { summary: AgentRunSummary }) {
+  const { workItems, progress } = summary
+
+  // Counts worth naming, in attention order. Cancelled is deliberately last
+  // and blocked deliberately first: abandoned work is the least urgent thing
+  // on the list, and stuck work is the most.
+  const breakdown = [
+    workItems.blocked > 0 ? `${workItems.blocked} blocked` : null,
+    workItems.active > 0 ? `${workItems.active} active` : null,
+    workItems.pending > 0 ? `${workItems.pending} pending` : null,
+    workItems.completed > 0 ? `${workItems.completed} completed` : null,
+    workItems.cancelled > 0 ? `${workItems.cancelled} cancelled` : null,
+  ].filter(Boolean)
+
+  const reach = [
+    summary.artifactCount > 0
+      ? `${summary.artifactCount} file${summary.artifactCount === 1 ? "" : "s"}`
+      : null,
+    summary.contextTabCount > 0 ? `${summary.contextTabCount} context` : null,
+    summary.producedTabCount > 0 ? `${summary.producedTabCount} produced` : null,
+  ].filter(Boolean)
+
+  if (breakdown.length === 0 && reach.length === 0 && !progress) return null
+
+  return (
+    <div className="space-y-1">
+      <p className="text-label text-tertiary">SUMMARY</p>
+
+      {/* Derived from real item statuses — never from elapsed time, event
+          volume, or a session going quiet. */}
+      {progress && (
+        <p className="text-body-sm text-foreground">
+          {progress.completed} / {progress.total} complete
+        </p>
+      )}
+
+      {breakdown.length > 0 && <p className="text-meta text-tertiary">{breakdown.join(" · ")}</p>}
+
+      {reach.length > 0 && <p className="text-meta text-tertiary">{reach.join(" · ")}</p>}
+
+      {/* Blocked work is called out in words, not by colour, and never
+          folded into "inactive": it is neither finished nor failed. */}
+      {workItems.blocked > 0 && (
+        <p className="text-body-sm text-foreground">
+          <span aria-hidden>{WORK_ITEM_STATUS_VISUALS.blocked.glyph} </span>
+          {workItems.blocked} work item{workItems.blocked === 1 ? " is" : "s are"} blocked
+        </p>
+      )}
     </div>
   )
 }
@@ -414,7 +488,8 @@ function AgentInspector({
   }
 
   if (selection.kind === "workItem") {
-    const { item, runTitle, runSpatialId, runStatus, agentName, files, tabs, events } = selection
+    const { item, runTitle, runSpatialId, runStatus, agentName, files, tabs, events, runSummary } =
+      selection
     const visual = WORK_ITEM_STATUS_VISUALS[item.status]
     const progress = progressLabel(item.progress)
     const started = formatWhen(item.startedAt)
@@ -479,6 +554,8 @@ function AgentInspector({
           </dl>
         )}
 
+        {runSummary && <RunSummarySection summary={runSummary} />}
+
         <RunContext files={files} tabs={tabs} events={events} />
       </div>
     )
@@ -520,10 +597,14 @@ function AgentInspector({
     )
   }
 
-  const { node, agentName, files, tabs, events, workItems, startedAt, endedAt } = selection
+  const { node, agentName, files, tabs, events, workItems, summary, startedAt, endedAt } = selection
   const started = formatWhen(startedAt)
   const ended = formatWhen(endedAt)
-  const lastActivity = formatWhen(node.updatedAt)
+  // Phase 16's last-activity is a maximum over every kind of observed
+  // evidence — events, work-item updates and file links — so it is preferred
+  // over the run record's own `updatedAt`, which only moves when the run
+  // itself is rewritten. Falls back to the Phase 14 behaviour without an index.
+  const lastActivity = formatWhen(summary?.lastActivityAt ?? node.updatedAt)
 
   return (
     <div className="space-y-3">
@@ -571,6 +652,8 @@ function AgentInspector({
           )}
         </dl>
       )}
+
+      {summary && <RunSummarySection summary={summary} />}
 
       <WorkItemList items={workItems} onSelect={onSelectSpatial} />
 

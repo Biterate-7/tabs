@@ -359,6 +359,47 @@ export function drawAgentEdge(ctx: DrawContext, edge: AgentEdgeVisualInput): voi
   ctx.restore();
 }
 
+/**
+ * Marks a tab the selected run touched.
+ *
+ * Phase 16's whole visual contribution to the canvas, and deliberately the
+ * smallest thing that answers "what did this run touch?": a ring around a tab
+ * that is already on screen.
+ *
+ * What it is NOT is a second layout. It draws at a position the tab layer has
+ * already decided, inside the agent layer's own pass, so it cannot move a tab,
+ * cannot enter the force simulation, and cannot change what the tab layer
+ * draws. Adding or removing a highlight repositions nothing.
+ *
+ * It is drawn only while a run is selected. A canvas that ringed every
+ * agent-touched tab at all times would be the permanent web this phase is
+ * meant not to produce.
+ */
+export function drawAgentTabHighlight(
+  ctx: DrawContext,
+  input: { at: { x: number; y: number }; radius: number; color: string }
+): void {
+  if (input.radius <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.7;
+  ctx.strokeStyle = input.color;
+  ctx.lineWidth = 2;
+
+  const dashable = ctx as DrawContext & { setLineDash?: (segments: number[]) => void };
+  dashable.setLineDash?.([4, 3]);
+
+  ctx.beginPath();
+  const arc = ctx as DrawContext & {
+    arc?: (x: number, y: number, r: number, start: number, end: number) => void;
+  };
+  arc.arc?.(input.at.x, input.at.y, input.radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  dashable.setLineDash?.([]);
+  ctx.restore();
+}
+
 /** Card sizes in world units, before the camera's zoom is applied. */
 export const AGENT_NODE_SIZES: Record<AgentNodeVisual["kind"], { width: number; height: number }> = {
   agent: { width: 190, height: 68 },
@@ -379,6 +420,19 @@ export type AgentCanvasLayer = {
   /** Edge ids to draw prominently; everything else is drawn faintly. */
   emphasized: Set<string>;
   selectedId: string | null;
+  /**
+   * Workspace objects the selected run touches (Phase 16).
+   *
+   * Optional, so a caller that has not built the intelligence index draws
+   * exactly the Phase 14 canvas. Only `tabIds` is used by the renderer today;
+   * the other two are carried because the inspector and search consume the
+   * same value, and splitting them would mean deriving it twice.
+   */
+  highlighted?: {
+    workItemIds: Set<string>;
+    artifactIds: Set<string>;
+    tabIds: Set<string>;
+  };
 };
 
 /** Whether a point is inside a node's card, for hit-testing. */

@@ -53,9 +53,12 @@ import { DeleteCollectionDialog } from "@/components/workspace/delete-collection
 
 import { useAgentStore } from "@/hooks/use-agent-store"
 import { useAgentSpatial } from "@/hooks/use-agent-spatial"
+import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
 import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
 import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
 import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
+import { getRunsTouchingArtifact } from "@/lib/agents/intelligence/relationships"
+import { runSpatialId } from "@/lib/agents/spatial/types"
 import { searchAgentWork } from "@/lib/agents/spatial/search"
 import { GraphAgentPanel } from "./graph-agent-panel"
 
@@ -286,14 +289,35 @@ export function GraphView({
     tabBounds: agentTabBounds,
   })
 
+  /**
+   * The Phase 16 derived intelligence layer.
+   *
+   * Reads the same store the spatial layer does and owns no state of its own —
+   * it groups the domain once per state object so the inspector, the canvas
+   * and the search box share one traversal rather than each doing their own.
+   */
+  const agentIntelligence = useAgentIntelligence({
+    state: agentStore.state,
+    workspaceId: store.currentId,
+    selectedId: agentSpatial.selectedId,
+  })
+
   const agentLayer = useMemo(
     () => ({
       scene: agentSpatial.scene,
       positions: agentSpatial.positions,
       emphasized: agentSpatial.emphasized,
       selectedId: agentSpatial.selectedId,
+      /** Objects the selected run touches, so the canvas can emphasise them. */
+      highlighted: agentIntelligence.highlighted,
     }),
-    [agentSpatial.scene, agentSpatial.positions, agentSpatial.emphasized, agentSpatial.selectedId]
+    [
+      agentSpatial.scene,
+      agentSpatial.positions,
+      agentSpatial.emphasized,
+      agentSpatial.selectedId,
+      agentIntelligence.highlighted,
+    ]
   )
 
   /** Tab titles for the inspector, so it can name a run's context tabs without importing the tab store. */
@@ -314,8 +338,15 @@ export function GraphView({
         scene: agentSpatial.scene,
         selectedId: agentSpatial.selectedId,
         tabTitles: agentTabTitles,
+        intelligence: agentIntelligence.index,
       }),
-    [agentStore.state, agentSpatial.scene, agentSpatial.selectedId, agentTabTitles]
+    [
+      agentStore.state,
+      agentSpatial.scene,
+      agentSpatial.selectedId,
+      agentTabTitles,
+      agentIntelligence.index,
+    ]
   )
 
   /**
@@ -364,7 +395,29 @@ export function GraphView({
     // sending the camera to a node that is not there.
     const focusId = runIdForWorkItemSelection(agentSpatial.scene, id) ?? id
     const point = agentSpatial.positions.get(focusId)
-    if (point) canvasHandleRef.current?.focusPoint(point.x, point.y)
+    if (point) {
+      canvasHandleRef.current?.focusPoint(point.x, point.y)
+      return
+    }
+
+    // A file that the scene has not disclosed yet has no position — selecting
+    // it is what discloses it, and that happens on the next render. So focus
+    // a run that worked on it instead, which is on screen now. Workspace-
+    // scoped, so an identically-named file elsewhere cannot move the camera.
+    if (focusId.startsWith("artifact:")) {
+      const artifactId = focusId.slice("artifact:".length)
+      for (const runId of getRunsTouchingArtifact(
+        agentIntelligence.index,
+        store.currentId,
+        artifactId
+      )) {
+        const runPoint = agentSpatial.positions.get(runSpatialId(runId))
+        if (runPoint) {
+          canvasHandleRef.current?.focusPoint(runPoint.x, runPoint.y)
+          return
+        }
+      }
+    }
   }
 
   const { visibleNodes, visibleEdges, visibleDependencyEdges, centerDistances } = useMemo(() => {

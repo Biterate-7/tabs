@@ -1,5 +1,7 @@
 import { getRunEvents } from "@/lib/agents/selectors";
+import { getAgentRunSummary } from "@/lib/agents/intelligence/run-summary";
 import { isWorkItemSpatialId } from "./types";
+import type { AgentDomainIndex } from "@/lib/agents/intelligence/domain-index";
 import type { AgentSpatialScene, SpatialId } from "./types";
 import type {
   AgentRunArtifactRole,
@@ -32,6 +34,15 @@ export type InspectorInput = {
   selectedId: SpatialId | null;
   /** Tab titles by id, supplied by the caller — this module does not import the tab store. */
   tabTitles: Map<string, string>;
+  /**
+   * The Phase 16 intelligence index, when the caller has one.
+   *
+   * Optional, and deliberately so: every existing selection renders exactly
+   * as before without it, and the derived summary is simply absent. That
+   * keeps this a widening rather than a rewrite — an inspector built from a
+   * state alone (as the Phase 14 and 15 tests do) stays valid.
+   */
+  intelligence?: AgentDomainIndex;
 };
 
 /**
@@ -47,7 +58,7 @@ export type InspectorInput = {
  * sidebar down with it.
  */
 export function buildInspectorSelection(input: InspectorInput): AgentInspectorSelection | null {
-  const { state, scene, selectedId, tabTitles } = input;
+  const { state, scene, selectedId, tabTitles, intelligence } = input;
   if (!selectedId) return null;
 
   const agentsById = new Map(state.agents.map((agent) => [agent.id, agent]));
@@ -82,6 +93,12 @@ export function buildInspectorSelection(input: InspectorInput): AgentInspectorSe
       events: run ? getRunEvents(state, run.id).slice(-INSPECTOR_EVENT_LIMIT).reverse() : [],
     };
     if (run?.status) selection.runStatus = run.status;
+    // The owning run's derived summary, so a selected work item can show what
+    // the run around it amounts to without the user selecting the run first.
+    if (intelligence && run) {
+      const summary = getAgentRunSummary(intelligence, run.id);
+      if (summary) selection.runSummary = summary;
+    }
 
     return selection;
   }
@@ -148,6 +165,14 @@ export function buildInspectorSelection(input: InspectorInput): AgentInspectorSe
   // Only when the domain actually says the run ended — never inferred from a
   // session disappearing, which Phase 12 established cannot be interpreted.
   if (run?.endedAt !== undefined) selection.endedAt = run.endedAt;
+
+  // The Phase 16 derived summary: per-status work counts, distinct file and
+  // tab counts split by role, and a last-activity drawn from every kind of
+  // evidence rather than the run record alone.
+  if (intelligence) {
+    const summary = getAgentRunSummary(intelligence, node.runId);
+    if (summary) selection.summary = summary;
+  }
 
   return selection;
 }
