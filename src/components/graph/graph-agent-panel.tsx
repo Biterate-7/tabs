@@ -3,8 +3,13 @@
 import { Bot, FileCode2, PlugZap } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Pill } from "@/components/workspace/category-filter-bar"
+import { AgentActivityList, AgentLoadingState } from "@/components/agents/agent-activity-list"
+import { AgentIcon } from "@/components/agents/agent-icon"
+import { visualStateForConnector, visualStateForRun } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import { AGENT_STATUS_VISUALS } from "./agent-node-renderer"
+import type { AgentActivityItem } from "@/components/agents/agent-activity-list"
+import type { ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import { AGENT_FILTER_LABELS, AGENT_SPATIAL_FILTERS } from "@/lib/agents/spatial/types"
 import type { AgentSearchResult } from "@/lib/agents/spatial/search"
 import type { AgentRunSummary } from "@/lib/agents/intelligence/types"
@@ -305,6 +310,15 @@ export type AgentPanelConnector = {
   /** Already-resolved status word — the panel does not know the status vocabulary. */
   statusLabel: string
   connected: boolean
+  /**
+   * The connector's raw status kind, so the strip can show the agent's mark in
+   * the state it is actually in.
+   *
+   * Optional, and its absence is handled rather than assumed: a caller that
+   * has not supplied it gets a resting mark, which is the honest default for
+   * "we were not told".
+   */
+  statusKind?: ConnectorStatusKind
 }
 
 /**
@@ -321,7 +335,16 @@ function ConnectorStrip({ connectors }: { connectors: AgentPanelConnector[] }) {
   return (
     <ul aria-label="Connected agents" className="space-y-0.5">
       {connectors.map((entry) => (
-        <li key={entry.provider} className="flex items-baseline gap-2">
+        <li key={entry.provider} className="flex items-center gap-2">
+          {/* Who, then what state. The mark identifies the provider; the dot
+              beside it says whether it is observing. Two marks because they
+              answer two questions, and because status must never be carried
+              by an identity's colour. */}
+          <AgentIcon
+            connector={entry.provider}
+            state={entry.statusKind ? visualStateForConnector(entry.statusKind) : "idle"}
+            size="sm"
+          />
           <span
             className={cn("text-body-sm leading-none", entry.connected ? "text-accent-text" : "text-tertiary")}
             aria-hidden
@@ -353,6 +376,9 @@ export function GraphAgentPanel({
   searchResults,
   onSelectResult,
   onSelectRun,
+  activity = [],
+  selectedActivityId = null,
+  onOpenWorld,
 }: {
   /** False when the provider cannot currently be observed. Distinct from "no data". */
   available: boolean
@@ -375,6 +401,17 @@ export function GraphAgentPanel({
   searchResults: AgentSearchResult[]
   onSelectResult: (id: SpatialId) => void
   onSelectRun: (runId: string) => void
+  /**
+   * The runs that are live right now, newest first.
+   *
+   * Each item's `id` is its run's spatial id, so selecting a row selects the
+   * same thing clicking the card on the canvas would. Empty when nothing is
+   * running, and the section then does not appear at all.
+   */
+  activity?: readonly AgentActivityItem[]
+  selectedActivityId?: SpatialId | null
+  /** Opens the Agent World. Absent when the user has turned it off. */
+  onOpenWorld?: () => void
 }) {
   // One provider is not a choice. The control appears the moment a second one
   // has worked here, and not before.
@@ -385,11 +422,41 @@ export function GraphAgentPanel({
       aria-labelledby="agent-panel-heading"
       className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0"
     >
-      <p id="agent-panel-heading" className="text-label text-tertiary">
-        AI AGENTS
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p id="agent-panel-heading" className="text-label text-tertiary">
+          AI AGENTS
+        </p>
+
+        {/* The entry point into the world. Offered only when there is
+            something to watch — a button opening an empty room would be a
+            control that promises more than it delivers. */}
+        {onOpenWorld && hasAnyAgentData && (
+          <button
+            type="button"
+            onClick={onOpenWorld}
+            className="shrink-0 rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            Agent World
+          </button>
+        )}
+      </div>
 
       <ConnectorStrip connectors={connectors} />
+
+      {/* What is happening right now, with each agent's mark animating
+          according to its own run's real state. Above the filters because it
+          answers the question the panel is most often opened for, and it is
+          not something the filters apply to. */}
+      {activity.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-label text-tertiary">NOW</p>
+          <AgentActivityList
+            items={activity}
+            onSelect={onSelectResult}
+            selectedId={selectedActivityId}
+          />
+        </div>
+      )}
 
       <div role="group" aria-label="Filter agent runs" className="flex flex-wrap gap-1">
         {AGENT_SPATIAL_FILTERS.map((option) => (
@@ -445,6 +512,14 @@ export function GraphAgentPanel({
         available={available}
         anyConnected={connectors.some((entry) => entry.connected)}
         anyConfigured={connectors.length > 0}
+        // The one connector still establishing observation, if any. §27's
+        // replacement for a bare "Loading…": the agent's own mark, in its
+        // starting state, beside a sentence naming it. A real state with a
+        // real duration, not a spinner standing in for one.
+        connecting={connectors.find(
+          (entry) =>
+            entry.statusKind === "connecting" || entry.statusKind === "reconnecting"
+        )}
         selection={selection}
         hasAnyAgentData={hasAnyAgentData}
         hasVisibleRuns={hasVisibleRuns}
@@ -460,6 +535,7 @@ function AgentPanelBody({
   available,
   anyConnected,
   anyConfigured,
+  connecting,
   selection,
   hasAnyAgentData,
   hasVisibleRuns,
@@ -472,6 +548,8 @@ function AgentPanelBody({
   anyConnected: boolean
   /** The user has enabled at least one connector, whatever state it is in. */
   anyConfigured: boolean
+  /** A connector currently establishing observation, if there is one. */
+  connecting?: AgentPanelConnector
   selection: AgentInspectorSelection | null
   hasAnyAgentData: boolean
   hasVisibleRuns: boolean
@@ -480,6 +558,13 @@ function AgentPanelBody({
   onSelectSpatial: (id: SpatialId) => void
 }) {
   if (selection) return <AgentInspector selection={selection} onSelectRun={onSelectRun} onSelectSpatial={onSelectSpatial} />
+
+  // Before any of the empty states: a connector that is mid-handshake has not
+  // failed and has not finished, and saying "no agent activity" while it is
+  // still connecting would be wrong in a way the user would act on.
+  if (connecting && !hasVisibleRuns) {
+    return <AgentLoadingState connector={connecting.provider} name={connecting.displayName} />
+  }
 
   // Four states that all look like "nothing here", kept apart because they
   // call for four different things from the user: connect something, wait,
@@ -558,9 +643,20 @@ function AgentInspector({
     const { node, recentRuns } = selection
     return (
       <div className="space-y-3">
-        <div>
-          <p className="truncate text-body font-medium text-foreground">{node.label}</p>
-          <p className="text-meta text-tertiary">{node.provider}</p>
+        <div className="flex items-start gap-2">
+          {/* The agent's own mark, in the state its worst run is in. The
+              provider id below it stays, because the mark identifies and the
+              text names. */}
+          <AgentIcon
+            connector={node.provider}
+            state={node.status === "idle" ? "idle" : visualStateForRun({ status: node.status })}
+            size="md"
+            className="mt-0.5"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-body font-medium text-foreground">{node.label}</p>
+            <p className="text-meta text-tertiary">{node.provider}</p>
+          </div>
         </div>
         <StatusLine status={node.status} />
         <p className="text-meta text-tertiary">
@@ -713,9 +809,21 @@ function AgentInspector({
 
   return (
     <div className="space-y-3">
-      <div>
-        <p className="truncate text-body font-medium text-foreground">{node.label}</p>
-        <p className="text-meta text-tertiary">{agentName}</p>
+      <div className="flex items-start gap-2">
+        {/* Who is doing this run, drawn in the state the run is actually in.
+            The activity line the node already carries decides whether that
+            reads as working or as thinking — the same derivation the world
+            and the sidebar use, so all three agree. */}
+        <AgentIcon
+          connector={node.provider}
+          state={visualStateForRun({ status: node.status, currentActivity: node.activity })}
+          size="md"
+          className="mt-0.5"
+        />
+        <div className="min-w-0">
+          <p className="truncate text-body font-medium text-foreground">{node.label}</p>
+          <p className="text-meta text-tertiary">{agentName}</p>
+        </div>
       </div>
 
       <StatusLine status={node.status} />

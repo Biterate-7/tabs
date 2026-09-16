@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { Bot, Check, ChevronLeft, Minus, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { AgentIcon } from "@/components/agents/agent-icon"
+import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { loadAgentState } from "@/lib/agents/persistence"
 import {
@@ -10,6 +12,10 @@ import {
   CAPABILITY_LABELS,
   CONNECTOR_STATUS_LABELS,
 } from "@/lib/agents/connectors/types"
+import {
+  CONNECTOR_STATUS_VISUALS,
+  visualStateForConnector,
+} from "@/lib/agents/visual/states"
 import { EMPTY_PROVIDER_USAGE, summarizeProviderUsage } from "@/lib/agents/connectors/usage"
 import { cn } from "@/lib/utils"
 import { SectionHeading, SectionStack } from "./section-ui"
@@ -49,14 +55,9 @@ import type { AgentState } from "@/lib/agents/types"
  * words are not redefined here, so this page and the workspace sidebar cannot
  * drift into describing the same connector differently.
  */
-const STATUS_VISUALS: Record<ConnectorStatusKind, { glyph: string; tone: string }> = {
-  connected: { glyph: "●", tone: "text-accent-text" },
-  connecting: { glyph: "◐", tone: "text-muted-foreground" },
-  reconnecting: { glyph: "◐", tone: "text-muted-foreground" },
-  disconnected: { glyph: "○", tone: "text-tertiary" },
-  configuration_required: { glyph: "◌", tone: "text-muted-foreground" },
-  unavailable: { glyph: "○", tone: "text-tertiary" },
-  error: { glyph: "▲", tone: "text-destructive" },
+function statusVisual(kind: ConnectorStatusKind): { glyph: string; tone: string } {
+  const visual = CONNECTOR_STATUS_VISUALS[kind]
+  return { glyph: visual.glyph, tone: AGENT_TONE_TEXT_CLASS[visual.tone] }
 }
 
 function statusLabel(kind: ConnectorStatusKind): string {
@@ -117,7 +118,7 @@ function usageLine(usage: ProviderUsage): string | null {
 }
 
 function StatusDot({ kind }: { kind: ConnectorStatusKind }) {
-  const visual = STATUS_VISUALS[kind]
+  const visual = statusVisual(kind)
   return (
     <span className={cn("text-body-sm leading-none", visual.tone)} aria-hidden>
       {visual.glyph}
@@ -134,7 +135,7 @@ function ConnectorRow({
   usage: ProviderUsage
   onOpen: (provider: AgentProviderId) => void
 }) {
-  const visual = STATUS_VISUALS[view.status.kind]
+  const visual = statusVisual(view.status.kind)
   const line = usageLine(usage)
 
   return (
@@ -146,15 +147,26 @@ function ConnectorRow({
       aria-label={`${view.descriptor.displayName} — ${statusLabel(view.status.kind)}`}
       className="flex w-full items-start gap-3 rounded-lg border border-subtle p-3 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
     >
+      {/* The provider's own mark, in the state its connector is actually in.
+          It identifies who this row is about; the glyph beside the status word
+          below says what state it is in. Two marks rather than one because
+          they answer different questions, and the status must never be
+          carried by the identity's colour. */}
       <span className="mt-0.5">
-        <StatusDot kind={view.status.kind} />
+        <AgentIcon
+          connector={view.descriptor.provider}
+          state={visualStateForConnector(view.status.kind)}
+          size="md"
+        />
       </span>
 
       <span className="min-w-0 flex-1">
         <span className="block text-body-sm font-medium text-foreground">
           {view.descriptor.displayName}
         </span>
-        <span className={cn("mt-0.5 block text-meta", visual.tone)}>{statusLabel(view.status.kind)}</span>
+        <span className={cn("mt-0.5 block text-meta", visual.tone)}>
+          <StatusDot kind={view.status.kind} /> {statusLabel(view.status.kind)}
+        </span>
         {line && <span className="mt-0.5 block text-meta text-tertiary">{line}</span>}
       </span>
 
@@ -281,7 +293,7 @@ function ConnectorDetail({
   onConnect: () => void
   onDisconnect: () => void
 }) {
-  const visual = STATUS_VISUALS[view.status.kind]
+  const visual = statusVisual(view.status.kind)
   const lastObservation = relativeTime(view.status.lastObservationAt, now)
   const connected = view.status.kind === "connected"
   const live = connected || view.status.kind === "reconnecting" || view.status.kind === "connecting"
@@ -297,10 +309,17 @@ function ConnectorDetail({
         All connectors
       </button>
 
-      <SectionHeading
-        title={view.descriptor.displayName}
-        description={view.descriptor.summary}
-      />
+      <div className="mb-4 flex items-start gap-3">
+        <AgentIcon
+          connector={view.descriptor.provider}
+          state={visualStateForConnector(view.status.kind)}
+          size="lg"
+        />
+        <SectionHeading
+          title={view.descriptor.displayName}
+          description={view.descriptor.summary}
+        />
+      </div>
 
       <SectionStack>
         <div className="rounded-lg border border-subtle p-3">

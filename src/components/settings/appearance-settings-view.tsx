@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot } from "lucide-react"
+import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot, Boxes } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,10 +26,12 @@ import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
 import { ConnectorsSection } from "./sections/connectors-section"
+import { AgentWorldSection } from "./sections/agent-world-section"
 
 type NavSection =
   | "general"
   | "connectors"
+  | "agent-world"
   | "theme"
   | "typography"
   | "background"
@@ -59,6 +61,7 @@ const APPEARANCE_SECTIONS: readonly NavSection[] = [
 const NAV: { id: NavSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "connectors", label: "AI connectors", icon: Bot },
+  { id: "agent-world", label: "Agent World", icon: Boxes },
   { id: "theme", label: "Theme", icon: Palette },
   { id: "typography", label: "Typography", icon: Type },
   { id: "background", label: "Background", icon: Image },
@@ -75,7 +78,23 @@ const NAV: { id: NavSection; label: string; icon: typeof Settings2 }[] = [
  * custom editor, typography, background, layout, shape, motion, accent)
  * that the small Dialog this replaced couldn't reasonably hold them.
  */
-export function AppearanceSettingsView({ onClose }: { onClose: () => void }) {
+export function AppearanceSettingsView({
+  onClose,
+  workspaceId,
+  workspaceName,
+}: {
+  onClose: () => void
+  /**
+   * The workspace Settings was opened over, when there is one.
+   *
+   * Only the Agent World section uses it, for the per-workspace environment
+   * and world name. Passing it down rather than reading a store here keeps
+   * this view free of workspace state, which is the reason it has stayed a
+   * simple layout component through eight sections.
+   */
+  workspaceId?: string
+  workspaceName?: string
+}) {
   const { resetAllAppearance } = useAppearanceContext()
   const [active, setActive] = useState<NavSection>("theme")
 
@@ -158,6 +177,9 @@ export function AppearanceSettingsView({ onClose }: { onClose: () => void }) {
           <div className="mx-auto w-full max-w-3xl">
             {active === "general" && <GeneralSection />}
             {active === "connectors" && <ConnectorsSection />}
+            {active === "agent-world" && (
+              <AgentWorldSection workspaceId={workspaceId} workspaceName={workspaceName} />
+            )}
             {active === "theme" && <ThemeSection />}
             {active === "typography" && <TypographySection />}
             {active === "background" && <BackgroundSection />}

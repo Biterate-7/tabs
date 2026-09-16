@@ -665,3 +665,354 @@
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
+/* ===================================================================
+   Agent visual system (Phase 18)
+
+   Every animation the agent identity system and the Agent World use is
+   declared here, once, and selected by name from
+   src/lib/agents/visual/animation.ts. Nothing in the agent feature
+   animates from JavaScript.
+
+   That is a performance decision before it is a style decision. A mark
+   animated from a requestAnimationFrame loop costs a main-thread wake-up
+   per frame per mark, and the brief asks for twenty simultaneous agents;
+   twenty loops at 60fps is 1200 callbacks a second competing with the
+   graph canvas's own render loop. These keyframes touch only `transform`
+   and `opacity`, which the compositor handles off the main thread, so a
+   scene with twenty moving agents costs approximately what one costs.
+
+   Two further properties follow from using CSS rather than JS, and both
+   are requirements of the brief rather than happy accidents:
+
+     - The reduced-motion and [data-motion="off"] blocks ABOVE already
+       flatten every animation in the document with !important, which
+       beats even an inline animation-duration. Agent motion therefore
+       cannot outlive a user asking the product to stop moving, even if
+       the TypeScript policy in animation.ts had a bug.
+     - An animation stops when its element unmounts. There is no timer to
+       clear, no frame to cancel, and no way for this system to leak one.
+
+   Every keyframe below starts AND ends at the neutral resting state. That
+   matters because the reduced-motion override collapses each animation to
+   a single 0.001ms cycle with fill-mode "both": the final frame is what
+   stays on screen, so a keyframe that ended mid-gesture would leave a mark
+   permanently skewed for exactly the users who asked for no movement.
+   =================================================================== */
+
+:root {
+  /* Multiplies every agent animation's duration. The Agent World's density
+     control raises it so a crowded scene calms down without each component
+     recomputing its own timing. */
+  --agent-anim-scale: 1;
+}
+
+.agent-mark {
+  /* The marks are inline SVG; giving the wrapper its own containing box
+     keeps a transform from nudging the text baseline beside it. */
+  line-height: 0;
+  will-change: transform;
+}
+
+.agent-mark [data-agent-orbit] {
+  /* SVG children transform about the element's own box rather than the
+     user-space origin, which is what makes `center` mean what it looks
+     like it means on a path inside a 24-unit viewBox. */
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ---- Whole-mark states ------------------------------------------- */
+
+/* Idle: the smallest movement that reads as alive rather than as a still
+   image. 4% over five seconds is below the threshold at which motion
+   attracts the eye, which is the point — a resting agent must never
+   compete with a working one. */
+@keyframes agent-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+/* Starting: a connection being established. Fades rather than moves,
+   because "in progress, nothing to show yet" has no direction to it. */
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Thinking: live, and has not said what it is doing. A slow lateral sway
+   — present, unhurried, and deliberately NOT the working animation, so
+   the two states are distinguishable without reading the label. */
+@keyframes agent-think {
+  0%,
+  100% {
+    transform: translateX(0) scale(1);
+  }
+  30% {
+    transform: translateX(-0.8px) scale(1.02);
+  }
+  70% {
+    transform: translateX(0.8px) scale(1.02);
+  }
+}
+
+/* Working: the one animation with a beat to it. Faster than thinking and
+   with a scale change big enough to catch peripheral vision, because this
+   is the state a glance is supposed to find. */
+@keyframes agent-work {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.1);
+  }
+  60% {
+    transform: scale(0.98);
+  }
+}
+
+/* Per-identity working variants. Same job, different gait, so two agents
+   working side by side are still tellable apart at 16px. */
+@keyframes agent-work-lattice {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.06) rotate(3deg);
+  }
+}
+
+@keyframes agent-work-twin {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-1.2px) scale(1.05);
+  }
+}
+
+@keyframes agent-work-climb {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  45% {
+    transform: translate(0.8px, -1px) scale(1.05);
+  }
+}
+
+/* Communicating: a lean toward the thing being handed over and back. */
+@keyframes agent-signal {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  25% {
+    transform: translateX(1.4px);
+    opacity: 0.85;
+  }
+  75% {
+    transform: translateX(-1.4px);
+    opacity: 0.85;
+  }
+}
+
+/* Success: one short rise and settle. Runs once. A completed run that
+   celebrated on a loop would be claiming to still be finishing. */
+@keyframes agent-settle {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.22);
+  }
+  70% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Error: a single small shake. Two pixels, four hundred milliseconds, no
+   flash and no colour change of its own — the tone has already turned the
+   mark red and the label already reads the state out. */
+@keyframes agent-falter {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-1.6px);
+  }
+  50% {
+    transform: translateX(1.6px);
+  }
+  80% {
+    transform: translateX(-0.8px);
+  }
+}
+
+/* ---- Inner-element motion ----------------------------------------
+   The one movable part inside each mark, animated only in the states that
+   are genuinely ongoing. Selecting on the state attribute rather than on a
+   class means one rule per state, not one per state per provider. */
+
+.agent-mark[data-agent-state="working"] [data-agent-orbit],
+.agent-mark[data-agent-state="communicating"] [data-agent-orbit] {
+  animation: agent-orbit calc(2400ms * var(--agent-anim-scale, 1)) linear infinite;
+}
+
+.agent-mark[data-agent-state="thinking"] [data-agent-orbit] {
+  animation: agent-flicker calc(2000ms * var(--agent-anim-scale, 1)) var(--ease-standard) infinite;
+}
+
+.agent-mark[data-agent-state="starting"] [data-agent-orbit] {
+  animation: agent-flicker calc(1200ms * var(--agent-anim-scale, 1)) var(--ease-standard) infinite;
+}
+
+@keyframes agent-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes agent-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.35;
+  }
+}
+
+/* ===================================================================
+   Agent World
+
+   The world is DOM and SVG, not a canvas. Characters are absolutely
+   positioned elements moved by `transform: translate3d(...)` with a
+   transition on transform, which means movement between workstations is
+   interpolated by the compositor and needs no animation loop, no easing
+   maths and no per-frame React work: the layout engine says where an agent
+   belongs, React writes one transform, and the browser walks it there.
+
+   It also means the world is real DOM — focusable, labelled, reachable by
+   keyboard and readable by a screen reader — which a canvas would have had
+   to reimplement from nothing.
+   =================================================================== */
+
+.agent-world-stage {
+  /* A new stacking and containing context, so a character's transform is
+     resolved against the stage rather than against whatever the stage
+     happens to be nested in. */
+  position: relative;
+  isolation: isolate;
+  contain: layout paint;
+}
+
+.agent-world-character {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Movement. The duration is a variable so the layout engine can hand a
+     character a distance-appropriate travel time — a short hop and a walk
+     across the room should not take the same wall-clock time. */
+  transition:
+    transform var(--agent-travel-duration, 900ms) var(--ease-standard),
+    opacity var(--duration-slow) var(--ease-standard);
+  will-change: transform;
+}
+
+/* Arrival: a character entering the world. Runs once, on mount. */
+@keyframes agent-world-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.agent-world-body {
+  animation: agent-world-enter var(--duration-slow) var(--ease-standard) both;
+}
+
+/* Ambient life: the environment itself, at a fraction of the amplitude of
+   anything an agent does. The rule this encodes is brief §25 — the active
+   agent must always dominate ambient animation — and the way it is
+   enforced is arithmetic: nothing ambient exceeds 0.35 opacity travel or
+   2% scale, while the quietest agent state moves 4%. */
+@keyframes agent-world-ambient {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.agent-world-ambient {
+  animation: agent-world-ambient calc(4200ms * var(--agent-anim-scale, 1)) var(--ease-standard) infinite;
+}
+
+/* A packet of work travelling from one agent to another. Drawn only for a
+   handoff the domain actually recorded — see world/handoffs.ts — and never
+   as generic decoration between two agents that happen to be on screen.
+
+   The two endpoints arrive as CSS custom properties in the SVG's own user
+   space, so one keyframe rule serves every link rather than a generated
+   @keyframes per pair. `offset-path` would have read better and is not used
+   on purpose: it is animatable, but a browser without it silently parks the
+   dot at the origin, and a transform between two explicit points degrades to
+   nothing at all instead of to something wrong. */
+@keyframes agent-world-packet {
+  0% {
+    transform: translate(var(--packet-x1), var(--packet-y1));
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--packet-x2), var(--packet-y2));
+    opacity: 0;
+  }
+}
+
+.agent-world-packet {
+  transform-box: view-box;
+  animation: agent-world-packet calc(2600ms * var(--agent-anim-scale, 1)) linear infinite;
+}
+
+/* The connection itself. A dash that drifts along the path, so direction is
+   readable without an arrowhead that would be invisible at this scale. */
+@keyframes agent-world-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.agent-world-flow {
+  animation: agent-world-flow calc(1800ms * var(--agent-anim-scale, 1)) linear infinite;
+}

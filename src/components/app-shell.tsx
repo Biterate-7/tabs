@@ -1016,7 +1016,13 @@ export function AppShell() {
   }
 
   if (view === "settings") {
-    return <AppearanceSettingsView onClose={() => setView("workspace")} />
+    return (
+      <AppearanceSettingsView
+        onClose={() => setView("workspace")}
+        workspaceId={store.currentId}
+        workspaceName={currentWorkspace.name}
+      />
+    )
   }
 
   if (view === "favorites") {

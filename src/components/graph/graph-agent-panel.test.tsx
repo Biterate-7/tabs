@@ -470,3 +470,85 @@ describe("accessibility", () => {
   })
 })
 
+
+describe("the live activity section", () => {
+  const working = [
+    {
+      id: "run:r1",
+      provider: "claude-code",
+      agentName: "Claude Code",
+      state: "working" as const,
+      activity: "Researching competitor architecture",
+    },
+  ]
+
+  it("is absent entirely when nothing is running", () => {
+    renderPanel()
+    expect(screen.queryByText("NOW")).toBeNull()
+  })
+
+  it("names who is working and what they are doing", () => {
+    renderPanel({ activity: working })
+    expect(screen.getByText("NOW")).toBeTruthy()
+
+    // Scoped to the list: the agent's name is legitimately in the connector
+    // strip too, and the two sections answer different questions — "who is
+    // connected" and "who is working right now".
+    const list = within(screen.getByRole("list", { name: "Agent activity" }))
+    expect(list.getByText("Claude Code")).toBeTruthy()
+    expect(list.getByText(/Researching competitor architecture/)).toBeTruthy()
+  })
+
+  it("selects the run behind a row", async () => {
+    const user = userEvent.setup()
+    const { onSelectResult } = renderPanel({ activity: working })
+
+    await user.click(screen.getByRole("button", { name: /Claude Code — Working/ }))
+    expect(onSelectResult).toHaveBeenCalledWith("run:r1")
+  })
+})
+
+describe("the Agent World entry point", () => {
+  it("is absent when the world is turned off", () => {
+    renderPanel()
+    expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull()
+  })
+
+  it("is absent when there is nothing to watch", () => {
+    // A button opening an empty room would be a control that promises more
+    // than it delivers.
+    renderPanel({ onOpenWorld: vi.fn(), hasAnyAgentData: false })
+    expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull()
+  })
+
+  it("opens the world when there is", async () => {
+    const user = userEvent.setup()
+    const onOpenWorld = vi.fn()
+    renderPanel({ onOpenWorld })
+
+    await user.click(screen.getByRole("button", { name: "Agent World" }))
+    expect(onOpenWorld).toHaveBeenCalled()
+  })
+})
+
+describe("a connector that is still connecting", () => {
+  it("says which agent is getting ready rather than 'no activity'", () => {
+    // Mid-handshake is neither a failure nor a finish, and saying "no agent
+    // activity" while it is still connecting would be wrong in a way the user
+    // would act on.
+    renderPanel({
+      connectors: [
+        {
+          provider: "claude-code",
+          displayName: "Claude Code",
+          statusLabel: "Connecting",
+          connected: false,
+          statusKind: "connecting",
+        },
+      ],
+      hasVisibleRuns: false,
+    })
+
+    expect(screen.getByText("Claude Code is getting ready…")).toBeTruthy()
+  })
+})

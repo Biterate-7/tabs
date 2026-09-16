@@ -60,6 +60,12 @@ export const SCOPED_STORAGE_KEYS = [
   // because one account must never inherit another's observation settings.
   // It holds intent only: no credential is written here, or anywhere else.
   "tabdump:connectors:v1",
+  // How the user has set up their Agent World — theme, density, motion,
+  // effects, and a per-workspace theme map (see
+  // src/lib/agents/world/persistence.ts). Scoped rather than global because
+  // it is keyed by workspace id, and one account's workspaces are not
+  // another's. Preferences only: no run, no activity, no content.
+  "tabdump:agent-world:v1",
 ] as const;
 
 /**
