@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "./app-shell";
+import { dismissOnboarding } from "@/lib/onboarding";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
@@ -102,6 +103,13 @@ async function recategorizeOneTab(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // Every test in this file is about the app, not about how a first-time
+  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // which AppShell answers with the public landing page rather than the app
+  // shell (see the FirstRunLanding branch) — so mark onboarding as already
+  // handled here, and let the tests that care about the landing page opt back
+  // out by clearing it again.
+  dismissOnboarding();
   saveSpy.mockClear();
 });
 

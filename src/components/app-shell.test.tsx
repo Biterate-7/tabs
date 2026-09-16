@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
+import { dismissOnboarding } from "@/lib/onboarding";
 import { Toaster } from "@/components/ui/sonner";
 import { AppearanceProvider } from "@/components/appearance-provider";
 import { loadWorkspaceStore, saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
@@ -54,6 +55,13 @@ async function openSwitcher(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // Every test in this file is about the app, not about how a first-time
+  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // which AppShell answers with the public landing page rather than the app
+  // shell (see the FirstRunLanding branch) — so mark onboarding as already
+  // handled here, and let the tests that care about the landing page opt back
+  // out by clearing it again.
+  dismissOnboarding();
   // sonner's toast queue is a module-level singleton independent of any
   // particular <Toaster/> instance, so a toast fired by one test (even one
   // that never renders <Toaster/> at all) would otherwise still be sitting
@@ -65,6 +73,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+
+describe("AppShell first run", () => {
+  it("greets a visitor who has never used TabDump with the public landing page", async () => {
+    // Undoes the shared beforeEach: this is the one case that wants the
+    // genuinely untouched state a brand-new visitor arrives in.
+    window.localStorage.clear();
+    render(<AppShell />);
+
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading.textContent).toMatch(/Watch your AI agents work/);
+    // The app shell itself must not be mounted underneath it — no sidebar, no
+    // paste box, nothing for a stray click to reach.
+    expect(screen.queryByPlaceholderText(/Paste your tabs/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Switch workspace" })).toBeNull();
+  });
+
+  it("hands over to the app once the visitor chooses to open TabDump", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click((await screen.findAllByRole("button", { name: /Open TabDump/ }))[0]);
+
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+  });
+
+  it("sends a returning visitor straight to the app, landing page skipped", async () => {
+    // Onboarding already handled (the shared beforeEach) and nothing
+    // persisted: an empty workspace belongs to the app, not to marketing.
+    render(<AppShell />);
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Watch your AI agents work/ })).toBeNull();
+  });
+
+  it("keeps a visitor who has dumped tabs out of the landing page", async () => {
+    // The gate is conservative on both halves — the onboarding flag AND an
+    // entirely empty store. Someone with real tabs is never sent to marketing,
+    // whatever the flag says.
+    window.localStorage.clear();
+    saveWorkspace([makeTab({ id: "t1" })]);
+    render(<AppShell />);
+
+    expect(await screen.findByRole("button", { name: "Switch workspace" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Watch your AI agents work/ })).toBeNull();
+  });
+});
 describe("AppShell persistence", () => {
   it("shows the landing page when nothing is persisted", async () => {
     render(<AppShell />);
