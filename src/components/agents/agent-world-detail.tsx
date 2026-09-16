@@ -93,10 +93,26 @@ export type AgentWorldDetailProps = {
   /** The scene's clock, for elapsed time. */
   now: number
   onClose?: () => void
+  /**
+   * Takes the user to the connectors page.
+   *
+   * Optional, and the card degrades to a plain sentence without it: the world
+   * renders inside surfaces that have no navigation of their own (the panel
+   * over the graph canvas, and every test that renders a scene directly), and
+   * a card that required a router would not be usable from them.
+   */
+  onOpenConnectors?: () => void
   className?: string
 }
 
-function AgentWorldDetailImpl({ character, detail, now, onClose, className }: AgentWorldDetailProps) {
+function AgentWorldDetailImpl({
+  character,
+  detail,
+  now,
+  onClose,
+  onOpenConnectors,
+  className,
+}: AgentWorldDetailProps) {
   const presentation = AGENT_VISUAL_STATE_PRESENTATION[character.state]
   const elapsed =
     character.startedAt !== undefined ? formatElapsed(now - character.startedAt) : null
@@ -225,12 +241,32 @@ function AgentWorldDetailImpl({ character, detail, now, onClose, className }: Ag
       ) : null}
 
       {/* An agent with nothing to report says so once, rather than showing
-          five empty headings. A connected provider that has observed nothing
-          is a correct, stable state — not a gap to be filled. */}
+          five empty headings. A provider that has observed nothing is a
+          correct, stable state — not a gap to be filled.
+
+          The two stand-ins say different things because they are different
+          facts. "Connected" means the agent is here and idle. An available
+          one is not connected at all, and saying it was would be the one
+          piece of theatre this feature has been built to avoid — so it
+          reports the connector layer's own status word and says what would
+          bring it in. */}
       {!character.runId && (
-        <p className="text-meta text-tertiary">
-          Connected. No activity has been observed in this workspace yet.
-        </p>
+        <div className="space-y-1">
+          <p className="text-meta text-tertiary">
+            {character.presence === "available"
+              ? `${character.statusLabel ?? "Not connected"}. This agent ships with TabDump and is waiting to be connected.`
+              : "Connected. No activity has been observed in this workspace yet."}
+          </p>
+          {character.presence === "available" && onOpenConnectors && (
+            <button
+              type="button"
+              onClick={onOpenConnectors}
+              className="rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              Connect in AI connectors
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

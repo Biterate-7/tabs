@@ -1,6 +1,6 @@
 "use client"
 
-import { History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
+import { Boxes, History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
@@ -48,6 +48,7 @@ export function AppSidebar({
   onOpenGraph,
   graphLocked = false,
   graphLockedReason,
+  onOpenAgentWorld,
   onOpenSettings,
 }: {
   workspaces: Workspace[]
@@ -74,6 +75,17 @@ export function AppSidebar({
   graphLocked?: boolean
   /** What the graph is waiting on, used as the disabled button's tooltip. */
   graphLockedReason?: string
+  /**
+   * Opens the Agent World.
+   *
+   * Unconditional, unlike the graph above it. The world is worth opening with
+   * nothing running — that is the whole point of the rework — so there is no
+   * readiness gate, no agent-history gate and no connector gate on this row.
+   * The one state that changes what it shows is the world being switched off
+   * in settings, and the view itself says so rather than the rail hiding the
+   * way to find out.
+   */
+  onOpenAgentWorld: () => void
   onOpenSettings: () => void
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
@@ -217,6 +229,15 @@ export function AppSidebar({
         >
           <Waypoints />
           {showLabels && <span className="text-body-sm">Graph</span>}
+        </IconButton>
+        <IconButton
+          aria-label="Open Agent World"
+          tooltip="Agent World"
+          onClick={onOpenAgentWorld}
+          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
+        >
+          <Boxes />
+          {showLabels && <span className="text-body-sm">Agent World</span>}
         </IconButton>
         <IconButton
           aria-label="Open Settings"

@@ -8,10 +8,15 @@ import { createConnectorManager } from "./manager";
  * One poll loop against the user's machine, enforced mechanically.
  *
  * Several files claim this in prose — the observer hook says "one
- * subscription, one loop", GraphView says "THE observer", AppShell says "THE
- * connector restore" — and until now nothing checked it. That is exactly the
- * kind of invariant that holds until someone adds a second surface which
- * needs connector state and reasonably mounts the same hook.
+ * subscription, one loop", AppShell says "THE connector restore" and "THE
+ * observer" — and until now nothing checked it. That is exactly the kind of
+ * invariant that holds until someone adds a second surface which needs
+ * connector state and reasonably mounts the same hook.
+ *
+ * Which is precisely what happened when the Agent World became a view of its
+ * own. The fix was not a bigger allowlist: observation and the domain moved
+ * up to the shell, where they belong, and both views now read what they are
+ * handed. That is why the expectations below name one file and not two.
  *
  * Phase 17 made that likelier rather than less likely: there are now three
  * `useAgentConnectors` call sites, and the difference between the one that
@@ -36,7 +41,7 @@ function walk(dir: string): string[] {
   });
 }
 
-const sources = walk(SRC).map((file) => ({
+const sources: { file: string; source: string }[] = walk(SRC).map((file) => ({
   file: path.relative(SRC, file).replace(/\\/g, "/"),
   source: readFileSync(file, "utf8"),
 }));
@@ -73,7 +78,17 @@ describe("exactly one thing starts observation", () => {
 
   it("mounts the Claude observer in exactly one place", () => {
     expect(callSites("useClaudeCodeObserver", "hooks/use-claude-code-observer.ts")).toEqual([
-      "components/graph/graph-view.tsx",
+      "components/app-shell.tsx",
+    ]);
+  });
+
+  it("mounts the agent domain in exactly one place", () => {
+    // The other half of the same invariant, and the one with teeth: the store
+    // saves itself to localStorage on a debounce, so two live instances would
+    // be two writers racing on one key — the failure `useDependencyStore`
+    // already documents, in a domain where losing a write loses agent history.
+    expect(callSites("useAgentStore", "hooks/use-agent-store.ts")).toEqual([
+      "components/app-shell.tsx",
     ]);
   });
 });
@@ -92,7 +107,7 @@ describe("exactly one Claude adapter can exist", () => {
     const hook = sources.find((entry) => entry.file === "hooks/use-claude-code-observer.ts")!;
 
     // The guard that makes the second construction site unreachable in
-    // production: GraphView always passes the manager's connector, so the
+    // production: AppShell always passes the manager's connector, so the
     // hook never builds one of its own. Written as a ternary on `connector`
     // so this assertion can see it.
     expect(hook.source).toMatch(/connector\s*\?\s*null\s*:\s*createClaudeCodeAdapter/);

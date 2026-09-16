@@ -6,11 +6,14 @@ import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
+import { AgentWorldView } from "@/components/agents/agent-world-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { HistoryDumpView } from "@/components/workspace/history-dump-view"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
+import { useAgentStore } from "@/hooks/use-agent-store"
+import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -59,6 +62,8 @@ import { applyOrganizationPlan } from "@/lib/organize/apply"
 import type { OrganizationPlan } from "@/lib/organize/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
+import type { SettingsSection } from "@/components/settings/appearance-settings-view"
+import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 
@@ -117,7 +122,49 @@ export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
-  const [view, setView] = useState<"workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump">("workspace")
+  const [view, setView] = useState<
+    "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump" | "agent-world"
+  >("workspace")
+  /**
+   * Which settings section the next visit to Settings opens on.
+   *
+   * Held here rather than inside the settings view because the surfaces that
+   * deep-link into it live out here — the Agent World's header sends someone
+   * straight to Connectors or to Agent World. Cleared to undefined by the
+   * ordinary Settings entry points, so the sidebar's Settings button keeps
+   * landing where it always has.
+   */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
+
+  /**
+   * Where closing Settings goes back to.
+   *
+   * Settings has always returned to the workspace, which is right when the
+   * workspace is where you opened it from. It stopped being right once the
+   * Agent World started sending people here: changing a world setting and
+   * being dropped somewhere other than the world you were changing is a
+   * one-way trip through a control that reads as a round one.
+   */
+  const [settingsReturnView, setSettingsReturnView] = useState<"workspace" | "agent-world">(
+    "workspace"
+  )
+
+  /**
+   * Opening Settings from somewhere that knows which section it wants.
+   *
+   * The view is keyed on the section, so each deep link remounts it:
+   * `initialSection` is an initial value, and without a fresh mount a second
+   * jump from the Agent World to a different section would be ignored by the
+   * state that already holds the first one.
+   */
+  function openSettings(
+    section?: SettingsSection,
+    returnTo: "workspace" | "agent-world" = "workspace"
+  ) {
+    setSettingsSection(section)
+    setSettingsReturnView(returnTo)
+    setView("settings")
+  }
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail
@@ -710,10 +757,62 @@ export function AppShell() {
    * opened the graph, and the settings page would report "Not connected" for
    * something they had connected.
    *
-   * This starts observation; it does not consume it. Ingestion remains
-   * GraphView's single call site (see useClaudeCodeObserver), unchanged.
+   * This starts observation, and — since the Agent World became a view of
+   * its own — the shell consumes it too. See below.
    */
-  useAgentConnectors({ restore: true })
+  const connectors = useAgentConnectors({ restore: true })
+
+  /**
+   * THE agent domain, and THE observer that fills it.
+   *
+   * Both used to live in GraphView, on the reasoning that the graph was the
+   * only surface reading agent work. That stopped being true the moment the
+   * Agent World got a front door of its own: two views each mounting their
+   * own `useAgentStore` would be two debounced writers racing on one
+   * localStorage key, and two observers would be two ingestion paths for the
+   * same observations. Hoisting both here makes "exactly one" structural
+   * rather than a consequence of AppShell happening to render one view at a
+   * time — and `connectors/single-loop.test.ts` enforces it.
+   *
+   * This starts no poll loop. The connector the manager owns does the
+   * reading, on the user's connect/disconnect decision; this hook subscribes
+   * to it and hands what arrives to the domain. Ingestion now follows the
+   * app's lifetime rather than the graph's, which is also the behaviour a
+   * user would expect: work an agent did while they were reading their tabs
+   * is there when they open the world.
+   */
+  const agentStore = useAgentStore()
+
+  const claudeConnector = useMemo(
+    () => connectors.manager.connector("claude-code") as ClaudeCodeConnector | undefined,
+    [connectors.manager]
+  )
+
+  /**
+   * Per-workspace tab index for exact-match URL linking, keyed by TabDump's
+   * own normalized URL so an agent visiting a saved page links to the same tab
+   * the user would have opened.
+   */
+  const agentTabIndexes = useMemo(
+    () =>
+      (store?.workspaces ?? []).map((workspace) => {
+        const tabsByNormalizedUrl = new Map<string, string>()
+        for (const tab of workspace.tabs) {
+          if (!tabsByNormalizedUrl.has(tab.normalizedUrl)) {
+            tabsByNormalizedUrl.set(tab.normalizedUrl, tab.id)
+          }
+        }
+        return { workspaceId: workspace.id, tabsByNormalizedUrl }
+      }),
+    [store]
+  )
+
+  const agentObserver = useClaudeCodeObserver({
+    store: agentStore,
+    enabled: true,
+    connector: claudeConnector ?? null,
+    tabIndexes: agentTabIndexes,
+  })
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
   // Subscribes to the engine rather than mirroring its state into React —
@@ -1012,15 +1111,46 @@ export function AppShell() {
         />
       )
     }
-    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
+    return (
+      <GraphView
+        store={store}
+        onStoreUpdate={persist}
+        onClose={() => setView("workspace")}
+        agentStore={agentStore}
+        agentSessionsAvailable={agentObserver.available}
+      />
+    )
   }
 
   if (view === "settings") {
     return (
       <AppearanceSettingsView
-        onClose={() => setView("workspace")}
+        key={settingsSection ?? "default"}
+        initialSection={settingsSection}
+        onClose={() => setView(settingsReturnView)}
         workspaceId={store.currentId}
         workspaceName={currentWorkspace.name}
+      />
+    )
+  }
+
+  /*
+    The Agent World, as a view of its own.
+
+    Not gated on readiness, on connectors or on agent history — the point of
+    the rework is that it opens and is worth looking at before any of those
+    are true. It is also a sibling of the graph rather than a layer over it,
+    which is what keeps the two agent observers from ever being mounted at
+    once: exactly one of these branches renders.
+  */
+  if (view === "agent-world") {
+    return (
+      <AgentWorldView
+        store={store}
+        agentStore={agentStore}
+        onClose={() => setView("workspace")}
+        onOpenConnectors={() => openSettings("connectors", "agent-world")}
+        onOpenWorldSettings={() => openSettings("agent-world", "agent-world")}
       />
     )
   }
@@ -1083,7 +1213,8 @@ export function AppShell() {
         onOpenGraph={handleOpenGraph}
         graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
         graphLockedReason={readiness.label}
-        onOpenSettings={() => setView("settings")}
+        onOpenAgentWorld={() => setView("agent-world")}
+        onOpenSettings={() => openSettings()}
       />
       <div
         className="min-w-0 flex-1"
@@ -1128,6 +1259,7 @@ export function AppShell() {
             onOpenFavorites={() => setView("favorites")}
             onOpenRecents={() => setView("recents")}
             onOpenHistoryDump={() => setView("history-dump")}
+            onOpenAgentWorld={() => setView("agent-world")}
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}

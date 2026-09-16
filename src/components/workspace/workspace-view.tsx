@@ -20,6 +20,7 @@ import {
   Star,
   History,
   ScanSearch,
+  Boxes,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -103,6 +104,7 @@ export function WorkspaceView({
   onOpenFavorites,
   onOpenRecents,
   onOpenHistoryDump,
+  onOpenAgentWorld,
   onSwitchWorkspace,
   recentlyAddedIds,
   onOpenSidebar,
@@ -133,6 +135,15 @@ export function WorkspaceView({
   onOpenFavorites?: () => void
   onOpenRecents?: () => void
   onOpenHistoryDump?: () => void
+  /**
+   * Backs the command palette's "Open Agent World" entry.
+   *
+   * Unconditional where it is supplied: unlike the graph, the world is worth
+   * opening with nothing running, so there is no lock to check before listing
+   * it. A keyboard user reaches the feature the same way they reach every
+   * other view in this product.
+   */
+  onOpenAgentWorld?: () => void
   /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
   onSwitchWorkspace?: (id: string) => void
   /** Ids from the most recently completed dump/import — drives TabCard's "recently added" highlight. Omitted (not just empty) outside AppShell. */
@@ -777,6 +788,17 @@ export function WorkspaceView({
             group: "Navigation",
             icon: ScanSearch,
             onSelect: onOpenHistoryDump,
+          } satisfies Command,
+        ]
+      : []),
+    ...(onOpenAgentWorld
+      ? [
+          {
+            id: "nav-open-agent-world",
+            label: "Open Agent World",
+            group: "Navigation",
+            icon: Boxes,
+            onSelect: onOpenAgentWorld,
           } satisfies Command,
         ]
       : []),

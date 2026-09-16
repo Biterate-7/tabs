@@ -257,3 +257,12 @@ export function useAgentStore(validTabIds?: Set<string>) {
     [visible, apply, commit]
   )
 }
+
+/**
+ * The store's public shape, for the surfaces that are handed one.
+ *
+ * The store is mounted once, at the shell, and passed down — so the views
+ * that read it need a name for what they are receiving. Derived from the hook
+ * rather than written out, so it cannot drift from what the hook returns.
+ */
+export type AgentStoreApi = ReturnType<typeof useAgentStore>

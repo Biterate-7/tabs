@@ -427,10 +427,16 @@ export function GraphAgentPanel({
           AI AGENTS
         </p>
 
-        {/* The entry point into the world. Offered only when there is
-            something to watch — a button opening an empty room would be a
-            control that promises more than it delivers. */}
-        {onOpenWorld && hasAnyAgentData && (
+        {/* The entry point into the world.
+
+            It used to be gated on this workspace having agent history, on the
+            principle that a button opening an empty room promises more than it
+            delivers. That was true of the room it used to open. The world now
+            has a real idle state — the connected agents standing in it, and a
+            line saying what would make them work — so the gate was hiding the
+            one view that explains the feature from exactly the people who had
+            not found it yet. */}
+        {onOpenWorld && (
           <button
             type="button"
             onClick={onOpenWorld}

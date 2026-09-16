@@ -2,8 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GraphView } from "./graph-view";
+import { useAgentStore } from "@/hooks/use-agent-store";
 import type { Tab } from "@/lib/tabs/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
+
+/**
+ * GraphView no longer mounts the agent domain — the shell does, and hands it
+ * down, so that exactly one store and one observer exist however many
+ * surfaces read agent work (see connectors/single-loop.test.ts). These tests
+ * are about the graph rather than about agents, so this harness stands in for
+ * the shell: a real store, and no observed sessions.
+ */
+function GraphViewHarness(
+  props: Omit<React.ComponentProps<typeof GraphView>, "agentStore" | "agentSessionsAvailable">
+) {
+  const agentStore = useAgentStore();
+  return <GraphView {...props} agentStore={agentStore} agentSessionsAvailable={false} />;
+}
 
 function makeTab(over: Partial<Tab> & { id: string }): Tab {
   return {
@@ -44,12 +59,12 @@ describe("GraphView", () => {
   });
 
   it("shows the empty state when there are no tabs", () => {
-    render(<GraphView store={makeStore([])} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={makeStore([])} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText("No tabs to visualize yet.")).toBeTruthy();
   });
 
   it("shows the 'not enough connections' state with exactly one tab", () => {
-    render(<GraphView store={makeStore([makeTab({ id: "a" })])} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={makeStore([makeTab({ id: "a" })])} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText("Not enough connections yet.")).toBeTruthy();
   });
 
@@ -58,7 +73,7 @@ describe("GraphView", () => {
       makeTab({ id: "a", domain: "github.com" }),
       makeTab({ id: "b", domain: "github.com" }),
     ]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByText("GRAPH")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Back to workspace" })).toBeTruthy();
@@ -69,7 +84,7 @@ describe("GraphView", () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={onClose} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={onClose} />);
 
     await user.click(screen.getByRole("button", { name: "Back to workspace" }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -78,7 +93,7 @@ describe("GraphView", () => {
   it("prompts for a selection when switching to local view with nothing selected", async () => {
     const user = userEvent.setup();
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Local" }));
     expect(screen.getByText("Select a tab to see its local graph.")).toBeTruthy();
@@ -116,7 +131,7 @@ describe("GraphView", () => {
       })
     );
 
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByText("GRAPH")).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /show category regions/i })).toBeTruthy();
@@ -128,7 +143,7 @@ describe("GraphView", () => {
     // filters are both on by default, so both must be turned off to reach
     // zero edges (category/group are off by default; there's no manual link).
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     await user.click(screen.getByRole("checkbox", { name: /same domain/i }));
     await user.click(screen.getByRole("checkbox", { name: /same workspace/i }));
@@ -175,7 +190,7 @@ describe("GraphView dedicated notes page", () => {
   it("does not open just from selecting a node, but offers an explicit Notes action", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
@@ -184,7 +199,7 @@ describe("GraphView dedicated notes page", () => {
   it("opens via the sidebar's Notes button and shows a placeholder when it has no note", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     openNotes();
 
     expect(screen.getByRole("button", { name: "Back to graph" })).toBeTruthy();
@@ -197,7 +212,7 @@ describe("GraphView dedicated notes page", () => {
       makeTab({ id: "a", domain: "github.com", notes: "From the tab card" }),
       makeTab({ id: "b", domain: "github.com" }),
     ]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     openNotes();
 
     expect((screen.getByPlaceholderText("Start writing…") as HTMLTextAreaElement).value).toBe(
@@ -209,7 +224,7 @@ describe("GraphView dedicated notes page", () => {
     seedSelectedTab("a");
     const onStoreUpdate = vi.fn();
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
     openNotes();
 
     const textarea = screen.getByPlaceholderText("Start writing…");
@@ -232,7 +247,7 @@ describe("GraphView dedicated notes page", () => {
       makeTab({ id: "a", domain: "github.com", notes: "Old note" }),
       makeTab({ id: "b", domain: "github.com" }),
     ]);
-    render(<GraphView store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={onStoreUpdate} onClose={vi.fn()} />);
     openNotes();
 
     const textarea = screen.getByPlaceholderText("Start writing…");
@@ -246,7 +261,7 @@ describe("GraphView dedicated notes page", () => {
   it("closing the notes page returns to the graph without touching selection", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     openNotes();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
@@ -259,7 +274,7 @@ describe("GraphView dedicated notes page", () => {
 
   it("offers no Notes entry point when no node is selected", () => {
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "Notes" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
@@ -268,12 +283,12 @@ describe("GraphView dedicated notes page", () => {
   it("closes when the tab is removed from the store while its note is open", () => {
     seedSelectedTab("a");
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
-    const { rerender } = render(<GraphView store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    const { rerender } = render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
     openNotes();
     expect(screen.getByPlaceholderText("Start writing…")).toBeTruthy();
 
     const withoutA = makeStore([makeTab({ id: "b", domain: "github.com" })]);
-    rerender(<GraphView store={withoutA} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
+    rerender(<GraphViewHarness store={withoutA} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "Back to graph" })).toBeNull();
   });

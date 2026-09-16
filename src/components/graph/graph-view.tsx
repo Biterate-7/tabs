@@ -51,10 +51,8 @@ import { GatherDialog } from "@/components/workspace/gather-dialog"
 import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
 import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
 
-import { useAgentStore } from "@/hooks/use-agent-store"
 import { useAgentSpatial } from "@/hooks/use-agent-spatial"
 import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
-import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
 import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
@@ -65,10 +63,11 @@ import { CONNECTOR_STATUS_LABELS } from "@/lib/agents/connectors/types"
 import { GraphAgentPanel } from "./graph-agent-panel"
 import { AgentWorld } from "@/components/agents/agent-world"
 import { useAgentWorld } from "@/hooks/use-agent-world"
+import { buildWorldRoster } from "@/lib/agents/world/roster"
 import { handoffsForCharacter } from "@/lib/agents/world/scene"
 import type { AgentActivityItem } from "@/components/agents/agent-activity-list"
 import type { WorldCharacterDetail } from "@/components/agents/agent-world-detail"
-import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
+import type { AgentStoreApi } from "@/hooks/use-agent-store"
 
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
@@ -88,10 +87,26 @@ export function GraphView({
   store,
   onStoreUpdate,
   onClose,
+  agentStore,
+  agentSessionsAvailable,
 }: {
   store: WorkspaceStore
   onStoreUpdate: (store: WorkspaceStore) => void
   onClose: () => void
+  /**
+   * The agent domain, mounted once at the shell and handed down.
+   *
+   * It used to be mounted here, alongside the observer that feeds it. Both
+   * moved out when the Agent World became a view of its own: two surfaces
+   * that each mounted their own store would have been two debounced writers
+   * racing on one localStorage key, and two observers would have been two
+   * ingestion paths for the same observations. One of each, at the shell,
+   * removes the question rather than relying on the two views never being
+   * open at once. See AppShell, and connectors/single-loop.test.ts.
+   */
+  agentStore: AgentStoreApi
+  /** Whether Claude Code sessions can currently be observed, from the shell's observer. */
+  agentSessionsAvailable: boolean
 }) {
   const canvasHandleRef = useRef<GraphCanvasHandle>(null)
   const [graphState, setGraphState] = useState<GraphPersistedState>(() => {
@@ -246,11 +261,10 @@ export function GraphView({
   /**
    * The agent work layer.
    *
-   * Reads the agent store, which the Phase 12 observer feeds — this view owns
-   * no polling and makes no request of its own. It is also strictly a reader:
-   * nothing here can change a run, a status or a relationship.
+   * Reads the agent store the shell mounted, which the observer feeds — this
+   * view owns no polling and makes no request of its own. It is also strictly
+   * a reader: nothing here can change a run, a status or a relationship.
    */
-  const agentStore = useAgentStore()
   const agentTabBounds = useMemo(() => {
     const points = Object.values(graphState.positions)
     if (points.length === 0) return null
@@ -268,25 +282,6 @@ export function GraphView({
   }, [graphState.positions])
 
   /**
-   * Per-workspace tab index for exact-match URL linking, keyed by TabDump's
-   * own normalized URL so an agent visiting a saved page links to the same tab
-   * the user would have opened.
-   */
-  const agentTabIndexes = useMemo(
-    () =>
-      store.workspaces.map((workspace) => {
-        const tabsByNormalizedUrl = new Map<string, string>()
-        for (const tab of workspace.tabs) {
-          if (!tabsByNormalizedUrl.has(tab.normalizedUrl)) {
-            tabsByNormalizedUrl.set(tab.normalizedUrl, tab.id)
-          }
-        }
-        return { workspaceId: workspace.id, tabsByNormalizedUrl }
-      }),
-    [store.workspaces]
-  )
-
-  /**
    * Connector state, read-only.
    *
    * No `restore` here: AppShell owns that, because the manager outlives any
@@ -295,30 +290,6 @@ export function GraphView({
    * and the settings panel can never disagree about what is connected.
    */
   const connectors = useAgentConnectors()
-
-  /**
-   * THE observer. Mounted exactly once, here, beside the store it feeds.
-   *
-   * Phase 12 owns observation; every other consumer — the canvas, the panel,
-   * search — reads the store this fills. Mounting it anywhere else as well
-   * would double the polling done against the user's machine, which is why
-   * there is one call site and an architectural test guarding it.
-   *
-   * Since Phase 17 the observation *source* is the connector the manager
-   * owns, so whether anything is read at all is the user's connect/disconnect
-   * decision rather than a constant in this file.
-   */
-  const claudeConnector = useMemo(
-    () => connectors.manager.connector("claude-code") as ClaudeCodeConnector | undefined,
-    [connectors.manager]
-  )
-
-  const agentObserver = useClaudeCodeObserver({
-    store: agentStore,
-    enabled: true,
-    connector: claudeConnector ?? null,
-    tabIndexes: agentTabIndexes,
-  })
 
   /**
    * The connector strip's view models.
@@ -349,18 +320,15 @@ export function GraphView({
   /**
    * Connected providers that could appear in the world as idle stand-ins.
    *
-   * Only ones reporting `connected` — a provider the user enabled but which
-   * cannot be observed here has nothing to stand around doing, and drawing it
-   * would imply a working connection that does not exist.
+   * Connected ones only. The dedicated Agent World view draws the whole
+   * roster, connected or not, because it is the surface someone opens to find
+   * out what the feature is; this is a small window onto work in progress
+   * beside the canvas, and filling it with agents that are not running would
+   * crowd out the one that is. Both go through `buildWorldRoster`, so the two
+   * surfaces cannot disagree about a provider's name or status.
    */
   const idleWorldProviders = useMemo(
-    () =>
-      connectors.connectors
-        .filter((view) => view.status.kind === "connected")
-        .map((view) => ({
-          provider: view.descriptor.provider,
-          displayName: view.descriptor.displayName,
-        })),
+    () => buildWorldRoster(connectors.connectors),
     [connectors.connectors]
   )
 
@@ -1198,7 +1166,7 @@ export function GraphView({
         onFit={handleFit}
         agentPanel={
           <GraphAgentPanel
-            available={agentObserver.available}
+            available={agentSessionsAvailable}
             filter={agentSpatial.filter}
             onFilterChange={agentSpatial.setFilter}
             connectors={agentPanelConnectors}

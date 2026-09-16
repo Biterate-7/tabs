@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
 import { Toaster } from "@/components/ui/sonner";
+import { AppearanceProvider } from "@/components/appearance-provider";
 import { loadWorkspaceStore, saveWorkspace, saveWorkspaceStore } from "@/lib/workspace/persistence";
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
@@ -606,5 +607,118 @@ describe("AppShell timestamp stamping", () => {
     for (const tab of placed) {
       expect(tab.updatedAt!).toBeLessThanOrEqual(workspace!.updatedAt);
     }
+  });
+});
+
+describe("AppShell Agent World", () => {
+  /**
+   * The entry point, at the shell.
+   *
+   * The world's own behaviour is covered in agent-world-view.test.tsx; what
+   * these pin down is the thing the rework was actually about — that it can
+   * be reached from the app's navigation, with nothing dumped, nothing
+   * connected and nothing running, and that its header's two quick-access
+   * controls land on the right settings section rather than merely on
+   * Settings.
+   */
+  it("opens from the sidebar with no tabs, no connectors and no agents", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    expect(await screen.findByRole("heading", { name: "Agent World" })).toBeTruthy();
+  });
+
+  it("shows the world rather than an empty screen on that first open", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    expect(await screen.findByRole("region", { name: "AGENTS IN THIS WORLD" })).toBeTruthy();
+    expect(screen.getByText(/Your agents will appear here as they work/)).toBeTruthy();
+  });
+
+  it("goes back to the workspace", async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+  });
+
+  /**
+   * Settings reads AppearanceProvider, which the real app mounts in the root
+   * layout rather than in AppShell. The tests above deliberately mount the
+   * shell bare; the three below need the provider because they navigate into
+   * Settings, so they get it the same way the route does.
+   */
+  function renderWithAppearance() {
+    // jsdom has no matchMedia, and useAppearance reads it directly to resolve
+    // the OS reduced-motion preference. `afterEach`'s unstubAllGlobals puts it
+    // back, so this does not leak into the suites above.
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })
+    );
+    render(
+      <AppearanceProvider>
+        <AppShell />
+      </AppearanceProvider>
+    );
+  }
+
+  it("lands on the connectors section, not just on Settings", async () => {
+    const user = userEvent.setup();
+    renderWithAppearance();
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(screen.getByRole("button", { name: "AI connectors" }));
+
+    const nav = await screen.findAllByRole("button", { name: "AI connectors" });
+    expect(nav.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
+  });
+
+  it("lands on the Agent World section of Settings", async () => {
+    const user = userEvent.setup();
+    renderWithAppearance();
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(screen.getByRole("button", { name: "Agent World settings" }));
+
+    const nav = await screen.findAllByRole("button", { name: "Agent World" });
+    expect(nav.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
+  });
+
+  it("comes back to the world from the settings it sent you to", async () => {
+    // A control that reads as a round trip has to be one. Settings still
+    // returns to the workspace when the workspace is where it was opened
+    // from — see the test below.
+    const user = userEvent.setup();
+    renderWithAppearance();
+
+    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(screen.getByRole("button", { name: "Agent World settings" }));
+    await user.click(await screen.findByRole("button", { name: "Back" }));
+
+    expect(await screen.findByRole("heading", { name: "Agent World" })).toBeTruthy();
+  });
+
+  it("still opens Settings on its usual section from the sidebar", async () => {
+    // The deep link must not become the new default for everybody else.
+    const user = userEvent.setup();
+    renderWithAppearance();
+
+    await user.click(await screen.findByRole("button", { name: "Open Settings" }));
+    const theme = await screen.findAllByRole("button", { name: "Theme" });
+    expect(theme.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
+
+    // And still returns where it always did.
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
   });
 });

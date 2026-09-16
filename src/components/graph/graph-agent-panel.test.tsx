@@ -514,14 +514,22 @@ describe("the Agent World entry point", () => {
     expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull()
   })
 
-  it("is absent when there is nothing to watch", () => {
-    // A button opening an empty room would be a control that promises more
-    // than it delivers.
-    renderPanel({ onOpenWorld: vi.fn(), hasAnyAgentData: false })
-    expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull()
+  it("is offered before this workspace has any agent history", async () => {
+    // It used to be hidden here, on the principle that a button opening an
+    // empty room promises more than it delivers. That was true of the room it
+    // used to open. The world now has a real idle state — the connected
+    // agents standing in it, and a line saying what would make them work — so
+    // the gate was hiding the view that explains the feature from exactly the
+    // people who had not found it yet.
+    const user = userEvent.setup()
+    const onOpenWorld = vi.fn()
+    renderPanel({ onOpenWorld, hasAnyAgentData: false })
+
+    await user.click(screen.getByRole("button", { name: "Agent World" }))
+    expect(onOpenWorld).toHaveBeenCalled()
   })
 
-  it("opens the world when there is", async () => {
+  it("opens the world once there is work in it", async () => {
     const user = userEvent.setup()
     const onOpenWorld = vi.fn()
     renderPanel({ onOpenWorld })

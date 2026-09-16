@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Bot } from "lucide-react"
-import { EmptyState } from "@/components/ui/empty-state"
 import { useAgentMotion } from "@/hooks/use-agent-motion"
 import { CHARACTER_FOOTPRINT, travelDurationMs } from "@/lib/agents/world/layout"
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
@@ -63,6 +62,16 @@ export type AgentWorldProps = {
   details?: (characterId: string) => WorldCharacterDetail | null
   /** Controls for the header — a customise button, a close button. */
   actions?: React.ReactNode
+  /**
+   * Takes the user to the connectors page, from the idle copy and from an
+   * unconnected agent's detail card.
+   *
+   * Optional throughout. The world is rendered by surfaces that have no
+   * navigation of their own, and every affordance that depends on this one
+   * simply does not appear without it — none of them is load-bearing for
+   * understanding the room.
+   */
+  onOpenConnectors?: () => void
   className?: string
 }
 
@@ -134,6 +143,7 @@ export function AgentWorld({
   onSelect,
   details,
   actions,
+  onOpenConnectors,
   className,
 }: AgentWorldProps) {
   const policy = useAgentMotion(settings.animation)
@@ -287,6 +297,21 @@ export function AgentWorld({
 
   const hasAnyone = scene.characters.length > 0
 
+  /**
+   * Whether anything in the room is actually a run.
+   *
+   * The distinction the idle experience turns on. A room holding five
+   * stand-ins is not empty — there is a world to look at and identities to
+   * explore — but nothing is happening in it, and saying "5 agents" without
+   * saying "idle" would read as five agents at work. Derived rather than
+   * passed, because `runId` already carries the fact.
+   */
+  const workingCount = scene.characters.reduce(
+    (total, character) => total + (character.runId ? 1 : 0),
+    0
+  )
+  const idleOnly = hasAnyone && workingCount === 0
+
   return (
     <div
       className={cn("flex min-w-0 flex-col gap-2", className)}
@@ -315,7 +340,9 @@ export function AgentWorld({
         role="group"
         aria-label={`Agent ${scene.theme.spaceLabel}${
           hasAnyone
-            ? `, ${scene.characters.length} agent${scene.characters.length === 1 ? "" : "s"}`
+            ? `, ${scene.characters.length} agent${scene.characters.length === 1 ? "" : "s"}${
+                idleOnly ? ", none working" : ""
+              }`
             : ", empty"
         }`}
         tabIndex={settings.camera === "free" ? 0 : -1}
@@ -361,13 +388,36 @@ export function AgentWorld({
           ))}
         </div>
 
+        {/*
+          The empty room, which is a different thing from an idle one.
+
+          `pointer-events-none` is the deliberate part: the copy sits over the
+          scenery rather than replacing it, so someone arriving at a world
+          with nothing in it still sees what the world *is* — and can still
+          drag a free camera around it — instead of reading a card on a blank
+          panel. Only the button inside takes the pointer back.
+        */}
         {!hasAnyone && (
-          <div className="absolute inset-0 flex items-center justify-center p-4">
-            <EmptyState
-              icon={Bot}
-              title="No agents at work here"
-              description="Agents appear in this world when a connected agent starts working in this workspace."
-            />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <div className="pointer-events-auto max-w-xs rounded-xl border border-subtle bg-popover/80 px-4 py-3 text-center backdrop-blur-sm">
+              <Bot className="mx-auto size-5 text-tertiary" aria-hidden />
+              <p className="mt-1.5 text-body-sm font-medium text-foreground">
+                Your agents will appear here as they work
+              </p>
+              <p className="mt-0.5 text-meta text-tertiary">
+                Connect an AI agent and this {scene.theme.spaceLabel} fills with the sessions
+                running in this workspace.
+              </p>
+              {onOpenConnectors && (
+                <button
+                  type="button"
+                  onClick={onOpenConnectors}
+                  className="mt-2 rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                >
+                  AI connectors
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -382,6 +432,22 @@ export function AgentWorld({
             }`
           : ""}
       </p>
+
+      {/*
+        A room with agents in it and no work happening says so in words.
+
+        Not an overlay, because there is something to look at: the figures are
+        real identities standing in a real environment, and covering them to
+        explain that nothing is happening would hide the very thing that makes
+        the feature legible on first open. It is also the honest reading of
+        requirement §8 — the figures are visibly idle and captioned "Idle",
+        and this line says what would change that.
+      */}
+      {idleOnly && (
+        <p className="text-meta text-tertiary">
+          Your agents will appear here as they work. Nothing is running in this workspace yet.
+        </p>
+      )}
 
       {/* Never a silent omission: a world that could not draw everybody says
           how many it left out. */}
@@ -398,6 +464,7 @@ export function AgentWorld({
           detail={details?.(selected.id) ?? null}
           now={now}
           onClose={() => onSelect(null)}
+          onOpenConnectors={onOpenConnectors}
         />
       )}
     </div>
@@ -470,6 +537,11 @@ function CharacterButton({
   const label = [
     character.agentName,
     presentation.label,
+    // A stand-in that is not connected says so, in the connector layer's own
+    // word. "Codex — Idle" and "Codex — Idle — Not connected" are different
+    // facts, and the second is the one someone needs before they wonder why
+    // it never does anything.
+    character.presence === "available" ? character.statusLabel : undefined,
     character.activity,
     `at ${character.stationLabel}`,
   ]

@@ -13,6 +13,7 @@ import type { AgentRun, AgentRunStatus } from "@/lib/agents/types";
 import type { AgentVisualState } from "@/lib/agents/visual/types";
 import type { DerivedHandoff } from "./handoffs";
 import type { LayoutSubject } from "./layout";
+import type { WorldPresence } from "./roster";
 import type { AgentWorldSettings } from "./settings";
 import type { WorldCharacter, WorldHandoff, WorldScene } from "./types";
 
@@ -34,10 +35,21 @@ import type { WorldCharacter, WorldHandoff, WorldScene } from "./types";
 
 const LIVE_STATUSES = new Set<AgentRunStatus>(LIVE_AGENT_RUN_STATUSES);
 
-/** A connected provider with nothing to show. Drawn only when "show idle agents" is on. */
+/**
+ * A provider with nothing to show. Drawn only when "show idle agents" is on.
+ *
+ * Structurally a `WorldRosterEntry` with the two extra fields optional, so the
+ * roster builder's output drops straight in while the Phase 18 shape — a bare
+ * provider and a name — keeps working. An entry that says nothing about its
+ * presence is treated as `connected`, which is the only kind that existed
+ * before the roster did.
+ */
 export type WorldIdleProvider = {
   provider: string;
   displayName: string;
+  presence?: WorldPresence;
+  /** The connector layer's own status word, carried through to the detail card. */
+  statusLabel?: string;
 };
 
 export type BuildWorldSceneInput = {
@@ -212,6 +224,12 @@ export function buildWorldScene(input: BuildWorldSceneInput): WorldScene {
         agentName: idle.displayName,
         title: idle.displayName,
         state,
+        // `idle`, unconditionally, for both kinds of stand-in. A figure that
+        // is here because the user connected it and a figure that is here
+        // because this build ships it are both doing nothing, and the only
+        // thing that may ever put a character into a live state is a run.
+        presence: idle.presence ?? "connected",
+        statusLabel: idle.statusLabel,
         character: agentVisualIdentity(idle.provider).character ?? DEFAULT_WORLD_CHARACTER,
         updatedAt: 0,
       });

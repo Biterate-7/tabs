@@ -1,4 +1,5 @@
 import type { AgentVisualState, WorldCharacterConfig } from "@/lib/agents/visual/types";
+import type { WorldPresence } from "./roster";
 
 /**
  * The Agent World's model.
@@ -219,6 +220,23 @@ export type WorldCharacter = {
    */
   runId?: string;
   agentId?: string;
+  /**
+   * What a character with no run is.
+   *
+   * Absent for a run — a run's presence is that it exists. Present for the
+   * two kinds of stand-in: `connected`, an observable agent that has done
+   * nothing here yet, and `available`, an agent this build ships that the
+   * user has not connected. Both are drawn `idle`, and neither can ever hold
+   * a working, thinking or communicating state — see world/roster.ts for why
+   * an unconnected provider is drawn at all.
+   */
+  presence?: WorldPresence;
+  /**
+   * The connector layer's own status word for a stand-in, e.g. "Not
+   * connected". Carried rather than re-derived, so the world and the settings
+   * page cannot disagree about what state a connector is in.
+   */
+  statusLabel?: string;
   /** Opaque provider key, used to resolve a visual identity. Never branched on here. */
   provider: string;
   /** The agent's name, as the domain recorded it. */

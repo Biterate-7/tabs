@@ -80,7 +80,36 @@ describe("drawing the world", () => {
   it("says the room is empty rather than saying nothing", () => {
     renderWorld({ scene: emptyWorldScene(THEME) });
     expect(screen.getByRole("group", { name: /office floor, empty/ })).toBeTruthy();
-    expect(screen.getByText("No agents at work here")).toBeTruthy();
+    expect(screen.getByText("Your agents will appear here as they work")).toBeTruthy();
+  });
+
+  it("leaves the room visible behind its own empty copy", () => {
+    // The copy sits over the scenery rather than replacing it, so someone
+    // arriving at a world with nothing in it still sees what the world is.
+    const { container } = renderWorld({ scene: emptyWorldScene(THEME) });
+    expect(container.querySelectorAll("rect").length).toBeGreaterThan(0);
+    expect(container.querySelector(".pointer-events-none.absolute.inset-0")).not.toBeNull();
+  });
+
+  it("says nobody is working when the room holds only idle stand-ins", () => {
+    renderWorld({
+      scene: scene({
+        characters: [
+          character({
+            id: "idle:gemini",
+            runId: undefined,
+            agentId: undefined,
+            state: "idle",
+            activity: undefined,
+            agentName: "Gemini",
+            presence: "connected",
+          }),
+        ],
+      }),
+    });
+
+    expect(screen.getByRole("group", { name: /1 agent, none working/ })).toBeTruthy();
+    expect(screen.getByText(/Nothing is running in this workspace yet/)).toBeTruthy();
   });
 
   it("draws twenty agents, each with its own button", () => {

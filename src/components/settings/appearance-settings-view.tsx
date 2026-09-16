@@ -28,7 +28,7 @@ import { AccentSection } from "./sections/accent-section"
 import { ConnectorsSection } from "./sections/connectors-section"
 import { AgentWorldSection } from "./sections/agent-world-section"
 
-type NavSection =
+export type SettingsSection =
   | "general"
   | "connectors"
   | "agent-world"
@@ -47,7 +47,7 @@ type NavSection =
  * would mean disconnecting the user's agents, a destructive action with no
  * business hiding behind a button labelled about themes.
  */
-const APPEARANCE_SECTIONS: readonly NavSection[] = [
+const APPEARANCE_SECTIONS: readonly SettingsSection[] = [
   "general",
   "theme",
   "typography",
@@ -58,7 +58,7 @@ const APPEARANCE_SECTIONS: readonly NavSection[] = [
   "accent",
 ]
 
-const NAV: { id: NavSection; label: string; icon: typeof Settings2 }[] = [
+const NAV: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "connectors", label: "AI connectors", icon: Bot },
   { id: "agent-world", label: "Agent World", icon: Boxes },
@@ -82,8 +82,20 @@ export function AppearanceSettingsView({
   onClose,
   workspaceId,
   workspaceName,
+  initialSection,
 }: {
   onClose: () => void
+  /**
+   * Which section to open on.
+   *
+   * Exists so another surface can send someone straight to the settings they
+   * came for — the Agent World's header does exactly that for "AI connectors"
+   * and "Agent World settings", and a deep link that landed on Theme and left
+   * them to find the right row would not be the one-click promise those
+   * controls make. It is an initial value, not a controlled prop: once here,
+   * the nav is the user's.
+   */
+  initialSection?: SettingsSection
   /**
    * The workspace Settings was opened over, when there is one.
    *
@@ -96,7 +108,7 @@ export function AppearanceSettingsView({
   workspaceName?: string
 }) {
   const { resetAllAppearance } = useAppearanceContext()
-  const [active, setActive] = useState<NavSection>("theme")
+  const [active, setActive] = useState<SettingsSection>(initialSection ?? "theme")
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background" style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}>
@@ -163,6 +175,7 @@ export function AppearanceSettingsView({
               key={item.id}
               type="button"
               onClick={() => setActive(item.id)}
+              aria-current={active === item.id}
               className={cn(
                 "shrink-0 rounded-full px-3 py-1 text-label",
                 active === item.id ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"
