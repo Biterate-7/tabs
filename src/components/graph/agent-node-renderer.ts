@@ -1,7 +1,7 @@
 import { truncateToWidth } from "@/lib/graph/canvas-text";
 import type { DrawContext } from "./node-renderer";
 import type { AgentEdgeKind } from "@/lib/agents/spatial/types";
-import type { AgentRunStatus } from "@/lib/agents/types";
+import type { AgentRunStatus, AgentWorkItemStatus } from "@/lib/agents/types";
 
 /**
  * Drawing the agent layer.
@@ -44,6 +44,32 @@ export const AGENT_STATUS_VISUALS: Record<AgentRunStatus | "idle", StatusVisual>
   blocked: { glyph: "▲", label: "Blocked", tone: "bad", animated: false },
   cancelled: { glyph: "—", label: "Cancelled", tone: "muted", animated: false },
   idle: { glyph: "○", label: "Idle", tone: "muted", animated: false },
+};
+
+/**
+ * Work item status presentation.
+ *
+ * A glyph *and* a word for each, mirroring AGENT_STATUS_VISUALS above: status
+ * must never be carried by colour alone, and a screen reader must be able to
+ * read the state out as a word rather than announce a coloured dot.
+ *
+ * The glyphs deliberately differ from the run glyphs — an active work item is
+ * not the same kind of thing as a working run, and reusing the same mark would
+ * suggest they are interchangeable.
+ *
+ * Lives here rather than in the inspector that first used it because the
+ * landing page renders work item status too, and importing it from that panel
+ * would pull the whole inspector into the marketing bundle.
+ */
+export const WORK_ITEM_STATUS_VISUALS: Record<
+  AgentWorkItemStatus,
+  { glyph: string; label: string }
+> = {
+  pending: { glyph: "○", label: "Pending" },
+  active: { glyph: "◐", label: "Active" },
+  blocked: { glyph: "▲", label: "Blocked" },
+  completed: { glyph: "✓", label: "Completed" },
+  cancelled: { glyph: "—", label: "Cancelled" },
 };
 
 /**

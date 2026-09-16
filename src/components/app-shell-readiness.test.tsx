@@ -14,6 +14,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
+import { dismissOnboarding } from "@/lib/onboarding";
 import { emptyReport } from "@/lib/sections/ai/report";
 import { saveWorkspaceStore } from "@/lib/workspace/persistence";
 import type { Section } from "@/lib/sections/types";
@@ -76,6 +77,13 @@ function graphButton(): HTMLButtonElement {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // Every test in this file is about the app, not about how a first-time
+  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // which AppShell answers with the public landing page rather than the app
+  // shell (see the FirstRunLanding branch) — so mark onboarding as already
+  // handled here, and let the tests that care about the landing page opt back
+  // out by clearing it again.
+  dismissOnboarding();
   toast.dismiss();
   pending = [];
   pipeline.organizeTabsCollectively.mockImplementation(

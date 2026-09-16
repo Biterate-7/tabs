@@ -3,7 +3,7 @@
 import { Bot, FileCode2, PlugZap } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Pill } from "@/components/workspace/category-filter-bar"
-import { AGENT_STATUS_VISUALS } from "./agent-node-renderer"
+import { AGENT_STATUS_VISUALS, WORK_ITEM_STATUS_VISUALS } from "./agent-node-renderer"
 import { AGENT_FILTER_LABELS, AGENT_SPATIAL_FILTERS } from "@/lib/agents/spatial/types"
 import type { AgentSearchResult } from "@/lib/agents/spatial/search"
 import type { AgentRunSummary } from "@/lib/agents/intelligence/types"
@@ -18,7 +18,6 @@ import type {
   AgentRunArtifactRole,
   AgentRunLinkRole,
   AgentRunStatus,
-  AgentWorkItemStatus,
 } from "@/lib/agents/types"
 
 /**
@@ -93,27 +92,11 @@ export type InspectorRun = {
   status: keyof typeof AGENT_STATUS_VISUALS
 }
 
-/**
- * Work item status presentation.
- *
- * A glyph *and* a word for each, mirroring AGENT_STATUS_VISUALS: status must
- * never be carried by colour alone, and a screen reader must be able to read
- * the state out as a word rather than announce a coloured dot.
- *
- * The glyphs deliberately differ from the run glyphs — an active work item is
- * not the same kind of thing as a working run, and reusing the same mark would
- * suggest they are interchangeable.
- */
-export const WORK_ITEM_STATUS_VISUALS: Record<
-  AgentWorkItemStatus,
-  { glyph: string; label: string }
-> = {
-  pending: { glyph: "○", label: "Pending" },
-  active: { glyph: "◐", label: "Active" },
-  blocked: { glyph: "▲", label: "Blocked" },
-  completed: { glyph: "✓", label: "Completed" },
-  cancelled: { glyph: "—", label: "Cancelled" },
-}
+// Re-exported from its new home beside AGENT_STATUS_VISUALS: the landing page
+// renders work item status too, and importing it from this panel would pull
+// the whole inspector into that bundle.
+export { WORK_ITEM_STATUS_VISUALS }
+
 
 /**
  * Progress as text, or nothing at all.

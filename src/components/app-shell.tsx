@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { LandingView } from "@/components/landing-view"
+import { FirstRunLanding } from "@/components/marketing/first-run-landing"
+import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
@@ -115,6 +117,14 @@ const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
 export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
+  // Has this visitor engaged with TabDump at all — connected the extension, or
+  // explicitly chosen to skip onboarding? Decides whether `/` shows the public
+  // landing page or the app (see the branch before this shell's return).
+  // Defaults to true, the conservative answer: the app, not a marketing page,
+  // is what an unknown visitor gets if this never resolves. Read post-mount
+  // alongside the store below, for the same localStorage reason — never during
+  // render.
+  const [onboarded, setOnboarded] = useState(true)
   const [canPersist, setCanPersist] = useState(true)
   const [view, setView] = useState<"workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump">("workspace")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -238,6 +248,13 @@ export function AppShell() {
     // same effect is still in the middle of setting.
     if (available && changedOnLoad) saveWorkspaceStore(synced)
     setSidebarCollapsed(loadSidebarCollapsed())
+    const onboarding = getOnboardingState()
+    // `available` gates this: with no localStorage there is no way to tell a
+    // first-time visitor from a returning one, and getOnboardingState's default
+    // would answer "first time" on every single load — trapping someone behind
+    // the landing page on every visit forever. Unknown resolves to onboarded,
+    // i.e. the app.
+    setOnboarded(!available || onboarding.dismissed || onboarding.extensionConnected)
     if (!available) {
       toast.info("Your workspace won't be saved between visits", {
         description: "Local storage isn't available in this browser.",
@@ -977,6 +994,22 @@ export function AppShell() {
   }
 
   if (!hydrated || !store || !currentWorkspace) return null
+
+  // A first-time visitor gets TabDump's public landing page, full-bleed: no
+  // sidebar, no content-width clamp, none of the workspace chrome that means
+  // nothing to someone who has not dumped anything yet.
+  //
+  // The condition is deliberately conservative on both halves — the onboarding
+  // flag AND an entirely empty store — so a returning user who merely cleared a
+  // workspace is never sent back to marketing; they fall through to
+  // LandingView's in-shell empty state below, exactly as before.
+  //
+  // AppShell stays mounted around this, so an extension dump arriving mid-scroll
+  // still lands in the store and the next render swaps straight through to the
+  // real app without the landing page having to know it happened.
+  if (!onboarded && store.workspaces.every((w) => w.tabs.length === 0)) {
+    return <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
+  }
 
   if (view === "graph") {
     // The gate, at the transition itself rather than inside the canvas: while
