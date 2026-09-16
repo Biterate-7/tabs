@@ -60,12 +60,12 @@ export const WORLD_ANIMATIONS: readonly WorldAnimation[] = ["off", "subtle", "fu
  *
  * | switch | what it turns off |
  * |---|---|
- * | `particles` | the moving element inside each mark, and handoff packets |
+ * | `particles` | the moving element inside each mark, and the packets that travel a handoff line |
  * | `handoffTrails` | the lines between agents that shared work |
- * | `ambientLife` | the environment's own faint movement |
+ * | `ambientLife` | the environment's own faint movement: lit screens, traffic, beacons |
  * | `completionEffects` | the one-shot flourish when a run finishes |
  * | `statusEffects` | per-state animation on characters in the world |
- * | `scenery` | decor: desks, towers, racks, plants |
+ * | `scenery` | the rooms and their furniture, leaving the bare floor |
  */
 export type WorldEffects = {
   particles: boolean;
@@ -95,12 +95,12 @@ export const WORLD_EFFECT_KEYS = [
 ] as const satisfies readonly (keyof WorldEffects)[];
 
 export const WORLD_EFFECT_LABELS: Record<keyof WorldEffects, string> = {
-  particles: "Particles",
-  handoffTrails: "Handoff trails",
-  ambientLife: "Ambient life",
+  particles: "Data streams",
+  handoffTrails: "Communication trails",
+  ambientLife: "Ambient effects",
   completionEffects: "Completion effects",
   statusEffects: "Status animation",
-  scenery: "Scenery",
+  scenery: "Environment detail",
 };
 
 /** Bounds on the agent scale slider. Narrow, so no setting can make the world unreadable. */

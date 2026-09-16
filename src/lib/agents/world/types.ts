@@ -1,4 +1,6 @@
 import type { AgentVisualState, WorldCharacterConfig } from "@/lib/agents/visual/types";
+import type { WorldFixture, WorldRoom } from "./architecture";
+import type { WorldCraft } from "./craft";
 import type { WorldPresence } from "./roster";
 
 /**
@@ -138,20 +140,40 @@ export const STABLE_ZONE_FOR_STATE: Record<AgentVisualState, WorldZoneKind> = {
 /**
  * A place in the world an agent can stand.
  *
- * Coordinates are normalised 0..1 against the stage, never pixels. The stage
- * is whatever size the viewport gives it — a full panel on a desktop, a short
- * strip on a phone — and a layout in pixels would need re-authoring per
- * breakpoint. Normalised coordinates make the responsive requirement (§20) a
- * property of the model rather than a set of media queries.
+ * Carries its position twice, and the duplication is the point. `planX` and
+ * `planY` are where the station is on the **floor** — the space rooms,
+ * desks and towers are authored in, where a rectangle is a rectangle. `x`
+ * and `y` are where that lands on the **stage** once projected, normalised
+ * 0..1, which is what the renderer multiplies by the measured pixel size.
+ *
+ * Both are derived from one source: `stationsFrom` in themes.ts projects the
+ * plan coordinate and stores the result, so the two can never disagree.
+ * Keeping the plan coordinate is what lets the geometry rules be stated about
+ * the floor ("this station is inside its room") while the separation rules
+ * are stated about the screen ("these two figures do not overlap"), which is
+ * the space each question actually belongs in.
  */
 export type WorldStation = {
   id: string;
   zone: WorldZoneKind;
+  /**
+   * Which kind of work prefers this station.
+   *
+   * Only ever set on stations in the `work` zone, and only a *preference*:
+   * a run whose craft cannot be derived, or whose station is full, is placed
+   * by the zone's ordinary fill rules. See craft.ts for what may and may not
+   * be concluded from a run's evidence.
+   */
+  craft?: WorldCraft;
   /** What this station is called in this theme. Shown as a label at detailed density. */
   label: string;
-  /** 0..1 across the stage. */
+  /** 0..1 across the floor. */
+  planX: number;
+  /** 0..1 down the floor. */
+  planY: number;
+  /** 0..1 across the stage, after projection. */
   x: number;
-  /** 0..1 down the stage. */
+  /** 0..1 down the stage, after projection. */
   y: number;
   /**
    * How many characters stand here before the next station is used.
@@ -164,35 +186,35 @@ export type WorldStation = {
   capacity: number;
 };
 
-/** Scenery. Purely decorative, never interactive, and the first thing dropped at low density. */
-export type WorldDecor = {
-  id: string;
-  /** The shape family the renderer draws. Themes compose scenes from these. */
-  kind: "block" | "panel" | "tower" | "bench" | "screen" | "plant" | "rack" | "window";
-  x: number;
-  y: number;
-  /** Width and height, normalised like the coordinates. */
-  width: number;
-  height: number;
-  /**
-   * Whether this piece carries the theme's ambient animation.
-   *
-   * A minority of decor on purpose: §25 asks for a world that feels alive
-   * while keeping the active agent dominant, and the way that is guaranteed
-   * is by animating few things, faintly. The renderer enforces the amplitude;
-   * this flag decides the count.
-   */
-  ambient?: boolean;
-};
-
-/** One environment. Entirely data — no theme contributes behaviour. */
+/**
+ * One environment. Entirely data — no theme contributes behaviour.
+ *
+ * `rooms` replaced Phase 18's flat `decor` list, and the replacement is not
+ * only richer but differently shaped: scenery used to be a bag of rectangles
+ * with nothing to say about itself, and is now organised under rooms that
+ * have a name, a purpose and a set of stations. That is what makes §6's
+ * "clicking a room tells you what happens there" derivable rather than a
+ * second table somebody has to keep in step.
+ */
 export type WorldTheme = {
   id: WorldThemeId;
   name: string;
   /** One line, for the theme picker. */
   description: string;
+  /** Interior or exterior, which decides the backdrop the renderer draws behind it. */
+  setting: "interior" | "exterior";
   stations: WorldStation[];
-  decor: WorldDecor[];
+  rooms: WorldRoom[];
+  /**
+   * Scenery that belongs to no room.
+   *
+   * The skyline behind a city, the trusses under a deck, the pot plants in a
+   * corridor. Drawn before every room and never interactive — §6 asks that
+   * the world not turn every decorative object into a click target, and this
+   * is the structural form of that: a thing in `backdrop` has no name, no
+   * purpose and no way to be selected, because it is not a place.
+   */
+  backdrop: WorldFixture[];
   /** What this theme calls the space itself, for the stage's accessible name. */
   spaceLabel: string;
 };
@@ -246,10 +268,23 @@ export type WorldCharacter = {
   state: AgentVisualState;
   /** The run's sanitised activity line, or its active work item's title. Never raw provider text. */
   activity?: string;
+  /**
+   * The kind of work this run's own evidence points at, when it points
+   * anywhere.
+   *
+   * Absent for a stand-in, and absent for a run whose title, tasks and files
+   * say nothing — which is a real state, not a gap to be filled in. It
+   * decides which room the figure works in and nothing else; the caption and
+   * the detail card still come from the run itself. See craft.ts.
+   */
+  craft?: WorldCraft;
   zone: WorldZoneKind;
   stationId: string;
   stationLabel: string;
-  /** Final position, 0..1, station plus slot offset. */
+  /** The room this character's station stands in, when the theme puts it in one. */
+  roomId?: string;
+  roomName?: string;
+  /** Final position on the stage, 0..1, projected station plus slot offset. */
   x: number;
   y: number;
   /** Slot within the station. Decides the offset, and is stable for a given run. */

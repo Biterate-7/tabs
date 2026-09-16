@@ -1,45 +1,60 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Bot } from "lucide-react"
+import { Bot, Crosshair, Locate, Minus, Plus } from "lucide-react"
 import { useAgentMotion } from "@/hooks/use-agent-motion"
-import { CHARACTER_FOOTPRINT, travelDurationMs } from "@/lib/agents/world/layout"
+import { travelDurationMs } from "@/lib/agents/world/layout"
+import {
+  CHARACTER_HEIGHT_UNITS,
+  STAGE_HEIGHT,
+  STAGE_WIDTH,
+  contentBoxFor,
+} from "@/lib/agents/world/projection"
+import { roomById } from "@/lib/agents/world/themes"
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import { AgentCharacter } from "./agent-character"
 import { AgentWorldDetail } from "./agent-world-detail"
+import { AgentWorldRoomDetail } from "./agent-world-room-detail"
+import { WorldSky } from "./agent-world-scenery"
 import { AgentWorldStage } from "./agent-world-stage"
 import type { WorldCharacterDetail } from "./agent-world-detail"
-import type { AgentWorldSettings } from "@/lib/agents/world/settings"
+import type { StageContentBox } from "@/lib/agents/world/projection"
+import type { AgentWorldSettings, WorldDensity } from "@/lib/agents/world/settings"
 import type { WorldCharacter, WorldScene } from "@/lib/agents/world/types"
 
 /**
  * The Agent World.
  *
- * A room, with the agents that are actually working in it. Everything the
- * room shows is derived from observed state: a figure exists because a run
- * exists, it stands where it stands because of that run's status, and the
- * lines between figures are transfers the domain recorded. Nothing is
- * decorative except the furniture.
+ * A place, with the agents that are actually working in it. Everything the
+ * world shows is derived from observed state: a figure exists because a run
+ * exists, it stands in the room it stands in because of what that run has
+ * said and touched, and the lines between figures are transfers the domain
+ * recorded. Nothing is decorative except the building.
  *
  * ## It is DOM, and that is the accessibility story
  *
  * Every agent is a `<button>` with a complete accessible name — who, what
- * state, what task, where. Tab reaches them in layout order, Enter opens the
- * detail card, Escape closes it. A screen reader user gets the same
- * information a sighted one does, in the same order, without the layout
- * having to mean anything to them. That is the main reason this is not a
- * canvas: a canvas would have needed all of it rebuilt from nothing.
+ * state, what task, which room. Every room is a button too. Tab reaches them
+ * in layout order, Enter opens the detail card, Escape closes it. A screen
+ * reader user gets the same information a sighted one does, in the same
+ * order, without the layout having to mean anything to them. That is the main
+ * reason this is not a canvas.
  *
- * ## The caption bar, and why it is not a floating tooltip
+ * It is also the one constraint the isometric redesign had to work around
+ * rather than through: a DOM figure always paints over the SVG behind it, so
+ * nothing in the scenery may be both tall enough to hide somebody and nearer
+ * the camera than they are. The themes are authored so it never happens and
+ * `themes.test.ts` fails the build if one stops being.
  *
- * Hovering or focusing an agent fills a fixed strip beneath the stage rather
- * than popping a card at the cursor. Three reasons, in order of weight: a
- * floating card near the top edge of a short stage has nowhere to go; the
- * same strip serves hover and keyboard focus identically, so there is one
- * behaviour rather than two; and a caption that always appears in the same
- * place is read faster than one that appears wherever the pointer happens to
- * be. It is instant and it never moves.
+ * ## The camera
+ *
+ * `settings.camera` chooses the **default** framing — the whole world, the
+ * active agents, everybody, or wherever you left it. On top of that, dragging,
+ * the wheel, a pinch and the arrow keys all work in every mode, and taking
+ * hold of the camera that way parks the automatic framing until Reset view
+ * hands it back. A control called "Static" that refused to be nudged would be
+ * a preference masquerading as a lock.
  */
 
 export type AgentWorldProps = {
@@ -68,47 +83,159 @@ export type AgentWorldProps = {
    *
    * Optional throughout. The world is rendered by surfaces that have no
    * navigation of their own, and every affordance that depends on this one
-   * simply does not appear without it — none of them is load-bearing for
-   * understanding the room.
+   * simply does not appear without it.
    */
   onOpenConnectors?: () => void
+  /**
+   * The shape of the stage box.
+   *
+   * The dedicated view gives the world the rest of the screen; the panel over
+   * the graph canvas gives it a fixed ratio. The world does not care which —
+   * it measures whatever box it is in and fits itself to it — so this is a
+   * class rather than a mode.
+   */
+  stageClassName?: string
   className?: string
 }
 
 /**
- * How big to draw a figure, given the stage it stands on.
+ * How big to draw a figure, in pixels.
  *
- * The layout engine reserves `CHARACTER_FOOTPRINT` of the stage per
- * character and guarantees its slots clear that much. This is the other half
- * of that contract: draw a figure at the size the reservation assumed, so the
- * guarantee holds at any stage size rather than only at the one the constants
- * were eyeballed against.
+ * The argument is the scale that maps one stage unit to one pixel for this
+ * box, so a figure is drawn at exactly the height the projection reserved for
+ * it. The layout engine's separation guarantee is stated in the same units,
+ * which is what makes it hold at any stage size rather than only at the one
+ * the constants were eyeballed against.
  *
- * Clamped at both ends. Below about 20px a figure stops being readable as a
- * figure; above about 44px it starts to dominate a panel that also has to
- * hold a caption and a detail card.
+ * The camera's zoom is deliberately *not* applied here: it scales the whole
+ * world, figures included, so zooming in makes everyone bigger — which is
+ * what zooming in is supposed to do.
+ *
+ * Clamped at both ends. Below about 14px a figure stops being readable as a
+ * figure; above about 64px it starts to dominate a room it is supposed to be
+ * standing in.
  */
-export function characterPixelSize(stageHeight: number): number {
-  if (!Number.isFinite(stageHeight) || stageHeight <= 0) return 36;
-  return Math.round(Math.min(44, Math.max(20, stageHeight * CHARACTER_FOOTPRINT.height)));
+export function characterPixelSize(fit: number): number {
+  if (!Number.isFinite(fit) || fit <= 0) return 30
+  return Math.round(Math.min(64, Math.max(14, CHARACTER_HEIGHT_UNITS * fit)))
 }
 
-/** Where the camera is looking, in normalised stage coordinates. */
-type CameraView = { cx: number; cy: number; scale: number }
+/** Where the camera is looking: a point in world fractions, and how far in. */
+type CameraView = { fx: number; fy: number; scale: number }
 
-const STATIC_VIEW: CameraView = { cx: 0.5, cy: 0.5, scale: 1 }
+/** The middle of the world, at whatever zoom this box needs to stay legible. */
+function centeredIn(fit: StageFit | null): CameraView {
+  return { fx: 0.5, fy: 0.5, scale: fit?.baseZoom ?? 1 }
+}
+
+const MAX_ZOOM = 3.2
 
 /** States that count as "active" for the follow-active camera. */
 const ACTIVE_STATES = new Set(["working", "thinking", "communicating", "starting"])
 
 /**
+ * The smallest a figure may be drawn before the world stops being worth
+ * looking at, in pixels.
+ *
+ * Below this a character is a coloured smudge: you can tell somebody is there
+ * and not who, what state they are in, or which desk they are at. It is the
+ * number that decides whether a given box shows the whole world or a part of
+ * it — see `fitFor`.
+ */
+const MIN_FIGURE_PX = 22
+
+/**
+ * How the container maps onto the world.
+ *
+ * The world is always drawn at the size that **fits** the container, and the
+ * camera's baseline zoom decides how much of it you see. The two together
+ * settle a question every isometric view has to answer and most answer badly:
+ * a box that is much wider than the world either letterboxes it or crops it,
+ * and which is right depends entirely on how big that leaves the people in it.
+ *
+ * So the rule is stated in those terms. If fitting the whole world still
+ * leaves a figure readable, the whole world is shown — nothing is hidden from
+ * someone who has the room for it. If it does not, the view starts zoomed in
+ * far enough to be legible and the rest is a drag away, which is what makes
+ * the phone case a window into a headquarters rather than a photograph of one
+ * taken from too far off.
+ */
+type StageFit = {
+  /** Stage units to pixels, before the camera's zoom. */
+  scale: number
+  width: number
+  height: number
+  /** The zoom the camera starts at: 1 for the whole world, more to stay legible. */
+  baseZoom: number
+  container: { width: number; height: number }
+  /**
+   * A character's normalised stage `y`, as a fraction of the *drawn* box.
+   *
+   * The two differ because an interior world is cropped to the part of the
+   * stage it uses (see `STAGE_CONTENT_BOX`). Everything upstream stays in
+   * full-stage terms; this is the single place the crop is applied, and both
+   * the camera and the figures go through it so they cannot disagree.
+   */
+  toFy: (y: number) => number
+}
+
+function fitFor(
+  container: { width: number; height: number },
+  box: StageContentBox
+): StageFit | null {
+  if (container.width <= 0 || container.height <= 0) return null
+
+  const fit = Math.min(container.width / STAGE_WIDTH, container.height / box.height)
+  const fill = Math.max(container.width / STAGE_WIDTH, container.height / box.height)
+  const figure = fit * CHARACTER_HEIGHT_UNITS
+
+  const baseZoom =
+    figure >= MIN_FIGURE_PX
+      ? 1
+      : Math.min(MAX_ZOOM, Math.max(fill / fit, MIN_FIGURE_PX / Math.max(figure, 1)))
+
+  return {
+    scale: fit,
+    width: STAGE_WIDTH * fit,
+    height: box.height * fit,
+    baseZoom,
+    container,
+    toFy: (y: number) => (y * STAGE_HEIGHT - box.y) / box.height,
+  }
+}
+
+/**
+ * Keeps the camera over the world.
+ *
+ * The visible half-width in world fractions is whatever the container covers
+ * at this zoom, so the centre can travel exactly as far as the edges allow and
+ * no further. At zoom 1 on a wide screen that interval collapses to a point,
+ * which is the correct behaviour: there is nothing off-screen to pan to.
+ */
+function clampView(view: CameraView, fit: StageFit): CameraView {
+  const scale = Math.min(MAX_ZOOM, Math.max(1, view.scale))
+  const halfX = Math.min(0.5, fit.container.width / (2 * scale * fit.width))
+  const halfY = Math.min(0.5, fit.container.height / (2 * scale * fit.height))
+
+  return {
+    scale,
+    fx: Math.min(1 - halfX, Math.max(halfX, view.fx)),
+    fy: Math.min(1 - halfY, Math.max(halfY, view.fy)),
+  }
+}
+
+/**
  * Frames a set of characters.
  *
- * Returns the static view for an empty set rather than a degenerate one — a
- * camera asked to frame nothing should show the room, not divide by zero.
+ * Returns the centred view for an empty set rather than a degenerate one — a
+ * camera asked to frame nothing should show the world, not divide by zero.
  */
-function frame(characters: readonly WorldCharacter[], maxScale: number): CameraView {
-  if (characters.length === 0) return STATIC_VIEW
+function frame(
+  characters: readonly WorldCharacter[],
+  maxScale: number,
+  fit: StageFit | null
+): CameraView {
+  if (characters.length === 0 || !fit) return centeredIn(fit)
 
   let minX = 1
   let maxX = 0
@@ -117,21 +244,45 @@ function frame(characters: readonly WorldCharacter[], maxScale: number): CameraV
   for (const character of characters) {
     if (character.x < minX) minX = character.x
     if (character.x > maxX) maxX = character.x
-    if (character.y < minY) minY = character.y
-    if (character.y > maxY) maxY = character.y
+    const fy = fit.toFy(character.y)
+    if (fy < minY) minY = fy
+    if (fy > maxY) maxY = fy
   }
 
   // A margin wide enough that a framed figure is never flush against the
   // edge, plus a floor on the span so a single character does not zoom to
   // absurdity.
-  const spanX = Math.max(maxX - minX, 0.28) + 0.18
-  const spanY = Math.max(maxY - minY, 0.28) + 0.22
+  const spanX = Math.max(maxX - minX, 0.16) + 0.14
+  const spanY = Math.max(maxY - minY, 0.16) + 0.18
 
-  return {
-    cx: (minX + maxX) / 2,
-    cy: (minY + maxY) / 2,
-    scale: Math.min(maxScale, Math.max(1, Math.min(1 / spanX, 1 / spanY))),
-  }
+  const scale = Math.min(
+    maxScale,
+    Math.max(
+      1,
+      Math.min(
+        fit.container.width / (spanX * fit.width),
+        fit.container.height / (spanY * fit.height)
+      )
+    )
+  )
+
+  return clampView({ fx: (minX + maxX) / 2, fy: (minY + maxY) / 2, scale }, fit)
+}
+
+/**
+ * How much of the environment this box can carry.
+ *
+ * §14 asks that a phone not be a shrunken desktop, and this is the mechanism:
+ * the same world, drawn with less furniture and with the camera already
+ * closer, rather than the same drawing at a third of the size. The user's own
+ * visual-detail setting is a ceiling, never a floor — asking for Minimal on a
+ * desktop still gets Minimal.
+ */
+function densityForBox(preferred: WorldDensity, width: number): WorldDensity {
+  if (width <= 0) return preferred
+  if (width < 520) return "minimal"
+  if (width < 880) return preferred === "detailed" ? "balanced" : preferred
+  return preferred
 }
 
 export function AgentWorld({
@@ -144,22 +295,24 @@ export function AgentWorld({
   details,
   actions,
   onOpenConnectors,
+  stageClassName,
   className,
 }: AgentWorldProps) {
   const policy = useAgentMotion(settings.animation)
   const animate = policy !== "none"
 
   const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const [freeView, setFreeView] = useState<CameraView>(STATIC_VIEW)
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
+  const [hoveredRoomId, setHoveredRoomId] = useState<string | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
 
   /**
    * The stage's pixel size.
    *
-   * Measured so characters can be positioned with `transform: translate3d`,
-   * which is what lets the browser interpolate a walk between two stations on
-   * the compositor instead of animating `left`/`top` and relaying out the
-   * scene every frame.
+   * Measured so the world can be drawn at a size that covers it and
+   * characters can be positioned with `transform: translate3d`, which is what
+   * lets the browser interpolate a walk between two rooms on the compositor
+   * instead of animating `left`/`top` and relaying out the scene every frame.
    *
    * It starts at zero — on the server, and on the first client render, there
    * is no layout — and the renderer falls back to percentage offsets until a
@@ -181,26 +334,66 @@ export function AgentWorld({
     return () => observer.disconnect()
   }, [])
 
-  const view = useMemo<CameraView>(() => {
+  const fit = useMemo(
+    () => fitFor(stageSize, contentBoxFor(scene.theme.setting)),
+    [stageSize, scene.theme.setting]
+  )
+  const density = densityForBox(settings.density, stageSize.width)
+
+  /**
+   * The camera the user has taken hold of, or null for "follow the setting".
+   *
+   * Reset by the control below, and reset in render when the mode changes,
+   * which is React's own answer to "derive state from a prop": the alternative
+   * is an effect that fires after a paint showing the old framing.
+   */
+  const [manualView, setManualView] = useState<CameraView | null>(null)
+  const [mode, setMode] = useState(settings.camera)
+  const [dragging, setDragging] = useState(false)
+
+  if (mode !== settings.camera) {
+    setMode(settings.camera)
+    setManualView(null)
+  }
+
+  const autoView = useMemo<CameraView>(() => {
     switch (settings.camera) {
       case "follow-active":
         return frame(
           scene.characters.filter((character) => ACTIVE_STATES.has(character.state)),
-          2.1
+          2.4,
+          fit
         )
       case "follow-workflow":
-        return frame(scene.characters, 1.8)
+        return frame(scene.characters, 2, fit)
       case "free":
-        return freeView
       case "static":
       default:
-        return STATIC_VIEW
+        return centeredIn(fit)
     }
-  }, [settings.camera, scene.characters, freeView])
+  }, [settings.camera, scene.characters, fit])
+
+  const view = useMemo(
+    () => (fit ? clampView(manualView ?? autoView, fit) : (manualView ?? autoView)),
+    [manualView, autoView, fit]
+  )
 
   const selected = useMemo(
     () => scene.characters.find((character) => character.id === selectedId) ?? null,
     [scene.characters, selectedId]
+  )
+
+  const selectedRoom = useMemo(
+    () => (selectedRoomId ? roomById(scene.theme, selectedRoomId) : null),
+    [scene.theme, selectedRoomId]
+  )
+
+  const roomOccupants = useMemo(
+    () =>
+      selectedRoomId
+        ? scene.characters.filter((character) => character.roomId === selectedRoomId)
+        : [],
+    [scene.characters, selectedRoomId]
   )
 
   const captioned = useMemo(() => {
@@ -208,109 +401,258 @@ export function AgentWorld({
     return scene.characters.find((character) => character.id === id) ?? null
   }, [scene.characters, hoveredId, selectedId])
 
-  /**
-   * Dragging and wheeling the free camera.
-   *
-   * A control called "Free" that only answered the keyboard would be a
-   * setting that does not do what it is named. The keyboard path below stays
-   * — it is the one a keyboard user has — and this is the one everyone else
-   * reaches for first.
-   *
-   * A drag that starts on an agent is left alone: that is a click on a
-   * button, and stealing it would make the figures unselectable in exactly
-   * the camera mode where someone is most likely to be exploring.
-   */
-  const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null)
-
-  const onPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (settings.camera !== "free") return
-      if ((event.target as HTMLElement).closest("button")) return
-
-      dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
-      event.currentTarget.setPointerCapture?.(event.pointerId)
-    },
-    [settings.camera]
+  const captionedRoom = useMemo(
+    () => (hoveredRoomId ? roomById(scene.theme, hoveredRoomId) : null),
+    [scene.theme, hoveredRoomId]
   )
+
+  /** Selecting a figure and selecting a room are mutually exclusive. */
+  const selectCharacter = useCallback(
+    (id: string | null) => {
+      setSelectedRoomId(null)
+      onSelect(id)
+    },
+    [onSelect]
+  )
+
+  const selectRoom = useCallback(
+    (roomId: string | null) => {
+      if (roomId) onSelect(null)
+      setSelectedRoomId(roomId)
+    },
+    [onSelect]
+  )
+
+  // ---- Camera gestures ----------------------------------------------------
+
+  const nudge = useCallback(
+    (change: (view: CameraView) => CameraView) => {
+      setManualView((current) => {
+        const base = current ?? autoView
+        const next = change(base)
+        return fit ? clampView(next, fit) : next
+      })
+    },
+    [autoView, fit]
+  )
+
+  const zoomBy = useCallback(
+    (factor: number, at?: { fx: number; fy: number }) => {
+      nudge((current) => {
+        const scale = Math.min(MAX_ZOOM, Math.max(1, current.scale * factor))
+        if (!at || scale === current.scale) return { ...current, scale }
+        // Keep the world point under the pointer where it is: the camera
+        // centre moves towards it in proportion to how much closer we got.
+        const ratio = current.scale / scale
+        return {
+          scale,
+          fx: at.fx - ratio * (at.fx - current.fx),
+          fy: at.fy - ratio * (at.fy - current.fy),
+        }
+      })
+    },
+    [nudge]
+  )
+
+  /**
+   * The world point under a client coordinate, in world fractions.
+   *
+   * Needed for zoom-at-pointer, which is the difference between a wheel that
+   * magnifies what you are looking at and one that magnifies the middle of
+   * the room while you chase it with the mouse.
+   */
+  const worldPointAt = useCallback(
+    (clientX: number, clientY: number): { fx: number; fy: number } | null => {
+      const element = stageRef.current
+      if (!element || !fit) return null
+      const box = element.getBoundingClientRect()
+      const offsetX = (clientX - box.left) / box.width - 0.5
+      const offsetY = (clientY - box.top) / box.height - 0.5
+      return {
+        fx: view.fx + (offsetX * fit.container.width) / (view.scale * fit.width),
+        fy: view.fy + (offsetY * fit.container.height) / (view.scale * fit.height),
+      }
+    },
+    [fit, view]
+  )
+
+  /**
+   * Pointers currently down on the stage.
+   *
+   * One is a drag, two is a pinch. Held in a ref rather than in state because
+   * every frame of a gesture would otherwise be a React render, and the thing
+   * being updated is a transform that does not need one.
+   */
+  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ distance: number } | null>(null)
+
+  /**
+   * Whether the pointer travelled far enough for this to have been a drag.
+   *
+   * The rooms cover almost the whole floor, so refusing to start a drag on one
+   * would mean the camera could only be dragged from the gaps between them.
+   * Instead the drag starts anywhere, and a gesture that actually moved
+   * swallows the click it would otherwise have produced — which is what every
+   * map does, and what anyone who has just dragged a world around expects.
+   */
+  const dragged = useRef(false)
+
+  const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    dragged.current = false
+    // A press on a figure or a control is a click on that thing. Rooms are
+    // deliberately not in this list: see `dragged`.
+    if ((event.target as HTMLElement).closest?.("button")) return
+
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    if (pointers.current.size === 1) setDragging(true)
+  }, [])
+
+  /** Swallows the click at the end of a drag, before it reaches a room. */
+  const onClickCapture = useCallback((event: React.MouseEvent) => {
+    if (!dragged.current) return
+    dragged.current = false
+    event.stopPropagation()
+  }, [])
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current
-      if (!drag || drag.pointerId !== event.pointerId) return
-      if (stageSize.width <= 0 || stageSize.height <= 0) return
+      const previous = pointers.current.get(event.pointerId)
+      if (!previous || !fit) return
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
 
-      const dx = event.clientX - drag.x
-      const dy = event.clientY - drag.y
-      dragRef.current = { ...drag, x: event.clientX, y: event.clientY }
+      const points = [...pointers.current.values()]
 
-      // Divided by the scale so a drag moves the world by the distance under
-      // the pointer rather than by a distance that shrinks as you zoom in.
-      setFreeView((view) => ({
-        ...view,
-        cx: clamp01(view.cx - dx / (stageSize.width * view.scale)),
-        cy: clamp01(view.cy - dy / (stageSize.height * view.scale)),
+      if (points.length >= 2) {
+        // Pinch: the ratio of the two touches' separation is the zoom, and
+        // their midpoint is what stays still.
+        const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+        const last = pinch.current
+        pinch.current = { distance }
+        if (last && last.distance > 0) {
+          const midpoint = worldPointAt(
+            (points[0].x + points[1].x) / 2,
+            (points[0].y + points[1].y) / 2
+          )
+          zoomBy(distance / last.distance, midpoint ?? undefined)
+        }
+        return
+      }
+
+      const dx = event.clientX - previous.x
+      const dy = event.clientY - previous.y
+      // Four pixels of slop, so a click with an unsteady hand is still a
+      // click.
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragged.current = true
+
+      // Divided by the zoom so a drag moves the world by the distance under
+      // the pointer rather than by one that shrinks as you zoom in.
+      nudge((current) => ({
+        ...current,
+        fx: current.fx - dx / (current.scale * fit.width),
+        fy: current.fy - dy / (current.scale * fit.height),
       }))
     },
-    [stageSize.width, stageSize.height]
+    [fit, nudge, worldPointAt, zoomBy]
   )
 
-  const endDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId !== event.pointerId) return
-    dragRef.current = null
+  const endPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(event.pointerId)
     event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (pointers.current.size < 2) pinch.current = null
+    if (pointers.current.size === 0) setDragging(false)
   }, [])
 
-  const onWheel = useCallback(
-    (event: React.WheelEvent) => {
-      if (settings.camera !== "free") return
-      setFreeView(zoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12))
-    },
-    [settings.camera]
-  )
+  /**
+   * The wheel, attached by hand.
+   *
+   * React's `onWheel` is registered passively, so it cannot stop the page
+   * scrolling behind a zoom. One non-passive listener on the stage can, and
+   * it is the only listener in this component that is not JSX.
+   */
+  useEffect(() => {
+    const element = stageRef.current
+    if (!element) return
+
+    function onWheel(event: WheelEvent) {
+      event.preventDefault()
+      // A trackpad's two-finger pan arrives as a mostly-horizontal wheel, and
+      // treating that as zoom makes the world lurch sideways under the
+      // fingers. Everything else — a mouse wheel, a pinch, which the platform
+      // reports as ctrl+wheel — is a zoom, as §7 asks.
+      if (!event.ctrlKey && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        if (!fit) return
+        nudge((current) => ({
+          ...current,
+          fx: current.fx + event.deltaX / (current.scale * fit.width),
+        }))
+        return
+      }
+      zoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, worldPointAt(event.clientX, event.clientY) ?? undefined)
+    }
+
+    element.addEventListener("wheel", onWheel, { passive: false })
+    return () => element.removeEventListener("wheel", onWheel)
+  }, [fit, nudge, zoomBy, worldPointAt])
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
-      if (event.key === "Escape" && selectedId) {
-        onSelect(null)
+      if (event.key === "Escape") {
+        if (selectedRoomId) {
+          setSelectedRoomId(null)
+          return
+        }
+        if (selectedId) {
+          onSelect(null)
+          return
+        }
         return
       }
-      if (settings.camera !== "free") return
 
-      // Keyboard panning and zooming, so the free camera is not a
-      // pointer-only control. Step sizes are a twentieth of the stage, which
-      // is roughly one character's width.
+      // Keyboard panning and zooming, so the camera is not a pointer-only
+      // control. Step sizes are a twentieth of the world, which is roughly
+      // one room.
       const step = 0.05
-      if (event.key === "ArrowLeft") setFreeView((v) => ({ ...v, cx: clamp01(v.cx - step) }))
-      else if (event.key === "ArrowRight") setFreeView((v) => ({ ...v, cx: clamp01(v.cx + step) }))
-      else if (event.key === "ArrowUp") setFreeView((v) => ({ ...v, cy: clamp01(v.cy - step) }))
-      else if (event.key === "ArrowDown") setFreeView((v) => ({ ...v, cy: clamp01(v.cy + step) }))
-      else if (event.key === "+" || event.key === "=") setFreeView(zoomBy(1.2))
-      else if (event.key === "-") setFreeView(zoomBy(1 / 1.2))
+      if (event.key === "ArrowLeft") nudge((v) => ({ ...v, fx: v.fx - step / v.scale }))
+      else if (event.key === "ArrowRight") nudge((v) => ({ ...v, fx: v.fx + step / v.scale }))
+      else if (event.key === "ArrowUp") nudge((v) => ({ ...v, fy: v.fy - step / v.scale }))
+      else if (event.key === "ArrowDown") nudge((v) => ({ ...v, fy: v.fy + step / v.scale }))
+      else if (event.key === "+" || event.key === "=") zoomBy(1.2)
+      else if (event.key === "-") zoomBy(1 / 1.2)
+      else if (event.key === "0") setManualView(null)
       else return
 
       event.preventDefault()
     },
-    [selectedId, onSelect, settings.camera]
+    [selectedId, selectedRoomId, onSelect, nudge, zoomBy]
   )
 
-  const travel = travelDurationMs(policy)
+  const focusActive = useCallback(() => {
+    const active = scene.characters.filter((character) => ACTIVE_STATES.has(character.state))
+    setManualView(frame(active.length > 0 ? active : scene.characters, 2.4, fit))
+  }, [scene.characters, fit])
 
+  // ---- Drawing ------------------------------------------------------------
+
+  const travel = travelDurationMs(policy)
   const hasAnyone = scene.characters.length > 0
+  const size = fit ? characterPixelSize(fit.scale) : 30
 
   /**
    * Whether anything in the room is actually a run.
    *
-   * The distinction the idle experience turns on. A room holding five
-   * stand-ins is not empty — there is a world to look at and identities to
+   * The distinction the idle experience turns on. A world holding five
+   * stand-ins is not empty — there is a place to look at and identities to
    * explore — but nothing is happening in it, and saying "5 agents" without
-   * saying "idle" would read as five agents at work. Derived rather than
-   * passed, because `runId` already carries the fact.
+   * saying "idle" would read as five agents at work.
    */
   const workingCount = scene.characters.reduce(
     (total, character) => total + (character.runId ? 1 : 0),
     0
   )
   const idleOnly = hasAnyone && workingCount === 0
+
+  const cameraMoved = manualView !== null
 
   return (
     <div
@@ -334,9 +676,17 @@ export function AgentWorld({
 
       <div
         ref={stageRef}
-        className="agent-world-stage w-full overflow-hidden rounded-xl border border-subtle bg-background-secondary"
+        data-world-setting={scene.theme.setting}
+        data-world-theme={scene.theme.id}
+        className={cn(
+          "agent-world-stage w-full overflow-hidden rounded-xl border border-subtle",
+          dragging ? "cursor-grabbing" : "cursor-grab",
+          stageClassName ?? "aspect-[3/4] sm:aspect-[10/7]"
+        )}
         // A group rather than an application: the characters inside are
-        // ordinary buttons and browse mode works on them normally.
+        // ordinary buttons and browse mode works on them normally. It is
+        // focusable in every camera mode, because panning and zooming are
+        // available in every camera mode.
         role="group"
         aria-label={`Agent ${scene.theme.spaceLabel}${
           hasAnyone
@@ -345,56 +695,87 @@ export function AgentWorld({
               }`
             : ", empty"
         }`}
-        tabIndex={settings.camera === "free" ? 0 : -1}
+        tabIndex={0}
         onKeyDown={onKeyDown}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onWheel={onWheel}
-        style={
-          settings.camera === "free"
-            ? { aspectRatio: "5 / 3", cursor: "grab", touchAction: "none" }
-            : { aspectRatio: "5 / 3" }
-        }
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
+        onClickCapture={onClickCapture}
+        style={{ touchAction: "none" }}
       >
-        <div
-          className="absolute inset-0"
-          style={{
-            transformOrigin: "center",
-            transform: `scale(${view.scale}) translate(${(0.5 - view.cx) * 100}%, ${(0.5 - view.cy) * 100}%)`,
-            transition: animate ? `transform var(--duration-slow) var(--ease-standard)` : undefined,
-          }}
-        >
-          <AgentWorldStage
-            scene={scene}
-            settings={settings}
-            selectedId={selectedId}
-            animate={animate}
-          />
+        {/* Behind the camera, and deliberately not inside it: a sky that
+            panned with the floor would read as a painted backdrop being
+            dragged about. It also fills the space around a world that does
+            not fill its box. */}
+        <WorldSky setting={scene.theme.setting} />
 
+        <div
+          className="agent-world-camera"
+          style={
+            fit
+              ? {
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  width: `${fit.width}px`,
+                  height: `${fit.height}px`,
+                  transform: `translate(-50%, -50%) translate(${
+                    -view.scale * (view.fx - 0.5) * fit.width
+                  }px, ${-view.scale * (view.fy - 0.5) * fit.height}px) scale(${view.scale})`,
+                  transition:
+                    animate && !dragging
+                      ? "transform var(--duration-slow) var(--ease-standard)"
+                      : undefined,
+                }
+              : { position: "absolute", inset: 0 }
+          }
+        >
+          {/*
+            The agents come first in the DOM and last in the paint.
+
+            First in the DOM because Tab follows document order, and a
+            keyboard user who opened the Agent World came for the agents — not
+            for eleven rooms they have to pass through to reach one. Last in
+            the paint because every figure carries a z-index and the scenery
+            carries none, so the stacking context resolves them above it
+            whatever order they were written in.
+          */}
           {scene.characters.map((character) => (
             <CharacterButton
               key={character.id}
               character={character}
               settings={settings}
-              stageSize={stageSize}
+              fit={fit}
+              size={size}
               selected={character.id === selectedId}
               hovered={character.id === hoveredId}
-              onSelect={onSelect}
+              onSelect={selectCharacter}
               onHover={setHoveredId}
               animate={animate}
             />
           ))}
+
+          <AgentWorldStage
+            scene={scene}
+            settings={settings}
+            density={density}
+            selectedId={selectedId}
+            selectedRoomId={selectedRoomId}
+            hoveredRoomId={hoveredRoomId}
+            onSelectRoom={selectRoom}
+            onHoverRoom={setHoveredRoomId}
+            animate={animate}
+          />
         </div>
 
         {/*
-          The empty room, which is a different thing from an idle one.
+          The empty world, which is a different thing from an idle one.
 
           `pointer-events-none` is the deliberate part: the copy sits over the
           scenery rather than replacing it, so someone arriving at a world
           with nothing in it still sees what the world *is* — and can still
-          drag a free camera around it — instead of reading a card on a blank
+          drag the camera around it — instead of reading a card on a blank
           panel. Only the button inside takes the pointer back.
         */}
         {!hasAnyone && (
@@ -420,6 +801,15 @@ export function AgentWorld({
             </div>
           </div>
         )}
+
+        <CameraControls
+          zoom={view.scale}
+          moved={cameraMoved}
+          onZoomIn={() => zoomBy(1.25)}
+          onZoomOut={() => zoomBy(1 / 1.25)}
+          onFocusActive={focusActive}
+          onReset={() => setManualView(null)}
+        />
       </div>
 
       {/* The caption bar. Always present so the layout does not jump when
@@ -429,19 +819,19 @@ export function AgentWorld({
         {captioned
           ? `${captioned.agentName} · ${AGENT_VISUAL_STATE_PRESENTATION[captioned.state].label}${
               captioned.activity ? ` · ${captioned.activity}` : ""
-            }`
-          : ""}
+            }${captioned.roomName ? ` · ${captioned.roomName}` : ""}`
+          : captionedRoom
+            ? `${captionedRoom.name} · ${captionedRoom.purpose}`
+            : ""}
       </p>
 
       {/*
-        A room with agents in it and no work happening says so in words.
+        A world with agents in it and no work happening says so in words.
 
         Not an overlay, because there is something to look at: the figures are
         real identities standing in a real environment, and covering them to
         explain that nothing is happening would hide the very thing that makes
-        the feature legible on first open. It is also the honest reading of
-        requirement §8 — the figures are visibly idle and captioned "Idle",
-        and this line says what would change that.
+        the feature legible on first open.
       */}
       {idleOnly && (
         <p className="text-meta text-tertiary">
@@ -467,29 +857,94 @@ export function AgentWorld({
           onOpenConnectors={onOpenConnectors}
         />
       )}
+
+      {selectedRoom && (
+        <AgentWorldRoomDetail
+          room={selectedRoom}
+          occupants={roomOccupants}
+          onSelectCharacter={selectCharacter}
+          onClose={() => setSelectedRoomId(null)}
+        />
+      )}
     </div>
   )
 }
 
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value))
-}
+/**
+ * Zoom, focus and reset, as buttons.
+ *
+ * §7 asks for a camera that can be driven, and a gesture nobody can see is
+ * not a control — on a touch screen especially, where there is no wheel and
+ * no arrow keys. These are deliberately tertiary: small, translucent, in the
+ * corner, and they never fit a room.
+ */
+function CameraControls({
+  zoom,
+  moved,
+  onZoomIn,
+  onZoomOut,
+  onFocusActive,
+  onReset,
+}: {
+  zoom: number
+  moved: boolean
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onFocusActive: () => void
+  onReset: () => void
+}) {
+  const buttonClass =
+    "flex size-7 items-center justify-center rounded-md border border-subtle bg-popover/80 text-tertiary backdrop-blur-sm transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-40"
 
-function zoomBy(factor: number): (view: CameraView) => CameraView {
-  return (view) => ({ ...view, scale: Math.min(2.4, Math.max(1, view.scale * factor)) })
+  return (
+    // Above every figure's own z-index, so an agent standing in the near
+    // corner of the world cannot end up drawn over the zoom controls.
+    <div className="absolute bottom-2 right-2 z-[500] flex flex-col gap-1">
+      <button type="button" aria-label="Zoom in" className={buttonClass} onClick={onZoomIn}>
+        <Plus className="size-3.5" aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="Zoom out"
+        className={buttonClass}
+        disabled={zoom <= 1}
+        onClick={onZoomOut}
+      >
+        <Minus className="size-3.5" aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="Focus active agents"
+        className={buttonClass}
+        onClick={onFocusActive}
+      >
+        <Locate className="size-3.5" aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="Reset view"
+        className={buttonClass}
+        disabled={!moved}
+        onClick={onReset}
+      >
+        <Crosshair className="size-3.5" aria-hidden />
+      </button>
+    </div>
+  )
 }
 
 /**
  * One agent, placed and focusable.
  *
  * Memoised on primitives so a poll that changes one run re-renders one
- * button. `stageSize` is a fresh object per resize only, which is the one
- * moment every character genuinely does need to move.
+ * button. `fit` is a fresh object per resize only, which is the one moment
+ * every character genuinely does need to move.
  */
 function CharacterButton({
   character,
   settings,
-  stageSize,
+  fit,
+  size,
   selected,
   hovered,
   onSelect,
@@ -498,7 +953,8 @@ function CharacterButton({
 }: {
   character: WorldCharacter
   settings: AgentWorldSettings
-  stageSize: { width: number; height: number }
+  fit: StageFit | null
+  size: number
   selected: boolean
   hovered: boolean
   onSelect: (id: string | null) => void
@@ -506,7 +962,6 @@ function CharacterButton({
   animate: boolean
 }) {
   const presentation = AGENT_VISUAL_STATE_PRESENTATION[character.state]
-  const measured = stageSize.width > 0 && stageSize.height > 0
 
   // Two switches, and they gate different things. `statusEffects` is about
   // ongoing states — is this figure allowed to look busy. `completionEffects`
@@ -521,9 +976,11 @@ function CharacterButton({
   // `.agent-world-character` interpolates. Unmeasured (server, first paint,
   // jsdom): percentage offsets, which place everybody correctly with no
   // animation to run.
-  const position: React.CSSProperties = measured
+  const position: React.CSSProperties = fit
     ? {
-        transform: `translate3d(${character.x * stageSize.width}px, ${character.y * stageSize.height}px, 0) translate(-50%, -100%)`,
+        transform: `translate3d(${character.x * fit.width}px, ${
+          fit.toFy(character.y) * fit.height
+        }px, 0) translate(-50%, -100%)`,
       }
     : {
         left: `${character.x * 100}%`,
@@ -532,8 +989,7 @@ function CharacterButton({
       }
 
   // The accessible name says everything the figure expresses spatially: who,
-  // what state, what task, and where. Someone who never sees the room loses
-  // nothing but the picture.
+  // what state, what task, and where.
   const label = [
     character.agentName,
     presentation.label,
@@ -543,7 +999,7 @@ function CharacterButton({
     // it never does anything.
     character.presence === "available" ? character.statusLabel : undefined,
     character.activity,
-    `at ${character.stationLabel}`,
+    `in the ${character.roomName ?? character.stationLabel}`,
   ]
     .filter(Boolean)
     .join(" — ")
@@ -551,13 +1007,24 @@ function CharacterButton({
   return (
     <button
       type="button"
+      // Marks the character layer apart from the room buttons and the camera
+      // controls, which share the stage and the button role. Used by the
+      // tests and by visual QA in a real browser; nothing in the app branches
+      // on it.
+      data-world-character={character.id}
       className={cn(
         "agent-world-character rounded-lg outline-none",
         "focus-visible:ring-2 focus-visible:ring-ring/70",
         selected && "ring-2 ring-ring/60",
         hovered && !selected && "ring-1 ring-border-strong"
       )}
-      style={{ ...position, zIndex: selected ? 3 : 2 }}
+      style={{
+        ...position,
+        // Depth order. Further down the stage is nearer the camera, which is
+        // exactly what the projection guarantees, so a figure in front of
+        // another draws over it rather than under it.
+        zIndex: selected ? 400 : 100 + Math.round(character.y * 200),
+      }}
       aria-pressed={selected}
       aria-label={label}
       onClick={() => onSelect(selected ? null : character.id)}
@@ -574,11 +1041,11 @@ function CharacterButton({
           style={settings.agentStyle}
           intensity={settings.animation}
           animate={stateAnimated}
-          // Sized from the stage, not fixed: the layout reserved a share of
+          // Sized from the world, not fixed: the layout reserved a share of
           // the stage per character, and drawing at any other size would
-          // break the separation guarantee on a narrow panel. The user's own
-          // scale multiplies it — deliberately, and reversibly.
-          size={characterPixelSize(stageSize.height) * settings.agentScale}
+          // break the separation guarantee. The user's own scale multiplies
+          // it — deliberately, and reversibly.
+          size={size * settings.agentScale}
         />
       </span>
     </button>

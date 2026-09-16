@@ -429,3 +429,150 @@ describe("determinism", () => {
     expect(build(withRun)).toEqual(build(withRun));
   });
 });
+
+describe("which room an agent works in", () => {
+  /**
+   * The redesign's placement rule, end to end: a run's own evidence decides
+   * its craft, its craft decides its station, and its station decides the
+   * room the world says it is in. Nothing in this chain can see a provider.
+   */
+  function workingRun(title: string, files: string[] = [], provider = "claude-code") {
+    const { state, agentId } = seed(provider, "Agent");
+    const { state: created, runId } = addRun(state, agentId, "wA", title);
+    let next = setStatus(created, runId, "working");
+    for (const file of files) next = withArtifact(next, runId, file);
+    return { state: next, runId };
+  }
+
+  it("sends a run that has been editing code to the development room", () => {
+    const { state, runId } = workingRun("Session", ["src/app/page.tsx", "src/lib/utils.ts"]);
+    const character = build(state).characters.find((entry) => entry.id === runCharacterId(runId))!;
+
+    expect(character.craft).toBe("code");
+    expect(character.roomName).toBe("Development Room");
+  });
+
+  it("sends a run that says it is researching to the research lab", () => {
+    const { state, runId } = workingRun("Research competitor pricing");
+    const character = build(state).characters.find((entry) => entry.id === runCharacterId(runId))!;
+
+    expect(character.craft).toBe("research");
+    expect(character.roomName).toBe("Research Lab");
+  });
+
+  it("sends a run whose work cannot be told to the general floor", () => {
+    // The honest outcome for a run that has said nothing and touched nothing,
+    // and the one every run had before rooms existed.
+    const { state, runId } = workingRun("Session 4");
+    const character = build(state).characters.find((entry) => entry.id === runCharacterId(runId))!;
+
+    expect(character.craft).toBeUndefined();
+    expect(character.roomName).toBe("Operations Floor");
+  });
+
+  it("puts two runs of different crafts in different rooms", () => {
+    const first = workingRun("Draft the changelog", ["docs/changelog.md"]);
+    const { state: withSecondAgent, agentId } = seed("gemini", "Gemini");
+    // Both runs have to live in one state, so the second is added on top of
+    // the first rather than seeded separately.
+    const merged: typeof first.state = {
+      ...first.state,
+      agents: [...first.state.agents, ...withSecondAgent.agents],
+    };
+    const { state: created, runId: secondRun } = addRun(
+      merged,
+      agentId,
+      "wA",
+      "Benchmark the query",
+      T0 + 5
+    );
+    const state = withArtifact(setStatus(created, secondRun, "working"), secondRun, "data/q.csv");
+
+    const scene = build(state);
+    const writer = scene.characters.find((entry) => entry.id === runCharacterId(first.runId))!;
+    const analyst = scene.characters.find((entry) => entry.id === runCharacterId(secondRun))!;
+
+    expect(writer.roomName).toBe("Writing Studio");
+    expect(analyst.roomName).toBe("Analysis Room");
+    expect(writer.stationId).not.toBe(analyst.stationId);
+  });
+
+  it("does not let the same provider decide the room twice over", () => {
+    // Two runs of the same agent doing different work belong in different
+    // rooms. A world that grouped by provider would put them at one desk.
+    const coding = workingRun("Refactor the adapter", ["src/lib/adapter.ts"]);
+    const { state: created, runId: writingRun } = addRun(
+      coding.state,
+      coding.state.agents[0].id,
+      "wA",
+      "Draft the release notes",
+      T0 + 5
+    );
+    const state = withArtifact(
+      setStatus(created, writingRun, "working"),
+      writingRun,
+      "docs/notes.md"
+    );
+
+    const scene = build(state);
+    const coder = scene.characters.find((entry) => entry.id === runCharacterId(coding.runId))!;
+    const writer = scene.characters.find((entry) => entry.id === runCharacterId(writingRun))!;
+
+    expect(coder.roomName).toBe("Development Room");
+    expect(writer.roomName).toBe("Writing Studio");
+  });
+
+  it("holds a run at one desk when the user turned auto-arrange off", () => {
+    // The setting's promise is that a run keeps its desk for its whole
+    // working life. A craft can change as evidence accumulates, so honouring
+    // it would be a second reason for a figure to move after the user asked
+    // for none.
+    const { state, runId } = workingRun("Research the schema", ["src/db/schema.ts"]);
+    const character = build(state, { autoArrange: false }).characters.find(
+      (entry) => entry.id === runCharacterId(runId)
+    )!;
+
+    expect(character.craft).toBeUndefined();
+    expect(character.roomName).toBe("Operations Floor");
+  });
+
+  it("names the room an agent actually stands in, not the one it asked for", () => {
+    // Seven researchers into a six-desk lab: the seventh is on the general
+    // floor and the caption has to say the general floor.
+    let state = emptyAgentState();
+    const { state: seeded, agentId } = seed();
+    state = seeded;
+
+    const runIds: string[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      const created = addRun(state, agentId, "wA", "Research the market", T0 + index);
+      state = setStatus(created.state, created.runId, "working", T0 + index + 1);
+      runIds.push(created.runId);
+    }
+
+    const scene = build(state, {}, T0 + 10_000);
+    const rooms = runIds.map(
+      (runId) => scene.characters.find((entry) => entry.id === runCharacterId(runId))!.roomName
+    );
+
+    expect(rooms.slice(0, 6)).toEqual(Array(6).fill("Research Lab"));
+    expect(rooms[6]).toBe("Operations Floor");
+  });
+
+  it("gives every drawn character a room", () => {
+    // Every station in every shipped theme belongs to a room, so a character
+    // with no room name would mean the scene had placed somebody outside the
+    // building.
+    const { state, runId } = workingRun("Fix the build", ["src/a.ts"]);
+    const finished = setStatus(state, runId, "completed", T0 + 100);
+
+    for (const scene of [build(state), build(finished, {}, T0 + 200)]) {
+      for (const character of scene.characters) {
+        expect({ id: character.id, room: Boolean(character.roomName) }).toEqual({
+          id: character.id,
+          room: true,
+        });
+      }
+    }
+  });
+});

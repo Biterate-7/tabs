@@ -4,9 +4,10 @@ import { LIVE_AGENT_RUN_STATUSES } from "@/lib/agents/types";
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities";
 import { DEFAULT_WORLD_CHARACTER } from "@/lib/agents/visual/registry";
 import { visualStateForRun } from "@/lib/agents/visual/states";
+import { deriveCraft } from "./craft";
 import { deriveHandoffs } from "./handoffs";
 import { layoutWorld } from "./layout";
-import { getWorldTheme } from "./themes";
+import { getWorldTheme, roomForStation, stationKeyForCraft } from "./themes";
 import { STABLE_ZONE_FOR_STATE, ZONE_FOR_STATE, emptyWorldScene } from "./types";
 import type { AgentDomainIndex } from "@/lib/agents/intelligence/domain-index";
 import type { AgentRun, AgentRunStatus } from "@/lib/agents/types";
@@ -180,6 +181,34 @@ export function buildWorldScene(input: BuildWorldSceneInput): WorldScene {
     // name the user recognises.
     const agentName = agent?.name ?? agentVisualIdentity(provider).displayName;
 
+    /**
+     * Which room this run works in.
+     *
+     * Derived from the run's own evidence — what it has said it is doing and
+     * which files it has touched — and never from which provider it is. A run
+     * whose evidence says nothing gets no craft and stands on the general
+     * floor, which is where every run stood before rooms existed.
+     *
+     * Suppressed entirely when the user has turned auto-arrange off, because
+     * that setting's promise is that a run keeps its desk for its whole
+     * working life: a craft can change as evidence accumulates, and honouring
+     * it here would be a second reason for a figure to move after the user
+     * asked for none.
+     */
+    const craft = settings.autoArrange
+      ? deriveCraft({
+          title: run.title,
+          activity: run.currentActivity,
+          workItemTitles: (items ?? []).map((item) => item.title),
+          filePaths: (index.artifactLinksByRun.get(run.id) ?? []).flatMap((link) => {
+            const artifact = index.artifactsById.get(link.artifactId);
+            return artifact ? [artifact.relativePath] : [];
+          }),
+        })
+      : null;
+
+    const preferredStationKey = craft ? stationKeyForCraft(craft) : null;
+
     drafts.push({
       id: runCharacterId(run.id),
       runId: run.id,
@@ -192,6 +221,7 @@ export function buildWorldScene(input: BuildWorldSceneInput): WorldScene {
       // run's own activity line first, then the task it is on. Both are
       // already-sanitised domain strings; neither is raw provider text.
       activity: run.currentActivity?.trim() || primary?.title,
+      ...(craft ? { craft } : {}),
       character: agentVisualIdentity(provider).character ?? DEFAULT_WORLD_CHARACTER,
       progress: deriveWorkProgress(items),
       startedAt: run.createdAt,
@@ -202,6 +232,7 @@ export function buildWorldScene(input: BuildWorldSceneInput): WorldScene {
       id: runCharacterId(run.id),
       zone: zoneFor[state],
       createdAt: run.createdAt,
+      ...(preferredStationKey ? { preferredStationId: `${theme.id}-${preferredStationKey}` } : {}),
     });
   }
 
@@ -255,11 +286,18 @@ export function buildWorldScene(input: BuildWorldSceneInput): WorldScene {
     // the drawing agree.
     if (!placement) continue;
 
+    // Which room the figure ended up in, resolved from the station it was
+    // actually given rather than from the one it asked for. A run that
+    // preferred a full Research Lab is standing on the general floor, and the
+    // caption has to say the general floor.
+    const room = roomForStation(theme, placement.stationId);
+
     characters.push({
       ...draft,
       zone: placement.zone,
       stationId: placement.stationId,
       stationLabel: placement.stationLabel,
+      ...(room ? { roomId: room.id, roomName: room.name } : {}),
       slot: placement.slot,
       x: placement.x,
       y: placement.y,

@@ -17,6 +17,13 @@ message anything; neither writes to the agent domain; and the generic domain
 still does not know a provider exists. `visual/security.test.ts` fails the
 build if any of that changes.
 
+> **The world described below is now drawn in isometric**, with named rooms
+> and a craft-derived placement. Everything this document says about states,
+> derivation, handoffs, motion policy and accessibility still holds — only the
+> presentation changed. See
+> [phase-18-2-the-isometric-agent-world.md](./phase-18-2-the-isometric-agent-world.md)
+> for what replaced §4's flat station grid and §5's scenery.
+
 ---
 
 ## 1. Where the pieces live

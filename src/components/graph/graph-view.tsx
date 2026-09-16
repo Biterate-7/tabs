@@ -1130,6 +1130,11 @@ export function GraphView({
             selectedId={agentWorld.selectedId}
             onSelect={agentWorld.select}
             details={worldDetail}
+            // Wider than it is tall, unlike the dedicated view's. This panel
+            // sits over a canvas someone is reading, so it takes a strip
+            // rather than the screen; the camera is what gets them a closer
+            // look without the panel growing to provide one.
+            stageClassName="aspect-[4/3] sm:aspect-[10/7]"
             actions={
               <button
                 type="button"

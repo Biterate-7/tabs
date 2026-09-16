@@ -918,15 +918,6 @@
    to reimplement from nothing.
    =================================================================== */
 
-.agent-world-stage {
-  /* A new stacking and containing context, so a character's transform is
-     resolved against the stage rather than against whatever the stage
-     happens to be nested in. */
-  position: relative;
-  isolation: isolate;
-  contain: layout paint;
-}
-
 .agent-world-character {
   position: absolute;
   top: 0;
@@ -1015,4 +1006,205 @@
 
 .agent-world-flow {
   animation: agent-world-flow calc(1800ms * var(--agent-anim-scale, 1)) linear infinite;
+}
+
+/* ===================================================================
+   Agent World — the isometric environment (Phase 18.2)
+
+   The world is authored on a floor plan and projected into an SVG; see
+   src/lib/agents/world/projection.ts. Everything below is the part that
+   could not sensibly live in TypeScript: the palette, which has to follow
+   whichever app theme is active, and the ambient keyframes, which have to
+   be composited rather than run from a loop.
+
+   Colours are derived from the app's own semantic tokens with color-mix
+   rather than written as literals, so a light theme gets a lit room and a
+   dark one gets a lit room at night without a second palette existing.
+   The exceptions are the room accents, which are fixed identity hues in
+   the same spirit as --category-* above: a Research Lab should be the
+   same violet whichever accent colour the user has chosen, because it is
+   naming a place rather than decorating one.
+   =================================================================== */
+
+.agent-world-stage {
+  /* Light and shade, as two fixed directions rather than two more theme
+     tokens.
+
+     Which way a surface faces is a fact about the room, not about the user's
+     colour scheme, so the shading ramp is built by mixing each material
+     towards white for the face that catches the light and towards black for
+     the face in shade. That gives three distinguishable steps in a dark theme
+     *and* in a light one, which mixing towards --foreground cannot: in a
+     light theme --foreground is dark, so "more foreground" would make the
+     top face the darkest of the three and every box would read inside-out. */
+  --world-light: #ffffff;
+  --world-shade: #000000;
+
+  /* The two materials the world is built from. Structure is the building —
+     walls, racks, towers. Surface is what you work at, and is deliberately a
+     step lighter so a desk separates from the floor it stands on. */
+  --world-base-structure: color-mix(in oklch, var(--background-tertiary), var(--foreground) 14%);
+  --world-base-surface: color-mix(in oklch, var(--background-tertiary), var(--foreground) 30%);
+
+  --world-structure-top: color-mix(in oklch, var(--world-base-structure), var(--world-light) 26%);
+  --world-structure-right: var(--world-base-structure);
+  --world-structure-left: color-mix(in oklch, var(--world-base-structure), var(--world-shade) 32%);
+
+  --world-surface-top: color-mix(in oklch, var(--world-base-surface), var(--world-light) 26%);
+  --world-surface-right: var(--world-base-surface);
+  --world-surface-left: color-mix(in oklch, var(--world-base-surface), var(--world-shade) 32%);
+
+  --world-accent-top: color-mix(in oklch, var(--accent-text), var(--world-light) 18%);
+  --world-accent-right: var(--accent-text);
+  --world-accent-left: color-mix(in oklch, var(--accent-text), var(--world-shade) 34%);
+
+  --world-glass-top: color-mix(in oklch, var(--accent-text), var(--world-light) 26%);
+  --world-glass-right: color-mix(in oklch, var(--accent-text), var(--background) 24%);
+  --world-glass-left: color-mix(in oklch, var(--accent-text), var(--world-shade) 30%);
+
+  --world-foliage: #3f9e6a;
+  --world-foliage-dark: #2a6b46;
+
+  /* The ground, and the slab it sits on. Mixed towards the foreground rather
+     than towards white, because the floor's job is to separate from the sky
+     and it has to do that whichever of the two is darker. */
+  --world-floor: color-mix(in oklch, var(--background-secondary), var(--foreground) 13%);
+  --world-floor-line: color-mix(in oklch, var(--foreground), transparent 72%);
+  --world-room-plate: color-mix(in oklch, var(--world-floor), var(--world-light) 7%);
+  --world-deck-right: color-mix(in oklch, var(--background-tertiary), var(--world-shade) 20%);
+  --world-deck-left: color-mix(in oklch, var(--background-tertiary), var(--world-shade) 45%);
+  --world-rim: color-mix(in oklch, var(--foreground), transparent 60%);
+  --world-edge: color-mix(in oklch, var(--foreground), transparent 78%);
+  --world-wall: color-mix(in oklch, var(--world-base-structure), var(--world-light) 12%);
+  --world-wall-shade: color-mix(in oklch, var(--world-base-structure), var(--world-shade) 24%);
+  --world-label: var(--foreground);
+  --world-glow: var(--accent-text);
+
+  /* Sky: a soft pool of light behind an interior, and what fills the stage
+     around a world that does not fill its box. */
+  --world-sky-inner: color-mix(in oklch, var(--background), var(--foreground) 5%);
+  --world-sky-outer: color-mix(in oklch, var(--background), var(--world-shade) 25%);
+  --world-star: var(--foreground);
+  --world-planet: color-mix(in oklch, var(--accent-text), var(--background) 62%);
+  --world-planet-ring: color-mix(in oklch, var(--accent-text), var(--background) 40%);
+
+  /* The stage's own backdrop, so the space around a world that does not fill
+     its box reads as sky rather than as an empty panel. */
+  background:
+    radial-gradient(120% 90% at 50% 38%, var(--world-sky-inner), var(--world-sky-outer));
+
+  /* Room accents. Fixed hues, like the category colours: they name a place
+     rather than follow the user's accent, and a Research Lab that changed
+     colour with the theme would stop being a landmark. */
+  --world-accent-neutral: var(--text-tertiary);
+  --world-accent-research: #8b7cf6;
+  --world-accent-code: #4fa6f7;
+  --world-accent-writing: #ec4899;
+  --world-accent-analysis: #14b8a6;
+  --world-accent-command: #6d8bff;
+  --world-accent-infra: #7c8598;
+  --world-accent-done: #22c55e;
+  --world-accent-alert: #e5484d;
+  --world-accent-rest: #f5a623;
+
+  /* A new stacking and containing context, so a character's transform is
+     resolved against the stage rather than against whatever the stage
+     happens to be nested in. */
+  position: relative;
+  isolation: isolate;
+  contain: layout paint;
+}
+
+/* Outside, at night, in orbit. The floor is lit from within rather than
+   from a window, the sky goes to space, and the structures take a cooler
+   cast so the skyline reads as distance rather than as more furniture. */
+.agent-world-stage[data-world-setting="exterior"] {
+  --world-sky-inner: color-mix(in oklch, var(--background), var(--accent-text) 16%);
+  --world-sky-outer: color-mix(in oklch, var(--background), var(--world-shade) 45%);
+  --world-base-structure: color-mix(in oklch, var(--background-tertiary), var(--accent-text) 22%);
+  --world-base-surface: color-mix(in oklch, var(--background-tertiary), var(--accent-text) 38%);
+  --world-floor: color-mix(in oklch, var(--background-tertiary), var(--accent-text) 14%);
+  --world-floor-line: color-mix(in oklch, var(--accent-text), transparent 66%);
+  --world-deck-right: color-mix(in oklch, var(--background), var(--accent-text) 8%);
+  --world-deck-left: color-mix(in oklch, var(--background), var(--world-shade) 35%);
+  --world-rim: color-mix(in oklch, var(--accent-text), transparent 40%);
+}
+
+/* The camera layer. `will-change` is declared once here rather than on each
+   of the two hundred nodes it contains: one promoted layer that pans and
+   zooms as a unit is the entire point of transforming the wrapper. */
+.agent-world-camera {
+  will-change: transform;
+  transform-origin: center;
+}
+
+/* A room's hit area. The polygon itself is transparent — the highlight is
+   drawn separately — so this only has to carry the cursor and the ring. */
+.agent-world-room {
+  cursor: pointer;
+  outline: none;
+}
+
+.agent-world-room:focus-visible polygon {
+  stroke: var(--ring);
+  stroke-width: 2.5;
+}
+
+/* A lit surface: a screen, a rack's indicator strip, a lamp. Faint and slow,
+   because §12's hierarchy puts the environment below the agents — a room
+   that pulsed as hard as a working agent would compete with it. */
+@keyframes agent-world-screen {
+  0%,
+  100% {
+    opacity: 0.16;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+.agent-world-screen {
+  animation: agent-world-screen calc(5200ms * var(--agent-anim-scale, 1)) var(--ease-standard) infinite;
+}
+
+/* Traffic. The vector comes from the theme and arrives as two custom
+   properties, exactly as the handoff packet's endpoints do, so any number of
+   vehicles cost one composited transform each and share one keyframe rule.
+   `alternate` rather than a loop back to the origin: a vehicle that
+   teleported home every cycle would be the one thing in the world that
+   visibly is not real. */
+@keyframes agent-world-vehicle {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(var(--vehicle-dx, 0), var(--vehicle-dy, 0));
+  }
+}
+
+.agent-world-vehicle {
+  transform-box: view-box;
+  animation: agent-world-vehicle var(--vehicle-duration, 10s) var(--ease-standard) infinite alternate;
+}
+
+/* A figure has to read against whatever it is standing on.
+
+   Phase 18 drew characters over one flat panel, so a coloured outline with a
+   whisper of fill was enough. The isometric world puts them on a floor, in
+   front of desks and under room tints, and at that point an outline stops
+   being a figure and becomes a smudge — which defeats §12's first question,
+   "who is working".
+
+   Both rules below are scoped to the world rather than applied to the
+   drawing, because everywhere else the mark is on a known background and the
+   lighter weight is the better drawing. A CSS declaration beats an SVG
+   presentation attribute, so this lifts the component's own fill-opacity
+   without the component knowing. */
+.agent-world-character .agent-mark {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
+}
+
+.agent-world-character .agent-mark svg path,
+.agent-world-character .agent-mark svg rect {
+  fill-opacity: 0.55;
 }

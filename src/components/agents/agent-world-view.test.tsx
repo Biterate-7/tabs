@@ -132,7 +132,7 @@ function renderScreen(
 describe("opening Agent World with nothing running", () => {
   it("shows the world itself rather than a blank screen", () => {
     renderScreen();
-    expect(screen.getByRole("group", { name: /office floor/ })).toBeTruthy();
+    expect(screen.getByRole("group", { name: /office headquarters/ })).toBeTruthy();
   });
 
   it("names itself, so what this is takes no interpretation", () => {
@@ -184,7 +184,7 @@ describe("opening Agent World with nothing running", () => {
 
   it("still draws the room when the catalogue itself is empty", () => {
     renderScreen({ scene: sceneFrom(emptyAgentState(), []), roster: [] });
-    expect(screen.getByRole("group", { name: /office floor, empty/ })).toBeTruthy();
+    expect(screen.getByRole("group", { name: /office headquarters, empty/ })).toBeTruthy();
     expect(screen.getByText(/Your agents will appear here as they work/)).toBeTruthy();
   });
 });
@@ -257,7 +257,27 @@ describe("when real agents start working", () => {
     renderScreen({ scene, roster: CONNECTED_ROSTER, selectedId: runCharacter.id });
 
     expect(screen.getByText("Implement auth")).toBeTruthy();
-    expect(screen.getByText("Editing the session reader")).toBeTruthy();
+    // Twice over, and both are wanted: the card names the activity in full,
+    // and the working-now strip names it again for someone whose stage is
+    // cropped past the agent doing it.
+    expect(screen.getAllByText("Editing the session reader").length).toBeGreaterThan(0);
+  });
+
+  it("lists the live runs as text beside the world", () => {
+    // §14 more than anything else: on a phone the stage is a window into part
+    // of the building, and an agent outside the crop would otherwise be
+    // invisible rather than merely off to one side.
+    const scene = sceneFrom(stateWithLiveRun(), CONNECTED_ROSTER);
+    renderScreen({ scene, roster: CONNECTED_ROSTER });
+
+    expect(screen.getByText("WORKING NOW")).toBeTruthy();
+  });
+
+  it("says nothing is working when nothing is", () => {
+    // Never a heading over an empty list: a strip that said WORKING NOW with
+    // nothing under it would read as work that failed to render.
+    renderScreen();
+    expect(screen.queryByText("WORKING NOW")).toBeNull();
   });
 });
 
@@ -371,7 +391,7 @@ describe("when the world is switched off", () => {
   it("says so instead of showing an empty screen", () => {
     renderScreen({ settings: { enabled: false } });
     expect(screen.getByText("Agent World is turned off")).toBeTruthy();
-    expect(screen.queryByRole("group", { name: /office floor/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: /office headquarters/ })).toBeNull();
   });
 
   it("still offers the way to turn it back on", () => {
@@ -401,6 +421,6 @@ describe("the existing world behaviour, preserved", () => {
     const scene = sceneFrom(emptyAgentState(), UNCONNECTED_ROSTER, settings);
     renderScreen({ scene, settings });
 
-    expect(screen.getByRole("group", { name: /office floor, empty/ })).toBeTruthy();
+    expect(screen.getByRole("group", { name: /office headquarters, empty/ })).toBeTruthy();
   });
 });

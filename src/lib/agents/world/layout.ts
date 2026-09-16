@@ -1,3 +1,9 @@
+import {
+  CHARACTER_HEIGHT_UNITS,
+  CHARACTER_WIDTH_UNITS,
+  STAGE_HEIGHT,
+  STAGE_WIDTH,
+} from "./projection";
 import { stationsInZone } from "./themes";
 import type { WorldDensity } from "./settings";
 import type { WorldStation, WorldTheme, WorldZoneKind } from "./types";
@@ -16,22 +22,33 @@ import type { WorldStation, WorldTheme, WorldZoneKind } from "./types";
  * Three properties this is built to have, each of which rules something out:
  *
  *   - **Deterministic.** Position is a pure function of (theme, zone,
- *     ordering key). The same set of runs lays out identically on every poll,
- *     every rerender and every reload. Nothing is random, so nothing drifts.
- *   - **Append-only within a zone.** Characters fill a zone in `createdAt`
- *     order, so a newly discovered run takes the next free slot instead of
- *     sorting into the middle and pushing its neighbours along. This is the
- *     same rule `spatial/placement.ts` follows, for the same reason: a layout
- *     that rearranges itself on a poll is unreadable.
+ *     preference, ordering key). The same set of runs lays out identically on
+ *     every poll, every rerender and every reload. Nothing is random, so
+ *     nothing drifts.
+ *   - **Append-only within a station.** Characters fill a station in
+ *     `createdAt` order, so a newly discovered run takes the next free slot
+ *     instead of sorting into the middle and pushing its neighbours along.
+ *     This is the same rule `spatial/placement.ts` follows, for the same
+ *     reason: a layout that rearranges itself on a poll is unreadable.
  *   - **Bounded.** A zone that runs out of stations spills into extra slots
  *     at its last station rather than growing the world, and a scene past the
  *     density cap reports the remainder as a count. Nothing is ever silently
  *     dropped.
  *
- * All coordinates are normalised 0..1 against the stage. The stage decides
- * how big that is — a tall panel on a desktop, a short strip on a phone — so
- * the responsive behaviour the brief asks for is a property of the model
- * rather than a set of breakpoints in the renderer.
+ * ## Which space this works in, and why it changed
+ *
+ * Phase 18 laid out in the same flat space it drew in, so there was only one.
+ * The isometric world has two — the floor a room is authored on, and the
+ * screen it is drawn to — and slots belong firmly to the second.
+ *
+ * The reason is that a slot exists to stop two *drawings* touching, and the
+ * projection does not preserve distance: a step along the floor's x axis
+ * covers half the screen width of the same step taken diagonally. Slot
+ * offsets expressed on the floor would therefore guarantee separation in a
+ * space nobody looks at, and two figures a comfortable distance apart on the
+ * floor would be drawn on top of each other. So a station arrives already
+ * projected (see `WorldStation`), and everything below is in normalised
+ * stage coordinates, where a unit is a unit whichever way you move.
  */
 
 /** Someone who needs placing. The engine needs nothing else about them. */
@@ -46,6 +63,17 @@ export type LayoutSubject = {
    * shuffle continuously while nothing meaningful changed.
    */
   createdAt: number;
+  /**
+   * A station this subject would rather stand at.
+   *
+   * How a run doing research ends up in the Research Lab. It is a preference
+   * and not an instruction: a station that is full, or that belongs to
+   * another zone, is ignored and the subject falls back to the zone's
+   * ordinary fill order. That fallback is what keeps the craft derivation
+   * (craft.ts) from being load-bearing — at worst a figure stands on the
+   * general floor, which is where every figure stood before this existed.
+   */
+  preferredStationId?: string;
 };
 
 export type LayoutPlacement = {
@@ -54,6 +82,7 @@ export type LayoutPlacement = {
   stationLabel: string;
   zone: WorldZoneKind;
   slot: number;
+  /** Normalised stage coordinates: 0..1 across and down the drawn stage. */
   x: number;
   y: number;
 };
@@ -90,27 +119,35 @@ const MAX_CHARACTERS: Record<WorldDensity, number> = {
 /**
  * How much of the stage one character takes up.
  *
- * Normalised, like everything else here, and it is the number the rest of
- * this module is calibrated against: slot spacing has to exceed it or two
- * characters at the same station will draw on top of each other however
- * distinct their coordinates are. The renderer sizes each figure from the
- * stage's measured height so that this stays true at any stage size — see
- * `characterPixelSize` in components/agents/agent-world.tsx.
+ * Derived from the projection's own figure size rather than guessed, so the
+ * number the layout reserves and the number the renderer draws cannot drift:
+ * `characterPixelSize` in components/agents/agent-world.tsx scales the same
+ * constant by the same stage.
  *
  * Exported because the layout tests assert *separation*, not mere
  * distinctness. Two placements a thousandth apart are technically different
  * points and visually one figure; only a test that knows the footprint can
  * tell those apart.
  */
-export const CHARACTER_FOOTPRINT = { width: 0.055, height: 0.11 } as const;
+export const CHARACTER_FOOTPRINT = {
+  width: CHARACTER_WIDTH_UNITS / STAGE_WIDTH,
+  height: CHARACTER_HEIGHT_UNITS / STAGE_HEIGHT,
+} as const;
 
-/** Slots per row at a station, and the spacing between them, in stage units. */
+/**
+ * Slots per row at a station, and the spacing between them.
+ *
+ * Both exceed the footprint they have to clear, and the row spacing exceeds
+ * it in the axis that matters: a figure's body rises a full character height
+ * from its own anchor, so rows closer together than that would stack heads
+ * onto shoulders.
+ */
 const SLOTS_PER_ROW = 3;
-const SLOT_DX = 0.062;
-const SLOT_DY = 0.125;
+const SLOT_DX = 34 / STAGE_WIDTH;
+const SLOT_DY = 32 / STAGE_HEIGHT;
 
 /** Keeps every character clear of the stage edge, whatever a theme's coordinates say. */
-export const EDGE_MARGIN = 0.05;
+export const EDGE_MARGIN = 0.02;
 
 /**
  * The lowest `y` a character's anchor may take.
@@ -118,9 +155,9 @@ export const EDGE_MARGIN = 0.05;
  * A placement coordinate is the figure's **feet**: the renderer draws it with
  * `translate(-50%, -100%)`, so the body rises from the anchor. An anchor
  * closer to the top than one character height therefore hangs the figure's
- * head off the stage — which is exactly what happened the first time the
- * exchange zone was placed at `y: 0.10`. The margin makes the requirement
- * explicit rather than leaving it to whoever picks a theme's coordinates.
+ * head off the stage. The margin makes the requirement explicit rather than
+ * leaving it to whoever picks a theme's coordinates, and the station labels
+ * are drawn in the space it reserves.
  */
 export const TOP_MARGIN = CHARACTER_FOOTPRINT.height + EDGE_MARGIN;
 
@@ -139,8 +176,8 @@ function clampY(value: number): number {
  *
  * A centred row that wraps. Row 0 sits on the station's own line and later
  * rows stack below it, which reads as a group gathered at a desk rather than
- * as a queue — and, more practically, keeps a busy station's footprint wider
- * than it is tall, because the stage is always wider than it is tall.
+ * as a queue — and, in isometric, as a group standing in front of it, because
+ * further down the stage is nearer the camera.
  */
 export function slotOffset(slot: number): { dx: number; dy: number } {
   const column = slot % SLOTS_PER_ROW;
@@ -152,14 +189,13 @@ export function slotOffset(slot: number): { dx: number; dy: number } {
 }
 
 /**
- * The rectangle a full station's occupants occupy.
+ * The rectangle a full station's occupants occupy, in normalised stage
+ * coordinates.
  *
  * Asymmetric on purpose, and that asymmetry is the whole reason this returns
  * a box rather than a radius. Slots spread sideways symmetrically, but rows
  * grow *downward* from the station's line while each figure's body rises
- * *upward* from its own anchor. A single "half-height" cannot express both,
- * and the version that tried put the exchange zone's heads through the top of
- * the stage.
+ * *upward* from its own anchor. A single "half-height" cannot express both.
  *
  * The theme tests intersect these boxes, so changing the slot spacing above
  * re-checks every theme's geometry instead of silently invalidating it.
@@ -260,11 +296,26 @@ export function layoutWorld(input: LayoutInput): LayoutResult {
     const usable = stations.length > 0 ? stations : theme.stations.slice(0, 1);
     if (usable.length === 0) continue;
 
+    const byId = new Map(usable.map((station) => [station.id, station]));
+
     let index = 0;
     for (const subject of occupants) {
+      // A preference is honoured only while its station has room. The
+      // fallback is not an error path: a Research Lab with six agents in it
+      // is full, and a seventh researcher standing on the general floor is a
+      // better picture than a seventh researcher standing inside the sixth.
+      const preferred = subject.preferredStationId
+        ? byId.get(subject.preferredStationId)
+        : undefined;
+
+      if (preferred && (usedSlots.get(preferred.id) ?? 0) < preferred.capacity) {
+        placements.push(take(preferred, subject));
+        continue;
+      }
+
       // Advance past any station already at capacity — including capacity
-      // taken by a pinned character, which is why this re-reads the counter
-      // rather than tracking its own position.
+      // taken by a preference, which is why this re-reads the counter rather
+      // than tracking its own position.
       while (
         index < usable.length - 1 &&
         (usedSlots.get(usable[index].id) ?? 0) >= usable[index].capacity

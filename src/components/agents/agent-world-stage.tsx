@@ -1,29 +1,43 @@
 "use client"
 
 import { memo } from "react"
-import { CHARACTER_FOOTPRINT } from "@/lib/agents/world/layout"
+import { byDepth } from "@/lib/agents/world/architecture"
+import {
+  STAGE_HEIGHT,
+  STAGE_WIDTH,
+  contentBoxFor,
+  projectPlan,
+  rectPoints,
+} from "@/lib/agents/world/projection"
 import { cn } from "@/lib/utils"
-import type { AgentWorldSettings } from "@/lib/agents/world/settings"
-import type { WorldCharacter, WorldDecor, WorldHandoff, WorldScene } from "@/lib/agents/world/types"
+import { AgentWorldScenery } from "./agent-world-scenery"
+import type { WorldRoom } from "@/lib/agents/world/architecture"
+import type { AgentWorldSettings, WorldDensity } from "@/lib/agents/world/settings"
+import type { WorldCharacter, WorldHandoff, WorldScene } from "@/lib/agents/world/types"
 
 /**
- * The backdrop: scenery, station labels, and the lines between agents.
+ * The stage: the world, the rooms you can click, and the lines between agents.
  *
- * One SVG behind the characters, drawn in a fixed user space so that shapes
- * keep their proportions at every stage size. Normalised 0..1 coordinates
- * from the layout engine are multiplied up into that space here, and nowhere
- * else — everything upstream stays resolution-free.
+ * One SVG in a fixed user space, so shapes keep their proportions at every
+ * stage size. Its box is sized by `AgentWorld` to the world's own aspect
+ * ratio, so `preserveAspectRatio` has nothing to correct and the mapping from
+ * a normalised character coordinate to a pixel is a single multiplication —
+ * which is what lets the DOM character layer land exactly on the desks this
+ * SVG drew.
  *
- * Nothing in this file is interactive. The scenery is `aria-hidden` in its
- * entirety, because a screen reader announcing "bench, bench, plant, rack"
- * would be noise standing between someone and the agents they came for. The
- * agents themselves are real buttons, rendered above this by `AgentWorld`.
+ * ## Three layers, and why they are separate components
+ *
+ * `AgentWorldScenery` is the building: two hundred nodes that change when a
+ * setting changes and at no other time, memoised so a poll never touches
+ * them. `RoomLayer` is eleven transparent polygons that know who is standing
+ * in them. `HandoffLink` is one line per observed transfer. Splitting them is
+ * the whole of the render-cost story: what moves every few seconds is small,
+ * and what is large does not move.
  */
 
-/** The SVG user space. 5:3, which is the shape a sidebar panel and a phone both tolerate. */
-export const STAGE_WIDTH = 1000
-export const STAGE_HEIGHT = 600
+export { STAGE_WIDTH, STAGE_HEIGHT }
 
+/** Stage user-space coordinates from a character's normalised position. */
 export function toStageX(x: number): number {
   return x * STAGE_WIDTH
 }
@@ -32,64 +46,8 @@ export function toStageY(y: number): number {
   return y * STAGE_HEIGHT
 }
 
-/**
- * One piece of scenery.
- *
- * Every kind is drawn from the same two primitives — a rounded rectangle and
- * a line — because scenery that competed for attention with the agents would
- * defeat the purpose of drawing agents. Colour comes entirely from theme
- * tokens, so the world re-skins with the user's theme without a per-theme
- * palette of its own.
- */
-function Decor({ item, ambient }: { item: WorldDecor; ambient: boolean }) {
-  const x = toStageX(item.x)
-  const y = toStageY(item.y)
-  const width = toStageX(item.width)
-  const height = toStageY(item.height)
-
-  const radius = item.kind === "tower" || item.kind === "block" ? 6 : item.kind === "panel" ? 18 : 4
-
-  return (
-    <g
-      className={cn(item.ambient && ambient && "agent-world-ambient")}
-      opacity={item.kind === "panel" ? 0.3 : 0.45}
-    >
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        rx={radius}
-        fill="var(--background-tertiary)"
-        stroke="var(--border-subtle)"
-        strokeWidth={1.5}
-      />
-      {/* A single interior line gives a shape its character — shelves on a
-          rack, a sill on a window, a screen's bezel — without adding a second
-          drawing per kind. */}
-      {(item.kind === "rack" || item.kind === "window" || item.kind === "screen") && (
-        <line
-          x1={x + width * 0.12}
-          y1={y + height * 0.55}
-          x2={x + width * 0.88}
-          y2={y + height * 0.55}
-          stroke="var(--border-subtle)"
-          strokeWidth={1.5}
-        />
-      )}
-      {item.kind === "plant" && (
-        <line
-          x1={x + width / 2}
-          y1={y}
-          x2={x + width / 2}
-          y2={y + height}
-          stroke="var(--border-subtle)"
-          strokeWidth={1.5}
-        />
-      )}
-    </g>
-  )
-}
+/** How far above its feet a figure's chest is, in stage units. Where lines meet it. */
+const CHEST_OFFSET = 19
 
 /**
  * A line between two agents that shared work.
@@ -98,8 +56,8 @@ function Decor({ item, ambient }: { item: WorldDecor; ambient: boolean }) {
  * same emphasis rule the graph canvas already follows, so a world with a
  * dozen connections stays legible while one neighbourhood is in focus.
  *
- * The travelling dot is the "packet" §11 asks for, and it appears only when
- * particles are on. It moves between two explicit points supplied as custom
+ * The travelling dot is the data packet, and it appears only when data
+ * streams are on. It moves between two explicit points supplied as custom
  * properties, so one keyframe rule in globals.css serves every link.
  */
 function HandoffLink({
@@ -118,14 +76,23 @@ function HandoffLink({
   animate: boolean
 }) {
   const x1 = toStageX(from.x)
-  // Lines meet the figures at chest height rather than at their feet, which
-  // is where the layout coordinate sits.
-  const y1 = toStageY(from.y) - 26
+  const y1 = toStageY(from.y) - CHEST_OFFSET
   const x2 = toStageX(to.x)
-  const y2 = toStageY(to.y) - 26
+  const y2 = toStageY(to.y) - CHEST_OFFSET
 
   return (
-    <g data-agent-handoff={handoff.id} opacity={emphasized ? 0.9 : 0.3}>
+    <g data-agent-handoff={handoff.id} opacity={emphasized ? 0.95 : 0.4}>
+      {/* A soft under-stroke, so a thin dashed line stays visible over a
+          floor plate as well as over open deck. */}
+      <line
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        stroke="var(--world-sky-outer)"
+        strokeWidth={emphasized ? 5 : 4}
+        opacity={0.5}
+      />
       <line
         x1={x1}
         y1={y1}
@@ -160,39 +127,186 @@ function HandoffLink({
   )
 }
 
+/**
+ * The rooms, as things you can point at.
+ *
+ * Eleven transparent polygons over the scenery, each a button with a complete
+ * accessible name: what the room is called, what it is for, and how many
+ * agents are in it. §6 asks for exactly this and also for its opposite — that
+ * decorative objects *not* be clickable — and the way both are guaranteed is
+ * that this layer knows only about rooms. A desk cannot become a click target
+ * because there is nowhere to write one.
+ *
+ * Clicking a room selects it; clicking a figure standing in that room selects
+ * the figure instead, because the figure is a DOM button layered above this.
+ */
+function RoomLayer({
+  rooms,
+  occupancy,
+  selectedRoomId,
+  hoveredRoomId,
+  onSelectRoom,
+  onHoverRoom,
+  showLabels,
+}: {
+  rooms: readonly WorldRoom[]
+  occupancy: ReadonlyMap<string, number>
+  selectedRoomId: string | null
+  hoveredRoomId: string | null
+  onSelectRoom: (roomId: string | null) => void
+  onHoverRoom: (roomId: string | null) => void
+  showLabels: boolean
+}) {
+  return (
+    <g>
+      {rooms
+        .slice()
+        .sort(byDepth)
+        .map((room) => {
+          const count = occupancy.get(room.id) ?? 0
+          const selected = room.id === selectedRoomId
+          const hovered = room.id === hoveredRoomId
+          // The purpose is already a sentence, so it is joined rather than
+          // punctuated again — "…each other.. 0 agents here" is what happens
+          // when a label builder assumes its parts are fragments.
+          const label = `${room.name}. ${room.purpose} ${
+            count === 1 ? "1 agent here." : `${count} agents here.`
+          }`
+
+          return (
+            <g
+              key={room.id}
+              role="button"
+              tabIndex={0}
+              aria-label={label}
+              aria-pressed={selected}
+              className="agent-world-room"
+              onClick={() => onSelectRoom(selected ? null : room.id)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return
+                event.preventDefault()
+                onSelectRoom(selected ? null : room.id)
+              }}
+              onPointerEnter={() => onHoverRoom(room.id)}
+              onPointerLeave={() => onHoverRoom(null)}
+              onFocus={() => onHoverRoom(room.id)}
+              onBlur={() => onHoverRoom(null)}
+            >
+              <polygon
+                points={rectPoints(room.planX, room.planY, room.width, room.depth)}
+                fill="transparent"
+              />
+              {(selected || hovered) && (
+                <polygon
+                  points={rectPoints(room.planX, room.planY, room.width, room.depth)}
+                  fill={`var(--world-accent-${room.accent})`}
+                  fillOpacity={selected ? 0.2 : 0.12}
+                  stroke={`var(--world-accent-${room.accent})`}
+                  strokeWidth={selected ? 2.5 : 1.75}
+                />
+              )}
+            </g>
+          )
+        })}
+
+      {/*
+        Labels sit above the room's far corner, clear of everybody's head.
+
+        Only occupied rooms are named, and only at detailed density. A world
+        that labelled all eleven rooms at once would be a map with a legend
+        printed over it, and the point of the environment is that a room is
+        recognisable from what is in it.
+      */}
+      {showLabels &&
+        rooms
+          .filter((room) => (occupancy.get(room.id) ?? 0) > 0)
+          .map((room) => {
+            const anchor = projectPlan(room.planX + room.width / 2, room.planY)
+            return (
+              <text
+                key={`${room.id}-label`}
+                x={anchor.x}
+                y={anchor.y - 30}
+                textAnchor="middle"
+                fill="var(--world-label)"
+                fontSize={15}
+                fontFamily="var(--tabdump-font-mono)"
+                pointerEvents="none"
+              >
+                {room.name}
+              </text>
+            )
+          })}
+    </g>
+  )
+}
+
 export type AgentWorldStageProps = {
   scene: WorldScene
   settings: AgentWorldSettings
+  /** The density actually drawn at, after any responsive reduction. */
+  density: WorldDensity
   /** The selected character, so its connections can be emphasised. */
   selectedId: string | null
+  selectedRoomId: string | null
+  hoveredRoomId: string | null
+  onSelectRoom: (roomId: string | null) => void
+  onHoverRoom: (roomId: string | null) => void
   /** False when the resolved motion policy is `none`. */
   animate: boolean
 }
 
-function AgentWorldStageImpl({ scene, settings, selectedId, animate }: AgentWorldStageProps) {
+function AgentWorldStageImpl({
+  scene,
+  settings,
+  density,
+  selectedId,
+  selectedRoomId,
+  hoveredRoomId,
+  onSelectRoom,
+  onHoverRoom,
+  animate,
+}: AgentWorldStageProps) {
   const { theme, characters, handoffs } = scene
   const byId = new Map(characters.map((character) => [character.id, character]))
 
-  // Station labels are detail, and detail is what `density` controls. At
-  // `minimal` the world is figures on an empty floor, which is the right
-  // amount of information for a strip at the bottom of a sidebar.
-  const showLabels = settings.density === "detailed"
-  const occupied = new Set(scene.occupiedStationIds)
+  // Who is where, counted once. Both the room buttons' accessible names and
+  // the room labels read it, so the two cannot disagree.
+  const occupancy = new Map<string, number>()
+  for (const character of characters) {
+    if (!character.roomId) continue
+    occupancy.set(character.roomId, (occupancy.get(character.roomId) ?? 0) + 1)
+  }
+
+  const box = contentBoxFor(theme.setting)
 
   return (
     <svg
-      viewBox={`0 0 ${STAGE_WIDTH} ${STAGE_HEIGHT}`}
+      // Cropped to what this kind of world actually occupies — see
+      // STAGE_CONTENT_BOX. The pixel mapping in AgentWorld reads the same
+      // box, so the DOM figures land exactly on the desks drawn here.
+      viewBox={`0 ${box.y} ${STAGE_WIDTH} ${box.height}`}
       preserveAspectRatio="xMidYMid meet"
       className="absolute inset-0 h-full w-full"
-      // Scenery is decoration. Everything a screen reader needs is on the
-      // character buttons above it.
-      aria-hidden
       focusable={false}
     >
-      {settings.effects.scenery &&
-        theme.decor.map((item) => (
-          <Decor key={item.id} item={item} ambient={animate && settings.effects.ambientLife} />
-        ))}
+      <AgentWorldScenery
+        theme={theme}
+        density={density}
+        scenery={settings.effects.scenery}
+        ambient={settings.effects.ambientLife}
+        animate={animate}
+      />
+
+      <RoomLayer
+        rooms={theme.rooms}
+        occupancy={occupancy}
+        selectedRoomId={selectedRoomId}
+        hoveredRoomId={hoveredRoomId}
+        onSelectRoom={onSelectRoom}
+        onHoverRoom={onHoverRoom}
+        showLabels={density === "detailed"}
+      />
 
       {settings.effects.handoffTrails &&
         handoffs.map((handoff) => {
@@ -214,32 +328,6 @@ function AgentWorldStageImpl({ scene, settings, selectedId, animate }: AgentWorl
             />
           )
         })}
-
-      {/*
-        Labels sit ABOVE the station, clear of its occupants' heads.
-
-        Below was the obvious place and was wrong: rows grow downward from a
-        station's line, so a busy desk drew its own label through the second
-        row of figures. Above is bounded — `TOP_MARGIN` guarantees no station
-        sits within a character height of the stage top, which leaves exactly
-        the room a caption needs.
-      */}
-      {showLabels &&
-        theme.stations
-          .filter((station) => occupied.has(station.id))
-          .map((station) => (
-            <text
-              key={station.id}
-              x={toStageX(station.x)}
-              y={toStageY(station.y - CHARACTER_FOOTPRINT.height) - 8}
-              textAnchor="middle"
-              fill="var(--text-tertiary)"
-              fontSize={14}
-              fontFamily="var(--tabdump-font-mono)"
-            >
-              {station.label}
-            </text>
-          ))}
     </svg>
   )
 }

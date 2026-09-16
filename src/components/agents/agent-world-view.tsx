@@ -7,6 +7,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
 import { useAgentWorld } from "@/hooks/use-agent-world"
+import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { buildWorldRoster } from "@/lib/agents/world/roster"
 import { handoffsForCharacter, idleCharacterId } from "@/lib/agents/world/scene"
 import { cn } from "@/lib/utils"
@@ -14,6 +15,7 @@ import { AgentIcon } from "./agent-icon"
 import { AgentWorld } from "./agent-world"
 import type { WorldCharacterDetail } from "./agent-world-detail"
 import type { AgentStoreApi } from "@/hooks/use-agent-store"
+import type { AgentVisualState } from "@/lib/agents/visual/types"
 import type { WorldRosterEntry } from "@/lib/agents/world/roster"
 import type { AgentWorldSettings } from "@/lib/agents/world/settings"
 import type { WorldScene } from "@/lib/agents/world/types"
@@ -43,6 +45,21 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  * running — without standing up a connector manager, a store and an observer
  * to reach each one.
  */
+
+/**
+ * The visual states a run is still going in.
+ *
+ * `waiting` is in and `success` is not: a run that is stalled is still this
+ * session's problem, and one that has finished is history the world keeps for
+ * a few hours rather than something happening now.
+ */
+const ONGOING_STATES = new Set<AgentVisualState>([
+  "starting",
+  "thinking",
+  "working",
+  "communicating",
+  "waiting",
+])
 
 /** What the header's quick-access controls do. All three navigate; none is a dialog. */
 export type AgentWorldNavProps = {
@@ -182,6 +199,78 @@ function AgentWorldRoster({
   )
 }
 
+/**
+ * What is happening right now, as text.
+ *
+ * The world says who is working by drawing them; this says it in a line you
+ * can read without interpreting a room. It exists for §14 above all: on a
+ * phone the stage is a window into part of the building, and the agents
+ * outside the crop would otherwise be invisible rather than merely off to one
+ * side. It is also the fastest answer to "what is my machine doing" on any
+ * screen size, which is why it is not hidden behind a breakpoint.
+ *
+ * Only runs appear. A stand-in is present, not busy, and listing it under a
+ * heading that says WORKING NOW would be the world inventing activity out of
+ * presence — the one thing this whole layer refuses to do.
+ */
+function AgentWorldNow({
+  scene,
+  selectedId,
+  onSelect,
+}: {
+  scene: WorldScene
+  selectedId: string | null
+  onSelect: (id: string | null) => void
+}) {
+  const live = scene.characters.filter(
+    (character) => character.runId && ONGOING_STATES.has(character.state)
+  )
+
+  if (live.length === 0) return null
+
+  return (
+    <section aria-labelledby="agent-world-now-heading" className="space-y-1.5">
+      <p id="agent-world-now-heading" className="text-label text-tertiary">
+        WORKING NOW
+      </p>
+      <ul className="grid gap-1.5 sm:grid-cols-2">
+        {live.map((character) => {
+          const selected = selectedId === character.id
+          return (
+            <li key={character.id}>
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onSelect(selected ? null : character.id)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                  selected
+                    ? "border-primary/40 bg-primary/10"
+                    : "border-subtle hover:border-border hover:bg-surface-hover"
+                )}
+              >
+                <AgentIcon connector={character.provider} state={character.state} size="sm" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-body-sm text-foreground">
+                    {character.agentName}
+                    <span className="text-tertiary">
+                      {" · "}
+                      {AGENT_VISUAL_STATE_PRESENTATION[character.state].label}
+                    </span>
+                  </span>
+                  <span className="block truncate text-meta text-tertiary">
+                    {character.activity ?? character.roomName ?? character.stationLabel}
+                  </span>
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 export type AgentWorldScreenProps = AgentWorldNavProps & {
   scene: WorldScene
   settings: AgentWorldSettings
@@ -253,7 +342,7 @@ export function AgentWorldScreen({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
-        <div className="mx-auto w-full max-w-5xl space-y-4">
+        <div className="mx-auto w-full max-w-6xl space-y-4">
           {settings.enabled ? (
             <>
               <AgentWorld
@@ -265,7 +354,34 @@ export function AgentWorldScreen({
                 onSelect={onSelect}
                 details={details}
                 onOpenConnectors={onOpenConnectors}
+                /*
+                  The world gets the screen, rather than a fixed ratio inside
+                  it. A viewport height rather than `flex-1` because the detail
+                  cards flow underneath and a stage that shrank as one opened
+                  would move the figure the card is about.
+
+                  The floor is what makes the phone case work: at 300px the
+                  world is a tall window into the building, and the camera —
+                  already closer, with fewer fixtures drawn — shows a part of
+                  it at a readable size instead of all of it at none.
+                */
+                /*
+                  The stage takes the world's own proportions from `sm` up,
+                  capped at 64vh so the roster stays on screen, and turns
+                  portrait below it.
+
+                  Both halves matter. Giving the stage a free-form box — the
+                  obvious "let it fill the screen" — leaves it wider or taller
+                  than a 10:7 world, and the world then sits in a band of
+                  empty sky that is as tall as the difference. Matching the
+                  ratio means the building fills what it is given at every
+                  width above a phone. Below that, matching it would make the
+                  world 250px tall, so the box goes portrait instead and the
+                  camera's own legibility rule zooms into it.
+                */
+                stageClassName="mx-auto aspect-[4/5] w-full min-h-[280px] sm:aspect-[10/7] sm:max-h-[64vh] sm:max-w-[calc(64vh*10/7)]"
               />
+              <AgentWorldNow scene={scene} selectedId={selectedId} onSelect={onSelect} />
               <AgentWorldRoster
                 roster={roster}
                 scene={scene}
