@@ -55,12 +55,15 @@ import { useAgentStore } from "@/hooks/use-agent-store"
 import { useAgentSpatial } from "@/hooks/use-agent-spatial"
 import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
 import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
+import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
 import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
 import { getRunsTouchingArtifact } from "@/lib/agents/intelligence/relationships"
 import { runSpatialId } from "@/lib/agents/spatial/types"
 import { searchAgentWork } from "@/lib/agents/spatial/search"
+import { CONNECTOR_STATUS_LABELS } from "@/lib/agents/connectors/types"
 import { GraphAgentPanel } from "./graph-agent-panel"
+import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
 
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
@@ -270,18 +273,69 @@ export function GraphView({
   )
 
   /**
+   * Connector state, read-only.
+   *
+   * No `restore` here: AppShell owns that, because the manager outlives any
+   * one view and a connector the user enabled must not stay dormant until
+   * they happen to open the graph. This view reads the same singleton, so it
+   * and the settings panel can never disagree about what is connected.
+   */
+  const connectors = useAgentConnectors()
+
+  /**
    * THE observer. Mounted exactly once, here, beside the store it feeds.
    *
    * Phase 12 owns observation; every other consumer — the canvas, the panel,
    * search — reads the store this fills. Mounting it anywhere else as well
    * would double the polling done against the user's machine, which is why
    * there is one call site and an architectural test guarding it.
+   *
+   * Since Phase 17 the observation *source* is the connector the manager
+   * owns, so whether anything is read at all is the user's connect/disconnect
+   * decision rather than a constant in this file.
    */
+  const claudeConnector = useMemo(
+    () => connectors.manager.connector("claude-code") as ClaudeCodeConnector | undefined,
+    [connectors.manager]
+  )
+
   const agentObserver = useClaudeCodeObserver({
     store: agentStore,
     enabled: true,
+    connector: claudeConnector ?? null,
     tabIndexes: agentTabIndexes,
   })
+
+  /**
+   * The connector strip's view models.
+   *
+   * Only what the user has actually enabled: a provider they have never
+   * connected is not a row in the workspace sidebar, it is an option in
+   * settings. Status words come from the connector layer rather than being
+   * re-derived here, so the sidebar and the settings page can never disagree
+   * about what state something is in.
+   */
+  const agentPanelConnectors = useMemo(
+    () =>
+      connectors.connectors
+        .filter((view) => view.enabled)
+        .map((view) => ({
+          provider: view.descriptor.provider,
+          displayName: view.descriptor.displayName,
+          statusLabel: CONNECTOR_STATUS_LABELS[view.status.kind],
+          connected: view.status.kind === "connected",
+        })),
+    [connectors.connectors]
+  )
+
+  /** Provider id → display name, for the provider filter. Built from the catalogue, not hard-coded. */
+  const providerLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    for (const view of connectors.connectors) {
+      labels[view.descriptor.provider] = view.descriptor.displayName
+    }
+    return labels
+  }, [connectors.connectors])
 
   const agentSpatial = useAgentSpatial({
     state: agentStore.state,
@@ -982,6 +1036,11 @@ export function GraphView({
             available={agentObserver.available}
             filter={agentSpatial.filter}
             onFilterChange={agentSpatial.setFilter}
+            connectors={agentPanelConnectors}
+            providers={agentSpatial.providers}
+            providerFilter={agentSpatial.providerFilter}
+            onProviderFilterChange={agentSpatial.setProviderFilter}
+            providerLabels={providerLabels}
             selection={agentInspection}
             hiddenRunCount={agentSpatial.hiddenRunCount}
             hasAnyAgentData={workspaceAgentRunCount > 0}

@@ -27,8 +27,13 @@ export type AgentSpatialLayer = {
   /** Edge ids to draw prominently, given the current selection. */
   emphasized: Set<string>
   filter: AgentSpatialFilter
+  /** Which provider's runs are shown; null means all of them. */
+  providerFilter: string | null
+  /** Providers with runs in this workspace. Empty until at least one has worked here. */
+  providers: string[]
   selectedId: SpatialId | null
   setFilter: (filter: AgentSpatialFilter) => void
+  setProviderFilter: (provider: string | null) => void
   select: (id: SpatialId | null) => void
   /** Records a drag. Layout only — this cannot change agent state. */
   moveNode: (id: SpatialId, point: Point) => void
@@ -68,6 +73,17 @@ export function useAgentSpatial(input: UseAgentSpatialInput): AgentSpatialLayer 
     }
     return loadAgentLayout()
   })
+
+  /**
+   * The provider filter, held in React state rather than in the persisted
+   * layout.
+   *
+   * Not persisted on purpose: a saved provider filter is a way to come back
+   * tomorrow, see one agent's work, and conclude the others did nothing. The
+   * status filter is safe to remember because it is about *recency*, which
+   * the user can read off the pills; a hidden provider has no such tell.
+   */
+  const [providerFilter, setProviderFilter] = useState<string | null>(null)
 
   /**
    * Selection remembers which workspace it belongs to.
@@ -124,10 +140,11 @@ export function useAgentSpatial(input: UseAgentSpatialInput): AgentSpatialLayer 
         artifacts: state.artifacts,
         workspaceId,
         filter: layout.filter,
+        providerFilter,
         selectedId,
         now: now ?? derivedNow,
       }),
-    [state, workspaceId, layout.filter, selectedId, now, derivedNow]
+    [state, workspaceId, layout.filter, providerFilter, selectedId, now, derivedNow]
   )
 
   const pinned = useMemo(
@@ -159,12 +176,25 @@ export function useAgentSpatial(input: UseAgentSpatialInput): AgentSpatialLayer 
       positions,
       emphasized,
       filter: layout.filter,
+      providerFilter,
+      providers: scene.providers,
       selectedId,
       setFilter,
+      setProviderFilter,
       select,
       moveNode,
       hiddenRunCount: scene.hiddenRunCount,
     }),
-    [scene, positions, emphasized, layout.filter, selectedId, setFilter, select, moveNode]
+    [
+      scene,
+      positions,
+      emphasized,
+      layout.filter,
+      providerFilter,
+      selectedId,
+      setFilter,
+      select,
+      moveNode,
+    ]
   )
 }

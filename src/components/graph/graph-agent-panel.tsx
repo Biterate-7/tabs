@@ -3,6 +3,7 @@
 import { Bot, FileCode2, PlugZap } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Pill } from "@/components/workspace/category-filter-bar"
+import { cn } from "@/lib/utils"
 import { AGENT_STATUS_VISUALS } from "./agent-node-renderer"
 import { AGENT_FILTER_LABELS, AGENT_SPATIAL_FILTERS } from "@/lib/agents/spatial/types"
 import type { AgentSearchResult } from "@/lib/agents/spatial/search"
@@ -289,10 +290,61 @@ function groupByRole<T extends { role: string }>(items: T[]): [string, T[]][] {
   return [...groups.entries()]
 }
 
+/**
+ * One connected provider, as the workspace sees it.
+ *
+ * A view model rather than the connector itself, so the panel stays a pure
+ * presentational component and cannot reach a connector's lifecycle. There is
+ * no `onConnect` here and no `onDisconnect`: connecting is a settings action,
+ * and a control that changed observation from inside the graph sidebar would
+ * put a system-level switch in a place people click while exploring.
+ */
+export type AgentPanelConnector = {
+  provider: string
+  displayName: string
+  /** Already-resolved status word — the panel does not know the status vocabulary. */
+  statusLabel: string
+  connected: boolean
+}
+
+/**
+ * The unified agent strip.
+ *
+ * Every provider the user has connected, with the state it is actually in.
+ * Nothing is listed that was not connected, and nothing shows activity that
+ * was not observed — a provider that is connected and has done nothing says
+ * so, rather than being given a hopeful dot.
+ */
+function ConnectorStrip({ connectors }: { connectors: AgentPanelConnector[] }) {
+  if (connectors.length === 0) return null
+
+  return (
+    <ul aria-label="Connected agents" className="space-y-0.5">
+      {connectors.map((entry) => (
+        <li key={entry.provider} className="flex items-baseline gap-2">
+          <span
+            className={cn("text-body-sm leading-none", entry.connected ? "text-accent-text" : "text-tertiary")}
+            aria-hidden
+          >
+            {entry.connected ? "●" : "○"}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-meta text-foreground">{entry.displayName}</span>
+          <span className="shrink-0 text-meta text-tertiary">{entry.statusLabel}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export function GraphAgentPanel({
   available,
   filter,
   onFilterChange,
+  connectors = [],
+  providers = [],
+  providerFilter = null,
+  onProviderFilterChange,
+  providerLabels,
   selection,
   hiddenRunCount,
   hasAnyAgentData,
@@ -306,6 +358,14 @@ export function GraphAgentPanel({
   available: boolean
   filter: AgentSpatialFilter
   onFilterChange: (filter: AgentSpatialFilter) => void
+  /** Connected providers and their state. Empty when the user has connected none. */
+  connectors?: AgentPanelConnector[]
+  /** Providers with runs in this workspace. The filter appears only when there are two or more. */
+  providers?: string[]
+  providerFilter?: string | null
+  onProviderFilterChange?: (provider: string | null) => void
+  /** Provider id -> display name. Falls back to the id for a provider with no descriptor. */
+  providerLabels?: Record<string, string>
   selection: AgentInspectorSelection | null
   hiddenRunCount: number
   /** Whether this workspace has any agent runs at all, regardless of filter. */
@@ -316,14 +376,20 @@ export function GraphAgentPanel({
   onSelectResult: (id: SpatialId) => void
   onSelectRun: (runId: string) => void
 }) {
+  // One provider is not a choice. The control appears the moment a second one
+  // has worked here, and not before.
+  const showProviderFilter = providers.length > 1 && onProviderFilterChange !== undefined
+
   return (
     <section
       aria-labelledby="agent-panel-heading"
       className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0"
     >
       <p id="agent-panel-heading" className="text-label text-tertiary">
-        AGENT
+        AI AGENTS
       </p>
+
+      <ConnectorStrip connectors={connectors} />
 
       <div role="group" aria-label="Filter agent runs" className="flex flex-wrap gap-1">
         {AGENT_SPATIAL_FILTERS.map((option) => (
@@ -332,6 +398,23 @@ export function GraphAgentPanel({
           </Pill>
         ))}
       </div>
+
+      {showProviderFilter && (
+        <div role="group" aria-label="Filter by agent" className="flex flex-wrap gap-1">
+          <Pill active={providerFilter === null} onClick={() => onProviderFilterChange(null)}>
+            All agents
+          </Pill>
+          {providers.map((provider) => (
+            <Pill
+              key={provider}
+              active={providerFilter === provider}
+              onClick={() => onProviderFilterChange(provider)}
+            >
+              {providerLabels?.[provider] ?? provider}
+            </Pill>
+          ))}
+        </div>
+      )}
 
       {searchQuery.trim() &&
         (searchResults.length === 0 ? (
@@ -360,6 +443,8 @@ export function GraphAgentPanel({
 
       <AgentPanelBody
         available={available}
+        anyConnected={connectors.some((entry) => entry.connected)}
+        anyConfigured={connectors.length > 0}
         selection={selection}
         hasAnyAgentData={hasAnyAgentData}
         hasVisibleRuns={hasVisibleRuns}
@@ -373,6 +458,8 @@ export function GraphAgentPanel({
 
 function AgentPanelBody({
   available,
+  anyConnected,
+  anyConfigured,
   selection,
   hasAnyAgentData,
   hasVisibleRuns,
@@ -381,6 +468,10 @@ function AgentPanelBody({
   onSelectSpatial,
 }: {
   available: boolean
+  /** At least one connector is reporting `connected`. */
+  anyConnected: boolean
+  /** The user has enabled at least one connector, whatever state it is in. */
+  anyConfigured: boolean
   selection: AgentInspectorSelection | null
   hasAnyAgentData: boolean
   hasVisibleRuns: boolean
@@ -390,19 +481,33 @@ function AgentPanelBody({
 }) {
   if (selection) return <AgentInspector selection={selection} onSelectRun={onSelectRun} onSelectSpatial={onSelectSpatial} />
 
-  // Unavailable and empty are genuinely different states and must not collapse
-  // into one message: one says "we cannot look right now", the other says "we
-  // looked and there is nothing". Conflating them would either hide a real
-  // connection problem or invent one.
-  if (!available) {
+  // Four states that all look like "nothing here", kept apart because they
+  // call for four different things from the user: connect something, wait,
+  // fix a connection, or change the filter. Collapsing any two of them would
+  // either hide a real problem or invent one.
+  if (!anyConfigured) {
+    return (
+      <EmptyState
+        icon={Bot}
+        title="No agents connected"
+        description={
+          hasAnyAgentData
+            ? "This workspace still shows previously observed agent activity. Connect an agent in Settings → AI connectors to resume."
+            : "Connect an agent in Settings → AI connectors to watch it work here."
+        }
+      />
+    )
+  }
+
+  if (!anyConnected || !available) {
     return (
       <EmptyState
         icon={PlugZap}
-        title="Claude Code unavailable"
+        title="Agent not observable"
         description={
           hasAnyAgentData
             ? "This workspace still shows previously observed agent activity."
-            : "Agent activity cannot be observed on this machine right now."
+            : "A connected agent cannot be observed on this machine right now. Settings → AI connectors explains why."
         }
       />
     )

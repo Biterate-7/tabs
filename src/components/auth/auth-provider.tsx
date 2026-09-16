@@ -26,6 +26,7 @@ import {
   hasNamespaceData,
   setStorageNamespace,
 } from "@/lib/storage/namespace"
+import { resetConnectorManager } from "@/lib/agents/connectors/app-manager"
 import { loadAnonymousWorkspaceStore } from "@/lib/workspace/persistence"
 
 /**
@@ -196,6 +197,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   if (typeof window !== "undefined" && appliedNamespace !== namespace) {
     setAppliedNamespace(namespace)
     setStorageNamespace(namespace)
+    // Connectors belong to whoever enabled them. Tearing the manager down
+    // here stops the previous account's connectors observing into the new
+    // one's namespace, and drops every session credential — carrying one
+    // across a sign-out would be the single worst thing this layer could do.
+    // Same reasoning as the namespace switch above, and the same timing: the
+    // shell re-mounts right after and restores whatever the new account
+    // enabled.
+    resetConnectorManager()
     setAdoptionOffer(
       namespace && hasAnonymousData() && !hasNamespaceData(namespace)
         ? { userId: namespace, workspaceCount: loadAnonymousWorkspaceStore()?.workspaces.length ?? 0 }

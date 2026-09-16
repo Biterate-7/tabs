@@ -10,26 +10,43 @@ import {
   setProjectMapping,
 } from "@/lib/agents/claude-code/mapping"
 import { CLAUDE_CODE_AGENT_NAME, CLAUDE_CODE_PROVIDER } from "@/lib/agents/claude-code/types"
-import { normalizeUrl } from "@/lib/tabs/normalize"
+import {
+  ingestObservationBatch,
+  resolveProviderAgentId,
+} from "@/lib/agents/connectors/ingest"
 import { createTimestamp } from "@/lib/timestamps"
 import type { ClaudeCodeAdapter, ClaudeCodeAdapterOptions } from "@/lib/agents/claude-code/adapter"
 import type { ProjectMappingState } from "@/lib/agents/claude-code/mapping"
 import type { ClaudeDiscoveredSession } from "@/lib/agents/claude-code/types"
+import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
 import type { AgentAdapterObservation } from "@/lib/agents/adapter"
 import type { useAgentStore } from "./use-agent-store"
 
 /**
- * Wires the Claude Code adapter into the Phase 11 agent store.
+ * Binds Claude Code observation to the agent store.
  *
- * Its whole job is the joining-up: take observations from the adapter, attach
- * a workspace from the explicit mapping, and hand them to the domain. It
- * parses nothing, reads no files, and knows no transcript format — those live
- * on the server side of `src/lib/agents/claude-code/`.
+ * Its whole job is the joining-up: take observations from a Claude Code
+ * source, attach a workspace from the explicit mapping, and hand them to the
+ * domain. It parses nothing, reads no files, and knows no transcript format —
+ * those live on the server side of `src/lib/agents/claude-code/`.
  *
- * It also does not reimplement any domain rule. Run identity, terminal-status
- * protection, event retention, sticky metadata and workspace validation are
- * all Phase 11's, reached through `store.ingest` (which calls
- * `ingestObservation`) and `store.addRunLink`.
+ * Nor does it reimplement any rule. The domain's — run identity,
+ * terminal-status protection, event retention, sticky metadata, workspace
+ * validation — are reached through `store.ingest` and `store.addRunLink`. The
+ * connector layer's — agent identity per provider, batch folding, URL
+ * linking — come from `connectors/ingest.ts`, which is provider-neutral and
+ * shared with every future provider binding. What is genuinely Claude Code's
+ * and lives here is exactly one thing: the project-to-workspace mapping
+ * policy, and the session list the user maps with.
+ *
+ * ## Where the observations come from
+ *
+ * Preferably from the connector the manager owns — pass `connector`, and this
+ * hook subscribes to it rather than starting anything, so the app has one
+ * Claude Code poll loop whose lifecycle the user controls from settings.
+ *
+ * Without one it falls back to constructing its own adapter, which is what
+ * the tests exercise and what keeps this hook usable in isolation.
  */
 
 export type ClaudeCodeTabIndex = {
@@ -47,11 +64,20 @@ export type UseClaudeCodeObserverOptions = {
    * entirely — the feature is optional and costs nothing when absent.
    */
   tabIndexes?: ClaudeCodeTabIndex[]
+  /**
+   * The connector the manager owns.
+   *
+   * When present this hook observes through it and starts nothing of its own,
+   * so connecting and disconnecting from settings controls whether anything
+   * is read at all. When absent the hook builds its own adapter — the
+   * standalone path the tests drive.
+   */
+  connector?: ClaudeCodeConnector | null
   adapterOptions?: ClaudeCodeAdapterOptions
 }
 
 export function useClaudeCodeObserver(options: UseClaudeCodeObserverOptions) {
-  const { store, enabled = false, tabIndexes, adapterOptions } = options
+  const { store, enabled = false, tabIndexes, connector, adapterOptions } = options
 
   const [mappings, setMappings] = useState<ProjectMappingState>(() => {
     if (typeof window === "undefined") return { version: 1, mappings: [] }
@@ -89,25 +115,32 @@ export function useClaudeCodeObserver(options: UseClaudeCodeObserverOptions) {
   }, [store])
 
   /**
-   * One adapter for the life of the hook.
+   * The hook's own adapter — built only when nothing else is supplying
+   * observations.
    *
    * Held in state with a lazy initialiser rather than a ref, so it is created
    * exactly once without being written during render — and so its identity is
    * stable, which is what keeps the subscription effect below from tearing
    * down and restarting the poll loop (losing its cursor) on every render.
+   *
+   * Null when a connector was passed: the manager already owns one, and a
+   * second would be a second cursor over the same files.
    */
-  const [adapter] = useState<ClaudeCodeAdapter>(() =>
-    createClaudeCodeAdapter({
-      ...adapterOptions,
-      // Session listing and availability arrive with each poll rather than
-      // being read back on a timer of our own — one loop for the whole
-      // feature, which is the point of the adapter owning the schedule.
-      onPoll: (polled) => {
-        setSessions(polled.sessions)
-        setAvailable(polled.available)
-        adapterOptions?.onPoll?.(polled)
-      },
-    })
+  const [adapter] = useState<ClaudeCodeAdapter | null>(() =>
+    connector
+      ? null
+      : createClaudeCodeAdapter({
+          ...adapterOptions,
+          // Session listing and availability arrive with each poll rather
+          // than being read back on a timer of our own — one loop for the
+          // whole feature, which is the point of the adapter owning the
+          // schedule.
+          onPoll: (polled) => {
+            setSessions(polled.sessions)
+            setAvailable(polled.available)
+            adapterOptions?.onPoll?.(polled)
+          },
+        })
   )
 
   useEffect(() => {
@@ -116,116 +149,80 @@ export function useClaudeCodeObserver(options: UseClaudeCodeObserverOptions) {
   }, [mappings])
 
   /**
-   * Resolves the single provider-level Agent, creating it only if absent.
+   * The one genuinely Claude-Code-specific rule in this hook: which workspace
+   * a session belongs to.
    *
-   * One Agent for Claude Code, many runs beneath it — never one Agent per
-   * session. The lookup is by provider, so repeated polling finds the
-   * existing identity instead of minting another.
+   * Returns undefined when the project has not been mapped. The domain then
+   * reports the observation as `unattached` and creates nothing, which
+   * preserves the discovery without inventing a home for it — and the same
+   * session attaches on a later poll once the user maps its project.
    */
-  const resolveAgentId = useCallback((): string | null => {
-    const current = storeRef.current
-
-    // Read through getState rather than the rendered `agents` array: an agent
-    // created moments ago in this same batch is already in the live state but
-    // not yet in the render, and attributing the rest of the batch to it is
-    // the whole point of resolving an id here.
-    const existing = current
-      .getState()
-      .agents.find((agent) => agent.provider === CLAUDE_CODE_PROVIDER)
-    if (existing) return existing.id
-
-    const failure = current.createAgent({
-      provider: CLAUDE_CODE_PROVIDER,
-      name: CLAUDE_CODE_AGENT_NAME,
-    })
-    if (failure) return null
-
-    return (
-      current.getState().agents.find((agent) => agent.provider === CLAUDE_CODE_PROVIDER)?.id ?? null
-    )
-  }, [])
-
-  /**
-   * Attaches a workspace to an observation, if the project has been mapped.
-   *
-   * Returns the observation unchanged when it has not. Phase 11 then reports
-   * it as `unattached` and creates nothing, which preserves the discovery
-   * without inventing a home for it — and the same session attaches on a
-   * later poll once the user maps its project.
-   */
-  const attachWorkspace = useCallback(
-    (observation: AgentAdapterObservation): AgentAdapterObservation => {
-      if (!observation.projectKey) return observation
-
-      const workspaceId = findWorkspaceForProject(mappingsRef.current, observation.projectKey)
-      return workspaceId ? { ...observation, workspaceId } : observation
+  const resolveWorkspaceId = useCallback(
+    (observation: AgentAdapterObservation): string | undefined => {
+      if (!observation.projectKey) return undefined
+      return findWorkspaceForProject(mappingsRef.current, observation.projectKey)
     },
     []
   )
 
   /**
-   * Links an observed URL to an existing tab, when one matches exactly.
+   * Folding observations into the domain, through the provider-neutral path.
    *
-   * Exact normalized match only, within the run's own workspace, using
-   * TabDump's existing `normalizeUrl` so an agent visiting a saved page links
-   * to the same tab the user would have. No tab is ever created, and no fuzzy
-   * matching is attempted: a near-miss link is worse than no link, because it
-   * asserts a relationship that did not happen.
+   * Agent identity, batch ingestion and URL linking all come from
+   * `connectors/ingest.ts` — the same code every future provider binding uses,
+   * so none of them can drift into its own idea of what an observation does.
    */
-  const linkUrl = useCallback((runId: string, workspaceId: string, rawUrl: string) => {
-    const indexes = tabIndexRef.current
-    if (!indexes) return
-
-    const index = indexes.find((entry) => entry.workspaceId === workspaceId)
-    if (!index) return
-
-    let normalized: string
-    try {
-      normalized = normalizeUrl(new URL(rawUrl))
-    } catch {
-      return
-    }
-
-    const tabId = index.tabsByNormalizedUrl.get(normalized)
-    if (!tabId) return
-
-    // Through the domain, never around it: addRunLink is what enforces that
-    // the tab and the run share a workspace.
-    storeRef.current.addRunLink({ runId, tabId, role: "context", tabWorkspaceId: workspaceId })
-  }, [])
-
   const handleObservations = useCallback(
     (incoming: AgentAdapterObservation[]) => {
-      const agentId = resolveAgentId()
+      const agentId = resolveProviderAgentId(
+        storeRef.current,
+        CLAUDE_CODE_PROVIDER,
+        CLAUDE_CODE_AGENT_NAME
+      )
       if (!agentId) return
 
-      for (const raw of incoming) {
-        const observation = attachWorkspace(raw)
-        storeRef.current.ingest(agentId, observation)
-
-        if (!observation.url || !observation.workspaceId) continue
-
-        // Live state again: the run may have been created by an earlier
-        // observation in this very batch.
-        const run = storeRef.current
-          .getState()
-          .runs.find(
-            (candidate) =>
-              candidate.agentId === agentId && candidate.externalId === observation.externalId
-          )
-        if (run) linkUrl(run.id, run.workspaceId, observation.url)
-      }
+      ingestObservationBatch({
+        store: storeRef.current,
+        agentId,
+        provider: CLAUDE_CODE_PROVIDER,
+        observations: incoming,
+        resolveWorkspaceId,
+        tabIndexes: tabIndexRef.current,
+      })
     },
-    [attachWorkspace, linkUrl, resolveAgentId]
+    [resolveWorkspaceId]
   )
 
   useEffect(() => {
     if (!enabled) return
 
-    // One subscription, one loop. The adapter stops its timer as soon as the
-    // last subscriber leaves, so unmounting ends all polling.
-    return adapter.subscribe(handleObservations)
-  }, [adapter, enabled, handleObservations])
+    // One subscription, one loop. Through the manager's connector when there
+    // is one — in which case this hook starts nothing and the user's
+    // connect/disconnect decides whether anything is read — and otherwise
+    // through the hook's own adapter, which stops its timer as soon as the
+    // last subscriber leaves.
+    if (connector) return connector.subscribe(handleObservations)
+    return adapter?.subscribe(handleObservations)
+  }, [adapter, connector, enabled, handleObservations])
+
+  /**
+   * Session listing and availability, when the connector is the source.
+   *
+   * The connector's own status is the availability signal — it is set from
+   * the very poll that produced the sessions — so this reads it back on each
+   * status change rather than running a second loop to ask again.
+   */
+  useEffect(() => {
+    if (!connector) return
+
+    const sync = () => {
+      setSessions(connector.getSessions())
+      setAvailable(connector.getStatus().kind === "connected")
+    }
+
+    sync()
+    return connector.watchStatus(sync)
+  }, [connector])
 
   return useMemo(
     () => ({
@@ -247,8 +244,10 @@ export function useClaudeCodeObserver(options: UseClaudeCodeObserverOptions) {
         setMappings((current) => removeProjectMapping(current, projectPath)),
 
       /** Polls immediately instead of waiting for the next tick. */
-      refresh: () => adapter.refresh(),
+      refresh: async () => {
+        await (connector ?? adapter)?.refresh()
+      },
     }),
-    [adapter, available, mappings, sessions]
+    [adapter, connector, available, mappings, sessions]
   )
 }

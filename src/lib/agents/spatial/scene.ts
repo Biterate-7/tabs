@@ -140,13 +140,30 @@ export function buildAgentSpatialScene(
   state: AgentState,
   input: BuildSceneInput
 ): AgentSpatialScene {
-  const { workspaceId, filter, selectedId, now } = input;
+  const { workspaceId, filter, providerFilter, selectedId, now } = input;
   if (!workspaceId) return emptyAgentSpatialScene();
 
   const workspaceRuns = state.runs.filter((run) => run.workspaceId === workspaceId);
   if (workspaceRuns.length === 0) return emptyAgentSpatialScene();
 
-  const visibleRuns = workspaceRuns.filter((run) => runMatchesFilter(run, filter, now));
+  // Which providers have worked here, taken before any filter so that a
+  // provider the user has just filtered away does not vanish from the control
+  // they would use to bring it back.
+  const providerByAgentId = new Map(state.agents.map((agent) => [agent.id, agent.provider]));
+  const providers: string[] = [];
+  for (const run of workspaceRuns) {
+    const provider = providerByAgentId.get(run.agentId);
+    if (provider && !providers.includes(provider)) providers.push(provider);
+  }
+
+  const visibleRuns = workspaceRuns.filter(
+    (run) =>
+      runMatchesFilter(run, filter, now) &&
+      // An unknown provider filter hides everything rather than silently
+      // showing all runs: a filter that quietly stopped applying would be
+      // read as "this provider did all of this".
+      (!providerFilter || providerByAgentId.get(run.agentId) === providerFilter)
+  );
   const hiddenRunCount = workspaceRuns.length - visibleRuns.length;
   const visibleRunIds = new Set(visibleRuns.map((run) => run.id));
 
@@ -336,7 +353,7 @@ export function buildAgentSpatialScene(
     }
   }
 
-  return { nodes, edges, workItems, hiddenRunCount };
+  return { nodes, edges, workItems, hiddenRunCount, providers };
 }
 
 /**

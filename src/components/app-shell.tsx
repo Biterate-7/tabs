@@ -10,6 +10,7 @@ import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { HistoryDumpView } from "@/components/workspace/history-dump-view"
+import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -698,6 +699,21 @@ export function AppShell() {
     }
     toast.success("Reorganized", { description: outcome.report ? summarizeReportForToast(outcome.report) : undefined })
   }
+
+  /**
+   * THE connector restore, mounted at the shell.
+   *
+   * Here rather than in a view, because the manager is a singleton that
+   * outlives any one surface and the user's intent is about the app, not
+   * about whichever screen happens to be open. Restoring from GraphView would
+   * mean a connector the user enabled in settings stayed dormant until they
+   * opened the graph, and the settings page would report "Not connected" for
+   * something they had connected.
+   *
+   * This starts observation; it does not consume it. Ingestion remains
+   * GraphView's single call site (see useClaudeCodeObserver), unchanged.
+   */
+  useAgentConnectors({ restore: true })
 
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
   // Subscribes to the engine rather than mirroring its state into React —

@@ -228,10 +228,21 @@ export type AgentSpatialScene = {
    * as the former.
    */
   hiddenRunCount: number;
+  /**
+   * Providers with runs in this workspace, before any provider filter is
+   * applied, in stable order.
+   *
+   * Computed from the workspace's own runs rather than from the connector
+   * catalogue, so the list describes what has actually worked here. That is
+   * what lets a provider filter appear only once there is something to filter
+   * between: a control offering one choice is noise, and one offering
+   * providers that have never touched this workspace is worse.
+   */
+  providers: string[];
 };
 
 export function emptyAgentSpatialScene(): AgentSpatialScene {
-  return { nodes: [], edges: [], workItems: [], hiddenRunCount: 0 };
+  return { nodes: [], edges: [], workItems: [], hiddenRunCount: 0, providers: [] };
 }
 
 /**
@@ -286,6 +297,17 @@ export type BuildSceneInput = {
   artifacts: WorkArtifact[];
   workspaceId: string;
   filter: AgentSpatialFilter;
+  /**
+   * Show only runs belonging to this provider. Absent or null means all of
+   * them.
+   *
+   * A second, orthogonal dimension to `filter` rather than another value
+   * inside it: "active" and "Claude Code" are answers to different questions,
+   * and a user watching two agents wants to combine them ("what is Codex
+   * doing right now"), which a single enum could not express without a value
+   * per combination.
+   */
+  providerFilter?: string | null;
   /** The currently selected spatial node, which widens what is disclosed around it. */
   selectedId?: SpatialId | null;
   /** Clock, injected — used to decide what counts as recent. */

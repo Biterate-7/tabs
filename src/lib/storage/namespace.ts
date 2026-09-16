@@ -54,6 +54,12 @@ export const SCOPED_STORAGE_KEYS = [
   // state, but personal layout state — it describes their workspace, so it
   // partitions with the rest rather than staying global.
   "tabdump:agent-layout:v1",
+  // Which AI connectors the user has asked TabDump to observe (see
+  // src/lib/agents/connectors/persistence.ts). Scoped because "this person
+  // watches Claude Code" is a fact about them, not about the device — and
+  // because one account must never inherit another's observation settings.
+  // It holds intent only: no credential is written here, or anywhere else.
+  "tabdump:connectors:v1",
 ] as const;
 
 /**

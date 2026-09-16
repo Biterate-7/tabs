@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush } from "lucide-react"
+import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,11 +25,40 @@ import { LayoutSection } from "./sections/layout-section"
 import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
+import { ConnectorsSection } from "./sections/connectors-section"
 
-type NavSection = "general" | "theme" | "typography" | "background" | "layout" | "shape" | "motion" | "accent"
+type NavSection =
+  | "general"
+  | "connectors"
+  | "theme"
+  | "typography"
+  | "background"
+  | "layout"
+  | "shape"
+  | "motion"
+  | "accent"
+
+/**
+ * The sections the appearance reset applies to.
+ *
+ * Everything except connectors, which are not appearance — and whose "reset"
+ * would mean disconnecting the user's agents, a destructive action with no
+ * business hiding behind a button labelled about themes.
+ */
+const APPEARANCE_SECTIONS: readonly NavSection[] = [
+  "general",
+  "theme",
+  "typography",
+  "background",
+  "layout",
+  "shape",
+  "motion",
+  "accent",
+]
 
 const NAV: { id: NavSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
+  { id: "connectors", label: "AI connectors", icon: Bot },
   { id: "theme", label: "Theme", icon: Palette },
   { id: "typography", label: "Typography", icon: Type },
   { id: "background", label: "Background", icon: Image },
@@ -58,6 +87,10 @@ export function AppearanceSettingsView({ onClose }: { onClose: () => void }) {
         </IconButton>
         <p className="text-h2 text-foreground">Settings</p>
         <div className="ml-auto">
+          {/* Appearance-only, and hidden where it would not apply: a reset
+              button sitting above the AI connector list reads as though it
+              might disconnect them. */}
+          {APPEARANCE_SECTIONS.includes(active) && (
           <AlertDialog>
             <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
               <RotateCcw /> Reset appearance
@@ -77,6 +110,7 @@ export function AppearanceSettingsView({ onClose }: { onClose: () => void }) {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          )}
         </div>
       </div>
 
@@ -123,6 +157,7 @@ export function AppearanceSettingsView({ onClose }: { onClose: () => void }) {
         <div className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="mx-auto w-full max-w-3xl">
             {active === "general" && <GeneralSection />}
+            {active === "connectors" && <ConnectorsSection />}
             {active === "theme" && <ThemeSection />}
             {active === "typography" && <TypographySection />}
             {active === "background" && <BackgroundSection />}

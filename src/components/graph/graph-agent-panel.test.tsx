@@ -58,6 +58,18 @@ function renderPanel(props: Partial<React.ComponentProps<typeof GraphAgentPanel>
       available
       filter="active"
       onFilterChange={onFilterChange}
+      // The situation these tests describe: one provider connected, so the
+      // panel is past "nothing is connected" and into the states below.
+      // Phase 17's connector-specific behaviour lives in
+      // graph-agent-panel-connectors.test.tsx.
+      connectors={[
+        {
+          provider: "claude-code",
+          displayName: "Claude Code",
+          statusLabel: "Connected",
+          connected: true,
+        },
+      ]}
       selection={null}
       hiddenRunCount={0}
       hasAnyAgentData
@@ -120,14 +132,16 @@ describe("empty and unavailable states", () => {
   it("distinguishes unavailable from empty", () => {
     renderPanel({ available: false, hasAnyAgentData: false, hasVisibleRuns: false })
 
-    expect(screen.getByText(/claude code unavailable/i)).toBeTruthy()
+    // Provider-neutral since Phase 17: a workspace may have several connected
+    // agents, and naming one of them here would be wrong for the others.
+    expect(screen.getByText(/agent not observable/i)).toBeTruthy()
     expect(screen.queryByText(/no agent activity in this workspace/i)).toBeNull()
   })
 
   it("says historical activity is still shown when unavailable but data exists", () => {
     renderPanel({ available: false, hasAnyAgentData: true, hasVisibleRuns: true })
 
-    expect(screen.getByText(/claude code unavailable/i)).toBeTruthy()
+    expect(screen.getByText(/agent not observable/i)).toBeTruthy()
     expect(screen.getByText(/previously observed agent activity/i)).toBeTruthy()
   })
 
@@ -156,7 +170,8 @@ describe("the run inspector", () => {
     renderPanel({ selection: runSelection() })
 
     expect(screen.getByText("Implement authentication")).toBeTruthy()
-    expect(screen.getByText("Claude Code")).toBeTruthy()
+    // Two matches since Phase 17: the connector strip names the provider too.
+    expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0)
     // Status as words, not only a colour.
     expect(screen.getAllByText("Working").some((el) => el.tagName === "SPAN")).toBe(true)
   })
@@ -314,7 +329,8 @@ describe("the agent inspector", () => {
   it("shows provider, status and counts", () => {
     renderPanel({ selection })
 
-    expect(screen.getByText("Claude Code")).toBeTruthy()
+    // Two matches since Phase 17: the connector strip names the provider too.
+    expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0)
     expect(screen.getByText("claude-code")).toBeTruthy()
     expect(screen.getAllByText("Working").some((el) => el.tagName === "SPAN")).toBe(true)
     expect(screen.getByText(/2 active · 5 total/)).toBeTruthy()
