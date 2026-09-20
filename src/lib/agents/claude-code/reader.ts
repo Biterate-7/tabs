@@ -3,9 +3,9 @@ import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isValidSessionId, resolveReadStart } from "./cursor";
-import { countCreatedTasks } from "./normalizer";
+import { advanceTaskWindow, countCreatedTasks } from "./normalizer";
 import { parseTranscriptLine } from "./parser";
-import { CLAUDE_LIMITS, mapClaudeStatus } from "./types";
+import { CLAUDE_LIMITS, NO_TASK_WINDOW, mapClaudeStatus } from "./types";
 import type { CursorState } from "./cursor";
 import type {
   ClaudeDiscoveredSession,
@@ -219,6 +219,12 @@ export async function readSessionActivity(
   // creations would be numbered from zero and collide with the existing ones.
   const carriedOrdinal = previous?.taskOrdinal ?? 0;
 
+  // Which task this session had open when the last poll stopped, carried
+  // forward by every early return below for the same reason the ordinal is:
+  // a poll that reads no records has learned nothing about the window, and
+  // resetting it would end a task span at an arbitrary poll boundary.
+  const carriedWindow = previous?.taskWindow ?? NO_TASK_WINDOW;
+
   const status = mapClaudeStatus(entry.status);
   if (status) session.status = status;
   if (entry.name) session.title = entry.name;
@@ -228,7 +234,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal },
+      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal, taskWindow: carriedWindow },
     };
   }
 
@@ -242,7 +248,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal },
+      cursor: { sessionId: entry.sessionId, offset: 0, size: 0, taskOrdinal: carriedOrdinal, taskWindow: carriedWindow },
     };
   }
 
@@ -254,7 +260,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal, taskWindow: carriedWindow },
     };
   }
 
@@ -271,7 +277,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal, taskWindow: carriedWindow },
     };
   }
 
@@ -288,7 +294,7 @@ export async function readSessionActivity(
     return {
       session,
       records: [],
-      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal },
+      cursor: { sessionId: entry.sessionId, offset: start.offset, size, taskOrdinal: carriedOrdinal, taskWindow: carriedWindow },
     };
   }
 
@@ -317,6 +323,9 @@ export async function readSessionActivity(
       // Advanced by however many tasks these records created, so the next
       // poll numbers its own creations from the right place.
       taskOrdinal: carriedOrdinal + countCreatedTasks(records),
+      // Advanced over the same records, so a task span that continues past
+      // this poll's last byte is still open when the next poll resumes.
+      taskWindow: advanceTaskWindow(records, carriedWindow),
     },
   };
 }

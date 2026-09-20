@@ -68,6 +68,12 @@ export async function POST(request: Request): Promise<Response> {
         // minus what this batch itself created — the count the previous poll
         // left behind.
         taskOrdinalBase: result.cursor.taskOrdinal - countCreatedTasks(result.records),
+        // The window the PREVIOUS poll left open, for the same reason: the
+        // swept cursor has already been advanced past this batch, so the
+        // base has to come from the cursor that went in, not the one coming
+        // out. A session absent from the incoming cursor has none.
+        taskWindowBase: cursors.find((entry) => entry.sessionId === result.cursor.sessionId)
+          ?.taskWindow,
       })
     ),
     cursor: encodeCursor(sweep.results.map((result) => result.cursor)),

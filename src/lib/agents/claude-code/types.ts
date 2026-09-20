@@ -184,7 +184,65 @@ export type ClaudeTranscriptCursor = {
    * item, because an item is only ever matched within its own run.
    */
   taskOrdinal: number;
+  /**
+   * Which task, if any, this session currently has open.
+   *
+   * A task window routinely spans several polls — a `TaskUpdate` opens it,
+   * dozens of tool calls follow, and a later poll reads the one that closes
+   * it. Without carrying the open task here, every poll boundary would end a
+   * window, and the file operations after it would look unattributable.
+   *
+   * Server-owned for the same reason the offset is. A forged value is
+   * bounded by the domain rather than by this type: the ordinal it names
+   * still has to match a work item the run already has, so the worst a
+   * tampered window can do is attribute a file to another task *of the same
+   * run* — never to another run, and never to another workspace.
+   */
+  taskWindow: ClaudeTaskWindow;
 };
+
+/**
+ * The open-task window: the only structure in a Claude Code transcript that
+ * says which task a file operation belongs to.
+ *
+ * There is no field on a `tool_use` block, or on the record containing it,
+ * that names a task — verified against every block in every task-using
+ * transcript on the survey machine, whose complete key set is
+ * `type, id, name, input, caller`. What the transcript does give is order: it
+ * is append-only, and a tool call physically sits between the `TaskUpdate`
+ * that opened a task and the one that closed it.
+ *
+ * That is a state machine over explicit provider-written events, not a clock
+ * comparison. Timestamps are never consulted to decide attribution, so a
+ * skewed or out-of-order timestamp cannot move a tool call into a window.
+ *
+ * See docs/claude-code-evidence-attribution.md for the survey and the rules.
+ */
+export type ClaudeTaskWindow = {
+  /**
+   * The provider task id currently open, or "" when none is.
+   *
+   * Exactly one task is ever open. Across all four task-using transcripts on
+   * the survey machine, two tasks were never simultaneously `in_progress`
+   * (max observed concurrency: 1). If that is ever violated the window is
+   * marked contaminated rather than picking one, because there would be no
+   * observed basis for the choice.
+   */
+  openTaskId: string;
+  /**
+   * Whether the open window may still be attributed from.
+   *
+   * Set when something proves that work happened for a task the window
+   * structure did not track — principally a `completed` for a task never
+   * seen `in_progress`, which means untracked work occurred somewhere
+   * earlier. A contaminated window yields no evidence at all rather than
+   * attributing its files to whichever task happened to be open.
+   */
+  contaminated: boolean;
+};
+
+/** No task open, nothing contaminated. What a session starts from. */
+export const NO_TASK_WINDOW: ClaudeTaskWindow = { openTaskId: "", contaminated: false };
 
 /** A session the reader found, with everything the client needs to decide what to do with it. */
 export type ClaudeDiscoveredSession = {

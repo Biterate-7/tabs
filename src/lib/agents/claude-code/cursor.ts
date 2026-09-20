@@ -25,6 +25,15 @@ const SESSION_ID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
 /** Ceiling on how many sessions a cursor may track, so a forged one cannot fan out work. */
 const MAX_CURSOR_ENTRIES = 64;
 
+/**
+ * Claude Code task ids, as its own `TaskUpdate` writes them.
+ *
+ * Small decimal integers in every instance on the survey machine. Bounded
+ * here so a client-supplied window cannot carry an arbitrary string toward
+ * the work-item lookup it is eventually matched against.
+ */
+const TASK_ID_PATTERN = /^[0-9]{1,6}$/;
+
 export function isValidSessionId(value: unknown): value is string {
   return typeof value === "string" && SESSION_ID_PATTERN.test(value);
 }
@@ -43,6 +52,12 @@ export function encodeCursor(entries: CursorState): string {
       // so an in-flight client is not forced to restart its whole sweep just
       // because work items arrived.
       t: entry.taskOrdinal,
+      // The open task window, additive in the same way and for the same
+      // reason: a cursor written before evidence existed decodes with no
+      // window open, and the session simply attributes nothing until it
+      // reads the next explicit `in_progress`.
+      w: entry.taskWindow.openTaskId,
+      c: entry.taskWindow.contaminated,
     })),
   };
 
@@ -91,11 +106,27 @@ export function decodeCursor(value: unknown): CursorState {
         ? Math.floor(entry.t)
         : 0;
 
+    // A window is only ever carried if it names a plausible task id. The
+    // bound matters because this value is client-supplied: it ends up
+    // matched against a work item's externalId, and an unbounded string
+    // there would be a forged key looking for somewhere to land. Claude
+    // Code's own task ids are small decimal integers, so anything else is
+    // refused and the session simply starts with no window open.
+    const openTaskId =
+      typeof entry.w === "string" && TASK_ID_PATTERN.test(entry.w) ? entry.w : "";
+
     entries.push({
       sessionId: entry.s,
       offset: Math.floor(entry.o),
       size: Math.floor(entry.z),
       taskOrdinal,
+      taskWindow: {
+        openTaskId,
+        // Contamination only means anything while a window is open, and it
+        // defaults to *true* for a malformed value: the safe direction for
+        // this flag is "attribute nothing".
+        contaminated: openTaskId ? entry.c !== false : false,
+      },
     });
   }
 

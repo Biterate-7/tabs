@@ -1,8 +1,14 @@
 import { toProjectRelative } from "@/lib/agents/paths";
-import { CLAUDE_CODE_PROVIDER, CLAUDE_LIMITS, mapClaudeTaskStatus } from "./types";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CLAUDE_LIMITS,
+  NO_TASK_WINDOW,
+  mapClaudeTaskStatus,
+} from "./types";
 import type {
   ClaudeDiscoveredSession,
   ClaudeParsedRecord,
+  ClaudeTaskWindow,
   ClaudeToolUse,
 } from "./types";
 import type {
@@ -103,6 +109,15 @@ export type NormalizeInput = {
    * caller advances it.
    */
   taskOrdinalBase?: number;
+  /**
+   * Which task this session had open when the last poll stopped.
+   *
+   * Absent means none, which is also what a session seen for the first time
+   * gets: its earlier records are outside the read window, so nothing is
+   * known about which task was open, and nothing is attributed until an
+   * explicit `in_progress` is read. Fail-safe rather than fail-wrong.
+   */
+  taskWindowBase?: ClaudeTaskWindow;
 };
 
 /**
@@ -172,6 +187,167 @@ export function redactAbsolutePaths(value: string): string {
  */
 function taskExternalId(ordinal: number): string {
   return String(ordinal);
+}
+
+/**
+ * The two tools whose presence in a record makes it a task-bookkeeping record
+ * rather than a working one.
+ *
+ * `extractToolUses` does not filter these out, so they appear in both
+ * `record.tasks` and `record.tools`. That is deliberate elsewhere — they still
+ * deserve an activity line — but here it matters for a different reason: see
+ * `resolveWindows` on mixed records.
+ */
+const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate"]);
+
+/**
+ * One span of records attributable to one task.
+ *
+ * Built by walking records in the order the provider appended them. A span
+ * that never closes cleanly, or that something later proves was shared with
+ * untracked work, is marked `contaminated` and contributes nothing.
+ */
+type TaskSpan = {
+  taskId: string;
+  /** Indexes into the record array whose tool calls this span may claim. */
+  recordIndexes: number[];
+  contaminated: boolean;
+  /** Whether an explicit matching `completed` closed this span inside this batch. */
+  closed: boolean;
+};
+
+type ResolvedWindows = {
+  /** Record index -> the task id its file operations may be attributed to. */
+  attribution: Map<number, string>;
+  /** The window state to carry into the next poll. */
+  next: ClaudeTaskWindow;
+};
+
+/**
+ * Works out which records belong to which task.
+ *
+ * Two passes are needed rather than one, and the reason is contamination: a
+ * `completed` for a task that was never `in_progress` proves untracked work
+ * happened, and the window it damages is one that has *already been walked
+ * past*. Resolving spans first and stamping observations second means such a
+ * span can be retracted before any of it is emitted.
+ *
+ * ## What each branch refuses
+ *
+ * - **A second task opening while one is open.** Never observed (max
+ *   concurrency 1 across every task-using transcript surveyed), and if it
+ *   happens there is no observed basis for choosing between them, so both the
+ *   old span and the new one are contaminated.
+ * - **A completion that does not match the open task.** Either an orphan or a
+ *   duplicate; both mean the window structure lost track of something. The
+ *   most recent span is contaminated.
+ * - **A record that mixes task events with working tools.** The parser keeps
+ *   `tasks` and `tools` in separate arrays, so their relative order inside one
+ *   record is not recoverable — a file operation in such a record could sit
+ *   either side of the status change. Never observed (0 of 290 tool-bearing
+ *   records), and refused rather than guessed.
+ */
+function resolveWindows(
+  records: ClaudeParsedRecord[],
+  base: ClaudeTaskWindow
+): ResolvedWindows {
+  const spans: TaskSpan[] = [];
+
+  // A window carried in from an earlier poll continues here. Its records from
+  // previous polls are gone, but the records in *this* batch are still its own.
+  let open: TaskSpan | undefined = base.openTaskId
+    ? { taskId: base.openTaskId, recordIndexes: [], contaminated: base.contaminated, closed: false }
+    : undefined;
+  if (open) spans.push(open);
+
+  let lastClosed: TaskSpan | undefined;
+
+  records.forEach((record, index) => {
+    if (record.tasks.length === 0) {
+      // An ordinary working record. It belongs to whatever is open, or to
+      // nothing at all — which is the common case even in sessions that use
+      // tasks (142 of 186 file-touching calls on the survey machine).
+      if (open) open.recordIndexes.push(index);
+      return;
+    }
+
+    // A task-bookkeeping record. It contributes no attributable work of its
+    // own, and if it also carries working tools their ordering is unknowable.
+    if (record.tools.some((tool) => !TASK_TOOL_NAMES.has(tool.name))) {
+      if (open) open.contaminated = true;
+    }
+
+    for (const task of record.tasks) {
+      if (task.kind === "create") continue;
+
+      if (task.status === "in_progress") {
+        // An overlap contaminates BOTH spans, not just the one being
+        // displaced. If two tasks were ever open at once then this window
+        // model does not describe what this session is doing, and the span
+        // that opens second is no more trustworthy than the one it
+        // interrupted.
+        const overlapping = Boolean(open) && open?.taskId !== task.taskId;
+        if (overlapping && open) open.contaminated = true;
+
+        open = { taskId: task.taskId, recordIndexes: [], contaminated: overlapping, closed: false };
+        spans.push(open);
+        continue;
+      }
+
+      if (open && open.taskId === task.taskId) {
+        open.closed = true;
+        lastClosed = open;
+        open = undefined;
+        continue;
+      }
+
+      // Nothing open that matches. Whatever this task's work was, it happened
+      // inside a span this structure credited to someone else.
+      const victim = open ?? lastClosed;
+      if (victim) victim.contaminated = true;
+    }
+  });
+
+  const attribution = new Map<number, string>();
+  for (const span of spans) {
+    if (span.contaminated) continue;
+    // Only a span that CLOSED inside this batch may be attributed from, and
+    // the reason is contamination arriving late.
+    //
+    // An orphan completion damages a span that has already been walked past.
+    // Inside one batch that is recoverable — the span is retracted before
+    // anything is emitted. Across a batch boundary it is not: the records are
+    // gone, and the observations carrying them have already left. Measured on
+    // the survey machine, streaming instead cost 2 wrong rows out of 28 —
+    // files belonging to a task that was completed without ever being
+    // started, credited to the task that happened to be open.
+    //
+    // So a span pays out at its close or not at all. The cost is a span whose
+    // `completed` lands in the next poll, which yields nothing; that is the
+    // direction this feature is required to fail in.
+    if (!span.closed) continue;
+    for (const index of span.recordIndexes) attribution.set(index, span.taskId);
+  }
+
+  return {
+    attribution,
+    next: open
+      ? { openTaskId: open.taskId, contaminated: open.contaminated }
+      : { ...NO_TASK_WINDOW },
+  };
+}
+
+/**
+ * The window state a batch of records leaves behind, for the reader's cursor.
+ *
+ * Sibling of `countCreatedTasks`, and called in the same place for the same
+ * reason: the cursor is the only per-session state that survives a poll.
+ */
+export function advanceTaskWindow(
+  records: ClaudeParsedRecord[],
+  base: ClaudeTaskWindow
+): ClaudeTaskWindow {
+  return resolveWindows(records, base).next;
 }
 
 /** How many tasks a batch of records created, so a caller can advance its ordinal. */
@@ -254,7 +430,11 @@ function workItemsForRecords(
  * observation carrying its own summary and `sourceId`.
  */
 export function normalizeSession(input: NormalizeInput): AgentAdapterObservation[] {
-  const { session, records, now, taskOrdinalBase = 0 } = input;
+  const { session, records, now, taskOrdinalBase = 0, taskWindowBase = NO_TASK_WINDOW } = input;
+
+  // Resolved up front, over the whole batch, because a span can be
+  // contaminated by an event that arrives after the records it covers.
+  const { attribution } = resolveWindows(records, taskWindowBase);
 
   const base: AgentAdapterObservation = {
     provider: CLAUDE_CODE_PROVIDER,
@@ -293,13 +473,16 @@ export function normalizeSession(input: NormalizeInput): AgentAdapterObservation
   let branch = session.gitBranch;
   let budget = CLAUDE_LIMITS.maxObservationsPerSession;
 
-  for (const record of records) {
+  records.forEach((record, index) => {
     // The branch a record was written on is fresher than the session-level
     // value, so later records refine it for subsequent observations.
     if (record.gitBranch) branch = record.gitBranch;
 
+    // Empty unless this record sits inside one uncontaminated task window.
+    const workItemExternalId = attribution.get(index);
+
     for (const tool of record.tools) {
-      if (budget <= 0) return observations;
+      if (budget <= 0) return;
       budget -= 1;
 
       const observation: AgentAdapterObservation = {
@@ -316,12 +499,12 @@ export function normalizeSession(input: NormalizeInput): AgentAdapterObservation
       if (branch) observation.gitBranch = branch;
       if (tool.url) observation.url = tool.url;
 
-      const artifacts = artifactsForTool(tool, session.projectPath);
+      const artifacts = artifactsForTool(tool, session.projectPath, workItemExternalId);
       if (artifacts.length > 0) observation.artifacts = artifacts;
 
       observations.push(observation);
     }
-  }
+  });
 
   return observations;
 }
@@ -341,7 +524,8 @@ export function normalizeSession(input: NormalizeInput): AgentAdapterObservation
  */
 function artifactsForTool(
   tool: ClaudeToolUse,
-  projectPath: string
+  projectPath: string,
+  workItemExternalId?: string
 ): AgentArtifactObservation[] {
   const role = roleForTool(tool.name);
   if (!role || !tool.filePaths?.length) return [];
@@ -355,12 +539,17 @@ function artifactsForTool(
     if (seen.has(relative.relativePath)) continue;
     seen.add(relative.relativePath);
 
-    artifacts.push({
+    const artifact: AgentArtifactObservation = {
       projectPath,
       relativePath: relative.relativePath,
       role,
       sourceId: tool.id,
-    });
+    };
+    // Set only when a window resolved one. An absent value is the honest
+    // "nothing said which task this was for" — never a placeholder.
+    if (workItemExternalId) artifact.workItemExternalId = workItemExternalId;
+
+    artifacts.push(artifact);
   }
 
   return artifacts;
@@ -394,4 +583,7 @@ export const ARTIFACT_OBSERVATION_ALLOWLIST = [
   "relativePath",
   "role",
   "sourceId",
+  // An opaque per-session task id ("1", "2", …). Not a path, not prose, and
+  // not derived from either — see resolveWindows.
+  "workItemExternalId",
 ] as const;

@@ -51,6 +51,22 @@ export type AgentArtifactObservation = {
   role: AgentRunArtifactRole;
   /** Provider-stable id of the record this came from, for event deduplication. */
   sourceId?: string;
+  /**
+   * The work item this file operation was explicitly observed to belong to.
+   *
+   * Present only when the provider can say *which task* a file was touched
+   * for, from its own transcript structure. It carries the provider's
+   * `ObservedWorkItem.externalId`, to be resolved during ingestion against
+   * the items this run already has — a value matching nothing records no
+   * evidence, which is the fail-closed behaviour.
+   *
+   * Absent is the overwhelmingly common case, and it means exactly one
+   * thing: nothing observed which task this was for. It is never an
+   * invitation to derive one from the run that the artifact and the work
+   * item happen to share. See the note on the deliberately absent
+   * `work-item -> artifact` relationship in intelligence/types.ts.
+   */
+  workItemExternalId?: string;
 };
 
 /**

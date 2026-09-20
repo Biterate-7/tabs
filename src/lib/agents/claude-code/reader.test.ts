@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NO_TASK_WINDOW } from "./types";
 
 /**
  * The reader exercised against a real temporary filesystem laid out exactly
@@ -364,7 +365,7 @@ describe("path safety", () => {
     // Cursors are validated before they get here; this asserts the reader
     // still only ever looks up the registry's own session ids.
     const sweep = await sweepSessions(
-      [{ sessionId: SESSION, offset: 0, size: 0, taskOrdinal: 0 }],
+      [{ sessionId: SESSION, offset: 0, size: 0, taskOrdinal: 0, taskWindow: NO_TASK_WINDOW }],
       T0
     );
 
