@@ -2,6 +2,7 @@ import { recordArtifactWork } from "./artifacts";
 import { appendRunEvent } from "./events";
 import { createRun, findRunByExternalId, transitionRunStatus, updateRun } from "./runs";
 import { agentFailure, isTerminalRunStatus, normalizeSummary } from "./types";
+import { recordWorkItemEvidence } from "./work-item-evidence";
 import {
   createWorkItem,
   findWorkItemByExternalId,
@@ -275,8 +276,12 @@ export function ingestObservation(
     if (started.ok) next = started.state;
 
     next = applyActivity(next, created.run.id, observation, observedAt, now);
-    next = applyArtifacts(next, created.run.id, observation, now);
+    // Work items before artifacts: an artifact carrying an attribution is
+    // resolved against the items this run holds, so an observation that
+    // introduces a task and evidences it in one go must create the task
+    // first. Nothing in the other direction depends on this order.
     next = applyWorkItems(next, created.run.id, observation, now);
+    next = applyArtifacts(next, created.run.id, observation, now);
     return { ok: true, state: next, run: findRun(next, created.run.id), outcome: "created" };
   }
 
@@ -311,8 +316,9 @@ export function ingestObservation(
   }
 
   next = applyActivity(next, existing.id, observation, observedAt, now);
-  next = applyArtifacts(next, existing.id, observation, now);
+  // See the note on the create path: attribution needs the task to exist.
   next = applyWorkItems(next, existing.id, observation, now);
+  next = applyArtifacts(next, existing.id, observation, now);
   return { ok: true, state: next, run: findRun(next, existing.id), outcome: "updated" };
 }
 
@@ -440,7 +446,10 @@ function applyArtifacts(
     if (!projectPath || !relativePath) continue;
 
     // One tool call naming the same file twice costs one resolution, not two.
-    const key = `${projectPath}::${relativePath}::${entry.role}`;
+    // The attribution is part of the key because this loop now writes two
+    // things: collapsing on (path, role) alone would silently drop the
+    // second of two rows that differ only by which task they belong to.
+    const key = `${projectPath}::${relativePath}::${entry.role}::${entry.workItemExternalId ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
@@ -449,10 +458,63 @@ function applyArtifacts(
       { runId, projectPath, path: relativePath, role: entry.role },
       now
     );
-    if (recorded.ok) next = recorded.state;
+    if (!recorded.ok) continue;
+    next = recorded.state;
+
+    next = applyArtifactEvidence(next, runId, entry, recorded.artifact.id, now);
   }
 
   return next;
+}
+
+/**
+ * Records that a *work item* — not just its run — touched this file.
+ *
+ * Written here rather than in the provider because `targetId` is a domain
+ * id: the artifact is resolved during ingestion, and an adapter never sees
+ * one. What the adapter can say is which of its own tasks the operation
+ * belonged to, which arrives as `workItemExternalId` and is resolved against
+ * the items this run already has.
+ *
+ * ## Every branch that declines
+ *
+ * No attribution, or an id matching no item of this run, records nothing —
+ * and nothing else is tried. There is no fallback to the run's other work
+ * items, to the most recent one, to the only one, or to anything derived
+ * from ordering, titles, timestamps or shared run membership. That is the
+ * whole point: an evidence row exists because something observed it, and a
+ * work item with no rows is a task nothing was recorded for, which every
+ * surface renders as "No recorded evidence for this task."
+ *
+ * `findWorkItemByExternalId` matches on `(runId, externalId)`, so an id that
+ * belongs to another run's task cannot resolve here. `recordWorkItemEvidence`
+ * then re-checks containment against stored state — the run must already
+ * hold this artifact — so this function is the outer of two independent
+ * gates rather than the only one.
+ */
+function applyArtifactEvidence(
+  state: AgentState,
+  runId: string,
+  entry: AgentArtifactObservation,
+  artifactId: string,
+  now: number
+): AgentState {
+  const externalId = entry.workItemExternalId?.trim();
+  if (!externalId) return state;
+
+  const item = findWorkItemByExternalId(state, runId, externalId);
+  if (!item) return state;
+
+  const evidenced = recordWorkItemEvidence(
+    state,
+    { workItemId: item.id, kind: "artifact", targetId: artifactId },
+    now
+  );
+  // A refused row costs this association and not the observation — the same
+  // tolerance every other fold here shows. Re-observing an association the
+  // domain already holds returns the existing row unchanged, so repeated
+  // polling of the same transcript bytes stays idempotent.
+  return evidenced.ok ? evidenced.state : state;
 }
 
 /**
