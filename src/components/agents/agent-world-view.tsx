@@ -143,23 +143,40 @@ function AgentWorldRoster({
 
   if (roster.length === 0) return null
 
+  /*
+    Split by whether the provider has an observation source at all, which is
+    what `requirement` records (see roster.ts).
+
+    Listing all five as equal chips reading "Not connected" made four
+    providers that cannot be observed in this build look one click from
+    running — the exact impression the connector layer's `declared.ts` was
+    written to prevent, undone in the UI. The landing page already refuses
+    to do this: providers-demo.tsx puts the same four under "Not yet" in a
+    dashed group labelled "No adapter yet" rather than in a row of logos.
+    This is that distinction, carried into the product, off the same field.
+  */
+  const observable = roster.filter((entry) => !entry.requirement)
+  const planned = roster.filter((entry) => entry.requirement)
+
   return (
     <section aria-labelledby="agent-world-roster-heading" className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <p id="agent-world-roster-heading" className="text-label text-tertiary">
-          AGENTS IN THIS WORLD
+        <p id="agent-world-roster-heading" className="text-eyebrow text-tertiary">
+          Agents in this world
         </p>
         <button
           type="button"
           onClick={onOpenConnectors}
-          className="shrink-0 rounded-md px-1.5 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          /* min-h-6 (24px): at `py-0.5` this measured 18px tall, under the
+             20pt floor in `accessibility.md` for a desktop control. */
+          className="flex min-h-6 shrink-0 items-center rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           Manage
         </button>
       </div>
 
       <ul className="flex flex-wrap gap-1.5">
-        {roster.map((entry) => {
+        {observable.map((entry) => {
           const characterId = idleCharacterId(entry.provider)
           // A provider that is running something has run characters in the
           // room instead of a stand-in, so selecting its chip would select
@@ -195,6 +212,39 @@ function AgentWorldRoster({
           )
         })}
       </ul>
+
+      {planned.length > 0 && (
+        <div className="pt-1.5">
+          <p className="text-eyebrow text-tertiary">Not yet</p>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            {planned.map((entry) => (
+              <li key={entry.provider}>
+                {/*
+                  Not a button. There is nothing to select — these providers
+                  place no figure in the room — and a control that looks
+                  pressable but does nothing is worse than a plain statement.
+                  Dashed, unfilled and dimmed for the same reason the landing
+                  page draws them that way: visibly unfinished.
+                */}
+                <span
+                  title={entry.requirement}
+                  className="flex items-center gap-1.5 rounded-lg border border-dashed border-subtle px-2 py-1"
+                >
+                  <AgentIcon connector={entry.provider} state="idle" size="sm" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-body-sm text-muted-foreground">
+                      {entry.displayName}
+                    </span>
+                    <span className="block truncate text-eyebrow text-tertiary">
+                      No adapter yet
+                    </span>
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   )
 }
@@ -230,8 +280,8 @@ function AgentWorldNow({
 
   return (
     <section aria-labelledby="agent-world-now-heading" className="space-y-1.5">
-      <p id="agent-world-now-heading" className="text-label text-tertiary">
-        WORKING NOW
+      <p id="agent-world-now-heading" className="text-eyebrow text-tertiary">
+        Working now
       </p>
       <ul className="grid gap-1.5 sm:grid-cols-2">
         {live.map((character) => {
@@ -328,9 +378,27 @@ export function AgentWorldScreen({
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [selectedId, onSelect, onClose])
 
+  /*
+    Whether anything is actually happening, which decides how much of the
+    screen the stage is worth.
+
+    At 64vh the stage was the whole first screen whether or not it had
+    anything to say, so on the far more common idle open the sentence
+    explaining that nothing is running — and the roster saying who could —
+    both sat below the fold, under a large drawing of an empty building.
+    That inverts the hierarchy: `design-principles.md` › Simplicity asks
+    that every element earn its place, and a room with nobody working in it
+    has not earned the entire viewport.
+
+    Live, it keeps the full height: then the room *is* the content.
+  */
+  const liveCount = scene.characters.filter(
+    (character) => character.runId && ONGOING_STATES.has(character.state)
+  ).length
+
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
@@ -339,7 +407,10 @@ export function AgentWorldScreen({
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-h2 text-foreground">Agent World</h1>
-          <p className="truncate text-meta text-tertiary">
+          {/* Sans, not `.text-meta`. This is a sentence, and mono is
+              reserved here for micro-labels and figures exactly as the
+              landing page reserves it — see `.text-eyebrow` in globals.css. */}
+          <p className="truncate text-body-sm text-muted-foreground">
             {workspaceName ? `${workspaceName} · ` : ""}
             Watch connected AI agents work. Nothing here is simulated.
           </p>
@@ -352,7 +423,31 @@ export function AgentWorldScreen({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
-        <div className="mx-auto w-full max-w-6xl space-y-4">
+        {/*
+          Idle and live are two compositions, not one layout with a smaller
+          picture in it.
+
+          Live, the room is the content and gets the column to itself, with
+          the text readouts stacked underneath.
+
+          Idle, the room has nothing to report, so it stops being the whole
+          first screen and pairs with the text instead: who is here, and what
+          will happen when they start. That is the landing page's own
+          workhorse composition — a statement on one side, a live piece of
+          product on the other (`SplitSection` in marketing/primitives.tsx) —
+          and it is what stops a 10:7 stage from floating as a small centred
+          box with its own caption orphaned at the far left of a 1150px
+          column. Below `lg` it stacks, statement-first, exactly as that
+          component does.
+        */}
+        <div
+          className={cn(
+            "mx-auto w-full max-w-6xl",
+            liveCount === 0 && settings.enabled
+              ? "grid items-start gap-x-8 gap-y-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]"
+              : "space-y-4"
+          )}
+        >
           {settings.enabled ? (
             <>
               <AgentWorld
@@ -390,7 +485,15 @@ export function AgentWorldScreen({
                   world 250px tall, so the box goes portrait instead and the
                   camera's own legibility rule zooms into it.
                 */
-                stageClassName="mx-auto aspect-[4/5] w-full min-h-[280px] sm:aspect-[10/7] sm:max-h-[64vh] sm:max-w-[calc(64vh*10/7)]"
+                stageClassName={cn(
+                  "mx-auto w-full aspect-[4/5] min-h-[280px] sm:aspect-[10/7]",
+                  liveCount > 0
+                    ? "sm:max-h-[64vh] sm:max-w-[calc(64vh*10/7)]"
+                    : // Idle: the stage fills its grid column rather than
+                      // being capped, so it keeps its 10:7 proportions
+                      // without leaving a band of empty ground beside it.
+                      "sm:max-h-[52vh]"
+                )}
               />
               <AgentWorldNow scene={scene} selectedId={selectedId} onSelect={onSelect} />
               <AgentWorldRoster

@@ -52,6 +52,23 @@ export type WorldRosterEntry = {
   statusLabel: string;
   /** The raw status kind, for a caller that needs to style rather than read it. */
   statusKind: ConnectorStatusKind;
+  /**
+   * What this provider needs before TabDump could observe it, carried
+   * straight from its descriptor.
+   *
+   * Present exactly when the provider has no observation source — see
+   * `ProviderDescriptor.requirement` and providers/declared.ts. That makes it
+   * the honest, static answer to "does this one actually work yet", which a
+   * status kind cannot give: an unimplemented provider that has never been
+   * connected reports `disconnected`, the same word a working one reports,
+   * so a roster keyed on status alone shows five agents that all look one
+   * click away from running.
+   *
+   * The landing page draws the same distinction, and has to, for the same
+   * reason — see marketing/providers-demo.tsx, which puts providers with no
+   * adapter in a separate dashed group rather than in a row of logos.
+   */
+  requirement?: string;
 };
 
 export type WorldRosterOptions = {
@@ -90,6 +107,7 @@ export function buildWorldRoster(
       presence: connected ? "connected" : "available",
       statusLabel: CONNECTOR_STATUS_LABELS[view.status.kind],
       statusKind: view.status.kind,
+      requirement: view.descriptor.requirement,
     });
   }
 

@@ -67,7 +67,7 @@ export function GraphEdgePopover({
             {titleOf(source)} <span className="text-tertiary">──→</span> {titleOf(target)}
           </p>
 
-          <p className="mt-2.5 text-label text-tertiary">CONNECTIONS</p>
+          <p className="mt-2.5 text-eyebrow text-tertiary">CONNECTIONS</p>
           <ul className="mt-1 space-y-1">
             <li className="flex items-center gap-1.5 text-body-sm text-foreground">
               <Check className="size-3.5 text-success" /> Dependency
@@ -98,7 +98,7 @@ export function GraphEdgePopover({
             {titleOf(source)} <span className="text-tertiary">──</span> {titleOf(target)}
           </p>
 
-          <p className="mt-2.5 text-label text-tertiary">CONNECTION</p>
+          <p className="mt-2.5 text-eyebrow text-tertiary">CONNECTION</p>
           <ul className="mt-1 space-y-1">
             {state.edge.reasons.map((reason) => (
               <li key={reason} className="flex items-center gap-1.5 text-body-sm text-foreground">

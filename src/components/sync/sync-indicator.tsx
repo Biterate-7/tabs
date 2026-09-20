@@ -92,7 +92,7 @@ export function SyncIndicator({ state, disabled, onSyncNow, onMigrate, onResolve
         >
           {state.status === "never-synced" ? (
             <div className="space-y-2">
-              <p className="text-xs text-secondary">
+              <p className="text-xs text-muted-foreground">
                 This workspace is only on this device. Uploading it is explicit — nothing is sent until you ask.
               </p>
               <button
@@ -109,19 +109,19 @@ export function SyncIndicator({ state, disabled, onSyncNow, onMigrate, onResolve
           ) : null}
 
           {state.status === "remote-deleted" ? (
-            <p className="text-xs text-secondary">
+            <p className="text-xs text-muted-foreground">
               This workspace was deleted on another device. Your copy here is untouched — nothing has
               been removed from this device, and nothing will be unless you delete it yourself.
             </p>
           ) : null}
 
           {state.lastError && !hasConflicts ? (
-            <p className="text-xs text-secondary">{state.lastError}</p>
+            <p className="text-xs text-muted-foreground">{state.lastError}</p>
           ) : null}
 
           {hasConflicts ? (
             <div className="space-y-3">
-              <p className="text-xs text-secondary">
+              <p className="text-xs text-muted-foreground">
                 These were changed on another device too. Your copy is safe either way — nothing is
                 overwritten until you choose.
               </p>

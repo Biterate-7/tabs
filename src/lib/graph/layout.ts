@@ -49,7 +49,22 @@ export function computeFitCamera(
   points: BoundedPoint[],
   width: number,
   height: number,
-  padding = 64
+  padding = 64,
+  /**
+   * Width of chrome overlaying the canvas's right edge — the graph panel.
+   *
+   * The canvas element runs the full width of the view and the panel floats
+   * on top of it, so "fit" used to centre the graph across a region a
+   * 288px-wide panel was covering the right quarter of: on open, the
+   * right-hand clusters sat underneath it and the leftmost nodes ran off
+   * the other edge. Fitting to the *visible* region instead is the same
+   * calculation with a narrower box and an offset centre.
+   *
+   * Not folded into `padding` because padding is symmetric and this is not:
+   * the space is missing from one side only, and the camera has to move to
+   * compensate as well as zoom.
+   */
+  insetRight = 0
 ): CameraState {
   if (points.length === 0 || width <= 0 || height <= 0) return DEFAULT_CAMERA;
 
@@ -66,9 +81,19 @@ export function computeFitCamera(
 
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const availableW = Math.max(width - padding * 2, 1);
+  // Never let the inset eat the whole canvas: a panel wider than the view
+  // (possible at `max-w-[85vw]` on a phone) would otherwise produce a
+  // zero-width box and a NaN zoom.
+  const inset = Math.max(0, Math.min(insetRight, Math.max(width - padding * 2, 0)));
+  const availableW = Math.max(width - inset - padding * 2, 1);
   const availableH = Math.max(height - padding * 2, 1);
   const zoom = clampZoom(Math.min(availableW / spanX, availableH / spanY, 2));
 
-  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2, zoom };
+  // The camera centres the world on the canvas's midpoint, but the visible
+  // region's midpoint is `inset / 2` to the left of it. Shifting the target
+  // by that much — converted to world units, hence the divide by zoom —
+  // lands the content in the middle of what can actually be seen.
+  const centerShift = inset / 2 / zoom;
+
+  return { x: (minX + maxX) / 2 + centerShift, y: (minY + maxY) / 2, zoom };
 }

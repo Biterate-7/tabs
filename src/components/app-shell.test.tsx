@@ -237,7 +237,7 @@ describe("AppShell workspaces", () => {
   it("gives a brand-new user a single clean default workspace", async () => {
     render(<AppShell />);
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
   });
 
   it("migrates existing legacy single-workspace data into the default workspace automatically", async () => {
@@ -246,7 +246,7 @@ describe("AppShell workspaces", () => {
 
     render(<AppShell />);
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
@@ -261,7 +261,7 @@ describe("AppShell workspaces", () => {
     await user.click(screen.getByRole("button", { name: "Create workspace" }));
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("Second")).toBeTruthy();
+    expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
   });
 
   it("renames the current workspace", async () => {
@@ -275,7 +275,7 @@ describe("AppShell workspaces", () => {
     await user.type(input, "Renamed");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("Renamed")).toBeTruthy();
+    expect((await screen.findAllByText("Renamed")).length).toBeGreaterThan(0);
   });
 
   it("keeps each workspace's tabs separate when switching between them", async () => {
@@ -294,7 +294,7 @@ describe("AppShell workspaces", () => {
     expect((await screen.findAllByText("arxiv.org")).length).toBeGreaterThan(0);
 
     await openSwitcher(user);
-    await user.click(await screen.findByText("General"));
+    await user.click(await screen.findByRole("menuitem", { name: /General/ }));
 
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
@@ -309,13 +309,13 @@ describe("AppShell workspaces", () => {
     await user.click(await screen.findByText("New workspace"));
     await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
     await user.click(screen.getByRole("button", { name: "Create workspace" }));
-    expect(await screen.findByText("Second")).toBeTruthy();
+    expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
 
     await openSwitcher(user);
     await user.click(await screen.findByText(/^Delete/));
     await user.click(await screen.findByRole("button", { name: "Delete workspace" }));
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Second")).toBeNull();
   });
 
@@ -332,7 +332,7 @@ describe("AppShell workspaces", () => {
     await user.click(await screen.findByRole("button", { name: "Delete workspace" }));
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
   });
 
   it("persists multiple workspaces across a remount", async () => {
@@ -348,9 +348,9 @@ describe("AppShell workspaces", () => {
     unmount();
     render(<AppShell />);
 
-    expect(await screen.findByText("Second")).toBeTruthy();
+    expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
     await openSwitcher(user);
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
   });
 
   it("imports a JSON workspace export and switches to it", async () => {
@@ -384,7 +384,7 @@ describe("AppShell workspaces", () => {
     const file = new File([exportedJson], "export.json", { type: "application/json" });
     await user.upload(screen.getByLabelText("Import workspace JSON file"), file);
 
-    expect(await screen.findByText("Imported Notes")).toBeTruthy();
+    expect((await screen.findAllByText("Imported Notes")).length).toBeGreaterThan(0);
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "github");
     expect((await screen.findAllByText("github.com")).length).toBeGreaterThan(0);
   });
@@ -398,7 +398,7 @@ describe("AppShell workspaces", () => {
     const file = new File(["{not json"], "export.json", { type: "application/json" });
     await user.upload(screen.getByLabelText("Import workspace JSON file"), file);
 
-    expect(await screen.findByText("General")).toBeTruthy();
+    expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
   });
 });
@@ -525,7 +525,7 @@ describe("AppShell History Dump", () => {
       ],
     });
 
-    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+    await user.click(screen.getByRole("button", { name: "History Dump" }));
     await user.click(await screen.findByRole("button", { name: "Scan History" }));
     await user.click(await screen.findByRole("button", { name: "Select all" }));
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
@@ -542,7 +542,7 @@ describe("AppShell History Dump", () => {
 
     fetchBrowserHistoryMock.mockResolvedValue({ ok: false, reason: "not-connected" });
 
-    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+    await user.click(screen.getByRole("button", { name: "History Dump" }));
     await user.click(await screen.findByRole("button", { name: "Scan History" }));
     expect(await screen.findByText("TabDump extension not detected.")).toBeTruthy();
   });
@@ -679,7 +679,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
     expect(await screen.findByRole("heading", { name: "Agent World" })).toBeTruthy();
   });
 
@@ -687,8 +687,8 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
-    expect(await screen.findByRole("region", { name: "AGENTS IN THIS WORLD" })).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
+    expect(await screen.findByRole("region", { name: "Agents in this world" })).toBeTruthy();
     expect(screen.getByText(/Your agents will appear here as they work/)).toBeTruthy();
   });
 
@@ -696,7 +696,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
   });
@@ -730,7 +730,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     renderWithAppearance();
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
     await user.click(screen.getByRole("button", { name: "AI connectors" }));
 
     const nav = await screen.findAllByRole("button", { name: "AI connectors" });
@@ -741,7 +741,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     renderWithAppearance();
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
     await user.click(screen.getByRole("button", { name: "Agent World settings" }));
 
     const nav = await screen.findAllByRole("button", { name: "Agent World" });
@@ -755,7 +755,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     renderWithAppearance();
 
-    await user.click(await screen.findByRole("button", { name: "Open Agent World" }));
+    await user.click(await screen.findByRole("button", { name: "Agent World" }));
     await user.click(screen.getByRole("button", { name: "Agent World settings" }));
     await user.click(await screen.findByRole("button", { name: "Back" }));
 
@@ -767,7 +767,7 @@ describe("AppShell Agent World", () => {
     const user = userEvent.setup();
     renderWithAppearance();
 
-    await user.click(await screen.findByRole("button", { name: "Open Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
     const theme = await screen.findAllByRole("button", { name: "Theme" });
     expect(theme.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
 

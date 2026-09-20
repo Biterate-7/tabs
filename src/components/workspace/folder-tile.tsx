@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, type AnimationEvent, type CSSProperties, type DragEvent } from "react"
+import { useRef, useState, type AnimationEvent, type DragEvent } from "react"
 import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Tab } from "@/lib/tabs/types"
@@ -12,20 +12,18 @@ import { getDragTabId, hasDragTabId } from "@/lib/collections/drag"
 
 export type FolderPresence = "large" | "standard" | "compact"
 
-// Fanned peeking-document layout, indexed by preview slot — deliberately
-// asymmetric (not a neat evenly-spaced row) so a stack of "papers" reads as
-// physically dropped into a folder rather than laid out by a grid.
-const DOC_ROTATE = [-6, 3, -4, 5]
-const DOC_OFFSET_X = [-30, -6, 20, 46]
-
 /**
- * Shared "digital folder" presentation for both flat categories
- * (CategoryFolder) and hierarchical sections (SectionFolder) — a folder
- * silhouette with an accent index tab, peeking document previews, and a
- * flap that "unzips" open on click before handing off to whatever view the
- * caller opens (CategoryPage / SectionPage). Kept presentational: identity
- * (name/icon/accent/tabs) and the open callback are the only per-caller
- * inputs, so both card types stay visually and behaviorally in sync.
+ * Shared tile presentation for both flat categories (CategoryFolder) and
+ * hierarchical sections (SectionFolder): a quiet surface listing what is
+ * inside, opening to whatever view the caller provides (CategoryPage /
+ * SectionPage).
+ *
+ * Kept presentational: identity (name/icon/accent/tabs) and the open
+ * callback are the only per-caller inputs, so both card types stay visually
+ * and behaviorally in sync.
+ *
+ * It was a folder *illustration* until this pass — see the note on the card
+ * body below for what changed and why.
  */
 export function FolderTile({
   name,
@@ -106,7 +104,10 @@ export function FolderTile({
     )
   }
 
-  const previewLimit = presence === "large" ? 4 : 3
+  // Four rows fit the standard tile without it growing; the large tile has
+  // the height for one more. Both are up from 3/4 *scraps* — the rows are
+  // legible now, so more of them is more information rather than more noise.
+  const previewLimit = presence === "large" ? 5 : 4
   const previewTabs = representativeTabs(tabs, previewLimit)
   const extraCount = Math.max(0, totalCount - previewTabs.length)
 
@@ -151,111 +152,67 @@ export function FolderTile({
           : {}),
       }}
     >
-      {/* Folder body: back plate + peeking documents + front pocket flap. */}
+      {/*
+        The card body: what is actually in this folder.
+
+        What used to be here was a folder *illustration* — a back plate, four
+        paper scraps rotated at angles under a pocket flap, and a zipper seam
+        with a pull that ran along it on open. It was the most distinctive
+        thing on the workspace screen and it communicated almost nothing:
+        roughly sixty percent of a 152px card was an empty flap, the "papers"
+        carried titles at 9px (about 6.75pt, under the 10pt macOS minimum in
+        `accessibility.md`), and a folder of research papers and a folder of
+        news were indistinguishable below the favicon row.
+
+        Two things made it worth replacing rather than tidying. Apple's Craft
+        and Delight principles draw the line exactly here — "don't mistake
+        delight for decoration" — and the skill's craft lens asks what can be
+        removed without loss; a pocket flap answers that question by itself.
+        And it was the single biggest reason the product read as a different
+        design system from the landing page, which is flat, hairline-ruled and
+        has no skeuomorphism anywhere in it.
+
+        Everything the tile *did* is intact: it is still one button, still a
+        drop target, still opens with the same animation and the same sound,
+        still previews representative tabs and still says how many more there
+        are. The previews are simply legible now.
+      */}
       <div
         className={cn(
-          "relative flex flex-col overflow-hidden rounded-xl border border-subtle bg-card shadow-sm transition-[transform,box-shadow,border-color] duration-(--duration-fast) ease-(--ease-standard) group-hover:-translate-y-0.5 group-hover:shadow-md",
+          "relative flex flex-col gap-px overflow-hidden rounded-xl border border-subtle bg-card p-1.5",
+          "transition-[transform,border-color,background-color] duration-(--duration-fast) ease-(--ease-standard)",
+          "group-hover:-translate-y-0.5 group-hover:border-border",
           dragOver && "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/30"
         )}
         style={{ minHeight: presence === "large" ? 168 : 152 }}
       >
-        {/* Accent index tab — the folder's identity color. */}
-        <div
-          aria-hidden
-          className="absolute top-0 left-4 h-2 w-10 rounded-b-sm"
-          style={{ backgroundColor: `var(${accentVar})`, opacity: 0.6 }}
-        />
-
-        {/* Peeking tab-sheet previews, stored inside the folder. */}
-        {previewTabs.length > 0 && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-4 h-16"
-            style={{
-              animation:
-                isOpening && !reduced ? "folder-docs-reveal var(--duration-folder-open) var(--ease-standard) both" : undefined,
-            }}
-          >
-            {previewTabs.map((tab, i) => (
-              <div
+        {previewTabs.length > 0 ? (
+          <>
+            {previewTabs.map((tab) => (
+              <span
                 key={tab.id}
-                className="absolute w-[74px] rounded-md border border-subtle bg-surface px-1.5 py-1 shadow-sm transition-transform duration-(--duration-fast) ease-(--ease-standard) group-hover:-translate-y-1"
-                style={{
-                  left: `calc(50% + ${DOC_OFFSET_X[i]}px)`,
-                  transform: `translateX(-50%) rotate(${DOC_ROTATE[i]}deg)`,
-                  zIndex: i + 1,
-                }}
+                className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-(--duration-fast) group-hover:bg-surface-hover/60"
               >
-                <div className="flex items-center gap-1">
-                  <TabFavicon domain={tab.domain} size={12} />
-                  <span className="truncate text-[9px] leading-tight text-foreground">
-                    {tab.title?.trim() || tab.domain}
-                  </span>
-                </div>
-              </div>
+                <TabFavicon domain={tab.domain} size={14} />
+                <span className="min-w-0 flex-1 truncate text-body-sm text-muted-foreground">
+                  {tab.title?.trim() || tab.domain}
+                </span>
+              </span>
             ))}
             {extraCount > 0 && (
-              <div
-                className="absolute w-[74px] rounded-md border border-subtle bg-surface-active px-1.5 py-1 text-center text-[9px] leading-tight text-tertiary shadow-sm transition-transform duration-(--duration-fast) ease-(--ease-standard) group-hover:-translate-y-1"
-                style={{
-                  left: `calc(50% + ${DOC_OFFSET_X[previewTabs.length] ?? 60}px)`,
-                  transform: "translateX(-50%)",
-                  zIndex: previewTabs.length + 1,
-                }}
-              >
+              <span className="mt-auto px-2 pt-1 text-meta text-tertiary">
                 +{extraCount} more
-              </div>
+              </span>
             )}
-          </div>
+          </>
+        ) : (
+          /* An empty folder says so plainly. `writing.md`: an empty screen
+             invites the next action, and here the action is a drag. */
+          <span className="flex flex-1 items-center justify-center px-3 text-center text-body-sm text-tertiary">
+            {dragOver ? "Drop to file here" : "Nothing filed here yet"}
+          </span>
         )}
-
-        {/* Front pocket flap — the piece that "unzips" open. */}
-        <div
-          aria-hidden
-          className="absolute inset-x-0 bottom-0 origin-top rounded-b-xl border-t border-subtle transition-transform duration-(--duration-fast) ease-(--ease-standard) group-hover:[transform:rotateX(-5deg)]"
-          style={{
-            top: "40%",
-            backgroundColor: "var(--surface)",
-            backfaceVisibility: "hidden",
-            animation:
-              isOpening && !reduced ? "folder-flap-open var(--duration-folder-open) var(--ease-standard) both" : undefined,
-          }}
-        >
-          {/* Zipper seam + pull, the signature open interaction. */}
-          <svg
-            className="absolute -top-[5px] left-2 h-[10px] w-[calc(100%-1rem)]"
-            viewBox="0 0 100 10"
-            preserveAspectRatio="none"
-            style={{
-              animation: isOpening && !reduced ? "folder-seam-fade var(--duration-folder-open) var(--ease-standard) both" : undefined,
-            }}
-          >
-            <path
-              d="M0 5 L4 1 L8 9 L12 1 L16 9 L20 1 L24 9 L28 1 L32 9 L36 1 L40 9 L44 1 L48 9 L52 1 L56 9 L60 1 L64 9 L68 1 L72 9 L76 1 L80 9 L84 1 L88 9 L92 1 L96 9 L100 5"
-              stroke="var(--border-strong)"
-              strokeWidth="1"
-              fill="none"
-              vectorEffect="non-scaling-stroke"
-            />
-          </svg>
-          {!reduced && (
-            <svg
-              className="absolute -top-[7px] left-2 h-[14px] w-[14px]"
-              viewBox="0 0 14 14"
-              style={
-                {
-                  "--zip-travel": "calc(100% - 3rem)",
-                  animation: isOpening ? "folder-zipper-pull var(--duration-folder-open) var(--ease-standard) both" : undefined,
-                } as CSSProperties
-              }
-            >
-              <circle cx="7" cy="7" r="4" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.4" />
-              <rect x="5.5" y="1" width="3" height="4" rx="1" fill="var(--border-strong)" />
-            </svg>
-          )}
-        </div>
       </div>
-
       {/* Label — stays outside the animated folder body so it never moves
           on hover and reads clearly through every phase of the open sequence. */}
       <div className="mt-3 px-0.5">

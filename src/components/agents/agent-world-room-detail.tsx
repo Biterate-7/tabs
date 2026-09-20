@@ -125,7 +125,7 @@ function AgentWorldRoomDetailImpl({
 
       {tasks.length > 0 && (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">ACTIVE TASKS</p>
+          <p className="text-eyebrow text-tertiary">ACTIVE TASKS</p>
           <ul className="space-y-0.5">
             {tasks.slice(0, 5).map((occupant) => (
               <li key={`${occupant.id}-task`} className="truncate text-meta text-tertiary">

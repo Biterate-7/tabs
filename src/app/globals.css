@@ -92,10 +92,19 @@
 
 /*
  * Text hierarchy (4 tiers — do not add a 5th ad hoc gray):
- *   text-foreground   primary   — titles, primary values, active state
- *   text-secondary    secondary — descriptions, body copy, labels
- *   text-tertiary     tertiary  — metadata, counts, timestamps (dimmer, still AA)
- *   text-disabled     disabled  — inactive controls, placeholder-adjacent text
+ *   text-foreground        primary   — titles, primary values, active state
+ *   text-muted-foreground  secondary — descriptions, body copy, labels
+ *   text-tertiary          tertiary  — metadata, counts, timestamps (dimmer, still AA)
+ *   text-disabled          disabled  — inactive controls, placeholder-adjacent text
+ *
+ * The second tier is `text-muted-foreground`, NOT `text-secondary`. That
+ * reads like the right class and is not: `--color-secondary` (the secondary
+ * *surface*) and `--color-text-secondary` both exist in @theme inline, and
+ * Tailwind builds `text-secondary` from the first of them — so it paints
+ * text in a near-black surface colour. On the default ground that measured
+ * about 1.5:1, i.e. invisible. Four call sites in sync-indicator.tsx were
+ * doing exactly that until this pass. `text-text-secondary` is not
+ * generated at all and silently inherits.
  *
  * Elevation (3 tiers — match surface to layer, don't default everything to bg-card):
  *   bg-background  base    — page canvas
@@ -376,6 +385,31 @@
     font-size: calc(0.75rem * var(--tabdump-font-scale));
     line-height: 1.2;
     font-variant-numeric: tabular-nums;
+    font-weight: 400;
+  }
+
+  /* Small uppercase mono label — section headings in the rail, group titles
+     above a list, the one or two places a region genuinely needs a category
+     over it.
+
+     This is the landing page's `.m-label` brought into the product, and it
+     is deliberately the *only* mono text in the app that isn't a number.
+     The marketing page allows mono in exactly two roles — this label and
+     tabular figures — and reserving it the same way here is most of what
+     makes a product screen and a marketing section read as one system.
+     Where the app previously set whole sentences in mono (the Agent World
+     and Agent History subtitles, settings descriptions), it was borrowing a
+     voice the design system uses for structure, not prose.
+
+     Unlike `.m-label` it tracks --tabdump-font-scale, because unlike the
+     landing page this text lives inside product chrome the user can
+     resize. */
+  .text-eyebrow {
+    font-family: var(--tabdump-font-mono);
+    font-size: calc(0.6875rem * var(--tabdump-font-scale));
+    line-height: 1;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
     font-weight: 400;
   }
 
@@ -1203,6 +1237,30 @@
    without the component knowing. */
 .agent-world-character .agent-mark {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
+}
+
+/*
+ * Pointer target for a figure in the world.
+ *
+ * A character is drawn at whatever size the layout reserved for it, and at
+ * a normal density that is about 19x30 CSS px — narrower than the 20x20pt
+ * floor `accessibility.md` sets for macOS, and far under the 28pt default.
+ * Making the figure bigger is not the fix: its size is what guarantees the
+ * separation between figures the layout engine works to maintain.
+ *
+ * So the *target* grows and the drawing does not. An ::after overlay adds
+ * no layout box, so it cannot move the figure or disturb the transform the
+ * walk animation interpolates — and because the button is positioned by
+ * `translate(-50%, -100%)`, anything that changed its box would move it.
+ */
+.agent-world-character::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: max(calc(100% + 14px), 30px);
+  height: max(calc(100% + 8px), 30px);
 }
 
 .agent-world-character .agent-mark svg path,

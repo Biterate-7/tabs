@@ -76,7 +76,7 @@ export function GraphSettingsPanel({
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-label text-tertiary">CONNECTIONS</p>
+        <p className="text-eyebrow text-tertiary">CONNECTIONS</p>
         <div className="mt-2 space-y-2">
           {CONNECTION_ROWS.map((row) => (
             <label key={row.key} className="flex items-center gap-2 text-body-sm text-foreground">
@@ -93,7 +93,7 @@ export function GraphSettingsPanel({
       </div>
 
       <div>
-        <p className="text-label text-tertiary">DISPLAY</p>
+        <p className="text-eyebrow text-tertiary">DISPLAY</p>
         <div className="mt-2 space-y-3">
           <label className="flex items-center gap-2 text-body-sm text-foreground">
             <Checkbox
@@ -137,7 +137,7 @@ export function GraphSettingsPanel({
 
       {workspaces.length > 1 && (
         <div>
-          <p className="text-label text-tertiary">WORKSPACE</p>
+          <p className="text-eyebrow text-tertiary">WORKSPACE</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Pill active={workspaceFilter === "all"} onClick={() => onWorkspaceFilterChange("all")}>
               All

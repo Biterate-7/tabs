@@ -25,15 +25,15 @@ export function TypographySection() {
       <div className="flex flex-col gap-2.5">
         <div className="grid gap-2.5 sm:grid-cols-3">
           <div>
-            <p className="mb-1.5 px-0.5 text-label text-tertiary">UI FONT</p>
+            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">UI FONT</p>
             <Select value={t.uiFont} onValueChange={(v) => setTypography({ uiFont: v })} options={UI_FONT_OPTIONS} />
           </div>
           <div>
-            <p className="mb-1.5 px-0.5 text-label text-tertiary">CONTENT / NOTES FONT</p>
+            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">CONTENT / NOTES FONT</p>
             <Select value={t.contentFont} onValueChange={(v) => setTypography({ contentFont: v })} options={CONTENT_FONT_OPTIONS} />
           </div>
           <div>
-            <p className="mb-1.5 px-0.5 text-label text-tertiary">MONOSPACE FONT</p>
+            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">MONOSPACE FONT</p>
             <Select value={t.monoFont} onValueChange={(v) => setTypography({ monoFont: v })} options={MONO_FONT_OPTIONS} />
           </div>
         </div>
@@ -58,7 +58,7 @@ export function TypographySection() {
         </div>
 
         <div>
-          <p className="mb-1.5 px-0.5 text-label text-tertiary">PREVIEW</p>
+          <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">PREVIEW</p>
           <div className="rounded-lg border border-subtle bg-card p-4">
             <p className="text-h1 text-foreground">TabDump</p>
             <p className="mt-1 text-body text-foreground">Organize your tabs.</p>

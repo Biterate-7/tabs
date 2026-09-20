@@ -19,8 +19,29 @@ function applyAccentOverride(colors: ThemeColors, overrideHex: string): ThemeCol
   };
 }
 
+/**
+ * Supplies `surfaceElevated` for colour sets saved before the third
+ * elevation tier existed.
+ *
+ * A custom theme is persisted as a full ThemeColors literal, so one stored
+ * by an earlier build has every other key and not this one — and an
+ * `undefined` reaching `--popover` would leave every menu and dialog with no
+ * background at all. Derived the same way buildThemeColors derives it, so a
+ * backfilled custom theme is indistinguishable from a rebuilt one.
+ */
+function withElevatedTier(colors: ThemeColors): ThemeColors {
+  if (colors.surfaceElevated) return colors;
+  const toEdge = isDarkColor(colors.background) ? "#ffffff" : "#000000";
+  return {
+    ...colors,
+    surfaceElevated: mix(colors.surface, toEdge, isDarkColor(colors.background) ? 0.055 : 0.03),
+  };
+}
+
 export function resolveThemeColors(settings: AppearanceSettings): ThemeColors {
-  const base = settings.customTheme ?? getTheme(settings.themeId)?.colors ?? getTheme("midnight")!.colors;
+  const base = withElevatedTier(
+    settings.customTheme ?? getTheme(settings.themeId)?.colors ?? getTheme("midnight")!.colors
+  );
   if (settings.accentOverride && isValidColor(settings.accentOverride)) {
     return applyAccentOverride(base, settings.accentOverride);
   }
@@ -59,11 +80,15 @@ const SHADOW_LEVELS: Record<AppearanceSettings["shape"]["shadowIntensity"], { sm
   },
 };
 
+// `medium` is the default and is pinned to marketing.css's own --radius
+// (0.75rem) so a card in the product and a panel on the landing page are cut
+// to the same curve. The steps either side were re-spaced around it rather
+// than left where they were, so the scale still reads as one progression.
 const RADIUS_LEVELS: Record<AppearanceSettings["shape"]["radius"], string> = {
   sharp: "0rem",
-  small: "0.3125rem",
-  medium: "0.625rem",
-  rounded: "1rem",
+  small: "0.375rem",
+  medium: "0.75rem",
+  rounded: "1.125rem",
   "very-rounded": "1.5rem",
 };
 
@@ -159,7 +184,7 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
     "--foreground": colors.text,
     "--card": colors.surface,
     "--card-foreground": colors.text,
-    "--popover": colors.surface,
+    "--popover": colors.surfaceElevated,
     "--popover-foreground": colors.text,
     "--primary": colors.accent,
     "--primary-foreground": accentFg,
@@ -198,6 +223,7 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
     "--surface-hover": colors.surfaceHover,
     "--surface-active": colors.surfaceActive,
     "--surface-selected": colors.surfaceSelected,
+    "--surface-elevated": colors.surfaceElevated,
     "--text-secondary": colors.textSecondary,
     "--text-disabled": colors.textDisabled,
     "--accent-hover": colors.accentHover,

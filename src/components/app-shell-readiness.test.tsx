@@ -72,7 +72,7 @@ function postExtensionImport(urls: string[]) {
 }
 
 function graphButton(): HTMLButtonElement {
-  return screen.getByRole("button", { name: "Open Graph View" }) as HTMLButtonElement;
+  return screen.getByRole("button", { name: "Graph" }) as HTMLButtonElement;
 }
 
 beforeEach(() => {

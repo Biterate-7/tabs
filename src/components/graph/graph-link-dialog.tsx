@@ -101,7 +101,7 @@ export function GraphLinkDialog({
 
         {isDependency && sourceNode && (
           <div className="shrink-0">
-            <p className="mb-1 text-label text-tertiary">PARENT</p>
+            <p className="mb-1 text-eyebrow text-tertiary">PARENT</p>
             <div className="flex items-center gap-2.5 rounded-md border border-subtle bg-muted/40 px-2.5 py-2">
               <TabFavicon domain={sourceNode.tab.domain} size={20} />
               <p className="truncate text-body-sm font-medium text-foreground">{sourceLabel}</p>
@@ -113,7 +113,7 @@ export function GraphLinkDialog({
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 slide-in-from-bottom-1">
             <div>
               <div className="mb-1 flex items-center justify-between">
-                <p className="text-label text-tertiary">DEPENDS ON</p>
+                <p className="text-eyebrow text-tertiary">DEPENDS ON</p>
                 <button
                   type="button"
                   onClick={() => setPickedId(null)}
@@ -136,7 +136,7 @@ export function GraphLinkDialog({
             </div>
 
             <div>
-              <p className="mb-1 text-label text-tertiary">DEPENDENCY TYPE</p>
+              <p className="mb-1 text-eyebrow text-tertiary">DEPENDENCY TYPE</p>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={

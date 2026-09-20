@@ -182,6 +182,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    * layout rather than re-running ~200 ticks of physics in front of the user.
    */
   layoutSettled: boolean
+  /**
+   * Width in px of chrome floating over the canvas's right edge (the graph
+   * panel), so "fit" frames the graph in the part of the canvas that is
+   * actually visible rather than behind the panel. 0 when it is closed.
+   */
+  viewportInsetRight?: number
   initialCamera: CameraState
   display: GraphDisplaySettings
   selectedTabId: string | null
@@ -237,6 +243,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     positions,
     boundaryOffsets,
     layoutSettled,
+    viewportInsetRight = 0,
     initialCamera,
     display,
     selectedTabId,
@@ -275,6 +282,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
   const cameraRef = useRef<CameraState>(initialCamera)
   const sizeRef = useRef({ width: 0, height: 0 })
+  /* Read inside imperative-handle callbacks, which are created once and
+     would otherwise close over the panel width as it was when the canvas
+     mounted — fitting to a panel that has since been toggled. */
+  const insetRightRef = useRef(viewportInsetRight)
+  insetRightRef.current = viewportInsetRight
   const paletteRef = useRef<GraphPalette | null>(null)
   const faviconCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const nodesRef = useRef<GraphNode[]>(nodes)
@@ -1615,7 +1627,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
       .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
     if (points.length === 0) return
-    const next = computeFitCamera(points, width, height)
+    const next = computeFitCamera(points, width, height, 64, insetRightRef.current)
     animateCameraTo(next)
   }
 
@@ -1640,7 +1652,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         .map((n) => simulation.findNode(n.id))
         .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
         .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
-      const next = computeFitCamera(points, width, height)
+      const next = computeFitCamera(points, width, height, 64, insetRightRef.current)
       animateCameraTo(next)
     },
     centerOnNode(id: string) {
@@ -1672,7 +1684,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
         .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
       if (points.length === 0) return
-      const next = computeFitCamera(points, width, height)
+      const next = computeFitCamera(points, width, height, 64, insetRightRef.current)
       animateCameraTo(next)
     },
     focusCluster(id: string) {

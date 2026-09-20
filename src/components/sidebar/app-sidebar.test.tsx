@@ -57,7 +57,12 @@ describe("AppSidebar", () => {
 
   it("shows the current workspace's tab count", () => {
     renderSidebar();
-    expect(screen.getByText("1 tab")).toBeTruthy();
+    // The count moved out of a "1 tab · N relationships" line under the
+    // switcher and onto the rows themselves: the Workspace destination
+    // carries the current space's tab count, and each Spaces row carries
+    // its own. Same information, attached to the thing it describes.
+    const workspaceRow = screen.getByRole("button", { name: "Workspace" });
+    expect(workspaceRow.textContent).toContain("1");
   });
 
   it("switches workspace when a space row is clicked", async () => {
@@ -89,7 +94,7 @@ describe("AppSidebar", () => {
   it("renders the current workspace name in the switcher when expanded", () => {
     renderSidebar({ collapsed: false });
 
-    expect(screen.getByText("General")).toBeTruthy();
+    expect(screen.getAllByText("General").length).toBeGreaterThan(0);
   });
 
   it("removes the workspace name from the switcher (not just clips it) when collapsed", () => {
@@ -105,7 +110,7 @@ describe("AppSidebar", () => {
     const onOpenGraph = vi.fn();
     renderSidebar({ onOpenGraph });
 
-    await user.click(screen.getByRole("button", { name: "Open Graph View" }));
+    await user.click(screen.getByRole("button", { name: "Graph" }));
 
     expect(onOpenGraph).toHaveBeenCalledOnce();
   });
@@ -115,7 +120,7 @@ describe("AppSidebar", () => {
     const onOpenHistoryDump = vi.fn();
     renderSidebar({ onOpenHistoryDump });
 
-    await user.click(screen.getByRole("button", { name: "Open History Dump" }));
+    await user.click(screen.getByRole("button", { name: "History Dump" }));
 
     expect(onOpenHistoryDump).toHaveBeenCalledOnce();
   });
@@ -125,7 +130,7 @@ describe("AppSidebar", () => {
     const onOpenSettings = vi.fn();
     renderSidebar({ onOpenSettings });
 
-    await user.click(screen.getByRole("button", { name: "Open Settings" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(onOpenSettings).toHaveBeenCalledOnce();
   });

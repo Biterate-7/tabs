@@ -51,7 +51,7 @@ export function TabInspector({
         {node && (
           <>
             <SheetHeader>
-              <p className="text-label text-tertiary">TAB</p>
+              <p className="text-eyebrow text-tertiary">TAB</p>
               <div className="flex items-center gap-2.5 pt-1">
                 <TabFavicon domain={node.tab.domain} size={28} />
                 <div className="min-w-0 flex-1">

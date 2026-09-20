@@ -1,5 +1,58 @@
-import { mix } from "./contrast";
+import { contrastRatio, mix } from "./contrast";
 import type { ThemeCategory, ThemeColors, ThemeDefinition } from "./types";
+
+/**
+ * WCAG AA for body-sized text, which is what `accessibility.md` states for
+ * anything up to 17pt — and the metadata tier is well under that.
+ */
+const AA_BODY = 4.5;
+
+/**
+ * Fades `text` toward `ground` by `amount`, then walks it back until it
+ * clears AA against every surface it is used on.
+ *
+ * The dimmer text tiers used to be a plain `mix` at a fixed amount, and a
+ * fixed amount cannot be correct for every palette in the registry: the same
+ * step that reads comfortably on a near-black ground lands under 4.5:1 on a
+ * warm off-white one, because fading dark text toward white loses contrast
+ * much faster than fading light text toward black. Measured on the shipped
+ * themes, the single 0.46 step failed on every light preset (≈3.8:1 on
+ * Paper) and on at least one dark one (≈4.2:1 on Charcoal).
+ *
+ * Tuning the constant per polarity only moves the problem — the next theme
+ * someone adds, or any custom theme a user builds, is a new palette the
+ * constant was not tuned against. So the derivation states the requirement
+ * instead: fade as far as asked, then step back toward the text colour in
+ * small increments until the result actually passes. Themes with room to
+ * spare are unaffected (the first candidate already passes and is returned
+ * unchanged); only the ones that would have failed move, and they move the
+ * least distance that fixes them.
+ *
+ * `grounds` is every surface the tier is drawn on — both the page and the
+ * card, since the tightest of the two is what has to pass.
+ */
+function fadeButKeepLegible(
+  text: string,
+  ground: string,
+  amount: number,
+  grounds: readonly string[]
+): string {
+  const passes = (candidate: string) =>
+    grounds.every((g) => {
+      const r = contrastRatio(candidate, g);
+      // An unparseable colour is not evidence of failure; leave it be
+      // rather than darkening a theme on the strength of a null.
+      return r === null || r >= AA_BODY;
+    });
+
+  for (let step = amount; step > 0; step -= 0.02) {
+    const candidate = mix(text, ground, step);
+    if (passes(candidate)) return candidate;
+  }
+  // Nothing in the range passed: the palette itself has too little range,
+  // and full-strength text is the most legible thing available.
+  return text;
+}
 
 /**
  * Compact input to `buildThemeColors` — every original TabDump preset below
@@ -30,6 +83,13 @@ export function buildThemeColors(spec: ThemeSpec): ThemeColors {
   const error = spec.error ?? (isDark ? "#f0576a" : "#c8253f");
   const info = spec.info ?? (isDark ? "#4fa6f7" : "#1d6fd1");
 
+  // Hoisted above `base` because the text tiers have to be checked against
+  // it: it is a step further from the ground than `surface`, which makes it
+  // the *tightest* background any readable text sits on, and therefore the
+  // one that decides whether a tier passes.
+  const surfaceElevated = mix(surface, toEdge, isDark ? 0.055 : 0.03);
+  const readableGrounds = [bg, surface, surfaceElevated] as const;
+
   const base: ThemeColors = {
     background: bg,
     backgroundSecondary: mix(bg, toEdge, isDark ? 0.05 : 0.035),
@@ -39,10 +99,24 @@ export function buildThemeColors(spec: ThemeSpec): ThemeColors {
     surfaceHover: mix(surface, toEdge, isDark ? 0.07 : 0.045),
     surfaceActive: mix(surface, toEdge, isDark ? 0.11 : 0.075),
     surfaceSelected: mix(surface, accent, 0.18),
+    // One step further from the ground than `surface`, in the same direction
+    // every other elevation step in this theme travels. Deliberately a
+    // larger step on light themes: on a white-ish ground a floating panel
+    // cannot get brighter, so it separates by going *down* towards the edge
+    // colour, and a small step there is invisible.
+    surfaceElevated,
 
     text,
-    textSecondary: mix(text, bg, 0.28),
-    textMuted: mix(text, bg, 0.46),
+    // Both readable tiers carry real text, so both are held to AA against
+    // the page and the card. See fadeButKeepLegible.
+    textSecondary: fadeButKeepLegible(text, bg, 0.28, readableGrounds),
+    // The metadata tier (`--text-tertiary`): counts, timestamps, section
+    // labels, filter chips.
+    textMuted: fadeButKeepLegible(text, bg, 0.46, readableGrounds),
+    // Disabled text is deliberately not held to AA: it marks a control that
+    // cannot be used, and WCAG exempts inactive controls. Holding it to the
+    // same floor would make disabled and enabled indistinguishable, which
+    // is the opposite of what the state is for.
     textDisabled: mix(text, bg, 0.66),
 
     accent,
@@ -50,9 +124,18 @@ export function buildThemeColors(spec: ThemeSpec): ThemeColors {
     accentActive: mix(accent, "#000000", 0.16),
     accentSubtle: mix(accent, bg, 0.84),
 
-    border: mix(surface, toEdge, isDark ? 0.16 : 0.18),
-    borderSubtle: mix(surface, toEdge, isDark ? 0.08 : 0.09),
-    borderStrong: mix(surface, toEdge, isDark ? 0.28 : 0.32),
+    // Hairlines, matched to the landing page rather than inherited from the
+    // old palette. `mix(surface, white, t)` is exactly white composited over
+    // the surface at alpha t, so these are marketing.css's --border (0.07)
+    // and --border-strong (0.16) reproduced, not approximated. The previous
+    // 0.16 default border was more than twice the landing's weight, which is
+    // most of why the product read as boxed-in where the page reads as open.
+    // `subtle` keeps a step below `border` because the app uses the two to
+    // separate a real division from a quiet one; the landing collapses them
+    // only because a marketing page has fewer divisions to make.
+    border: mix(surface, toEdge, isDark ? 0.07 : 0.1),
+    borderSubtle: mix(surface, toEdge, isDark ? 0.045 : 0.065),
+    borderStrong: mix(surface, toEdge, isDark ? 0.16 : 0.22),
 
     success,
     successSubtle: mix(success, bg, 0.85),
@@ -90,11 +173,18 @@ function theme(
 
 export const THEME_REGISTRY: ThemeDefinition[] = [
   // ---- Dark ---------------------------------------------------------
-  theme("midnight", "Midnight", "dark", "TabDump's original dark palette.", {
+  // The default, and the one theme that has to agree with the landing page:
+  // a first-run user crosses from marketing into the product without the
+  // ground shifting under them. These are marketing.css's own values
+  // (--background / --surface / --foreground / --primary), not an
+  // approximation of them — a cool near-black with a faint indigo cast.
+  // Every other theme below keeps its own palette and inherits only the
+  // shared geometry, type and motion.
+  theme("midnight", "Midnight", "dark", "TabDump's signature near-black.", {
     isDark: true,
-    bg: "#0a0a0b",
-    surface: "#131316",
-    text: "#f4f4f5",
+    bg: "#07070a",
+    surface: "#101015",
+    text: "#f2f1ee",
     accent: "#4361ff",
   }),
   theme("graphite", "Graphite", "dark", "Neutral gray-on-gray, almost no color.", {

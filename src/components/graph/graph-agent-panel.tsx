@@ -174,7 +174,7 @@ function WorkItemList({
 
   return (
     <div className="space-y-1">
-      <p className="text-label text-tertiary">WORK</p>
+      <p className="text-eyebrow text-tertiary">WORK</p>
       {countable > 0 && (
         <p className="text-meta text-tertiary">{done} of {countable} done</p>
       )}
@@ -225,7 +225,7 @@ function RunSummarySection({ summary }: { summary: AgentRunSummary }) {
 
   return (
     <div className="space-y-1">
-      <p className="text-label text-tertiary">SUMMARY</p>
+      <p className="text-eyebrow text-tertiary">SUMMARY</p>
 
       {/* Derived from real item statuses — never from elapsed time, event
           volume, or a session going quiet. */}
@@ -438,7 +438,7 @@ export function GraphAgentPanel({
           not something the filters apply to. */}
       {activity.length > 0 && (
         <div className="space-y-1">
-          <p className="text-label text-tertiary">NOW</p>
+          <p className="text-eyebrow text-tertiary">NOW</p>
           <AgentActivityList
             items={activity}
             onSelect={onSelectResult}
@@ -654,7 +654,7 @@ function AgentInspector({
 
         {recentRuns.length > 0 && (
           <div className="space-y-1">
-            <p className="text-label text-tertiary">RECENT RUNS</p>
+            <p className="text-eyebrow text-tertiary">RECENT RUNS</p>
             <ul className="space-y-0.5">
               {recentRuns.map((run) => (
                 <li key={run.runId}>
@@ -706,7 +706,7 @@ function AgentInspector({
             only meaningful in relation to its run, so getting back to it must
             be one keystroke away. */}
         <div className="space-y-1">
-          <p className="text-label text-tertiary">RUN</p>
+          <p className="text-eyebrow text-tertiary">RUN</p>
           <button
             type="button"
             onClick={() => onSelectSpatial(runSpatialId)}
@@ -764,7 +764,7 @@ function AgentInspector({
 
         {touchedBy.length > 0 && (
           <div className="space-y-1">
-            <p className="text-label text-tertiary">WORKED ON BY</p>
+            <p className="text-eyebrow text-tertiary">WORKED ON BY</p>
             <ul className="space-y-0.5">
               {touchedBy.map((entry) => (
                 <li key={`${entry.runId}:${entry.role}`}>
@@ -884,7 +884,7 @@ function RunContext({
     <>
       {files.length > 0 && (
         <div className="space-y-1">
-          <p className="text-label text-tertiary">FILES</p>
+          <p className="text-eyebrow text-tertiary">FILES</p>
           {groupByRole(files).map(([role, group]) => (
             <div key={role} className="space-y-0.5">
               <p className="text-meta text-tertiary">{role}</p>
@@ -910,7 +910,7 @@ function RunContext({
         <div className="space-y-1">
           {/* Tabs are kept visibly separate from files: one is the human's
               context surface, the other is the agent's work target. */}
-          <p className="text-label text-tertiary">TABS</p>
+          <p className="text-eyebrow text-tertiary">TABS</p>
           {groupByRole(tabs).map(([role, group]) => (
             <div key={role} className="space-y-0.5">
               <p className="text-meta text-tertiary">{role}</p>
@@ -928,7 +928,7 @@ function RunContext({
 
       {events.length > 0 && (
         <div className="space-y-1">
-          <p className="text-label text-tertiary">RECENT ACTIVITY</p>
+          <p className="text-eyebrow text-tertiary">RECENT ACTIVITY</p>
           <ul className="space-y-0.5">
             {events.map((event) => (
               <li key={event.id} className="truncate px-1.5 py-0.5 text-body-sm text-muted-foreground">

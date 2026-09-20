@@ -208,7 +208,7 @@ export function AgentHistoryScreen({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
@@ -217,7 +217,7 @@ export function AgentHistoryScreen({
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-h2 text-foreground">Agent History</h1>
-          <p className="truncate text-meta text-tertiary">
+          <p className="truncate text-body-sm text-muted-foreground">
             Every agent session TabDump still holds, however long ago it ran.
           </p>
         </div>

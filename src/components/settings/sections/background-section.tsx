@@ -106,11 +106,11 @@ export function BackgroundSection() {
             </FieldRow>
             <div className="grid gap-2.5 sm:grid-cols-2">
               <div>
-                <p className="mb-1.5 px-0.5 text-label text-tertiary">SIZE</p>
+                <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">SIZE</p>
                 <Select value={bg.size} onValueChange={(v) => setBackground({ size: v as typeof bg.size })} options={[...SIZE_OPTIONS]} />
               </div>
               <div>
-                <p className="mb-1.5 px-0.5 text-label text-tertiary">POSITION</p>
+                <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">POSITION</p>
                 <Select
                   value={bg.position}
                   onValueChange={(v) => setBackground({ position: v as typeof bg.position })}

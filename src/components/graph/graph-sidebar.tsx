@@ -126,7 +126,7 @@ export function GraphSidebar({
   return (
     <div className="absolute top-0 right-0 z-10 flex h-full w-72 max-w-[85vw] flex-col border-l border-subtle bg-popover/95 shadow-lg backdrop-blur-sm duration-(--duration-slow) ease-(--ease-standard) animate-in slide-in-from-right">
       <div className="flex items-center justify-between border-b border-subtle px-3 py-3">
-        <p className="text-label text-tertiary">GRAPH</p>
+        <p className="text-eyebrow text-tertiary">GRAPH</p>
         <IconButton aria-label="Collapse sidebar" tooltip="Collapse sidebar" onClick={onToggle}>
           <PanelRightClose />
         </IconButton>
@@ -144,7 +144,7 @@ export function GraphSidebar({
           <div className="h-px bg-border" />
 
           <div>
-            <p className="text-label text-tertiary">VIEW</p>
+            <p className="text-eyebrow text-tertiary">VIEW</p>
             <div className="mt-2 flex gap-1.5">
               <Pill active={view === "global"} onClick={() => onViewChange("global")}>
                 Global

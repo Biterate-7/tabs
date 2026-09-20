@@ -420,7 +420,7 @@ describe("navigation", () => {
     const { session } = multiTaskRun();
     const { onOpenWorld } = renderSession(session);
 
-    await userEvent.click(screen.getByRole("button", { name: "Open Agent World" }));
+    await userEvent.click(screen.getByRole("button", { name: "Agent World" }));
     expect(onOpenWorld).toHaveBeenCalled();
   });
 

@@ -32,7 +32,13 @@ export function FieldRow({
     >
       <div className={stacked ? "mb-3" : "min-w-0"}>
         <p className="text-body-sm font-medium text-foreground">{label}</p>
-        {description && <p className="mt-0.5 text-meta text-tertiary">{description}</p>}
+        {/* Sans. Every settings row's explanatory line came through here in
+            mono, which is why whole sentences across Settings read as code
+            — "Pick a new theme automatically each time TabDump loads." set
+            in Geist Mono. Mono is for micro-labels and figures (see
+            `.text-eyebrow` and `.text-meta` in globals.css); a sentence
+            explaining a control is prose. */}
+        {description && <p className="mt-0.5 text-body-sm text-muted-foreground">{description}</p>}
       </div>
       <div className={stacked ? "" : "shrink-0"}>{children}</div>
     </div>

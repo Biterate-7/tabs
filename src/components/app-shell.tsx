@@ -1182,6 +1182,27 @@ export function AppShell() {
     return <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
   }
 
+  /*
+    Every destination other than the workspace itself, resolved to the
+    element that fills the content column.
+
+    These used to be early `return`s from the component, which meant each
+    one replaced the entire shell — opening Agent World, the Graph, History
+    or Settings unmounted the sidebar and left a back chevron as the only
+    way home. Two things were wrong with that. The current location was
+    invisible, which `design-principles.md` › Agency asks us not to do
+    ("keep them informed about what's happening"), and the rail's own
+    active state had nothing to mark, because the rail was gone. It also
+    made every move between destinations a two-step trip through the
+    workspace.
+
+    Resolving them to a value instead lets the shell render once, with the
+    rail persistent and the active row lit, which is also what the landing
+    page does: its nav stays put while the page changes under it.
+
+    `null` means "no destination" — the workspace content renders instead.
+  */
+  const destination: React.ReactNode = (() => {
   if (view === "graph") {
     // The gate, at the transition itself rather than inside the canvas: while
     // a dump is organizing, laying out or settling, GraphView is not rendered
@@ -1324,6 +1345,9 @@ export function AppShell() {
     )
   }
 
+    return null
+  })()
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar
@@ -1349,14 +1373,25 @@ export function AppShell() {
         onOpenAgentWorld={() => setView("agent-world")}
         onOpenAgentHistory={() => setView("agent-history")}
         onOpenSettings={() => openSettings()}
+        onOpenWorkspace={() => setView("workspace")}
+        currentView={view}
       />
       <div
-        className="min-w-0 flex-1"
+        className="flex min-w-0 flex-1 flex-col"
         // Settings → Appearance → Layout → Content width (see resolve.ts).
         // "Full" resolves to `none`, i.e. today's unconstrained behavior.
-        style={{ maxWidth: "var(--tabdump-content-max-width)", marginInline: "auto" }}
+        //
+        // Only applied to the workspace itself. A destination like the Graph
+        // or the Agent World is a canvas, not a column of reading material,
+        // and capping it at the reading width would letterbox it inside a
+        // shell that is already narrower than the window.
+        style={
+          destination
+            ? undefined
+            : { maxWidth: "var(--tabdump-content-max-width)", marginInline: "auto" }
+        }
       >
-        {currentWorkspace.tabs.length === 0 ? (
+        {destination ?? (currentWorkspace.tabs.length === 0 ? (
           <LandingView onDump={handleDump} onOpenSidebar={() => setMobileSidebarOpen(true)} />
         ) : (
           // Keyed on the workspace id so switching workspaces remounts
@@ -1408,7 +1443,7 @@ export function AppShell() {
             onAssignTabToSection={handleAssignTabToSection}
             onReorganizeSections={handleReorganizeSections}
           />
-        )}
+        ))}
       </div>
     </div>
   )

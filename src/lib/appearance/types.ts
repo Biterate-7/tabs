@@ -19,6 +19,18 @@ export type ThemeColors = {
   surfaceHover: string;
   surfaceActive: string;
   surfaceSelected: string;
+  /**
+   * The third elevation tier: menus, dialogs, sheets, popovers, the command
+   * palette — anything that floats above the surface layer rather than
+   * sitting in it.
+   *
+   * It exists because globals.css documents a three-tier elevation
+   * (background / surface / elevated) that the resolver used to collapse
+   * into two by pointing --popover straight at `surface`. A dropdown opening
+   * on top of a card it exactly matched had nothing but its shadow to say it
+   * was a separate plane, which is the one thing elevation is for.
+   */
+  surfaceElevated: string;
 
   text: string;
   textSecondary: string;

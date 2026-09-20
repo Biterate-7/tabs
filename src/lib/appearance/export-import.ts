@@ -24,6 +24,7 @@ const COLOR_FIELDS: (keyof ThemeColors)[] = [
   "surfaceHover",
   "surfaceActive",
   "surfaceSelected",
+  "surfaceElevated",
   "text",
   "textSecondary",
   "textMuted",

@@ -92,7 +92,7 @@ export function SectionPage({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

@@ -290,7 +290,7 @@ export function HistoryDumpView({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
@@ -393,7 +393,7 @@ export function HistoryDumpView({
                 <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 space-y-6">
                   {filteredSuggested.length > 0 && (
                     <section>
-                      <p className="mb-2 px-1 text-label text-tertiary">HIGH CONFIDENCE</p>
+                      <p className="mb-2 px-1 text-eyebrow text-tertiary">HIGH CONFIDENCE</p>
                       <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
                         {filteredSuggested.map((c) => (
                           <HistoryCandidateRow
@@ -410,7 +410,7 @@ export function HistoryDumpView({
 
                   {filteredOther.length > 0 && (
                     <section>
-                      <p className="mb-2 px-1 text-label text-tertiary">OTHER POTENTIAL TABS</p>
+                      <p className="mb-2 px-1 text-eyebrow text-tertiary">OTHER POTENTIAL TABS</p>
                       <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
                         {filteredOther.map((c) => (
                           <HistoryCandidateRow
@@ -434,7 +434,7 @@ export function HistoryDumpView({
 
                   {filteredAlready.length > 0 && (
                     <section>
-                      <p className="mb-2 px-1 text-label text-tertiary">ALREADY IN TABDUMP</p>
+                      <p className="mb-2 px-1 text-eyebrow text-tertiary">ALREADY IN TABDUMP</p>
                       <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
                         {filteredAlready.map((c) => (
                           <HistoryCandidateRow key={c.id} candidate={c} selected={false} onToggle={() => {}} />

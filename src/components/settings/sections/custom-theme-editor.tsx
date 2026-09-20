@@ -211,7 +211,7 @@ export function CustomThemeEditor({ colors, onChange }: { colors: ThemeColors; o
       </div>
 
       <div className="lg:sticky lg:top-0 lg:self-start">
-        <p className="mb-1.5 px-0.5 text-label text-tertiary">LIVE PREVIEW</p>
+        <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">LIVE PREVIEW</p>
         <MiniPreview />
       </div>
     </div>

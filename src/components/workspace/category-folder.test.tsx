@@ -56,8 +56,10 @@ describe("CategoryFolder", () => {
     );
     render(<CategoryFolder categoryId="projects" tabs={tabs} presence="standard" onViewAll={() => {}} />);
 
-    // presence="standard" previews 3 tabs, so 2 remain hidden.
-    expect(screen.getByText("+2 more")).toBeTruthy();
+    // presence="standard" previews 4 tabs, so 1 remains hidden. The limit went
+    // 3 -> 4 when the tile stopped drawing rotated paper scraps and started
+    // listing legible rows — see FolderTile.
+    expect(screen.getByText("+1 more")).toBeTruthy();
   });
 
   it("still shows the tab count and an accessible open control", () => {

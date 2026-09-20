@@ -36,7 +36,7 @@ export function GraphCollectionPanel({
   return (
     <div className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0">
       <div className="flex items-center justify-between">
-        <p className="text-label text-tertiary">COLLECTION</p>
+        <p className="text-eyebrow text-tertiary">COLLECTION</p>
         <IconButton aria-label="Focus collection" tooltip="Focus this collection" className="size-7" onClick={onFocus}>
           <Scan />
         </IconButton>

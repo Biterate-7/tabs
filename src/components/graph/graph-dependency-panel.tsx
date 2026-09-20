@@ -196,7 +196,7 @@ export function GraphDependencyPanel({
         <>
           {dependencies.length > 0 && (
             <div>
-              <p className="mb-1 text-label text-tertiary">DEPENDENCIES</p>
+              <p className="mb-1 text-eyebrow text-tertiary">DEPENDENCIES</p>
               <div className="space-y-0.5">
                 {dependencies.map((dep) => (
                   <DependencyRow
@@ -238,7 +238,7 @@ export function GraphDependencyPanel({
 
           {usedByDeps.length > 0 && (
             <div>
-              <p className="mb-1 text-label text-tertiary">USED BY</p>
+              <p className="mb-1 text-eyebrow text-tertiary">USED BY</p>
               <div className="space-y-0.5">
                 {usedByDeps.map((dep) => (
                   <DependencyRow
@@ -264,7 +264,7 @@ export function GraphDependencyPanel({
 
           {tree.length > 0 && (
             <div>
-              <p className="mb-1 text-label text-tertiary">DEPENDENCY TREE</p>
+              <p className="mb-1 text-eyebrow text-tertiary">DEPENDENCY TREE</p>
               <div className="rounded-md border border-subtle p-1.5">
                 {tree.map((child) => (
                   <DependencyTreeRow

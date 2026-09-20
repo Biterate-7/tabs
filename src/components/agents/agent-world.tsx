@@ -655,6 +655,29 @@ export function AgentWorld({
   )
   const idleOnly = hasAnyone && workingCount === 0
 
+  /**
+   * Whether the *scenery* moves — lit windows flickering, screens glowing,
+   * vehicles crossing the ground.
+   *
+   * Gated on real work, not only on the motion preference. Ambient loops are
+   * the only animations in this app that run forever, and with nothing
+   * running they were decorating an empty building indefinitely: motion that
+   * carries no information, on a screen whose whole claim is that nothing
+   * here is simulated. `motion.md` is direct about it — "Don't add motion for
+   * the sake of adding motion. Gratuitous or excessive animation can distract
+   * people" — and the landing page holds itself to the sharper version of the
+   * same rule: its one looping animation attaches to a working run only,
+   * because "an idle page should be still."
+   *
+   * So the room comes alive when there is life in it. That also makes the
+   * motion mean something: movement in the world now says work is happening,
+   * which is exactly what a spatial view of agents should communicate.
+   *
+   * Characters keep their own `animate` below — their motion is already
+   * per-state, and an idle figure has no working animation to suppress.
+   */
+  const sceneryAnimate = animate && workingCount > 0
+
   const cameraMoved = manualView !== null
 
   return (
@@ -768,7 +791,7 @@ export function AgentWorld({
             hoveredRoomId={hoveredRoomId}
             onSelectRoom={selectRoom}
             onHoverRoom={setHoveredRoomId}
-            animate={animate}
+            animate={sceneryAnimate}
           />
         </div>
 
@@ -837,7 +860,7 @@ export function AgentWorld({
         the feature legible on first open.
       */}
       {idleOnly && (
-        <p className="text-meta text-tertiary">
+        <p className="text-body-sm text-muted-foreground">
           Your agents will appear here as they work. Nothing is running in this workspace yet.
         </p>
       )}

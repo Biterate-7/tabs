@@ -54,7 +54,7 @@ export function OrganizationPreparationView({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">

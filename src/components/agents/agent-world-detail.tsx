@@ -165,7 +165,7 @@ function AgentWorldDetailImpl({
 
       {character.activity && (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">DOING</p>
+          <p className="text-eyebrow text-tertiary">DOING</p>
           <p className="text-body-sm text-foreground">{character.activity}</p>
         </div>
       )}
@@ -184,7 +184,7 @@ function AgentWorldDetailImpl({
 
       {detail?.workItems.length ? (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">WORK</p>
+          <p className="text-eyebrow text-tertiary">WORK</p>
           <ul className="space-y-0.5">
             {detail.workItems.slice(0, 5).map((item) => (
               <li key={item.id} className="truncate text-body-sm text-foreground">
@@ -215,7 +215,7 @@ function AgentWorldDetailImpl({
 
       {detail?.files.length ? (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">FILES</p>
+          <p className="text-eyebrow text-tertiary">FILES</p>
           <ul className="space-y-0.5">
             {detail.files.slice(0, 5).map((file) => (
               <li key={file.artifactId} className="truncate text-meta text-tertiary">
@@ -228,7 +228,7 @@ function AgentWorldDetailImpl({
 
       {detail?.handoffs.length ? (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">SHARED WORK</p>
+          <p className="text-eyebrow text-tertiary">SHARED WORK</p>
           <ul className="space-y-0.5">
             {detail.handoffs.slice(0, 4).map((handoff) => (
               <li key={handoff.id} className="truncate text-meta text-tertiary">
@@ -242,7 +242,7 @@ function AgentWorldDetailImpl({
 
       {detail?.events.length ? (
         <div className="space-y-0.5">
-          <p className="text-label text-tertiary">RECENT ACTIVITY</p>
+          <p className="text-eyebrow text-tertiary">RECENT ACTIVITY</p>
           <ul className="space-y-0.5">
             {detail.events.slice(0, 5).map((event) => (
               <li key={event.id} className="truncate text-meta text-tertiary">

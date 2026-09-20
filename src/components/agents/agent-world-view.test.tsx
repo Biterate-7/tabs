@@ -163,7 +163,7 @@ describe("opening Agent World with nothing running", () => {
 
   it("lists the roster in text beside the figures", () => {
     renderScreen();
-    const roster = screen.getByRole("region", { name: "AGENTS IN THIS WORLD" });
+    const roster = screen.getByRole("region", { name: "Agents in this world" });
     expect(within(roster).getByText("Claude Code")).toBeTruthy();
     expect(within(roster).getByText("Not connected")).toBeTruthy();
     expect(within(roster).getByText("Unavailable")).toBeTruthy();
@@ -270,7 +270,7 @@ describe("when real agents start working", () => {
     const scene = sceneFrom(stateWithLiveRun(), CONNECTED_ROSTER);
     renderScreen({ scene, roster: CONNECTED_ROSTER });
 
-    expect(screen.getByText("WORKING NOW")).toBeTruthy();
+    expect(screen.getByText("Working now")).toBeTruthy();
   });
 
   it("says nothing is working when nothing is", () => {
@@ -344,7 +344,7 @@ describe("the keyboard", () => {
     const user = userEvent.setup();
     const { onSelect } = renderScreen();
 
-    const roster = screen.getByRole("region", { name: "AGENTS IN THIS WORLD" });
+    const roster = screen.getByRole("region", { name: "Agents in this world" });
     await user.click(within(roster).getByRole("button", { name: /Claude Code/ }));
     expect(onSelect).toHaveBeenCalledWith("idle:claude-code");
   });
@@ -382,7 +382,7 @@ describe("narrow screens", () => {
 
   it("wraps the roster rather than overflowing it", () => {
     renderScreen();
-    const list = screen.getByRole("region", { name: "AGENTS IN THIS WORLD" }).querySelector("ul");
+    const list = screen.getByRole("region", { name: "Agents in this world" }).querySelector("ul");
     expect(list?.className).toContain("flex-wrap");
   });
 });

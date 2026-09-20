@@ -383,7 +383,7 @@ export function AgentSessionScreen({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
+      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
@@ -431,7 +431,7 @@ export function AgentSessionScreen({
               type="button"
               variant="outline"
               size="sm"
-              aria-label="Open Agent World"
+              aria-label="Agent World"
               onClick={onOpenWorld}
             >
               <Boxes />
@@ -459,7 +459,7 @@ export function AgentSessionScreen({
             {session.currentActivity ? (
               <p className="text-body-sm text-muted-foreground">{session.currentActivity}</p>
             ) : null}
-            {last ? <p className="text-meta text-tertiary">Last recorded activity {last}</p> : null}
+            {last ? <p className="text-body-sm text-muted-foreground">Last recorded activity {last}</p> : null}
           </section>
 
           {/* WORK ITEMS — every one, including completed and cancelled. */}
@@ -592,7 +592,7 @@ export function AgentSessionScreen({
               title="TIMELINE"
               right={
                 selected ? (
-                  <span className="text-meta text-tertiary">
+                  <span className="text-body-sm text-muted-foreground">
                     Highlighted: evidence for the selected task
                   </span>
                 ) : null
@@ -701,7 +701,7 @@ export function AgentSessionView({
 
   if (!session) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <div className="relative flex h-screen min-w-0 flex-1 flex-col bg-background">
         <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
           <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
             <ChevronLeft />

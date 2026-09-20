@@ -1014,7 +1014,7 @@ export function GraphView({
 
   return (
     <div
-      className="fixed inset-0 z-40 bg-background"
+      className="relative h-screen min-w-0 flex-1 bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
@@ -1038,6 +1038,11 @@ export function GraphView({
       ) : (
         <GraphCanvas
           ref={canvasHandleRef}
+          /* GraphSidebar is `absolute right-0 w-72` over this canvas, so
+             fitting to the canvas alone framed the graph partly underneath
+             it. 288px is that w-72 in pixels; below `sm` the panel is
+             `max-w-[85vw]` and computeFitCamera clamps the inset itself. */
+          viewportInsetRight={graphState.settings.sidebarOpen ? 288 : 0}
           nodes={visibleNodes}
           edges={visibleEdges}
           dependencyEdges={visibleDependencyEdges}

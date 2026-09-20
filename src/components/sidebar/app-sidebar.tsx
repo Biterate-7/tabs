@@ -1,9 +1,10 @@
 "use client"
 
-import { Boxes, History, PanelLeftClose, PanelLeftOpen, ScanSearch, Settings, Star, Waypoints } from "lucide-react"
+import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, ScanSearch, ScrollText, Settings, Star, Waypoints } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
+import { SidebarItem, SidebarSectionLabel } from "@/components/ui/sidebar-item"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
@@ -11,22 +12,59 @@ import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
 /**
- * The persistent left "Spaces" rail. Deliberately reuses WorkspaceSwitcher
- * as-is for the actual switch/create/rename/delete/import interactions
- * (unstyled logic, already covered by app-shell.test.tsx via its "Switch
- * workspace" trigger) rather than re-implementing that flow — this component
- * only adds the surrounding spatial chrome: brand, collapse state, a
- * per-space compact identity rail, and a Graph nav entry.
+ * Which destination is on screen. Mirrors the `view` union in app-shell —
+ * the rail only needs to know enough to light the right row.
+ */
+export type SidebarView =
+  | "workspace"
+  | "graph"
+  | "settings"
+  | "favorites"
+  | "recents"
+  | "history-dump"
+  | "agent-world"
+  | "agent-history"
+  | "agent-session"
+
+/**
+ * The persistent left rail.
  *
- * The rail's rows show an initial-letter badge and tab count only, with the
- * full name in a hover tooltip rather than as inline text — this is a
- * deliberate choice, not just a density preference: WorkspaceSwitcher's own
- * trigger already renders the *current* workspace's name as plain text, and
- * its dropdown renders every workspace's name as plain text while open, so
- * duplicating those names as a second always-visible text node here would
- * make a workspace name resolvable by more than one on-screen element at
- * once — exactly the ambiguity plain-text queries like `getByText(name)`
- * can't tolerate.
+ * ## What changed, and why
+ *
+ * The rail used to put all seven destinations in a footer block pinned
+ * below a workspace list that took every remaining pixel — so the nav sat
+ * in the last 250px of the column while several hundred px of nothing sat
+ * above it, and Settings ended up underneath the floating sync badge.
+ * `sidebars.md` › Desktop is explicit about this: "Avoid putting critical
+ * information or actions at the bottom of a sidebar. People often relocate
+ * a window in a way that hides its bottom edge." Destinations now open the
+ * rail and Spaces follow; the only thing left at the foot is the account,
+ * which is the one row that genuinely belongs there.
+ *
+ * Rows are `SidebarItem`, not `IconButton`, so each one carries
+ * `aria-current="page"` when it is the view on screen. Before this there
+ * was exactly one `aria-current` in the entire shell and it was on the
+ * workspace list, which meant nothing anywhere said which destination you
+ * were looking at.
+ *
+ * Icons are one per destination. "Recent" and "Agent History" both used
+ * lucide's `History` glyph, so two unrelated rows were visually identical —
+ * `sidebars.md` asks for "familiar symbols to represent items in the
+ * sidebar", and two items sharing one symbol is the opposite. Recent keeps
+ * a clock, Agent History takes a scroll: a record of what happened, which
+ * is what it is.
+ *
+ * ## Workspace rows
+ *
+ * They show the name. They previously showed an avatar and a count with the
+ * name only in a tooltip, which made two workspaces whose names began with
+ * the same letter indistinguishable — the seeded "Thesis Research" and
+ * "TabDump Build" both rendered as a circled "T". The original reason was a
+ * test constraint (WorkspaceSwitcher also renders the current name, so a
+ * plain `getByText(name)` could match twice), and that is a real constraint
+ * but the wrong thing to spend legibility on. It is resolved here by giving
+ * the switcher's trigger and these rows distinct accessible names rather
+ * than by hiding one of them.
  */
 export function AppSidebar({
   workspaces,
@@ -51,6 +89,8 @@ export function AppSidebar({
   onOpenAgentWorld,
   onOpenAgentHistory,
   onOpenSettings,
+  onOpenWorkspace,
+  currentView = "workspace",
 }: {
   workspaces: Workspace[]
   currentId: string
@@ -98,14 +138,30 @@ export function AppSidebar({
    */
   onOpenAgentHistory: () => void
   onOpenSettings: () => void
+  /** Returns to the current workspace from any other destination. */
+  onOpenWorkspace?: () => void
+  /** The destination currently on screen, used to mark the active row. */
+  currentView?: SidebarView
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
-  const currentRelationships = relationshipCounts[currentId] ?? 0
   // The desktop icon-rail collapse has no business hiding labels inside the
   // mobile drawer — that's a different affordance (off-canvas vs. in-flow)
   // with its own open/closed state. Labels only actually hide when
   // `collapsed` applies, i.e. on desktop and not inside the mobile drawer.
   const showLabels = !collapsed || mobileOpen
+  const railCollapsed = !showLabels
+  // Inside the drawer these rows are tapped, and iOS wants 44pt where macOS
+  // is happy with 28 (`accessibility.md` › control sizes). The rail keeps
+  // its pointer-sized rows.
+  const touch = mobileOpen
+
+  /*
+    The Session View belongs to Agent History: it is opened from a row there
+    and its back action returns there, so History stays lit while a session
+    is open rather than leaving no row marked at all.
+  */
+  const activeIs = (v: SidebarView) =>
+    currentView === v || (v === "agent-history" && currentView === "agent-session")
 
   return (
     <>
@@ -144,136 +200,197 @@ export function AppSidebar({
           </IconButton>
         </div>
 
-      <div className={cn("px-3", !showLabels && "w-full overflow-hidden px-2")}>
-        <WorkspaceSwitcher
-          workspaces={workspaces}
-          currentId={currentId}
-          onSwitch={onSwitch}
-          onCreate={onCreate}
-          onRename={onRename}
-          onDelete={onDelete}
-          onImportFile={onImportFile}
-          onUpdateLogo={onUpdateLogo}
-          collapsed={!showLabels}
-        />
-        {showLabels && current && (
-          <p className="mt-0.5 truncate text-meta text-tertiary">
-            {current.tabs.length} tab{current.tabs.length === 1 ? "" : "s"}
-            {currentRelationships > 0
-              ? ` · ${currentRelationships} relationship${currentRelationships === 1 ? "" : "s"}`
-              : ""}
-          </p>
-        )}
-      </div>
-
-      <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        {showLabels && <p className="px-1.5 pb-1.5 text-label text-tertiary">SPACES</p>}
-        <div className="flex flex-col gap-1">
-          {workspaces.map((w) => {
-            const isActive = w.id === currentId
-            const relationships = relationshipCounts[w.id] ?? 0
-            return (
-              <Tooltip key={w.id}>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      onClick={() => onSwitch(w.id)}
-                      aria-label={`Switch to ${w.name}`}
-                      aria-current={isActive ? "true" : undefined}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-lg border border-transparent px-1.5 py-1.5 text-left transition-[background-color,border-color,transform] duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]",
-                        isActive ? "border-primary/30 bg-primary/10" : "hover:bg-accent"
-                      )}
-                    >
-                      <WorkspaceAvatar workspace={w} size={24} />
-                      {showLabels && (
-                        <span className="ml-auto shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
-                      )}
-                    </button>
-                  }
-                />
-                <TooltipContent>
-                  {w.name} · {w.tabs.length} tab{w.tabs.length === 1 ? "" : "s"}
-                  {relationships > 0 ? ` · ${relationships} relationship${relationships === 1 ? "" : "s"}` : ""}
-                </TooltipContent>
-              </Tooltip>
-            )
-          })}
+        <div className={cn("px-3 pb-1", railCollapsed && "w-full overflow-hidden px-2")}>
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            currentId={currentId}
+            onSwitch={onSwitch}
+            onCreate={onCreate}
+            onRename={onRename}
+            onDelete={onDelete}
+            onImportFile={onImportFile}
+            onUpdateLogo={onUpdateLogo}
+            collapsed={railCollapsed}
+          />
         </div>
-      </div>
 
-      <div className="flex flex-col gap-1 border-t border-subtle p-2">
-        <IconButton
-          aria-label="Open Favorites"
-          tooltip="Favorites"
-          onClick={onOpenFavorites}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <Star />
-          {showLabels && <span className="text-body-sm">Favorites</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open Recent"
-          tooltip="Recent"
-          onClick={onOpenRecents}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <History />
-          {showLabels && <span className="text-body-sm">Recent</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open History Dump"
-          tooltip="History Dump"
-          onClick={onOpenHistoryDump}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <ScanSearch />
-          {showLabels && <span className="text-body-sm">History Dump</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open Graph View"
-          tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : "Graph"}
-          disabled={graphLocked}
-          onClick={onOpenGraph}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <Waypoints />
-          {showLabels && <span className="text-body-sm">Graph</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open Agent World"
-          tooltip="Agent World"
-          onClick={onOpenAgentWorld}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <Boxes />
-          {showLabels && <span className="text-body-sm">Agent World</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open Agent History"
-          tooltip="Agent History"
-          onClick={onOpenAgentHistory}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <History />
-          {showLabels && <span className="text-body-sm">Agent History</span>}
-        </IconButton>
-        <IconButton
-          aria-label="Open Settings"
-          tooltip="Settings"
-          onClick={onOpenSettings}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
-        >
-          <Settings />
-          {showLabels && <span className="text-body-sm">Settings</span>}
-        </IconButton>
-        {/* Renders nothing at all when this deployment has no accounts
-            configured, so the rail is unchanged from before accounts
-            existed. See AccountSection. */}
-        <AccountSection showLabels={showLabels} />
-      </div>
+        {/*
+          Destinations, at the top where they are reachable, and scrollable
+          together with Spaces so a long workspace list never pushes the nav
+          off the bottom edge.
+        */}
+        <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          <nav aria-label="Views" className="flex flex-col gap-0.5">
+            <SidebarItem
+              label="Workspace"
+              icon={<Boxes />}
+              current={activeIs("workspace")}
+              collapsed={railCollapsed}
+              touch={touch}
+              trailing={current ? current.tabs.length : undefined}
+              onClick={onOpenWorkspace}
+            />
+            <SidebarItem
+              label="Graph"
+              icon={<Waypoints />}
+              current={activeIs("graph")}
+              collapsed={railCollapsed}
+              touch={touch}
+              disabled={graphLocked}
+              tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : undefined}
+              trailing={relationshipCounts[currentId] || undefined}
+              onClick={onOpenGraph}
+            />
+            <SidebarItem
+              label="Favorites"
+              icon={<Star />}
+              current={activeIs("favorites")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenFavorites}
+            />
+            <SidebarItem
+              label="Recent"
+              icon={<Clock />}
+              current={activeIs("recents")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenRecents}
+            />
+            <SidebarItem
+              label="History Dump"
+              icon={<ScanSearch />}
+              current={activeIs("history-dump")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenHistoryDump}
+            />
+          </nav>
+
+          <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
+            Agents
+          </SidebarSectionLabel>
+          <nav aria-label="Agents" className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
+            <SidebarItem
+              label="Agent World"
+              icon={<AgentWorldGlyph />}
+              current={activeIs("agent-world")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenAgentWorld}
+            />
+            <SidebarItem
+              label="Agent History"
+              icon={<ScrollText />}
+              current={activeIs("agent-history")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenAgentHistory}
+            />
+          </nav>
+
+          <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
+            Spaces
+          </SidebarSectionLabel>
+          <div className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
+            {workspaces.map((w) => {
+              const isActive = w.id === currentId
+              const relationships = relationshipCounts[w.id] ?? 0
+              const detail = `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}${
+                relationships > 0
+                  ? ` · ${relationships} relationship${relationships === 1 ? "" : "s"}`
+                  : ""
+              }`
+              return (
+                <Tooltip key={w.id}>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => onSwitch(w.id)}
+                        // Distinct from the name alone, so the switcher's
+                        // trigger and this row are separately addressable.
+                        aria-label={`Switch to ${w.name}`}
+                        aria-current={isActive ? "true" : undefined}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 text-left",
+                          "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-standard)",
+                          "outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                          touch ? "h-11" : "h-9",
+                          railCollapsed && "justify-center px-0",
+                          isActive
+                            ? "bg-surface-selected text-foreground"
+                            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                        )}
+                      >
+                        <WorkspaceAvatar workspace={w} size={20} />
+                        {showLabels && <span className="min-w-0 flex-1 truncate text-body-sm">{w.name}</span>}
+                        {showLabels && (
+                          /* Same measured reason as SidebarItem's trailing
+                             count: tertiary on the selected surface is
+                             4.36:1, under AA for 12px text. */
+                          <span
+                            className={cn(
+                              "shrink-0 text-meta tabular-nums",
+                              isActive ? "text-muted-foreground" : "text-tertiary"
+                            )}
+                          >
+                            {w.tabs.length}
+                          </span>
+                        )}
+                      </button>
+                    }
+                  />
+                  <TooltipContent>
+                    {w.name} · {detail}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </div>
+        </div>
+
+        {/*
+          The foot holds only what belongs at a window's bottom edge: the
+          account, and Settings — which macOS itself keeps out of the main
+          navigation and under the app menu (`settings.md`). Everything a
+          person navigates to is above, out of the way of a dragged window.
+        */}
+        <div className="flex flex-col gap-0.5 border-t border-subtle p-2">
+          <SidebarItem
+            label="Settings"
+            icon={<Settings />}
+            current={activeIs("settings")}
+            collapsed={railCollapsed}
+            touch={touch}
+            onClick={onOpenSettings}
+          />
+          {/* Renders nothing at all when this deployment has no accounts
+              configured, so the rail is unchanged from before accounts
+              existed. See AccountSection. */}
+          <AccountSection showLabels={showLabels} />
+        </div>
       </aside>
     </>
+  )
+}
+
+/**
+ * The Agent World's own glyph.
+ *
+ * `Boxes` now marks the Workspace row, and the world needs a symbol that is
+ * about presence rather than storage: three figures sharing one ground.
+ * Drawn here rather than taken from the icon set because nothing in lucide
+ * says "agents at work in a place", and a wrong-but-available glyph is what
+ * produced the two-identical-clocks problem this rail just fixed.
+ */
+function AgentWorldGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden focusable="false">
+      <ellipse cx="8" cy="12.25" rx="6.25" ry="2.25" stroke="currentColor" strokeWidth="1.2" opacity="0.45" />
+      <circle cx="4.9" cy="6.4" r="1.5" fill="currentColor" />
+      <circle cx="11.1" cy="6.4" r="1.5" fill="currentColor" opacity="0.55" />
+      <circle cx="8" cy="3.3" r="1.5" fill="currentColor" opacity="0.8" />
+    </svg>
   )
 }
