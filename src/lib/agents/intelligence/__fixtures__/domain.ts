@@ -4,12 +4,14 @@ import { addRunLink } from "@/lib/agents/links";
 import { createAgent } from "@/lib/agents/registry";
 import { createRun } from "@/lib/agents/runs";
 import { emptyAgentState } from "@/lib/agents/types";
+import { recordWorkItemEvidence } from "@/lib/agents/work-item-evidence";
 import { createWorkItem, transitionWorkItem } from "@/lib/agents/work-items";
 import type {
   AgentRunArtifactRole,
   AgentRunLinkRole,
   AgentRunStatus,
   AgentState,
+  AgentWorkItemEvidenceKind,
   AgentWorkItemStatus,
 } from "@/lib/agents/types";
 
@@ -170,12 +172,26 @@ export function withArtifact(
   return { state: result.state, artifactId: result.artifact.id };
 }
 
-/** Appends one activity event to a run. */
+/** Appends one activity event to a run, returning its id as well. */
 export function withEvent(
   state: AgentState,
   input: { runId: string; summary: string },
   at = T0
 ): AgentState {
+  return withEventId(state, input, at).state;
+}
+
+/**
+ * As `withEvent`, but hands back the event's id.
+ *
+ * Needed by every evidence fixture: attributing an event to a work item
+ * requires naming it, and the domain mints the id.
+ */
+export function withEventId(
+  state: AgentState,
+  input: { runId: string; summary: string },
+  at = T0
+): { state: AgentState; eventId: string } {
   const result = appendRunEvent(state, {
     runId: input.runId,
     kind: "activity",
@@ -183,5 +199,23 @@ export function withEvent(
     timestamp: at,
   });
   if (!result.ok) throw new Error(`fixture: appendRunEvent failed (${result.reason})`);
+  return { state: result.state, eventId: result.event.id };
+}
+
+/**
+ * Records that one thing is evidence for one work item.
+ *
+ * Goes through the real domain operation, so a fixture cannot express an
+ * attribution the domain would refuse - evidence pointing at a tab the run
+ * never linked, for instance. That is the property the disjointness tests
+ * depend on.
+ */
+export function withEvidence(
+  state: AgentState,
+  input: { workItemId: string; kind: AgentWorkItemEvidenceKind; targetId: string },
+  at = T0
+): AgentState {
+  const result = recordWorkItemEvidence(state, input, at);
+  if (!result.ok) throw new Error(`fixture: recordWorkItemEvidence failed (${result.reason})`);
   return result.state;
 }

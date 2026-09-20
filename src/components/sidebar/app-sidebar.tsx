@@ -49,6 +49,7 @@ export function AppSidebar({
   graphLocked = false,
   graphLockedReason,
   onOpenAgentWorld,
+  onOpenAgentHistory,
   onOpenSettings,
 }: {
   workspaces: Workspace[]
@@ -86,6 +87,16 @@ export function AppSidebar({
    * way to find out.
    */
   onOpenAgentWorld: () => void
+  /**
+   * Opens Agent History.
+   *
+   * Unconditional, like the world above it, and for a sharper reason: the
+   * whole point of history is to be reachable when nothing is running. A row
+   * that appeared only once there was recent activity would be missing in
+   * exactly the state someone comes here in - days later, looking for what
+   * an agent did.
+   */
+  onOpenAgentHistory: () => void
   onOpenSettings: () => void
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
@@ -238,6 +249,15 @@ export function AppSidebar({
         >
           <Boxes />
           {showLabels && <span className="text-body-sm">Agent World</span>}
+        </IconButton>
+        <IconButton
+          aria-label="Open Agent History"
+          tooltip="Agent History"
+          onClick={onOpenAgentHistory}
+          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
+        >
+          <History />
+          {showLabels && <span className="text-body-sm">Agent History</span>}
         </IconButton>
         <IconButton
           aria-label="Open Settings"

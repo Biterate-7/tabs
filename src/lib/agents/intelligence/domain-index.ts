@@ -1,10 +1,12 @@
 import type {
   Agent,
+  AgentEvent,
   AgentRun,
   AgentRunArtifactLink,
   AgentRunLink,
   AgentState,
   AgentWorkItem,
+  AgentWorkItemEvidence,
   WorkArtifact,
 } from "@/lib/agents/types";
 
@@ -45,7 +47,11 @@ import type {
  *   state is not a trust boundary either;
  * - an artifact link whose run or artifact is unknown is **dropped**;
  * - an artifact link whose artifact belongs to another workspace than its run
- *   is **dropped**.
+ *   is **dropped**;
+ * - an evidence row whose work item was dropped, whose run disagrees with
+ *   its item's, or whose target is not something that run touches, is
+ *   **dropped** - the containment rule the write path enforces, re-applied
+ *   because in-memory state is not a trust boundary either.
  *
  * Every one of those is a fail-closed omission. Nothing is repaired, nothing
  * is re-parented, and nothing is fabricated to stand in for what was dropped.
@@ -69,6 +75,24 @@ export type AgentDomainIndex = {
    * make the index heavier than the state it indexes.
    */
   latestEventAtByRun: Map<string, number>;
+  /**
+   * A run's events, oldest first.
+   *
+   * Added for the Session View, which is the first surface that wants the
+   * whole timeline rather than its newest timestamp. Held only for runs that
+   * exist, so the cap the domain already applies bounds this too.
+   */
+  eventsByRun: Map<string, AgentEvent[]>;
+  /** Every event, by id. Lets evidence resolve its target without a scan. */
+  eventsById: Map<string, AgentEvent>;
+  /**
+   * A work item's evidence, oldest first.
+   *
+   * The map that makes task-level evidence a lookup rather than a filter over
+   * the whole array per rendered row - the difference between a Session View
+   * that costs one pass and one that costs items x evidence on every render.
+   */
+  evidenceByWorkItem: Map<string, AgentWorkItemEvidence[]>;
 };
 
 /**
@@ -126,13 +150,48 @@ export function buildAgentDomainIndex(state: AgentState): AgentDomainIndex {
   }
 
   const latestEventAtByRun = new Map<string, number>();
+  const eventsByRun = new Map<string, AgentEvent[]>();
+  const eventsById = new Map<string, AgentEvent>();
   for (const event of state.events) {
     if (!runsById.has(event.runId)) continue;
+    eventsById.set(event.id, event);
+    push(eventsByRun, event.runId, event);
     const current = latestEventAtByRun.get(event.runId);
     if (current === undefined || event.timestamp > current) {
       latestEventAtByRun.set(event.runId, event.timestamp);
     }
   }
+  for (const events of eventsByRun.values()) events.sort(byOldestEvent);
+
+  // Evidence: every end re-checked. An item that was itself dropped above
+  // takes its evidence with it, which is why this is built from
+  // `workItemsByRun` rather than from `state.workItems`.
+  const workItemsById = new Map<string, AgentWorkItem>();
+  for (const items of workItemsByRun.values()) {
+    for (const item of items) workItemsById.set(item.id, item);
+  }
+  const tabLinkKeys = new Set<string>();
+  for (const [runId, links] of tabLinksByRun) {
+    for (const link of links) tabLinkKeys.add(`${runId}:${link.tabId}`);
+  }
+  const artifactLinkKeys = new Set<string>();
+  for (const [runId, links] of artifactLinksByRun) {
+    for (const link of links) artifactLinkKeys.add(`${runId}:${link.artifactId}`);
+  }
+
+  const evidenceByWorkItem = new Map<string, AgentWorkItemEvidence[]>();
+  for (const row of state.workItemEvidence) {
+    const item = workItemsById.get(row.workItemId);
+    if (!item) continue;
+    if (item.runId !== row.runId) continue;
+    if (row.kind === "event" && !eventsById.has(row.targetId)) continue;
+    if (row.kind === "tab" && !tabLinkKeys.has(`${row.runId}:${row.targetId}`)) continue;
+    if (row.kind === "artifact" && !artifactLinkKeys.has(`${row.runId}:${row.targetId}`)) {
+      continue;
+    }
+    push(evidenceByWorkItem, row.workItemId, row);
+  }
+  for (const rows of evidenceByWorkItem.values()) rows.sort(byOldestEvidence);
 
   return {
     agentsById,
@@ -143,6 +202,9 @@ export function buildAgentDomainIndex(state: AgentState): AgentDomainIndex {
     tabLinksByRun,
     artifactsById,
     latestEventAtByRun,
+    eventsByRun,
+    eventsById,
+    evidenceByWorkItem,
   };
 }
 
@@ -157,6 +219,9 @@ export function emptyAgentDomainIndex(): AgentDomainIndex {
     tabLinksByRun: new Map(),
     artifactsById: new Map(),
     latestEventAtByRun: new Map(),
+    eventsByRun: new Map(),
+    eventsById: new Map(),
+    evidenceByWorkItem: new Map(),
   };
 }
 
@@ -179,5 +244,15 @@ function byNewestRun(a: AgentRun, b: AgentRun): number {
 
 /** Oldest first, id breaking ties - a plan read in the order it was made. */
 function byOldestWorkItem(a: AgentWorkItem, b: AgentWorkItem): number {
+  return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/** Oldest first - a timeline read forwards. Total, for the same reason. */
+function byOldestEvent(a: AgentEvent, b: AgentEvent): number {
+  return a.timestamp - b.timestamp || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/** Oldest first - evidence in the order it was observed. */
+function byOldestEvidence(a: AgentWorkItemEvidence, b: AgentWorkItemEvidence): number {
   return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }

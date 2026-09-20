@@ -41,6 +41,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       onOpenHistoryDump={vi.fn()}
       onOpenGraph={vi.fn()}
       onOpenAgentWorld={vi.fn()}
+      onOpenAgentHistory={vi.fn()}
       onOpenSettings={vi.fn()}
       {...overrides}
     />

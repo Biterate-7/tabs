@@ -5,6 +5,7 @@ import { ingestObservation } from "@/lib/agents/adapter"
 import { pruneOrphanedArtifacts, recordArtifactWork } from "@/lib/agents/artifacts"
 import { appendRunEvent } from "@/lib/agents/events"
 import { addRunLink, removeRunLink, pruneRunLinks } from "@/lib/agents/links"
+import { recordWorkItemEvidence } from "@/lib/agents/work-item-evidence"
 import {
   loadAgentState,
   saveAgentState,
@@ -35,6 +36,7 @@ import type { AppendRunEventInput } from "@/lib/agents/events"
 import type { AddRunLinkInput } from "@/lib/agents/links"
 import type { CreateAgentInput, UpdateAgentPatch } from "@/lib/agents/registry"
 import type { CreateRunInput, UpdateRunPatch } from "@/lib/agents/runs"
+import type { RecordWorkItemEvidenceInput } from "@/lib/agents/work-item-evidence"
 import type { CreateWorkItemInput, UpdateWorkItemPatch } from "@/lib/agents/work-items"
 import type {
   AgentFailureReason,
@@ -220,6 +222,19 @@ export function useAgentStore(validTabIds?: Set<string>) {
       },
       deleteWorkItem: (workItemId: string) =>
         apply((current) => deleteWorkItem(current, workItemId)),
+
+      /**
+       * Records that one thing is evidence for one work item.
+       *
+       * The only way a task-level association enters the domain, and it is
+       * write-only in the sense that matters: nothing derives these rows.
+       * The domain refuses any target the work item's run does not already
+       * touch, so this cannot reach a tab, file or event outside the run.
+       */
+      recordWorkItemEvidence: (input: RecordWorkItemEvidenceInput) => {
+        const now = createTimestamp()
+        return apply((current) => recordWorkItemEvidence(current, input, now))
+      },
 
       appendRunEvent: (input: Omit<AppendRunEventInput, "timestamp"> & { timestamp?: number }) => {
         const timestamp = input.timestamp ?? createTimestamp()

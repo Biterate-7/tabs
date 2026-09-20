@@ -86,6 +86,8 @@ export type AgentWorldProps = {
    * simply does not appear without it.
    */
   onOpenConnectors?: () => void
+  /** Opens a drawn run's durable session. Threaded to the detail card. */
+  onOpenSession?: (runId: string) => void
   /**
    * The shape of the stage box.
    *
@@ -295,6 +297,7 @@ export function AgentWorld({
   details,
   actions,
   onOpenConnectors,
+  onOpenSession,
   stageClassName,
   className,
 }: AgentWorldProps) {
@@ -855,6 +858,7 @@ export function AgentWorld({
           now={now}
           onClose={() => onSelect(null)}
           onOpenConnectors={onOpenConnectors}
+          onOpenSession={onOpenSession}
         />
       )}
 

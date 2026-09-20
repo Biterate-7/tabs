@@ -11,8 +11,10 @@ import {
   isAgentRunLinkRole,
   isAgentRunStatus,
   isTerminalRunStatus,
+  isAgentWorkItemEvidenceKind,
   isAgentWorkItemStatus,
   isTerminalWorkItemStatus,
+  MAX_EVIDENCE_PER_WORK_ITEM,
   isWorkArtifactKind,
   MAX_WORK_ITEMS_PER_RUN,
   normalizeSummary,
@@ -28,6 +30,7 @@ import type {
   AgentRunLink,
   AgentState,
   AgentWorkItem,
+  AgentWorkItemEvidence,
   WorkArtifact,
 } from "./types";
 
@@ -341,6 +344,68 @@ function sanitizeWorkItems(
   return out;
 }
 
+/**
+ * Task-level evidence, validated against everything it points at.
+ *
+ * Strictest sanitizer in this file, because an evidence row is the only
+ * record that names four things at once. Each is re-checked on read: the
+ * work item must exist, its run must agree, the workspace must agree, and
+ * the target must be something that run actually touches. A row that fails
+ * any of those is dropped rather than repaired - there is no correct way to
+ * guess which task a dangling association belonged to, and inventing one
+ * would manufacture exactly the fabricated relationship this entity exists
+ * to avoid.
+ */
+function sanitizeWorkItemEvidence(
+  value: unknown,
+  itemsById: Map<string, AgentWorkItem>,
+  eventIds: Set<string>,
+  tabLinkKeys: Set<string>,
+  artifactLinkKeys: Set<string>
+): AgentWorkItemEvidence[] {
+  if (!Array.isArray(value)) return [];
+  const out: AgentWorkItemEvidence[] = [];
+  const seen = new Set<string>();
+  const perItem = new Map<string, number>();
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, workItemId, runId, workspaceId, kind, targetId, createdAt } = entry as Record<
+      string,
+      unknown
+    >;
+    if (typeof id !== "string" || !id || seen.has(id)) continue;
+    if (typeof workItemId !== "string" || !workItemId) continue;
+    if (typeof runId !== "string" || !runId) continue;
+    if (typeof workspaceId !== "string" || !workspaceId) continue;
+    if (typeof targetId !== "string" || !targetId) continue;
+    if (!isAgentWorkItemEvidenceKind(kind)) continue;
+    if (!isValidTimestamp(createdAt)) continue;
+
+    const item = itemsById.get(workItemId);
+    if (!item) continue;
+    // The item is the authority on its own run and workspace; a row that
+    // disagrees with it is stale or hand-edited either way.
+    if (item.runId !== runId) continue;
+    if (item.workspaceId !== workspaceId) continue;
+
+    // The containment rule, re-applied on read for the same reason the
+    // workspace invariant is: stored state is not a trust boundary.
+    if (kind === "event" && !eventIds.has(targetId)) continue;
+    if (kind === "tab" && !tabLinkKeys.has(`${runId}:${targetId}`)) continue;
+    if (kind === "artifact" && !artifactLinkKeys.has(`${runId}:${targetId}`)) continue;
+
+    const count = perItem.get(workItemId) ?? 0;
+    if (count >= MAX_EVIDENCE_PER_WORK_ITEM) continue;
+    perItem.set(workItemId, count + 1);
+
+    seen.add(id);
+    out.push({ id, workItemId, runId, workspaceId, kind, targetId, createdAt });
+  }
+
+  return out;
+}
+
 function capEventsPerRun(events: AgentEvent[]): AgentEvent[] {
   const byRun = new Map<string, AgentEvent[]>();
   for (const event of events) {
@@ -425,6 +490,17 @@ export function loadAgentState(): AgentStateLoad {
     // must not cost anyone their agent history.
     const workItems = sanitizeWorkItems(record.workItems, runsById);
 
+    // Absent in state written before task-level evidence existed, sanitizing
+    // to empty on the same additive principle. Validated last because it is
+    // the only record that depends on all four layers above it.
+    const workItemEvidence = sanitizeWorkItemEvidence(
+      record.workItemEvidence,
+      new Map(workItems.map((item) => [item.id, item])),
+      new Set(events.map((event) => event.id)),
+      new Set(links.map((link) => `${link.runId}:${link.tabId}`)),
+      new Set(artifactLinks.map((link) => `${link.runId}:${link.artifactId}`))
+    );
+
     return {
       status: "loaded",
       state: {
@@ -436,6 +512,7 @@ export function loadAgentState(): AgentStateLoad {
         artifacts,
         artifactLinks,
         workItems,
+        workItemEvidence,
       },
     };
   } catch {
