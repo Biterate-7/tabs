@@ -215,6 +215,10 @@ export type DeleteRunResult = { ok: true; state: AgentState } | AgentFailure;
  * Work items go with the run unconditionally, and unlike artifacts there is
  * no shared-ownership case to consider: a work item belongs to exactly one
  * run, so nothing else can still refer to it once that run is gone.
+ *
+ * Task-level evidence goes too. Every row names a work item, a run and one
+ * of that run's events, tabs or artifact links - all four of which this
+ * cascade removes - so a surviving row could only dangle.
  */
 export function deleteRun(state: AgentState, runId: string): DeleteRunResult {
   if (!findRun(state, runId)) return agentFailure("run-not-found");
@@ -228,6 +232,7 @@ export function deleteRun(state: AgentState, runId: string): DeleteRunResult {
       events: state.events.filter((event) => event.runId !== runId),
       artifactLinks: state.artifactLinks.filter((link) => link.runId !== runId),
       workItems: state.workItems.filter((item) => item.runId !== runId),
+      workItemEvidence: state.workItemEvidence.filter((row) => row.runId !== runId),
     },
   };
 }

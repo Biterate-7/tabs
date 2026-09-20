@@ -1,4 +1,5 @@
 import type {
+  AgentEventKind,
   AgentRunArtifactRole,
   AgentRunStatus,
   AgentWorkItemProgress,
@@ -97,6 +98,22 @@ export type ArtifactReference = {
   updatedAt: number;
 };
 
+/**
+ * An event, as intelligence reports it.
+ *
+ * `AgentEvent` minus `sourceId` - the provider's own id for the record this
+ * event was read from. It is stored so that re-reading a transcript does not
+ * append the same line twice, and it is not a caption, so it stops here for
+ * the same reason the three fields in the table above do.
+ */
+export type EventReference = {
+  eventId: string;
+  kind: AgentEventKind;
+  /** Already-normalised and length-bounded by the domain. Never raw provider text. */
+  summary: string;
+  timestamp: number;
+};
+
 /** A file plus how one run touched it. A run may hold several roles on one file. */
 export type ArtifactImpact = {
   artifact: ArtifactReference;
@@ -183,6 +200,24 @@ export type AgentRunImpact = {
    * twice would overstate the run's reach.
    */
   affectedTabIds: string[];
+};
+
+/**
+ * What one work item's *explicitly recorded* evidence resolves to.
+ *
+ * Read from stored `AgentWorkItemEvidence` rows and from nothing else. The
+ * sets are empty when nothing was recorded, and they are emphatically not
+ * the run's tabs and files filtered down - there is no filter, because there
+ * is no derivation. See intelligence/work-item-evidence.ts.
+ */
+export type WorkItemEvidenceView = {
+  workItemId: string;
+  events: EventReference[];
+  /** Tab ids. Resolving one to a title is the caller's job, as everywhere here. */
+  tabIds: string[];
+  artifacts: ArtifactImpact[];
+  /** Total rows across all three kinds. Zero means nothing was recorded. */
+  total: number;
 };
 
 /**

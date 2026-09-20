@@ -324,19 +324,26 @@ export type DeleteWorkItemResult = { ok: true; state: AgentState } | AgentFailur
 /**
  * Deletes one work item.
  *
- * Nothing hangs off a work item — it owns no links, no events and no
- * artifacts, because its relationships to tabs and files are its *run's*
- * relationships. So there is no cascade here, and deliberately no cascade
- * outward either: deleting an item must never remove the artifacts or tab
- * links its run accumulated, which belong to the run and outlive any one
- * item's lifetime.
+ * One thing hangs off a work item: its evidence rows, which name it and are
+ * meaningless without it. Those go.
+ *
+ * Nothing else does. A work item owns no links, no events and no artifacts —
+ * its relationships to tabs and files are its *run's* relationships, and an
+ * evidence row refines one of those rather than replacing it. So there is
+ * deliberately no cascade outward: deleting an item must never remove the
+ * artifacts or tab links its run accumulated, which belong to the run and
+ * outlive any one item's lifetime.
  */
 export function deleteWorkItem(state: AgentState, workItemId: string): DeleteWorkItemResult {
   if (!findWorkItem(state, workItemId)) return agentFailure("work-item-not-found");
 
   return {
     ok: true,
-    state: { ...state, workItems: state.workItems.filter((item) => item.id !== workItemId) },
+    state: {
+      ...state,
+      workItems: state.workItems.filter((item) => item.id !== workItemId),
+      workItemEvidence: state.workItemEvidence.filter((row) => row.workItemId !== workItemId),
+    },
   };
 }
 
@@ -348,5 +355,9 @@ export function deleteWorkItem(state: AgentState, workItemId: string): DeleteWor
  */
 export function removeWorkItemsForRun(state: AgentState, runId: string): AgentState {
   const kept = state.workItems.filter((item) => item.runId !== runId);
-  return kept.length === state.workItems.length ? state : { ...state, workItems: kept };
+  const keptEvidence = state.workItemEvidence.filter((row) => row.runId !== runId);
+  if (kept.length === state.workItems.length && keptEvidence.length === state.workItemEvidence.length) {
+    return state;
+  }
+  return { ...state, workItems: kept, workItemEvidence: keptEvidence };
 }

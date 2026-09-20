@@ -6,6 +6,8 @@ import { LandingView } from "@/components/landing-view"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
+import { AgentHistoryView } from "@/components/agents/agent-history-view"
+import { AgentSessionView } from "@/components/agents/agent-session-view"
 import { AgentWorldView } from "@/components/agents/agent-world-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
@@ -123,8 +125,34 @@ export function AppShell() {
   const [hydrated, setHydrated] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
   const [view, setView] = useState<
-    "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump" | "agent-world"
+    | "workspace"
+    | "graph"
+    | "settings"
+    | "favorites"
+    | "recents"
+    | "history-dump"
+    | "agent-world"
+    | "agent-history"
+    | "agent-session"
   >("workspace")
+  /**
+   * Which session the Session View resolves, and which task is open inside
+   * it.
+   *
+   * This is the whole navigation mechanism for the phase. TabDump has no
+   * router - every view above is a `useState` union - so a session is
+   * addressed the same way: two opaque ids held beside the view. It is
+   * deliberately the smallest thing that works, and it is serialisable (see
+   * lib/agents/session/address.ts) so a later context-address system can
+   * adopt it without a migration.
+   *
+   * Nothing content-bearing lives here. Not a title, not a url, not a path,
+   * not an artifact id.
+   */
+  const [sessionTarget, setSessionTarget] = useState<{
+    runId: string
+    workItemId?: string
+  } | null>(null)
   /**
    * Which settings section the next visit to Settings opens on.
    *
@@ -447,6 +475,34 @@ export function AppShell() {
     if (!tab) return
     openTab(tab.url)
     handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, lastAccessedAt: Date.now() } : t)))
+  }
+
+  /**
+   * Opens a tab named by an agent session.
+   *
+   * Separate from handleOpenTabInView because a session can belong to a
+   * workspace the user is not currently in, and that view searches only the
+   * current one. It reuses the same `openTab` capability rather than
+   * introducing a second way to open a tab.
+   *
+   * A tab that no longer exists anywhere does nothing here - the Session
+   * View has already rendered it as stale, so there is no button to press.
+   */
+  function handleOpenAgentTab(id: string) {
+    if (!store) return
+    for (const workspace of store.workspaces) {
+      const tab = workspace.tabs.find((candidate) => candidate.id === id)
+      if (tab) {
+        openTab(tab.url)
+        return
+      }
+    }
+  }
+
+  /** History -> Session, and World -> Session. One entry point for both. */
+  function handleOpenSession(runId: string, workItemId?: string) {
+    setSessionTarget(workItemId === undefined ? { runId } : { runId, workItemId })
+    setView("agent-session")
   }
 
   function handleNotesChangeInView(id: string, notes: string) {
@@ -1148,9 +1204,53 @@ export function AppShell() {
       <AgentWorldView
         store={store}
         agentStore={agentStore}
+        /* World -> Session. The run keeps working while the record of it is
+           open; nothing about opening one changes the other. */
+        onOpenSession={(runId) => handleOpenSession(runId)}
         onClose={() => setView("workspace")}
         onOpenConnectors={() => openSettings("connectors", "agent-world")}
         onOpenWorldSettings={() => openSettings("agent-world", "agent-world")}
+      />
+    )
+  }
+
+  /*
+    Agent History and the Session View.
+
+    Siblings of the world rather than layers over it, for the same reason
+    the world is a sibling of the graph: exactly one of these branches
+    renders, so no two surfaces ever mount the agent stack at once.
+
+    Neither is gated on readiness, on connectors, or on recency. History
+    exists precisely to reach runs the spatial world has stopped drawing.
+  */
+  if (view === "agent-history") {
+    return (
+      <AgentHistoryView
+        store={store}
+        agentStore={agentStore}
+        onOpenSession={(runId) => handleOpenSession(runId)}
+        onClose={() => setView("workspace")}
+      />
+    )
+  }
+
+  if (view === "agent-session" && sessionTarget) {
+    return (
+      <AgentSessionView
+        runId={sessionTarget.runId}
+        store={store}
+        agentStore={agentStore}
+        initialWorkItemId={sessionTarget.workItemId}
+        onOpenTab={handleOpenAgentTab}
+        /* Session -> World. The run's own workspace is made current first,
+           so returning to the world lands on the world that contains this
+           work rather than on whichever one was open before. */
+        onOpenWorld={(workspaceId) => {
+          if (workspaceId !== store.currentId) handleSwitchWorkspace(workspaceId)
+          setView("agent-world")
+        }}
+        onClose={() => setView("agent-history")}
       />
     )
   }
@@ -1214,6 +1314,7 @@ export function AppShell() {
         graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
         graphLockedReason={readiness.label}
         onOpenAgentWorld={() => setView("agent-world")}
+        onOpenAgentHistory={() => setView("agent-history")}
         onOpenSettings={() => openSettings()}
       />
       <div

@@ -105,8 +105,22 @@ export function removeLinksForRun(state: AgentState, runId: string): RemoveRunLi
  * that know nothing about agents, so a link can outlive its tab. Called with
  * the set of live tab ids at read time rather than reactively, so a deletion
  * is reflected on the very next read.
+ *
+ * Tab evidence goes with the link. A row saying "this task used this tab"
+ * is only meaningful while the run-level link it refines exists, and keeping
+ * it would leave a task pointing at a tab its run is no longer recorded as
+ * having touched.
  */
 export function pruneRunLinks(state: AgentState, validTabIds: Set<string>): AgentState {
   const kept = state.links.filter((link) => validTabIds.has(link.tabId));
-  return kept.length === state.links.length ? state : { ...state, links: kept };
+  const keptEvidence = state.workItemEvidence.filter(
+    (row) => row.kind !== "tab" || validTabIds.has(row.targetId)
+  );
+  if (
+    kept.length === state.links.length &&
+    keptEvidence.length === state.workItemEvidence.length
+  ) {
+    return state;
+  }
+  return { ...state, links: kept, workItemEvidence: keptEvidence };
 }

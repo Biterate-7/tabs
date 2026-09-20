@@ -102,6 +102,18 @@ export type AgentWorldDetailProps = {
    * a card that required a router would not be usable from them.
    */
   onOpenConnectors?: () => void
+  /**
+   * Opens this character's run in the Session View.
+   *
+   * Optional, and the card is unchanged without it - the world renders
+   * inside surfaces that have no navigation of their own (the panel over
+   * the graph canvas, and every test that renders a scene directly), and a
+   * card that required one would not be usable from them.
+   *
+   * Only offered for a character that has a run. A stand-in figure is
+   * present, not working, and has no session to open.
+   */
+  onOpenSession?: (runId: string) => void
   className?: string
 }
 
@@ -111,6 +123,7 @@ function AgentWorldDetailImpl({
   now,
   onClose,
   onOpenConnectors,
+  onOpenSession,
   className,
 }: AgentWorldDetailProps) {
   const presentation = AGENT_VISUAL_STATE_PRESENTATION[character.state]
@@ -250,6 +263,19 @@ function AgentWorldDetailImpl({
           piece of theatre this feature has been built to avoid — so it
           reports the connector layer's own status word and says what would
           bring it in. */}
+      {/* The way from the spatial world to the durable record. The world
+          will stop drawing this run in a few hours; the session it opens
+          outlives that entirely. */}
+      {character.runId && onOpenSession && (
+        <button
+          type="button"
+          onClick={() => onOpenSession(character.runId as string)}
+          className="rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
+          Open session
+        </button>
+      )}
+
       {!character.runId && (
         <div className="space-y-1">
           <p className="text-meta text-tertiary">

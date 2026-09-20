@@ -441,6 +441,84 @@ export function normalizeWorkItemProgress(value: unknown): AgentWorkItemProgress
   return { completed, total };
 }
 
+/**
+ * What kind of thing a work item's evidence points at.
+ *
+ * Closed, and each member names a relationship the run already holds: an
+ * `AgentEvent` of this run, a tab the run linked, or a `WorkArtifact` the run
+ * touched. Evidence never reaches something the run itself is not connected
+ * to, which is why there is no `kind` here for a workspace, another run, or
+ * a free-form url.
+ */
+export type AgentWorkItemEvidenceKind = "event" | "tab" | "artifact";
+
+export const AGENT_WORK_ITEM_EVIDENCE_KINDS: readonly AgentWorkItemEvidenceKind[] = [
+  "event",
+  "tab",
+  "artifact",
+] as const;
+
+export function isAgentWorkItemEvidenceKind(value: unknown): value is AgentWorkItemEvidenceKind {
+  return (
+    typeof value === "string" &&
+    (AGENT_WORK_ITEM_EVIDENCE_KINDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * "This work item was evidenced by this thing."
+ *
+ * ## Why this entity has to exist
+ *
+ * Until now the domain recorded which *run* touched a file, a tab or an
+ * event, and nothing recorded which *task* it was touched for. The
+ * intelligence layer refuses to guess (see the note on the absent
+ * `work-item -> artifact` relationship in intelligence/types.ts): joining a
+ * work item to an artifact through their shared run would assert a plausible
+ * edge for every (item, file) pair in the run, and none of those edges would
+ * have been observed.
+ *
+ * This is that observation, stored. An evidence row exists only because
+ * something explicitly reported "this task, this thing". A provider that
+ * cannot report it writes no rows, and every surface then shows an honest
+ * "no recorded evidence" rather than a derived set. The distinction between
+ * *task evidence* and *run-level context* is therefore a stored fact, not a
+ * presentation convention.
+ *
+ * ## Why the id is derived
+ *
+ * `${workItemId}:${kind}:${targetId}`, the same approach `agentRunLinkId`
+ * takes. Observing the same association on three consecutive polls must
+ * produce one row, not three, and a minted id would make idempotence the
+ * caller's problem.
+ *
+ * `runId` and `workspaceId` are denormalised from the work item for the same
+ * reason `AgentWorkItem` denormalises `workspaceId` from its run: every
+ * relationship is checked against them, and a check that had to join to find
+ * its own scope is one join away from leaking across it.
+ */
+export type AgentWorkItemEvidence = {
+  id: string;
+  workItemId: string;
+  runId: string;
+  workspaceId: string;
+  kind: AgentWorkItemEvidenceKind;
+  /** An eventId, tabId or artifactId, according to `kind`. Never a path. */
+  targetId: string;
+  createdAt: number;
+};
+
+/**
+ * Hard cap on evidence rows per work item.
+ *
+ * The same bounded-growth argument as MAX_EVENTS_PER_RUN: this array is
+ * persisted to localStorage, and a provider that evidenced every tool call
+ * against one task would otherwise grow it until a quota error took the
+ * user's whole state down. Oldest wins, matching work items: the first things
+ * evidenced for a task are the ones that explain it.
+ */
+export const MAX_EVIDENCE_PER_WORK_ITEM = 100;
+
 export const AGENT_STATE_VERSION = 1;
 
 /**
@@ -468,6 +546,14 @@ export type AgentState = {
    * version bump is needed to read it.
    */
   workItems: AgentWorkItem[];
+  /**
+   * Explicit task-level evidence. Additive in exactly the way `workItems`
+   * was: state written before evidence existed has no such key, and loading
+   * defaults it to empty rather than rejecting the record. An empty array is
+   * a truthful state - it means nothing reported which task a thing belonged
+   * to - so no version bump and no backfill are needed to read old history.
+   */
+  workItemEvidence: AgentWorkItemEvidence[];
 };
 
 /**
@@ -487,7 +573,9 @@ export type AgentFailureReason =
   | "cross-workspace"
   | "artifact-not-found"
   | "invalid-path"
-  | "work-item-not-found";
+  | "work-item-not-found"
+  /** The thing being evidenced is not something this run actually touched. */
+  | "evidence-target-not-found";
 
 export type AgentFailure = { ok: false; reason: AgentFailureReason };
 
@@ -506,6 +594,7 @@ export function emptyAgentState(): AgentState {
     artifacts: [],
     artifactLinks: [],
     workItems: [],
+    workItemEvidence: [],
   };
 }
 

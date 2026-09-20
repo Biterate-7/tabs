@@ -283,6 +283,15 @@ export type AgentWorldScreenProps = AgentWorldNavProps & {
   onSelect: (id: string | null) => void
   details?: (characterId: string) => WorldCharacterDetail | null
   roster: readonly WorldRosterEntry[]
+  /**
+   * Opens a drawn run's durable session.
+   *
+   * The world's one link out to the record. Optional, because the screen is
+   * rendered directly by tests and by surfaces with no navigation, and a
+   * world that could not be drawn without a Session View would be the
+   * coupling this separation exists to avoid.
+   */
+  onOpenSession?: (runId: string) => void
 }
 
 export function AgentWorldScreen({
@@ -295,6 +304,7 @@ export function AgentWorldScreen({
   onSelect,
   details,
   roster,
+  onOpenSession,
   onClose,
   onOpenConnectors,
   onOpenWorldSettings,
@@ -354,6 +364,7 @@ export function AgentWorldScreen({
                 onSelect={onSelect}
                 details={details}
                 onOpenConnectors={onOpenConnectors}
+                onOpenSession={onOpenSession}
                 /*
                   The world gets the screen, rather than a fixed ratio inside
                   it. A viewport height rather than `flex-1` because the detail
@@ -421,6 +432,8 @@ export function AgentWorldScreen({
 }
 
 export type AgentWorldViewProps = AgentWorldNavProps & {
+  /** World -> Session. Absent in surfaces that cannot navigate there. */
+  onOpenSession?: (runId: string) => void
   store: WorkspaceStore
   /**
    * The agent domain, mounted once at the shell and handed down.
@@ -446,6 +459,7 @@ export type AgentWorldViewProps = AgentWorldNavProps & {
 export function AgentWorldView({
   store,
   agentStore,
+  onOpenSession,
   onClose,
   onOpenConnectors,
   onOpenWorldSettings,
@@ -535,6 +549,7 @@ export function AgentWorldView({
       onSelect={world.select}
       details={details}
       roster={roster}
+      onOpenSession={onOpenSession}
       onClose={onClose}
       onOpenConnectors={onOpenConnectors}
       onOpenWorldSettings={onOpenWorldSettings}
