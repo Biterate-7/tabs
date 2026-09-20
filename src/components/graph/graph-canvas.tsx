@@ -38,7 +38,7 @@ import type { ClusterAnchorAssignment, ClusterNode, ClusterTree } from "@/lib/gr
 import { resolveLabelOverlaps, type LabelBox } from "@/lib/graph/label-layout"
 import { assertBoundaryWithinBudget, assertNodeRadius } from "@/lib/graph/dimension-guard"
 import { faviconUrl } from "@/lib/workspace/favicon"
-import { drawNode } from "./node-renderer"
+import { drawNode, nodeLabelBox, nodeLabelFont } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
 import {
   AGENT_NODE_SIZES,
@@ -92,6 +92,9 @@ const MAJOR_DEGREE_THRESHOLD = 3
 // state (selection/search/hover dimming, arrival scale/opacity) instead
 // eases exponentially toward a target each frame — see tickVisualStates.
 const VISUAL_EASE = 0.22
+/** Allocation-free stand-in for "nothing suppressed", reused every frame. */
+const EMPTY_SUPPRESSED: ReadonlySet<string> = new Set()
+
 const NODE_EXIT_MS = 260
 const EDGE_CREATE_PULSE_MS = 550
 const EDGE_REMOVE_MS = 280
@@ -188,6 +191,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    * actually visible rather than behind the panel. 0 when it is closed.
    */
   viewportInsetRight?: number
+  /**
+   * Frame the whole graph once, the first time the layout comes to rest.
+   *
+   * Set by the view when the persisted camera is still the default, i.e.
+   * this person has not positioned the graph themselves. It has to happen
+   * here rather than in the view because only the canvas knows when the
+   * physics has cooled: fitting on mount frames a layout that is still
+   * expanding, and the result is a graph half off the edges.
+   */
+  autoFitOnFirstSettle?: boolean
   initialCamera: CameraState
   display: GraphDisplaySettings
   selectedTabId: string | null
@@ -244,6 +257,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     boundaryOffsets,
     layoutSettled,
     viewportInsetRight = 0,
+    autoFitOnFirstSettle = false,
     initialCamera,
     display,
     selectedTabId,
@@ -286,6 +300,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
      would otherwise close over the panel width as it was when the canvas
      mounted — fitting to a panel that has since been toggled. */
   const insetRightRef = useRef(viewportInsetRight)
+  /* One-shot: set the moment the first auto-fit runs, so a later settle
+     (a node added, a boundary dragged) never re-frames the graph under
+     someone who has since moved the camera. */
+  const didAutoFitRef = useRef(false)
   insetRightRef.current = viewportInsetRight
   const paletteRef = useRef<GraphPalette | null>(null)
   const faviconCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
@@ -708,6 +726,32 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     boundarySettledRef.current = boundarySettledNow
 
     const stillSettling = !simulation.isSettled() || !simulation.isBoundaryLayerSettled()
+
+    /*
+      Frame the graph the first time it comes to rest.
+
+      Here rather than on mount because the layout is still expanding for
+      the first ~200 ticks: a fit taken before that frames a graph that
+      then grows out of frame, which is exactly what the Fit graph button
+      existed to rescue people from. Waiting for `isSettled()` means the
+      first thing someone sees when the physics stops is their whole
+      graph, correctly inset for the panel floating over it.
+
+      Skipped entirely if the pointer is down — settling while someone is
+      mid-drag is their doing, and yanking the camera would fight them.
+    */
+    if (autoFitOnFirstSettle && !didAutoFitRef.current && !stillSettling && !isInteracting) {
+      didAutoFitRef.current = true
+      const points = nodesRef.current
+        .map((n) => simulation.findNode(n.id))
+        .filter((n): n is NonNullable<typeof n> => Boolean(n && n.x !== undefined && n.y !== undefined))
+        .map((n) => ({ x: n.x!, y: n.y!, radius: n.radius }))
+      if (points.length > 0) {
+        const { width: w, height: h } = sizeRef.current
+        animateCameraTo(computeFitCamera(points, w, h, 64, insetRightRef.current))
+      }
+    }
+
     if (stillSettling || isInteracting || stillAnimating) {
       rafRef.current = requestAnimationFrame(loop)
     } else {
@@ -1147,6 +1191,55 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       ctx.restore()
     }
 
+    /*
+      Which node labels can be drawn without colliding.
+
+      Node labels used to be drawn unconditionally at `y + radius + 4`,
+      with no collision test at all — so two nodes close together in screen
+      space painted their labels on top of each other and neither could be
+      read. `resolveLabelOverlaps` already existed for exactly this and was
+      wired only to the cluster labels above; this is the same resolver
+      applied to the node layer, so both obey one policy: "a missing label
+      reads better than two overlapping, unreadable ones."
+
+      Priority decides who survives a collision, and it is ordered by how
+      much the label is worth: the selected node, then the local-graph
+      centre, then the node under the pointer, then a search hit, then —
+      among equals — the physically larger node, which is the more
+      connected one. Ties break on id inside the resolver, so the choice is
+      stable frame to frame and labels do not flicker between neighbours
+      while the physics settles.
+
+      Hovering is excluded from suppression entirely further down: pointing
+      at a node is a direct request to read it.
+    */
+    const labelBoxes: LabelBox[] = []
+    if (showLabels) {
+      ctx.font = nodeLabelFont(display.textSize, palette.fontFamily)
+      for (const node of nodesRef.current) {
+        const physicsNode = simulation.findNode(node.id)
+        if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
+        const screen = worldToScreen(camera, { x: physicsNode.x, y: physicsNode.y }, width, height)
+        if (screen.x < -40 || screen.x > width + 40 || screen.y < -40 || screen.y > height + 40) continue
+        const label = node.tab.title?.trim() || node.tab.domain
+        if (!label) continue
+        const radius = physicsNode.radius * camera.zoom
+        const box = nodeLabelBox(ctx, label, screen.x, screen.y, radius, display.textSize)
+        labelBoxes.push({
+          id: node.id,
+          ...box,
+          priority:
+            (node.id === selectedTabId ? 1000 : 0) +
+            (node.id === centerTabId ? 500 : 0) +
+            (node.id === hoveredIdRef.current ? 250 : 0) +
+            (hasSearch && searchMatches!.has(node.id) ? 100 : 0) +
+            radius,
+        })
+      }
+    }
+    const suppressedNodeLabels =
+      labelBoxes.length > 0 ? resolveLabelOverlaps(labelBoxes) : EMPTY_SUPPRESSED
+
     for (const node of nodesRef.current) {
       const physicsNode = simulation.findNode(node.id)
       if (!physicsNode || physicsNode.x === undefined || physicsNode.y === undefined) continue
@@ -1189,7 +1282,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
         isDimmed: false,
         isMatch,
         isFavorite: node.tab.isFavorite === true,
-        showLabel: showLabels || isHovered,
+        // Hover always wins: pointing at a node is a direct request to
+        // read its label, so it is drawn even where the resolver
+        // suppressed it for the resting frame.
+        showLabel: isHovered || (showLabels && !suppressedNodeLabels.has(node.id)),
         textSize: display.textSize,
         visualAlpha,
         visualScale,

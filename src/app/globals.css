@@ -345,11 +345,36 @@
 }
 
 @layer components {
+  /* Retuned to the landing page's display setting rather than left at
+     weight 600 / leading 1.05.
+
+     marketing.css is explicit about why, and the reasoning applies
+     wherever large type appears: "1.14 and weight 420, not 1.1/440. Side
+     by side at this size the tighter, heavier setting read as a poster
+     headline where the benchmark's reads as a sentence — the extra
+     leading and the lighter stem are most of what makes a large line feel
+     composed rather than shouted."
+
+     Both existing call sites want exactly that: the legal pages' <h1>, and
+     the intro title, which re-adds `font-semibold` itself and so is
+     unaffected by the weight change. */
   .text-display {
-    font-size: clamp(2.25rem, 1.6rem + 2.5vw, 3.5rem);
-    line-height: 1.05;
+    font-size: clamp(2rem, 1.35rem + 2.1vw, 3.125rem);
+    line-height: 1.14;
+    letter-spacing: -0.025em;
+    font-weight: 420;
+    text-wrap: balance;
+  }
+
+  /* The step below it: a statement that opens a view or an empty state —
+     big enough to carry the page's voice, small enough to live inside
+     product chrome. The landing's `.m-headline`. */
+  .text-statement {
+    font-size: clamp(1.375rem, 1.15rem + 0.7vw, 1.75rem);
+    line-height: 1.2;
     letter-spacing: -0.02em;
-    font-weight: 600;
+    font-weight: 440;
+    text-wrap: balance;
   }
   .text-h1 {
     font-size: calc(1.5rem * var(--tabdump-font-scale));
@@ -411,6 +436,66 @@
     letter-spacing: 0.12em;
     text-transform: uppercase;
     font-weight: 400;
+  }
+
+  /* ---- Panel depth ---------------------------------------------------
+     The landing page's two-plane device, brought into the product.
+
+     `.m-stage` + `.m-window` is the single biggest thing separating that
+     page's product shots from a screenshot in a card: a window resting on
+     a lit backdrop reads as an object, one plane reads as a div. A CSS
+     census of the running app found the product using *zero* shadows on
+     any surface, so it had no depth language at all — panels, the world
+     stage and dialogs all sat flat on the page.
+
+     These are the same two devices expressed in tokens instead of the
+     literals marketing.css can afford (it is brand-pinned; the product has
+     43 themes). Nothing here invents a colour: the ground is `--card`, the
+     rule is `--border`, the lit edge is `--surface-highlight`, and the
+     wash is the theme's own accent at very low chroma. */
+  /* Frame only — border, radius, lit top edge, cast shadow — and
+     deliberately no background, so it can be put on a surface that paints
+     its own ground (the Agent World stage draws a sky) without the two
+     fighting. Callers that want the ordinary card ground add `bg-card`. */
+  .surface-window {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow:
+      0 1px 0 0 var(--surface-highlight) inset,
+      var(--shadow-md);
+  }
+
+  .surface-stage {
+    position: relative;
+    border: 1px solid var(--border-subtle);
+    /* One step rounder than the window resting on it, so the two radii
+       read as nested rather than as the same box drawn twice. */
+    border-radius: calc(var(--radius) * 1.6);
+    padding: clamp(0.5rem, 2vw, 1.5rem);
+    background:
+      radial-gradient(
+        130% 120% at 50% -15%,
+        color-mix(in oklch, var(--primary), transparent 86%) 0%,
+        transparent 64%
+      ),
+      var(--background-secondary);
+  }
+
+  /* Texture at close range, so the backdrop is a surface rather than a
+     flat tint. Masked out towards the bottom so it never competes with
+     the content resting on it. */
+  .surface-stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image:
+      linear-gradient(to right, var(--surface-highlight) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--surface-highlight) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 80%);
   }
 
   /* Notes / document-editing surfaces (Graph node notes page, per-tab notes
@@ -1259,8 +1344,23 @@
   left: 50%;
   top: 50%;
   translate: -50% -50%;
-  width: max(calc(100% + 14px), 30px);
-  height: max(calc(100% + 8px), 30px);
+  /*
+    Just past the floor, not as far as possible.
+
+    20pt is 26.7px, and a figure draws about 21px wide, so it needs roughly
+    eight more. An earlier, more generous version forced 30x30 and made
+    things worse rather than better: figures stand close together in a
+    crowded room and the one in front occludes whatever is behind it, so
+    every extra pixel of target on the front figure is a pixel taken off
+    its neighbour's. Measured with elementFromPoint, a figure with clear
+    space around it gets the full expansion; one in a group keeps whatever
+    is not covered. Clearing the minimum with the smallest expansion is
+    what leaves the most for everybody.
+
+    Height is left alone — a figure is already ~33px tall.
+  */
+  width: max(calc(100% + 8px), 28px);
+  height: 100%;
 }
 
 .agent-world-character .agent-mark svg path,

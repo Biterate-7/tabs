@@ -25,6 +25,7 @@ import {
   pruneGraphState,
   saveGraphState,
 } from "@/lib/graph/persistence"
+import { DEFAULT_CAMERA } from "@/lib/graph/types"
 import type {
   CameraState,
   ConnectionFilters,
@@ -725,6 +726,32 @@ export function GraphView({
     canvasHandleRef.current?.fitToView()
   }
 
+  /*
+    Whether the canvas should frame the graph itself once the layout
+    settles.
+
+    `fitToView` existed but was only reachable from the Fit graph button,
+    so opening the Graph showed the layout at the default camera
+    (0, 0, zoom 1) — which for any real workspace leaves clusters hanging
+    off both edges and nodes under the panel. Someone arriving had to find
+    a button before they could see their own graph.
+
+    Only when the camera is still the default. A camera the user panned or
+    zoomed is their position, and re-framing over it would throw away where
+    they had got to — `design-principles.md` › Flexibility asks a design to
+    "preserve a person's context". Read once, on mount, for the same
+    reason: this is about how the view opens, not a reaction to later
+    camera changes.
+  */
+  const [autoFitOnFirstSettle] = useState(() => {
+    const { camera } = graphState.settings
+    return (
+      camera.x === DEFAULT_CAMERA.x &&
+      camera.y === DEFAULT_CAMERA.y &&
+      camera.zoom === DEFAULT_CAMERA.zoom
+    )
+  })
+
   function closeMenus() {
     setContextMenu(null)
     setEdgePopover(null)
@@ -1043,6 +1070,7 @@ export function GraphView({
              it. 288px is that w-72 in pixels; below `sm` the panel is
              `max-w-[85vw]` and computeFitCamera clamps the inset itself. */
           viewportInsetRight={graphState.settings.sidebarOpen ? 288 : 0}
+          autoFitOnFirstSettle={autoFitOnFirstSettle}
           nodes={visibleNodes}
           edges={visibleEdges}
           dependencyEdges={visibleDependencyEdges}

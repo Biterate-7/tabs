@@ -699,13 +699,31 @@ export function AgentWorld({
         </p>
         {actions}
       </div>
+      {/*
+        The backdrop the world rests on.
+
+        Two planes, which is the landing page's own device for showing
+        software inside a page (`.m-stage` under `.m-window`): a window on a
+        lit backdrop reads as an object, one plane reads as a div. The
+        product had no depth language at all — a CSS census of every surface
+        found zero shadows — so this is the one place it is worth spending,
+        because the world IS the product shot.
+      */}
+      <div className="surface-stage">
 
       <div
         ref={stageRef}
         data-world-setting={scene.theme.setting}
         data-world-theme={scene.theme.id}
         className={cn(
-          "agent-world-stage w-full overflow-hidden rounded-xl border border-subtle",
+          // `surface-window` rather than a bare border: the world is the
+          // product's one "piece of software rendered inside the page", and
+          // the landing frames every one of those as an object resting on a
+          // backdrop (`.m-window` on `.m-stage`). A census of the running
+          // app found zero shadows anywhere in the product, so the world sat
+          // flat on the page where the same thing on /welcome reads as a
+          // photograph of software. The backdrop is the wrapper below.
+          "agent-world-stage surface-window w-full overflow-hidden",
           dragging ? "cursor-grabbing" : "cursor-grab",
           stageClassName ?? "aspect-[3/4] sm:aspect-[10/7]"
         )}
@@ -836,6 +854,7 @@ export function AgentWorld({
           onFocusActive={focusActive}
           onReset={() => setManualView(null)}
         />
+      </div>
       </div>
 
       {/* The caption bar. Always present so the layout does not jump when

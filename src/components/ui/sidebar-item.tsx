@@ -63,6 +63,23 @@ export const SidebarItem = React.forwardRef<HTMLButtonElement, SidebarItemProps>
         aria-current={current ? "page" : undefined}
         disabled={disabled}
         className={cn(
+          /*
+            A rounded rect, not a pill — deliberately, and against the first
+            instinct when matching the landing page.
+
+            That page's controls are pills, and the shared primitives here
+            (Button, IconButton, Badge, SegmentedControl) follow it. But
+            every pill on /welcome is width-fitted to its own label: its nav
+            links are `rounded-full h-8 px-3` around a word. It has no
+            full-width row anywhere, so there is nothing to copy for one —
+            and a 36px-tall row spanning the whole rail, fully rounded,
+            reads as a lozenge rather than as the same object. macOS agrees:
+            sidebar selection is a rounded rect.
+
+            So the rule the census actually supports is "width-fitted
+            controls are pills, full-width rows and containers are rounded
+            rects", which is what both sources do.
+          */
           "group relative flex w-full items-center gap-2.5 rounded-lg border border-transparent",
           "text-left outline-none select-none",
           // Colour and background only — no transform. These rows are hit

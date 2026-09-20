@@ -423,7 +423,11 @@ export function GraphAgentPanel({
           <button
             type="button"
             onClick={onOpenWorld}
-            className="shrink-0 rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            /* A pill at the shared control height. It measured 97x20 — on
+               the 20pt floor in `accessibility.md` rather than comfortably
+               over it — and was the last rounded-rect control left beside
+               the pills the rest of the app now uses. */
+            className="flex h-6 shrink-0 items-center rounded-full border border-subtle px-2.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             Agent World
           </button>

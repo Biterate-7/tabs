@@ -224,6 +224,18 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
     "--surface-active": colors.surfaceActive,
     "--surface-selected": colors.surfaceSelected,
     "--surface-elevated": colors.surfaceElevated,
+    /*
+      The top-edge highlight on a floating panel — the landing page's
+      `.m-window` opens with `0 1px 0 rgba(255,255,255,.045) inset`, and
+      that one hairline is most of what makes its demo frames read as
+      objects with a lit edge rather than as flat divs.
+
+      A token rather than a literal so it is part of the system, and
+      polarity-aware because the effect is lighting, not palette: a lit top
+      edge is brighter than its surface on a dark ground and can only be
+      read as a soft inner shadow on a light one.
+    */
+    "--surface-highlight": isDark ? "rgba(255, 255, 255, 0.045)" : "rgba(0, 0, 0, 0.035)",
     "--text-secondary": colors.textSecondary,
     "--text-disabled": colors.textDisabled,
     "--accent-hover": colors.accentHover,

@@ -25,7 +25,7 @@ export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
             data-slot="icon-button"
             aria-label={ariaLabel}
             className={cn(
-              "inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-transparent",
+              "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-transparent",
               "transition-colors duration-(--duration-fast) ease-(--ease-standard) outline-none",
               "active:not-aria-[haspopup]:translate-y-px",
               "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",

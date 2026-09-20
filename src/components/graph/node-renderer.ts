@@ -40,6 +40,43 @@ export type NodeVisual = {
 
 const LABEL_MAX_WIDTH = 96;
 
+/** The font a node label is drawn in, at a given text-size setting. */
+export function nodeLabelFont(textSize: number, fontFamily: string): string {
+  return `${Math.round(10.5 * textSize)}px ${fontFamily}`;
+}
+
+/**
+ * The box a node's label will occupy on screen, in the same coordinates
+ * `drawNode` draws it in.
+ *
+ * Exported so the caller can decide which labels to draw *before* drawing
+ * any of them (see `resolveLabelOverlaps`), and kept here so the geometry
+ * has exactly one definition — a collision box measured against different
+ * numbers from the ones the renderer uses would suppress the wrong labels.
+ *
+ * The caller must have set `ctx.font` to `nodeLabelFont(...)` first;
+ * measuring in a different font is the same drift by another route.
+ */
+export function nodeLabelBox(
+  ctx: Pick<CanvasRenderingContext2D, "measureText">,
+  label: string,
+  x: number,
+  y: number,
+  radius: number,
+  textSize: number
+): { x: number; y: number; width: number; height: number } {
+  const fontSize = Math.round(10.5 * textSize);
+  const width = Math.min(ctx.measureText(label).width, LABEL_MAX_WIDTH);
+  return {
+    // `textAlign = "center"`, so the box straddles x.
+    x: x - width / 2,
+    // `textBaseline = "top"` at y + radius + 4.
+    y: y + radius + 4,
+    width,
+    height: fontSize * 1.2,
+  };
+}
+
 export function drawNode(ctx: DrawContext, palette: GraphPalette, node: NodeVisual): void {
   const { x, y } = node;
   const scale = node.visualScale ?? 1;

@@ -7,11 +7,12 @@ import { IconButton } from "@/components/ui/icon-button"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
 import { useAgentWorld } from "@/hooks/use-agent-world"
-import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
+import { AGENT_VISUAL_STATE_PRESENTATION, CONNECTOR_STATUS_VISUALS } from "@/lib/agents/visual/states"
 import { buildWorldRoster } from "@/lib/agents/world/roster"
 import { handoffsForCharacter, idleCharacterId } from "@/lib/agents/world/scene"
 import { cn } from "@/lib/utils"
 import { AgentIcon } from "./agent-icon"
+import { AgentStatusPill } from "./agent-status-pill"
 import { AgentWorld } from "./agent-world"
 import type { WorldCharacterDetail } from "./agent-world-detail"
 import type { AgentStoreApi } from "@/hooks/use-agent-store"
@@ -167,9 +168,7 @@ function AgentWorldRoster({
         <button
           type="button"
           onClick={onOpenConnectors}
-          /* min-h-6 (24px): at `py-0.5` this measured 18px tall, under the
-             20pt floor in `accessibility.md` for a desktop control. */
-          className="flex min-h-6 shrink-0 items-center rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="flex h-6 shrink-0 items-center rounded-full px-2.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           Manage
         </button>
@@ -205,7 +204,17 @@ function AgentWorldRoster({
                   <span className="block truncate text-body-sm text-foreground">
                     {entry.displayName}
                   </span>
-                  <span className="block truncate text-meta text-tertiary">{entry.statusLabel}</span>
+                  {/* A pill, not a line of text: this is the landing page's
+                      one repeated product-UI device, and a connector's
+                      state is exactly what it is for. Tone comes from
+                      CONNECTOR_STATUS_VISUALS so the pill can never
+                      disagree with the figure in the room. */}
+                  <AgentStatusPill
+                    quiet
+                    className="mt-0.5"
+                    tone={CONNECTOR_STATUS_VISUALS[entry.statusKind].tone}
+                    label={entry.statusLabel}
+                  />
                 </span>
               </button>
             </li>
@@ -301,14 +310,20 @@ function AgentWorldNow({
               >
                 <AgentIcon connector={character.provider} state={character.state} size="sm" />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-body-sm text-foreground">
-                    {character.agentName}
-                    <span className="text-tertiary">
-                      {" · "}
-                      {AGENT_VISUAL_STATE_PRESENTATION[character.state].label}
+                  {/* WHO, then WHAT: the name and the state on one line,
+                      the state as a pill so it is scannable down a column
+                      of runs rather than buried in a "Name · State" string. */}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">
+                      {character.agentName}
                     </span>
+                    <AgentStatusPill
+                      tone={AGENT_VISUAL_STATE_PRESENTATION[character.state].tone}
+                      label={AGENT_VISUAL_STATE_PRESENTATION[character.state].label}
+                    />
                   </span>
-                  <span className="block truncate text-meta text-tertiary">
+                  {/* WHERE / on what. */}
+                  <span className="mt-0.5 block truncate text-meta text-tertiary">
                     {character.activity ?? character.roomName ?? character.stationLabel}
                   </span>
                 </span>
@@ -486,13 +501,19 @@ export function AgentWorldScreen({
                   camera's own legibility rule zooms into it.
                 */
                 stageClassName={cn(
-                  "mx-auto w-full aspect-[4/5] min-h-[280px] sm:aspect-[10/7]",
+                  "mx-auto w-full min-h-[240px] sm:aspect-[10/7]",
                   liveCount > 0
-                    ? "sm:max-h-[64vh] sm:max-w-[calc(64vh*10/7)]"
-                    : // Idle: the stage fills its grid column rather than
-                      // being capped, so it keeps its 10:7 proportions
-                      // without leaving a band of empty ground beside it.
-                      "sm:max-h-[52vh]"
+                    ? "aspect-[4/5] sm:max-h-[64vh] sm:max-w-[calc(64vh*10/7)]"
+                    : // Idle. On desktop the stage fills its grid column
+                      // rather than being capped, so it keeps its 10:7
+                      // proportions without a band of empty ground beside
+                      // it. On a phone the portrait 4:5 box is ~490px of a
+                      // 844px viewport for a world with nothing in it, so
+                      // the idle case goes square and the message and
+                      // roster below it come back above the fold — the
+                      // same rule the desktop already applied, which had
+                      // simply never reached the mobile branch.
+                      "aspect-square sm:aspect-[10/7] sm:max-h-[52vh]"
                 )}
               />
               <AgentWorldNow scene={scene} selectedId={selectedId} onSelect={onSelect} />
