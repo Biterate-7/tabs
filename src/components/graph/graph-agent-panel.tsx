@@ -406,8 +406,8 @@ export function GraphAgentPanel({
       className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0"
     >
       <div className="flex items-center justify-between gap-2">
-        <p id="agent-panel-heading" className="text-label text-tertiary">
-          AI AGENTS
+        <p id="agent-panel-heading" className="text-eyebrow text-tertiary">
+          AI agents
         </p>
 
         {/* The entry point into the world.
@@ -566,6 +566,7 @@ function AgentPanelBody({
   if (!anyConfigured) {
     return (
       <EmptyState
+        density="panel"
         icon={Bot}
         title="No agents connected"
         description={
@@ -580,6 +581,7 @@ function AgentPanelBody({
   if (!anyConnected || !available) {
     return (
       <EmptyState
+        density="panel"
         icon={PlugZap}
         title="Agent not observable"
         description={
@@ -594,6 +596,7 @@ function AgentPanelBody({
   if (!hasAnyAgentData) {
     return (
       <EmptyState
+        density="panel"
         icon={Bot}
         title="No agent activity in this workspace."
         description="Agent activity appears here when a connected agent works in this workspace."
@@ -604,6 +607,7 @@ function AgentPanelBody({
   if (!hasVisibleRuns) {
     return (
       <EmptyState
+        density="panel"
         icon={Bot}
         title="No runs match this filter."
         description={

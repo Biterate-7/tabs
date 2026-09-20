@@ -49,7 +49,7 @@ export function CommandPalette({
               <CommandPrimitive.Group
                 key={group}
                 heading={group}
-                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-label [&_[cmdk-group-heading]]:text-tertiary"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-eyebrow [&_[cmdk-group-heading]]:text-tertiary"
               >
                 {groupCommands.map((command) => (
                   <CommandPrimitive.Item

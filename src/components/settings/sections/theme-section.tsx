@@ -95,7 +95,7 @@ export function ThemeSection() {
               if (themes.length === 0) return null
               return (
                 <div key={category}>
-                  <p className="mb-2 px-0.5 text-label text-tertiary">{THEME_CATEGORY_LABELS[category].toUpperCase()}</p>
+                  <p className="mb-2 px-0.5 text-eyebrow text-tertiary">{THEME_CATEGORY_LABELS[category]}</p>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                     {themes.map((theme) => (
                       <ThemeCard

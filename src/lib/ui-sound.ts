@@ -1,6 +1,6 @@
 /**
  * Tiny procedural sound engine for general interface sound effects (today:
- * the folder zipper-open sound). Mirrors IntroSoundEngine's approach —
+ * the folder-open sound). Mirrors IntroSoundEngine's approach —
  * synthesized with Web Audio rather than shipped as audio assets, so there's
  * nothing to fetch and nothing that can 404. Every public method is a
  * fire-and-forget trigger that either plays immediately or silently does
@@ -71,11 +71,19 @@ export class UiSoundEngine {
   }
 
   /**
-   * ZIPPER — a short, bright bandpass-filtered noise sweep (the "zzzip")
-   * ending in one tiny click (the pull reaching the end of its travel).
+   * Opening a folder — a short, bright bandpass-filtered noise sweep
+   * ending in one tiny click.
+   *
+   * Called `zipperOpen` until the folder tile stopped being a drawing of a
+   * folder with a zipper on it. The synthesis is unchanged: the sweep is a
+   * generic "something opened" gesture and still fits the card's open
+   * animation, so only the name moved. Nothing persists this name — the
+   * sound settings store `enabled` and `volume`, not a sound id — so the
+   * rename needed no migration.
+   *
    * `volume` is the 0-1 fraction from Settings → General → Sound volume.
    */
-  zipperOpen(volume: number) {
+  folderOpen(volume: number) {
     const ctx = this.getContext()
     if (!ctx || !this.master) return
     const gain = Math.max(0, Math.min(1, volume))
@@ -106,7 +114,8 @@ export class UiSoundEngine {
         env.disconnect()
       }
 
-      // The pull reaching the end of the zipper — a tiny high click.
+      // A tiny high click closing the gesture, so the sweep lands on
+      // something rather than just fading out.
       const click = ctx.createBufferSource()
       click.buffer = this.getNoiseBuffer(ctx)
       const clickFilter = ctx.createBiquadFilter()

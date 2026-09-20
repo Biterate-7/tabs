@@ -38,7 +38,7 @@ export function IntroTitle({ phase }: { phase: IntroPhase }) {
         <div className="mx-auto mt-3 h-px w-24 bg-border" />
         <p
           key={label}
-          className="mt-3 h-4 text-label text-tertiary uppercase transition-opacity duration-300 ease-(--ease-standard)"
+          className="mt-3 h-4 text-eyebrow text-tertiary transition-opacity duration-300 ease-(--ease-standard)"
           style={{ opacity: label ? 1 : 0 }}
         >
           {label}

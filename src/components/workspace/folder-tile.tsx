@@ -114,7 +114,7 @@ export function FolderTile({
   const handleOpen = () => {
     if (isOpening) return
     setIsOpening(true)
-    if (!reduced) sound.zipperOpen(soundVolume)
+    if (!reduced) sound.folderOpen(soundVolume)
   }
 
   const handleAnimationEnd = (event: AnimationEvent<HTMLButtonElement>) => {

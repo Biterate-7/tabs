@@ -50,7 +50,7 @@ export function GraphCollectionPanel({
       </div>
 
       {collection.tabIds.length === 0 ? (
-        <EmptyState icon={Layers} title="No tabs yet." description="Gather tabs into this collection to see them here." />
+        <EmptyState density="panel" icon={Layers} title="No tabs yet." description="Gather tabs into this collection to see them here." />
       ) : (
         <div className="space-y-0.5">
           {collection.tabIds.map((tabId) => {

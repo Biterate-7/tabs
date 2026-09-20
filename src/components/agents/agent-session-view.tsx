@@ -201,7 +201,7 @@ function Section({
   return (
     <section aria-labelledby={id} className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 id={id} className="text-label text-tertiary">
+        <h3 id={id} className="text-eyebrow text-tertiary">
           {title}
         </h3>
         {right}
@@ -255,7 +255,7 @@ function WorkItemEvidence({
       aria-label={EVIDENCE_REGION_LABEL}
       className="space-y-3 rounded-lg border border-subtle bg-background-secondary p-2.5"
     >
-      <Section id={`evidence-events-${item.reference.workItemId}`} title="EVENTS">
+      <Section id={`evidence-events-${item.reference.workItemId}`} title="Events">
         {evidence.events.length === 0 ? (
           <EmptyLine>No events recorded for this task.</EmptyLine>
         ) : (
@@ -267,7 +267,7 @@ function WorkItemEvidence({
         )}
       </Section>
 
-      <Section id={`evidence-tabs-${item.reference.workItemId}`} title="TABS">
+      <Section id={`evidence-tabs-${item.reference.workItemId}`} title="Tabs">
         {evidence.tabIds.length === 0 ? (
           <EmptyLine>No tabs recorded for this task.</EmptyLine>
         ) : (
@@ -284,7 +284,7 @@ function WorkItemEvidence({
         )}
       </Section>
 
-      <Section id={`evidence-files-${item.reference.workItemId}`} title="FILES">
+      <Section id={`evidence-files-${item.reference.workItemId}`} title="Files">
         {evidence.artifacts.length === 0 ? (
           <EmptyLine>No files recorded for this task.</EmptyLine>
         ) : (
@@ -296,7 +296,7 @@ function WorkItemEvidence({
         )}
       </Section>
 
-      <Section id={`evidence-result-${item.reference.workItemId}`} title="RESULT">
+      <Section id={`evidence-result-${item.reference.workItemId}`} title="Result">
         {produced.length === 0 ? (
           <EmptyLine>{EMPTY.taskResult}</EmptyLine>
         ) : (
@@ -445,8 +445,8 @@ export function AgentSessionScreen({
         <div className="mx-auto w-full max-w-4xl space-y-5">
           {/* WHAT — the run's own description, or the honest fallback. */}
           <section aria-labelledby="session-work-heading" className="space-y-1">
-            <h2 id="session-work-heading" className="text-label text-tertiary">
-              WORK
+            <h2 id="session-work-heading" className="text-eyebrow text-tertiary">
+              Work
             </h2>
             <p
               className={cn(
@@ -464,8 +464,8 @@ export function AgentSessionScreen({
 
           {/* WORK ITEMS — every one, including completed and cancelled. */}
           <section aria-labelledby="session-items-heading" className="space-y-1.5">
-            <h2 id="session-items-heading" className="text-label text-tertiary">
-              WORK ITEMS
+            <h2 id="session-items-heading" className="text-eyebrow text-tertiary">
+              Work items
             </h2>
 
             {session.workItems.length === 0 ? (
@@ -535,8 +535,8 @@ export function AgentSessionScreen({
             className="space-y-3 rounded-xl border border-subtle bg-background-secondary p-3"
           >
             <div className="space-y-0.5">
-              <h2 id="session-run-context-heading" className="text-label text-tertiary">
-                THE RUN AROUND THIS WORK
+              <h2 id="session-run-context-heading" className="text-eyebrow text-tertiary">
+                The run around this work
               </h2>
               <p className="text-meta text-muted-foreground">
                 Everything this session touched. These are run-level records and are not
@@ -544,7 +544,7 @@ export function AgentSessionScreen({
               </p>
             </div>
 
-            <Section id="session-run-tabs" title="TABS">
+            <Section id="session-run-tabs" title="Tabs">
               {session.runContext.affectedTabIds.length === 0 ? (
                 <EmptyLine>{EMPTY.tabs}</EmptyLine>
               ) : (
@@ -563,7 +563,7 @@ export function AgentSessionScreen({
               )}
             </Section>
 
-            <Section id="session-run-files" title="FILES">
+            <Section id="session-run-files" title="Files">
               {session.runContext.artifacts.length === 0 ? (
                 <EmptyLine>{EMPTY.files}</EmptyLine>
               ) : (
@@ -575,7 +575,7 @@ export function AgentSessionScreen({
               )}
             </Section>
 
-            <Section id="session-run-result" title="RESULT">
+            <Section id="session-run-result" title="Result">
               {runProduced.length === 0 ? (
                 <EmptyLine>{EMPTY.result}</EmptyLine>
               ) : (

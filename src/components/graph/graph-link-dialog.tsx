@@ -170,7 +170,7 @@ export function GraphLinkDialog({
 
             <ScrollArea className="min-h-0 flex-1 -mx-1 px-1">
               {results.length === 0 ? (
-                <EmptyState icon={Link2} title="No tabs match" description="Try a different search." />
+                <EmptyState density="panel" icon={Link2} title="No tabs match" description="Try a different search." />
               ) : (
                 <div className="space-y-0.5 pb-2">
                   {results.map((node) => {

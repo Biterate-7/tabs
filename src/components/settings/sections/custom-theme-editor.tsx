@@ -194,7 +194,7 @@ export function CustomThemeEditor({ colors, onChange }: { colors: ThemeColors; o
 
         {GROUPS.map((group) => (
           <div key={group.title}>
-            <p className="mb-1.5 px-0.5 text-label text-tertiary">{group.title.toUpperCase()}</p>
+            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">{group.title}</p>
             <div className="flex flex-col gap-1.5">
               {group.fields.map((field) => (
                 <ColorRow

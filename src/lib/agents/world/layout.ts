@@ -143,7 +143,33 @@ export const CHARACTER_FOOTPRINT = {
  * onto shoulders.
  */
 const SLOTS_PER_ROW = 3;
-const SLOT_DX = 34 / STAGE_WIDTH;
+/*
+  38, not 34.
+
+  A figure is 25 units wide, so the old 34 left 9 units between neighbours
+  — enough to keep two drawings apart, but only just enough to click
+  between them. Measured in a real browser with `elementFromPoint`, the
+  three figures in the middle of a full station had 30px of exclusive
+  pointer area against the 26.7px (20pt) floor in `accessibility.md`;
+  38 takes that to 33px. The composition is unchanged at this distance —
+  still a group standing at a desk, not a spaced-out row.
+
+  38 is also the ceiling. At 40 the station spans start intersecting and
+  themes.test.ts fails, which is the world telling the truth about how
+  much room it has.
+*/
+const SLOT_DX = 38 / STAGE_WIDTH;
+/*
+  32, and it cannot go up.
+
+  Row spacing has no headroom at all: at 34 — a mere two units more than
+  a figure's own height — themes.test.ts already reports fixtures standing
+  in front of somebody's head, which is the one invariant the DOM-over-SVG
+  world cannot break (see the note in agent-world.tsx). Vertical crowding
+  between rows is therefore a fixed property of this world, and the roster
+  beneath the stage is the full-size way to reach a figure that a taller
+  neighbour is standing in front of.
+*/
 const SLOT_DY = 32 / STAGE_HEIGHT;
 
 /** Keeps every character clear of the stage edge, whatever a theme's coordinates say. */

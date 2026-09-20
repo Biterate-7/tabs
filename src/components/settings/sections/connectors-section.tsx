@@ -489,7 +489,7 @@ export function ConnectorsSection() {
 
       {connected.length > 0 && (
         <div className="mb-5">
-          <p className="mb-2 text-label text-tertiary">Connected</p>
+          <p className="mb-2 text-eyebrow text-tertiary">Connected</p>
           <SectionStack>
             {connected.map((view) => (
               <ConnectorRow
@@ -505,7 +505,7 @@ export function ConnectorsSection() {
 
       {others.length > 0 && (
         <div>
-          <p className="mb-2 text-label text-tertiary">
+          <p className="mb-2 text-eyebrow text-tertiary">
             {connected.length > 0 ? "Other" : "Available"}
           </p>
           <SectionStack>

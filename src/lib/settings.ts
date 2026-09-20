@@ -23,7 +23,7 @@ import type {
 const STORAGE_KEY = "tabdump:settings:v1";
 
 /**
- * Interface sounds (the folder zipper-open sound, and any future UI sound
+ * Interface sounds (the folder-open sound, and any future UI sound
  * effects) — a sibling of `playIntro` rather than part of `AppearanceSettings`
  * since it isn't a theme/visual concern. `volume` is a 0-100 percentage of
  * the sound engine's already-conservative master gain, so 100 still never

@@ -87,8 +87,8 @@ function AgentWorldRoomDetailImpl({
 
       {occupants.length > 0 ? (
         <div className="space-y-1">
-          <p className="text-label text-tertiary">
-            {occupants.length === 1 ? "1 AGENT HERE" : `${occupants.length} AGENTS HERE`}
+          <p className="text-eyebrow text-tertiary">
+            {occupants.length === 1 ? "1 agent here" : `${occupants.length} agents here`}
           </p>
           <ul className="space-y-0.5">
             {occupants.map((occupant) => {

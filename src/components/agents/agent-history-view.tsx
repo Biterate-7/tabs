@@ -227,8 +227,8 @@ export function AgentHistoryScreen({
         <div className="mx-auto w-full max-w-4xl space-y-4">
           {total > 0 ? (
             <section aria-labelledby="agent-history-filters-heading" className="space-y-1.5">
-              <h2 id="agent-history-filters-heading" className="text-label text-tertiary">
-                FILTER
+              <h2 id="agent-history-filters-heading" className="text-eyebrow text-tertiary">
+                Filter
               </h2>
               <div className="flex flex-wrap gap-2">
                 <FilterSelect
@@ -285,8 +285,8 @@ export function AgentHistoryScreen({
 
           <section aria-labelledby="agent-history-sessions-heading" className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
-              <h2 id="agent-history-sessions-heading" className="text-label text-tertiary">
-                SESSIONS
+              <h2 id="agent-history-sessions-heading" className="text-eyebrow text-tertiary">
+                Sessions
               </h2>
               {total > 0 ? (
                 <p className="text-meta text-tertiary">

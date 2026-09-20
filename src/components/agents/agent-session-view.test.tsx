@@ -384,7 +384,7 @@ describe("results", () => {
     const { session } = multiTaskRun();
     renderSession(session);
 
-    const result = within(regions().runContext).getByRole("region", { name: "RESULT" });
+    const result = within(regions().runContext).getByRole("region", { name: "Result" });
     expect(within(result).getByText("src/parser.ts")).toBeTruthy();
     // A file the run only read is not a result.
     expect(within(result).queryByText("src/notes.md")).toBeNull();

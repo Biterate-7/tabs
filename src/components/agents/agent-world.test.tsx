@@ -213,7 +213,7 @@ describe("drawing the world", () => {
         onSelect={vi.fn()}
       />
     );
-    expect(screen.getByText("RESEARCH")).toBeTruthy();
+    expect(screen.getByText("Research")).toBeTruthy();
   });
 });
 
@@ -239,7 +239,7 @@ describe("the rooms", () => {
 
     await user.click(screen.getByRole("button", { name: /^Research Lab\./ }));
 
-    const card = screen.getByText("1 AGENT HERE").closest("div")!;
+    const card = screen.getByText("1 agent here").closest("div")!;
     expect(within(card).getByText("Claude Code")).toBeTruthy();
     expect(screen.getByText("Claude Code · Researching competitor architecture")).toBeTruthy();
   });
@@ -268,7 +268,7 @@ describe("the rooms", () => {
 
     await user.click(screen.getByRole("button", { name: /^Research Lab./ }));
 
-    const card = screen.getByText("1 AGENT HERE").closest("div")!;
+    const card = screen.getByText("1 agent here").closest("div")!;
     await user.click(within(card).getByRole("button", { name: /Claude Code/ }));
     expect(onSelect).toHaveBeenCalledWith("run:1");
   });
@@ -280,7 +280,7 @@ describe("the rooms", () => {
     const room = screen.getByRole("button", { name: /^Research Lab\./ });
     room.focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByText("1 AGENT HERE")).toBeTruthy();
+    expect(screen.getByText("1 agent here")).toBeTruthy();
   });
 
   it("selecting an agent closes the open room card", async () => {
@@ -288,10 +288,10 @@ describe("the rooms", () => {
     const { container } = renderWorld();
 
     await user.click(screen.getByRole("button", { name: /^Research Lab\./ }));
-    expect(screen.queryByText("1 AGENT HERE")).not.toBeNull();
+    expect(screen.queryByText("1 agent here")).not.toBeNull();
 
     await user.click(agentButtons(container)[0]);
-    expect(screen.queryByText("1 AGENT HERE")).toBeNull();
+    expect(screen.queryByText("1 agent here")).toBeNull();
   });
 });
 
@@ -525,7 +525,7 @@ describe("the camera", () => {
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 330, clientY: 300 });
     fireEvent.click(room);
 
-    expect(screen.queryByText("1 AGENT HERE")).toBeNull();
+    expect(screen.queryByText("1 agent here")).toBeNull();
   });
 
   it("still opens a room on a click that did not travel", async () => {
@@ -540,7 +540,7 @@ describe("the camera", () => {
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 402, clientY: 301 });
     fireEvent.click(room);
 
-    expect(screen.getByText("1 AGENT HERE")).toBeTruthy();
+    expect(screen.getByText("1 agent here")).toBeTruthy();
   });
 
   it("focuses the working agents on request", async () => {
@@ -744,7 +744,7 @@ describe("the detail view", () => {
 
   it("omits a section entirely rather than showing an empty heading", () => {
     render(<AgentWorldDetail character={character()} now={T0} />);
-    expect(screen.queryByText("FILES")).toBeNull();
+    expect(screen.queryByText("Files")).toBeNull();
     expect(screen.queryByText("WORK")).toBeNull();
   });
 

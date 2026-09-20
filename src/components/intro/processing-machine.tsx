@@ -30,7 +30,7 @@ export function ProcessingMachine({ phase, tabs }: { phase: IntroPhase; tabs: In
     >
       <div className="relative h-[104px] w-[300px] overflow-hidden rounded-xl border border-border sm:w-[360px]">
         <div className="absolute inset-x-6 top-3 flex justify-center">
-          <span className="text-label tracking-[0.14em] text-tertiary uppercase">TabDump Engine</span>
+          <span className="text-eyebrow text-tertiary">TabDump Engine</span>
         </div>
         {[25, 50, 75].map((pct, i) => (
           <div
@@ -53,7 +53,7 @@ export function ProcessingMachine({ phase, tabs }: { phase: IntroPhase; tabs: In
       <div className="flex gap-8 sm:gap-14">
         {grouped.map(({ bucket, tabs: bucketTabs }, groupIndex) => (
           <div key={bucket} className="flex flex-col items-center gap-2">
-            <span className="text-label tracking-[0.08em] text-tertiary uppercase">{BUCKET_LABEL[bucket]}</span>
+            <span className="text-eyebrow text-tertiary">{BUCKET_LABEL[bucket]}</span>
             <div
               className="flex max-w-[64px] flex-wrap justify-center gap-1.5 sm:max-w-[84px]"
               style={{

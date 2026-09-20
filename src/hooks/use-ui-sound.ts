@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef } from "react"
 import { UiSoundEngine } from "@/lib/ui-sound"
 
 export type UiSound = {
-  zipperOpen: (volume: number) => void
+  folderOpen: (volume: number) => void
   dispose: () => void
 }
 
 const NOOP_SOUND: UiSound = {
-  zipperOpen() {},
+  folderOpen() {},
   dispose() {},
 }
 
@@ -40,7 +40,7 @@ export function useUiSound(enabled: boolean): UiSound {
     }
 
     return {
-      zipperOpen: (volume) => getEngine().zipperOpen(volume),
+      folderOpen: (volume) => getEngine().folderOpen(volume),
       dispose: () => {
         engineRef.current?.dispose()
         engineRef.current = null

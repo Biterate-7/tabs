@@ -694,8 +694,8 @@ export function AgentWorld({
       }
     >
       <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 truncate text-label text-tertiary">
-          {(worldName ?? scene.theme.name).toUpperCase()}
+        <p className="min-w-0 flex-1 truncate text-eyebrow text-tertiary">
+          {worldName ?? scene.theme.name}
         </p>
         {actions}
       </div>

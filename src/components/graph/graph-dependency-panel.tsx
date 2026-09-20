@@ -187,6 +187,7 @@ export function GraphDependencyPanel({
 
       {isEmpty ? (
         <EmptyState
+          density="panel"
           icon={Boxes}
           title="No dependencies yet."
           description="Add tabs that this tab relies on."
