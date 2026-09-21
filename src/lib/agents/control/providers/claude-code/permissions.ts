@@ -1,3 +1,4 @@
+import type { ApprovalAction } from "../../approval-details";
 import { isGranted } from "../../permissions";
 import type { AgentPermissionGrant, AgentPermissionScope } from "../../permissions";
 import type { ClaudePermissionMode } from "./runtime";
@@ -253,4 +254,43 @@ export function isToolPermitted(
   if (scope === null) return false;
 
   return isGranted(grant, scope, projectId);
+}
+
+/**
+ * The broker's action for a Claude tool, or `null` for one that needs no
+ * approval at all.
+ *
+ * `ApprovalAction` is a closed set because it is what the future dialog's
+ * headline is built from, and this is the one place Claude's tool names are
+ * translated into it. Two properties are deliberate:
+ *
+ *   - **Reads return `null`.** Reading inside a project the user already
+ *     authorized is covered by the grant; `requiresApproval` says so, and the
+ *     broker refuses to record one. Manufacturing an action for it would
+ *     produce a prompt that teaches people to click yes.
+ *   - **`Write` is `create_files` and `Edit` is `modify_files`.** The
+ *     distinction is the whole value of the headline: "Claude wants to create
+ *     files" and "Claude wants to modify files" are different sentences to be
+ *     asked, and collapsing them would lose the one the user cares more about.
+ *
+ * An unknown tool returns `null` rather than a guess. It is already denied by
+ * `isToolPermitted` before this is ever consulted.
+ */
+export function actionForTool(toolName: string): ApprovalAction | null {
+  switch (toolName) {
+    case "Write":
+      return "create_files";
+    case "Edit":
+    case "NotebookEdit":
+      return "modify_files";
+    case "Bash":
+    case "BashOutput":
+    case "KillShell":
+      return "run_command";
+    case "WebFetch":
+    case "WebSearch":
+      return "network_request";
+    default:
+      return toolName.startsWith("mcp__") ? "use_mcp_tool" : null;
+  }
 }

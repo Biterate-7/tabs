@@ -1,9 +1,11 @@
+import { hasAdapterApprovalDetails } from "../../approval-details";
 import { capabilitySet } from "../../capabilities";
 import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
 import { normalizeClaudeMessage, providerSessionIdOf } from "./normalize";
-import { isToolPermitted, planForGrant, scopeForTool } from "./permissions";
+import { actionForTool, isToolPermitted, planForGrant, scopeForTool } from "./permissions";
 import { withContext } from "./context-prompt";
+import type { AdapterApprovalDetails } from "../../approval-details";
 import type { AgentCapabilitySet } from "../../capabilities";
 import type { AgentContextAttachment, AgentMessageInput } from "../../context";
 import type { AgentControlEvent } from "../../events";
@@ -315,10 +317,16 @@ export function createClaudeCodeControlAdapter(
 
     // Surfaced separately so the service can mint the broker record with
     // everything the future dialog needs.
+    const action = actionForTool(request.toolName);
+
     pendingDetails.set(approvalId, {
       sessionId: session.sessionId,
       runId: session.runId,
       toolName: request.toolName,
+      // Absent for a tool whose scope needs no per-use approval. The service
+      // reads that as "the grant already answered this" rather than as a
+      // missing field — see ../../approval-details.ts.
+      ...(action ? { action } : {}),
       scope,
       projectId: session.project?.id,
       targets: targetsFor(request, session),
@@ -596,15 +604,20 @@ export function createClaudeCodeControlAdapter(
   };
 }
 
-/** What the adapter knows about a pending approval, for the broker record. */
-export type ClaudeApprovalDetails = {
-  sessionId: string;
-  runId?: string;
-  toolName: string;
+/**
+ * What the adapter knows about a pending approval, for the broker record.
+ *
+ * An `AdapterApprovalDetails` plus the one Claude-shaped field the generic
+ * shape has no room for. Declared as an extension rather than a separate type
+ * so that the accessor satisfies the provider-neutral contract in
+ * ../../approval-details.ts by construction: if this shape ever stopped being
+ * assignable, it would be a type error here rather than a silent divergence
+ * the service discovers at runtime.
+ */
+export type ClaudeApprovalDetails = AdapterApprovalDetails & {
   scope: AgentPermissionScope;
-  projectId?: string;
-  targets: readonly string[];
-  reason?: string;
+  /** The provider's own tool name. Never leaves this adapter's own accessor. */
+  toolName: string;
 };
 
 /**
@@ -623,11 +636,15 @@ export function readApprovalDetails(
   return adapter.takeApprovalDetails(approvalId);
 }
 
-/** Whether this adapter carries the Claude-specific approval detail accessor. */
+/**
+ * Whether this adapter carries the Claude-specific approval detail accessor.
+ *
+ * The same structural check the provider-neutral reader makes, narrowed to
+ * this adapter's richer detail type. Delegated rather than repeated so there
+ * is one answer to "does this adapter report approvals".
+ */
 export function hasApprovalDetails(
   adapter: AgentControlAdapter
 ): adapter is ClaudeCodeControlAdapter {
-  return (
-    typeof (adapter as Partial<ClaudeCodeControlAdapter>).takeApprovalDetails === "function"
-  );
+  return hasAdapterApprovalDetails(adapter);
 }

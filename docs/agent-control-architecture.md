@@ -413,3 +413,22 @@ capability; anything unanswered stays undeclared.
     connected, and have **no code path that emits an event**.
 18. The control plane declares no credential field and touches only its two
     storage keys.
+
+---
+
+## 15. The surface this runs on
+
+Everything above describes what may be asked of an agent. **Where that asking
+actually happens** — the trusted local runtime, the browser transport, session
+ownership, run correlation, and how a controlled run is told apart from one
+TabDump merely observed — is `docs/agent-local-runtime.md`.
+
+Two things in this document were true when it was written and are no longer:
+
+- **`service.attachRun` was uncalled.** The runtime host now mints a control
+  run when a session starts driving, binds it to the adapter, and records it on
+  the session, so every event a provider emits is attributable. See §10 there.
+- **`approval_requested` reached no broker.** The service now mints the broker
+  record from a provider-neutral accessor (`control/approval-details.ts`) the
+  moment an adapter raises one. The adapter still has no route to the broker,
+  and guard 13 above still holds unchanged. See §14 there.

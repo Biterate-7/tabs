@@ -1,3 +1,4 @@
+import { readAdapterApprovalDetails } from "./approval-details";
 import { createApprovalBroker } from "./approvals";
 import {
   isWellFormedAttachedContext,
@@ -175,6 +176,22 @@ export type ControlService = {
   /** Records that a session produced a domain run. Called by whatever correlates the two planes. */
   attachRun(sessionId: string, runId: string): void;
 
+  /**
+   * Records the provider's own identity for a session, once it is known.
+   *
+   * A provider that issues its id up front supplies it on the `SessionHandle`
+   * and this is never needed. Claude Code does not: the id arrives on the
+   * first frame of the stream, which is *after* `createSession` has resolved,
+   * so without this a session that could be resumed would never say so.
+   *
+   * Write-once. A session whose provider identity changed under it would be a
+   * different conversation wearing the same record, and the two could not be
+   * told apart afterwards — so a second, different id is refused rather than
+   * applied. Re-reporting the same one is a no-op, which is what a reconnect
+   * does.
+   */
+  attachProviderSession(sessionId: string, providerSessionId: string): void;
+
   dispose(): void;
 };
 
@@ -275,11 +292,106 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const session = sessions.get(event.sessionId);
       if (!session) return;
 
+      if (event.kind === "approval_requested" && event.approvalId) {
+        recordApproval(adapter, session, event.approvalId);
+      }
+
       applyEventToSession(session, event);
       for (const listener of [...listeners]) listener(event);
     });
 
     adapterSubscriptions.set(provider, unsubscribe);
+  }
+
+  /**
+   * Mints the broker record behind an `approval_requested` event.
+   *
+   * ## Why this is here and not in the adapter
+   *
+   * An adapter that could reach the broker could mint an approval that was
+   * already granted, so it has no route to one — it raises a request by
+   * emitting an event, and this is where that event becomes a record the user
+   * can answer. The adapter holds the detail (targets, reason, scope) because
+   * an event deliberately has nowhere to carry it; the narrow accessor in
+   * ./approval-details.ts is how it gets here, and it names no provider.
+   *
+   * ## The two refusals, and why they are opposite
+   *
+   * The broker can refuse to record a request, and *which* refusal it is
+   * decides the answer:
+   *
+   *   - **`scope-needs-no-approval`** — the action falls under a scope the
+   *     grant already settles (a read inside an authorized project). There is
+   *     no question to put to anybody, so the adapter is told `granted`
+   *     immediately. The alternative is a dialog that says "Claude would like
+   *     to read a file you already let it read", which is how people learn to
+   *     click yes without looking. The adapter has already checked the scope
+   *     against the grant before emitting; this is not a second authorization,
+   *     it is the absence of a question.
+   *   - **anything else** — a malformed or unrecordable request. The agent is
+   *     denied, because an approval nobody can answer must not become one
+   *     nobody has to.
+   *
+   * Either way the adapter gets an answer. Leaving one unanswered would block
+   * the provider on a decision that can never arrive.
+   */
+  function recordApproval(
+    adapter: AgentControlAdapter,
+    session: AgentSession,
+    approvalId: string
+  ): void {
+    const details = readAdapterApprovalDetails(adapter, approvalId);
+
+    function deny(): void {
+      void adapter.respondToApproval(approvalId, "denied");
+    }
+
+    // An adapter that raised an approval it cannot describe. Nothing can be
+    // put to the user, so nothing is granted.
+    if (!details) return deny();
+
+    // An action inside no project at all. The permission model refuses a
+    // project-scoped grant that names no project, so this cannot be
+    // authorized by anything, and there is nothing to ask.
+    if (details.action && !details.projectId) return deny();
+
+    if (details.action && details.projectId) {
+      const requested = broker.request(
+        {
+          id: approvalId,
+          sessionId: session.id,
+          provider: session.provider,
+          action: details.action,
+          scope: details.scope,
+          projectId: details.projectId,
+          targets: details.targets,
+          ...(details.runId ? { runId: details.runId } : {}),
+          ...(details.reason ? { reason: details.reason } : {}),
+        },
+        now()
+      );
+
+      // Recorded. The user answers it, and `respondToApproval` carries their
+      // decision back to the adapter.
+      if (requested.ok) return;
+
+      // Already recorded. An adapter reconnecting to a provider stream can
+      // re-emit the request it raised a moment ago, and the first record is
+      // still live and still waiting on the user — so there is nothing to do.
+      // Answering here would resolve a decision they have not made, and
+      // `denied` is no safer than `granted` when the effect is to cancel a
+      // prompt that is on screen.
+      if (requested.reason === "duplicate-id") return;
+
+      // Malformed, or otherwise unrecordable.
+      if (requested.reason !== "scope-needs-no-approval") return deny();
+    }
+
+    // Either the adapter named no action, or the broker refused to record one
+    // because its scope needs no per-use approval. Both mean the same thing:
+    // the grant already settles this, and there is no question to put to
+    // anybody. See the note above on why that is a grant rather than a prompt.
+    void adapter.respondToApproval(approvalId, "granted");
   }
 
   /**
@@ -544,6 +656,13 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const session = sessions.get(sessionId);
       if (!session) return;
       put(attachRunToSession(session, runId, now()));
+    },
+
+    attachProviderSession(sessionId, providerSessionId) {
+      const session = sessions.get(sessionId);
+      if (!session || !providerSessionId) return;
+      if (session.providerSessionId !== undefined) return;
+      put({ ...session, providerSessionId, updatedAt: now() });
     },
 
     dispose() {

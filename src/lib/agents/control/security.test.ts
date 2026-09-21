@@ -727,7 +727,53 @@ describe("approval-required operations cannot bypass the broker", () => {
     });
 
     expect(blocked).toMatchObject({ ok: false, error: { code: "approval-required" } });
-    expect(adapter.calls).toEqual(["createSession"]);
+    // The claim is that the *message* never reached the provider. The adapter
+    // is also told how the approval was answered — this one is denied, because
+    // this adapter raised a request it cannot describe and nothing
+    // undescribable may be granted — and that call is not the one under test.
+    expect(adapter.calls).not.toContain("sendMessage");
+  });
+
+  it("denies an approval the adapter cannot describe, rather than leaving the provider blocked", async () => {
+    // An adapter raises an approval by emitting an event and holds the
+    // provider's decision open until it is told an answer. If the service
+    // could not mint a broker record — here because the adapter offers no
+    // detail accessor at all — the honest outcome is a denial. The two
+    // failures it rules out are opposite and both bad: granting something
+    // nobody could evaluate, and leaving a provider waiting forever on a
+    // decision that can never be made.
+    let emit: ((event: AgentControlEvent) => void) | null = null;
+    const adapter = spyAdapter(capabilitySet("create_session", "message", "approvals"));
+    adapter.subscribeToEvents = (listener) => {
+      emit = listener;
+      return () => {
+        emit = null;
+      };
+    };
+
+    const service = createControlService({
+      runtime: ALLOW,
+      resolveAdapter: () => adapter,
+      now: () => T0,
+    });
+
+    const started = await service.startSession({ provider: "claude-code" });
+    const sessionId = started.ok ? started.value.id : "";
+
+    emit!({
+      id: "e1",
+      sessionId,
+      provider: "claude-code",
+      kind: "approval_requested",
+      timestamp: T0,
+      summary: "wants to modify files",
+      approvalId: "a9",
+    });
+
+    expect(adapter.calls).toContain("respondToApproval");
+    // And nothing was recorded as answerable, so there is no route by which a
+    // later `respondToApproval` could grant it after the fact.
+    expect(service.approvals.get("a9")).toBeUndefined();
   });
 });
 
