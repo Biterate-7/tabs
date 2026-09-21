@@ -1,5 +1,5 @@
 import { GenericAgentMark } from "./marks";
-import type { AgentVisualIdentity, WorldCharacterConfig } from "./types";
+import type { AgentVisualIdentity } from "./types";
 
 /**
  * Who has a visual identity, and how anything else asks for one.
@@ -26,20 +26,6 @@ import type { AgentVisualIdentity, WorldCharacterConfig } from "./types";
  */
 
 /**
- * The character an identity gets when it has not described one.
- *
- * The plainest of the four silhouettes at neutral scale with no tool. An
- * identity that says nothing about how it should look in the world still
- * appears in it — which is what makes `character` genuinely optional rather
- * than optional-until-you-open-the-world.
- */
-export const DEFAULT_WORLD_CHARACTER: WorldCharacterConfig = {
-  silhouette: "orb",
-  scale: 1,
-  accessory: "none",
-};
-
-/**
  * The identity used for anything unrecognised.
  *
  * Not an error state and not styled like one. An unknown provider is a
@@ -57,7 +43,6 @@ export const FALLBACK_VISUAL_IDENTITY: AgentVisualIdentity = {
   // unknown provider has no brand to express, and inventing one would make
   // two different unknown providers look like the same product.
   accentColor: "var(--graph-node)",
-  character: DEFAULT_WORLD_CHARACTER,
 };
 
 const identities = new Map<string, AgentVisualIdentity>();

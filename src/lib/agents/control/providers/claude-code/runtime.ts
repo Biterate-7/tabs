@@ -1,0 +1,217 @@
+/**
+ * The Claude runtime seam.
+ *
+ * ## Why this interface exists at all
+ *
+ * The adapter needs to be testable without Claude Code installed, without a
+ * developer's personal authentication, and without spending money on every
+ * CI run. It also needs to be real in production. Those two requirements are
+ * met by putting a narrow interface between them: the adapter drives *this*,
+ * and exactly one module implements it against `@anthropic-ai/claude-agent-sdk`.
+ *
+ * This is deliberately **not** a mock of the SDK. It is the smallest surface
+ * the adapter actually needs, defined in TabDump's own vocabulary, so that:
+ *
+ *   - the SDK's types do not leak through the codebase — only
+ *     `sdk-runtime.ts` imports them;
+ *   - a deterministic test runtime is a real implementation of a real
+ *     contract, not a `vi.mock` of somebody else's module, so the lifecycle
+ *     behaviour it exercises is behaviour the production path also has;
+ *   - replacing the SDK later is one file.
+ *
+ * ## What it deliberately does not expose
+ *
+ * No `spawn`, no `exec`, no argv, no shell, no command string, no arbitrary
+ * option bag. A caller names an operation and supplies already-validated
+ * scope. There is no field here into which a caller could put a flag of its
+ * own choosing, which is what stops the control plane from becoming a
+ * general-purpose process launcher with extra steps.
+ */
+
+/**
+ * The Claude permission modes TabDump is willing to send.
+ *
+ * Claude Code has five. This union has two, and the three omissions are the
+ * design:
+ *
+ *   - **`bypassPermissions`** skips Claude's checks entirely. Obviously not.
+ *   - **`acceptEdits`** auto-accepts file edit operations — which means the
+ *     host's `canUseTool` is *never called* for them. Sending it would
+ *     silently suppress the approvals this whole integration exists to
+ *     produce: TabDump would show no prompt and Claude would write the file.
+ *     It is the most dangerous of the three precisely because it looks
+ *     harmless.
+ *   - **`plan`** stops tool execution and makes Claude produce a plan instead.
+ *     A real mode, but a different *product* — someone who granted read
+ *     access expects answers about their project, not a plan document.
+ *
+ * What remains keeps the approval surface live:
+ *
+ *   - `default` — prompts for dangerous operations, so `canUseTool` fires and
+ *     TabDump decides.
+ *   - `dontAsk` — denies anything not pre-approved, without prompting. Right
+ *     for a grant that permits nothing.
+ *
+ * A value the union does not contain cannot be sent by accident, which is why
+ * this is a type rather than a comment.
+ */
+export type ClaudePermissionMode = "default" | "dontAsk";
+
+export const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = [
+  "default",
+  "dontAsk",
+] as const;
+
+/**
+ * One permission request, as it leaves the provider.
+ *
+ * Every field is populated from what the runtime actually supplied. Nothing
+ * here is synthesised: a provider that gives no `title` leaves it absent, and
+ * the approval that results says nothing rather than inventing a sentence.
+ */
+export type ClaudePermissionRequest = {
+  /** The tool the agent wants to use, e.g. "Edit", "Bash". */
+  toolName: string;
+  /** The provider's unique id for this specific tool call. */
+  toolUseId: string;
+  /** The control-request envelope id, echoed on the response. */
+  requestId: string;
+  /**
+   * The provider's own rendered prompt sentence, when it gives one.
+   *
+   * Preferred over anything TabDump could reconstruct from the tool name and
+   * input, because the provider knows what its own tool is about to do.
+   */
+  title?: string;
+  /** Short noun phrase for the action, for a compact label. */
+  displayName?: string;
+  /** The provider's subtitle, elaborating what access is being asked for. */
+  description?: string;
+  /** Why the request was triggered. */
+  decisionReason?: string;
+  /** The path that triggered the request, when one did. Absolute as the provider gives it. */
+  blockedPath?: string;
+  /**
+   * Structured input to the tool.
+   *
+   * Carried *only* so the adapter can extract file paths for the approval's
+   * targets. It is never stored, never forwarded to an event, and never
+   * rendered — see the note on `ControlToolInfo` in ../../events.ts about why
+   * a command string has nowhere to live in this system.
+   */
+  input: Readonly<Record<string, unknown>>;
+  /** Fires if the run is interrupted while the decision is outstanding. */
+  signal: AbortSignal;
+};
+
+/** The only two answers. A runtime that gets neither keeps waiting. */
+export type ClaudePermissionDecision =
+  | { behavior: "allow" }
+  | { behavior: "deny"; message: string };
+
+export type ClaudePermissionHandler = (
+  request: ClaudePermissionRequest
+) => Promise<ClaudePermissionDecision>;
+
+/**
+ * A provider message, structurally.
+ *
+ * Typed as `unknown` payload on purpose: the adapter's normalizer inspects it
+ * defensively (see ./normalize.ts) rather than trusting a shape. The SDK's
+ * message union has ~40 members and grows; a normalizer that destructured it
+ * confidently would break on a version bump, and a normalizer that ignores
+ * what it does not recognise will not.
+ */
+export type ClaudeRuntimeMessage = Readonly<Record<string, unknown>>;
+
+export type ClaudeRuntimeStartOptions = {
+  /** TabDump's session id. Used for correlation only; never sent to the provider as its own id. */
+  sessionId: string;
+  /**
+   * The working directory, already validated against an authorized project.
+   *
+   * Absent means no project scope, in which case the runtime is started with
+   * no directory access at all rather than inheriting the server's cwd —
+   * which would silently authorize wherever TabDump happens to be running.
+   */
+  cwd?: string;
+  /** Further authorized directories, each already validated the same way. */
+  additionalDirectories: readonly string[];
+  /** Claude's permission mode, derived from the TabDump grant. See ./permissions.ts. */
+  permissionMode: ClaudePermissionMode;
+  /** Tools the grant allows. An empty list means none. */
+  allowedTools: readonly string[];
+  /** Tools the grant explicitly forbids, belt-and-braces against a mode that would allow them. */
+  disallowedTools: readonly string[];
+  /** The provider's session id to reattach to, when resuming. */
+  resume?: string;
+  /** Receives every provider message, in order. */
+  onMessage: (message: ClaudeRuntimeMessage) => void;
+  /** Called when the provider asks permission. Must resolve, or the run stays blocked. */
+  onPermissionRequest: ClaudePermissionHandler;
+  /** Called exactly once, when the run ends for any reason. */
+  onExit: (error?: ClaudeRuntimeError) => void;
+};
+
+export type ClaudeRuntimeErrorCode =
+  | "not-installed"
+  | "authentication"
+  | "unavailable"
+  | "process-failed"
+  | "timeout"
+  | "malformed"
+  | "unknown";
+
+/**
+ * A runtime failure, already reduced.
+ *
+ * `detail` is for diagnosis and is never the user-facing string — the adapter
+ * maps `code` onto a `ControlError` from the fixed table in ../../types.ts.
+ * Keeping the raw text here rather than discarding it is what lets a
+ * developer debug without a provider getting to choose what a user reads.
+ */
+export type ClaudeRuntimeError = {
+  code: ClaudeRuntimeErrorCode;
+  detail?: string;
+};
+
+/** A live run. Returned by `start`, and the only handle on it. */
+export type ClaudeRuntimeHandle = {
+  /**
+   * Sends another user turn into the same conversation.
+   *
+   * Rejects if the run has ended. This is what makes a session multi-turn:
+   * one provider process for the whole conversation, rather than a fresh one
+   * per message that would lose all context.
+   */
+  send(text: string): Promise<void>;
+  /**
+   * Interrupts the in-flight turn.
+   *
+   * Reaches the provider. A local flag that merely stopped TabDump listening
+   * would leave the agent running and still editing files, which is the
+   * failure this method exists to prevent.
+   */
+  interrupt(): Promise<void>;
+  /** Ends the run and releases the process. Idempotent, and safe after an exit. */
+  dispose(): Promise<void>;
+  /** Whether the run is still live. */
+  isActive(): boolean;
+};
+
+export type ClaudeRuntimeStartResult =
+  | { ok: true; handle: ClaudeRuntimeHandle }
+  | { ok: false; error: ClaudeRuntimeError };
+
+export type ClaudeRuntime = {
+  /**
+   * Whether this environment can run Claude Code at all.
+   *
+   * Distinct from the control plane's runtime boundary (../../runtime.ts),
+   * which asks whether this *deployment* is permitted to execute agents. Both
+   * must say yes, and the boundary is checked first — a hosted deployment
+   * must never get as far as asking whether a binary exists.
+   */
+  isAvailable(): Promise<boolean>;
+  start(options: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeStartResult>;
+};

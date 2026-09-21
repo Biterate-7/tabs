@@ -133,49 +133,6 @@ export type AgentVisualStatePresentation = {
 };
 
 /**
- * A named animation an identity can attach to a state.
- *
- * Deliberately a *name plus timing*, not a function and not a keyframe list.
- * The animation itself is CSS, declared once in globals.css under the
- * `agent-` prefix, so the browser's compositor runs it off the main thread
- * and twenty agents cost close to what one does. A config that carried
- * JavaScript would put twenty animation loops on the main thread instead.
- */
-export type AgentAnimationConfig = {
-  /** A CSS animation name defined in globals.css. Never interpolated from provider data. */
-  keyframes: string;
-  /** One cycle, in ms. Scaled by the user's motion setting at render time. */
-  durationMs: number;
-  /** How many times to run. `"infinite"` for ongoing states, a count for one-shots. */
-  iterations: number | "infinite";
-  /** CSS easing. Falls back to the app's standard curve when absent. */
-  easing?: string;
-};
-
-/**
- * The shape an agent takes when it is a character in the world.
- *
- * Every field is a plain value rather than a component, so a character can be
- * described entirely by data and swapped later without touching a single
- * component — the property §4 of the brief asks for, and the reason the world
- * engine never imports a provider module.
- */
-export type WorldCharacterConfig = {
-  /**
-   * The silhouette family this agent's character is built from.
-   *
-   * Four families rather than five bespoke drawings: the world renders one
-   * parametric character and varies it, so adding a provider does not mean
-   * drawing a new sprite sheet.
-   */
-  silhouette: "beacon" | "prism" | "orb" | "chevron";
-  /** Relative size, 0.8-1.2. Keeps one agent from dwarfing another. */
-  scale: number;
-  /** What the character carries as its tool, drawn only while it is working. */
-  accessory: "terminal" | "lens" | "quill" | "spark" | "none";
-};
-
-/**
  * The props every provider mark accepts.
  *
  * Narrow on purpose: a mark receives a size and a title and draws itself. It
@@ -229,15 +186,11 @@ export type AgentVisualIdentity = {
   /**
    * The identity's colour, as a CSS colour string.
    *
-   * Used for the mark and for the character's accent in the world. It is a
-   * hint, not a status: a failing agent is drawn in the error tone whatever
-   * its accent is, because status must never be overridden by branding.
+   * Used for the mark. It is a hint, not a status: a failing agent is drawn
+   * in the error tone whatever its accent is, because status must never be
+   * overridden by branding.
    */
   accentColor: string;
-  /** Per-state animation. Any state left out falls back to the shared default. */
-  animations?: Partial<Record<AgentVisualState, AgentAnimationConfig>>;
-  /** How this identity appears as a character. Absent means the shared default character. */
-  character?: WorldCharacterConfig;
 };
 
 /** Icon sizes, in the vocabulary the components take. */

@@ -30,7 +30,7 @@ import type { AgentState } from "@/lib/agents/types";
  * else, which would make the disjointness tests worthless - they are the
  * whole point of the suite.
  *
- * The run under test is deliberately older than the world's recency window,
+ * The run under test is deliberately older than the live canvas's recency window,
  * so nothing here can accidentally pass because the run happens to be live.
  */
 
@@ -127,7 +127,6 @@ function renderSession(
 ) {
   const onSelectWorkItem = vi.fn();
   const onOpenTab = vi.fn();
-  const onOpenWorld = vi.fn();
   const onClose = vi.fn();
 
   const props = {
@@ -138,13 +137,12 @@ function renderSession(
     selectedWorkItemId: null,
     onSelectWorkItem,
     onOpenTab,
-    onOpenWorld,
     onClose,
     ...over,
   };
 
   const utils = render(<AgentSessionScreen {...props} />);
-  return { ...utils, onSelectWorkItem, onOpenTab, onOpenWorld, onClose };
+  return { ...utils, onSelectWorkItem, onOpenTab, onClose };
 }
 
 /**
@@ -182,7 +180,7 @@ describe("the session header", () => {
     const { session } = multiTaskRun();
     renderSession(session);
 
-    // Every task is on screen, though the run left the world's window long
+    // Every task is on screen, though the run left the canvas's recency window long
     // ago and is drawn on no canvas.
     expect(screen.getByRole("button", { name: /Research inflation/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Draft conclusion/ })).toBeTruthy();
@@ -416,12 +414,13 @@ describe("empty states", () => {
 });
 
 describe("navigation", () => {
-  it("offers a way back to the Agent World", async () => {
+  it("offers no route into a removed Agent World", async () => {
+    // The world is gone, and so is the header control that led to it. A
+    // button still sitting here would be dead UI pointing at nothing.
     const { session } = multiTaskRun();
-    const { onOpenWorld } = renderSession(session);
+    renderSession(session);
 
-    await userEvent.click(screen.getByRole("button", { name: "Agent World" }));
-    expect(onOpenWorld).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull();
   });
 
   it("offers a way back out", async () => {

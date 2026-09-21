@@ -278,7 +278,20 @@ describe("AppShell workspaces", () => {
     expect((await screen.findAllByText("Renamed")).length).toBeGreaterThan(0);
   });
 
-  it("keeps each workspace's tabs separate when switching between them", async () => {
+  /*
+    The longest test in the file: two dumps, a workspace creation, a switch,
+    and two searches — around a dozen real `userEvent` interactions, each
+    driving the organize pipeline and a re-render.
+
+    It needs more than the 5s default on this machine, and it needed more
+    before the Agent World was removed too: measured at 5.2s against the
+    pre-removal tree and 5.1s after, so the cost is the interactions rather
+    than anything the agent work changed. Given a longer budget it passes in
+    ~7s. Raised rather than split, because what it is checking — that two
+    workspaces genuinely hold different tabs — is one claim and reads best as
+    one test.
+  */
+  it("keeps each workspace's tabs separate when switching between them", { timeout: 30_000 }, async () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
@@ -664,48 +677,12 @@ describe("AppShell timestamp stamping", () => {
   });
 });
 
-describe("AppShell Agent World", () => {
-  /**
-   * The entry point, at the shell.
-   *
-   * The world's own behaviour is covered in agent-world-view.test.tsx; what
-   * these pin down is the thing the rework was actually about — that it can
-   * be reached from the app's navigation, with nothing dumped, nothing
-   * connected and nothing running, and that its header's two quick-access
-   * controls land on the right settings section rather than merely on
-   * Settings.
-   */
-  it("opens from the sidebar with no tabs, no connectors and no agents", async () => {
-    const user = userEvent.setup();
-    render(<AppShell />);
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    expect(await screen.findByRole("heading", { name: "Agent World" })).toBeTruthy();
-  });
-
-  it("shows the world rather than an empty screen on that first open", async () => {
-    const user = userEvent.setup();
-    render(<AppShell />);
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    expect(await screen.findByRole("region", { name: "Agents in this world" })).toBeTruthy();
-    expect(screen.getByText(/Your agents will appear here as they work/)).toBeTruthy();
-  });
-
-  it("goes back to the workspace", async () => {
-    const user = userEvent.setup();
-    render(<AppShell />);
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-  });
-
+describe("AppShell Settings navigation", () => {
   /**
    * Settings reads AppearanceProvider, which the real app mounts in the root
-   * layout rather than in AppShell. The tests above deliberately mount the
-   * shell bare; the three below need the provider because they navigate into
-   * Settings, so they get it the same way the route does.
+   * layout rather than in AppShell. The suites above deliberately mount the
+   * shell bare; this one needs the provider because it navigates into
+   * Settings, so it gets it the same way the route does.
    */
   function renderWithAppearance() {
     // jsdom has no matchMedia, and useAppearance reads it directly to resolve
@@ -726,44 +703,7 @@ describe("AppShell Agent World", () => {
     );
   }
 
-  it("lands on the connectors section, not just on Settings", async () => {
-    const user = userEvent.setup();
-    renderWithAppearance();
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    await user.click(screen.getByRole("button", { name: "AI connectors" }));
-
-    const nav = await screen.findAllByRole("button", { name: "AI connectors" });
-    expect(nav.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
-  });
-
-  it("lands on the Agent World section of Settings", async () => {
-    const user = userEvent.setup();
-    renderWithAppearance();
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    await user.click(screen.getByRole("button", { name: "Agent World settings" }));
-
-    const nav = await screen.findAllByRole("button", { name: "Agent World" });
-    expect(nav.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
-  });
-
-  it("comes back to the world from the settings it sent you to", async () => {
-    // A control that reads as a round trip has to be one. Settings still
-    // returns to the workspace when the workspace is where it was opened
-    // from — see the test below.
-    const user = userEvent.setup();
-    renderWithAppearance();
-
-    await user.click(await screen.findByRole("button", { name: "Agent World" }));
-    await user.click(screen.getByRole("button", { name: "Agent World settings" }));
-    await user.click(await screen.findByRole("button", { name: "Back" }));
-
-    expect(await screen.findByRole("heading", { name: "Agent World" })).toBeTruthy();
-  });
-
-  it("still opens Settings on its usual section from the sidebar", async () => {
-    // The deep link must not become the new default for everybody else.
+  it("opens Settings on its usual section from the sidebar, and returns", async () => {
     const user = userEvent.setup();
     renderWithAppearance();
 
@@ -771,8 +711,18 @@ describe("AppShell Agent World", () => {
     const theme = await screen.findAllByRole("button", { name: "Theme" });
     expect(theme.some((button) => button.getAttribute("aria-current") === "true")).toBe(true);
 
-    // And still returns where it always did.
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
+  });
+
+  it("offers no route into a removed Agent World", async () => {
+    // The world is gone from navigation, not merely hidden. A rail row that
+    // still existed would be the "dead UI left behind" this removal was
+    // meant to avoid.
+    renderWithAppearance();
+    await screen.findByRole("button", { name: "Settings" });
+
+    expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Agent World settings" })).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { ChevronLeft, Waypoints } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
@@ -59,15 +59,11 @@ import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
 import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
 import { getRunsTouchingArtifact } from "@/lib/agents/intelligence/relationships"
 import { runSpatialId } from "@/lib/agents/spatial/types"
+import { visualStateForRun } from "@/lib/agents/visual/states"
 import { searchAgentWork } from "@/lib/agents/spatial/search"
 import { CONNECTOR_STATUS_LABELS } from "@/lib/agents/connectors/types"
 import { GraphAgentPanel } from "./graph-agent-panel"
-import { AgentWorld } from "@/components/agents/agent-world"
-import { useAgentWorld } from "@/hooks/use-agent-world"
-import { buildWorldRoster } from "@/lib/agents/world/roster"
-import { handoffsForCharacter } from "@/lib/agents/world/scene"
 import type { AgentActivityItem } from "@/components/agents/agent-activity-list"
-import type { WorldCharacterDetail } from "@/components/agents/agent-world-detail"
 import type { AgentStoreApi } from "@/hooks/use-agent-store"
 
 const CAMERA_FLUSH_DELAY_MS = 200
@@ -318,21 +314,6 @@ export function GraphView({
     [connectors.connectors]
   )
 
-  /**
-   * Connected providers that could appear in the world as idle stand-ins.
-   *
-   * Connected ones only. The dedicated Agent World view draws the whole
-   * roster, connected or not, because it is the surface someone opens to find
-   * out what the feature is; this is a small window onto work in progress
-   * beside the canvas, and filling it with agents that are not running would
-   * crowd out the one that is. Both go through `buildWorldRoster`, so the two
-   * surfaces cannot disagree about a provider's name or status.
-   */
-  const idleWorldProviders = useMemo(
-    () => buildWorldRoster(connectors.connectors),
-    [connectors.connectors]
-  )
-
   /** Provider id → display name, for the provider filter. Built from the catalogue, not hard-coded. */
   const providerLabels = useMemo(() => {
     const labels: Record<string, string> = {}
@@ -391,86 +372,41 @@ export function GraphView({
   }, [store.workspaces])
 
   /**
-   * The Agent World.
-   *
-   * Reads the same memoised index the inspector and the canvas do, so opening
-   * the world costs a scene derivation and not a second traversal of the
-   * domain. It is built whether or not the world is on screen — the build is
-   * a pure `useMemo` over state that is already in hand, and gating it behind
-   * `worldOpen` would only move the work to the moment the user clicks.
-   */
-  const agentWorld = useAgentWorld({
-    index: agentIntelligence.index,
-    workspaceId: store.currentId,
-    tabTitles: agentTabTitles,
-    idleProviders: idleWorldProviders,
-  })
-
-  const [worldOpen, setWorldOpen] = useState(false)
-
-  /**
    * What is running right now, for the sidebar's NOW section.
    *
-   * Derived from the world's own characters rather than from the runs
-   * directly, so the list and the room cannot disagree about what state an
-   * agent is in — there is one derivation, and both read it. Filtered to the
-   * states that mean something is happening: a finished run belongs in the
-   * history the panel already shows, not in a list headed "now".
+   * Read off the same spatial scene the canvas draws, so the list and the
+   * canvas cannot disagree about what state a run is in — there is one
+   * derivation and both consume it. Filtered to the states that mean
+   * something is happening: a finished run belongs in the history the panel
+   * already shows, not in a list headed "now".
+   *
+   * `visualStateForRun` is given the same inputs the scene gave it, so a run
+   * that reads as `thinking` on the canvas reads as `thinking` here. It is
+   * never passed `isHandingOff`: handoffs were a world derivation, and
+   * inventing one from a run pair would be a claim the domain has not made.
    */
   const agentActivity = useMemo<AgentActivityItem[]>(
     () =>
-      agentWorld.scene.characters
-        .filter((character) => character.runId && LIVE_ACTIVITY_STATES.has(character.state))
-        .map((character) => ({
-          id: runSpatialId(character.runId!),
-          provider: character.provider,
-          agentName: character.agentName,
-          state: character.state,
-          activity: character.activity,
-          progress: character.progress,
-        })),
-    [agentWorld.scene.characters]
-  )
-
-  /**
-   * Detail for the character the world has open.
-   *
-   * A callback rather than a prepared map: the world asks for the one
-   * character that is selected, so this runs for one run rather than for
-   * twenty. Everything it returns is already-sanitised domain state reached
-   * through the index.
-   */
-  const worldDetail = useCallback(
-    (characterId: string): WorldCharacterDetail | null => {
-      const character = agentWorld.scene.characters.find((entry) => entry.id === characterId)
-      if (!character?.runId) return null
-      const runId = character.runId
-      const index = agentIntelligence.index
-
-      return {
-        // Newest first — the domain stores events oldest-first and caps them
-        // at 200, so this is a reverse of a bounded array.
-        events: [...agentStore.state.events]
-          .filter((event) => event.runId === runId)
-          .reverse()
-          .slice(0, 8),
-        files: (index.artifactLinksByRun.get(runId) ?? []).flatMap((link) => {
-          const artifact = index.artifactsById.get(link.artifactId)
-          // `relativePath` only. `projectPath` is an absolute local path and
-          // never leaves the domain — see intelligence/types.ts.
-          return artifact
-            ? [{ artifactId: artifact.id, relativePath: artifact.relativePath, role: link.role }]
-            : []
-        }),
-        workItems: (index.workItemsByRun.get(runId) ?? []).map((item) => ({
-          id: item.id,
-          title: item.title,
-          status: item.status,
-        })),
-        handoffs: handoffsForCharacter(agentWorld.scene, characterId),
-      }
-    },
-    [agentWorld.scene, agentIntelligence.index, agentStore.state.events]
+      agentSpatial.scene.nodes.flatMap((node) => {
+        if (node.kind !== "run") return []
+        const state = visualStateForRun({
+          status: node.status,
+          currentActivity: node.activity,
+          hasNamedWork: Boolean(node.primaryWorkItemTitle),
+        })
+        if (!LIVE_ACTIVITY_STATES.has(state)) return []
+        return [
+          {
+            id: node.id,
+            provider: node.provider,
+            agentName: node.label,
+            state,
+            activity: node.activity,
+            progress: node.workProgress,
+          },
+        ]
+      }),
+    [agentSpatial.scene.nodes]
   )
 
   const agentInspection = useMemo(
@@ -518,12 +454,6 @@ export function GraphView({
   const workspaceAgentRunCount = useMemo(
     () => agentStore.state.runs.filter((run) => run.workspaceId === store.currentId).length,
     [agentStore.state.runs, store.currentId]
-  )
-
-  /** What the world is called when the user has not named it themselves. */
-  const currentWorkspaceName = useMemo(
-    () => store.workspaces.find((workspace) => workspace.id === store.currentId)?.name ?? null,
-    [store.workspaces, store.currentId]
   )
 
   /**
@@ -1136,51 +1066,6 @@ export function GraphView({
       )}
       {!emptyState && <GraphControls onZoomIn={() => canvasHandleRef.current?.zoomBy(1.3)} onZoomOut={() => canvasHandleRef.current?.zoomBy(1 / 1.3)} onFit={handleFit} />}
 
-      {/*
-        The world, as a panel over the canvas rather than a route of its own.
-        Deliberately not a full-screen view: the point of watching agents work
-        is to watch them work *on the workspace you are looking at*, and
-        sending someone to a separate screen to do it would break the
-        connection the feature exists to draw.
-
-        Mounted only while open, so a closed world costs nothing — no elements,
-        no animations, no observer. That is also what §34's "must not keep
-        processing when hidden" amounts to here: there is nothing to keep
-        processing, because there is nothing mounted.
-      */}
-      {worldOpen && agentWorld.effective.enabled && (
-        // Full width and above the sidebar on a narrow screen, a panel beside
-        // it on a wide one. The z-index is deliberate rather than incidental:
-        // the sidebar also sits at z-10, and someone who has just pressed
-        // "Agent World" on a phone should get the world, not a panel hidden
-        // behind the controls they opened it from.
-        <div className="absolute inset-x-2 bottom-2 z-20 rounded-xl border border-subtle bg-popover/95 p-3 shadow-lg backdrop-blur-sm duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:bottom-4 sm:left-4 sm:w-[32rem]">
-          <AgentWorld
-            scene={agentWorld.scene}
-            settings={agentWorld.effective}
-            worldName={agentWorld.worldName ?? currentWorkspaceName}
-            now={agentWorld.now}
-            selectedId={agentWorld.selectedId}
-            onSelect={agentWorld.select}
-            details={worldDetail}
-            // Wider than it is tall, unlike the dedicated view's. This panel
-            // sits over a canvas someone is reading, so it takes a strip
-            // rather than the screen; the camera is what gets them a closer
-            // look without the panel growing to provide one.
-            stageClassName="aspect-[4/3] sm:aspect-[10/7]"
-            actions={
-              <button
-                type="button"
-                onClick={() => setWorldOpen(false)}
-                className="shrink-0 rounded-md border border-subtle px-2 py-0.5 text-meta text-muted-foreground transition-colors duration-(--duration-fast) hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              >
-                Close
-              </button>
-            }
-          />
-        </div>
-      )}
-
       <GraphSidebar
         open={graphState.settings.sidebarOpen}
         onToggle={() => updateSettings({ sidebarOpen: !graphState.settings.sidebarOpen })}
@@ -1222,10 +1107,6 @@ export function GraphView({
             onSelectRun={(runId) => agentSpatial.select(`run:${runId}`)}
             activity={agentActivity}
             selectedActivityId={agentSpatial.selectedId}
-            // The entry point exists only when the user has the world turned
-            // on. A button that opened a feature someone had disabled would be
-            // a setting the product did not honour.
-            onOpenWorld={agentWorld.effective.enabled ? () => setWorldOpen(true) : undefined}
           />
         }
         selectedNode={selectedNode}

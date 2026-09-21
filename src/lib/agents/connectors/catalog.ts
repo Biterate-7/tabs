@@ -1,3 +1,5 @@
+import { createClaudeCodeControlSeam } from "@/lib/agents/control/providers/claude-code/seam";
+import { createCodexControlAdapter } from "@/lib/agents/control/providers/codex";
 import { createClaudeCodeConnector, CLAUDE_CODE_DESCRIPTOR } from "./providers/claude-code";
 import { createDeclaredConnector } from "./providers/declared";
 import { NO_CAPABILITIES } from "./types";
@@ -31,6 +33,21 @@ import type { ProviderDescriptor } from "./types";
  * `createDeclaredConnector` for a real connector and its descriptor gains the
  * capabilities that were verified — a change confined to this file and the
  * new provider's own.
+ *
+ * ## The control plane
+ *
+ * A registration may also carry `createControl`. Observation and control are
+ * separate adapters with separate capabilities, so a provider can be fully
+ * observable and entirely undrivable — which is exactly what Claude Code is
+ * today, and the reason the two are declared apart rather than inferred from
+ * each other.
+ *
+ * Claude Code and Codex have control seams registered; both are
+ * `createUnimplementedControlAdapter`, declare no capabilities, and refuse
+ * every operation. Gemini, Grok and Custom have no control registration at
+ * all, which reads as "not drivable" everywhere without a stub having to say
+ * so. Registering a seam is a statement that the next phase will implement
+ * it, not that anything works now.
  */
 
 const CODEX_DESCRIPTOR: ProviderDescriptor = {
@@ -95,6 +112,7 @@ export function defaultConnectorCatalog(options: CatalogOptions = {}): Connector
     {
       descriptor: CLAUDE_CODE_DESCRIPTOR,
       create: () => createClaudeCodeConnector(options.claudeCode),
+      createControl: createClaudeCodeControlSeam,
     },
     {
       descriptor: CODEX_DESCRIPTOR,
@@ -103,6 +121,7 @@ export function defaultConnectorCatalog(options: CatalogOptions = {}): Connector
           descriptor: CODEX_DESCRIPTOR,
           unavailableDetail: CODEX_DESCRIPTOR.requirement!,
         }),
+      createControl: createCodexControlAdapter,
     },
     {
       descriptor: GEMINI_DESCRIPTOR,

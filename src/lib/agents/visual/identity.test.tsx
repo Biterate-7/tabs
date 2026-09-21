@@ -57,11 +57,14 @@ describe("the shipped catalogue", () => {
     expect(agentVisualIdentity("gemini").displayName).toBe(GEMINI_DESCRIPTOR.displayName);
   });
 
-  it("gives every identity a character the world can draw", () => {
+  it("gives every identity a mark and an accent", () => {
+    // What an identity owes the UI, now that the character layer is gone:
+    // something to draw and a colour to draw it in. Both are required rather
+    // than optional, so a provider added without one fails here instead of
+    // rendering an invisible gap in a dense list.
     for (const identity of defaultAgentVisualCatalog()) {
-      expect(identity.character).toBeDefined();
-      expect(identity.character!.scale).toBeGreaterThanOrEqual(0.8);
-      expect(identity.character!.scale).toBeLessThanOrEqual(1.2);
+      expect(typeof identity.icon).toBe("function");
+      expect(identity.accentColor).toBeTruthy();
     }
   });
 
@@ -97,7 +100,7 @@ describe("looking an identity up", () => {
     clearAgentVisualIdentities();
     const identity = getAgentVisualIdentity("claude-code");
     expect(identity.icon).toBe(FALLBACK_VISUAL_IDENTITY.icon);
-    expect(identity.character).toBeDefined();
+    expect(identity.accentColor).toBe(FALLBACK_VISUAL_IDENTITY.accentColor);
   });
 });
 
@@ -183,11 +186,16 @@ describe("the marks themselves", () => {
     }
   });
 
-  it("gives each mark one movable element for the animation to drive", () => {
+  it("draws a mark that holds no animation of its own", () => {
+    // Marks are static. They once carried a `data-agent-orbit` element for
+    // the stylesheet to spin; nothing animates them now, and an attribute
+    // no rule reads is exactly the dead hook this removal was meant to
+    // avoid leaving behind.
     for (const identity of defaultAgentVisualCatalog()) {
       const Mark = identity.icon;
       const { container, unmount } = render(<Mark size={24} />);
-      expect(container.querySelectorAll("[data-agent-orbit]").length).toBeGreaterThan(0);
+      expect(container.querySelectorAll("[data-agent-orbit]")).toHaveLength(0);
+      expect(container.querySelector("svg")?.querySelector("animate")).toBeFalsy();
       unmount();
     }
   });

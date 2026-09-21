@@ -31,10 +31,10 @@ import type { AgentMarkProps } from "./types";
  *     survives being rasterised at 14px on a 1× display;
  *   - is decorative unless given a `title`, because the mark almost always
  *     sits beside the name it would otherwise repeat;
- *   - marks its one movable element `data-agent-orbit`, which the CSS in
- *     globals.css animates according to the state on an ancestor. The mark
- *     itself holds no animation and no state — that is what keeps adding a
- *     provider a drawing problem rather than a state-machine problem.
+ *   - holds no animation and no state. Marks used to carry a
+ *     `data-agent-orbit` element that globals.css spun according to the
+ *     state on an ancestor; the marks are static now, and adding a provider
+ *     stayed a drawing problem rather than becoming a state-machine one.
  */
 
 /** Shared wrapper: sizing, colour inheritance, and the accessible-vs-decorative decision. */
@@ -77,7 +77,7 @@ export function GenericAgentMark(props: AgentMarkProps): React.ReactElement {
   return (
     <Mark {...props}>
       <rect x={4} y={5} width={16} height={14} rx={4} />
-      <circle cx={12} cy={12} r={2.4} fill="currentColor" stroke="none" data-agent-orbit />
+      <circle cx={12} cy={12} r={2.4} fill="currentColor" stroke="none" />
     </Mark>
   );
 }
@@ -95,7 +95,7 @@ export function ClaudeCodeMark(props: AgentMarkProps): React.ReactElement {
       {/* An arc rather than a circle: deliberately open at the right. */}
       <path d="M17.4 6.2a8 8 0 1 0 2.4 7.3" />
       <path d="M8.6 9.2 11.8 12l-3.2 2.8" />
-      <circle cx={19.4} cy={5.6} r={1.9} fill="currentColor" stroke="none" data-agent-orbit />
+      <circle cx={19.4} cy={5.6} r={1.9} fill="currentColor" stroke="none" />
     </Mark>
   );
 }
@@ -111,7 +111,7 @@ export function CodexMark(props: AgentMarkProps): React.ReactElement {
   return (
     <Mark {...props}>
       <path d="M12 3.2 19.6 7.6v8.8L12 20.8 4.4 16.4V7.6Z" />
-      <path d="M12 8.4 15.8 10.6v4.4L12 17.2 8.2 15V10.6Z" data-agent-orbit />
+      <path d="M12 8.4 15.8 10.6v4.4L12 17.2 8.2 15V10.6Z" />
     </Mark>
   );
 }
@@ -127,7 +127,7 @@ export function GeminiMark(props: AgentMarkProps): React.ReactElement {
   return (
     <Mark {...props}>
       <path d="M9 3.6 14.4 12 9 20.4 3.6 12Z" />
-      <path d="M15.6 7.2 20.4 12l-4.8 4.8L10.8 12Z" data-agent-orbit />
+      <path d="M15.6 7.2 20.4 12l-4.8 4.8L10.8 12Z" />
     </Mark>
   );
 }
@@ -144,7 +144,7 @@ export function GrokMark(props: AgentMarkProps): React.ReactElement {
     <Mark {...props}>
       <path d="M4.6 16.4 10.4 9.2l4 4.6 4.8-6" />
       <path d="M4.6 20.4h14.6" strokeWidth={1.5} />
-      <circle cx={19.2} cy={7.8} r={1.8} fill="currentColor" stroke="none" data-agent-orbit />
+      <circle cx={19.2} cy={7.8} r={1.8} fill="currentColor" stroke="none" />
     </Mark>
   );
 }
@@ -161,7 +161,7 @@ export function CustomAgentMark(props: AgentMarkProps): React.ReactElement {
   return (
     <Mark {...props}>
       <circle cx={12} cy={12} r={8.2} strokeDasharray="3 3" />
-      <path d="M12 8.6v6.8M8.6 12h6.8" data-agent-orbit />
+      <path d="M12 8.6v6.8M8.6 12h6.8" />
     </Mark>
   );
 }

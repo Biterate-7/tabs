@@ -55,16 +55,16 @@ export type SessionWorkItemEvidence = {
 /**
  * One run, as a durable record.
  *
- * ## What makes this different from the world
+ * ## What makes this different from the live canvas
  *
- * The Agent World is a presentation surface and answers "who is working
- * now?". It is allowed to use a recency window, to draw only some runs, and
- * to let a figure leave the room. This answers "what did this run do?", and
- * nothing in it may depend on any of that: no recency window is consulted
- * anywhere in its construction, no spatial placement is read, and whether
- * the run is live changes only the value of `status`.
+ * The canvas is a presentation surface and answers "who is working now?".
+ * It is allowed to use a recency window and to draw only some runs. This
+ * answers "what did this run do?", and nothing in it may depend on any of
+ * that: no recency window is consulted anywhere in its construction, no
+ * spatial placement is read, and whether the run is live changes only the
+ * value of `status`.
  *
- * A run outside the world's six-hour window resolves here exactly as a live
+ * A run outside the canvas's six-hour window resolves here exactly as a live
  * one does, which is the whole reason the type exists.
  *
  * ## The task/run separation

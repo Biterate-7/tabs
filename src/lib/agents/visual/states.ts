@@ -119,8 +119,16 @@ export function visualStateForRun(input: {
   /**
    * Whether this run is part of an observed handoff right now.
    *
-   * Supplied by the caller from a real relationship (see
-   * world/handoffs.ts) — this module never guesses at one.
+   * Supplied by the caller from a real relationship — this module never
+   * guesses at one.
+   *
+   * **No shipped caller supplies it today**, so `communicating` is currently
+   * unreachable from a run. Its only supplier was the Agent World's handoff
+   * derivation, which went with the world. The parameter is kept rather than
+   * removed because a provider adapter can genuinely observe one — a Claude
+   * Code session dispatching to a subagent is exactly this — and it must
+   * arrive as an observed fact, not as something inferred here from two runs
+   * that happen to overlap.
    */
   isHandingOff?: boolean;
 }): AgentVisualState {

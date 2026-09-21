@@ -1,33 +1,34 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { buildAgentDomainIndex } from "@/lib/agents/intelligence/domain-index";
 import { createAgent } from "@/lib/agents/registry";
 import { createRun } from "@/lib/agents/runs";
+import { buildAgentSpatialScene } from "@/lib/agents/spatial/scene";
 import { emptyAgentState } from "@/lib/agents/types";
 import { resetAgentVisualIdentitySeeding } from "@/lib/agents/visual/app-identities";
 import {
   clearAgentVisualIdentities,
   registerAgentVisualIdentity,
 } from "@/lib/agents/visual/registry";
-import { buildWorldScene } from "@/lib/agents/world/scene";
-import { DEFAULT_AGENT_WORLD_SETTINGS } from "@/lib/agents/world/settings";
-import { AgentWorld } from "./agent-world";
 import { AgentActivityList } from "./agent-activity-list";
 import { AgentIdentity } from "./agent-identity";
+import type { AgentState } from "@/lib/agents/types";
 import type { AgentVisualIdentity } from "@/lib/agents/visual/types";
 
 /**
  * Adding a provider, end to end.
  *
- * Brief §23 asks that a new connector require metadata, a mark, an identity,
- * an optional character and animation definitions — and that it require
- * **no** change to the Agent World, the activity feed, the execution UI, the
- * workflow UI, the agent cards or the settings UI.
+ * The architecture's central claim is that a new agent provider requires
+ * metadata, a mark and an identity — and **no** change to the activity feed,
+ * the agent cards, the spatial scene or the settings UI. This test is that
+ * claim, executed: it registers a provider that exists in no catalogue, puts
+ * a run against it through the real scene builder, and renders it through the
+ * real components. Nothing below imports a provider-specific module, and no
+ * component was modified to make it pass.
  *
- * This test is that claim, executed. It registers a provider that does not
- * exist in any catalogue, puts a run against it through the real scene
- * builder, and renders it through the real components. Nothing below imports
- * a provider-specific module, and no component was modified to make it pass.
+ * It was previously written against the Agent World, which is gone. What it
+ * asserts is unchanged — only the surfaces are, which is itself the point: a
+ * surface being deleted did not cost the product its extensibility guarantee,
+ * because the guarantee never lived in that surface.
  */
 
 const T0 = 1_700_000_000_000;
@@ -42,14 +43,10 @@ const NEW_IDENTITY: AgentVisualIdentity = {
   icon: ({ size, title }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" role={title ? "img" : undefined}>
       {title ? <title>{title}</title> : null}
-      <path d="M4 20 12 4l8 16Z" data-agent-orbit />
+      <path d="M4 20 12 4l8 16Z" />
     </svg>
   ),
   accentColor: "#ff8800",
-  animations: {
-    working: { keyframes: "agent-work-climb", durationMs: 1700, iterations: "infinite" },
-  },
-  character: { silhouette: "chevron", scale: 1.1, accessory: "spark" },
 };
 
 afterEach(() => {
@@ -61,7 +58,7 @@ function register(): void {
   registerAgentVisualIdentity({ ...NEW_IDENTITY, id: NEW_PROVIDER as AgentVisualIdentity["id"] });
 }
 
-function stateWithNewProviderRun() {
+function stateWithNewProviderRun(): AgentState {
   const agent = createAgent(emptyAgentState(), { provider: NEW_PROVIDER, name: "Acme Agent" }, T0);
   if (!agent.ok) throw new Error("fixture failed");
   const run = createRun(
@@ -71,6 +68,17 @@ function stateWithNewProviderRun() {
   );
   if (!run.ok) throw new Error("fixture failed");
   return run.state;
+}
+
+function sceneFor(state: AgentState) {
+  return buildAgentSpatialScene(state, {
+    agents: state.agents,
+    runs: state.runs,
+    artifacts: state.artifacts,
+    workspaceId: "wA",
+    filter: "all",
+    now: T0 + 1000,
+  });
 }
 
 describe("a provider this build has never shipped", () => {
@@ -102,69 +110,35 @@ describe("a provider this build has never shipped", () => {
     ).not.toBeNull();
   });
 
-  it("gets a character in the world, placed and labelled like any other", () => {
+  it("gets a node in the spatial scene, carrying its own provider key", () => {
     register();
-    const scene = buildWorldScene({
-      index: buildAgentDomainIndex(stateWithNewProviderRun()),
-      workspaceId: "wA",
-      settings: DEFAULT_AGENT_WORLD_SETTINGS,
-      now: T0 + 1000,
-    });
+    const scene = sceneFor(stateWithNewProviderRun());
 
-    expect(scene.characters).toHaveLength(1);
-    // Its identity's silhouette reached the scene without the world knowing
-    // who the provider is.
-    expect(scene.characters[0].character.silhouette).toBe("chevron");
-
-    render(
-      <AgentWorld
-        scene={scene}
-        settings={DEFAULT_AGENT_WORLD_SETTINGS}
-        now={T0 + 1000}
-        selectedId={null}
-        onSelect={() => {}}
-      />
-    );
-
-    expect(screen.getByRole("button", { name: /Acme Agent/ })).toBeTruthy();
-  });
-
-  it("uses the animation its identity declared", () => {
-    register();
-    const { container } = render(
-      <AgentActivityList
-        items={[
-          { id: "run:1", provider: NEW_PROVIDER, agentName: "Acme Agent", state: "working" },
-        ]}
-      />
-    );
-
-    const mark = container.querySelector<HTMLElement>(".agent-mark");
-    expect(mark?.style.animationName).toBe("agent-work-climb");
+    const runNodes = scene.nodes.filter((node) => node.kind === "run");
+    expect(runNodes).toHaveLength(1);
+    // The provider reached the scene without the scene builder knowing who it
+    // is — it is copied off the agent, never matched against a known set.
+    expect(runNodes[0]).toMatchObject({ provider: NEW_PROVIDER, label: "Investigate flake" });
   });
 
   it("still works with no identity registered at all", () => {
     // The unregistered case is the one that has to keep the product running:
     // a provider observed by a build that knew it, opened in one that does
     // not, is ordinary state — not an error.
-    const scene = buildWorldScene({
-      index: buildAgentDomainIndex(stateWithNewProviderRun()),
-      workspaceId: "wA",
-      settings: DEFAULT_AGENT_WORLD_SETTINGS,
-      now: T0 + 1000,
-    });
+    const scene = sceneFor(stateWithNewProviderRun());
+    const runNode = scene.nodes.find((node) => node.kind === "run");
+    expect(runNode).toBeDefined();
 
-    render(
-      <AgentWorld
-        scene={scene}
-        settings={DEFAULT_AGENT_WORLD_SETTINGS}
-        now={T0 + 1000}
-        selectedId={null}
-        onSelect={() => {}}
+    const { container } = render(
+      <AgentActivityList
+        items={[
+          { id: runNode!.id, provider: NEW_PROVIDER, agentName: "Acme Agent", state: "working" },
+        ]}
       />
     );
 
     // Named from the domain's own record, drawn with the fallback mark.
-    expect(screen.getByRole("button", { name: /Acme Agent/ })).toBeTruthy();
+    expect(screen.getByText("Acme Agent")).toBeTruthy();
+    expect(container.querySelector(".agent-mark")).not.toBeNull();
   });
 });

@@ -17,18 +17,18 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
 /**
  * Agent History: the durable way back to a session.
  *
- * ## Why this is not the Agent World
+ * ## Why this is not the live canvas
  *
- * The world answers "who is working now?" and is allowed to forget: it draws
- * live runs and ones that finished inside the last six hours, because a room
- * showing last week is not showing a room. This answers "what happened?",
- * and it reads `buildAgentHistory`, which never consults that window. A run
- * that has aged out of the canvas is an ordinary row here.
+ * The canvas answers "who is working now?" and is allowed to forget: it
+ * draws live runs and ones that finished inside the last six hours. This
+ * answers "what happened?", and it reads `buildAgentHistory`, which never
+ * consults that window. A run that has aged out of the canvas is an ordinary
+ * row here.
  *
  * That is the entire reason the surface exists, so it is worth being precise
  * about what was *not* done to achieve it: `RECENT_RUN_WINDOW_MS` is
  * unchanged, the canvas still shows only current work, and nothing in this
- * file imports the spatial or world layers.
+ * file imports the spatial layer.
  *
  * ## Read-only
  *
@@ -345,9 +345,9 @@ export type AgentHistoryViewProps = {
 /**
  * The container.
  *
- * Mirrors `AgentWorldView`'s shape: read the domain the shell mounted, build
- * the index once, own nothing that writes back. Unlike that view it is not
- * scoped to the current workspace - history spans all of them, which is the
+ * Reads the domain the shell mounted, builds the index once, and owns
+ * nothing that writes back. Unlike the live surfaces it is not scoped to the
+ * current workspace - history spans all of them, which is the
  * point, and the workspace filter is how a user narrows it by choice rather
  * than by where they happen to be standing.
  */

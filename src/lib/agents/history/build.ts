@@ -5,12 +5,12 @@ import type { AgentHistoryEntry, AgentHistoryFilter, AgentHistoryView } from "./
 /**
  * Agent History: the durable enumeration.
  *
- * ## Why this does not go through the world
+ * ## Why this does not go through the canvas
  *
- * The Agent World draws runs that are live or that finished inside
- * `RECENT_RUN_WINDOW_MS`. That rule is correct for a spatial surface - a
- * room showing last week's work is not showing a room - and this module does
- * not touch it, read it, or import it. History enumerates every retained run
+ * The live canvas draws runs that are live or that finished inside
+ * `RECENT_RUN_WINDOW_MS`. That rule is correct for a surface answering "what
+ * is happening now" - and this module does not touch it, read it, or import
+ * it. History enumerates every retained run
  * the domain still holds, which is why a run can be absent from the canvas
  * and present here at the same time. That divergence is the feature.
  *

@@ -22,7 +22,6 @@ export type SidebarView =
   | "favorites"
   | "recents"
   | "history-dump"
-  | "agent-world"
   | "agent-history"
   | "agent-session"
 
@@ -86,7 +85,6 @@ export function AppSidebar({
   onOpenGraph,
   graphLocked = false,
   graphLockedReason,
-  onOpenAgentWorld,
   onOpenAgentHistory,
   onOpenSettings,
   onOpenWorkspace,
@@ -126,7 +124,6 @@ export function AppSidebar({
    * in settings, and the view itself says so rather than the rail hiding the
    * way to find out.
    */
-  onOpenAgentWorld: () => void
   /**
    * Opens Agent History.
    *
@@ -272,14 +269,6 @@ export function AppSidebar({
           </SidebarSectionLabel>
           <nav aria-label="Agents" className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
             <SidebarItem
-              label="Agent World"
-              icon={<AgentWorldGlyph />}
-              current={activeIs("agent-world")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenAgentWorld}
-            />
-            <SidebarItem
               label="Agent History"
               icon={<ScrollText />}
               current={activeIs("agent-history")}
@@ -375,22 +364,3 @@ export function AppSidebar({
   )
 }
 
-/**
- * The Agent World's own glyph.
- *
- * `Boxes` now marks the Workspace row, and the world needs a symbol that is
- * about presence rather than storage: three figures sharing one ground.
- * Drawn here rather than taken from the icon set because nothing in lucide
- * says "agents at work in a place", and a wrong-but-available glyph is what
- * produced the two-identical-clocks problem this rail just fixed.
- */
-function AgentWorldGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden focusable="false">
-      <ellipse cx="8" cy="12.25" rx="6.25" ry="2.25" stroke="currentColor" strokeWidth="1.2" opacity="0.45" />
-      <circle cx="4.9" cy="6.4" r="1.5" fill="currentColor" />
-      <circle cx="11.1" cy="6.4" r="1.5" fill="currentColor" opacity="0.55" />
-      <circle cx="8" cy="3.3" r="1.5" fill="currentColor" opacity="0.8" />
-    </svg>
-  )
-}

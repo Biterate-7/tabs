@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTestConnector } from "./__fixtures__/test-connector";
+import { createUnimplementedControlAdapter } from "@/lib/agents/control/unimplemented";
 import { createConnectorRegistry } from "./registry";
 import { NO_CAPABILITIES } from "./types";
 import type { ConnectorRegistration } from "./registry";
@@ -131,5 +132,95 @@ describe("disposal", () => {
 
     expect(registry.has("gemini")).toBe(true);
     expect(registry.get("gemini")).toBeDefined();
+  });
+});
+
+describe("the control plane, held in the same registry", () => {
+  function controlAdapter(provider: AgentProviderId = "claude-code") {
+    return createUnimplementedControlAdapter({ provider, detail: "test" });
+  }
+
+  it("reports no control adapter for a provider that declares none", () => {
+    // Observable and not drivable is the ordinary state, not an error.
+    const registry = createConnectorRegistry();
+    registry.register(registration("gemini"));
+
+    expect(registry.hasControl("gemini")).toBe(false);
+    expect(registry.control("gemini")).toBeUndefined();
+  });
+
+  it("builds a control adapter only for a provider that declares one", () => {
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code"), createControl: () => controlAdapter() });
+
+    expect(registry.hasControl("claude-code")).toBe(true);
+    expect(registry.control("claude-code")?.provider).toBe("claude-code");
+  });
+
+  it("never constructs a control adapter for an unregistered provider", () => {
+    const registry = createConnectorRegistry();
+    expect(registry.control("grok")).toBeUndefined();
+    expect(registry.hasControl("grok")).toBe(false);
+  });
+
+  it("memoises, so every caller shares one adapter", () => {
+    const createControl = vi.fn(() => controlAdapter());
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code"), createControl });
+
+    const first = registry.control("claude-code");
+    const second = registry.control("claude-code");
+
+    expect(first).toBe(second);
+    expect(createControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not build the control adapter when only the connector is asked for", () => {
+    // The property that matters: a surface that only watches never
+    // instantiates the plane that could act.
+    const createControl = vi.fn(() => controlAdapter());
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code"), createControl });
+
+    registry.get("claude-code");
+
+    expect(createControl).not.toHaveBeenCalled();
+    expect(registry.instantiatedControl()).toEqual([]);
+  });
+
+  it("does not build the connector when only control is asked for", () => {
+    const create = vi.fn(() => createTestConnector({ provider: "claude-code" }));
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code", create), createControl: () => controlAdapter() });
+
+    registry.control("claude-code");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(registry.instantiated()).toEqual([]);
+  });
+
+  it("hasControl constructs nothing", () => {
+    const createControl = vi.fn(() => controlAdapter());
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code"), createControl });
+
+    registry.hasControl("claude-code");
+
+    expect(createControl).not.toHaveBeenCalled();
+  });
+
+  it("disposes both planes and forgets them", () => {
+    const adapter = controlAdapter();
+    const dispose = vi.spyOn(adapter, "dispose");
+    const registry = createConnectorRegistry();
+    registry.register({ ...registration("claude-code"), createControl: () => adapter });
+
+    registry.control("claude-code");
+    registry.disposeAll();
+
+    expect(dispose).toHaveBeenCalled();
+    expect(registry.instantiatedControl()).toEqual([]);
+    // The registration survives, so it can be built again.
+    expect(registry.hasControl("claude-code")).toBe(true);
   });
 });

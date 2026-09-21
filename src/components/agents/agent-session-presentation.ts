@@ -1,4 +1,3 @@
-import { formatElapsed } from "./agent-world-detail"
 import type { AgentRunArtifactRole, AgentRunStatus, AgentWorkItemStatus } from "@/lib/agents/types"
 
 /**
@@ -19,6 +18,25 @@ import type { AgentRunArtifactRole, AgentRunStatus, AgentWorkItemStatus } from "
  * waiting on something" in the other. See the domain notes on
  * TERMINAL_AGENT_RUN_STATUSES.
  */
+/**
+ * A duration, in the coarsest unit that still says something useful.
+ *
+ * Returns null rather than a string for a nonsensical input (negative, NaN,
+ * infinite), so a caller renders nothing instead of "NaN min". It moved here
+ * when the Agent World was removed: it was always presentation vocabulary
+ * rather than world geometry, and History and the Session View were already
+ * its only consumers.
+ */
+export function formatElapsed(ms: number): string | null {
+  if (!Number.isFinite(ms) || ms < 0) return null
+  const minutes = Math.floor(ms / 60000)
+  if (minutes < 1) return "under a minute"
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hr ${minutes % 60} min`
+  return `${Math.floor(hours / 24)} days`
+}
+
 export const RUN_STATUS_WORDS: Record<AgentRunStatus, string> = {
   working: "Working",
   waiting: "Waiting",

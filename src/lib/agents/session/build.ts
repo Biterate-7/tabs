@@ -60,7 +60,7 @@ function createArtifactKeys() {
  * `getAgentRunSummary` and `getAgentRunImpact` already answer "what does this
  * run amount to" and "what is it connected to". Re-deriving either here
  * would create a second answer free to disagree with the one the graph panel
- * and the world already show, so both are called rather than reimplemented.
+ * already shows, so both are called rather than reimplemented.
  * This function's own contribution is the task-level layer they do not have.
  *
  * ## No clock

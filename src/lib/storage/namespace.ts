@@ -20,7 +20,7 @@
  * where they left it.
  */
 
-const NAMESPACE_PREFIX = "tabdump:u:";
+export const NAMESPACE_PREFIX = "tabdump:u:";
 const BASE_PREFIX = "tabdump:";
 
 /**
@@ -60,13 +60,30 @@ export const SCOPED_STORAGE_KEYS = [
   // because one account must never inherit another's observation settings.
   // It holds intent only: no credential is written here, or anywhere else.
   "tabdump:connectors:v1",
-  // How the user has set up their Agent World — theme, density, motion,
-  // effects, and a per-workspace theme map (see
-  // src/lib/agents/world/persistence.ts). Scoped rather than global because
-  // it is keyed by workspace id, and one account's workspaces are not
-  // another's. Preferences only: no run, no activity, no content.
-  "tabdump:agent-world:v1",
+  // The control plane's sessions and authorized local projects (see
+  // src/lib/agents/control/persistence.ts). Scoped for the strongest reason
+  // any key here is: a project record names a directory on this machine that
+  // one account has authorized an agent to touch, and another account signed
+  // into the same browser must never inherit that authorization.
+  "tabdump:agent-sessions:v1",
+  "tabdump:agent-projects:v1",
 ] as const;
+
+/**
+ * Keys this app once wrote and no longer does.
+ *
+ * Listed rather than forgotten so that removing a feature actually removes
+ * its storage: `tabdump:agent-world:v1` held the Agent World's theme,
+ * density and motion preferences, and the world is gone. Leaving the key
+ * behind would strand a few kilobytes in every existing user's localStorage
+ * — under both the global and the per-account prefix — with nothing left in
+ * the app that could ever read or clear it.
+ *
+ * Entries here are swept on load (see ./retired.ts). A key may only be added
+ * once nothing writes it, because the sweep does not distinguish "retired"
+ * from "written a moment ago".
+ */
+export const RETIRED_STORAGE_KEYS = ["tabdump:agent-world:v1"] as const;
 
 /**
  * Module-level rather than React state because the persistence modules that

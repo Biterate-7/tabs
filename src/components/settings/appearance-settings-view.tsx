@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot, Boxes } from "lucide-react"
+import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,12 +26,10 @@ import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
 import { ConnectorsSection } from "./sections/connectors-section"
-import { AgentWorldSection } from "./sections/agent-world-section"
 
 export type SettingsSection =
   | "general"
   | "connectors"
-  | "agent-world"
   | "theme"
   | "typography"
   | "background"
@@ -61,7 +59,6 @@ const APPEARANCE_SECTIONS: readonly SettingsSection[] = [
 const NAV: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "connectors", label: "AI connectors", icon: Bot },
-  { id: "agent-world", label: "Agent World", icon: Boxes },
   { id: "theme", label: "Theme", icon: Palette },
   { id: "typography", label: "Typography", icon: Type },
   { id: "background", label: "Background", icon: Image },
@@ -80,32 +77,18 @@ const NAV: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
  */
 export function AppearanceSettingsView({
   onClose,
-  workspaceId,
-  workspaceName,
   initialSection,
 }: {
   onClose: () => void
   /**
    * Which section to open on.
    *
-   * Exists so another surface can send someone straight to the settings they
-   * came for — the Agent World's header does exactly that for "AI connectors"
-   * and "Agent World settings", and a deep link that landed on Theme and left
-   * them to find the right row would not be the one-click promise those
-   * controls make. It is an initial value, not a controlled prop: once here,
-   * the nav is the user's.
+   * Exists so another surface can send someone straight to the settings
+   * they came for, rather than landing them on Theme and leaving them to
+   * find the right row. It is an initial value, not a controlled prop: once
+   * here, the nav is the user's.
    */
   initialSection?: SettingsSection
-  /**
-   * The workspace Settings was opened over, when there is one.
-   *
-   * Only the Agent World section uses it, for the per-workspace environment
-   * and world name. Passing it down rather than reading a store here keeps
-   * this view free of workspace state, which is the reason it has stayed a
-   * simple layout component through eight sections.
-   */
-  workspaceId?: string
-  workspaceName?: string
 }) {
   const { resetAllAppearance } = useAppearanceContext()
   const [active, setActive] = useState<SettingsSection>(initialSection ?? "theme")
@@ -190,9 +173,6 @@ export function AppearanceSettingsView({
           <div className="mx-auto w-full max-w-3xl">
             {active === "general" && <GeneralSection />}
             {active === "connectors" && <ConnectorsSection />}
-            {active === "agent-world" && (
-              <AgentWorldSection workspaceId={workspaceId} workspaceName={workspaceName} />
-            )}
             {active === "theme" && <ThemeSection />}
             {active === "typography" && <TypographySection />}
             {active === "background" && <BackgroundSection />}

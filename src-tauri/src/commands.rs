@@ -12,6 +12,45 @@
 //!   interacted with, so the only file this app can write is one the user
 //!   picked by hand. The `fs` plugin is likewise not enabled, so there is no
 //!   general filesystem access to scope or leak.
+//!
+//! # Agent control (not implemented)
+//!
+//! The command centre will eventually run agents locally, and the desktop
+//! shell is the one runtime that is local *by construction* — see
+//! `src/lib/agents/control/runtime.ts` for why no browser-visible signal is
+//! trusted to establish that on the web.
+//!
+//! Nothing for it is implemented here yet, and no capability has been
+//! granted: `capabilities/default.json` is still `core:default` alone. What
+//! is settled is the *shape*, which follows the same rule as the two
+//! commands above — the frontend must not be able to express a dangerous
+//! request in the first place:
+//!
+//! ```text
+//! agent_runtime_status()                     -> may this shell run agents
+//! agent_create_session(provider, project_id) -> a project ID, never a path
+//! agent_send_message(session_id, text, ctx)
+//! agent_cancel_run(session_id)
+//! agent_approve(approval_id) / agent_deny(approval_id)
+//! agent_project_scope(project_id)            -> what Rust will enforce
+//! ```
+//!
+//! Four rules carried over from the commands above, and the reason each one
+//! exists rather than the obvious alternative:
+//!
+//! * **No `shell(command)` and no `execute(argv)`.** The frontend names an
+//!   *operation*; it never composes a command line. An `execute` taking argv
+//!   would make every other check here decorative.
+//! * **The frontend never supplies a filesystem path.** It supplies a project
+//!   id. Rust holds the registered root and resolves against it, so a
+//!   compromised or buggy webview cannot name a directory the user never
+//!   authorized.
+//! * **Rust revalidates containment itself.** The TypeScript check in
+//!   `control/projects.ts` is a convenience for showing a good message; it is
+//!   not a boundary, because it runs where an attacker would already be.
+//! * **The agent binary is allowlisted, not chosen by the caller.**
+//!
+//! See docs/agent-control-architecture.md.
 
 use tauri::Url;
 use tauri_plugin_dialog::DialogExt;

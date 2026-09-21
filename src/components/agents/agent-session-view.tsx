@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { Boxes, ChevronLeft, Link2 } from "lucide-react"
+import { ChevronLeft, Link2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
@@ -342,7 +342,6 @@ export type AgentSessionScreenProps = {
   onSelectWorkItem: (workItemId: string | null) => void
   onOpenTab?: (tabId: string) => void
   /** Takes the user to the spatial world. Optional - the screen works without it. */
-  onOpenWorld?: () => void
   /** Copies the session's address. Absent when the address cannot be formed. */
   onCopyLink?: () => void
   onClose: () => void
@@ -356,7 +355,6 @@ export function AgentSessionScreen({
   selectedWorkItemId,
   onSelectWorkItem,
   onOpenTab,
-  onOpenWorld,
   onCopyLink,
   onClose,
 }: AgentSessionScreenProps) {
@@ -424,18 +422,6 @@ export function AgentSessionScreen({
             >
               <Link2 />
               <span className="hidden sm:inline">Copy link</span>
-            </Button>
-          ) : null}
-          {onOpenWorld ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label="Agent World"
-              onClick={onOpenWorld}
-            >
-              <Boxes />
-              <span className="hidden sm:inline">Agent World</span>
             </Button>
           ) : null}
         </nav>
@@ -627,7 +613,6 @@ export type AgentSessionViewProps = {
   /** Preserved across navigation, so returning to a session keeps its task open. */
   initialWorkItemId?: string
   onOpenTab?: (tabId: string) => void
-  onOpenWorld?: (workspaceId: string) => void
   onClose: () => void
 }
 
@@ -643,7 +628,6 @@ export function AgentSessionView({
   agentStore,
   initialWorkItemId,
   onOpenTab,
-  onOpenWorld,
   onClose,
 }: AgentSessionViewProps) {
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(
@@ -728,7 +712,6 @@ export function AgentSessionView({
       selectedWorkItemId={selectedWorkItemId}
       onSelectWorkItem={setSelectedWorkItemId}
       onOpenTab={onOpenTab}
-      onOpenWorld={onOpenWorld ? () => onOpenWorld(session.workspaceId) : undefined}
       onCopyLink={address ? onCopyLink : undefined}
       onClose={onClose}
     />

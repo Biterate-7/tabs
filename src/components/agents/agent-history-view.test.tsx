@@ -15,8 +15,7 @@ import {
 import { createAgent } from "@/lib/agents/registry";
 import { transitionRunStatus } from "@/lib/agents/runs";
 import { RECENT_RUN_WINDOW_MS } from "@/lib/agents/spatial/types";
-import { buildWorldScene } from "@/lib/agents/world/scene";
-import { DEFAULT_AGENT_WORLD_SETTINGS } from "@/lib/agents/world/settings";
+import { buildAgentSpatialScene } from "@/lib/agents/spatial/scene";
 import { AgentHistoryScreen } from "./agent-history-view";
 import type { AgentHistoryFilter } from "@/lib/agents/history/types";
 import type { AgentState } from "@/lib/agents/types";
@@ -24,10 +23,10 @@ import type { AgentState } from "@/lib/agents/types";
 /**
  * Agent History, as a screen.
  *
- * The suite's first job is the phase's defining claim: an old run that the
- * spatial world will not draw is an ordinary, openable row here. That is
- * asserted against the *real* scene builder rather than against an
- * assumption about what the world does.
+ * The suite's first job is the defining claim: an old run the live canvas
+ * will not draw is an ordinary, openable row here. That is asserted against
+ * the *real* scene builder rather than against an assumption about what the
+ * canvas does.
  */
 
 const LONG_AGO = T0 - RECENT_RUN_WINDOW_MS * 4;
@@ -111,19 +110,21 @@ function renderHistory(filter: AgentHistoryFilter = {}) {
 }
 
 describe("the durable list", () => {
-  it("lists a run the world has stopped drawing, and opens it", async () => {
+  it("lists a run the live canvas has stopped drawing, and opens it", async () => {
     const f = renderHistory();
 
-    // The world, asked about the same state, does not have this run.
-    const scene = buildWorldScene({
-      index: f.index,
+    // The canvas, asked about the same state, does not have this run.
+    const scene = buildAgentSpatialScene(f.state, {
+      agents: f.state.agents,
+      runs: f.state.runs,
+      artifacts: f.state.artifacts,
       workspaceId: "dev",
-      settings: DEFAULT_AGENT_WORLD_SETTINGS,
+      filter: "active",
       now: NOW,
-      tabTitles: new Map(),
-      idleProviders: [],
     });
-    expect(scene.characters.some((character) => character.runId === f.oldRunId)).toBe(false);
+    expect(
+      scene.nodes.some((node) => node.kind === "run" && node.runId === f.oldRunId)
+    ).toBe(false);
 
     // History does, and it is a working entry point.
     const row = screen.getByRole("button", { name: /Fix parser import handling/ });

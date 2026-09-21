@@ -21,10 +21,9 @@ import type { AgentVisualState } from "@/lib/agents/visual/types"
  * waiting run holds still, and a row for a finished one does too, so movement
  * on this list always means work is happening right now.
  *
- * Deliberately independent of the Agent World. Someone who has the world
- * turned off still gets this, because "who is working" is the question the
- * sidebar exists to answer and it should not depend on an optional
- * visualisation.
+ * Deliberately independent of any visualisation. "Who is working" is the
+ * question the sidebar exists to answer, and the answer must not depend on
+ * whichever surface happens to be drawing the runs.
  */
 
 export type AgentActivityItem = {

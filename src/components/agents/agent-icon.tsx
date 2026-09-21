@@ -1,14 +1,11 @@
 "use client"
 
 import { memo } from "react"
-import { useAgentMotion } from "@/hooks/use-agent-motion"
-import { animationStyle } from "@/lib/agents/visual/animation"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { AGENT_ICON_PIXELS } from "@/lib/agents/visual/types"
 import { cn } from "@/lib/utils"
 import { markColor } from "./agent-tone"
-import type { WorldAnimationIntensity } from "@/lib/agents/visual/animation"
 import type { AgentIconSize, AgentVisualState } from "@/lib/agents/visual/types"
 
 /**
@@ -16,23 +13,24 @@ import type { AgentIconSize, AgentVisualState } from "@/lib/agents/visual/types"
  *
  * The primitive the whole feature is built from, and the only component in
  * the product that knows how a provider is drawn. Everything else — the
- * sidebar strip, the activity list, the world, the settings page, the search
- * results — renders this and passes a provider string and a state.
+ * sidebar strip, the activity list, the settings page, the search results —
+ * renders this and passes a provider string and a state.
  *
  *     <AgentIcon connector="claude-code" state="working" size="sm" />
  *
- * Callers never import a mark, never look up an identity, and never decide
- * whether something should animate. That is what makes adding a provider a
- * change to one catalogue entry instead of a sweep through the UI.
+ * Callers never import a mark and never look up an identity. That is what
+ * makes adding a provider a change to one catalogue entry instead of a sweep
+ * through the UI.
  *
  * ## What it guarantees
  *
  * - **It always renders.** An unknown provider gets the fallback identity
  *   (see registry.ts). There is no path here that throws, and none that
  *   returns null.
- * - **It never animates when motion is off.** The policy is resolved once,
- *   through the same hook every agent surface uses, and a policy of `none`
- *   produces an element with no `animation-name` at all.
+ * - **It does not move.** The mark is a static drawing. State is carried by
+ *   tone and by the words beside it, never by motion — which is what the
+ *   command centre wants and what a dense list can afford to repeat a
+ *   hundred times.
  * - **It is never the only carrier of state.** The mark is decorative by
  *   default; a caller that shows the icon *without* an adjacent status word
  *   passes `label`, and the icon then announces both who and what. See
@@ -54,8 +52,6 @@ export type AgentIconProps = {
    * alone.
    */
   label?: string
-  /** The world's animation intensity, when this icon is inside the world. */
-  intensity?: WorldAnimationIntensity
   className?: string
 }
 
@@ -64,12 +60,10 @@ function AgentIconImpl({
   state = "idle",
   size = "sm",
   label,
-  intensity,
   className,
 }: AgentIconProps) {
   const identity = agentVisualIdentity(connector)
   const presentation = AGENT_VISUAL_STATE_PRESENTATION[state]
-  const policy = useAgentMotion(intensity)
   const pixels = AGENT_ICON_PIXELS[size]
 
   // The richer drawing only where there is room for it. An identity without
@@ -78,16 +72,14 @@ function AgentIconImpl({
 
   return (
     <span
-      // Read by the CSS that animates the mark's inner `data-agent-orbit`
-      // element. Keeping the state on an attribute rather than in a class
-      // means one stylesheet rule per state instead of one per state per
-      // provider.
+      // Kept as attributes rather than classes so that a stylesheet or a
+      // test can select on "this provider" or "this state" without the
+      // component having to enumerate the cross-product as class names.
       data-agent-state={state}
       data-agent-provider={connector}
       className={cn("agent-mark inline-flex shrink-0 items-center justify-center", className)}
       style={{
         color: markColor(identity.accentColor, presentation.tone),
-        ...animationStyle(identity, state, policy),
       }}
       {...(label ? {} : { "aria-hidden": true })}
     >
@@ -100,10 +92,10 @@ function AgentIconImpl({
  * Memoised, and it matters.
  *
  * A workspace with twenty live agents renders this several times per agent —
- * once in the strip, once in the activity list, once in the world. The props
- * are all primitives, so the default shallow comparison is exactly right, and
- * a poll that changes one run's status re-renders one icon rather than all
- * sixty.
+ * once in the strip, once in the activity list, once in the session header.
+ * The props are all primitives, so the default shallow comparison is exactly
+ * right, and a poll that changes one run's status re-renders one icon rather
+ * than all sixty.
  */
 export const AgentIcon = memo(AgentIconImpl)
 AgentIcon.displayName = "AgentIcon"

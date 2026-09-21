@@ -5,24 +5,23 @@ import path from "node:path";
 /**
  * The visual layer's structural guards.
  *
- * Phase 18 adds a layer that is *about* providers — it names them, colours
- * them and draws them — sitting above a domain that must never learn one
- * exists. Three rules keep that arrangement from quietly eroding, and all
- * three fail silently if left to review:
+ * This is a layer that is *about* providers — it names them, colours them
+ * and draws them — sitting above a domain that must never learn one exists.
+ * Three rules keep that arrangement from quietly eroding, and all three fail
+ * silently if left to review:
  *
  *   1. **The visual layer cannot act.** It is presentation data. A single
  *      `fetch` or `child_process` here would turn a drawing system into
  *      something with reach.
  *   2. **Only the catalogue knows who the providers are.** That is what makes
- *      adding one a two-file change rather than a sweep through the UI, and
- *      it is the property brief §23 asks for.
- *   3. **It stores nothing.** The visual layer has no state of its own; the
- *      world's preferences live behind their own key in `world/persistence.ts`
- *      and nothing here may write anywhere.
+ *      adding one a two-file change rather than a sweep through the UI.
+ *   3. **It stores nothing.** The visual layer has no state of its own and
+ *      may not write anywhere. It once had a sibling that did — the Agent
+ *      World's preferences — and that layer is gone, so the rule is now
+ *      unconditional rather than carved around one key.
  */
 
 const VISUAL_DIR = path.resolve(__dirname);
-const WORLD_DIR = path.resolve(__dirname, "../world");
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 
 function walk(dir: string): string[] {
@@ -39,13 +38,7 @@ const visualSources = walk(VISUAL_DIR).map((file) => ({
   source: readFileSync(file, "utf8"),
 }));
 
-const worldSources = walk(WORLD_DIR).map((file) => ({
-  file: path.relative(REPO_ROOT, file),
-  name: path.basename(file),
-  source: readFileSync(file, "utf8"),
-}));
-
-const allSources = [...visualSources, ...worldSources];
+const allSources = visualSources;
 
 /** Code lines only — prose legitimately discusses what is *not* done. */
 function codeOf(source: string): string {
@@ -55,16 +48,15 @@ function codeOf(source: string): string {
     .join("\n");
 }
 
-describe("the visual and world layers cannot act on anything", () => {
+describe("the visual layer cannot act on anything", () => {
   it("finds the files it is supposed to be checking", () => {
     // Guards against the walker silently matching nothing and the whole suite
     // passing vacuously.
-    expect(visualSources.length).toBeGreaterThanOrEqual(6);
-    expect(worldSources.length).toBeGreaterThanOrEqual(6);
+    expect(visualSources.length).toBeGreaterThanOrEqual(5);
     const names = allSources.map((entry) => entry.name);
     expect(names).toContain("catalog.ts");
     expect(names).toContain("registry.ts");
-    expect(names).toContain("scene.ts");
+    expect(names).toContain("states.ts");
   });
 
   it("imports no process, shell, filesystem or network module", () => {
@@ -192,28 +184,26 @@ describe("the visual layer stores nothing", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("confines the world layer to its own key", () => {
-    const keys = new Set<string>();
-    for (const { source } of worldSources) {
-      for (const match of source.matchAll(/["'](tabdump:[^"']+)["']/g)) keys.add(match[1]);
+  it("names no storage key at all", () => {
+    const offenders: string[] = [];
+    for (const { file, source } of visualSources) {
+      for (const match of codeOf(source).matchAll(/["'](tabdump:[^"']+)["']/g)) {
+        offenders.push(`${file}: ${match[1]}`);
+      }
     }
 
-    expect([...keys]).toEqual(["tabdump:agent-world:v1"]);
+    expect(offenders).toEqual([]);
   });
 
-  it("registers that key as account-scoped", async () => {
-    // One account's world configuration must be invisible to another signed
-    // into the same browser, exactly as their workspaces already are.
-    const { SCOPED_STORAGE_KEYS } = await import("@/lib/storage/namespace");
-    expect(SCOPED_STORAGE_KEYS).toContain("tabdump:agent-world:v1");
-  });
-
-  it("never persists a run, an event or any observed content", () => {
-    const { source } = worldSources.find((entry) => entry.name === "persistence.ts")!;
-    const code = codeOf(source);
-    for (const field of ["events", "runs", "workItems", "artifacts", "currentActivity"]) {
-      expect(code).not.toContain(`${field}:`);
-    }
+  it("has retired the Agent World's key rather than orphaning it", async () => {
+    // The world is gone. Its key must be gone from the scoped list *and*
+    // listed for sweeping — a key that is merely dropped from the list stays
+    // in every existing user's localStorage forever, unreachable.
+    const { SCOPED_STORAGE_KEYS, RETIRED_STORAGE_KEYS } = await import(
+      "@/lib/storage/namespace"
+    );
+    expect(SCOPED_STORAGE_KEYS).not.toContain("tabdump:agent-world:v1");
+    expect(RETIRED_STORAGE_KEYS).toContain("tabdump:agent-world:v1");
   });
 });
 
@@ -230,7 +220,7 @@ describe("the generic domain is still unaware of any of this", () => {
     const offenders: string[] = [];
     for (const entry of domainFiles) {
       const source = readFileSync(path.join(domainDir, entry), "utf8");
-      if (/from\s+["'][^"']*(visual|world)\//.test(source)) offenders.push(entry);
+      if (/from\s+["'][^"']*visual\//.test(source)) offenders.push(entry);
     }
 
     expect(offenders).toEqual([]);

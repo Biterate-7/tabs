@@ -11,8 +11,7 @@ import {
 } from "@/lib/agents/intelligence/__fixtures__/domain";
 import { createAgent } from "@/lib/agents/registry";
 import { RECENT_RUN_WINDOW_MS } from "@/lib/agents/spatial/types";
-import { buildWorldScene } from "@/lib/agents/world/scene";
-import { DEFAULT_AGENT_WORLD_SETTINGS } from "@/lib/agents/world/settings";
+import { buildAgentSpatialScene } from "@/lib/agents/spatial/scene";
 import { transitionRunStatus } from "@/lib/agents/runs";
 import { buildAgentHistory } from "./build";
 import type { AgentState } from "@/lib/agents/types";
@@ -20,18 +19,18 @@ import type { AgentState } from "@/lib/agents/types";
 /**
  * Agent History.
  *
- * The suite's centre of gravity is the divergence from the spatial world: a
- * run that the canvas has stopped drawing must still be an ordinary row
- * here. Several tests assert the two surfaces *disagree*, which is the
- * intended behaviour rather than a bug either of them should fix.
+ * The suite's centre of gravity is the divergence from the live canvas: a
+ * run the canvas has stopped drawing must still be an ordinary row here.
+ * Several tests assert the two surfaces *disagree*, which is the intended
+ * behaviour rather than a bug either of them should fix.
  */
 
-/** Long enough ago that the world will not draw it. */
+/** Long enough ago that the canvas's "active" filter will not draw it. */
 const LONG_AGO = T0 - RECENT_RUN_WINDOW_MS * 4;
 const NOW = T0 + 60_000;
 
 /**
- * Three workspaces, four runs, one of them well outside the world's window.
+ * Three workspaces, four runs, one of them well outside the recency window.
  *
  * Built through real domain operations, so nothing here is a state the
  * domain could not produce.
@@ -133,23 +132,25 @@ describe("buildAgentHistory", () => {
   });
 
   /*
-    The defining test of the phase. The world and history are asked the same
+    The defining test of the phase. The canvas and history are asked the same
     question about the same state and must give different answers.
   */
-  it("lists a run the spatial world has stopped drawing", () => {
+  it("lists a run the live canvas has stopped drawing", () => {
     const h = history();
 
-    const scene = buildWorldScene({
-      index: h.index,
+    const scene = buildAgentSpatialScene(h.state, {
+      agents: h.state.agents,
+      runs: h.state.runs,
+      artifacts: h.state.artifacts,
       workspaceId: "dev",
-      settings: DEFAULT_AGENT_WORLD_SETTINGS,
+      filter: "active",
       now: NOW,
-      tabTitles: new Map(),
-      idleProviders: [],
     });
 
     // The canvas does not have it: it completed four windows ago.
-    expect(scene.characters.some((character) => character.runId === h.oldRunId)).toBe(false);
+    expect(
+      scene.nodes.some((node) => node.kind === "run" && node.runId === h.oldRunId)
+    ).toBe(false);
 
     // History does, with its evidence counts intact.
     const view = buildAgentHistory({ index: h.index, workspaceNames: NAMES });

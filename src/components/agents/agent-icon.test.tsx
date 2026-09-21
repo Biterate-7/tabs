@@ -4,7 +4,6 @@ import { AGENT_VISUAL_STATES } from "@/lib/agents/visual/types";
 import { AgentIcon } from "./agent-icon";
 import { AgentActivityList, AgentLoadingState } from "./agent-activity-list";
 import { AgentAvatar, AgentIdentity, AgentStatus } from "./agent-identity";
-import { AgentCharacter } from "./agent-character";
 import { markColor } from "./agent-tone";
 import type { AgentActivityItem } from "./agent-activity-list";
 
@@ -81,23 +80,22 @@ describe("AgentIcon", () => {
     expect(screen.getByRole("img", { name: "Claude Code" })).toBeTruthy();
   });
 
-  it("does not animate when the world's intensity is off", () => {
-    const { container } = render(
-      <AgentIcon connector="claude-code" state="working" intensity="off" />
-    );
-    expect(wrapperOf(container)?.style.animationName).toBe("");
-  });
+  /*
+    The mark is static in every state.
 
-  it("animates a working agent when motion is allowed", () => {
-    const { container } = render(<AgentIcon connector="claude-code" state="working" />);
-    expect(wrapperOf(container)?.style.animationName.length).toBeGreaterThan(0);
-  });
-
-  it("does not animate a finished agent, even at full intensity", () => {
-    const { container } = render(
-      <AgentIcon connector="claude-code" state="waiting" intensity="full" />
-    );
-    expect(wrapperOf(container)?.style.animationName).toBe("");
+    It used to animate, driven by the Agent World's motion policy. The
+    command centre renders these in dense lists where a hundred moving marks
+    are noise rather than information, so state is carried by tone and by the
+    words beside it. Asserted across the whole state union rather than for a
+    couple of examples, because "one state started moving again" is exactly
+    the regression that would otherwise go unnoticed.
+  */
+  it("never animates, in any state", () => {
+    for (const state of AGENT_VISUAL_STATES) {
+      const { container, unmount } = render(<AgentIcon connector="claude-code" state={state} />);
+      expect(wrapperOf(container)?.style.animationName).toBe("");
+      unmount();
+    }
   });
 });
 
@@ -211,52 +209,5 @@ describe("AgentLoadingState", () => {
   it("says who is loading rather than just that something is", () => {
     render(<AgentLoadingState connector="claude-code" name="Claude Code" />);
     expect(screen.getByText("Claude Code is getting ready…")).toBeTruthy();
-  });
-});
-
-describe("AgentCharacter", () => {
-  it("draws a figure in every style", () => {
-    for (const style of ["character", "pixel", "illustrated", "futuristic"] as const) {
-      const { container, unmount } = render(
-        <AgentCharacter connector="claude-code" state="working" style={style} />
-      );
-      expect(container.querySelector("svg")).not.toBeNull();
-      unmount();
-    }
-  });
-
-  it("draws the mark alone in the minimal style", () => {
-    // Someone who chose "icons" wants the arrangement without the
-    // anthropomorphism; drawing a small body anyway would ignore the setting.
-    const { container } = render(
-      <AgentCharacter connector="claude-code" state="working" style="minimal" />
-    );
-    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 24 24");
-  });
-
-  it("gives each style a visibly different drawing", () => {
-    const character = render(<AgentCharacter connector="claude-code" state="idle" style="character" />);
-    const pixel = render(<AgentCharacter connector="claude-code" state="idle" style="pixel" />);
-    expect(character.container.innerHTML).not.toBe(pixel.container.innerHTML);
-  });
-
-  it("only picks up its tool while it is working", () => {
-    const idle = render(<AgentCharacter connector="claude-code" state="idle" />);
-    const working = render(<AgentCharacter connector="claude-code" state="working" />);
-
-    expect(idle.container.querySelectorAll("[data-agent-orbit]")).toHaveLength(0);
-    expect(working.container.querySelectorAll("[data-agent-orbit]").length).toBeGreaterThan(0);
-  });
-
-  it("is decorative — the button around it carries the name", () => {
-    const { container } = render(<AgentCharacter connector="claude-code" state="idle" />);
-    expect(container.querySelector(".agent-mark")?.getAttribute("aria-hidden")).toBe("true");
-  });
-
-  it("holds still when asked not to animate", () => {
-    const { container } = render(
-      <AgentCharacter connector="claude-code" state="working" animate={false} />
-    );
-    expect((container.querySelector(".agent-mark") as HTMLElement).style.animationName).toBe("");
   });
 });

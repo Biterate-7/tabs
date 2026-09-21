@@ -10,7 +10,6 @@ import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
 import { AgentHistoryView } from "@/components/agents/agent-history-view"
 import { AgentSessionView } from "@/components/agents/agent-session-view"
-import { AgentWorldView } from "@/components/agents/agent-world-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
@@ -141,7 +140,6 @@ export function AppShell() {
     | "favorites"
     | "recents"
     | "history-dump"
-    | "agent-world"
     | "agent-history"
     | "agent-session"
   >("workspace")
@@ -175,32 +173,15 @@ export function AppShell() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
 
   /**
-   * Where closing Settings goes back to.
-   *
-   * Settings has always returned to the workspace, which is right when the
-   * workspace is where you opened it from. It stopped being right once the
-   * Agent World started sending people here: changing a world setting and
-   * being dropped somewhere other than the world you were changing is a
-   * one-way trip through a control that reads as a round one.
-   */
-  const [settingsReturnView, setSettingsReturnView] = useState<"workspace" | "agent-world">(
-    "workspace"
-  )
-
-  /**
    * Opening Settings from somewhere that knows which section it wants.
    *
    * The view is keyed on the section, so each deep link remounts it:
    * `initialSection` is an initial value, and without a fresh mount a second
-   * jump from the Agent World to a different section would be ignored by the
-   * state that already holds the first one.
+   * jump to a different section would be ignored by the state that already
+   * holds the first one.
    */
-  function openSettings(
-    section?: SettingsSection,
-    returnTo: "workspace" | "agent-world" = "workspace"
-  ) {
+  function openSettings(section?: SettingsSection) {
     setSettingsSection(section)
-    setSettingsReturnView(returnTo)
     setView("settings")
   }
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -1237,33 +1218,7 @@ export function AppShell() {
       <AppearanceSettingsView
         key={settingsSection ?? "default"}
         initialSection={settingsSection}
-        onClose={() => setView(settingsReturnView)}
-        workspaceId={store.currentId}
-        workspaceName={currentWorkspace.name}
-      />
-    )
-  }
-
-  /*
-    The Agent World, as a view of its own.
-
-    Not gated on readiness, on connectors or on agent history — the point of
-    the rework is that it opens and is worth looking at before any of those
-    are true. It is also a sibling of the graph rather than a layer over it,
-    which is what keeps the two agent observers from ever being mounted at
-    once: exactly one of these branches renders.
-  */
-  if (view === "agent-world") {
-    return (
-      <AgentWorldView
-        store={store}
-        agentStore={agentStore}
-        /* World -> Session. The run keeps working while the record of it is
-           open; nothing about opening one changes the other. */
-        onOpenSession={(runId) => handleOpenSession(runId)}
         onClose={() => setView("workspace")}
-        onOpenConnectors={() => openSettings("connectors", "agent-world")}
-        onOpenWorldSettings={() => openSettings("agent-world", "agent-world")}
       />
     )
   }
@@ -1271,12 +1226,11 @@ export function AppShell() {
   /*
     Agent History and the Session View.
 
-    Siblings of the world rather than layers over it, for the same reason
-    the world is a sibling of the graph: exactly one of these branches
-    renders, so no two surfaces ever mount the agent stack at once.
+    Siblings of the graph rather than layers over it: exactly one of these
+    branches renders, so no two surfaces ever mount the agent stack at once.
 
     Neither is gated on readiness, on connectors, or on recency. History
-    exists precisely to reach runs the spatial world has stopped drawing.
+    exists precisely to reach runs no live surface is still drawing.
   */
   if (view === "agent-history") {
     return (
@@ -1297,13 +1251,6 @@ export function AppShell() {
         agentStore={agentStore}
         initialWorkItemId={sessionTarget.workItemId}
         onOpenTab={handleOpenAgentTab}
-        /* Session -> World. The run's own workspace is made current first,
-           so returning to the world lands on the world that contains this
-           work rather than on whichever one was open before. */
-        onOpenWorld={(workspaceId) => {
-          if (workspaceId !== store.currentId) handleSwitchWorkspace(workspaceId)
-          setView("agent-world")
-        }}
         onClose={() => setView("agent-history")}
       />
     )
@@ -1370,7 +1317,6 @@ export function AppShell() {
         onOpenGraph={handleOpenGraph}
         graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
         graphLockedReason={readiness.label}
-        onOpenAgentWorld={() => setView("agent-world")}
         onOpenAgentHistory={() => setView("agent-history")}
         onOpenSettings={() => openSettings()}
         onOpenWorkspace={() => setView("workspace")}
@@ -1428,7 +1374,6 @@ export function AppShell() {
             onOpenFavorites={() => setView("favorites")}
             onOpenRecents={() => setView("recents")}
             onOpenHistoryDump={() => setView("history-dump")}
-            onOpenAgentWorld={() => setView("agent-world")}
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
