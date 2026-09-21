@@ -138,10 +138,10 @@ keyframes and isometric CSS in `globals.css`.
 | --- | --- | --- |
 | A | Agent World removal | done |
 | B | Provider-neutral agent control foundation — see [agent-control-architecture.md](agent-control-architecture.md) | done |
-| C | Real Claude Code connection | |
-| D | Codex connection | |
-| E | Local project connection + permission model | |
-| F | Workspace → agent context bridge | |
+| C | Real Claude Code connection | done |
+| D | Codex connection | not built — the shipped adapter is the honest unimplemented one |
+| E | Local project connection + permission model | built during B — `control/projects.ts`, `control/permissions.ts` |
+| F | Workspace → agent context bridge | done — see [agent-context-bridge.md](agent-context-bridge.md) |
 | G | Unified event stream + session persistence | |
 | H | Command Centre shell | |
 | I | Conversation / activity / approval UI | |
@@ -150,6 +150,15 @@ keyframes and isometric CSS in `globals.css`.
 | L | Full TabDump visual redesign | |
 | M | Cross-provider polish | |
 | N | Test / QA pass | |
+
+> **A note on letters.** This table's lettering and the lettering used in the
+> working briefs have drifted apart. The context bridge was briefed as
+> "Phase E" and is row **F** here, because row E's content — the local
+> project connection and the permission model — was in practice built during
+> B, where the control plane needed both before it could gate anything. The
+> rows above record what was actually built; the brief letters are kept in
+> the commit messages. Neither is renumbered, because renumbering one would
+> silently invalidate every reference to the other.
 
 ### Notes for Phase C
 

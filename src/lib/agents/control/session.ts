@@ -209,6 +209,20 @@ export type AgentSession = {
    * growing a second representation of work.
    */
   runIds: readonly string[];
+  /**
+   * The context snapshot this session currently holds, by the bridge's id.
+   *
+   * A reference for the same reason `runIds` is one: the snapshot itself —
+   * its scope, its limits, what it deliberately omitted — belongs to the
+   * bridge, and copying it here would give the control plane a second
+   * representation of context that could disagree with the first.
+   *
+   * Absent means the session was started with no context at all, which is
+   * the default. Replaced, never merged, by an explicit refresh: a session
+   * holds exactly one snapshot at a time, so "what does this agent know"
+   * has one answer.
+   */
+  contextSnapshotId?: string;
 };
 
 export type SessionTransitionFailure = {
@@ -257,6 +271,7 @@ export type CreateSessionInput = {
   workspaceId?: string;
   title?: string;
   providerSessionId?: string;
+  contextSnapshotId?: string;
 };
 
 /** Mints a session in `created`. The only way one is born, so no session starts mid-lifecycle. */
@@ -274,8 +289,31 @@ export function createSession(input: CreateSessionInput, now: number): AgentSess
   if (input.projectId) session.projectId = input.projectId;
   if (input.workspaceId) session.workspaceId = input.workspaceId;
   if (input.title) session.title = input.title;
+  if (input.contextSnapshotId) session.contextSnapshotId = input.contextSnapshotId;
 
   return session;
+}
+
+/**
+ * Points a session at a different context snapshot.
+ *
+ * Replaces rather than merges, and returns a new session rather than
+ * mutating — the same shape as `attachRunToSession` below it, so a caller
+ * that knows one knows this.
+ *
+ * Note what it deliberately does not touch: not the grant, not the project,
+ * not the status. Changing what an agent *knows* is not a lifecycle event
+ * and cannot become one. That is the control-plane half of
+ * context-is-not-authority, and `security.test.ts` asserts it by comparing
+ * the whole record either side of a call.
+ */
+export function attachContextToSession(
+  session: AgentSession,
+  snapshotId: string,
+  now: number
+): AgentSession {
+  if (session.contextSnapshotId === snapshotId) return session;
+  return { ...session, contextSnapshotId: snapshotId, updatedAt: now };
 }
 
 /**

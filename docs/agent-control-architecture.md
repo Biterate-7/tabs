@@ -74,7 +74,7 @@ external agent → connector → AgentAdapterObservation → agent domain
 | `permissions.ts` | scopes, grants, capability→scope mapping |
 | `projects.ts` | authorized directories + path validation |
 | `approvals.ts` | the approval broker |
-| `context.ts` | provider-neutral TabDump context attachments |
+| `context.ts` | provider-neutral TabDump context attachments — the *contract*. What resolves a workspace id into one lives in `lib/agents/context/`, a sibling directory that reads TabDump's domain so this one never has to. See [agent-context-bridge.md](agent-context-bridge.md). |
 | `runtime.ts` | the local-execution boundary |
 | `types.ts` | `AgentControlAdapter`, errors, results |
 | `service.ts` | the gate; the only thing that may drive an adapter |

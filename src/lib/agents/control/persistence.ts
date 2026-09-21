@@ -35,6 +35,26 @@ import type { AgentSession } from "./session";
  * what survives for later reading is the domain's own bounded activity log,
  * which already has a retention cap and already gets written.
  *
+ * **No context, and not even the id of one.** A session can hold a resolved
+ * context snapshot (`AgentSession.contextSnapshotId`), and neither the
+ * snapshot nor the id is written here. Two reasons, and the second is the
+ * load-bearing one:
+ *
+ *   - a snapshot is made of tab titles, URLs, collection names and notes,
+ *     which is to say it is a *copy* of the user's workspace content. That
+ *     content already has a home; duplicating it into a second key would
+ *     double it on disk and leave the copy to go stale and never be swept.
+ *   - snapshots live in memory for the lifetime of a page, exactly as the
+ *     sessions that hold them do. A restored session comes back
+ *     `disconnected` (see above), so a restored `contextSnapshotId` would
+ *     point at a snapshot that no longer exists — a reference that reads as
+ *     "this agent knows about your workspace" while resolving to nothing.
+ *     Dropping it is the honest answer, and reattaching is the same
+ *     explicit act that attaching was.
+ *
+ * `reviveSession` therefore does not read the field, and `security.test.ts`
+ * asserts that a persisted session carries no attachment.
+ *
  * ## Why sessions are restored as terminal
  *
  * A session that was `running` when the tab closed is not running now — the
@@ -231,12 +251,28 @@ export function loadControlSessions(): ControlSessionState {
   return { version: 1, sessions };
 }
 
+/**
+ * Drops the fields a persisted session must not carry.
+ *
+ * Stripping on *write* rather than relying on `reviveSession` ignoring the
+ * field on read: a value that is never written cannot leak through a future
+ * reader, a devtools inspection, or an export. See the note at the top of
+ * this file on why context is one of them.
+ */
+function forPersistence(session: AgentSession): AgentSession {
+  if (session.contextSnapshotId === undefined) return session;
+  const stripped: AgentSession = { ...session };
+  delete stripped.contextSnapshotId;
+  return stripped;
+}
+
 export function saveControlSessions(state: ControlSessionState): boolean {
   // Newest first, then truncated — so the cap drops the oldest rather than
   // whichever happened to be last in the array.
   const sessions = [...state.sessions]
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_PERSISTED_SESSIONS);
+    .slice(0, MAX_PERSISTED_SESSIONS)
+    .map(forPersistence);
 
   return writeRaw(CONTROL_SESSIONS_KEY, { version: 1, sessions });
 }

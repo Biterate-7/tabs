@@ -1,10 +1,15 @@
 import { createApprovalBroker } from "./approvals";
-import { isWellFormedContext, isWellFormedMessage } from "./context";
+import {
+  isWellFormedAttachedContext,
+  isWellFormedContext,
+  isWellFormedMessage,
+} from "./context";
 import { isWellFormedControlEvent } from "./events";
 import { isCapabilityPermitted, NO_PERMISSIONS } from "./permissions";
 import { isProviderAuthorized } from "./projects";
 import { denyNonServerRuntime } from "./runtime";
 import {
+  attachContextToSession,
   attachRunToSession,
   createSession as mintSession,
   isTerminalSessionStatus,
@@ -13,7 +18,7 @@ import {
 import { adapterSupports, controlFailure } from "./types";
 import type { ApprovalBroker } from "./approvals";
 import type { AgentCapability } from "./capabilities";
-import type { AgentMessageInput } from "./context";
+import type { AgentAttachedContext, AgentMessageInput } from "./context";
 import type { AgentControlEvent } from "./events";
 import type { AgentPermissionGrant } from "./permissions";
 import type { AgentProject } from "./projects";
@@ -98,6 +103,23 @@ export type StartSessionInput = {
   title?: string;
   /** The grant for this session. Defaults to nothing granted. */
   permissions?: AgentPermissionGrant;
+  /**
+   * Context to seed the session with, already resolved by the bridge.
+   *
+   * Optional, and absent is the default: a session starts knowing nothing
+   * about TabDump unless a caller explicitly attached something. There is
+   * deliberately no branch here that resolves context on the caller's
+   * behalf — the service cannot reach the bridge, and a service that
+   * resolved "the current workspace" by default would be the automatic
+   * context injection this design exists to prevent.
+   *
+   * It is also, emphatically, not a permission. The grant is
+   * `permissions`, and attaching a project's metadata here neither adds a
+   * scope to that grant nor authorizes the project. `security.test.ts`
+   * proves it by starting a session with project context and a grant of
+   * nothing, then watching every local-effect operation still refuse.
+   */
+  context?: AgentAttachedContext;
 };
 
 export type ResumeInput = StartSessionInput & { providerSessionId: string };
@@ -123,6 +145,30 @@ export type ControlService = {
     decision: "granted" | "denied"
   ): Promise<ControlResult<void>>;
 
+  /**
+   * The context a session currently holds, or undefined for one holding none.
+   *
+   * The attachments, not the snapshot: the bridge owns that record, and this
+   * is the control plane's view of it.
+   */
+  contextFor(sessionId: string): AgentAttachedContext | undefined;
+
+  /**
+   * Replaces a session's context with an already-resolved snapshot.
+   *
+   * The whole of `refreshContext` as far as the control plane is concerned.
+   * Resolution — re-running scope, re-applying limits, minting a new
+   * snapshot id — happens in the bridge before this is called, which is why
+   * there is no `refresh` verb here: this layer cannot resolve anything, and
+   * a method that implied it could would be the wrong seam.
+   *
+   * Replaces rather than merges. A session knows one thing at a time.
+   */
+  attachContext(sessionId: string, context: AgentAttachedContext): ControlResult<AgentSession>;
+
+  /** Drops a session's context. The agent keeps whatever it was already told; nothing further is sent. */
+  detachContext(sessionId: string): ControlResult<AgentSession>;
+
   /** Receives every well-formed event from every adapter. Returns the detach function. */
   subscribe(listener: (event: AgentControlEvent) => void): ControlUnsubscribe;
 
@@ -143,6 +189,16 @@ export function createControlService(options: ControlServiceOptions): ControlSer
   const sessions = new Map<string, AgentSession>();
   /** The grant each session was started under. Held here, never on the session record. */
   const grants = new Map<string, AgentPermissionGrant>();
+  /**
+   * The context each session holds.
+   *
+   * Beside the grants, and deliberately not merged with them: they are
+   * indexed the same way and have the same lifetime, but one says what the
+   * agent may do and the other says what it has been told. A single map
+   * holding both would be one refactor away from a check that reads the
+   * wrong half.
+   */
+  const contexts = new Map<string, AgentAttachedContext>();
   const listeners = new Set<(event: AgentControlEvent) => void>();
   const adapterSubscriptions = new Map<AgentProviderId, ControlUnsubscribe>();
 
@@ -290,6 +346,14 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const gated = gate(input.provider, "create_session", input.projectId, grant);
       if (!gated.ok) return { ok: false, error: gated.error };
 
+      // Malformed context fails the whole start rather than being dropped.
+      // Starting a session with silently less context than the caller
+      // attached is the quiet failure the omission model exists to avoid,
+      // and here there is no snapshot to record it on.
+      if (input.context !== undefined && !isWellFormedAttachedContext(input.context)) {
+        return controlFailure("invalid-request");
+      }
+
       const project = input.projectId ? resolveProject(input.projectId) : undefined;
       const session = put(
         mintSession(
@@ -299,11 +363,13 @@ export function createControlService(options: ControlServiceOptions): ControlSer
             projectId: input.projectId,
             workspaceId: input.workspaceId,
             title: input.title,
+            contextSnapshotId: input.context?.snapshotId,
           },
           now()
         )
       );
       grants.set(session.id, grant);
+      if (input.context) contexts.set(session.id, input.context);
 
       ensureSubscribed(input.provider, gated.value);
       const connecting = move(session, "connecting");
@@ -312,7 +378,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
         sessionId: session.id,
         project,
         permissions: grant,
-        attachments: [],
+        attachments: input.context?.attachments ?? [],
         title: input.title,
       });
 
@@ -434,6 +500,41 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       return gated.value.respondToApproval(approvalId, decision);
     },
 
+    contextFor(sessionId) {
+      return contexts.get(sessionId);
+    },
+
+    attachContext(sessionId, context) {
+      if (!isWellFormedAttachedContext(context)) return controlFailure<AgentSession>("invalid-request");
+
+      const session = sessions.get(sessionId);
+      if (!session) return controlFailure<AgentSession>("invalid-session");
+      // A finished session cannot be told anything new. Allowing it would
+      // let a snapshot be attached to a transcript that is already closed,
+      // making the record say the agent knew something it never saw.
+      if (isTerminalSessionStatus(session.status)) return controlFailure<AgentSession>("invalid-session");
+
+      contexts.set(sessionId, context);
+      // Note the gate that is deliberately absent: there is none. Attaching
+      // context is not an operation on the provider — nothing is dispatched,
+      // no adapter is touched, no capability is consulted. It changes what
+      // the *next* message will carry, and that message goes through the
+      // full gate as it always did.
+      return { ok: true, value: put(attachContextToSession(session, context.snapshotId, now())) };
+    },
+
+    detachContext(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) return controlFailure<AgentSession>("invalid-session");
+
+      contexts.delete(sessionId);
+      if (session.contextSnapshotId === undefined) return { ok: true, value: session };
+
+      const stripped: AgentSession = { ...session, updatedAt: now() };
+      delete stripped.contextSnapshotId;
+      return { ok: true, value: put(stripped) };
+    },
+
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -451,6 +552,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       listeners.clear();
       sessions.clear();
       grants.clear();
+      contexts.clear();
     },
   };
 

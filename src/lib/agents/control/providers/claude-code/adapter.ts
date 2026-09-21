@@ -3,8 +3,9 @@ import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
 import { normalizeClaudeMessage, providerSessionIdOf } from "./normalize";
 import { isToolPermitted, planForGrant, scopeForTool } from "./permissions";
+import { withContext } from "./context-prompt";
 import type { AgentCapabilitySet } from "../../capabilities";
-import type { AgentMessageInput } from "../../context";
+import type { AgentContextAttachment, AgentMessageInput } from "../../context";
 import type { AgentControlEvent } from "../../events";
 import type { AgentPermissionGrant, AgentPermissionScope } from "../../permissions";
 import type { AgentProject } from "../../projects";
@@ -116,6 +117,20 @@ type LiveSession = {
   grant: AgentPermissionGrant;
   providerSessionId?: string;
   runId?: string;
+  /**
+   * Context the session was seeded with, not yet delivered.
+   *
+   * Claude Code's runtime is started without an initial prompt — the first
+   * thing it receives is the first `sendMessage`. So session-level context
+   * waits here and rides along with that message, rather than being sent as
+   * a turn of its own that the user never asked for.
+   *
+   * Cleared once delivered. A session's context is stated once, not
+   * re-stated on every turn: repeating it would grow the conversation
+   * without adding anything, and would make a later refresh ambiguous about
+   * which version the model is working from.
+   */
+  pendingContext?: readonly AgentContextAttachment[];
   /** Approvals awaiting an answer, by the id the adapter minted for them. */
   pending: Map<string, (decision: ClaudePermissionDecision) => void>;
 };
@@ -366,8 +381,16 @@ export function createClaudeCodeControlAdapter(
     sessionId: string,
     project: AgentProject | undefined,
     grant: AgentPermissionGrant,
-    resume?: string
+    resume?: string,
+    attachments: readonly AgentContextAttachment[] = []
   ): Promise<ControlResult<SessionHandle>> {
+    // Note what the attachments do NOT reach. The plan below — the
+    // permission mode, the allowed and disallowed tool lists — is derived
+    // from the grant and the project alone, exactly as it was before
+    // context existed. Attaching a workspace, or a project's metadata,
+    // cannot move a single flag here. That is context-is-not-authority on
+    // the Claude side, and the security suite asserts it by diffing the
+    // start options with and without context attached.
     const plan = planForGrant(grant, project?.id);
 
     const session: LiveSession = {
@@ -376,6 +399,7 @@ export function createClaudeCodeControlAdapter(
       project,
       grant,
       pending: new Map(),
+      ...(attachments.length > 0 ? { pendingContext: attachments } : {}),
       ...(resume ? { providerSessionId: resume } : {}),
     };
 
@@ -443,7 +467,13 @@ export function createClaudeCodeControlAdapter(
     },
 
     createSession(request: CreateSessionRequest) {
-      return startRun(request.sessionId, request.project, request.permissions);
+      return startRun(
+        request.sessionId,
+        request.project,
+        request.permissions,
+        undefined,
+        request.attachments
+      );
     },
 
     resumeSession(request: ResumeSessionRequest) {
@@ -461,12 +491,28 @@ export function createClaudeCodeControlAdapter(
         return controlFailure<void>("invalid-session");
       }
 
+      // Session-level context first, then this message's own, then the
+      // user's words. Deduplicated by kind+id so a caller that re-attaches
+      // the same snapshot on the first message does not state it twice.
+      const byId = new Map<string, AgentContextAttachment>();
+      for (const attachment of [
+        ...(session.pendingContext ?? []),
+        ...message.context.attachments,
+      ]) {
+        byId.set(`${attachment.kind}:${attachment.id}`, attachment);
+      }
+
       try {
-        await session.handle.send(message.text);
+        await session.handle.send(withContext(message.text, [...byId.values()]));
       } catch {
         // The thrown value is deliberately not read. See `controlError`.
         return controlFailure<void>("unreachable");
       }
+
+      // Delivered, so it is no longer owed. Cleared after the send rather
+      // than before, so a failed send leaves the seeded context still
+      // pending instead of silently dropping it.
+      delete session.pendingContext;
 
       return { ok: true, value: undefined };
     },

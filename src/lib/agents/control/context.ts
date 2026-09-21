@@ -15,12 +15,22 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * `@collection` and `@project` are resolved by the application into these
  * flat, provider-neutral records, and the adapter receives only these.
  *
- * ## Phase B scope
+ * ## Phase B scope, and what Phase E added
  *
- * The *shape* is here and is used by `sendMessage`. The resolvers that turn a
- * workspace id into attachments are **not** — that is the workspace→agent
- * bridge, and it belongs to its own phase. Nothing in this file reads
- * TabDump's domain, and `security.test.ts` asserts that.
+ * The *shape* was defined in Phase B and used by `sendMessage`. The
+ * resolvers that turn a workspace id into attachments were deliberately left
+ * out, because that is the workspace→agent bridge and it belongs to its own
+ * phase.
+ *
+ * That phase has now happened, and it lives in `lib/agents/context/` — a
+ * sibling of this directory, not a part of it. The dependency runs one way:
+ * the bridge imports this contract and projects its snapshots into these
+ * attachments, and nothing here imports the bridge. So this file still reads
+ * TabDump's domain nowhere, and the rule it was written to enforce — a
+ * provider adapter must never learn what a workspace *is* — is unchanged.
+ *
+ * The only Phase E edit here is two new `AgentContextKind` members, for the
+ * two sources the bridge resolves that had no spelling yet.
  */
 
 export type AgentContextKind =
@@ -28,7 +38,11 @@ export type AgentContextKind =
   | "tab"
   | "collection"
   | "relationship"
+  /** A bounded neighbourhood of the relationship graph around one tab. */
+  | "graph"
   | "project"
+  /** What TabDump has observed an agent doing. Observation, never a way to act. */
+  | "agent_activity"
   | "file";
 
 export const AGENT_CONTEXT_KINDS: readonly AgentContextKind[] = [
@@ -36,7 +50,9 @@ export const AGENT_CONTEXT_KINDS: readonly AgentContextKind[] = [
   "tab",
   "collection",
   "relationship",
+  "graph",
   "project",
+  "agent_activity",
   "file",
 ] as const;
 
@@ -101,6 +117,40 @@ export function createAttachment(input: {
 }
 
 /**
+ * A resolved context snapshot, as the control plane holds it.
+ *
+ * ## Why the control plane stores an id and a time rather than a snapshot
+ *
+ * The bridge's `AgentContextSnapshot` carries the scope it resolved under —
+ * every workspace and project the user authorized — plus the list of
+ * entities that were deliberately *not* attached. An adapter has no business
+ * with either, and a type that put them within reach of one would be an
+ * invitation.
+ *
+ * So what crosses is this: the attachments themselves, plus enough
+ * provenance to answer the question the whole snapshot model exists to make
+ * answerable — *which* context did this invocation use, and when was it
+ * captured. The full record stays on TabDump's side, keyed by `snapshotId`.
+ *
+ * Nothing here is provider-shaped and nothing here is domain-shaped, which
+ * is why it can live in this file at all.
+ */
+export type AgentAttachedContext = {
+  /** The bridge's id for the snapshot these attachments came from. Opaque here. */
+  snapshotId: string;
+  /** When the snapshot was taken. Epoch ms. */
+  capturedAt: number;
+  attachments: readonly AgentContextAttachment[];
+};
+
+export function isWellFormedAttachedContext(context: AgentAttachedContext): boolean {
+  if (!context || typeof context !== "object") return false;
+  if (typeof context.snapshotId !== "string" || context.snapshotId.length === 0) return false;
+  if (!Number.isFinite(context.capturedAt)) return false;
+  return isWellFormedContext({ attachments: context.attachments });
+}
+
+/**
  * Everything a message carries besides its text.
  *
  * `attachments` is capped so that "attach this workspace" on a workspace with
@@ -113,6 +163,14 @@ export type AgentMessageContext = {
   projectId?: string;
   /** The TabDump workspace the message came from. */
   workspaceId?: string;
+  /**
+   * The context snapshot these attachments were projected from.
+   *
+   * Absent for a message carrying no context, which is the default. Present,
+   * it is what makes a delivered message traceable back to exactly what the
+   * agent was told — the audit property the snapshot model is for.
+   */
+  snapshotId?: string;
 };
 
 export const EMPTY_CONTEXT: AgentMessageContext = { attachments: [] };
