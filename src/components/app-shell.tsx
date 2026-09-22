@@ -8,6 +8,9 @@ import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
+import { CommandCentreView } from "@/components/command-centre/command-centre-view"
+import { buildContextWorld } from "@/lib/agents/command-centre/world"
+import { getStorageNamespace } from "@/lib/storage/namespace"
 import { AgentHistoryView } from "@/components/agents/agent-history-view"
 import { AgentSessionView } from "@/components/agents/agent-session-view"
 import { GraphView } from "@/components/graph/graph-view"
@@ -140,6 +143,7 @@ export function AppShell() {
     | "favorites"
     | "recents"
     | "history-dump"
+    | "command-centre"
     | "agent-history"
     | "agent-session"
   >("workspace")
@@ -889,6 +893,49 @@ export function AppShell() {
     return countRelationshipsByWorkspace(store.workspaces, loadDependencyState().dependencies)
   }, [store])
 
+  /*
+    The world the Command Centre's context bridge reads.
+
+    A plain read of persisted state rather than `useCollectionStore` /
+    `useDependencyStore`, for the same reason `relationshipCounts` above is:
+    those hooks are written to have exactly one live instance at a time, and a
+    second reactive instance here would put two debounced writers on one
+    localStorage key. Nothing in the Command Centre writes any of this — it
+    resolves context out of it — so a read-only snapshot is the correct and
+    the safe shape.
+
+    `ownerId` comes from the same storage namespace the stores were read
+    through, so the resolver's cross-account check is comparing like with
+    like rather than trusting an id from somewhere else.
+  */
+  const agentContextWorld = useMemo(() => {
+    if (!store || typeof window === "undefined") {
+      return buildContextWorld({
+        ownerId: null,
+        workspaces: [],
+        collections: [],
+        dependencies: [],
+        manualConnections: [],
+        projects: [],
+        agents: [],
+        runs: [],
+      })
+    }
+
+    return buildContextWorld({
+      ownerId: getStorageNamespace(),
+      workspaces: store.workspaces,
+      collections: loadCollectionState().collections,
+      dependencies: loadDependencyState().dependencies,
+      manualConnections: loadGraphState().manualConnections,
+      // Authorized projects live in the control plane's own storage and are
+      // joined by the Command Centre, which owns that hook.
+      projects: [],
+      agents: agentStore.agents,
+      runs: agentStore.runs,
+    })
+  }, [store, agentStore.agents, agentStore.runs])
+
   useTitleResolution(currentWorkspace?.tabs ?? [], (tabs) => {
     if (currentWorkspace) handleTitlesResolved(currentWorkspace.id, tabs)
   })
@@ -1224,6 +1271,19 @@ export function AppShell() {
   }
 
   /*
+    The Command Centre.
+
+    A sibling of the Graph and of Agent History, not a layer over either: it
+    mounts the control-plane hooks, and exactly one agent surface is ever
+    mounted at a time. Ungated on readiness — the point of the surface is to
+    be able to say that agents cannot run here, which it cannot do if it is
+    withheld until they can.
+  */
+  if (view === "command-centre") {
+    return <CommandCentreView world={agentContextWorld} onClose={() => setView("workspace")} />
+  }
+
+  /*
     Agent History and the Session View.
 
     Siblings of the graph rather than layers over it: exactly one of these
@@ -1317,6 +1377,7 @@ export function AppShell() {
         onOpenGraph={handleOpenGraph}
         graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
         graphLockedReason={readiness.label}
+        onOpenCommandCentre={() => setView("command-centre")}
         onOpenAgentHistory={() => setView("agent-history")}
         onOpenSettings={() => openSettings()}
         onOpenWorkspace={() => setView("workspace")}
@@ -1351,6 +1412,7 @@ export function AppShell() {
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
             onOpenGraph={handleOpenGraph}
+            onOpenCommandCentre={() => setView("command-centre")}
             graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
             graphLockedReason={readiness.label}
             organizationStatus={

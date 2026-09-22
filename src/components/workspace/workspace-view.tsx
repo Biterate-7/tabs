@@ -14,6 +14,7 @@ import {
   CheckSquare,
   X,
   Waypoints,
+  Radio,
   Layers,
   Pencil,
   ExternalLink as OpenAllIcon,
@@ -97,6 +98,7 @@ export function WorkspaceView({
   currentWorkspace,
   allWorkspaces,
   onOpenGraph,
+  onOpenCommandCentre,
   graphLocked = false,
   graphLockedReason,
   organizationStatus,
@@ -123,6 +125,8 @@ export function WorkspaceView({
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   onOpenGraph?: () => void
+  /** Opens the agent Command Centre. Optional so surfaces that have no agent context can omit it. */
+  onOpenCommandCentre?: () => void
   /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disables every graph affordance this view owns (header button, header dropdown, command palette entry). */
   graphLocked?: boolean
   /** What the graph is waiting on, used as the disabled controls' tooltip. */
@@ -752,6 +756,17 @@ export function WorkspaceView({
             group: "Navigation",
             icon: Waypoints,
             onSelect: onOpenGraph,
+          } satisfies Command,
+        ]
+      : []),
+    ...(onOpenCommandCentre
+      ? [
+          {
+            id: "nav-open-command-centre",
+            label: "Open Command Centre",
+            group: "Navigation",
+            icon: Radio,
+            onSelect: onOpenCommandCentre,
           } satisfies Command,
         ]
       : []),

@@ -1,6 +1,6 @@
 "use client"
 
-import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, ScanSearch, ScrollText, Settings, Star, Waypoints } from "lucide-react"
+import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, Radio, ScanSearch, ScrollText, Settings, Star, Waypoints } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
@@ -22,6 +22,7 @@ export type SidebarView =
   | "favorites"
   | "recents"
   | "history-dump"
+  | "command-centre"
   | "agent-history"
   | "agent-session"
 
@@ -85,6 +86,7 @@ export function AppSidebar({
   onOpenGraph,
   graphLocked = false,
   graphLockedReason,
+  onOpenCommandCentre,
   onOpenAgentHistory,
   onOpenSettings,
   onOpenWorkspace,
@@ -134,6 +136,15 @@ export function AppSidebar({
    * an agent did.
    */
   onOpenAgentHistory: () => void
+  /**
+   * The command centre.
+   *
+   * Unconditional for the same reason History is: the surface has to be
+   * reachable in order to say that agents cannot run here, and a row that
+   * appeared only once a runtime was available would be missing in exactly
+   * the state someone needs the explanation.
+   */
+  onOpenCommandCentre: () => void
   onOpenSettings: () => void
   /** Returns to the current workspace from any other destination. */
   onOpenWorkspace?: () => void
@@ -268,6 +279,14 @@ export function AppSidebar({
             Agents
           </SidebarSectionLabel>
           <nav aria-label="Agents" className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
+            <SidebarItem
+              label="Command Centre"
+              icon={<Radio />}
+              current={activeIs("command-centre")}
+              collapsed={railCollapsed}
+              touch={touch}
+              onClick={onOpenCommandCentre}
+            />
             <SidebarItem
               label="Agent History"
               icon={<ScrollText />}
