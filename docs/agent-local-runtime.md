@@ -512,7 +512,7 @@ Each is asserted mechanically, because each fails silently if it regresses.
 | Project scope enforced | Grant comes from the project, resolved per actor |
 | Cross-account denied | One control service per actor; another's sessions are not reachable, not merely refused |
 | Approval broker authoritative | Runtime mints no approval; adapter has no route to the broker |
-| No credentials anywhere | No credential field in the module; status and session views carry no env value, token or path |
+| No credential in the protocol | No credential field on any command, status or session view; none carries an env value, token or path. Since Phase I.2 a provider credential exists, but it is resolved server-side per actor and reaches only a provider process's environment — see docs/provider-connections.md |
 | Desktop capabilities unchanged | `["core:default"]`, asserted |
 
 ---

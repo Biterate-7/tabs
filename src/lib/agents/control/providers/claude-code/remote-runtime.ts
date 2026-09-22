@@ -4,8 +4,10 @@ import type { BridgeConfig, BridgeLine } from "@/lib/agents/remote/bridge";
 import type { RemoteSandboxService } from "@/lib/agents/remote/sandbox";
 import type { RemoteStore } from "@/lib/agents/remote/store";
 import type {
+  ClaudeCredentialSource,
   ClaudePermissionRequest,
   ClaudeRuntime,
+  ClaudeRuntimeAvailability,
   ClaudeRuntimeError,
   ClaudeRuntimeHandle,
   ClaudeRuntimeStartOptions,
@@ -72,12 +74,21 @@ const ALLOWED_EGRESS: readonly string[] = [
 /**
  * The environment variable carrying the provider credential.
  *
- * Read from the deployment's own environment at the moment a bridge starts,
- * handed to the platform over TLS, and never written to a row, a prompt, an
- * event or a log. There is deliberately no per-user path here yet — see
- * docs/agent-remote-runtime.md on why delegating a person's Claude
- * subscription to a hosted service is not something this architecture can do
- * honestly, and what a bring-your-own-key seam would need.
+ * ## The direction this name travels has reversed
+ *
+ * It used to be *read*: `process.env.ANTHROPIC_API_KEY`, the deployment's own
+ * operator key, used for every user's session. The consequence was stated
+ * plainly in docs/agent-remote-runtime.md — the deployment's owner paid for
+ * everybody's runs — and it is the exact shape Phase I.2 exists to remove.
+ *
+ * It is now only ever *written*: the name of one variable in the environment
+ * of one bridge process, carrying the credential of the one user whose session
+ * it is. Nothing in this file reads it from `process.env`, and there is no
+ * longer any code path by which a deployment-wide key could reach an agent.
+ *
+ * Kept as an export because the sandbox-facing tests assert on the name, and
+ * because whoever adds a second provider needs somewhere to put its variable
+ * beside this one.
  */
 export const PROVIDER_CREDENTIAL_ENV_VAR = "ANTHROPIC_API_KEY";
 
@@ -86,33 +97,39 @@ export type RemoteClaudeRuntimeOptions = {
   store: RemoteStore;
   /** Whose sandboxes this runtime may address. Every store read is scoped to it. */
   ownerId: string;
-  /** The process environment. Injected so the credential read is testable without one. */
-  env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * This actor's own provider credential.
+   *
+   * Already bound to the owner above by `runtime/server.ts`; there is no
+   * argument this runtime could pass that would resolve anybody else's.
+   */
+  credentials: ClaudeCredentialSource;
   now?: () => number;
 };
-
-/** Whether this deployment holds a provider credential at all. */
-export function hasProviderCredential(
-  env: Readonly<Record<string, string | undefined>> = process.env
-): boolean {
-  const value = env[PROVIDER_CREDENTIAL_ENV_VAR];
-  return typeof value === "string" && value.trim().length > 0;
-}
 
 export function createRemoteClaudeRuntime(
   options: RemoteClaudeRuntimeOptions
 ): ClaudeRuntime {
-  const env = options.env ?? process.env;
   const now = options.now ?? (() => Date.now());
 
   return {
     async isAvailable(): Promise<boolean> {
-      // Both halves, and neither is inferred. A sandbox platform with no
-      // provider credential can create microVMs that cannot run an agent, and
+      // Both halves, and neither is inferred. A sandbox platform the user has
+      // no credential for can create microVMs that cannot run an agent, and
       // reporting that as available is how a user gets a session that dies on
       // its first message with an unexplained error.
-      if (!hasProviderCredential(env)) return false;
+      if (!(await options.credentials()).ok) return false;
       return options.sandbox.isAvailable();
+    },
+
+    async describeAvailability(): Promise<ClaudeRuntimeAvailability> {
+      // Sandbox first: a deployment that cannot reach the platform at all is
+      // not a deployment where "connect your credentials" is useful advice.
+      if (!(await options.sandbox.isAvailable())) return { kind: "unavailable" };
+
+      const credential = await options.credentials();
+      if (!credential.ok) return { kind: "credential-required", reason: credential.reason };
+      return { kind: "available" };
     },
 
     async start(start: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeStartResult> {
@@ -120,7 +137,15 @@ export function createRemoteClaudeRuntime(
       // tolerates this — an agent with no project scope is a legitimate, if
       // limited, thing — but here the project *is* the sandbox.
       if (!start.projectId) return { ok: false, error: { code: "unavailable" } };
-      if (!hasProviderCredential(env)) return { ok: false, error: { code: "authentication" } };
+
+      // Resolved before a sandbox is touched. A user with no usable connection
+      // must not cause a microVM to be created — that would bill the
+      // deployment for a session that was never going to run, and leave a
+      // warm sandbox nobody asked for.
+      const credential = await options.credentials();
+      if (!credential.ok) {
+        return { ok: false, error: { code: "authentication", detail: credential.reason } };
+      }
 
       // Owner-scoped. A project id belonging to somebody else resolves to
       // nothing here, exactly as if it did not exist — the store's `findProject`
@@ -160,9 +185,13 @@ export function createRemoteClaudeRuntime(
 
       const started = await options.sandbox.startBridge({
         sandboxName: project.sandboxName,
-        // The credential's only crossing. Read here, used immediately,
-        // referenced nowhere else.
-        env: { [PROVIDER_CREDENTIAL_ENV_VAR]: env[PROVIDER_CREDENTIAL_ENV_VAR] ?? "" },
+        // The credential's only crossing. Resolved above, used here,
+        // referenced nowhere else — and it is *this user's*, not the
+        // deployment's. It reaches the platform as one process's environment
+        // over TLS; it is not an argument to the bridge command, not written
+        // into the sandbox's filesystem, not part of the sandbox's tags or
+        // metadata, and not carried on the session row created below.
+        env: credential.env,
       });
       if (!started.ok) return { ok: false, error: toRuntimeError(started.error.code) };
 
@@ -197,6 +226,27 @@ export function createRemoteClaudeRuntime(
       };
     },
 
+    /**
+     * Picks up a run this process did not start.
+     *
+     * ## Why this deliberately resolves no credential
+     *
+     * Reattaching starts nothing. The agent is a process that has been running
+     * inside a microVM the whole time, already holding the credential it was
+     * started with; what was lost is this deployment's *handle* on it. There
+     * is nothing here to authenticate.
+     *
+     * So a user who disconnects their credential stops being able to **start**
+     * sessions, and the one already running keeps running until it finishes or
+     * is explicitly stopped. That is stated rather than accidental: TabDump
+     * cannot reach inside a live sandbox to revoke a credential the provider
+     * already accepted, and a disconnect that claimed to do so would be a
+     * promise this architecture cannot keep. `session-isolation.test.ts` pins
+     * both halves.
+     *
+     * Adding a credential check here would not make it true — it would only
+     * make TabDump refuse to *show* the user a run that is still happening.
+     */
     async reattach(start: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeHandle | null> {
       return reattachRemoteSession({
         sandbox: options.sandbox,

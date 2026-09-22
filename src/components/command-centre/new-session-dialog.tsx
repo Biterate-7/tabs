@@ -25,6 +25,7 @@ import {
   startBlocker,
 } from "@/lib/agents/command-centre/remote"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { AUTH_METHOD_LABEL } from "@/lib/agents/credentials/types"
 import { cn } from "@/lib/utils"
 import type { AddProjectInput, AddProjectOutcome } from "@/hooks/use-agent-projects"
 import type {
@@ -34,6 +35,7 @@ import type {
 import type { ExecutionMode, RemoteProjectSummary } from "@/lib/agents/command-centre/remote"
 import type { AgentProject } from "@/lib/agents/control/projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import type { ProviderConnectionView } from "@/lib/agents/credentials/types"
 import type { RuntimeProviderStatus, RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
 /**
@@ -69,7 +71,9 @@ export function NewSessionDialog({
   projects,
   onAddProject,
   remote,
+  connectionFor,
   onCreate,
+  onConnectProvider,
   creating,
   error,
   now,
@@ -92,7 +96,24 @@ export function NewSessionDialog({
     creating: boolean
     create: (input: CreateRemoteProjectInput) => Promise<CreateRemoteProjectOutcome>
   }
+  /**
+   * This user's provider connection for an agent, when they have one.
+   *
+   * Rendered so the start flow answers "whose credentials is this about to
+   * run on?" before anything starts, rather than only when it refuses. The
+   * answer is always "yours" — which is the point worth making visible in a
+   * product where it could plausibly have been otherwise.
+   */
+  connectionFor?: (provider: AgentProviderId) => ProviderConnectionView | undefined
   onCreate: (input: { provider: AgentProviderId; projectId?: string; title?: string }) => void
+  /**
+   * Takes the user to where they connect their own provider credentials.
+   *
+   * Optional: a surface that has nowhere to send them simply shows the
+   * sentence without a button, rather than offering an action that goes
+   * nowhere.
+   */
+  onConnectProvider?: () => void
   creating: boolean
   /** A sentence from the runtime's refusal of the last attempt. */
   error?: string
@@ -225,6 +246,35 @@ export function NewSessionDialog({
               )}
             </div>
           </fieldset>
+
+          {/*
+            Whose credentials the agent runs on.
+
+            Only when there is something true to say. A provider the user has
+            not connected is already covered by the blocker sentence at the
+            bottom, and saying "Not connected" twice would be noise.
+          */}
+          {chosen &&
+            (() => {
+              const connection = connectionFor?.(chosen)
+              if (!connection || connection.status !== "connected") return null
+
+              return (
+                <div>
+                  <p className="text-eyebrow text-tertiary">Provider</p>
+                  <p className="mt-1.5 text-body-sm text-muted-foreground">
+                    <span className="text-foreground">
+                      {AUTH_METHOD_LABEL[connection.authMethod]}
+                    </span>
+                    {" · "}
+                    {/* Accurate about whose credentials these are. TabDump
+                        provides the command centre; the user provides the
+                        provider. */}
+                    Your own credentials
+                  </p>
+                </div>
+              )
+            })()}
 
           {/*
             Where the agent will run.
@@ -397,9 +447,23 @@ export function NewSessionDialog({
             sentence.
           */}
           {blocker && (
-            <p className="mr-auto min-w-0 text-body-sm text-tertiary">
-              {START_BLOCKER_MESSAGE[blocker]}
-            </p>
+            <div className="mr-auto flex min-w-0 items-center gap-2">
+              <p className="min-w-0 text-body-sm text-tertiary">
+                {START_BLOCKER_MESSAGE[blocker]}
+              </p>
+              {/*
+                The one blocker with a fix the user can reach from here.
+                Everything else on the list is a property of the deployment or
+                of a project they have already chosen; this one is a button
+                they have not pressed yet, and sending them to hunt for it in
+                settings is how a product loses somebody at the last step.
+              */}
+              {blocker === "authentication-required" && onConnectProvider && (
+                <Button type="button" size="sm" variant="outline" onClick={onConnectProvider}>
+                  Connect
+                </Button>
+              )}
+            </div>
           )}
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
+import { useProviderConnections } from "@/hooks/use-provider-connections"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { loadAgentState } from "@/lib/agents/persistence"
 import {
@@ -24,6 +25,8 @@ import {
 } from "@/lib/agents/command-centre/remote"
 import { cn } from "@/lib/utils"
 import { SectionHeading, SectionStack } from "./section-ui"
+import { ProviderConnectionCard } from "./provider-connection-card"
+import type { UseProviderConnections } from "@/hooks/use-provider-connections"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import type { ProviderUsage } from "@/lib/agents/connectors/usage"
@@ -363,6 +366,7 @@ function ConnectorDetail({
   onConnect,
   onDisconnect,
   status,
+  connections,
 }: {
   view: ConnectorView
   usage: ProviderUsage
@@ -373,6 +377,8 @@ function ConnectorDetail({
   onDisconnect: () => void
   /** The runtime's own report. What decides whether control is available, and where. */
   status: RuntimeStatus | null
+  /** This user's own provider credentials. The third plane, beside observation and control. */
+  connections: UseProviderConnections
 }) {
   const visual = statusVisual(view.status.kind)
   const lastObservation = relativeTime(view.status.lastObservationAt, now)
@@ -476,6 +482,22 @@ function ConnectorDetail({
             can still run this agent remotely. */}
         <ControlSummary view={view} status={status} />
 
+        {/* The third plane. Independent of both above: a provider can be
+            observable and drivable here and still have no credential from
+            this user, which is exactly the state that stops a session. */}
+        <ProviderConnectionCard
+          provider={view.descriptor.provider}
+          providerName={view.descriptor.displayName}
+          connection={connections.forProvider(view.descriptor.provider)}
+          input={connections.connectableFor(view.descriptor.provider)?.input}
+          unavailable={connections.unavailable}
+          durable={connections.durable}
+          busy={connections.busy}
+          onConnect={connections.connect}
+          onRotate={connections.rotate}
+          onDisconnect={connections.disconnect}
+        />
+
         {(view.status.kind === "unavailable" || view.status.kind === "configuration_required") && (
           <div className="rounded-lg border border-subtle p-3">
             <p className="text-meta text-tertiary">
@@ -518,6 +540,12 @@ export function ConnectorsSection() {
     somebody opened the page.
   */
   const runtime = useAgentRuntime({ poll: false })
+  /*
+    The user's own provider credentials. Read once on mount, like the runtime
+    status beside it: whether somebody has connected a key changes when they
+    press a button on this page, not on a timer.
+  */
+  const connections = useProviderConnections()
   const [openProvider, setOpenProvider] = useState<AgentProviderId | null>(null)
   const [busy, setBusy] = useState<AgentProviderId | null>(null)
 
@@ -556,6 +584,7 @@ export function ConnectorsSection() {
         onConnect={() => void handleConnect(open.descriptor.provider)}
         onDisconnect={() => connectors.disconnect(open.descriptor.provider)}
         status={runtime.status}
+        connections={connections}
       />
     )
   }

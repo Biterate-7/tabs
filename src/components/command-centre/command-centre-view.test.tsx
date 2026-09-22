@@ -64,10 +64,22 @@ function world(): AgentContextWorld {
   })
 }
 
-function renderCentre(runtime: ScriptedRuntime, onClose = vi.fn()) {
+function renderCentre(
+  runtime: ScriptedRuntime,
+  onClose = vi.fn(),
+  onOpenConnectors?: () => void
+) {
   return {
     onClose,
-    ...render(<CommandCentreView world={world()} onClose={onClose} client={runtime.client} poll={false} />),
+    ...render(
+      <CommandCentreView
+        world={world()}
+        onClose={onClose}
+        client={runtime.client}
+        poll={false}
+        {...(onOpenConnectors ? { onOpenConnectors } : {})}
+      />
+    ),
   }
 }
 
@@ -256,6 +268,68 @@ describe("creating a session", () => {
     await user.click(await screen.findByRole("button", { name: /start session/i }))
 
     expect(await screen.findByText(/Agent not signed in/i)).toBeTruthy()
+  })
+
+  it("says the agent is not connected, and offers the way to connect it", async () => {
+    // The state a user is in before they have supplied their own provider
+    // credentials: the runtime is fine, the adapter is registered, and the
+    // *user* has authorized nothing. That is what the host reports as
+    // `authentication: "required"` once an actor's adapter cannot resolve a
+    // credential.
+    const user = userEvent.setup()
+    const onOpenConnectors = vi.fn()
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session", "message"],
+          },
+        ],
+      }),
+    })
+    renderCentre(runtime, vi.fn(), onOpenConnectors)
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+
+    // Accurate about what is missing. Not "signed in": TabDump never asks for
+    // an account, it asks for the user's own credentials.
+    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
+
+    // Start is unavailable, and there is somewhere to go instead.
+    const start = await screen.findByRole("button", { name: /start session/i })
+    expect(start.hasAttribute("disabled")).toBe(true)
+
+    await user.click(await screen.findByRole("button", { name: /^connect$/i }))
+    expect(onOpenConnectors).toHaveBeenCalled()
+  })
+
+  it("does not offer a connect button on a surface with nowhere to send the user", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session"],
+          },
+        ],
+      }),
+    })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+
+    // The sentence still appears — the user must know why Start is disabled —
+    // but an action that goes nowhere does not.
+    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^connect$/i })).toBeNull()
   })
 
   it("ends a session through the runtime", async () => {

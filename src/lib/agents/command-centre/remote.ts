@@ -102,7 +102,13 @@ export type StartBlocker =
 export const START_BLOCKER_MESSAGE: Record<StartBlocker, string> = {
   "runtime-unavailable": "TabDump cannot run agents here.",
   "provider-unavailable": "That agent is not available on this runtime.",
-  "authentication-required": "That agent needs to be signed in before it can run here.",
+  // Accurate about what is actually missing. It used to say "needs to be
+  // signed in", which described an authorization TabDump never asks for; what
+  // the user has to do is connect their own provider credentials. The Command
+  // Centre pairs this sentence with a Connect action — see
+  // `new-session-dialog.tsx`.
+  "authentication-required":
+    "This agent isn't connected yet — add your own provider credentials to run it.",
   "provider-cannot-start": "That agent cannot start sessions yet.",
   "no-project": "Choose a project for the agent to work in.",
   "project-not-ready": "That environment is still being created.",
@@ -132,7 +138,11 @@ export function startBlocker(input: StartGateInput): StartBlocker | null {
   const provider = input.provider;
   if (!provider || !provider.available) return "provider-unavailable";
   // Reported by the provider itself, and the one state it can actually prove
-  // before a run starts. See `RuntimeProviderStatus.authentication`.
+  // before a run starts. Since per-user credentials, this is *this user's*
+  // answer rather than the deployment's: the host resolves an adapter per
+  // actor, and an actor with no usable provider connection gets an adapter
+  // whose runtime reports `credential-required`. See
+  // `RuntimeProviderStatus.authentication` and `credentials/service.ts`.
   if (provider.authentication === "required") return "authentication-required";
   if (!provider.capabilities.includes("create_session")) return "provider-cannot-start";
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createClaudeCodeControlAdapter } from "./adapter";
 import { createSdkClaudeRuntime } from "./sdk-runtime";
+import { machineCredentials } from "@/lib/agents/credentials/__fixtures__/source";
 import { createGrant } from "../../permissions";
 import { createProject } from "../../projects";
 import { decideServerRuntime, LOCAL_RUNTIME_ENV_VALUE, LOCAL_RUNTIME_ENV_VAR } from "../../runtime";
@@ -89,7 +90,9 @@ describeLocal("Claude Code, for real", () => {
   });
 
   function adapterFor() {
-    const adapter = createClaudeCodeControlAdapter({ runtime: createSdkClaudeRuntime() });
+    const adapter = createClaudeCodeControlAdapter({
+      runtime: createSdkClaudeRuntime({ credentials: machineCredentials }),
+    });
     const events: AgentControlEvent[] = [];
     adapter.subscribeToEvents((event) => events.push(event));
     return { adapter, events };

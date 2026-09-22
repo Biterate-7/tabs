@@ -569,8 +569,34 @@ export function createClaudeCodeControlAdapter(
     async connect() {
       setStatus({ kind: "connecting", since: now() });
 
-      const available = await options.runtime.isAvailable();
-      if (!available) {
+      // Three states where there used to be two. "The SDK is not installed"
+      // and "you have not connected your Anthropic credentials" are different
+      // problems with different fixes, and collapsing them into `unavailable`
+      // sent a user who needed to press a button looking for an installer
+      // instead. A runtime that cannot tell them apart is read through
+      // `isAvailable`, exactly as before.
+      const availability = options.runtime.describeAvailability
+        ? await options.runtime.describeAvailability()
+        : ((await options.runtime.isAvailable())
+            ? ({ kind: "available" } as const)
+            : ({ kind: "unavailable" } as const));
+
+      if (availability.kind === "credential-required") {
+        const next: ControlStatus = {
+          kind: "configuration_required",
+          since: now(),
+          lastError: controlError("configuration"),
+          // No environment variable, no provider name, no reason code. The
+          // Command Centre turns `configuration_required` into the
+          // "Claude isn't connected yet · [Connect Claude]" affordance; a
+          // sentence here would be a second, drifting copy of that.
+          detail: "Connect your own Anthropic credentials to run Claude here.",
+        };
+        setStatus(next);
+        return controlFailure<ControlStatus>("configuration");
+      }
+
+      if (availability.kind === "unavailable") {
         const next: ControlStatus = {
           kind: "unavailable",
           since: now(),

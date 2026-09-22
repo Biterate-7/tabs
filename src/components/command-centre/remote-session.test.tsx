@@ -311,7 +311,10 @@ describe("the start button", () => {
 
     await user.click(await screen.findByText("API service"))
 
-    expect(screen.getByText(/needs to be signed in/i)).toBeTruthy()
+    // Accurate about what is missing: the user has connected no provider
+    // credentials of their own. It used to say "needs to be signed in", which
+    // described an account authorization TabDump never asks for.
+    expect(screen.getByText(/isn't connected yet/i)).toBeTruthy()
     expect(screen.getByRole("button", { name: /start session/i }).hasAttribute("disabled")).toBe(
       true
     )

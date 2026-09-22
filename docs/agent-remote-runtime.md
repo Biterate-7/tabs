@@ -129,34 +129,45 @@ it can fall.
 
 ## 5. Claude authentication
 
+> **Superseded by Phase I.2.** This section described an operator-supplied
+> `ANTHROPIC_API_KEY` used for every user's session. That is gone. See
+> **docs/provider-connections.md** for what replaced it; what follows is the
+> current state.
+
 The remote sandbox is a fresh microVM with no Claude login and no way to
-acquire one, so running an agent there requires a server-side credential.
+acquire one, so running an agent there requires a credential supplied from
+outside it. That credential is now **the signed-in user's own**.
 
-**What is implemented:** an operator-supplied `ANTHROPIC_API_KEY` on the
-deployment. It is read from `process.env` at the moment a bridge starts, handed
-to the platform over TLS as one process's environment, and referenced nowhere
-else. It is never written to a row (the schema has no column for one), never
-put in a prompt, never emitted on an event, never logged, and never sent to the
-browser. `security.test.ts` asserts each of those.
+`RemoteClaudeRuntime` is constructed with a `ClaudeCredentialSource` bound to
+one actor, and resolves it on every `start()`:
 
-Consequence, stated plainly: **the deployment's owner pays for every user's
-agent runs.** That is a deliberate choice for a single-tenant or small-team
-deployment and is the wrong one for a public multi-tenant product.
+```
+actor → their provider connection → encrypted secret → bridge environment
+```
 
-**What is NOT implemented, and why.** Delegating a user's own Claude
-subscription to a hosted service. There is no supported mechanism for a
-third-party service to hold a person's Claude.ai OAuth credential, and
-inventing one would mean storing their session token on our server. That is the
-"report the exact blocker rather than fake it" case, and this is the report.
+Nothing in `remote-runtime.ts` reads `process.env` for a credential any more,
+and `security.test.ts` asserts that no module under `src/lib` does — the one
+exception being the integration-suite fixture, which is a developer's own key
+for a developer's own opt-in test.
 
-**The seam for per-user keys** is `PROVIDER_CREDENTIAL_ENV_VAR` in
-`remote-runtime.ts` — one function, `hasProviderCredential`, and one read. A
-bring-your-own-key implementation replaces both with a lookup against an
-encrypted per-user secret store. What it must not do is put a key anywhere the
-current one is forbidden from going.
+The credential is handed to the platform over TLS as one process's
+environment and referenced nowhere else. It is never written to a row (neither
+schema has a column for one), never put in a prompt, never emitted on an event,
+never logged, and never sent to the browser.
 
-When no credential is present the provider reports **Authentication required**,
-truthfully, and no sandbox is started.
+When the user has no usable connection the provider reports **Authentication
+required**, truthfully, **and no sandbox is created** — a user who cannot run
+an agent must not cause a microVM to be billed for.
+
+**What is still NOT implemented, and why.** Delegating a user's Claude.ai
+subscription to a hosted service. Anthropic documents API-key authentication
+and Workload Identity Federation for software that is not the user at their own
+terminal; the OAuth flow it documents writes a profile on a developer's own
+machine and is not a delegated third-party grant. Claiming otherwise would mean
+storing somebody's session token under a name that implied a consent they never
+gave. `ProviderAuthMethod` carries `official_oauth` as a declared, unimplemented
+member so that publishing such a flow would be one adapter rather than a
+rewrite.
 
 ---
 
@@ -261,8 +272,16 @@ Required environment:
 - `POSTGRES_URL` or `DATABASE_URL` — without it, `no-durable-store`, refused.
 - Sandbox credentials — `VERCEL_OIDC_TOKEN` (automatic on Vercel) or the
   `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` / `VERCEL_TOKEN` trio.
-- `ANTHROPIC_API_KEY` — without it the runtime is available and the provider
-  reports **Authentication required**.
+- `TABDUMP_CREDENTIAL_KEY` — 32 bytes, base64, for the provider-credential
+  store. Without it TabDump refuses to hold credentials at all, so no user can
+  connect and no session can start. Generate one with
+  `node scripts/migrate-credentials.mjs --key`, and run
+  `npm run migrate:credentials` for its tables. See
+  **docs/provider-connections.md**.
+- `ANTHROPIC_API_KEY` — **no longer read.** Each user supplies their own
+  credential through Settings → AI Connectors. A key left in the deployment's
+  environment is inert: the local runtime strips it from the agent process's
+  environment, and the remote runtime never reads it.
 
 The desktop build is untouched: `next.config.ts` still drops every `route.ts`
 from the Tauri static export, so the packaged app gains no server assumptions
@@ -275,7 +294,8 @@ and no remote runtime.
 - **`remote_git`.** The source type is declared and nothing creates one. Doing
   it safely needs a credential path that does not exist yet, and inventing one
   would be the insecure shortcut the brief rules out.
-- **Per-user provider credentials.** §5.
+- ~~**Per-user provider credentials.**~~ Built in Phase I.2 — see §5 and
+  docs/provider-connections.md.
 - **Staged large uploads.** §7.
 - **Streaming push.** The client polls `get_events` with its existing cursor.
   That satisfies "do not hold a request open indefinitely" honestly; SSE would

@@ -182,7 +182,20 @@ export type RuntimeHostOptions = {
   remote?: RemoteHostBindings;
 
   /** Resolves a provider's control adapter. Normally the connector registry's. */
-  resolveAdapter: (provider: AgentProviderId) => AgentControlAdapter | undefined;
+  /**
+   * Resolves a provider's control adapter, for one owner.
+   *
+   * The `ownerId` argument arrived with per-user provider credentials. A
+   * Claude adapter is now built around *somebody's* credential source, so
+   * "the adapter for claude-code" stopped being a well-formed question — two
+   * signed-in accounts on one deployment must get two adapters, each able to
+   * resolve only its own credential.
+   *
+   * A caller with nothing per-user to hold still writes `(provider) => ...`
+   * and still means what it did, because a function of one parameter is
+   * assignable to a type of two.
+   */
+  resolveAdapter: (provider: AgentProviderId, ownerId: string) => AgentControlAdapter | undefined;
 
   /**
    * A further source of authorized projects, consulted before the ones an
@@ -441,7 +454,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     const host = hosted.get(sessionId);
     if (!host || host.ownerId !== actor.id) return;
 
-    const adapter = options.resolveAdapter(host.provider);
+    const adapter = options.resolveAdapter(host.provider, host.ownerId);
     if (adapter) await drainAdapter(adapter, sessionId);
   }
 
@@ -477,7 +490,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       // The gate's decision, frozen at construction. Not re-read, not
       // re-decided, and not reachable from a request.
       runtime: () => options.gate.decision,
-      resolveAdapter: options.resolveAdapter,
+      // Bound to this service's actor. The control service asks for "the
+      // adapter for this provider"; which adapter that is depends on whose
+      // service is asking, and this closure is where that is decided.
+      resolveAdapter: (provider) => options.resolveAdapter(provider, actorId),
       resolveProject: (projectId) => projectFor(actorId, projectId),
       now,
       createId: () => `cs-${createId()}`,
@@ -533,7 +549,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
    * correlatable and not resumable, which is a distinction with no meaning.
    */
   function captureProviderSession(sessionId: string, session: HostSession): void {
-    const adapter = options.resolveAdapter(session.provider);
+    const adapter = options.resolveAdapter(session.provider, session.ownerId);
     if (!adapter) return;
 
     const providerSessionId = providerSessionIdOf(adapter, sessionId);
@@ -573,7 +589,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   function startRun(sessionId: string, host: HostSession): string {
     const runId = `cr-${createId()}`;
 
-    const adapter = options.resolveAdapter(host.provider);
+    const adapter = options.resolveAdapter(host.provider, host.ownerId);
     // An adapter that cannot be bound produces events with no run id. That is
     // recorded rather than pretended around: the run still exists as TabDump's
     // own unit of driving, and correlation simply has one less piece of
@@ -606,7 +622,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   /** The view a client gets. Assembled here so every command answers with the same shape. */
   function viewOf(session: AgentSession): RuntimeSessionView {
     const host = hosted.get(session.id);
-    const adapter = options.resolveAdapter(session.provider);
+    // A session with no host record is one this process did not create, so
+    // there is no owner to resolve an adapter for. `undefined` reads through
+    // the rest of this function as "not cancellable", which is true.
+    const adapter = host ? options.resolveAdapter(session.provider, host.ownerId) : undefined;
 
     const view: RuntimeSessionView = {
       sessionId: session.id,
@@ -643,14 +662,14 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   }
 
   /** The providers this host reports on, and what is true of each. */
-  function providerStatuses(): RuntimeProviderStatus[] {
+  function providerStatuses(ownerId: string): RuntimeProviderStatus[] {
     const ids =
       options.providers ?? [...hosted.values()].map((session) => session.provider);
 
     const unique = [...new Set(ids)];
 
     return unique.map((provider) => {
-      const adapter = options.resolveAdapter(provider);
+      const adapter = options.resolveAdapter(provider, ownerId);
       if (!adapter) {
         return {
           provider,
@@ -682,12 +701,12 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     });
   }
 
-  function statusOf(): RuntimeStatus {
+  function statusOf(actor: RuntimeActor): RuntimeStatus {
     const status: RuntimeStatus = {
       environment: options.gate.kind,
       executable: options.gate.allowed,
       runtimeId,
-      providers: providerStatuses(),
+      providers: providerStatuses(actor.id),
     };
 
     if (!options.gate.allowed) status.detail = options.gate.detail;
@@ -704,7 +723,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   ): Promise<RuntimeResult<RuntimeCommandResults[RuntimeCommandName]>> {
     // `get_status` is the one command a refused runtime still answers. It has
     // to be: a UI that cannot ask "why not" can only show a blank screen.
-    if (command.name === "get_status") return { ok: true, value: statusOf() };
+    if (command.name === "get_status") return { ok: true, value: statusOf(actor) };
 
     if (!options.gate.allowed) return gateFailure();
 

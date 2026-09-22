@@ -20,6 +20,7 @@ import { useAgentSession } from "@/hooks/use-agent-session"
 import { useAgentSessions } from "@/hooks/use-agent-sessions"
 import { useNow } from "@/hooks/use-now"
 import { useRemoteProjects } from "@/hooks/use-remote-projects"
+import { useProviderConnections } from "@/hooks/use-provider-connections"
 import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
 import { cn } from "@/lib/utils"
@@ -70,12 +71,22 @@ export function CommandCentreView({
    * driven without a network.
    */
   remoteFetch,
+  /**
+   * Takes the user to Settings → AI Connectors, where they connect their own
+   * provider credentials.
+   *
+   * Optional, and the dialog degrades to a sentence without a button when it
+   * is absent — a surface with nowhere to send somebody should not offer an
+   * action that goes nowhere.
+   */
+  onOpenConnectors,
 }: {
   world: AgentContextWorld
   onClose: () => void
   client?: RuntimeClient
   poll?: boolean
   remoteFetch?: typeof fetch
+  onOpenConnectors?: () => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -179,6 +190,16 @@ export function CommandCentreView({
     enabled: remoteEnabled,
     ...(remoteFetch ? { fetch: remoteFetch } : {}),
   })
+
+  /*
+    This user's own provider connections.
+
+    Read so the start dialog can say whose credentials a session is about to
+    run on — and so it can offer the Connect button when the answer is "none
+    yet". Whether somebody has connected a key changes when they press a
+    button in settings, not on a timer, so there is no polling here.
+  */
+  const connections = useProviderConnections()
 
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
@@ -445,7 +466,9 @@ export function CommandCentreView({
               },
             }
           : {})}
+        connectionFor={connections.forProvider}
         onCreate={(input) => void handleCreate(input)}
+        {...(onOpenConnectors ? { onConnectProvider: onOpenConnectors } : {})}
         creating={creating}
         now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}

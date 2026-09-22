@@ -246,6 +246,71 @@ export type ClaudeRuntimeStartResult =
   | { ok: true; handle: ClaudeRuntimeHandle }
   | { ok: false; error: ClaudeRuntimeError };
 
+/* ------------------------------------------------------------------ *
+ * Credentials
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where a runtime gets the credential it runs under.
+ *
+ * ## Why this is a function and not a field
+ *
+ * A credential must not be constructed with the runtime and held for the
+ * life of the process. It is fetched at the moment a run starts, used, and
+ * dropped — so a runtime that has been sitting idle for an hour is a runtime
+ * holding nothing worth stealing, and a connection the user revoked in the
+ * meantime stops working on the next start rather than at the next restart.
+ *
+ * ## Why it is bound to an actor rather than taking one
+ *
+ * The source handed to a runtime is already closed over one actor: it is
+ * built in `runtime/server.ts`, per actor, from the authenticated session.
+ * There is no argument a caller could pass that would make it resolve
+ * somebody else's, which is what makes §13's "User A must never start a
+ * session using User B's credential" structural rather than checked.
+ *
+ * ## What a runtime may do with the result
+ *
+ * Put `credential.env` into the environment of the provider process. That is
+ * all. Not a command-line argument, not a file, not a prompt, not an event
+ * payload, not a log line. `security.test.ts` asserts each of those.
+ */
+export type ClaudeCredentialSource = () => Promise<ClaudeCredentialResolution>;
+
+/**
+ * The resolution, restated in the seam's own vocabulary.
+ *
+ * Deliberately not an import of the credential layer's `CredentialResolution`:
+ * this module is the provider seam and is imported by the browser-testable
+ * adapter, and dragging a `server-only` domain's types across it would make
+ * the seam depend on the thing it exists to be independent of. The shapes
+ * agree structurally, and `runtime/server.ts` is the one place that adapts.
+ */
+export type ClaudeCredentialResolution =
+  | { ok: true; connectionId: string; env: Readonly<Record<string, string>> }
+  | { ok: false; reason: "not_connected" | "not_usable" | "unavailable" };
+
+/**
+ * Whether a runtime can run, in three separate facts rather than a boolean.
+ *
+ * `isAvailable()` collapses "the SDK is not installed" and "you have not
+ * connected a credential" into one `false`, and those need different
+ * sentences: one is a machine problem the user cannot fix and the other is a
+ * button they should press. So a runtime that can tell them apart implements
+ * `describeAvailability`, and the adapter prefers it when present.
+ *
+ * Optional rather than required, because `isAvailable` is what every existing
+ * implementation and every test fixture already has, and widening a seam that
+ * three runtimes implement is how a phase turns into a refactor.
+ */
+export type ClaudeRuntimeAvailability =
+  /** Ready. The SDK or sandbox is reachable and a credential resolved. */
+  | { kind: "available" }
+  /** Everything works except that this user has no usable provider connection. */
+  | { kind: "credential-required"; reason: "not_connected" | "not_usable" | "unavailable" }
+  /** The runtime itself cannot run here — no SDK, no sandbox, wrong machine. */
+  | { kind: "unavailable" };
+
 export type ClaudeRuntime = {
   /**
    * Whether this environment can run Claude Code at all.
@@ -256,6 +321,14 @@ export type ClaudeRuntime = {
    * must never get as far as asking whether a binary exists.
    */
   isAvailable(): Promise<boolean>;
+  /**
+   * The same question, answered in three states instead of two.
+   *
+   * See `ClaudeRuntimeAvailability`. A runtime that does not implement it is
+   * read through `isAvailable`, which is exactly the behaviour every caller
+   * had before this existed.
+   */
+  describeAvailability?(): Promise<ClaudeRuntimeAvailability>;
   start(options: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeStartResult>;
   /**
    * Picks up a run this process did not start.

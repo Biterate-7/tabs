@@ -10,6 +10,7 @@ import { createFakeSandboxService } from "@/lib/agents/remote/__fixtures__/sandb
 import { createMemoryRemoteStore } from "@/lib/agents/remote/store"
 import { createRemoteProject } from "@/lib/agents/remote/projects"
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter"
+import { staticCredentialSource } from "@/lib/agents/credentials/__fixtures__/source"
 import { createRemoteClaudeRuntime } from "@/lib/agents/control/providers/claude-code/remote-runtime"
 import { assistantText, systemInit } from "@/lib/agents/control/providers/claude-code/__fixtures__/scripted-runtime"
 import { REMOTE_WORKSPACE_ROOT } from "@/lib/agents/remote/types"
@@ -51,7 +52,8 @@ import type { AgentContextWorld } from "@/lib/agents/context/world"
 
 const OWNER = "account:alice"
 const ACTOR: RuntimeActor = { id: OWNER }
-const SANDBOX_ENV = { ANTHROPIC_API_KEY: "sk-ant-e2e" }
+// This user's own connected credential, as `server.ts` resolves it per actor.
+const CREDENTIALS = staticCredentialSource("sk-ant-e2e", "pc-alice")
 
 const REMOTE_GATE: ExecutionGateResult = {
   allowed: true,
@@ -95,7 +97,12 @@ function world(): AgentContextWorld {
 /** One request's worth of runtime, exactly as `server.ts` builds it for a remote actor. */
 function newHost() {
   const adapter = createClaudeCodeControlAdapter({
-    runtime: createRemoteClaudeRuntime({ sandbox, store, ownerId: ACTOR.id, env: SANDBOX_ENV }),
+    runtime: createRemoteClaudeRuntime({
+      sandbox,
+      store,
+      ownerId: ACTOR.id,
+      credentials: CREDENTIALS,
+    }),
   })
 
   return createRuntimeHost({
@@ -267,7 +274,11 @@ describe("the hosted flow, from click to sandbox", () => {
 
     const started = sandbox.calls.find((call) => call.kind === "startBridge")!
     expect(started.kind === "startBridge" && started.input.sandboxName).toBe(sandboxName)
-    expect(started.kind === "startBridge" && started.input.env).toEqual(SANDBOX_ENV)
+    // *This user's* credential, and only it. Not the deployment's — there is
+    // no longer any environment a deployment-wide key could arrive from.
+    expect(started.kind === "startBridge" && started.input.env).toEqual({
+      ANTHROPIC_API_KEY: "sk-ant-e2e",
+    })
 
     // The bridge's configuration came from the grant the user chose, not from
     // anything the browser could set.

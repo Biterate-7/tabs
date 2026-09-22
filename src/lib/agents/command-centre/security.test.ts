@@ -369,15 +369,25 @@ describe("a runtime that cannot execute is not worked around", () => {
     const apiDir = path.join(SRC_DIR, "app/api/agents")
     const routes = walk(apiDir).map((file) => path.relative(apiDir, file).replace(/\\/g, "/"))
 
-    // The allowlist, with what each one is for. `remote-projects` joined it in
-    // Phase I because creating a remote project has to accept *file contents*,
-    // which the control protocol's closed union deliberately cannot carry —
-    // see the note at the top of that route. It creates a workspace; it cannot
-    // start, message or drive an agent, which is what the assertions below
-    // pin down.
+    // The allowlist, with what each one is for.
+    //
+    // `remote-projects` joined it in Phase I because creating a remote project
+    // has to accept *file contents*, which the control protocol's closed union
+    // deliberately cannot carry.
+    //
+    // `provider-connections` joined it in Phase I.2 for the same shape of
+    // reason: connecting a credential has to accept a *secret* in a request
+    // body, and widening the control union to carry one would have put a
+    // credential-shaped field on the transport that drives agents. Keeping it
+    // on its own resource is what lets the control protocol's guard tests
+    // continue to assert exactly what they always did.
+    //
+    // Both create or hold *state*. Neither can start, message or drive an
+    // agent, which is what the assertions below pin down.
     expect(routes.sort()).toEqual([
       "claude-code/route.ts",
       "control/route.ts",
+      "provider-connections/route.ts",
       "remote-projects/route.ts",
     ])
 
@@ -387,13 +397,24 @@ describe("a runtime that cannot execute is not worked around", () => {
       expect(route).not.toMatch(/\b(chat|execute|exec|run|shell|spawn|eval)\b/)
     }
 
-    // And the one route that is not the control transport reaches no runtime
-    // host, so there is no path through it to a provider.
-    const remote = readFileSync(path.join(apiDir, "remote-projects/route.ts"), "utf8")
-    expect(remote).not.toContain("getRuntimeHost")
-    expect(remote).not.toContain("createSession")
-    expect(remote).not.toContain("sendMessage")
-    expect(remote).not.toContain("startBridge")
+    // And the routes that are not the control transport reach no runtime host,
+    // so there is no path through either of them to a provider.
+    for (const name of ["remote-projects/route.ts", "provider-connections/route.ts"]) {
+      const source = readFileSync(path.join(apiDir, name), "utf8")
+      expect(source, name).not.toContain("getRuntimeHost")
+      expect(source, name).not.toContain("createSession")
+      expect(source, name).not.toContain("sendMessage")
+      expect(source, name).not.toContain("startBridge")
+    }
+
+    // The credential route additionally never *reveals* one. `reveal` is the
+    // single function that produces plaintext, it lives on the secret store,
+    // and its one caller is the resolver the runtime uses — never a handler
+    // that answers a browser.
+    const connections = readFileSync(path.join(apiDir, "provider-connections/route.ts"), "utf8")
+    expect(connections).not.toContain(".reveal(")
+    expect(connections).not.toContain("resolveCredential")
+    expect(connections).not.toContain("prepareRuntimeCredential")
   })
 })
 

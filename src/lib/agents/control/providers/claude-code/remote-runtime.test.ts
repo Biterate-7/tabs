@@ -6,6 +6,10 @@ import { createRuntimeHost } from "@/lib/agents/runtime/host";
 import { createClaudeCodeControlAdapter } from "./adapter";
 import { createRemoteClaudeRuntime, PROVIDER_CREDENTIAL_ENV_VAR } from "./remote-runtime";
 import { assistantText, resultSuccess, systemInit } from "./__fixtures__/scripted-runtime";
+import {
+  missingCredentialSource,
+  staticCredentialSource,
+} from "@/lib/agents/credentials/__fixtures__/source";
 import { REMOTE_WORKSPACE_ROOT } from "@/lib/agents/remote/types";
 import type { FakeSandboxService } from "@/lib/agents/remote/__fixtures__/sandbox";
 import type { RemoteStore } from "@/lib/agents/remote/store";
@@ -41,7 +45,8 @@ const REMOTE_GATE: ExecutionGateResult = {
   decision: { allowed: true, kind: "remote-sandbox" },
 };
 
-const ENV = { [PROVIDER_CREDENTIAL_ENV_VAR]: "sk-ant-test-key" };
+/** A connected user's own credential. The env var is the one the bridge reads. */
+const CREDENTIALS = staticCredentialSource("sk-ant-test-key", "pc-test", PROVIDER_CREDENTIAL_ENV_VAR);
 
 let store: RemoteStore;
 let sandbox: FakeSandboxService;
@@ -71,7 +76,12 @@ function remoteProject(over: Partial<RemoteProject> = {}): RemoteProject {
  */
 function newRequest(actor: RuntimeActor): RuntimeHost {
   const adapter = createClaudeCodeControlAdapter({
-    runtime: createRemoteClaudeRuntime({ sandbox, store, ownerId: actor.id, env: ENV }),
+    runtime: createRemoteClaudeRuntime({
+      sandbox,
+      store,
+      ownerId: actor.id,
+      credentials: CREDENTIALS,
+    }),
   });
 
   return createRuntimeHost({
@@ -144,11 +154,18 @@ describe("starting a session", () => {
     );
   });
 
-  it("refuses when the deployment holds no provider credential", async () => {
+  it("refuses when the user has connected no provider credential", async () => {
     // Truthfully unavailable rather than a session that dies on its first
-    // message with an unexplained error.
+    // message with an unexplained error. Note what is NOT consulted on this
+    // path: the deployment's own environment. There is no operator key to
+    // fall back to, so a user with no connection simply cannot start.
     const adapter = createClaudeCodeControlAdapter({
-      runtime: createRemoteClaudeRuntime({ sandbox, store, ownerId: ALICE.id, env: {} }),
+      runtime: createRemoteClaudeRuntime({
+        sandbox,
+        store,
+        ownerId: ALICE.id,
+        credentials: missingCredentialSource("not_connected"),
+      }),
     });
     const host = createRuntimeHost({
       gate: REMOTE_GATE,

@@ -1,7 +1,9 @@
 import "server-only";
 import type {
+  ClaudeCredentialSource,
   ClaudePermissionDecision,
   ClaudeRuntime,
+  ClaudeRuntimeAvailability,
   ClaudeRuntimeError,
   ClaudeRuntimeHandle,
   ClaudeRuntimeMessage,
@@ -139,13 +141,66 @@ export type SdkClaudeRuntimeOptions = {
    */
   moduleSpecifier?: string;
   idleTimeoutMs?: number;
+  /**
+   * The signed-in user's own provider credential.
+   *
+   * Required. Before this phase the local runtime inherited whatever Claude
+   * Code login happened to exist in the process environment — which on a
+   * developer's own machine is their own credential and is fine, and on any
+   * deployment with an `ANTHROPIC_API_KEY` set is *the operator's*, used
+   * silently for everybody. There is no way to tell those two apart from
+   * inside this function, so it no longer tries: the credential arrives
+   * explicitly or the run does not start.
+   */
+  credentials: ClaudeCredentialSource;
+  /**
+   * The environment the agent process inherits, minus its credential.
+   *
+   * Injected so the stripping below is testable without a real `process.env`.
+   */
+  baseEnv?: Readonly<Record<string, string | undefined>>;
 };
 
-export function createSdkClaudeRuntime(
-  options: SdkClaudeRuntimeOptions = {}
-): ClaudeRuntime {
+/**
+ * Provider credential variables removed from the inherited environment.
+ *
+ * The user's own key is written over the top of these anyway, so stripping
+ * them changes no outcome — it removes the *path*. A future edit that forgot
+ * to set one of them would otherwise fall through to the operator's key and
+ * work, which is precisely the silent fallback §6 forbids and precisely the
+ * kind of bug that is invisible until a billing statement arrives.
+ */
+const INHERITED_CREDENTIAL_VARS: readonly string[] = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+] as const;
+
+export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): ClaudeRuntime {
   const specifier = options.moduleSpecifier ?? "@anthropic-ai/claude-agent-sdk";
   const idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+
+  /**
+   * The environment one agent process runs in.
+   *
+   * Built fresh per run, from a copy of the base environment with every
+   * provider credential variable deleted, then the resolved credential
+   * written in. Nothing mutates `process.env`, so two concurrent sessions
+   * belonging to two different users cannot see each other's key — which they
+   * would if this set a global and cleared it afterwards.
+   */
+  function environmentFor(credentialEnv: Readonly<Record<string, string>>): Record<string, string> {
+    const base = options.baseEnv ?? process.env;
+    const env: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(base)) {
+      if (value === undefined) continue;
+      if (INHERITED_CREDENTIAL_VARS.includes(key)) continue;
+      env[key] = value;
+    }
+
+    return { ...env, ...credentialEnv };
+  }
 
   type SdkModule = {
     query(params: { prompt: unknown; options?: Record<string, unknown> }): AsyncGenerator<
@@ -169,13 +224,33 @@ export function createSdkClaudeRuntime(
 
   return {
     async isAvailable(): Promise<boolean> {
-      return (await loadSdk()) !== null;
+      // Both halves. A machine with the SDK installed and no connected
+      // credential cannot run an agent, and reporting it as available is how
+      // a user gets a session that dies on its first message.
+      if ((await loadSdk()) === null) return false;
+      return (await options.credentials()).ok;
+    },
+
+    async describeAvailability(): Promise<ClaudeRuntimeAvailability> {
+      if ((await loadSdk()) === null) return { kind: "unavailable" };
+
+      const credential = await options.credentials();
+      if (!credential.ok) return { kind: "credential-required", reason: credential.reason };
+      return { kind: "available" };
     },
 
     async start(start: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeStartResult> {
       const sdk = await loadSdk();
       if (!sdk) {
         return { ok: false, error: { code: "not-installed" } };
+      }
+
+      // Resolved here, per run, and never held on the runtime. A user who
+      // disconnected their credential a minute ago cannot start a session
+      // now, even though this runtime object was built before they did.
+      const credential = await options.credentials();
+      if (!credential.ok) {
+        return { ok: false, error: { code: "authentication", detail: credential.reason } };
       }
 
       const queue = createMessageQueue();
@@ -210,6 +285,11 @@ export function createSdkClaudeRuntime(
           prompt: queue,
           options: {
             abortController: abort,
+            // The credential's only crossing on the local plane. It reaches
+            // the agent process as one entry in its environment and appears
+            // nowhere else in this call: not in `allowedTools`, not in a
+            // prompt, not in a path, not in anything the queue carries.
+            env: environmentFor(credential.env),
             ...(start.cwd ? { cwd: start.cwd } : {}),
             ...(start.additionalDirectories.length > 0
               ? { additionalDirectories: [...start.additionalDirectories] }

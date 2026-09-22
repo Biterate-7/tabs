@@ -5,9 +5,11 @@ import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-co
 import { createRemoteBindings } from "@/lib/agents/remote/bindings";
 import { createVercelSandboxService } from "@/lib/agents/remote/sandbox-vercel";
 import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
+import { resolveProviderCredential } from "@/lib/agents/credentials/server";
 import { assertExecutionAllowed, denyRemoteExecution } from "./gate";
 import { createRuntimeHost } from "./host";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { ClaudeCredentialSource } from "@/lib/agents/control/providers/claude-code/runtime";
 import type { AgentControlAdapter } from "@/lib/agents/control/types";
 import type { RemoteSandboxService } from "@/lib/agents/remote/sandbox";
 import type { RemoteStore } from "@/lib/agents/remote/store";
@@ -155,22 +157,71 @@ async function resolveRuntime(): Promise<Resolved> {
  * ------------------------------------------------------------------ */
 
 let localHost: RuntimeHost | undefined;
-let localClaude: AgentControlAdapter | undefined;
 
 /**
- * The local Claude control adapter, built once.
+ * One local Claude adapter per actor.
+ *
+ * ## Why this is no longer a single adapter
+ *
+ * It was, until provider credentials became per-user. An adapter now holds a
+ * `ClaudeCredentialSource` closed over one owner, so a shared adapter would
+ * be an adapter holding one user's credential resolver and handing it to
+ * every session on the process. On a developer's own machine there is one
+ * actor and the map has one entry; on a local server with accounts there are
+ * several, and they are structurally separate rather than separated by a
+ * check.
+ *
+ * Keyed by actor id and cached, because a local adapter owns child processes:
+ * building a second one for the same actor would orphan the first one's
+ * sessions. The map is cleared by `disposeRuntimeHost`.
+ */
+const localClaudeByActor = new Map<string, AgentControlAdapter>();
+
+/**
+ * This actor's credential, resolved fresh on every call.
+ *
+ * Deliberately a closure over `ownerId` rather than a parameter the runtime
+ * passes: a runtime cannot ask for a credential it was not built to resolve,
+ * so there is no argument any request could carry that would reach another
+ * account's key.
+ *
+ * Resolved per `start()` rather than once, so revoking a connection stops the
+ * next session rather than the next deployment.
+ */
+function credentialSourceFor(ownerId: string): ClaudeCredentialSource {
+  return async () => {
+    const resolution = await resolveProviderCredential(ownerId, "claude-code");
+    // Restated into the provider seam's own vocabulary. The seam does not
+    // import the credential domain — see the note on `ClaudeCredentialResolution`
+    // — so this is the one adaptation point, and it carries the connection id
+    // and the environment and nothing else.
+    if (!resolution.ok) return { ok: false, reason: resolution.reason };
+    return {
+      ok: true,
+      connectionId: resolution.credential.connectionId,
+      env: resolution.credential.env,
+    };
+  };
+}
+
+/**
+ * The local Claude control adapter for one actor, built once.
  *
  * `connect()` is fired and not awaited: it only settles the adapter's
  * reported connection status, and `connecting` is the honest answer while it
  * does. Awaiting it would make the first command of every cold process wait
  * on a module load it does not need.
  */
-function localAdapter(): AgentControlAdapter {
-  if (localClaude) return localClaude;
+function localAdapter(ownerId: string): AgentControlAdapter {
+  const existing = localClaudeByActor.get(ownerId);
+  if (existing) return existing;
 
-  localClaude = createClaudeCodeControlAdapter({ runtime: createSdkClaudeRuntime() });
-  void localClaude.connect();
-  return localClaude;
+  const adapter = createClaudeCodeControlAdapter({
+    runtime: createSdkClaudeRuntime({ credentials: credentialSourceFor(ownerId) }),
+  });
+  localClaudeByActor.set(ownerId, adapter);
+  void adapter.connect();
+  return adapter;
 }
 
 /* ------------------------------------------------------------------ *
@@ -236,6 +287,10 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
           sandbox: resolution.sandbox,
           store: resolution.store,
           ownerId: actor.id,
+          // The same actor the store view is scoped to. One owner id, used
+          // for both, so a sandbox this runtime can reach and a credential it
+          // can resolve always belong to the same person.
+          credentials: credentialSourceFor(actor.id),
         }),
       });
       void adapter.connect();
@@ -250,8 +305,11 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
     }
 
     case "local":
-      return localHostWith(resolution.gate, (provider) =>
-        provider === "claude-code" ? localAdapter() : undefined
+      // The resolver is consulted per command, with the owner the host
+      // already knows, so one cached host serves every actor while each
+      // still gets their own adapter and their own credential.
+      return localHostWith(resolution.gate, (provider, ownerId) =>
+        provider === "claude-code" ? localAdapter(ownerId) : undefined
       );
 
     case "refused":
@@ -273,7 +331,7 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
  */
 function localHostWith(
   gate: ExecutionGateResult,
-  resolveAdapter: (provider: AgentProviderId) => AgentControlAdapter | undefined
+  resolveAdapter: (provider: AgentProviderId, ownerId: string) => AgentControlAdapter | undefined
 ): RuntimeHost {
   if (localHost) return localHost;
 
@@ -311,11 +369,12 @@ export async function disposeRuntimeHost(): Promise<void> {
 
   if (current) await current.dispose();
 
-  // The adapter outlives the host by design — it is shared, and disposing it
-  // is what actually releases the provider processes, so it happens last and
-  // only when the host is going.
-  localClaude?.dispose();
-  localClaude = undefined;
+  // The adapters outlive the host by design — disposing them is what actually
+  // releases the provider processes, so it happens last and only when the host
+  // is going. Every actor's, not just the most recent: each holds its own
+  // child processes.
+  for (const adapter of localClaudeByActor.values()) adapter.dispose();
+  localClaudeByActor.clear();
 }
 
 let shutdownRegistered = false;

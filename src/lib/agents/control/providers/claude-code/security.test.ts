@@ -549,26 +549,60 @@ describe("the old control mechanism stays buried", () => {
 
 describe("no credential is handled or stored", () => {
   /**
-   * The one module allowed to know a credential exists, and why.
+   * The two modules allowed to know a credential exists, and why.
    *
-   * On the local plane the rule is absolute: Claude Code authenticates itself
-   * against the user's own installation, and TabDump introducing a second
-   * credential system would be gratuitous. That has not changed, and every
-   * local module below is still held to it.
+   * ## What changed in Phase I.2, and in which direction
    *
-   * The remote plane has no such installation to reuse. A sandbox is a fresh
-   * microVM with no Claude login and no way to acquire one, so running an
-   * agent there genuinely requires a server-side key. The honest response is
-   * to allow exactly one module to read one variable, and to hold that module
-   * to the stricter rules asserted immediately below — not to weaken the
-   * guard for the whole directory.
+   * This guard used to permit exactly one module — `remote-runtime.ts` — to
+   * *read* `ANTHROPIC_API_KEY` from the deployment's environment. That was
+   * the operator-key model: one key on the deployment, used for every user's
+   * session, with the whole cost falling on whoever ran TabDump.
+   *
+   * Per-user credentials removed that read entirely. Both runtimes now
+   * receive a `ClaudeCredentialSource` bound to one actor and resolve it per
+   * run. So the guard got *stronger*, not weaker, and it is now split in two:
+   *
+   *   - every module, including these two, is forbidden from reading a
+   *     credential out of `process.env` (asserted below, and this assertion
+   *     is new);
+   *   - every module except these two is forbidden from naming one at all.
+   *
+   * `sdk-runtime.ts` joined the list not because it gained a read but because
+   * it gained a *deletion*: it strips inherited provider variables out of the
+   * agent process's environment before writing the user's own over the top,
+   * so a future edit that forgot to set one cannot silently fall through to
+   * an operator key that happened to be present.
    */
-  const CREDENTIAL_BEARING = "remote-runtime.ts";
+  const CREDENTIAL_BEARING = new Set(["remote-runtime.ts", "sdk-runtime.ts"]);
 
-  it("declares no credential field and reads no key from the environment", () => {
+  it("reads no provider credential out of the process environment, anywhere", () => {
+    // The invariant the whole phase rests on: there is no code path by which
+    // a deployment-wide key can reach an agent. A credential arrives through
+    // a `ClaudeCredentialSource` — resolved from the signed-in user's own
+    // provider connection — or it does not arrive.
+    const offenders: string[] = [];
+    for (const { file, source } of sources) {
+      const code = codeOf(source);
+      for (const pattern of [
+        // process.env.ANTHROPIC_API_KEY, and the bracket form beside it.
+        /process.env.ANTHROPIC/,
+        /process.env[[^]]*ANTHROPIC/,
+        /process.env.CLAUDE_[A-Z_]*(KEY|TOKEN)/,
+        // The shape the old operator read had: an injected env map indexed by
+        // the credential variable's name.
+        /env[PROVIDER_CREDENTIAL_ENV_VAR]/,
+      ]) {
+        if (pattern.test(code)) offenders.push(`${file}: ${pattern}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("declares no credential field outside the two runtimes that inject one", () => {
     const offenders: string[] = [];
     for (const { file, name, source } of sources) {
-      if (name === CREDENTIAL_BEARING) continue;
+      if (CREDENTIAL_BEARING.has(name)) continue;
 
       const code = codeOf(source);
       for (const pattern of [
@@ -586,8 +620,8 @@ describe("no credential is handled or stored", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("confines the remote credential to reading one variable and handing it straight on", () => {
-    const remote = sources.find((entry) => entry.name === CREDENTIAL_BEARING);
+  it("confines the remote credential to handing one variable straight on", () => {
+    const remote = sources.find((entry) => entry.name === "remote-runtime.ts");
     expect(remote, "remote-runtime.ts should exist").toBeDefined();
     const code = codeOf(remote!.source);
 

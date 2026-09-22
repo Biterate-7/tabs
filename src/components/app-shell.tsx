@@ -1280,7 +1280,15 @@ export function AppShell() {
     withheld until they can.
   */
   if (view === "command-centre") {
-    return <CommandCentreView world={agentContextWorld} onClose={() => setView("workspace")} />
+    return (
+      <CommandCentreView
+        world={agentContextWorld}
+        onClose={() => setView("workspace")}
+        // So "this agent isn't connected yet" in the start dialog has a button
+        // rather than an instruction to go looking.
+        onOpenConnectors={() => openSettings("connectors")}
+      />
+    )
   }
 
   /*

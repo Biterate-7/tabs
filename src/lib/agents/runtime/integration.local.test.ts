@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
+import { machineCredentials } from "@/lib/agents/credentials/__fixtures__/source";
 import { decideServerRuntime } from "@/lib/agents/control/runtime";
 import { assertLocalExecutionAllowed } from "./gate";
 import { createRuntimeHost } from "./host";
@@ -85,7 +86,9 @@ describeLocal("the local execution surface, against real Claude Code", () => {
       permissions: { scopes: ["read_project"], projectId: "p-int", grantedAt: Date.now() },
     };
 
-    adapter = createClaudeCodeControlAdapter({ runtime: createSdkClaudeRuntime() });
+    adapter = createClaudeCodeControlAdapter({
+      runtime: createSdkClaudeRuntime({ credentials: machineCredentials }),
+    });
     await adapter.connect();
   });
 

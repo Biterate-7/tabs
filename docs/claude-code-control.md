@@ -287,7 +287,7 @@ Guarantees, each covered by a test:
 | No inherited MCP | `mcpServers: {}` + `strictMcpConfig: true` |
 | No provider bypass | `bypassPermissions` absent from the mode union |
 | No subagent escalation | `Task` in `NEVER_ALLOWED_TOOLS` |
-| No credentials | Claude Code authenticates itself; TabDump reads no key and stores none |
+| Credentials are the user's own | **Changed in Phase I.2.** This used to read "Claude Code authenticates itself; TabDump reads no key and stores none", which described inheriting whatever login the server process happened to have — a developer's own on their machine, and the *operator's* on any deployment with `ANTHROPIC_API_KEY` set. The runtime now takes a `ClaudeCredentialSource` bound to one actor, resolves it per run, strips inherited provider variables out of the agent's environment, and refuses to start without one. See docs/provider-connections.md |
 | No old control channel | `messagingSocketPath` / `procStart` / `pidDomain` appear nowhere |
 | No transcript leakage | thinking, tool inputs and tool results are all dropped at the normalizer |
 
