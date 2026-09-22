@@ -13,14 +13,28 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { AgentIcon } from "@/components/agents/agent-icon"
+import { RemoteProjectPicker } from "./remote-project-picker"
 import { canCreateSession, providerUnavailableReason } from "@/lib/agents/command-centre/presentation"
+import {
+  EXECUTION_MODE_DETAIL,
+  EXECUTION_MODE_LABEL,
+  START_BLOCKER_MESSAGE,
+  availableModes,
+  startBlocker,
+} from "@/lib/agents/command-centre/remote"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { cn } from "@/lib/utils"
 import type { AddProjectInput, AddProjectOutcome } from "@/hooks/use-agent-projects"
+import type {
+  CreateRemoteProjectInput,
+  CreateRemoteProjectOutcome,
+} from "@/hooks/use-remote-projects"
+import type { ExecutionMode, RemoteProjectSummary } from "@/lib/agents/command-centre/remote"
 import type { AgentProject } from "@/lib/agents/control/projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
-import type { RuntimeProviderStatus } from "@/lib/agents/runtime/protocol"
+import type { RuntimeProviderStatus, RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
 /**
  * Starting a session: an agent, a project, and nothing else.
@@ -50,27 +64,56 @@ import type { RuntimeProviderStatus } from "@/lib/agents/runtime/protocol"
 export function NewSessionDialog({
   open,
   onOpenChange,
+  status,
   providers,
   projects,
   onAddProject,
+  remote,
   onCreate,
   creating,
   error,
+  now,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * The runtime's own report, which is what decides which execution modes
+   * exist. Never a build flag and never a guess made in the browser.
+   */
+  status: RuntimeStatus | null
   providers: readonly RuntimeProviderStatus[]
   projects: readonly AgentProject[]
   onAddProject: (input: AddProjectInput) => AddProjectOutcome
+  /** The remote plane's half. Absent on a runtime that has none. */
+  remote?: {
+    projects: readonly RemoteProjectSummary[]
+    loading: boolean
+    unavailable: boolean
+    creating: boolean
+    create: (input: CreateRemoteProjectInput) => Promise<CreateRemoteProjectOutcome>
+  }
   onCreate: (input: { provider: AgentProviderId; projectId?: string; title?: string }) => void
   creating: boolean
   /** A sentence from the runtime's refusal of the last attempt. */
   error?: string
+  now: number
 }) {
   const startable = useMemo(() => providers.filter(canCreateSession), [providers])
 
+  /*
+    Which planes this runtime can actually execute in.
+
+    Derived from the host's own status, so a hosted deployment offers Remote
+    and never Local — it genuinely cannot execute locally, and offering it
+    would produce a failure the user could not have predicted. A local TabDump
+    offers Local, exactly as before.
+  */
+  const modes = useMemo(() => availableModes(status), [status])
+
   const [provider, setProvider] = useState<AgentProviderId | null>(null)
+  const [mode, setMode] = useState<ExecutionMode | null>(null)
   const [projectId, setProjectId] = useState<string>("")
+  const [remoteProjectId, setRemoteProjectId] = useState<string>("")
   const [title, setTitle] = useState("")
 
   const [addingProject, setAddingProject] = useState(false)
@@ -79,6 +122,31 @@ export function NewSessionDialog({
   const [projectError, setProjectError] = useState<string | null>(null)
 
   const chosen = provider ?? startable[0]?.provider ?? null
+  /*
+    The runtime decides the default, and there is only ever one plane to
+    default to: `availableModes` returns what this host can execute in, which
+    is one entry or none. An explicit choice wins when a future runtime
+    reports both.
+  */
+  const activeMode = mode ?? modes[0] ?? null
+  const chosenStatus = providers.find((candidate) => candidate.provider === chosen)
+
+  const selectedRemote = remote?.projects.find((project) => project.id === remoteProjectId) ?? null
+
+  /*
+    Whether Start may be pressed, and if not, precisely why.
+
+    One call, and the answer is the sentence shown beside the button. Nothing
+    here is a second opinion about permission: every fact consulted was decided
+    by the host, and pressing anyway would produce the same refusal with a
+    worse message.
+  */
+  const blocker = startBlocker({
+    status,
+    provider: chosenStatus,
+    mode: activeMode,
+    project: activeMode === "remote" ? selectedRemote : null,
+  })
 
   function submitProject() {
     if (!chosen) return
@@ -158,6 +226,63 @@ export function NewSessionDialog({
             </div>
           </fieldset>
 
+          {/*
+            Where the agent will run.
+
+            Rendered even when there is only one mode, because "this runs on
+            your machine" and "this runs in a container we made" are different
+            promises about where the user's files are, and a surface that says
+            neither leaves them to guess. With one mode it is a statement; with
+            two it is a choice.
+          */}
+          <fieldset>
+            <legend className="text-eyebrow text-tertiary">Runs</legend>
+            {modes.length === 0 ? (
+              <p className="mt-1.5 text-body-sm text-tertiary">
+                {START_BLOCKER_MESSAGE["runtime-unavailable"]}
+              </p>
+            ) : modes.length === 1 ? (
+              <p className="mt-1.5 text-body-sm text-muted-foreground">
+                <span className="text-foreground">{EXECUTION_MODE_LABEL[modes[0]]}</span>
+                {" · "}
+                {EXECUTION_MODE_DETAIL[modes[0]]}
+              </p>
+            ) : (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                <SegmentedControl
+                  value={activeMode ?? modes[0]}
+                  onValueChange={(next) => setMode(next)}
+                  options={modes.map((candidate) => ({
+                    value: candidate,
+                    label: EXECUTION_MODE_LABEL[candidate],
+                  }))}
+                  size="sm"
+                />
+                {activeMode && (
+                  <p className="text-body-sm text-tertiary">
+                    {EXECUTION_MODE_DETAIL[activeMode]}
+                  </p>
+                )}
+              </div>
+            )}
+          </fieldset>
+
+          {activeMode === "remote" && remote ? (
+            <RemoteProjectPicker
+              projects={remote.projects}
+              loading={remote.loading}
+              unavailable={remote.unavailable}
+              selectedId={remoteProjectId}
+              onSelect={setRemoteProjectId}
+              onCreate={remote.create}
+              creating={remote.creating}
+              now={now}
+            />
+          ) : activeMode === "remote" ? (
+            <p className="text-body-sm text-tertiary">
+              {START_BLOCKER_MESSAGE["runtime-unavailable"]}
+            </p>
+          ) : (
           <div>
             <div className="flex items-center justify-between gap-2">
               <label htmlFor="session-project" className="text-eyebrow text-tertiary">
@@ -244,6 +369,7 @@ export function NewSessionDialog({
               </div>
             )}
           </div>
+          )}
 
           <div className="flex flex-col gap-1">
             <label htmlFor="session-title" className="text-eyebrow text-tertiary">
@@ -261,20 +387,45 @@ export function NewSessionDialog({
         </div>
 
         <DialogFooter>
+          {/*
+            Why the block is stated rather than only enforced.
+
+            A disabled button with no explanation is the failure the brief
+            names: the user cannot tell whether the runtime is missing, the
+            provider needs signing in, or they simply have not chosen a
+            project. Each has a different next step, so each gets its own
+            sentence.
+          */}
+          {blocker && (
+            <p className="mr-auto min-w-0 text-body-sm text-tertiary">
+              {START_BLOCKER_MESSAGE[blocker]}
+            </p>
+          )}
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             type="button"
-            disabled={!chosen || creating}
-            onClick={() =>
-              chosen &&
+            disabled={!chosen || creating || blocker !== null}
+            onClick={() => {
+              if (!chosen || blocker) return
+
+              /*
+                The project the session is scoped to, by **id**, whichever
+                plane it came from. `create_session` has no field for a path
+                and the host resolves the id against what this actor
+                authorized — so a remote id and a local id travel the same way
+                and are checked the same way. There is no UI-specific
+                execution path here.
+              */
+              const scopedProjectId = activeMode === "remote" ? remoteProjectId : projectId
+
               onCreate({
                 provider: chosen,
-                ...(projectId ? { projectId } : {}),
+                ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
                 ...(title.trim() ? { title: title.trim() } : {}),
               })
-            }
+            }}
           >
             {creating ? "Starting…" : "Start session"}
           </Button>

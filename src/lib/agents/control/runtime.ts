@@ -1,9 +1,9 @@
 /**
- * The local-execution boundary.
+ * The execution boundary.
  *
  * ## The question this module answers
  *
- * "May this process start an agent that touches a filesystem?"
+ * "May this process start an agent, and *whose* filesystem would it touch?"
  *
  * It is the most consequential question in the control plane, because the
  * same TabDump frontend is served from a user's own machine *and* from a
@@ -11,6 +11,25 @@
  * project is the product. On a hosted deployment, running an agent against
  * *the server's* filesystem — on behalf of any visitor who loads the page —
  * is a remote code execution hole with a friendly UI.
+ *
+ * ## Two planes, two decisions, one default of no
+ *
+ * Phase I adds a second execution plane, and the thing to understand about
+ * it is that it did **not** weaken the first. `decideServerRuntime` below is
+ * byte for byte the function it always was: a hosted marker still vetoes,
+ * the opt-in still cannot override that veto, and a hosted deployment still
+ * has no path whatsoever to the machine the browser is running on.
+ *
+ * What is new is `decideRemoteRuntime`, which answers a *different* question
+ * — "can this process reach an isolated sandbox that is nobody's computer?"
+ * — and whose yes authorizes something categorically different: execution
+ * against a workspace that TabDump created, inside a microVM, with no route
+ * to the host application's filesystem and none at all to the user's.
+ *
+ * The two never substitute for one another. `gate.ts` asks for local first
+ * and remote second, and a refusal of one is never a reason to try the other
+ * on a caller's behalf: a session is started in the environment the gate
+ * settled, and there is deliberately no fallback edge between them.
  *
  * ## Why every obvious signal is refused
  *
@@ -54,10 +73,43 @@ export type AgentRuntimeKind =
   | "local-desktop"
   /** A Node process the operator explicitly marked as their own machine. */
   | "local-server"
+  /**
+   * An isolated remote sandbox this process can reach.
+   *
+   * Emphatically not a *local* kind. Nothing about this authorizes touching
+   * the filesystem of the process that decided it, and nothing about it
+   * authorizes touching the user's machine. It authorizes driving an agent
+   * inside a microVM whose entire filesystem TabDump created.
+   */
+  | "remote-sandbox"
   /** A managed hosting platform. Never permitted to execute locally. */
   | "hosted"
   /** Could not be established. Treated exactly as `hosted`. */
   | "unknown";
+
+/**
+ * Which plane an allowed decision authorizes.
+ *
+ * The distinction a user is owed: "this agent is editing files on your
+ * laptop" and "this agent is editing files in a container we made for you"
+ * are different products, and a UI that said only *running* would be
+ * concealing the one fact that decides whether the blast radius includes
+ * their home directory.
+ */
+export type ExecutionEnvironment = "local" | "remote";
+
+export function executionEnvironmentOf(kind: AgentRuntimeKind): ExecutionEnvironment | null {
+  switch (kind) {
+    case "local-desktop":
+    case "local-server":
+      return "local";
+    case "remote-sandbox":
+      return "remote";
+    case "hosted":
+    case "unknown":
+      return null;
+  }
+}
 
 /** Why local execution was refused. Every value is a reason to say no. */
 export type RuntimeDenialReason =
@@ -69,8 +121,40 @@ export type RuntimeDenialReason =
   | "no-server-context";
 
 export type RuntimeDecision =
-  | { allowed: true; kind: "local-desktop" | "local-server" }
+  | { allowed: true; kind: "local-desktop" | "local-server" | "remote-sandbox" }
   | { allowed: false; kind: AgentRuntimeKind; reason: RuntimeDenialReason };
+
+/**
+ * Why the remote plane was refused.
+ *
+ * Separate from `RuntimeDenialReason` rather than folded into it, because
+ * every value there is a statement about *this machine* and every value here
+ * is a statement about *infrastructure*. Collapsing them would produce the
+ * one failure the brief forbids by name: a deployment with no sandbox
+ * credentials telling the user their agent is unavailable in the same words
+ * as a laptop that never opted in.
+ */
+export type RemoteDenialReason =
+  /** No Vercel Sandbox credentials — neither an OIDC token nor the access-token trio. */
+  | "no-sandbox-credentials"
+  /**
+   * No durable store.
+   *
+   * A serverless control plane holds nothing between requests, so a remote
+   * session with nowhere to record its sandbox identity is a sandbox that
+   * would be created, used once and then leaked — unreachable, unstoppable
+   * and still billing. Refusing is the only honest answer.
+   */
+  | "no-durable-store"
+  /** Asked somewhere with no server environment at all — a browser, a static export. */
+  | "no-server-context";
+
+export type RemoteRuntimeDecision =
+  | { allowed: true; credentials: SandboxCredentialKind }
+  | { allowed: false; reason: RemoteDenialReason };
+
+/** How this process proves to the sandbox platform that it is the deployment it claims to be. */
+export type SandboxCredentialKind = "oidc" | "access-token";
 
 /**
  * The opt-in variable, and the only value that counts.
@@ -165,6 +249,144 @@ export function decideServerRuntime(env: RuntimeEnvironment): RuntimeDecision {
  */
 export function denyNonServerRuntime(): RuntimeDecision {
   return { allowed: false, kind: "unknown", reason: "no-server-context" };
+}
+
+/* ------------------------------------------------------------------ *
+ * The remote plane
+ * ------------------------------------------------------------------ */
+
+/**
+ * The token a Vercel deployment is handed for its own identity.
+ *
+ * Short-lived, rotated by the platform, and scoped to the project. Its
+ * presence is the signal that this process can address the sandbox API as
+ * itself — which is why it is *checked* here and never read: this module
+ * decides, and the value belongs to the SDK that uses it.
+ */
+export const SANDBOX_OIDC_ENV_VAR = "VERCEL_OIDC_TOKEN";
+
+/**
+ * The off-platform alternative, which is all-or-nothing.
+ *
+ * Two of the three is not a partial credential, it is a misconfiguration, and
+ * treating it as one avoids the failure where a deployment appears to offer
+ * remote execution and then fails at the first sandbox create.
+ */
+export const SANDBOX_ACCESS_TOKEN_ENV_VARS: readonly string[] = [
+  "VERCEL_TEAM_ID",
+  "VERCEL_PROJECT_ID",
+  "VERCEL_TOKEN",
+] as const;
+
+function isSet(env: RuntimeEnvironment, name: string): boolean {
+  const value = env[name];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Which sandbox credential this environment carries, if any.
+ *
+ * OIDC first, because on the platform it is the one that is rotated for you
+ * and the one that cannot be copied into a repository. An access token is the
+ * fallback for a deployment that is not on Vercel at all.
+ */
+export function sandboxCredentialKind(
+  env: RuntimeEnvironment
+): SandboxCredentialKind | null {
+  if (isSet(env, SANDBOX_OIDC_ENV_VAR)) return "oidc";
+  if (SANDBOX_ACCESS_TOKEN_ENV_VARS.every((name) => isSet(env, name))) return "access-token";
+  return null;
+}
+
+export type RemoteRuntimeInput = {
+  /**
+   * Whether a durable store is configured and reachable.
+   *
+   * Passed in rather than detected, for the same reason the environment is:
+   * this module must stay pure and importable from anywhere, and the module
+   * that knows about Postgres is `server-only`. It is a *fact about
+   * infrastructure* supplied by the one caller that has a server context.
+   */
+  durableStore: boolean;
+};
+
+/**
+ * Decides whether this process may drive agents inside an isolated sandbox.
+ *
+ * ## What is deliberately absent, and why it is not an oversight
+ *
+ * There is **no hosted-platform veto here**, and that is the entire
+ * distinction between this function and `decideServerRuntime`. The veto up
+ * there exists because a hosted process executing *locally* would be running
+ * an agent on the server's own filesystem on behalf of any visitor. That
+ * hazard does not exist on this path: the execution target is a microVM with
+ * no route to this process's filesystem, created per project, owned by one
+ * account and destroyed on a timer.
+ *
+ * Being hosted is therefore not a reason to refuse here. It is, in fact, the
+ * normal case — this plane exists precisely so that a deployment which can
+ * never touch anybody's computer can still run a real agent.
+ *
+ * ## What is required
+ *
+ * Both, and neither is inferred:
+ *
+ *   1. **A sandbox credential.** Without one there is no plane to execute on.
+ *   2. **A durable store.** Without one a sandbox could be created and then
+ *      lost, which is worse than not creating it.
+ *
+ * `NODE_ENV` appears nowhere. A production build is not a statement about
+ * whether this deployment has been given the infrastructure to run agents,
+ * and `security.test.ts` asserts that this module never consults it.
+ */
+export function decideRemoteRuntime(
+  env: RuntimeEnvironment,
+  input: RemoteRuntimeInput
+): RemoteRuntimeDecision {
+  const credentials = sandboxCredentialKind(env);
+  if (!credentials) return { allowed: false, reason: "no-sandbox-credentials" };
+  if (!input.durableStore) return { allowed: false, reason: "no-durable-store" };
+  return { allowed: true, credentials };
+}
+
+/**
+ * The remote plane's decision, in the shape the control service consumes.
+ *
+ * A separate function from `decideRemoteRuntime` so that minting an
+ * *allowing* `RuntimeDecision` takes a deliberate call, exactly as
+ * `allowDesktopRuntime` does. The guard suite asserts that only `gate.ts`
+ * calls it, which is what stops an adapter or a route from deciding on its
+ * own that it is running remotely.
+ */
+export function allowRemoteRuntime(): RuntimeDecision {
+  return { allowed: true, kind: "remote-sandbox" };
+}
+
+/** The refusal, in the same shape. `reason` is carried separately; see `REMOTE_DENIAL_MESSAGES`. */
+export function denyRemoteRuntime(reason: RemoteDenialReason): RuntimeDecision {
+  return {
+    allowed: false,
+    // A remote refusal is not a statement that this is a hosted platform —
+    // it very often *is* one, and saying so would answer a question the user
+    // did not ask while concealing the one they did.
+    kind: "unknown",
+    // Mapped onto the local vocabulary only so the shape stays uniform. The
+    // sentence a user reads comes from `REMOTE_DENIAL_MESSAGES`, keyed by the
+    // remote reason, which is why nothing is lost in this narrowing.
+    reason: reason === "no-server-context" ? "no-server-context" : "not-opted-in",
+  };
+}
+
+export const REMOTE_DENIAL_MESSAGES: Record<RemoteDenialReason, string> = {
+  "no-sandbox-credentials":
+    "This TabDump deployment is not configured to run agents in a remote sandbox.",
+  "no-durable-store":
+    "Remote agents need a database. This TabDump deployment does not have one configured.",
+  "no-server-context": "This build of TabDump cannot run agents.",
+};
+
+export function describeRemoteDenial(decision: RemoteRuntimeDecision): string | null {
+  return decision.allowed ? null : REMOTE_DENIAL_MESSAGES[decision.reason];
 }
 
 /**

@@ -398,38 +398,131 @@ export type RuntimeBanner = {
   detail: string;
   /** Whether the UI should offer a reconnect affordance. */
   reconnectable: boolean;
+  /**
+   * Which plane is executing, when one is.
+   *
+   * `null` means nothing is. Kept separate from `title` so a caller can render
+   * the short `REMOTE · Ready` form the brief asks for without parsing a
+   * sentence back apart.
+   */
+  environment: "local" | "remote" | null;
 };
+
+/**
+ * The short form for the top runtime bar.
+ *
+ * `REMOTE · Ready` rather than `Agent runtime unavailable`, when remote
+ * execution is genuinely available — which is the specific change the brief
+ * asks for, and the reason it matters is that the old sentence was *true* for
+ * a hosted deployment and is now false. A user on tabsdump.vercel.app whose
+ * agent is running in a sandbox should not be told agents cannot run.
+ */
+export function runtimeBadge(status: RuntimeStatus | null): string {
+  const banner = runtimeBanner(status);
+  if (!banner.environment) return banner.title;
+  return `${banner.environment === "remote" ? "REMOTE" : "LOCAL"} · ${banner.title}`;
+}
 
 export function runtimeBanner(status: RuntimeStatus | null): RuntimeBanner {
   if (!status) {
     return {
       tone: "bad",
-      title: "Runtime disconnected",
-      detail: "TabDump cannot reach a local agent runtime.",
+      title: "Disconnected",
+      detail: "TabDump cannot reach an agent runtime.",
       reconnectable: true,
+      environment: null,
     };
   }
 
   if (status.executable) {
+    // The two executing planes read differently on purpose. "Agents run on
+    // this machine" and "agents run in an isolated environment TabDump
+    // created" are different promises about where a user's files are, and
+    // collapsing them into "Ready" would conceal the one fact that decides
+    // whether the blast radius includes their home directory.
+    const remote = status.environment === "remote";
     return {
       tone: "good",
-      title: "Local runtime ready",
-      detail: "Agents run on this machine.",
+      title: "Ready",
+      detail: remote
+        ? "Agents run in an isolated environment TabDump creates for each project. They cannot reach this computer."
+        : "Agents run on this machine, in the projects you authorize.",
       reconnectable: false,
+      environment: remote ? "remote" : "local",
     };
   }
 
-  // `detail` is the gate's own sentence (RUNTIME_DENIAL_MESSAGES), which is
-  // already fixed text and already safe. Falling back rather than assuming it
-  // is present, because the protocol marks it optional.
+  // `detail` is the gate's own sentence (RUNTIME_DENIAL_MESSAGES or
+  // REMOTE_DENIAL_MESSAGES), which is already fixed text and already safe.
+  // Falling back rather than assuming it is present, because the protocol
+  // marks it optional.
   return {
     tone: "muted",
-    title: "Agent runtime unavailable",
+    title: "Unavailable",
     detail:
       status.detail ??
       "This build of TabDump cannot run agents. Workspaces, tabs and context still work.",
     reconnectable: false,
+    environment: null,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Remote projects
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a remote project's sandbox is doing, in words.
+ *
+ * Total over the lifecycle union, so a state added to the remote plane is a
+ * type error here rather than a silently unlabelled row. Each sentence says
+ * what the user can do next, because a status with no next step is a status
+ * that reads as an error whatever its tone.
+ */
+export const REMOTE_STATUS_LABEL: Record<string, string> = {
+  creating: "Creating environment…",
+  ready: "Ready",
+  running: "Running",
+  stopping: "Stopping",
+  stopped: "Stopped",
+  expired: "Expired",
+  failed: "Failed",
+};
+
+export const REMOTE_STATUS_DETAIL: Record<string, string> = {
+  creating: "TabDump is setting up an isolated environment for this project.",
+  ready: "The environment is warm and holds this project's files.",
+  running: "An agent is working in this project.",
+  stopping: "The environment is shutting down.",
+  stopped: "The environment was stopped. Starting a session will bring it back with your files.",
+  expired: "The environment timed out. Starting a session will bring it back with your files.",
+  failed: "The environment could not be created. Try creating the project again.",
+};
+
+export const REMOTE_STATUS_TONE: Record<string, AgentVisualTone> = {
+  creating: "idle",
+  ready: "good",
+  running: "live",
+  stopping: "idle",
+  stopped: "muted",
+  expired: "muted",
+  failed: "bad",
+};
+
+export function remoteStatusLabel(status: string): string {
+  return REMOTE_STATUS_LABEL[status] ?? status;
+}
+
+/**
+ * Whether a session can be started against this project right now.
+ *
+ * A stopped or expired environment is *not* excluded: starting a session
+ * resumes it, with the project's files intact, which is the whole point of a
+ * persistent remote project. Only the two states that genuinely cannot accept
+ * one are.
+ */
+export function canStartRemoteSession(status: string): boolean {
+  return status !== "creating" && status !== "failed";
 }
 
 /** What a provider row says about itself. */

@@ -16,6 +16,7 @@ const ALICE: RuntimeActor = { id: "account:alice" };
 
 const ALLOWED: ExecutionGateResult = {
   allowed: true,
+  environment: "local",
   kind: "local",
   decision: { allowed: true, kind: "local-server" },
 };

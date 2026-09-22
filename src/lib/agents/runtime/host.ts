@@ -1,4 +1,4 @@
-import { bindRunTo, providerSessionIdOf } from "@/lib/agents/control/binding";
+import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
 import { NO_PERMISSIONS } from "@/lib/agents/control/permissions";
 import {
   isBlockedSessionStatus,
@@ -111,6 +111,56 @@ export const LOCAL_ACTOR: RuntimeActor = { id: "local" };
  * Options
  * ------------------------------------------------------------------ */
 
+/**
+ * One remote session as durable state remembers it.
+ *
+ * Deliberately not a `RuntimeSessionView`: this is what survives a process,
+ * and the things a view carries — status, runs, approvals, sequence — are all
+ * properties of a *live* session that this process has not picked up yet.
+ * Conflating the two would mean inventing a status for a session nobody has
+ * asked the provider about.
+ */
+export type RemoteSessionRef = {
+  sessionId: string;
+  provider: AgentProviderId;
+  projectId: string;
+  providerSessionId?: string;
+  createdAt: number;
+};
+
+/**
+ * How a remote host reaches the state that outlives it.
+ *
+ * ## Why the host takes this rather than a store
+ *
+ * Because the host must stay pure and drivable by tests with no database, no
+ * cloud platform and no possibility of starting anything — exactly as it is
+ * today. These three functions are the entire surface through which durable
+ * state enters, they are all owner-scoped by signature, and a test supplies
+ * them as plain async functions.
+ *
+ * Note what is absent: no sandbox, no path, no handle. The host learns that a
+ * project exists and that a session exists; *reaching* either is the
+ * adapter's business, through state the adapter resolves itself.
+ */
+export type RemoteHostBindings = {
+  /**
+   * Projects this actor owns, already resolved and owner-checked.
+   *
+   * Replaces whatever a client synced, rather than merging with it. On a
+   * remote host the browser's local projects are directories on a machine
+   * this process cannot see, and treating them as authorizations would be the
+   * one genuinely dangerous confusion in this design.
+   */
+  projects(actorId: string): Promise<readonly AgentProject[]>;
+
+  /** Sessions this actor owns, as durable state remembers them. */
+  sessions(actorId: string): Promise<readonly RemoteSessionRef[]>;
+
+  /** Drops a session's durable record. Called when the session is disposed. */
+  forget(actorId: string, sessionId: string): Promise<void>;
+};
+
 export type RuntimeHostOptions = {
   /**
    * Whether this process may execute agents, decided once. See ./gate.ts.
@@ -120,6 +170,16 @@ export type RuntimeHostOptions = {
    * that then looks like a bug.
    */
   gate: ExecutionGateResult;
+
+  /**
+   * Durable state, for a host whose execution plane is remote.
+   *
+   * Absent on every local host, and that absence is what makes a local host
+   * incapable of rehydration — correctly, because a local agent is a child
+   * process and a process that is gone has no session still running. See
+   * `reattach` in the Claude runtime seam.
+   */
+  remote?: RemoteHostBindings;
 
   /** Resolves a provider's control adapter. Normally the connector registry's. */
   resolveAdapter: (provider: AgentProviderId) => AgentControlAdapter | undefined;
@@ -288,6 +348,101 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
    */
   function projectFor(actorId: string, projectId: string): AgentProject | undefined {
     return options.resolveProject?.(projectId) ?? projectsByActor.get(actorId)?.get(projectId);
+  }
+
+  /**
+   * Loads this actor's remote projects before anything can name one.
+   *
+   * Pre-resolved rather than looked up on demand, and that is a deliberate
+   * shape rather than a convenience. `ControlService` resolves projects
+   * *synchronously*, at the moment it authorizes a filesystem scope; making
+   * that path async would mean an `await` inside the permission gate, which is
+   * where a race becomes an authorization bug. Loading first and resolving
+   * from memory keeps the security-critical path exactly as synchronous as it
+   * has always been.
+   *
+   * Replaces rather than merges, for the reason on `RemoteHostBindings`.
+   */
+  async function hydrateProjects(actorId: string): Promise<void> {
+    if (!options.remote) return;
+
+    const projects = await options.remote.projects(actorId);
+    const next = new Map<string, AgentProject>();
+    for (const project of projects) next.set(project.id, project);
+    projectsByActor.set(actorId, next);
+  }
+
+  /**
+   * Picks a remote session back up, if this process does not already hold it.
+   *
+   * ## Why this exists and `own` could not do it
+   *
+   * `own` is synchronous and is called from the middle of command handling.
+   * This has to talk to durable state and to a provider. So the rehydration
+   * happens *before* the command runs, and `own` then finds the session in
+   * memory exactly as it would on a long-lived local runtime — which is what
+   * keeps every ownership check below unchanged.
+   *
+   * Ownership is still checked twice, and not redundantly: the bindings only
+   * return sessions belonging to this actor, and `own` re-derives the same
+   * answer from the host's own record. Two independent sources agreeing is
+   * the property worth having.
+   */
+  async function ensureSession(actor: RuntimeActor, sessionId: string): Promise<void> {
+    if (!options.remote || hosted.has(sessionId)) return;
+
+    const refs = await options.remote.sessions(actor.id);
+    const ref = refs.find((candidate) => candidate.sessionId === sessionId);
+    if (!ref) return;
+
+    const adopted = await serviceFor(actor.id).adoptSession({
+      sessionId: ref.sessionId,
+      provider: ref.provider,
+      projectId: ref.projectId,
+      ...(ref.providerSessionId ? { providerSessionId: ref.providerSessionId } : {}),
+      // From the project, never from the durable session record. A grant
+      // stored beside a session would be a grant that kept applying after the
+      // user narrowed the project's permissions.
+      permissions: grantFor(actor.id, ref.projectId),
+      createdAt: ref.createdAt,
+    });
+
+    if (!adopted.ok) return;
+
+    const correlation = correlations.register(
+      {
+        provider: ref.provider,
+        origin: "control",
+        controlSessionId: ref.sessionId,
+        ...(ref.providerSessionId ? { providerSessionId: ref.providerSessionId } : {}),
+      },
+      now()
+    );
+
+    const host: HostSession = {
+      ownerId: actor.id,
+      provider: ref.provider,
+      runIds: [],
+      correlationId: correlation.id,
+    };
+    hosted.set(ref.sessionId, host);
+    startRun(ref.sessionId, host);
+  }
+
+  /**
+   * Collects whatever a non-pushing provider has said.
+   *
+   * Called before any command that reports on a session, so that what the
+   * caller is told includes everything the agent has done — rather than
+   * everything it had done as of whichever earlier request happened to be
+   * listening. A local adapter has no `drainSession` and this is a no-op.
+   */
+  async function drainSession(actor: RuntimeActor, sessionId: string): Promise<void> {
+    const host = hosted.get(sessionId);
+    if (!host || host.ownerId !== actor.id) return;
+
+    const adapter = options.resolveAdapter(host.provider);
+    if (adapter) await drainAdapter(adapter, sessionId);
   }
 
   /**
@@ -553,11 +708,76 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
     if (!options.gate.allowed) return gateFailure();
 
+    // Everything durable this command could need, loaded before it runs.
+    //
+    // Three steps, in this order, and the order is the design:
+    //
+    //   1. **Projects**, because a session cannot be rehydrated without the
+    //      project that gives it its scope and its grant.
+    //   2. **The session**, because every check below reads it from memory and
+    //      must not have to await anything to do so.
+    //   3. **The drain**, because what the caller is told should include
+    //      everything the agent has done, not everything it had done as of
+    //      whichever earlier request happened to be listening.
+    //
+    // All three are no-ops on a local host, which has no durable state and a
+    // provider that pushes.
+    await hydrateProjects(actor.id);
+
+    const named = sessionIdOf(command);
+    if (named) {
+      await ensureSession(actor, named);
+      await drainSession(actor, named);
+    } else if (command.name === "respond_to_approval" && options.remote) {
+      // The one command that names no session. An approval id alone does not
+      // say which conversation it belongs to, and the broker that could answer
+      // is empty until the session is picked up — so every one of this actor's
+      // sessions is, bounded by the per-owner session limit.
+      //
+      // Draining is what actually makes the approval answerable: the pending
+      // request is re-read from the provider's log and a resolver registered
+      // for it, which is how a decision reaches an agent that has been blocked
+      // since some earlier request on some other instance.
+      for (const ref of await options.remote.sessions(actor.id)) {
+        await ensureSession(actor, ref.sessionId);
+        await drainSession(actor, ref.sessionId);
+      }
+    }
+
     // This actor's control service, and the only one this command can reach.
     const actorService = serviceFor(actor.id);
 
     switch (command.name) {
       case "authorize_projects": {
+        // A remote host accepts none of them, and this is the single most
+        // important refusal in the remote design.
+        //
+        // These records describe directories on the machine running the
+        // browser. A hosted TabDump cannot see that machine, so a path from
+        // one means nothing here — but it would still *validate*, because
+        // `validateProjectPath` is checking the shape of a path and not the
+        // existence of a filesystem. Accepting one would create an authorized
+        // project whose path resolved, if it resolved at all, to a directory
+        // on the server. That is the hosted-execution hole the whole Phase B
+        // boundary exists to prevent, arriving through the one command that
+        // carries a path.
+        //
+        // So they are refused by name rather than dropped silently: the client
+        // syncs its local projects on every mount, and a silent no would leave
+        // the user believing a project was authorized when it never could be.
+        if (options.remote) {
+          return {
+            ok: true,
+            value: {
+              accepted: [],
+              rejected: command.projects.map((candidate) => ({
+                id: candidate.id,
+                reason: "remote-runtime",
+              })),
+            },
+          };
+        }
+
         const accepted: string[] = [];
         const rejected: { id: string; reason: string }[] = [];
         const next = new Map<string, AgentProject>();
@@ -602,6 +822,24 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           .sessions()
           .filter((session) => hosted.get(session.id)?.ownerId === actor.id)
           .map(viewOf);
+
+        // Sessions this process has not picked up are listed from durable
+        // state as `disconnected`, which is exactly what they are *to this
+        // process*: the agent may well be working, and nothing here has a
+        // connection to it.
+        //
+        // Not adopted here on purpose. Adopting means a platform round trip
+        // per session, and this is the command the UI polls — so the list
+        // stays cheap and honest, and selecting a session is what reconnects
+        // it. That is the same contract `control/persistence.ts` already
+        // established for sessions restored after a reload, and the client
+        // already knows how to reattach.
+        if (options.remote) {
+          for (const ref of await options.remote.sessions(actor.id)) {
+            if (sessions.some((session) => session.sessionId === ref.sessionId)) continue;
+            sessions.push(disconnectedView(ref));
+          }
+        }
 
         const owned = new Set(sessions.map((session) => session.sessionId));
         const views: RuntimeCorrelationView[] = correlations
@@ -855,6 +1093,13 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         journal.forget(command.sessionId);
         correlations.removeControlSession(command.sessionId);
 
+        // The durable record goes too, or the next request would rehydrate a
+        // session the user just disposed of — and it would succeed, because
+        // the agent is genuinely still there. The sandbox itself is left
+        // alone: it belongs to the project, not to this session, and its own
+        // deadline reclaims it.
+        await options.remote?.forget(actor.id, command.sessionId);
+
         return { ok: true, value: { sessionId: command.sessionId } };
       }
 
@@ -936,6 +1181,67 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       services.clear();
     },
   };
+}
+
+/**
+ * A durable session this process has not picked up, as a view.
+ *
+ * Every live-only field is reported at its empty value rather than guessed:
+ * no runs, no active run, no approvals, sequence zero. The one field that is
+ * an assertion is `resumable`, and it is true — a remote session's whole
+ * point is that the agent is still there — which is what tells the client
+ * this row is worth selecting.
+ */
+function disconnectedView(ref: RemoteSessionRef): RuntimeSessionView {
+  const view: RuntimeSessionView = {
+    sessionId: ref.sessionId,
+    provider: ref.provider,
+    // Honest, and specifically about *this process*: there is no connection
+    // to the agent from here. Selecting the session is what makes one.
+    status: "disconnected",
+    projectId: ref.projectId,
+    runIds: [],
+    awaitingApproval: false,
+    cancellable: false,
+    resumable: true,
+    latestSequence: 0,
+    createdAt: ref.createdAt,
+    updatedAt: ref.createdAt,
+  };
+  if (ref.providerSessionId) view.providerSessionId = ref.providerSessionId;
+  return view;
+}
+
+/**
+ * The session a command names, if it names one.
+ *
+ * A switch over the closed union rather than `"sessionId" in command`, so
+ * that a fifteenth command is a type error here rather than a command that
+ * silently skips rehydration and reports an empty session on a remote host.
+ *
+ * `respond_to_approval` is absent on purpose: it names an approval, and which
+ * session that belongs to cannot be known until the sessions are loaded. Its
+ * caller handles that case explicitly.
+ */
+function sessionIdOf(command: RuntimeCommand): string | undefined {
+  switch (command.name) {
+    case "get_session":
+    case "get_events":
+    case "send_message":
+    case "cancel_run":
+    case "attach_context":
+    case "detach_context":
+    case "dispose_session":
+    case "link_observation":
+      return command.sessionId;
+    case "get_status":
+    case "list_sessions":
+    case "authorize_projects":
+    case "create_session":
+    case "resume_session":
+    case "respond_to_approval":
+      return undefined;
+  }
 }
 
 /** Strips an approval to what a client may see. Targets are already project-relative. */

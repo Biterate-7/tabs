@@ -548,11 +548,28 @@ describe("the old control mechanism stays buried", () => {
  * ------------------------------------------------------------------ */
 
 describe("no credential is handled or stored", () => {
+  /**
+   * The one module allowed to know a credential exists, and why.
+   *
+   * On the local plane the rule is absolute: Claude Code authenticates itself
+   * against the user's own installation, and TabDump introducing a second
+   * credential system would be gratuitous. That has not changed, and every
+   * local module below is still held to it.
+   *
+   * The remote plane has no such installation to reuse. A sandbox is a fresh
+   * microVM with no Claude login and no way to acquire one, so running an
+   * agent there genuinely requires a server-side key. The honest response is
+   * to allow exactly one module to read one variable, and to hold that module
+   * to the stricter rules asserted immediately below — not to weaken the
+   * guard for the whole directory.
+   */
+  const CREDENTIAL_BEARING = "remote-runtime.ts";
+
   it("declares no credential field and reads no key from the environment", () => {
-    // Claude Code authenticates itself. TabDump reuses that installation's
-    // own auth rather than introducing a second credential system.
     const offenders: string[] = [];
-    for (const { file, source } of sources) {
+    for (const { file, name, source } of sources) {
+      if (name === CREDENTIAL_BEARING) continue;
+
       const code = codeOf(source);
       for (const pattern of [
         /\bapiKey\b/i,
@@ -567,6 +584,60 @@ describe("no credential is handled or stored", () => {
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it("confines the remote credential to reading one variable and handing it straight on", () => {
+    const remote = sources.find((entry) => entry.name === CREDENTIAL_BEARING);
+    expect(remote, "remote-runtime.ts should exist").toBeDefined();
+    const code = codeOf(remote!.source);
+
+    // It may name exactly one credential variable. A second would be a second
+    // decision nobody made.
+    for (const pattern of [/\baccessToken\b/i, /\brefreshToken\b/i, /\bpassword\b/i]) {
+      expect(pattern.test(code), `must not name ${pattern}`).toBe(false);
+    }
+
+    // The value is read and passed on. It must never be written anywhere that
+    // survives the call, nor rendered into anything a person or a model sees.
+    for (const forbidden of [
+      "localStorage",
+      "sessionStorage",
+      "console.log",
+      "console.error",
+      "console.warn",
+      // The store is where durable rows are written. A credential must not
+      // reach one, and the schema has no column for it either.
+      "createProject(",
+    ]) {
+      expect(code.includes(forbidden), `must not use ${forbidden}`).toBe(false);
+    }
+
+    // It never becomes part of a prompt, a message or an event. Each of those
+    // is a path to a model, a screen or a log.
+    expect(/summary\s*:/.test(code), "must not build an event summary").toBe(false);
+    expect(code.includes("withContext"), "must not touch prompt assembly").toBe(false);
+  });
+
+  it("keeps the credential out of the durable remote records", () => {
+    // The row a remote project or session becomes. If a credential ever gains
+    // a home here, it gains one in every backup and every `SELECT *`.
+    const remoteDir = path.resolve(DIR, "../../../remote");
+    const records = readFileSync(path.join(remoteDir, "types.ts"), "utf8");
+    const schema = readFileSync(path.join(remoteDir, "schema.sql"), "utf8");
+
+    for (const pattern of [/\bapiKey\b/i, /ANTHROPIC/i, /\btoken\b/i, /\bsecret\b/i, /\bpassword\b/i]) {
+      expect(pattern.test(codeOf(records)), `types.ts must not name ${pattern}`).toBe(false);
+    }
+
+    for (const forbidden of ["api_key", "token", "secret", "password", "credential"]) {
+      const columns = schema
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n");
+      expect(columns.toLowerCase().includes(forbidden), `schema must have no ${forbidden} column`).toBe(
+        false
+      );
+    }
   });
 
   it("writes to no storage", () => {

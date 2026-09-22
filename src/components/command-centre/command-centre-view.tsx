@@ -19,7 +19,8 @@ import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { useAgentSession } from "@/hooks/use-agent-session"
 import { useAgentSessions } from "@/hooks/use-agent-sessions"
 import { useNow } from "@/hooks/use-now"
-import { RUNTIME_ERROR_PRESENTATION, runtimeBanner } from "@/lib/agents/command-centre/presentation"
+import { useRemoteProjects } from "@/hooks/use-remote-projects"
+import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
 import { cn } from "@/lib/utils"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
@@ -60,11 +61,21 @@ export function CommandCentreView({
   /** Injected in tests so the surface can be driven without a network. */
   client,
   poll,
+  /**
+   * The transport the remote-projects resource uses.
+   *
+   * Separate from `client` because it is a different resource with a different
+   * shape — the control plane's typed command endpoint versus a REST resource
+   * that carries files. Injected for the same reason: so the surface can be
+   * driven without a network.
+   */
+  remoteFetch,
 }: {
   world: AgentContextWorld
   onClose: () => void
   client?: RuntimeClient
   poll?: boolean
+  remoteFetch?: typeof fetch
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -142,7 +153,32 @@ export function CommandCentreView({
   )
 
   const banner = runtimeBanner(runtime.status)
+  /**
+   * `REMOTE · Ready`, `LOCAL · Ready`, or the plain refusal.
+   *
+   * The brief's requirement, and the reason it is a requirement: on a hosted
+   * deployment the old sentence ("Agent runtime unavailable") was true when it
+   * was written and is now false, because agents genuinely run — in a sandbox
+   * TabDump creates, which is nobody's computer. Naming the plane is also the
+   * honest half: a user is owed the difference between an agent editing files
+   * on their laptop and one editing files in a container.
+   */
+  const badge = runtimeBadge(runtime.status)
   const startableProviders = runtime.status?.providers ?? []
+
+  /*
+    Whether to talk to the remote-projects endpoint at all.
+
+    The host's own answer, relayed: a local TabDump has no remote plane and
+    should not spend a request per mount being told 503. Never inferred from a
+    hostname or a build flag.
+  */
+  const remoteEnabled = runtime.status?.environment === "remote" && runtime.executable
+
+  const remoteProjects = useRemoteProjects({
+    enabled: remoteEnabled,
+    ...(remoteFetch ? { fetch: remoteFetch } : {}),
+  })
 
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
@@ -222,7 +258,7 @@ export function CommandCentreView({
             <span aria-hidden className={cn("text-meta", AGENT_TONE_TEXT_CLASS[banner.tone])}>
               ●
             </span>
-            <span className="shrink-0 text-label text-muted-foreground">{banner.title}</span>
+            <span className="shrink-0 text-label text-muted-foreground">{badge}</span>
             {/* After the title, so the row reads "● Agent runtime unavailable ·
                 <why>" rather than trailing off into the headline. Truncates
                 first, because the title is the part that must survive. */}
@@ -394,11 +430,24 @@ export function CommandCentreView({
       <NewSessionDialog
         open={newSessionOpen}
         onOpenChange={setNewSessionOpen}
+        status={runtime.status}
         providers={startableProviders}
         projects={projects.projects}
         onAddProject={projects.addProject}
+        {...(remoteEnabled
+          ? {
+              remote: {
+                projects: remoteProjects.projects,
+                loading: remoteProjects.loading,
+                unavailable: remoteProjects.unavailable,
+                creating: remoteProjects.creating,
+                create: remoteProjects.create,
+              },
+            }
+          : {})}
         onCreate={(input) => void handleCreate(input)}
         creating={creating}
+        now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
       />
 

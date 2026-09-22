@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
+import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { loadAgentState } from "@/lib/agents/persistence"
 import {
   CAPABILITY_KEYS,
@@ -17,12 +18,17 @@ import {
   visualStateForConnector,
 } from "@/lib/agents/visual/states"
 import { EMPTY_PROVIDER_USAGE, summarizeProviderUsage } from "@/lib/agents/connectors/usage"
+import {
+  CONTROL_CAPABILITY_LABEL,
+  controlAvailability,
+} from "@/lib/agents/command-centre/remote"
 import { cn } from "@/lib/utils"
 import { SectionHeading, SectionStack } from "./section-ui"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import type { ProviderUsage } from "@/lib/agents/connectors/usage"
 import type { AgentState } from "@/lib/agents/types"
+import type { RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
 /**
  * Settings → AI Connectors.
@@ -187,6 +193,75 @@ function ConnectorRow({
  * the connector contract has no member that could execute, prompt or control
  * anything.
  */
+/**
+ * What TabDump can do *with* this agent, as two separate capabilities.
+ *
+ * ## Why these are two blocks and not one status
+ *
+ * Observation and control are different planes with different permissions,
+ * different failure modes and different answers. Collapsing them was what made
+ * the old page misleading: "Observes Claude Code sessions running on this
+ * machine" was true, and was the only thing said, so a reader concluded that
+ * observation was all TabDump could do.
+ *
+ * ## Where "available" comes from
+ *
+ * The runtime's own `get_status` reply — never from the fact that this UI has
+ * a label for the provider. A deployment with no remote plane, an agent with
+ * no adapter, and an agent that needs credentials each read differently,
+ * because each has a different next step.
+ */
+function ControlSummary({ view, status }: { view: ConnectorView; status: RuntimeStatus | null }) {
+  const control = controlAvailability(status, view.descriptor.provider)
+
+  return (
+    <div className="mt-3 rounded-lg border border-subtle p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-meta font-medium text-foreground">Control</p>
+        <span
+          className={cn(
+            "text-meta",
+            control.kind === "available" ? "text-success" : "text-tertiary"
+          )}
+        >
+          {control.kind === "available"
+            ? control.environment === "remote"
+              ? "Remote"
+              : "Local"
+            : control.kind === "authentication-required"
+              ? "Authentication required"
+              : "Unavailable"}
+        </span>
+      </div>
+
+      <p className="mt-1 text-meta text-muted-foreground">
+        {control.kind === "available"
+          ? control.environment === "remote"
+            ? `Run ${view.descriptor.displayName} in a scoped TabDump project environment. Nothing is installed on your machine.`
+            : `Run ${view.descriptor.displayName} on this machine, in projects you authorize.`
+          : control.reason}
+      </p>
+
+      {control.kind === "available" && (
+        <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
+          {/* Exactly what the adapter declared. The capability model already
+              forbids claiming one that is not implemented, so the honest list
+              is the one it returned. */}
+          {control.capabilities.map((capability) => (
+            <li
+              key={capability}
+              className="flex items-center gap-1.5 text-meta text-muted-foreground"
+            >
+              <Check className="size-3 shrink-0" aria-hidden />
+              <span>{CONTROL_CAPABILITY_LABEL[capability] ?? capability}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function ConnectPrompt({
   view,
   busy,
@@ -198,8 +273,10 @@ function ConnectPrompt({
 }) {
   return (
     <div className="rounded-lg border border-subtle p-4">
-      <p className="text-body-sm text-foreground">
-        TabDump can observe {view.descriptor.displayName} activity and show it in your workspace.
+      <p className="text-meta font-medium text-foreground">Observe</p>
+      <p className="mt-1 text-body-sm text-foreground">
+        TabDump can observe {view.descriptor.displayName} sessions running on this machine and show
+        them in your workspace.
       </p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -235,6 +312,7 @@ function ConnectPrompt({
           {busy ? "Connecting…" : "Connect"}
         </Button>
       </div>
+
     </div>
   )
 }
@@ -284,6 +362,7 @@ function ConnectorDetail({
   onBack,
   onConnect,
   onDisconnect,
+  status,
 }: {
   view: ConnectorView
   usage: ProviderUsage
@@ -292,6 +371,8 @@ function ConnectorDetail({
   onBack: () => void
   onConnect: () => void
   onDisconnect: () => void
+  /** The runtime's own report. What decides whether control is available, and where. */
+  status: RuntimeStatus | null
 }) {
   const visual = statusVisual(view.status.kind)
   const lastObservation = relativeTime(view.status.lastObservationAt, now)
@@ -390,6 +471,11 @@ function ConnectorDetail({
           <ConnectPrompt view={view} busy={busy} onConnect={onConnect} />
         )}
 
+        {/* Always rendered, whether or not observation is connected: the two
+            planes are independent, and a machine with no local installation
+            can still run this agent remotely. */}
+        <ControlSummary view={view} status={status} />
+
         {(view.status.kind === "unavailable" || view.status.kind === "configuration_required") && (
           <div className="rounded-lg border border-subtle p-3">
             <p className="text-meta text-tertiary">
@@ -423,6 +509,15 @@ export function ConnectorsSection() {
    * user's machine.
    */
   const connectors = useAgentConnectors()
+  /*
+    The runtime's own report, for the control half of a connector's page.
+
+    Polling is off: whether this deployment can drive an agent changes on a
+    restart, not on a keystroke, and settings is not a surface that should be
+    making a request every few seconds. It refreshes on mount, which is when
+    somebody opened the page.
+  */
+  const runtime = useAgentRuntime({ poll: false })
   const [openProvider, setOpenProvider] = useState<AgentProviderId | null>(null)
   const [busy, setBusy] = useState<AgentProviderId | null>(null)
 
@@ -460,6 +555,7 @@ export function ConnectorsSection() {
         onBack={() => setOpenProvider(null)}
         onConnect={() => void handleConnect(open.descriptor.provider)}
         onDisconnect={() => connectors.disconnect(open.descriptor.provider)}
+        status={runtime.status}
       />
     )
   }

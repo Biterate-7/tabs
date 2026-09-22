@@ -12,6 +12,7 @@ const T0 = 1_700_000_000_000;
 
 const ALLOWED: ExecutionGateResult = {
   allowed: true,
+  environment: "local",
   kind: "local",
   decision: { allowed: true, kind: "local-server" },
 };

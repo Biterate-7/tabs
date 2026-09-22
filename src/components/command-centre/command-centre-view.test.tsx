@@ -126,7 +126,7 @@ describe("runtime status is reported truthfully", () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
-    await screen.findByText(/Agent runtime unavailable/i)
+    await screen.findByText(/Unavailable/i)
     expect(runtime.commands.some((command) => command.name === "list_sessions")).toBe(false)
   })
 
@@ -135,7 +135,7 @@ describe("runtime status is reported truthfully", () => {
     runtime.failCommand("get_status", "runtime_disconnected")
     renderCentre(runtime)
 
-    expect(await screen.findByText(/Runtime disconnected/i)).toBeTruthy()
+    expect(await screen.findByText(/Disconnected/i)).toBeTruthy()
     expect(screen.getByRole("button", { name: /reconnect/i })).toBeTruthy()
   })
 
@@ -145,12 +145,12 @@ describe("runtime status is reported truthfully", () => {
     runtime.failCommand("get_status", "runtime_disconnected")
     renderCentre(runtime)
 
-    await screen.findByText(/Runtime disconnected/i)
+    await screen.findByText(/Disconnected/i)
     runtime.clearFailure("get_status")
     await user.click(screen.getByRole("button", { name: /reconnect/i }))
 
     await waitFor(() =>
-      expect(screen.queryByText(/Runtime disconnected/i)).toBeNull()
+      expect(screen.queryByText(/Disconnected/i)).toBeNull()
     )
   })
 })
@@ -820,14 +820,45 @@ describe("the location and runtime bar", () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: true }) })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/local runtime ready/i)).toBeTruthy()
+    expect(await screen.findByText(/LOCAL · Ready/i)).toBeTruthy()
   })
 
   it("still explains an unavailable runtime", async () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/agent runtime unavailable/i)).toBeTruthy()
+    expect(await screen.findByText(/Unavailable/i)).toBeTruthy()
+  })
+
+  it("says REMOTE · Ready rather than unavailable when agents genuinely run remotely", async () => {
+    // The specific thing Phase I changed, and the specific thing it must not
+    // have faked. The old sentence was true for a hosted deployment when it
+    // was written; it is false once a remote runtime exists, and a user whose
+    // agent is running in a sandbox must not be told agents cannot run.
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({ environment: "remote", executable: true }),
+    })
+    renderCentre(runtime)
+
+    expect(await screen.findByText(/REMOTE · Ready/i)).toBeTruthy()
+    expect(screen.queryByText(/unavailable/i)).toBeNull()
+  })
+
+  it("distinguishes the two executing planes, because the blast radius differs", async () => {
+    // "Agents run on this machine" and "agents run in a container we made" are
+    // different promises about where the user's files are.
+    const remote = createScriptedRuntime({
+      status: scriptedStatus({ environment: "remote", executable: true }),
+    })
+    const { unmount } = renderCentre(remote)
+    expect(await screen.findByText(/REMOTE · Ready/i)).toBeTruthy()
+    unmount()
+
+    const local = createScriptedRuntime({
+      status: scriptedStatus({ environment: "local", executable: true }),
+    })
+    renderCentre(local)
+    expect(await screen.findByText(/LOCAL · Ready/i)).toBeTruthy()
   })
 
   it("names where you are", async () => {

@@ -76,7 +76,14 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = parseRuntimeRequest(body);
   if (!parsed) return Response.json(runtimeFailure("invalid_request"), { status: 400 });
 
-  const host = getRuntimeHost();
+  // Identified before the host is built, and that ordering is now
+  // load-bearing rather than incidental. A remote host is constructed *for*
+  // an actor: its adapter is bound to a store view that can only see that
+  // account's sandboxes. Building one before knowing who is asking would mean
+  // a host that had to be told later, which is the shape where one account's
+  // request reaches another's session.
+  const actor = await resolveActor(request);
+  const host = await getRuntimeHost(actor);
 
   // The generation check. A client carrying an id from a previous process is
   // told so rather than silently served by a host that holds none of its
@@ -85,7 +92,6 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(runtimeFailure("runtime_disconnected"), { status: 409 });
   }
 
-  const actor = await resolveActor(request);
   const result = await host.execute(actor, parsed.command);
 
   // Always 200 for a well-formed command, whatever the host decided. The

@@ -42,7 +42,24 @@ import type { AgentConnector, ProviderDescriptor } from "../types";
 export const CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
   provider: "claude-code",
   displayName: CLAUDE_CODE_AGENT_NAME,
-  summary: "Observes Claude Code sessions running on this machine.",
+  /**
+   * Both planes, named as two things because they are two things.
+   *
+   * The previous sentence — "Observes Claude Code sessions running on this
+   * machine" — described this connector exactly, and still does: everything
+   * below it is observation, and observation genuinely cannot act. What made
+   * it misleading after Phase I is not that it was wrong but that it was the
+   * *only* thing the page said, so a reader concluded observation was all
+   * TabDump could do with Claude Code.
+   *
+   * So the summary names the control plane without claiming this object
+   * implements it. Whether control is actually available here is a runtime
+   * question with a real answer — `get_status` — and the command centre is
+   * where it is answered; a connector descriptor is a static string and must
+   * not pretend to know.
+   */
+  summary:
+    "Watches Claude Code sessions on this machine, and runs Claude Code in TabDump project environments.",
   capabilities: {
     ...NO_CAPABILITIES,
     runs: true,
@@ -63,7 +80,7 @@ export const CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
  * there is the same as on a machine that has never run Claude Code.
  */
 const UNAVAILABLE_DETAIL =
-  "No local Claude Code installation is visible from here. TabDump observes Claude Code by reading the session files it writes on your own machine.";
+  "No local Claude Code installation is visible from here. TabDump watches Claude Code by reading the session files it writes on your own machine — and can still run Claude Code for you in a TabDump project environment, which needs nothing installed.";
 
 export type ClaudeCodeConnector = AgentConnector & {
   /** Sessions seen on the most recent poll, for the project-mapping UI. */

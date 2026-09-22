@@ -1,4 +1,5 @@
 import { hasAdapterApprovalDetails } from "../../approval-details";
+import type { ReattachSessionRequest } from "../../binding";
 import { capabilitySet } from "../../capabilities";
 import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
@@ -183,6 +184,35 @@ export type ClaudeCodeControlAdapter = AgentControlAdapter & {
    * the honest state for Phase C, where nothing correlates the planes yet.
    */
   bindRun(sessionId: string, runId: string): void;
+
+  /**
+   * Collects whatever a non-pushing runtime has produced.
+   *
+   * A no-op for a local session, whose runtime delivers through `onMessage`
+   * as output arrives. A remote one has nothing holding a socket open across
+   * the request that created it, so it is asked — and what it replays goes
+   * through the same callbacks, emerges as the same events, and is
+   * indistinguishable from here down.
+   */
+  drainSession(sessionId: string): Promise<void>;
+
+  /**
+   * Picks up a session whose provider process is already running.
+   *
+   * ## Why an adapter needs this at all
+   *
+   * Because on a serverless control plane, "already running" is the *normal*
+   * state. The instance that started the agent is gone; this one has an agent
+   * that has been working for two minutes and no handle on it. Without this
+   * the only available verb would be `createSession`, which would start a
+   * second agent over the top of the first.
+   *
+   * Refuses rather than improvises. A runtime that cannot reattach — every
+   * local one, because a dead process has no agent still working — answers
+   * `unsupported`, and a session that cannot be reached answers
+   * `invalid-session`. Neither falls through to starting anything.
+   */
+  reattachSession(request: ReattachSessionRequest): Promise<ControlResult<SessionHandle>>;
 };
 
 export function createClaudeCodeControlAdapter(
@@ -298,27 +328,40 @@ export function createClaudeCodeControlAdapter(
       };
     }
 
-    const approvalId = createId();
+    // The provider's own identity when it has one, so that re-reading a
+    // pending request produces the same approval rather than a second one.
+    // See `stableId` in ./runtime.ts. A resolver already waiting under this
+    // id means we are looking at a request we have already reported, and the
+    // right move is to keep waiting on the original rather than replace it —
+    // replacing would orphan the promise the provider is blocked on.
+    const approvalId = request.stableId ?? createId();
+    if (session.pending.has(approvalId)) {
+      return new Promise<ClaudePermissionDecision>((resolve) => {
+        const existing = session.pending.get(approvalId)!;
+        session.pending.set(approvalId, (decision) => {
+          existing(decision);
+          resolve(decision);
+        });
+      });
+    }
+
     const scope: AgentPermissionScope = scopeForTool(request.toolName) ?? "run_commands";
-
-    emit({
-      id: createId(),
-      sessionId: session.sessionId,
-      provider: "claude-code",
-      kind: "approval_requested",
-      timestamp: now(),
-      // The provider's own sentence when it supplied one. Nothing is
-      // invented: a provider that says nothing yields the tool name.
-      summary: request.title ?? request.displayName ?? request.toolName,
-      approvalId,
-      ...(session.runId ? { runId: session.runId } : {}),
-      tool: { name: request.toolName, callId: request.toolUseId },
-    });
-
-    // Surfaced separately so the service can mint the broker record with
-    // everything the future dialog needs.
     const action = actionForTool(request.toolName);
 
+    // Recorded **before** the event is emitted, and the order is load-bearing.
+    //
+    // `emit` is synchronous: the control service's listener runs inside it,
+    // and the first thing that listener does is read these details back
+    // through `takeApprovalDetails` in order to mint the broker record. An
+    // adapter that raises an approval it cannot describe is denied — so
+    // emitting first means the details are reliably absent at the only moment
+    // anybody looks for them, and every approval is refused before it can
+    // reach a user.
+    //
+    // That was latent while the only exercised path drove this adapter
+    // directly, with no service attached. The remote runtime calls
+    // `onPermissionRequest` straight from its drain, which puts a real
+    // subscriber on the other end of `emit` and makes the ordering matter.
     pendingDetails.set(approvalId, {
       sessionId: session.sessionId,
       runId: session.runId,
@@ -333,7 +376,11 @@ export function createClaudeCodeControlAdapter(
       reason: request.description ?? request.decisionReason,
     });
 
-    return new Promise<ClaudePermissionDecision>((resolve) => {
+    // The resolver, registered before the event too and for the same reason:
+    // a listener that answers the approval synchronously — which is what the
+    // broker does for a scope the grant already settles — would otherwise find
+    // nothing waiting and the provider would block forever.
+    const decision = new Promise<ClaudePermissionDecision>((resolve) => {
       session.pending.set(approvalId, resolve);
 
       // An interrupted run must not leave the provider waiting on a decision
@@ -349,6 +396,25 @@ export function createClaudeCodeControlAdapter(
         { once: true }
       );
     });
+
+    emit({
+      // Derived from the approval rather than freshly minted, so that a
+      // re-read of the same pending request is dropped by the journal as the
+      // duplicate it is instead of appearing as a second prompt.
+      id: `approval-${approvalId}`,
+      sessionId: session.sessionId,
+      provider: "claude-code",
+      kind: "approval_requested",
+      timestamp: now(),
+      // The provider's own sentence when it supplied one. Nothing is
+      // invented: a provider that says nothing yields the tool name.
+      summary: request.title ?? request.displayName ?? request.toolName,
+      approvalId,
+      ...(session.runId ? { runId: session.runId } : {}),
+      tool: { name: request.toolName, callId: request.toolUseId },
+    });
+
+    return decision;
   }
 
   /**
@@ -413,7 +479,7 @@ export function createClaudeCodeControlAdapter(
 
     const started = await options.runtime.start({
       sessionId,
-      ...(project ? { cwd: project.path } : {}),
+      ...(project ? { cwd: project.path, projectId: project.id } : {}),
       // Exactly what the project authorized, and nothing derived. Each entry
       // was validated as strictly as the root when the project was created,
       // and revalidated on load — see ../../projects.ts.
@@ -437,6 +503,60 @@ export function createClaudeCodeControlAdapter(
     const handle: SessionHandle = { sessionId, status: "ready" };
     if (session.providerSessionId) handle.providerSessionId = session.providerSessionId;
     return { ok: true, value: handle };
+  }
+
+  /**
+   * Picks up a session whose agent is already running.
+   *
+   * Deliberately shaped like `startRun` and deliberately *not* able to become
+   * it: the runtime is asked to `reattach`, and a runtime with no such method
+   * — every local one — refuses. There is no branch here that falls through to
+   * starting something, because "reattach failed, so start a new agent" is how
+   * a user ends up with two agents editing the same files while believing
+   * their conversation resumed.
+   *
+   * The plan is recomputed from the grant exactly as it is on the start path,
+   * so a session picked up on a new instance is bound by the same permissions
+   * it was created under rather than by anything cached alongside it.
+   */
+  async function reattachRun(
+    sessionId: string,
+    project: AgentProject | undefined,
+    grant: AgentPermissionGrant
+  ): Promise<ControlResult<SessionHandle>> {
+    if (!options.runtime.reattach) return controlFailure<SessionHandle>("unsupported");
+
+    const plan = planForGrant(grant, project?.id);
+
+    const session: LiveSession = {
+      sessionId,
+      handle: null as unknown as ClaudeRuntimeHandle,
+      project,
+      grant,
+      pending: new Map(),
+    };
+
+    const handle = await options.runtime.reattach({
+      sessionId,
+      ...(project ? { cwd: project.path, projectId: project.id } : {}),
+      additionalDirectories: project ? project.additionalDirectories : [],
+      permissionMode: plan.mode,
+      allowedTools: plan.allowedTools,
+      disallowedTools: plan.disallowedTools,
+      onMessage: (message) => handleMessage(session, message),
+      onPermissionRequest: (request) => handlePermission(session, request),
+      onExit: (error) => finishSession(session, error),
+    });
+
+    // Not reachable, and that is a fact about the session rather than an
+    // error in the request. `invalid-session` is what the control plane says
+    // for "no such live session", which is precisely what this is.
+    if (!handle) return controlFailure<SessionHandle>("invalid-session");
+
+    session.handle = handle;
+    sessions.set(sessionId, session);
+
+    return { ok: true, value: { sessionId, status: "ready" } };
   }
 
   return {
@@ -600,6 +720,36 @@ export function createClaudeCodeControlAdapter(
     bindRun(sessionId: string, runId: string) {
       const session = sessions.get(sessionId);
       if (session) session.runId = runId;
+    },
+
+    async drainSession(sessionId: string) {
+      const session = sessions.get(sessionId);
+      // A runtime with no `drain` is a pushing one, and asking it for output
+      // it has already delivered would be a second delivery.
+      await session?.handle.drain?.();
+    },
+
+    async reattachSession(request: ReattachSessionRequest) {
+      // Never replaces a live session. Two handles onto one agent would mean
+      // two `send` paths into one conversation, and the second would
+      // interleave turns nothing downstream could untangle. Already having one
+      // is success, not a conflict: the caller wanted a reachable session and
+      // there is one.
+      const existing = sessions.get(request.sessionId);
+      if (existing) {
+        return {
+          ok: true as const,
+          value: {
+            sessionId: request.sessionId,
+            status: "ready" as const,
+            ...(existing.providerSessionId
+              ? { providerSessionId: existing.providerSessionId }
+              : {}),
+          },
+        };
+      }
+
+      return reattachRun(request.sessionId, request.project, request.permissions);
     },
   };
 }

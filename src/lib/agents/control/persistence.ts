@@ -227,6 +227,13 @@ function reviveProject(raw: unknown): AgentProject | null {
   return {
     id: record.id,
     name: record.name.trim(),
+    // Always local, and never read from the record. Remote projects are
+    // server-owned rows resolved by the host (see ../runtime/host.ts); this
+    // store holds the local-first half of the product, and a remote project
+    // revived from localStorage would be a client asserting a scope it has no
+    // authority to assert. `saveControlProjects` refuses to write one for the
+    // same reason, so this is a second lock on a door that is already shut.
+    source: "local",
     path: validated.path,
     providers,
     additionalDirectories,
@@ -292,6 +299,14 @@ export function loadControlProjects(): ControlProjectState {
 }
 
 export function saveControlProjects(state: ControlProjectState): boolean {
-  const projects = state.projects.slice(0, MAX_PERSISTED_PROJECTS);
+  // Local projects only. A remote project is a server-owned row whose
+  // authority comes from the sandbox that backs it, and writing a copy here
+  // would put a scope the browser cannot vouch for into a store the browser
+  // can edit. Dropped rather than refused: the caller is syncing the local
+  // list, and failing the whole write because a remote project was in the
+  // array would lose the local ones too.
+  const projects = state.projects
+    .filter((project) => project.source === "local")
+    .slice(0, MAX_PERSISTED_PROJECTS);
   return writeRaw(CONTROL_PROJECTS_KEY, { version: 1, projects });
 }

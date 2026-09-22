@@ -1,5 +1,6 @@
 import { readAdapterApprovalDetails } from "./approval-details";
 import { createApprovalBroker } from "./approvals";
+import { canReattachSession } from "./binding";
 import {
   isWellFormedAttachedContext,
   isWellFormedContext,
@@ -125,6 +126,20 @@ export type StartSessionInput = {
 
 export type ResumeInput = StartSessionInput & { providerSessionId: string };
 
+export type AdoptSessionInput = {
+  /** The existing session's id. Supplied, never minted — see `adoptSession`. */
+  sessionId: string;
+  provider: AgentProviderId;
+  projectId?: string;
+  workspaceId?: string;
+  title?: string;
+  /** The provider's own id, when durable state already recorded one. */
+  providerSessionId?: string;
+  /** The grant, re-read from the project by the caller rather than restored from a cache. */
+  permissions?: AgentPermissionGrant;
+  createdAt?: number;
+};
+
 export type ControlService = {
   /** Every session the service holds, newest first. */
   sessions(): AgentSession[];
@@ -139,6 +154,33 @@ export type ControlService = {
 
   startSession(input: StartSessionInput): Promise<ControlResult<AgentSession>>;
   resumeSession(input: ResumeInput): Promise<ControlResult<AgentSession>>;
+
+  /**
+   * Rebuilds a session whose agent is already running.
+   *
+   * ## Why this is not `resumeSession`
+   *
+   * `resumeSession` starts something: it asks a provider to reattach to a
+   * conversation by the provider's own id, and it mints a *new* TabDump
+   * session to hold it. This does neither. The TabDump session already
+   * exists, its id is already known, and the agent never stopped — what has
+   * been lost is only this process's memory of it, which is the normal state
+   * of affairs on a control plane where every request is a fresh process.
+   *
+   * So the id is supplied rather than minted, and the session comes back at
+   * the status the adapter reports rather than starting from `created`. A
+   * caller that used `resumeSession` for this would get a second session
+   * record for one conversation, and the two would diverge.
+   *
+   * ## What it still does not skip
+   *
+   * The gate. An adopted session passes the same runtime, provider,
+   * capability, project and permission checks a new one does, with the grant
+   * re-read from the project rather than carried alongside the session. A
+   * project whose authorization was revoked while the agent was running is
+   * refused here, which is the point of re-reading.
+   */
+  adoptSession(input: AdoptSessionInput): Promise<ControlResult<AgentSession>>;
   sendMessage(message: AgentMessageInput): Promise<ControlResult<void>>;
   cancelRun(sessionId: string): Promise<ControlResult<void>>;
   respondToApproval(
@@ -539,6 +581,65 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       }
 
       return { ok: true, value: adoptHandle(connecting, resumed.value) };
+    },
+
+    async adoptSession(input) {
+      // Already held by this process. Idempotent rather than an error: two
+      // commands in one request can both ask, and the second finding the
+      // session there is exactly the outcome it wanted.
+      const held = sessions.get(input.sessionId);
+      if (held) return { ok: true, value: held };
+
+      const grant = input.permissions ?? NO_PERMISSIONS;
+      // `create_session` rather than a capability of its own. Adopting is not
+      // a new power — it reaches the same provider, in the same project, under
+      // the same grant — so it is gated on being allowed to have started the
+      // session in the first place.
+      const gated = gate(input.provider, "create_session", input.projectId, grant);
+      if (!gated.ok) return { ok: false, error: gated.error };
+
+      const adapter = gated.value;
+      if (!canReattachSession(adapter)) return controlFailure("unsupported");
+
+      const project = input.projectId ? resolveProject(input.projectId) : undefined;
+      const at = now();
+
+      const session = put(
+        mintSession(
+          {
+            id: input.sessionId,
+            provider: input.provider,
+            providerSessionId: input.providerSessionId,
+            projectId: input.projectId,
+            workspaceId: input.workspaceId,
+            title: input.title,
+          },
+          // The session's real age, so a rebuilt record does not claim to have
+          // been created by whichever request happened to pick it up.
+          input.createdAt ?? at
+        )
+      );
+      grants.set(session.id, grant);
+
+      ensureSubscribed(input.provider, adapter);
+      const connecting = move(session, "connecting");
+
+      const reattached = await adapter.reattachSession({
+        sessionId: input.sessionId,
+        project,
+        permissions: grant,
+      });
+
+      if (!reattached.ok) {
+        // Left as `failed` rather than removed. A session the user can see in
+        // their history, marked as unreachable, is more use than one that
+        // silently vanished — and the durable record is the caller's to clean
+        // up, not this layer's.
+        move(connecting, "failed");
+        return { ok: false, error: reattached.error };
+      }
+
+      return { ok: true, value: adoptHandle(connecting, reattached.value) };
     },
 
     async sendMessage(message) {

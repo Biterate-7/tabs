@@ -163,7 +163,7 @@ export function runtimeFailure<T = never>(code: RuntimeErrorCode): RuntimeResult
  * ------------------------------------------------------------------ */
 
 /**
- * Where the runtime believes it is, in the four terms the brief asks for.
+ * Where the runtime believes it is, in the terms the brief asks for.
  *
  * A projection of `RuntimeDecision` (lib/agents/control/runtime.ts) rather
  * than a second decision: `local-desktop` and `local-server` both project to
@@ -172,8 +172,13 @@ export function runtimeFailure<T = never>(code: RuntimeErrorCode): RuntimeResult
  * reason - they behave identically and *read* differently, and a UI that said
  * "this is a hosted deployment" to a developer who forgot the opt-in would be
  * lying about their machine.
+ *
+ * `remote` is an *executing* kind, and the only one that does not mean "this
+ * machine". It says agents run here and none of them can see the filesystem
+ * of the process reporting it - which is a different sentence from `hosted`,
+ * where nothing runs at all.
  */
-export type RuntimeEnvironmentKind = "browser" | "local" | "hosted" | "unknown";
+export type RuntimeEnvironmentKind = "browser" | "local" | "remote" | "hosted" | "unknown";
 
 /**
  * What a provider's connection actually is, kept as three separate facts.

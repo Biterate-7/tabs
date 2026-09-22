@@ -170,6 +170,7 @@ export const CYCLE_CONNECTIONS: ManualConnection[] = [
 export const PROJECT_A: AgentProject = {
   id: "proj-a",
   name: "API service",
+  source: "local",
   path: "C:/work/api",
   providers: ["claude-code"],
   additionalDirectories: [],
@@ -181,6 +182,7 @@ export const PROJECT_A: AgentProject = {
 export const PROJECT_B: AgentProject = {
   id: "proj-b",
   name: "Taxes",
+  source: "local",
   path: "C:/work/taxes",
   providers: [],
   additionalDirectories: [],
