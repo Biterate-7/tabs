@@ -5,7 +5,11 @@ import { ArrowUp, Paperclip, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Kbd } from "@/components/ui/kbd"
-import { SESSION_STATUS_DETAIL, canSendMessage } from "@/lib/agents/command-centre/presentation"
+import {
+  SESSION_STATUS_DETAIL,
+  SESSION_STATUS_RECOVERY,
+  canSendMessage,
+} from "@/lib/agents/command-centre/presentation"
 import { cn } from "@/lib/utils"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
 
@@ -147,13 +151,17 @@ export function Composer({
         </div>
 
         {/*
-          The one line that says why the composer is inert.
+          Why the composer is inert — said once.
 
-          Only rendered when it is — a permanent hint under a working composer
-          is noise, and this surface has a lot of rows competing already.
+          This used to be a second copy of `SESSION_STATUS_DETAIL[status]`,
+          which the disabled textarea is already showing as its placeholder, so
+          a blocked session printed the same sentence twice, ten pixels apart.
+          The placeholder is the better of the two positions (it is inside the
+          control it explains), so the line below it now carries the part the
+          placeholder cannot: what the user can do about it.
         */}
-        {!sendable && (
-          <p className="mt-1.5 text-body-sm text-tertiary">{SESSION_STATUS_DETAIL[status]}</p>
+        {!sendable && SESSION_STATUS_RECOVERY[status] && (
+          <p className="mt-1.5 text-body-sm text-tertiary">{SESSION_STATUS_RECOVERY[status]}</p>
         )}
       </div>
     </div>

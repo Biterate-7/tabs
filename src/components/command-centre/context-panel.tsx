@@ -6,12 +6,14 @@ import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import {
   describeDelta,
   describeOmissionReason,
+  summarizeAvailable,
   summarizeSnapshot,
 } from "@/lib/agents/command-centre/context-selection"
 import { PROVIDER_CONNECTION_LABEL, PROVIDER_CONNECTION_TONE } from "@/lib/agents/command-centre/presentation"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { cn } from "@/lib/utils"
 import type { ContextDelta } from "@/lib/agents/command-centre/context-selection"
+import type { AgentContextWorld } from "@/lib/agents/context/world"
 import type { AgentContextSnapshot } from "@/lib/agents/context/types"
 import type { RuntimeSessionView, RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
@@ -49,7 +51,10 @@ function Section({
   action?: React.ReactNode
 }) {
   return (
-    <section className="border-b border-subtle px-3 py-2.5">
+    /* `last:` drops the rule under the final section: with the panel shorter
+       than the column, a trailing border drew a line across open space and
+       read as a cut-off edge rather than as a divider. */
+    <section className="border-b border-subtle px-3 py-2.5 last:border-b-0">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-eyebrow text-tertiary">{title}</h3>
         {action}
@@ -71,6 +76,7 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export function ContextPanel({
   session,
+  world,
   snapshot,
   delta,
   projectName,
@@ -80,6 +86,8 @@ export function ContextPanel({
   refreshing,
 }: {
   session: RuntimeSessionView | null
+  /** The account's own data, for the Available section. Never sent anywhere. */
+  world: Pick<AgentContextWorld, "workspaces" | "collections">
   /** The snapshot attached to this session, or `null` when none is. */
   snapshot: AgentContextSnapshot | null
   delta: readonly ContextDelta[]
@@ -90,12 +98,24 @@ export function ContextPanel({
   refreshing: boolean
 }) {
   const summary = snapshot ? summarizeSnapshot(snapshot) : []
+  const available = summarizeAvailable(world, snapshot)
   const deltaText = describeDelta(delta)
 
   return (
     <aside
       aria-label="Session context"
-      className="flex h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-subtle"
+      /*
+        Hidden below `xl`, not merely narrowed.
+
+        The command centre is four fixed columns wide once the app rail is
+        counted (rail 240 + sessions 256 + this 288 = 784px of chrome), and
+        below roughly 1280px that left the centre too narrow to read. It also
+        did not degrade gracefully: nothing shrank, so this panel was simply
+        pushed off the right edge and its text clipped mid-word rather than
+        wrapping. Collapsing it outright keeps the centre usable, and the
+        header's toggle brings it back at any width where it fits.
+      */
+      className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-subtle xl:flex"
     >
       <div className="flex h-12 shrink-0 items-center border-b border-subtle px-3">
         <h2 className="text-eyebrow text-tertiary">Context</h2>
@@ -113,12 +133,19 @@ export function ContextPanel({
 
       <Section
         title="Attached"
+        /*
+          Only once there is something to edit.
+
+          With nothing attached the section already ends in a full-width
+          "Attach TabDump context" button, and a header "Edit" beside it was a
+          second route to the same dialog three lines apart.
+        */
         action={
-          <div className="flex items-center gap-1">
-            <Button type="button" size="xs" variant="ghost" onClick={onEditContext}>
-              Edit
-            </Button>
-            {snapshot && (
+          snapshot ? (
+            <div className="flex items-center gap-1">
+              <Button type="button" size="xs" variant="ghost" onClick={onEditContext}>
+                Edit
+              </Button>
               <Button
                 type="button"
                 size="xs"
@@ -129,14 +156,33 @@ export function ContextPanel({
               >
                 <RefreshCw className={cn(refreshing && "animate-spin")} />
               </Button>
-            )}
-          </div>
+            </div>
+          ) : undefined
         }
       >
         {!snapshot ? (
-          <p className="text-body-sm text-tertiary">
-            Nothing attached. The agent sees only what you send it.
-          </p>
+          <>
+            <p className="text-body-sm text-tertiary">
+              Nothing attached. The agent sees only what you send it.
+            </p>
+            {/*
+              The way out of the empty state, inside the section it is about.
+
+              This used to be a button below every section, outside the panel's
+              own rhythm, which read as a stray control rather than as the
+              answer to the sentence above it.
+            */}
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="mt-2 w-full"
+              onClick={onEditContext}
+            >
+              <Sparkles />
+              Attach TabDump context
+            </Button>
+          </>
         ) : (
           <>
             {summary.map((row) => (
@@ -177,6 +223,24 @@ export function ContextPanel({
                 <span className="text-tertiary">{describeOmissionReason(omission.reason)}</span>
               </span>
             </div>
+          ))}
+        </Section>
+      )}
+
+      {/*
+        What is *not* attached, and could be.
+
+        The counterpart to "Attached", and the reason the panel can be read as
+        a scope rather than as a list: two workspaces attached means something
+        different when there are two in total than when there are nine. Every
+        row is a thing the user owns and has not sent — it says nothing about
+        what the agent can reach, which is the distinction the whole panel
+        exists to keep straight.
+      */}
+      {available.length > 0 && (
+        <Section title="Available">
+          {available.map((row) => (
+            <Row key={row.sourceType} label={row.label} value={String(row.count)} />
           ))}
         </Section>
       )}
@@ -225,14 +289,6 @@ export function ContextPanel({
         )}
       </Section>
 
-      {!snapshot && session && (
-        <div className="px-3 py-3">
-          <Button type="button" size="sm" variant="outline" className="w-full" onClick={onEditContext}>
-            <Sparkles />
-            Attach TabDump context
-          </Button>
-        </div>
-      )}
     </aside>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
+import { permissionScopeLabel } from "@/lib/agents/command-centre/presentation"
 import { cn } from "@/lib/utils"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
 
@@ -80,8 +81,20 @@ export function ApprovalPrompt({
       aria-live="assertive"
       aria-label="Approval required"
       className={cn(
-        "my-3 rounded-md border bg-surface px-3 py-2.5",
-        expiry.expired ? "border-subtle opacity-70" : "border-warning/50"
+        /*
+          Deliberately the heaviest block in the stream.
+
+          Everything else here is flat on the page; this is the one event that
+          stops the run and waits for a person, and in review it read as just
+          another bordered box — the same weight as the user's own message two
+          rows above it. So it gets the full-strength warning border, a tinted
+          surface and an accent edge, which is the only place in the command
+          centre that combination is used.
+        */
+        "my-4 rounded-md border border-l-2 px-3.5 py-3",
+        expiry.expired
+          ? "border-subtle border-l-subtle bg-surface opacity-70"
+          : "border-warning/60 border-l-warning bg-warning/[0.06]"
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
@@ -89,9 +102,16 @@ export function ApprovalPrompt({
         <span className="shrink-0 text-meta text-tertiary">{expiry.text}</span>
       </div>
 
-      <p className="mt-1.5 text-body-sm text-foreground">
-        {approval.action}
-        <span className="text-tertiary"> · {approval.scope}</span>
+      {/*
+        The action, then the permission it falls under — in words.
+
+        `approval.scope` is an internal identifier (`write_project`), and
+        printing it raw turned the one authorization prompt in the product
+        into debug output. See `permissionScopeLabel`.
+      */}
+      <p className="mt-2 text-body font-medium text-foreground">{approval.action}</p>
+      <p className="mt-0.5 text-body-sm text-muted-foreground">
+        {permissionScopeLabel(approval.scope)}
       </p>
 
       {approval.targets.length > 0 && (
@@ -112,12 +132,16 @@ export function ApprovalPrompt({
         </p>
       )}
 
-      <div className="mt-2.5 flex items-center gap-1.5">
+      {/* Wider than the command centre's other buttons: this is the decision
+          the whole run is stopped on, and it should not be the same size as
+          "Edit" in the context panel. */}
+      <div className="mt-3 flex items-center gap-2">
         <Button
           ref={denyRef}
           type="button"
           size="sm"
           variant="outline"
+          className="min-w-20"
           disabled={pending || expiry.expired}
           onClick={() => onRespond(approval.approvalId, "denied")}
         >
@@ -127,6 +151,7 @@ export function ApprovalPrompt({
           type="button"
           size="sm"
           variant="default"
+          className="min-w-20"
           disabled={pending || expiry.expired}
           onClick={() => onRespond(approval.approvalId, "granted")}
         >

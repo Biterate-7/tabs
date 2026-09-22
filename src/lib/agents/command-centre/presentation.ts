@@ -2,6 +2,7 @@ import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import type { AgentControlEventKind } from "@/lib/agents/control/events";
 import type { AgentCapability } from "@/lib/agents/control/capabilities";
+import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
 import type { AgentVisualState, AgentVisualTone } from "@/lib/agents/visual/types";
 import type {
   RuntimeErrorCode,
@@ -93,6 +94,32 @@ export const SESSION_STATUS_DETAIL: Record<AgentSessionStatus, string> = {
   cancelled: "The run was stopped.",
   failed: "The run stopped on an error.",
   disconnected: "The connection is gone.",
+};
+
+/**
+ * What the user can *do* about a session that will not accept a message.
+ *
+ * The companion to `SESSION_STATUS_DETAIL`, and deliberately not a paraphrase
+ * of it: the composer shows the detail as its placeholder, inside the control
+ * it explains, so a second line repeating the same sentence underneath was
+ * saying nothing twice. This map carries the next step instead.
+ *
+ * `null` means there is genuinely nothing to suggest — the agent is simply
+ * busy and the user's move is to wait, which is not worth a line of type. A
+ * status that needs no advice says so explicitly rather than being omitted,
+ * so the record stays total over the union.
+ */
+export const SESSION_STATUS_RECOVERY: Record<AgentSessionStatus, string | null> = {
+  created: null,
+  connecting: null,
+  ready: null,
+  running: null,
+  waiting_for_approval: "Answer the approval above to let the run continue.",
+  waiting_for_input: null,
+  completed: "Start a new session to keep going.",
+  cancelled: "Start a new session to keep going.",
+  failed: "Start a new session to keep going.",
+  disconnected: "Reconnect the runtime, then start a new session.",
 };
 
 export function sessionStatusTone(status: AgentSessionStatus): AgentVisualTone {
@@ -192,6 +219,49 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   run_completed: { register: "lifecycle", label: "Run completed", tone: "good" },
   run_cancelled: { register: "lifecycle", label: "Run cancelled", tone: "muted" },
 };
+
+/* ------------------------------------------------------------------ *
+ * Permission scopes
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a permission scope is called when a person has to decide about it.
+ *
+ * `AgentPermissionScope` is an internal identifier — `write_project`,
+ * `run_commands` — and the approval prompt was printing it verbatim next to
+ * the action. That is the one place in the product where the user is being
+ * asked to authorize something, and an identifier is the wrong register for
+ * it: it reads as debug output, and a person who does not already know the
+ * permission model cannot tell `write_project` from `read_project` at a
+ * glance, which is exactly the distinction the decision turns on.
+ *
+ * The sentences are the doc comments on `AgentPermissionScope` itself, said
+ * to the user rather than to the next developer. Total over the union, so a
+ * new scope cannot be added to the control plane without being given words
+ * here.
+ */
+export const PERMISSION_SCOPE_LABEL: Record<AgentPermissionScope, string> = {
+  read_workspace: "Read TabDump content",
+  read_project: "Read project files",
+  write_project: "Change project files",
+  run_commands: "Run commands",
+  network_access: "Use the network",
+  mcp_tools: "Use connected tools",
+};
+
+/**
+ * The scope's words, or the scope itself.
+ *
+ * `RuntimeApprovalView.scope` is a `string` on the wire rather than the narrow
+ * union, because the host is a separate process that may be a version ahead.
+ * An unrecognized scope is therefore possible, and it is returned **verbatim**
+ * rather than prettified: this is an authorization prompt, and a scope TabDump
+ * does not have words for is something the user should see exactly as the
+ * runtime named it, not a guess dressed up as a sentence.
+ */
+export function permissionScopeLabel(scope: string): string {
+  return PERMISSION_SCOPE_LABEL[scope as AgentPermissionScope] ?? scope;
+}
 
 /* ------------------------------------------------------------------ *
  * Runtime errors

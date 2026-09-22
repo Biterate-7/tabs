@@ -383,7 +383,10 @@ describe("the composer", () => {
 
     const box = await screen.findByLabelText(/message the agent/i)
     expect((box as HTMLTextAreaElement).disabled).toBe(true)
-    expect(screen.getAllByText(/The agent is working/i).length).toBeGreaterThan(0)
+    // The reason lives on the disabled control itself. It used to be repeated
+    // as a second line underneath, which said the same sentence twice; that
+    // line now carries the recovery step instead, and `running` has none.
+    expect((box as HTMLTextAreaElement).placeholder).toMatch(/the agent is working/i)
   })
 
   it("refuses to send while an approval is outstanding", async () => {
@@ -802,5 +805,90 @@ describe("nothing is invented", () => {
 
     const stream = await screen.findByRole("list", { name: /session events/i })
     expect(within(stream).queryAllByRole("listitem")).toHaveLength(0)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Phase H: what the surface says about itself
+ * ------------------------------------------------------------------ */
+
+describe("the location and runtime bar", () => {
+  it("states the runtime is ready, not only that it is broken", async () => {
+    // The regression: `runtimeBanner` has always had a healthy answer and the
+    // bar rendered only when `executable` was false, so a working command
+    // centre said nothing at all about whether agents could run.
+    const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: true }) })
+    renderCentre(runtime)
+
+    expect(await screen.findByText(/local runtime ready/i)).toBeTruthy()
+  })
+
+  it("still explains an unavailable runtime", async () => {
+    const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
+    renderCentre(runtime)
+
+    expect(await screen.findByText(/agent runtime unavailable/i)).toBeTruthy()
+  })
+
+  it("names where you are", async () => {
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime)
+
+    const bar = await screen.findByText("Command Centre", { selector: "span" })
+    expect(bar).toBeTruthy()
+  })
+})
+
+describe("the approval prompt", () => {
+  it("names the permission in words rather than as a scope identifier", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [scriptedSession({ status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([scriptedApproval({ scope: "write_project" })])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    expect(await screen.findByText(/change project files/i)).toBeTruthy()
+    // The identifier itself is an internal name and must not reach the one
+    // screen where the user authorizes something.
+    expect(screen.queryByText("write_project")).toBeNull()
+  })
+
+  it("shows an unrecognized scope verbatim rather than inventing words for it", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [scriptedSession({ status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([scriptedApproval({ scope: "some_future_scope" })])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    expect(await screen.findByText("some_future_scope")).toBeTruthy()
+  })
+})
+
+describe("the event stream", () => {
+  it("does not print an event's label and summary when they are the same words", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
+    // The real normalizer emits exactly this pair, which rendered as
+    // "Session started  Session started.".
+    runtime.pushEvents([scriptedEvent({ kind: "session_started", summary: "Session started." })])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    const stream = await screen.findByRole("list", { name: /session events/i })
+    expect(within(stream).getAllByText(/session started/i)).toHaveLength(1)
+  })
+
+  it("keeps a summary that carries detail the label does not", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
+    runtime.pushEvents([scriptedEvent({ kind: "thinking", summary: "Reviewing 12 attached tabs" })])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByText(/reviewing 12 attached tabs/i)).toBeTruthy()
   })
 })

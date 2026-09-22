@@ -1,4 +1,5 @@
 import { itemsOfType } from "@/lib/agents/context/types";
+import type { AgentContextWorld } from "@/lib/agents/context/world";
 import type {
   AgentContextOmissionReason,
   AgentContextRequest,
@@ -226,6 +227,60 @@ export function summarizeSnapshot(snapshot: AgentContextSnapshot): readonly Cont
     }
 
     rows.push({ sourceType, label: SOURCE_LABEL[sourceType], count: items.length });
+  }
+
+  return rows;
+}
+
+/**
+ * What the user could attach and has not.
+ *
+ * ## Why the panel needs this at all
+ *
+ * "Attached" on its own is ambiguous in the one direction that matters: a
+ * panel listing two workspaces does not tell you whether that is two out of
+ * two or two out of nine, so a user cannot tell a deliberately narrow context
+ * from a context that quietly missed something. Naming the remainder makes the
+ * scope legible as a *choice*.
+ *
+ * ## Why it counts down from the world rather than up from the selection
+ *
+ * The subtraction is against the **snapshot**, which is what the session was
+ * actually told, not against `ContextSelection`, which is only what was ticked.
+ * Those differ whenever the resolver dropped something for a limit — and in
+ * exactly that case the dropped workspace is genuinely still available to
+ * attach, so counting it here is the honest answer rather than a double
+ * report of the omission the panel already shows separately.
+ *
+ * Only the two source types a person browses by name are counted. Tabs,
+ * relationships and graph neighbourhoods are reachable only *through* a
+ * workspace in the picker, so offering a bare "1,400 tabs available" would
+ * name something the user cannot act on from here.
+ */
+export function summarizeAvailable(
+  world: Pick<AgentContextWorld, "workspaces" | "collections">,
+  snapshot: AgentContextSnapshot | null
+): readonly ContextSummaryRow[] {
+  const attached = new Set(
+    snapshot?.items
+      .filter((item) => item.sourceType === "workspace" || item.sourceType === "collection")
+      .map((item) => `${item.sourceType}:${item.sourceId}`) ?? []
+  );
+
+  const rows: ContextSummaryRow[] = [];
+
+  const workspaces = world.workspaces.filter(
+    (workspace) => !attached.has(`workspace:${workspace.id}`)
+  ).length;
+  if (workspaces > 0) {
+    rows.push({ sourceType: "workspace", label: SOURCE_LABEL.workspace, count: workspaces });
+  }
+
+  const collections = world.collections.filter(
+    (collection) => !attached.has(`collection:${collection.id}`)
+  ).length;
+  if (collections > 0) {
+    rows.push({ sourceType: "collection", label: SOURCE_LABEL.collection, count: collections });
   }
 
   return rows;

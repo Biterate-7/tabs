@@ -35,6 +35,19 @@ import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEvent }) {
   const presentation = EVENT_PRESENTATION[event.kind]
 
+  /*
+    Some events have nothing to add to their own label.
+
+    `session_started` normalizes to the summary "Session started." under the
+    label "Session started", so the row rendered the same words twice with a
+    full stop between them. Rather than special-casing that one kind, the row
+    drops a summary that only restates the label — which is the general shape
+    of the problem, and leaves every event whose summary carries real detail
+    ("Reviewing 12 attached tabs") untouched.
+  */
+  const restatesLabel =
+    event.summary.replace(/[.\s]+$/, "").toLowerCase() === presentation.label.toLowerCase()
+
   return (
     <li className="flex items-baseline gap-2 py-0.5">
       <span
@@ -44,7 +57,9 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
         ●
       </span>
       <span className="shrink-0 text-label text-muted-foreground">{presentation.label}</span>
-      <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">{event.summary}</span>
+      <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">
+        {restatesLabel ? "" : event.summary}
+      </span>
       {/*
         The tool or file the event concerns, when it named one.
 

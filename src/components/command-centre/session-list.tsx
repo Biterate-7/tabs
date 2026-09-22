@@ -127,7 +127,9 @@ export function SessionList({
   }, [sessions])
 
   return (
-    <div className="flex h-full min-h-0 w-64 shrink-0 flex-col border-r border-subtle">
+    // Narrower where the centre needs the width; full size once the context
+    // panel is affordable too. See context-panel.tsx for the column budget.
+    <div className="flex h-full min-h-0 w-56 shrink-0 flex-col border-r border-subtle xl:w-64">
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-subtle px-3">
         <h2 className="text-eyebrow text-tertiary">Sessions</h2>
         <Button

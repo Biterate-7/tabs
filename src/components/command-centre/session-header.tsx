@@ -59,10 +59,18 @@ export function SessionHeader({
             {view.title ?? identity.displayName}
           </h1>
           {projectName && (
-            <span className="shrink-0 truncate text-meta text-tertiary">{projectName}</span>
+            <span className="shrink-0 truncate text-label text-tertiary">{projectName}</span>
           )}
         </div>
-        <span className="truncate text-meta text-tertiary">
+        {/*
+          The subtitle is prose, so it is set in the UI face.
+
+          It was `text-meta`, which is the mono/tabular style — the design
+          system reserves mono for structure and figures, and "Claude Code ·
+          Not yet correlated" is neither. Set in mono it read as a status code
+          rather than as a sentence about where this session came from.
+        */}
+        <span className="truncate text-label text-tertiary">
           {identity.displayName} · {SESSION_ORIGIN_LABEL[session.origin]}
         </span>
       </div>
@@ -77,9 +85,18 @@ export function SessionHeader({
           <Trash2 />
         </IconButton>
 
+        {/*
+          Hidden at exactly the width the panel itself is.
+
+          Below `xl` there is no space for the context panel and it collapses
+          (see context-panel.tsx); a toggle that survived that breakpoint would
+          be a control whose only effect is on something the user cannot see —
+          and it would go on claiming to "Hide context panel" while no panel
+          was on screen.
+        */}
         <IconButton
           aria-label={contextPanelOpen ? "Hide context panel" : "Show context panel"}
-          className="size-7"
+          className="hidden size-7 xl:inline-flex"
           onClick={onToggleContextPanel}
         >
           {contextPanelOpen ? <PanelRightClose /> : <PanelRightOpen />}

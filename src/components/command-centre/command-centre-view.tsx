@@ -186,30 +186,82 @@ export function CommandCentreView({
   return (
     <div className="flex h-screen min-h-0 flex-1 flex-col">
       {/*
-        The runtime's own answer, at the top, always.
+        Where you are, and whether agents can run here.
 
-        `executable: false` is not an error state and is not hidden — it is the
-        truth about this build, and the rest of the surface stays browsable
-        underneath it.
+        This row used to appear only when the runtime was *not* executable,
+        which meant the healthy state said nothing at all: `runtimeBanner`
+        has always had a "Local runtime ready" answer and nothing rendered it.
+        A command centre that is silent about its runtime until something is
+        wrong makes the user check the context panel to find out whether the
+        thing they are about to type will run.
+
+        So the row is permanent and carries two facts — location on the left,
+        runtime on the right. It stays one line of quiet text when everything
+        is fine, and only the unavailable case spends the horizontal space on
+        the gate's full sentence.
       */}
-      {!runtime.executable && !runtime.loading && (
-        <div
-          role="status"
-          className="flex shrink-0 items-center gap-2 border-b border-subtle bg-surface px-4 py-2"
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-subtle px-4">
+        <span className="text-eyebrow text-tertiary">TabDump</span>
+        <span aria-hidden className="text-tertiary">
+          /
+        </span>
+        <span className="text-label text-foreground">Command Centre</span>
+        {selected && projectNameOf(selected.view.projectId) && (
+          <>
+            <span aria-hidden className="text-tertiary">
+              /
+            </span>
+            <span className="min-w-0 truncate text-label text-muted-foreground">
+              {projectNameOf(selected.view.projectId)}
+            </span>
+          </>
+        )}
+
+        {!runtime.loading && (
+          <div role="status" className="ml-auto flex min-w-0 items-center gap-2">
+            <span aria-hidden className={cn("text-meta", AGENT_TONE_TEXT_CLASS[banner.tone])}>
+              ●
+            </span>
+            <span className="shrink-0 text-label text-muted-foreground">{banner.title}</span>
+            {/* After the title, so the row reads "● Agent runtime unavailable ·
+                <why>" rather than trailing off into the headline. Truncates
+                first, because the title is the part that must survive. */}
+            {!runtime.executable && (
+              <span className="hidden min-w-0 truncate text-body-sm text-tertiary lg:inline">
+                · {banner.detail}
+              </span>
+            )}
+            {banner.reconnectable && (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => void runtime.refresh()}
+              >
+                <RotateCw />
+                Reconnect
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/*
+          Back to the workspace.
+
+          Anchored here rather than floating in the empty state, where it used
+          to sit absolutely positioned against nothing — with no header on that
+          column it read as a stray glyph in open space, and it disappeared
+          entirely once a session was selected. In the bar it is in the same
+          place at every moment of the surface's life.
+        */}
+        <IconButton
+          aria-label="Close command centre"
+          className={cn("size-7 shrink-0", runtime.loading && "ml-auto")}
+          onClick={onClose}
         >
-          <span aria-hidden className={cn("text-meta", AGENT_TONE_TEXT_CLASS[banner.tone])}>
-            ●
-          </span>
-          <span className="text-body-sm text-foreground">{banner.title}</span>
-          <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">{banner.detail}</span>
-          {banner.reconnectable && (
-            <Button type="button" size="xs" variant="outline" onClick={() => void runtime.refresh()}>
-              <RotateCw />
-              Reconnect
-            </Button>
-          )}
-        </div>
-      )}
+          <X />
+        </IconButton>
+      </div>
 
       <div className="flex min-h-0 flex-1">
         <SessionList
@@ -312,7 +364,6 @@ export function CommandCentreView({
               executable={runtime.executable}
               loading={runtime.loading}
               onNewSession={() => setNewSessionOpen(true)}
-              onClose={onClose}
             />
           )}
         </main>
@@ -320,6 +371,7 @@ export function CommandCentreView({
         {contextPanelOpen && (
           <ContextPanel
             session={session.session}
+            world={contextWorld}
             snapshot={context.snapshot}
             delta={context.delta}
             {...(selected && projectNameOf(selected.view.projectId)
@@ -374,19 +426,21 @@ function CommandCentreEmptyState({
   executable,
   loading,
   onNewSession,
-  onClose,
 }: {
   executable: boolean
   loading: boolean
   onNewSession: () => void
-  onClose: () => void
 }) {
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-6">
-      <IconButton aria-label="Close command centre" className="absolute top-3 right-3" onClick={onClose}>
-        <X />
-      </IconButton>
+    /*
+      Sits a little above centre rather than dead centre.
 
+      With the composer gone there is nothing below this block, so true
+      vertical centring left it stranded in the middle of a very tall empty
+      column. Pulling it up to roughly the optical third puts it where the
+      conversation would start.
+    */
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-24">
       <div className="w-full max-w-md text-center">
         <h1 className="text-h2 text-foreground">Command Centre</h1>
         <p className="mt-2 text-body-sm text-muted-foreground">
