@@ -3,6 +3,7 @@ import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/c
 import { createRemoteClaudeRuntime } from "@/lib/agents/control/providers/claude-code/remote-runtime";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
 import { createRemoteBindings } from "@/lib/agents/remote/bindings";
+import { hasPlatformOidcToken } from "@/lib/agents/remote/platform-identity";
 import { createVercelSandboxService } from "@/lib/agents/remote/sandbox-vercel";
 import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
 import { resolveProviderCredential } from "@/lib/agents/credentials/server";
@@ -125,7 +126,10 @@ let resolved: Promise<Resolved> | undefined;
 async function resolveRuntime(): Promise<Resolved> {
   resolved ??= (async () => {
     const store = await createPostgresRemoteStore().catch(() => undefined);
-    const gate = assertExecutionAllowed(process.env, { durableStore: store !== undefined });
+    const gate = assertExecutionAllowed(process.env, {
+      durableStore: store !== undefined,
+      platformOidc: hasPlatformOidcToken(),
+    });
 
     if (!gate.allowed) return { mode: "refused" as const, gate };
     if (gate.environment === "local") return { mode: "local" as const, gate };

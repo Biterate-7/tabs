@@ -1,5 +1,6 @@
 import "server-only";
 import { decideRemoteRuntime } from "@/lib/agents/control/runtime";
+import { hasPlatformOidcToken } from "./platform-identity";
 import { createVercelSandboxService } from "./sandbox-vercel";
 import { createPostgresRemoteStore } from "./store-postgres";
 import type { RemoteProjectServices } from "./projects";
@@ -36,7 +37,10 @@ export async function getRemoteServices(): Promise<RemoteProjectServices | undef
     // The same decision the gate takes, from the same inputs. Asked here
     // rather than re-derived, so a deployment cannot be "remote enough" to
     // create projects and not remote enough to run them.
-    const decision = decideRemoteRuntime(process.env, { durableStore: store !== undefined });
+    const decision = decideRemoteRuntime(process.env, {
+      durableStore: store !== undefined,
+      platformOidc: hasPlatformOidcToken(),
+    });
     if (!decision.allowed || !store) return undefined;
 
     return { store, sandbox: createVercelSandboxService() };

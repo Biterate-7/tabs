@@ -13,6 +13,7 @@ import type {
   ExecutionEnvironment,
   RemoteDenialReason,
   RemoteRuntimeDecision,
+  RemoteRuntimeInput,
   RuntimeDecision,
   RuntimeEnvironment,
 } from "@/lib/agents/control/runtime";
@@ -142,7 +143,7 @@ export function assertLocalExecutionAllowed(env: RuntimeEnvironment): ExecutionG
  */
 export function assertExecutionAllowed(
   env: RuntimeEnvironment,
-  input: { durableStore: boolean }
+  input: RemoteRuntimeInput
 ): ExecutionGateResult {
   const local = decideServerRuntime(env);
   if (local.allowed) return describe(local);

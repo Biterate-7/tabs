@@ -289,11 +289,17 @@ function isSet(env: RuntimeEnvironment, name: string): boolean {
  * OIDC first, because on the platform it is the one that is rotated for you
  * and the one that cannot be copied into a repository. An access token is the
  * fallback for a deployment that is not on Vercel at all.
+ *
+ * `platformOidc` is the platform's own answer, supplied by a server caller.
+ * On a deployed Vercel Function the token is handed over per request rather
+ * than as an environment variable, so the variable alone reads "absent" on
+ * exactly the deployment OIDC exists for. See `RemoteRuntimeInput`.
  */
 export function sandboxCredentialKind(
-  env: RuntimeEnvironment
+  env: RuntimeEnvironment,
+  platformOidc = false
 ): SandboxCredentialKind | null {
-  if (isSet(env, SANDBOX_OIDC_ENV_VAR)) return "oidc";
+  if (platformOidc || isSet(env, SANDBOX_OIDC_ENV_VAR)) return "oidc";
   if (SANDBOX_ACCESS_TOKEN_ENV_VARS.every((name) => isSet(env, name))) return "access-token";
   return null;
 }
@@ -308,6 +314,19 @@ export type RemoteRuntimeInput = {
    * infrastructure* supplied by the one caller that has a server context.
    */
   durableStore: boolean;
+  /**
+   * Whether the platform handed this request an OIDC token.
+   *
+   * Passed in for the same reason as `durableStore`. On a deployed Vercel
+   * Function the token arrives in the request context (`x-vercel-oidc-token`),
+   * not in `process.env` — the variable is only the local-development copy
+   * that `vercel env pull` writes. Checking the environment alone therefore
+   * refused every real deployment. The caller asks the sandbox SDK's own
+   * lookup, so this is true exactly when the SDK could authenticate.
+   *
+   * Presence only. The token itself never crosses into this module.
+   */
+  platformOidc?: boolean;
 };
 
 /**
@@ -343,7 +362,7 @@ export function decideRemoteRuntime(
   env: RuntimeEnvironment,
   input: RemoteRuntimeInput
 ): RemoteRuntimeDecision {
-  const credentials = sandboxCredentialKind(env);
+  const credentials = sandboxCredentialKind(env, input.platformOidc);
   if (!credentials) return { allowed: false, reason: "no-sandbox-credentials" };
   if (!input.durableStore) return { allowed: false, reason: "no-durable-store" };
   return { allowed: true, credentials };
