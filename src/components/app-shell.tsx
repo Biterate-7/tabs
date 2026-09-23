@@ -1287,6 +1287,9 @@ export function AppShell() {
         // So "this agent isn't connected yet" in the start dialog has a button
         // rather than an instruction to go looking.
         onOpenConnectors={() => openSettings("connectors")}
+        // The workspace the user came from is the one a new session is
+        // associated with by default (Phase J). They can pick another.
+        {...(currentWorkspace ? { activeWorkspaceId: currentWorkspace.id } : {})}
       />
     )
   }

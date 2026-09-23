@@ -345,13 +345,15 @@ describe("provider credential security", () => {
     });
 
     it("keeps the credential layer out of prompt assembly", () => {
-      const promptFile = path.resolve(
-        SRC,
-        "lib/agents/control/providers/claude-code/context-prompt.ts"
-      );
-      const code = codeOf(readFileSync(promptFile, "utf8"));
-      expect(code).not.toMatch(/credential/i);
-      expect(code).not.toMatch(/ANTHROPIC/);
+      // Both the shared renderer (Phase J) and Claude's re-export of it.
+      for (const promptFile of [
+        path.resolve(SRC, "lib/agents/control/providers/context-prompt.ts"),
+        path.resolve(SRC, "lib/agents/control/providers/claude-code/context-prompt.ts"),
+      ]) {
+        const code = codeOf(readFileSync(promptFile, "utf8"));
+        expect(code).not.toMatch(/credential/i);
+        expect(code).not.toMatch(/ANTHROPIC/);
+      }
     });
   });
 

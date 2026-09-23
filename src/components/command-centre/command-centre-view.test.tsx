@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { seedConnectedAgent } from "@/lib/agents/platform/__fixtures__/roster"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { CommandCentreView } from "./command-centre-view"
@@ -85,6 +86,8 @@ function renderCentre(
 
 beforeEach(() => {
   window.localStorage.clear()
+  // Phase J: sessions start only for a connected agent. See the fixture.
+  seedConnectedAgent()
 })
 
 /* ------------------------------------------------------------------ *

@@ -203,6 +203,7 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   session_resumed: { register: "lifecycle", label: "Session resumed", tone: "muted" },
   message_sent: { register: "message", label: "", tone: "idle", speaker: "user" },
   message_received: { register: "message", label: "", tone: "idle", speaker: "agent" },
+  message_delta: { register: "message", label: "", tone: "live", speaker: "agent" },
   thinking: { register: "activity", label: "Thinking", tone: "live" },
   tool_started: { register: "activity", label: "Tool", tone: "live" },
   tool_finished: { register: "activity", label: "Tool", tone: "idle" },

@@ -67,6 +67,11 @@ export const SCOPED_STORAGE_KEYS = [
   // into the same browser must never inherit that authorization.
   "tabdump:agent-sessions:v1",
   "tabdump:agent-projects:v1",
+  // The agents a user has connected, and what they approved each for (see
+  // src/lib/agents/platform/roster.ts). Scoped because which agents one
+  // person connected — and what they let each do — is theirs. It holds
+  // identities and consent only; no credential of any kind.
+  "tabdump:agent-roster:v1",
 ] as const;
 
 /**

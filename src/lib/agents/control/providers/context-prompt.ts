@@ -1,4 +1,4 @@
-import type { AgentContextAttachment } from "../../context";
+import type { AgentContextAttachment } from "../context";
 
 /**
  * Rendering TabDump context for Claude Code.

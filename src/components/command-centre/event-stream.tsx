@@ -1,8 +1,9 @@
 "use client"
 
-import { memo, useEffect, useRef } from "react"
+import { memo, useEffect, useMemo, useRef } from "react"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { EVENT_PRESENTATION } from "@/lib/agents/command-centre/presentation"
+import { buildTranscript } from "@/lib/agents/platform/chat"
 import { cn } from "@/lib/utils"
 import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 
@@ -29,6 +30,10 @@ import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
  * It also does not fake streaming. An event appears when the runtime has
  * reported it; there is no per-character animation pretending to be a token
  * stream, which would be motion asserting a fact TabDump does not have.
+ *
+ * Since Phase J the messages carry their whole text, and a provider that
+ * streams sends real pieces (`message_delta`) that are shown joined as they
+ * arrive. The grouping lives in `buildTranscript`, not here.
  */
 
 /** A single-line row: activity and lifecycle both use it, at the same density. */
@@ -82,21 +87,35 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
 })
 
 /** What the user said. Boxed, because it is an instruction rather than prose. */
-const UserMessage = memo(function UserMessage({ event }: { event: SequencedControlEvent }) {
+const UserMessage = memo(function UserMessage({ text }: { text: string }) {
   return (
     <li className="py-2">
       <p className="rounded-md border border-subtle bg-surface px-3 py-2 text-body-sm whitespace-pre-wrap text-foreground">
-        {event.summary}
+        {text}
       </p>
     </li>
   )
 })
 
-/** What the agent said. Unboxed prose — the thing the user is actually reading. */
-const AgentMessage = memo(function AgentMessage({ event }: { event: SequencedControlEvent }) {
+/**
+ * What the agent said. Unboxed prose — the thing the user is actually reading.
+ *
+ * Rendered as plain text, never as HTML or markdown-to-HTML: a reply is model
+ * output, and model output can quote a page that was written to be injected.
+ * `streaming` marks a reply whose pieces are still arriving (Phase J); the
+ * cursor is a static mark, not an animation pretending to be typing.
+ */
+const AgentMessage = memo(function AgentMessage({ text, streaming }: { text: string; streaming: boolean }) {
   return (
-    <li className="py-2">
-      <p className="text-body-sm whitespace-pre-wrap text-foreground">{event.summary}</p>
+    <li className="py-2" aria-busy={streaming || undefined}>
+      <p className="text-body-sm whitespace-pre-wrap text-foreground">
+        {text}
+        {streaming && (
+          <span aria-hidden className="ml-0.5 text-tertiary">
+            ▍
+          </span>
+        )}
+      </p>
     </li>
   )
 })
@@ -113,6 +132,9 @@ export function EventStream({
 }) {
   const endRef = useRef<HTMLDivElement | null>(null)
   const countRef = useRef(events.length)
+  // The conversation, derived from the window of events on every render —
+  // one model for every provider. See lib/agents/platform/chat.ts.
+  const transcript = useMemo(() => buildTranscript(events), [events])
 
   /*
     Follows the stream only when it grows.
@@ -135,18 +157,16 @@ export function EventStream({
         to find out which.
       */}
       <ol aria-label="Session events" className="mx-auto flex w-full max-w-3xl flex-col px-6 py-4">
-        {events.map((event) => {
-          const presentation = EVENT_PRESENTATION[event.kind]
-
-          if (presentation.register === "message") {
-            return presentation.speaker === "user" ? (
-              <UserMessage key={event.id} event={event} />
+        {transcript.map((item) => {
+          if (item.type === "message") {
+            return item.role === "user" ? (
+              <UserMessage key={item.id} text={item.text} />
             ) : (
-              <AgentMessage key={event.id} event={event} />
+              <AgentMessage key={item.id} text={item.text} streaming={item.streaming} />
             )
           }
 
-          return <QuietRow key={event.id} event={event} />
+          return <QuietRow key={item.id} event={item.event} />
         })}
         {children}
       </ol>

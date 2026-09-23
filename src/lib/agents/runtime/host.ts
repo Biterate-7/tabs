@@ -1,4 +1,6 @@
+import { hasAdapterAuthentication } from "@/lib/agents/control/authentication";
 import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
+import { boundMessageText, normalizeControlSummary } from "@/lib/agents/control/events";
 import { NO_PERMISSIONS } from "@/lib/agents/control/permissions";
 import {
   isBlockedSessionStatus,
@@ -32,6 +34,8 @@ import type {
   RuntimeCommandResult,
   RuntimeCommandResults,
   RuntimeCorrelationView,
+  ProviderConnectionView,
+  ProviderDetection,
   RuntimeErrorCode,
   RuntimeProviderStatus,
   RuntimeResult,
@@ -216,6 +220,12 @@ export type RuntimeHostOptions = {
   createId?: () => string;
   /** This process's identity. Injected so tests are deterministic. */
   runtimeId?: string;
+  /**
+   * What is installed on this machine (Phase J). Supplied only by a local
+   * runtime's wiring; answered only when the gate is local. See
+   * `lib/agents/launch/detect.ts` — it returns booleans, never paths.
+   */
+  detect?: () => readonly ProviderDetection[];
 };
 
 export type RuntimeHost = {
@@ -662,9 +672,12 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   }
 
   /** The providers this host reports on, and what is true of each. */
-  function providerStatuses(ownerId: string): RuntimeProviderStatus[] {
+  function providerStatuses(
+    ownerId: string,
+    only?: readonly AgentProviderId[]
+  ): RuntimeProviderStatus[] {
     const ids =
-      options.providers ?? [...hosted.values()].map((session) => session.provider);
+      only ?? options.providers ?? [...hosted.values()].map((session) => session.provider);
 
     const unique = [...new Set(ids)];
 
@@ -692,8 +705,12 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // arrives when a run starts, so anything before that is a guess.
         // `configuration_required` is the one state the provider has actually
         // told us about.
-        authentication:
-          status.kind === "configuration_required"
+        //
+        // An adapter with a native sign-in (Phase J) reports what the agent
+        // itself last told it, which is the one better source there is.
+        authentication: hasAdapterAuthentication(adapter)
+          ? adapter.describeAuthentication().state
+          : status.kind === "configuration_required"
             ? ("required" as const)
             : ("unknown" as const),
         capabilities: [...adapter.getCapabilities()],
@@ -1017,6 +1034,23 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
         if (!host.activeRunId) startRun(command.sessionId, host);
 
+        // What the user said, into the same journal as what the agent said,
+        // so the conversation reads back whole after a reload. Journalled
+        // here rather than by an adapter: the host is what received the text,
+        // and an adapter re-emitting it from a provider's echo would double
+        // it. Only the user's own words — the attached context is not
+        // repeated into the stream.
+        onEvent({
+          id: `sent-${createId()}`,
+          sessionId: command.sessionId,
+          provider: host.provider,
+          kind: "message_sent",
+          timestamp: now(),
+          summary: normalizeControlSummary(command.text),
+          text: boundMessageText(command.text),
+          ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+        });
+
         const after = actorService.session(command.sessionId);
         return after ? { ok: true, value: viewOf(after) } : runtimeFailure("session_not_found");
       }
@@ -1143,7 +1177,81 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           ? { ok: true, value: toCorrelationView(updated) }
           : runtimeFailure("invalid_request");
       }
+
+      /* ------------------------------------------------------------ *
+       * Phase J — the connector lifecycle
+       * ------------------------------------------------------------ */
+
+      case "detect_providers": {
+        // Only a runtime on the user's own machine may answer. A hosted or
+        // remote deployment's binaries are not the user's, and listing them
+        // would report the server's software to every visitor.
+        const thisMachine = options.gate.kind === "local" && options.detect !== undefined;
+        return {
+          ok: true,
+          value: { thisMachine, detections: thisMachine ? options.detect!() : [] },
+        };
+      }
+
+      case "connect_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+        const connected = await adapter.connect();
+        // A refusal is still an answer worth showing: the view carries the
+        // status the adapter settled into, which says why.
+        if (!connected.ok && connected.error.code === "unsupported") {
+          return runtimeFailure("unsupported");
+        }
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      case "authenticate_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+        if (!hasAdapterAuthentication(adapter)) return runtimeFailure("unsupported");
+        const signedIn = await adapter.authenticate(command.methodId);
+        if (!signedIn.ok) return fromControl(signedIn);
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      case "disconnect_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+
+        // This actor's sessions with this provider end first — cancelled,
+        // forgotten, exactly as `dispose_session` does one — so disconnecting
+        // cannot leave a process running that nothing can reach.
+        for (const [sessionId, host] of [...hosted.entries()]) {
+          if (host.ownerId !== actor.id || host.provider !== command.provider) continue;
+          const session = actorService.session(sessionId);
+          if (session && !isTerminalSessionStatus(session.status)) {
+            await actorService.cancelRun(sessionId);
+          }
+          hosted.delete(sessionId);
+          journal.forget(sessionId);
+          correlations.removeControlSession(sessionId);
+        }
+
+        await adapter.disconnect();
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
     }
+  }
+
+  /** One provider's status plus the agent's own sign-in methods. */
+  function connectionViewOf(provider: AgentProviderId, ownerId: string): ProviderConnectionView {
+    const status =
+      providerStatuses(ownerId, [provider])[0] ?? {
+        provider,
+        connection: "unavailable" as const,
+        available: false,
+        authentication: "unknown" as const,
+        capabilities: [],
+      };
+    const adapter = options.resolveAdapter(provider, ownerId);
+    const methods =
+      adapter && hasAdapterAuthentication(adapter) ? adapter.describeAuthentication().methods : [];
+    return { ...status, authMethods: methods.map((method) => ({ ...method })) };
   }
 
   /**
@@ -1259,6 +1367,10 @@ function sessionIdOf(command: RuntimeCommand): string | undefined {
     case "create_session":
     case "resume_session":
     case "respond_to_approval":
+    case "detect_providers":
+    case "connect_provider":
+    case "authenticate_provider":
+    case "disconnect_provider":
       return undefined;
   }
 }

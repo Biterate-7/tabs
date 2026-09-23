@@ -1,5 +1,5 @@
 import { toProjectRelative } from "@/lib/agents/paths";
-import { normalizeControlSummary } from "../../events";
+import { boundMessageText, normalizeControlSummary } from "../../events";
 import type { AgentControlEvent, AgentControlEventKind, ControlFileInfo } from "../../events";
 import type { ClaudeRuntimeMessage } from "./runtime";
 
@@ -215,7 +215,17 @@ function fromAssistant(
   }
 
   if (text) {
-    events.unshift(event("message_received", text, context));
+    // The summary stays the collapsed one-liner the durable log wants; the
+    // reply itself rides in `text` for the chat surface. See TEXT_EVENT_KINDS.
+    const full = boundMessageText(
+      list(inner.content)
+        .map((raw) => record(raw))
+        .filter((block) => block && str(block.type) === "text")
+        .map((block) => (block ? (str(block.text) ?? "") : ""))
+        .filter(Boolean)
+        .join("\n\n")
+    );
+    events.unshift(event("message_received", text, context, { text: full }));
   } else if (sawThinking && events.length === 0) {
     // A turn that is only thinking so far. Reported as `thinking` rather than
     // as an empty message, so a UI can say "working" without inventing prose.

@@ -107,7 +107,10 @@ export function SessionList({
   onNewSession,
   canCreate,
   now,
+  children,
 }: {
+  /** Rendered above the sessions — the connected-agents roster (Phase J). */
+  children?: React.ReactNode
   sessions: readonly CommandCentreSession[]
   selectedSessionId: string | null
   /** Resolves a project id to its name. Ids are internal and never shown. */
@@ -144,6 +147,8 @@ export function SessionList({
           New
         </Button>
       </div>
+
+      {children}
 
       <nav aria-label="Agent sessions" className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
         {sessions.length === 0 ? (

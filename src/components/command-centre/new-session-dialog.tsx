@@ -77,6 +77,10 @@ export function NewSessionDialog({
   creating,
   error,
   now,
+  workspaces,
+  defaultWorkspaceId,
+  connectionBlocker,
+  onConnectAgent,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -105,7 +109,29 @@ export function NewSessionDialog({
    * product where it could plausibly have been otherwise.
    */
   connectionFor?: (provider: AgentProviderId) => ProviderConnectionView | undefined
-  onCreate: (input: { provider: AgentProviderId; projectId?: string; title?: string }) => void
+  onCreate: (input: {
+    provider: AgentProviderId
+    projectId?: string
+    workspaceId?: string
+    title?: string
+  }) => void
+  /**
+   * The TabDump workspaces a session can be associated with (Phase J).
+   *
+   * The association is recorded on the session and on the agent's roster
+   * entry, and it is the workspace context is drawn from. Absent: no choice
+   * is offered and the session belongs to no workspace, as before.
+   */
+  workspaces?: readonly { id: string; name: string }[]
+  defaultWorkspaceId?: string
+  /**
+   * Why an agent cannot start a session yet, when the reason is that the user
+   * has not connected and approved it (Phase J). `undefined` for an agent
+   * that is connected. Absent: no connection gate, as before.
+   */
+  connectionBlocker?: (provider: AgentProviderId) => string | undefined
+  /** Opens Connect Agent for a provider the user has not connected yet. */
+  onConnectAgent?: (provider: AgentProviderId) => void
   /**
    * Takes the user to where they connect their own provider credentials.
    *
@@ -119,7 +145,15 @@ export function NewSessionDialog({
   error?: string
   now: number
 }) {
-  const startable = useMemo(() => providers.filter(canCreateSession), [providers])
+  const startable = useMemo(
+    () => providers.filter((candidate) => canCreateSession(candidate) && !connectionBlocker?.(candidate.provider)),
+    [providers, connectionBlocker]
+  )
+  const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null)
+  const workspaceId =
+    workspaceChoice ?? (defaultWorkspaceId && workspaces?.some((entry) => entry.id === defaultWorkspaceId)
+      ? defaultWorkspaceId
+      : "")
 
   /*
     Which planes this runtime can actually execute in.
@@ -212,7 +246,8 @@ export function NewSessionDialog({
                 <p className="text-body-sm text-tertiary">No agent providers are registered here.</p>
               ) : (
                 providers.map((candidate) => {
-                  const reason = providerUnavailableReason(candidate)
+                  const unconnected = connectionBlocker?.(candidate.provider)
+                  const reason = providerUnavailableReason(candidate) ?? unconnected
                   const identity = agentVisualIdentity(candidate.provider)
                   const selected = chosen === candidate.provider
 
@@ -240,6 +275,17 @@ export function NewSessionDialog({
                         {identity.displayName}
                       </span>
                       {reason && <span className="shrink-0 text-label text-tertiary">{reason}</span>}
+                      {/* The one unavailable reason with a fix one click away. */}
+                      {unconnected && !providerUnavailableReason(candidate) && onConnectAgent && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => onConnectAgent(candidate.provider)}
+                        >
+                          Connect
+                        </Button>
+                      )}
                     </label>
                   )
                 })
@@ -421,6 +467,23 @@ export function NewSessionDialog({
           </div>
           )}
 
+          {workspaces && workspaces.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="session-workspace" className="text-eyebrow text-tertiary">
+                Workspace <span className="text-tertiary">· optional</span>
+              </label>
+              <Select
+                value={workspaceId}
+                onValueChange={setWorkspaceChoice}
+                placeholder="No workspace"
+                options={[
+                  { value: "", label: "No workspace" },
+                  ...workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name })),
+                ]}
+              />
+            </div>
+          )}
+
           <div className="flex flex-col gap-1">
             <label htmlFor="session-title" className="text-eyebrow text-tertiary">
               Title <span className="text-tertiary">· optional</span>
@@ -487,6 +550,7 @@ export function NewSessionDialog({
               onCreate({
                 provider: chosen,
                 ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+                ...(workspaceId ? { workspaceId } : {}),
                 ...(title.trim() ? { title: title.trim() } : {}),
               })
             }}

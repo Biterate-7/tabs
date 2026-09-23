@@ -139,7 +139,7 @@ keyframes and isometric CSS in `globals.css`.
 | A | Agent World removal | done |
 | B | Provider-neutral agent control foundation — see [agent-control-architecture.md](agent-control-architecture.md) | done |
 | C | Real Claude Code connection | done |
-| D | Codex connection | not built — the shipped adapter is the honest unimplemented one |
+| D | Codex connection | done in Phase J, over ACP through `codex-acp` — see [agent-connector-platform.md](agent-connector-platform.md) |
 | E | Local project connection + permission model | built during B — `control/projects.ts`, `control/permissions.ts` |
 | F | Workspace → agent context bridge | done — see [agent-context-bridge.md](agent-context-bridge.md) |
 | G | Unified event stream + session persistence | |
@@ -150,6 +150,14 @@ keyframes and isometric CSS in `globals.css`.
 | L | Full TabDump visual redesign | |
 | M | Cross-provider polish | |
 | N | Test / QA pass | |
+
+**Phase J (brief lettering) — Agent Connector Platform: done.** One
+provider-neutral connector framework for Claude Code, Codex, Gemini CLI, Grok
+Build and custom MCP agents; one ACP adapter behind three of them; Connect
+Agent, the agents roster and streaming agent chat in the command centre. See
+[agent-connector-platform.md](agent-connector-platform.md). (The brief letters
+continue from the remote runtime's I, I.2 and I.3; the MCP server that preceded
+this phase was never lettered.)
 
 > **A note on letters.** This table's lettering and the lettering used in the
 > working briefs have drifted apart. The context bridge was briefed as

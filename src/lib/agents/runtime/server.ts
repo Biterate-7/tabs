@@ -1,5 +1,10 @@
 import "server-only";
+import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
+import { ACP_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
+import { createMcpLinker } from "@/lib/agents/launch/mcp-link";
+import { createAcpProcessLauncher, detectLocalProviders } from "@/lib/agents/launch/process";
+import { getMcpTokenStore } from "@/lib/mcp/tokens-postgres";
 import { createRemoteClaudeRuntime } from "@/lib/agents/control/providers/claude-code/remote-runtime";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
 import { createRemoteBindings } from "@/lib/agents/remote/bindings";
@@ -12,6 +17,8 @@ import { createRuntimeHost } from "./host";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { ClaudeCredentialSource } from "@/lib/agents/control/providers/claude-code/runtime";
 import type { AgentControlAdapter } from "@/lib/agents/control/types";
+import type { AcpMcpLinker } from "@/lib/agents/control/providers/acp/launcher";
+import type { ProviderDetection } from "./protocol";
 import type { RemoteSandboxService } from "@/lib/agents/remote/sandbox";
 import type { RemoteStore } from "@/lib/agents/remote/store";
 import type { ExecutionGateResult } from "./gate";
@@ -58,6 +65,13 @@ import type { RuntimeActor, RuntimeHost } from "./host";
 
 /** Providers this runtime reports on. A provider joins when it has a runtime, not when it has a name. */
 const REPORTED_PROVIDERS: readonly AgentProviderId[] = ["claude-code"];
+
+/**
+ * A local runtime also drives every ACP agent in the launch allowlist
+ * (Phase J). Remote does not: the ACP agents run on the user's own machine,
+ * with the user's own native sign-in, and a sandbox has neither.
+ */
+const LOCAL_REPORTED_PROVIDERS: readonly AgentProviderId[] = [...REPORTED_PROVIDERS, ...ACP_PROVIDERS];
 
 /* ------------------------------------------------------------------ *
  * The decision
@@ -229,6 +243,83 @@ function localAdapter(ownerId: string): AgentControlAdapter {
 }
 
 /* ------------------------------------------------------------------ *
+ * Local ACP agents (Phase J)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One ACP adapter per provider per actor, for the same reason there is one
+ * Claude adapter per actor: an adapter owns child processes, and a second one
+ * for the same pair would orphan the first one's sessions.
+ *
+ * Deliberately **not** connected on construction. Connecting starts the
+ * agent's process to learn how it signs in, and that happens when the user
+ * presses Connect — never because a status request happened to list it.
+ */
+const localAcpByActor = new Map<string, AgentControlAdapter>();
+
+const ACP_AGENT_NAMES: Partial<Record<AgentProviderId, string>> = {
+  gemini: "Gemini CLI",
+  grok: "Grok Build",
+  "openai-codex": "Codex",
+};
+
+/**
+ * TabDump's own MCP endpoint on this machine, for per-session links.
+ *
+ * Built from this process's own configuration, never from a request header:
+ * a `Host` header is chosen by the caller, and a link built from one would
+ * send a session's token to wherever the caller said.
+ */
+function localMcpUrl(): string {
+  const explicit = process.env.TABDUMP_MCP_LOCAL_URL;
+  if (explicit && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/api\/mcp$/.test(explicit)) return explicit;
+  const port = /^\d{2,5}$/.test(process.env.PORT ?? "") ? process.env.PORT : "3000";
+  return `http://127.0.0.1:${port}/api/mcp`;
+}
+
+/**
+ * A per-session TabDump MCP link for a signed-in actor, when this server has
+ * the token store. Signed-out local use has no account to scope a token to,
+ * so it gets no link — and the session still runs, with attached context.
+ */
+async function mcpLinkerFor(provider: AgentProviderId, ownerId: string) {
+  if (!ownerId.startsWith("account:")) return undefined;
+  const store = await getMcpTokenStore().catch(() => undefined);
+  if (!store) return undefined;
+  return createMcpLinker({
+    store,
+    url: localMcpUrl(),
+    userId: ownerId.slice("account:".length),
+    agentName: ACP_AGENT_NAMES[provider] ?? provider,
+  });
+}
+
+function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentControlAdapter | undefined {
+  const entry = launchEntryFor(provider)?.acp;
+  if (!entry) return undefined;
+
+  const key = `${provider}\u0000${ownerId}`;
+  const existing = localAcpByActor.get(key);
+  if (existing) return existing;
+
+  // Resolved lazily, per session: the token store is a database connection
+  // that a signed-out developer's runtime never needs to open.
+  let linker: Promise<AcpMcpLinker | undefined> | undefined;
+  const adapter = createAcpControlAdapter({
+    provider,
+    launch: createAcpProcessLauncher({ provider, env: process.env }),
+    ...(entry.askingModeId ? { askingModeId: entry.askingModeId } : {}),
+    mcpLink: async (request) => {
+      linker ??= mcpLinkerFor(provider, ownerId);
+      const resolved = await linker;
+      return resolved ? resolved(request) : undefined;
+    },
+  });
+  localAcpByActor.set(key, adapter);
+  return adapter;
+}
+
+/* ------------------------------------------------------------------ *
  * Remote
  * ------------------------------------------------------------------ */
 
@@ -312,8 +403,11 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
       // The resolver is consulted per command, with the owner the host
       // already knows, so one cached host serves every actor while each
       // still gets their own adapter and their own credential.
-      return localHostWith(resolution.gate, (provider, ownerId) =>
-        provider === "claude-code" ? localAdapter(ownerId) : undefined
+      return localHostWith(
+        resolution.gate,
+        (provider, ownerId) =>
+          provider === "claude-code" ? localAdapter(ownerId) : localAcpAdapter(provider, ownerId),
+        { providers: LOCAL_REPORTED_PROVIDERS, detect: () => detectLocalProviders(process.env) }
       );
 
     case "refused":
@@ -335,11 +429,18 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
  */
 function localHostWith(
   gate: ExecutionGateResult,
-  resolveAdapter: (provider: AgentProviderId, ownerId: string) => AgentControlAdapter | undefined
+  resolveAdapter: (provider: AgentProviderId, ownerId: string) => AgentControlAdapter | undefined,
+  local?: { providers: readonly AgentProviderId[]; detect: () => readonly ProviderDetection[] }
 ): RuntimeHost {
   if (localHost) return localHost;
 
-  localHost = createRuntimeHost({ gate, resolveAdapter, providers: REPORTED_PROVIDERS });
+  localHost = createRuntimeHost({
+    gate,
+    resolveAdapter,
+    providers: local?.providers ?? REPORTED_PROVIDERS,
+    // Only a local runtime can say what is installed on the user's machine.
+    ...(local ? { detect: local.detect } : {}),
+  });
   registerShutdown();
   return localHost;
 }
@@ -379,6 +480,8 @@ export async function disposeRuntimeHost(): Promise<void> {
   // child processes.
   for (const adapter of localClaudeByActor.values()) adapter.dispose();
   localClaudeByActor.clear();
+  for (const adapter of localAcpByActor.values()) adapter.dispose();
+  localAcpByActor.clear();
 }
 
 let shutdownRegistered = false;

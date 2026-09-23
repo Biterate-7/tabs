@@ -2,7 +2,16 @@ import { createUnimplementedControlAdapter } from "../unimplemented";
 import type { AgentControlAdapter } from "../types";
 
 /**
- * The Codex control seam.
+ * The Codex control seam — the browser catalogue's, not the runtime's.
+ *
+ * > **Phase J update.** Codex is now driven for real on a local runtime, over
+ * > the Agent Client Protocol through `codex-acp`, by the one ACP adapter in
+ * > ./acp/ — verified against the real adapter's handshake. That adapter is
+ * > built server-side (lib/agents/runtime/server.ts). What stays here is the
+ * > browser-registered seam, which must claim nothing: the browser cannot
+ * > start a process, and `control/security.test.ts` asserts it declares no
+ * > capability. The Phase D research notes below are kept for their findings
+ * > about the Codex SDK, which is still not what TabDump uses.
  *
  * ## What this is in Phase B
  *

@@ -180,8 +180,15 @@ describe("no arbitrary shell or filesystem surface", () => {
     );
 
     expect(codeOf(protocol)).not.toMatch(/sandbox/i);
-    // And the vocabulary did not grow a bytes-carrying verb.
-    expect(RUNTIME_COMMAND_NAMES).toHaveLength(14);
+    // And the vocabulary did not grow a bytes-carrying verb. Phase J added
+    // four, pinned by name: none carries a path, a sandbox or a byte.
+    expect(RUNTIME_COMMAND_NAMES).toHaveLength(18);
+    expect(RUNTIME_COMMAND_NAMES.slice(14)).toEqual([
+      "detect_providers",
+      "connect_provider",
+      "authenticate_provider",
+      "disconnect_provider",
+    ]);
   });
 
   it("writes an inbox file that a caller's label cannot escape", async () => {

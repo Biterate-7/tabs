@@ -56,6 +56,14 @@ describe("what the parser accepts", () => {
         observationAgentId: "agent",
         observationRunId: "run",
       },
+      detect_providers: { name: "detect_providers" },
+      connect_provider: { name: "connect_provider", provider: "gemini" },
+      authenticate_provider: {
+        name: "authenticate_provider",
+        provider: "gemini",
+        methodId: "oauth-personal",
+      },
+      disconnect_provider: { name: "disconnect_provider", provider: "gemini" },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {

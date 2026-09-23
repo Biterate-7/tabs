@@ -12,10 +12,11 @@ import type { AgentSessionStatus } from "@/lib/agents/control/session";
  *
  * The browser needs a way to ask the trusted local runtime to do something.
  * This is the entire vocabulary it may use, and the point of writing it as a
- * closed union is that the vocabulary is *small and boring*: fourteen verbs,
- * every one of them a control-plane operation the `ControlService` already
- * implements, and not one of them able to name a binary, a command line, a
- * filesystem path or a provider flag.
+ * closed union is that the vocabulary is *small and boring*: eighteen verbs —
+ * fourteen control-plane operations the `ControlService` already implements,
+ * plus Phase J's four connector-lifecycle verbs (detect, connect, sign in,
+ * disconnect) — and not one of them able to name a binary, a command line, a
+ * filesystem path, a provider flag or a credential.
  *
  * ## What is deliberately absent
  *
@@ -237,6 +238,44 @@ export type RuntimeStatus = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Provider connection (Phase J)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What is installed on the machine the runtime runs on, per provider.
+ *
+ * Only ever produced by a **local** runtime: a hosted or remote deployment's
+ * binaries are not the user's, and reporting them would be both meaningless
+ * and a leak. Carries no path — `installed` and `launchable` are booleans on
+ * purpose.
+ *
+ * `signIn` is `signed_in` only when the agent's own sign-in left a marker
+ * TabDump could see without opening it; otherwise `unknown`. There is no
+ * `signed_out`: absence of a marker proves nothing.
+ */
+export type ProviderDetection = {
+  provider: AgentProviderId;
+  installed: boolean;
+  /** How TabDump drives it: the provider SDK, or the Agent Client Protocol. */
+  transport: "sdk" | "acp";
+  /** Whether the executable TabDump would start was found. */
+  launchable: boolean;
+  signIn: "signed_in" | "unknown";
+};
+
+/** A sign-in method the agent itself advertised. Labels only. */
+export type ProviderAuthMethodView = { id: string; name: string; description?: string };
+
+/**
+ * One provider's connection, as the runtime sees it after a connect or a
+ * sign-in. The same three facts `RuntimeProviderStatus` keeps apart, plus the
+ * agent's own sign-in methods.
+ */
+export type ProviderConnectionView = RuntimeProviderStatus & {
+  authMethods: readonly ProviderAuthMethodView[];
+};
+
+/* ------------------------------------------------------------------ *
  * Session views
  * ------------------------------------------------------------------ */
 
@@ -355,7 +394,7 @@ export type RuntimeApprovalView = {
  * ------------------------------------------------------------------ */
 
 /**
- * Every verb the browser may use. Adding a fifteenth is a type error in the
+ * Every verb the browser may use. Adding a nineteenth is a type error in the
  * host, in the client and in the guard suite at once.
  */
 export type RuntimeCommandName =
@@ -372,7 +411,12 @@ export type RuntimeCommandName =
   | "detach_context"
   | "respond_to_approval"
   | "dispose_session"
-  | "link_observation";
+  | "link_observation"
+  /* Phase J — the connector lifecycle. None names a binary or a path. */
+  | "detect_providers"
+  | "connect_provider"
+  | "authenticate_provider"
+  | "disconnect_provider";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -389,6 +433,10 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "respond_to_approval",
   "dispose_session",
   "link_observation",
+  "detect_providers",
+  "connect_provider",
+  "authenticate_provider",
+  "disconnect_provider",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -477,7 +525,20 @@ export type RuntimeCommand =
       sessionId: string;
       observationAgentId: string;
       observationRunId: string;
-    };
+    }
+  /** What is installed on this machine. A local runtime only; empty elsewhere. */
+  | { name: "detect_providers" }
+  /** Proves the agent can be reached and learns how it signs in. Starts no session. */
+  | { name: "connect_provider"; provider: AgentProviderId }
+  /**
+   * Runs the agent's **own** sign-in for a method it advertised.
+   *
+   * A method id and nothing else: there is no field here a key, a token or a
+   * password could be put in, so no credential can cross this boundary.
+   */
+  | { name: "authenticate_provider"; provider: AgentProviderId; methodId: string }
+  /** Ends this actor's sessions with the provider and releases its connection. */
+  | { name: "disconnect_provider"; provider: AgentProviderId };
 
 /** What each command answers with. Keyed by name so the client can type one call generically. */
 export type RuntimeCommandResults = {
@@ -498,6 +559,14 @@ export type RuntimeCommandResults = {
   respond_to_approval: RuntimeSessionView;
   dispose_session: { sessionId: string };
   link_observation: RuntimeCorrelationView;
+  detect_providers: {
+    /** `false` on any runtime that is not the user's own machine. */
+    thisMachine: boolean;
+    detections: readonly ProviderDetection[];
+  };
+  connect_provider: ProviderConnectionView;
+  authenticate_provider: ProviderConnectionView;
+  disconnect_provider: ProviderConnectionView;
 };
 
 export type RuntimeCommandResult<N extends RuntimeCommandName> = RuntimeResult<
@@ -805,6 +874,19 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       const observationRunId = id(raw.observationRunId);
       if (!sessionId || !observationAgentId || !observationRunId) return null;
       return { name: "link_observation", sessionId, observationAgentId, observationRunId };
+    }
+
+    case "detect_providers":
+      return { name: "detect_providers" };
+
+    case "connect_provider":
+    case "disconnect_provider":
+      return isAgentProviderId(raw.provider) ? { name: raw.name, provider: raw.provider } : null;
+
+    case "authenticate_provider": {
+      if (!isAgentProviderId(raw.provider)) return null;
+      const methodId = id(raw.methodId);
+      return methodId ? { name: "authenticate_provider", provider: raw.provider, methodId } : null;
     }
   }
 }

@@ -197,7 +197,15 @@ describe("a local runtime", () => {
 
     expect(value.environment).toBe("local");
     expect(value.executable).toBe(true);
-    expect(value.providers.map((provider) => provider.provider)).toEqual(["claude-code"]);
+    // Claude through its SDK, and every ACP agent in the launch allowlist
+    // (Phase J). Listing one is not claiming it is installed — see
+    // `detect_providers` for that — only that this runtime can drive it.
+    expect(value.providers.map((provider) => provider.provider)).toEqual([
+      "claude-code",
+      "gemini",
+      "openai-codex",
+      "grok",
+    ]);
   });
 
   it("does not claim a provider is authenticated merely because it loaded", async () => {

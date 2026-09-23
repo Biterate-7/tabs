@@ -5,7 +5,9 @@ import { Plus, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
+import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
+import { ConnectAgentDialog } from "./connect-agent-dialog"
 import { Composer } from "./composer"
 import { ContextPanel } from "./context-panel"
 import { ContextPicker } from "./context-picker"
@@ -21,6 +23,11 @@ import { useAgentSessions } from "@/hooks/use-agent-sessions"
 import { useNow } from "@/hooks/use-now"
 import { useRemoteProjects } from "@/hooks/use-remote-projects"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
+import { useAgentPlatform } from "@/hooks/use-agent-platform"
+import { platformProvider } from "@/lib/agents/platform/catalog"
+import { isChatReady } from "@/lib/agents/platform/lifecycle"
+import { grantWithinApproval } from "@/lib/agents/platform/roster"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
 import { cn } from "@/lib/utils"
@@ -80,6 +87,7 @@ export function CommandCentreView({
    * action that goes nowhere.
    */
   onOpenConnectors,
+  activeWorkspaceId,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -87,6 +95,8 @@ export function CommandCentreView({
   poll?: boolean
   remoteFetch?: typeof fetch
   onOpenConnectors?: () => void
+  /** The workspace the user came from. The default association for a new session. */
+  activeWorkspaceId?: string
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -201,10 +211,62 @@ export function CommandCentreView({
   */
   const connections = useProviderConnections()
 
+  /*
+    The agent connector platform (Phase J): the roster of connected agents,
+    what is installed on this machine, and each agent's connection. Every
+    phase it reports is derived from the runtime's own answers.
+  */
+  const providerKeyConnected = useCallback(
+    (provider: AgentProviderId): boolean | undefined => {
+      if (platformProvider(provider)?.signIn.kind !== "provider-key") return undefined
+      // Unknown, not "no", while the credential service is loading or absent.
+      if (connections.loading || connections.unavailable) return undefined
+      return connections.forProvider(provider)?.status === "connected"
+    },
+    [connections]
+  )
+
+  const platform = useAgentPlatform({
+    client: runtime.client,
+    status: runtime.status,
+    providerKeyConnected,
+  })
+  const [connectOpen, setConnectOpen] = useState(false)
+  const [connectProvider, setConnectProvider] = useState<AgentProviderId | null>(null)
+
+  const openConnect = useCallback((provider?: AgentProviderId) => {
+    setConnectProvider(provider ?? null)
+    setNewSessionOpen(false)
+    setConnectOpen(true)
+  }, [])
+
+  const workspaceChoices = useMemo(
+    () => world.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+    [world.workspaces]
+  )
+  const workspaceNameOf = useCallback(
+    (workspaceId: string | undefined) =>
+      workspaceId ? world.workspaces.find((workspace) => workspace.id === workspaceId)?.name : undefined,
+    [world.workspaces]
+  )
+
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
-      setCreating(true)
       setCreateError(null)
+
+      // Only an agent the user connected and approved, and never on a project
+      // that grants it more than they approved it for. The runtime enforces
+      // the project grant itself; this keeps the approval step meaningful.
+      const agent = platform.identity(input.provider)
+      const project = input.projectId
+        ? projects.projects.find((candidate) => candidate.id === input.projectId)
+        : undefined
+      if (!agent || (project && !grantWithinApproval(agent, project.permissions.scopes))) {
+        setCreateError("permission_denied")
+        return
+      }
+
+      setCreating(true)
       const outcome = await sessions.createSession(input)
       setCreating(false)
 
@@ -213,10 +275,11 @@ export function CommandCentreView({
         return
       }
 
+      platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
       setRequestedSessionId(outcome.sessionId)
       setNewSessionOpen(false)
     },
-    [sessions]
+    [platform, projects.projects, sessions]
   )
 
   /*
@@ -329,7 +392,22 @@ export function CommandCentreView({
           onNewSession={() => setNewSessionOpen(true)}
           canCreate={runtime.executable}
           now={now}
-        />
+        >
+          <AgentRoster
+            platform={platform}
+            sessions={sessions.sessions}
+            selectedSessionId={selectedSessionId}
+            selectedEvents={session.events}
+            workspaceNameOf={workspaceNameOf}
+            onConnect={openConnect}
+            onOpenAgent={(agent, latest) => {
+              const chat = platformProvider(agent.provider)?.chat === true
+              if (latest) setRequestedSessionId(latest.view.sessionId)
+              else if (chat && isChatReady(platform.phaseOf(agent.provider))) setNewSessionOpen(true)
+              else openConnect(agent.provider)
+            }}
+          />
+        </SessionList>
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {selected ? (
@@ -472,6 +550,24 @@ export function CommandCentreView({
         creating={creating}
         now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
+        workspaces={workspaceChoices}
+        {...(activeWorkspaceId ? { defaultWorkspaceId: activeWorkspaceId } : {})}
+        connectionBlocker={(provider) => (platform.identity(provider) ? undefined : "Not connected")}
+        onConnectAgent={openConnect}
+      />
+
+      <ConnectAgentDialog
+        // Remounted per opening so it starts from the provider it was opened for.
+        key={`${connectOpen}-${connectProvider ?? ""}`}
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        platform={platform}
+        initialProvider={connectProvider}
+        {...(onOpenConnectors ? { onOpenSettings: onOpenConnectors } : {})}
+        onStartSession={() => {
+          setConnectOpen(false)
+          setNewSessionOpen(true)
+        }}
       />
 
       <ContextPicker

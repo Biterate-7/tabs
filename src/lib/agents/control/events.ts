@@ -32,6 +32,8 @@ export type AgentControlEventKind =
   | "session_resumed"
   | "message_sent"
   | "message_received"
+  /** Part of an agent message that is still being written. See `ControlMessageText`. */
+  | "message_delta"
   | "thinking"
   | "tool_started"
   | "tool_finished"
@@ -53,6 +55,7 @@ export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "session_resumed",
   "message_sent",
   "message_received",
+  "message_delta",
   "thinking",
   "tool_started",
   "tool_finished",
@@ -144,6 +147,45 @@ export type ControlFileInfo = {
 };
 
 /**
+ * Kinds that may carry conversation text. Nothing else may.
+ *
+ * ## Why a message may carry its whole text now
+ *
+ * Until Phase J an agent's reply reached the screen as its 200-character
+ * `summary`, which made the command centre a place that *reported* a
+ * conversation rather than one where you could have it. The agent chat needs
+ * the reply itself — it is the thing the user asked for.
+ *
+ * What the rule above protects is unchanged: a tool invocation, a command
+ * line, a file body, a diff and model reasoning still have nowhere to go. The
+ * text channel exists on exactly three kinds, all of them prose addressed to
+ * a person — what the user typed, what the agent answered, and a piece of an
+ * answer still being written. `isWellFormedControlEvent` rejects `text` on
+ * any other kind, so a tool result cannot ride in on a `tool_finished`.
+ *
+ * It is live-wire only. `toDomainEventInput` never copies it, so the durable
+ * activity log still holds a bounded summary and nothing more; the full
+ * conversation lives in the runtime's in-memory journal for as long as the
+ * session does, and is never written to browser storage.
+ */
+export const TEXT_EVENT_KINDS: readonly AgentControlEventKind[] = [
+  "message_sent",
+  "message_received",
+  "message_delta",
+] as const;
+
+/** Cap on a whole message. Long for prose, far short of a dumped file. */
+export const MAX_CONTROL_MESSAGE_TEXT_LENGTH = 32_000;
+
+/** Cap on one streamed piece. An adapter coalesces pieces before emitting. */
+export const MAX_CONTROL_DELTA_TEXT_LENGTH = 4_000;
+
+/** Bounds message text without reshaping it — line breaks are part of an answer. */
+export function boundMessageText(value: string, max = MAX_CONTROL_MESSAGE_TEXT_LENGTH): string {
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+/**
  * One normalized event.
  *
  * `summary` is the one free-text field and it is bounded, already-safe, and
@@ -163,6 +205,15 @@ export type AgentControlEvent = {
   file?: ControlFileInfo;
   /** The approval this event concerns. See ./approvals.ts. */
   approvalId?: string;
+  /**
+   * The message itself, on the three `TEXT_EVENT_KINDS` only.
+   *
+   * On `message_delta` it is one piece; on `message_received` it is the whole
+   * reply, which supersedes every delta sharing its `messageId`.
+   */
+  text?: string;
+  /** Joins a reply's deltas to each other and to the final `message_received`. */
+  messageId?: string;
   /**
    * Provider-stable id of the source record.
    *
@@ -223,6 +274,17 @@ export function isWellFormedControlEvent(event: AgentControlEvent): boolean {
 
   if (event.tool && event.tool.name.length > MAX_TOOL_NAME_LENGTH) return false;
 
+  if (event.text !== undefined) {
+    // Text belongs to prose kinds only. A tool result is never a message.
+    if (!(TEXT_EVENT_KINDS as readonly string[]).includes(event.kind)) return false;
+    if (typeof event.text !== "string") return false;
+    const max =
+      event.kind === "message_delta" ? MAX_CONTROL_DELTA_TEXT_LENGTH : MAX_CONTROL_MESSAGE_TEXT_LENGTH;
+    if (event.text.length > max) return false;
+  }
+  // A delta with nothing in it, or belonging to no message, is not a delta.
+  if (event.kind === "message_delta" && (!event.text || !event.messageId)) return false;
+
   return true;
 }
 
@@ -263,6 +325,7 @@ export function domainEventKindFor(
       return "activity";
     case "thinking":
     case "message_sent":
+    case "message_delta":
       // Deliberately dropped from the durable log. See above.
       return null;
   }
