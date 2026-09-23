@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils"
 import { SectionHeading, SectionStack } from "./section-ui"
 import { ProviderConnectionCard } from "./provider-connection-card"
+import { ClaudeDesktopMcpCard } from "./claude-desktop-mcp-card"
 import type { UseProviderConnections } from "@/hooks/use-provider-connections"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
@@ -645,6 +646,11 @@ export function ConnectorsSection() {
           </SectionStack>
         </div>
       )}
+
+      <div className="mt-5">
+        <p className="mb-2 text-eyebrow text-tertiary">Use TabDump from Claude</p>
+        <ClaudeDesktopMcpCard />
+      </div>
 
       <p className="mt-5 flex items-start gap-1.5 text-meta text-tertiary">
         <Plug className="mt-0.5 size-3 shrink-0" aria-hidden />
