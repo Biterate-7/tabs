@@ -12,6 +12,7 @@ import {
   registerCredentialAdapter,
   resetCredentialAdapters,
 } from "@/lib/agents/credentials/registry";
+import { LOCAL_RUNTIME_ENV_VALUE, LOCAL_RUNTIME_ENV_VAR } from "@/lib/agents/control/runtime";
 import type { CredentialService } from "@/lib/agents/credentials/service";
 import type { CredentialStore } from "@/lib/agents/credentials/secret-store";
 import type { ConnectionStore } from "@/lib/agents/credentials/store";
@@ -341,5 +342,54 @@ describe("disconnecting", () => {
   it("answers 404 for a connection that does not exist", async () => {
     signedIn = ALICE;
     expect((await DELETE(del({ connectionId: "pc-nothing" }))).status).toBe(404);
+  });
+});
+
+describe("an anonymous visitor", () => {
+  // Phase I.3 found this on the live deployment: every visitor without a
+  // session resolved to one shared "local" owner, so a key one of them
+  // connected was usable by all of them. Anonymous access now exists only on a
+  // machine that has opted into local execution.
+  let previousOptIn: string | undefined;
+
+  beforeEach(() => {
+    previousOptIn = process.env[LOCAL_RUNTIME_ENV_VAR];
+    delete process.env[LOCAL_RUNTIME_ENV_VAR];
+    signedIn = null;
+  });
+
+  afterEach(() => {
+    if (previousOptIn === undefined) delete process.env[LOCAL_RUNTIME_ENV_VAR];
+    else process.env[LOCAL_RUNTIME_ENV_VAR] = previousOptIn;
+  });
+
+  it("cannot list connections", async () => {
+    const response = await GET(get());
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "sign-in-required" } });
+  });
+
+  it("cannot connect a key, and the key is never validated or stored", async () => {
+    const validate = vi.fn(async () => new Response("{}", { status: 200 }));
+    resetCredentialAdapters();
+    registerCredentialAdapter(createClaudeCredentialAdapter({ fetchImpl: validate as typeof fetch }));
+
+    const response = await POST(post({ action: "connect", provider: "claude-code", secret: ALICE_KEY }));
+
+    expect(response.status).toBe(401);
+    expect(JSON.stringify(await response.json())).not.toContain(ALICE_KEY);
+    expect(validate).not.toHaveBeenCalled();
+    expect(await connections.list("local")).toEqual([]);
+  });
+
+  it("cannot delete a connection", async () => {
+    expect((await DELETE(del({ connectionId: "pc-anything" }))).status).toBe(401);
+  });
+
+  it("is still the local actor on an opted-in machine", async () => {
+    process.env[LOCAL_RUNTIME_ENV_VAR] = LOCAL_RUNTIME_ENV_VALUE;
+    const response = await POST(post({ action: "connect", provider: "claude-code", secret: ALICE_KEY }));
+    expect(response.status).toBe(200);
+    expect(await connections.list("local")).toHaveLength(1);
   });
 });

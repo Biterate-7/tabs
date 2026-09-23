@@ -1,7 +1,6 @@
 import "server-only";
-import { getSession } from "@/lib/auth/session";
+import { resolveRequestActor } from "@/lib/agents/runtime/actor";
 import { hasJsonContentType, isSameOrigin } from "@/lib/auth/origin";
-import { LOCAL_ACTOR } from "@/lib/agents/runtime/host";
 import { getCredentialInfrastructure } from "@/lib/agents/credentials/server";
 import { credentialAdapterFor, credentialSupportFor } from "@/lib/agents/credentials/registry";
 import { AGENT_PROVIDER_IDS } from "@/lib/agents/connectors/types";
@@ -66,6 +65,7 @@ const FAILURE_MESSAGES = {
   "unsupported-provider": "TabDump cannot hold credentials for that agent yet.",
   "not-found": "That connection no longer exists.",
   "credentials-unavailable": "This deployment cannot store provider credentials.",
+  "sign-in-required": "Sign in to connect an agent.",
 } as const;
 
 type FailureCode = keyof typeof FAILURE_MESSAGES;
@@ -94,7 +94,8 @@ export async function GET(request: Request): Promise<Response> {
   const infrastructure = await getCredentialInfrastructure();
   if (!infrastructure) return refuse("credentials-unavailable", 503);
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
   const connections = await infrastructure.service.list(actor.id);
 
   return Response.json({
@@ -180,7 +181,8 @@ export async function POST(request: Request): Promise<Response> {
     return refuse("invalid-request", 400);
   }
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
 
   switch (body.action) {
     case "connect":
@@ -312,7 +314,8 @@ export async function DELETE(request: Request): Promise<Response> {
     return refuse("invalid-request", 400);
   }
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
   const outcome = await infrastructure.service.disconnect(actor.id, body.connectionId);
 
   // A connection that is not this actor's produces the same 404 as one that
@@ -341,16 +344,4 @@ function resolveAuthMethod(
   if (requested === undefined) return available[0];
   if (!isProviderAuthMethod(requested)) return undefined;
   return available.includes(requested) ? requested : undefined;
-}
-
-/**
- * Who is asking.
- *
- * Exactly as the control and remote-projects routes resolve it: the signed-in
- * account when the deployment has accounts, the anonymous local actor when it
- * does not. Never anything out of the body.
- */
-async function resolveActor(request: Request): Promise<RuntimeActor> {
-  const session = await getSession(request);
-  return session.ok ? { id: `account:${session.auth.user.id}` } : LOCAL_ACTOR;
 }

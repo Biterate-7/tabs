@@ -1,13 +1,11 @@
 import "server-only";
-import { getSession } from "@/lib/auth/session";
+import { resolveRequestActor } from "@/lib/agents/runtime/actor";
 import { hasJsonContentType, isSameOrigin } from "@/lib/auth/origin";
-import { LOCAL_ACTOR } from "@/lib/agents/runtime/host";
 import { createRemoteProject, deleteRemoteProject } from "@/lib/agents/remote/projects";
 import { getRemoteServices } from "@/lib/agents/remote/services";
 import { REMOTE_LIMITS } from "@/lib/agents/remote/types";
 import { UPLOAD_REJECTION_MESSAGES } from "@/lib/agents/remote/upload";
 import type { UploadEntry } from "@/lib/agents/remote/upload";
-import type { RuntimeActor } from "@/lib/agents/runtime/host";
 
 export const runtime = "nodejs";
 
@@ -73,7 +71,8 @@ export async function POST(request: Request): Promise<Response> {
   const services = await getRemoteServices();
   if (!services) return refuse("remote-unavailable", 503);
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
 
   let form: FormData;
   try {
@@ -158,7 +157,8 @@ export async function GET(request: Request): Promise<Response> {
   const services = await getRemoteServices();
   if (!services) return refuse("remote-unavailable", 503);
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
   const projects = await services.store.listProjects(actor.id);
 
   return Response.json({
@@ -196,7 +196,8 @@ export async function DELETE(request: Request): Promise<Response> {
   const projectId = (body as { projectId?: unknown } | null)?.projectId;
   if (typeof projectId !== "string" || !projectId) return refuse("invalid-request", 400);
 
-  const actor = await resolveActor(request);
+  const actor = await resolveRequestActor(request, process.env);
+  if (!actor) return refuse("sign-in-required", 401);
   // Owner-scoped in the store. Another account's project id is
   // indistinguishable from one that does not exist, which is the answer a
   // probe should get.
@@ -231,6 +232,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   "too-many-files": "That's more files than a project upload can carry.",
   "invalid-request": "TabDump could not read that request.",
   "not-found": "That project no longer exists.",
+  "sign-in-required": "Sign in to use remote projects.",
 };
 
 /** One fixed sentence per code. Nothing is interpolated from a request or a platform. */
@@ -239,16 +241,4 @@ function refuse(code: string, status: number): Response {
     { ok: false, error: { code, message: FAILURE_MESSAGES[code] ?? "TabDump could not do that." } },
     { status }
   );
-}
-
-/**
- * Who this request is from.
- *
- * The signed-in account on a deployment with accounts; the anonymous local
- * actor otherwise. Never read from the body — a request cannot name its own
- * owner, which is why there is no field for one.
- */
-async function resolveActor(request: Request): Promise<RuntimeActor> {
-  const session = await getSession(request);
-  return session.ok ? { id: `account:${session.auth.user.id}` } : LOCAL_ACTOR;
 }
