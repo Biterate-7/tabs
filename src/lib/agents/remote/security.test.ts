@@ -121,6 +121,15 @@ describe("the remote plane fails closed", () => {
     );
     expect(codeOf(runtime)).not.toContain("NODE_ENV");
   });
+
+  it("loads the sandbox SDK through a specifier the deployment tracer can follow", () => {
+    // A variable inside an ignored import is invisible to the build's file
+    // tracer, so the SDK was missing from every deployed agent route and the
+    // catch below it quietly reported "unavailable" on Vercel. Only a literal
+    // specifier puts the package into the function.
+    const impl = codeOf(readFileSync(path.join(DIR, "sandbox-vercel.ts"), "utf8"));
+    expect(impl).toContain('import("@vercel/sandbox")');
+  });
 });
 
 /* ------------------------------------------------------------------ *

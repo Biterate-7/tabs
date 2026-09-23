@@ -148,15 +148,25 @@ export type VercelSandboxServiceOptions = {
 export function createVercelSandboxService(
   options: VercelSandboxServiceOptions = {}
 ): RemoteSandboxService {
-  const specifier = options.moduleSpecifier ?? "@vercel/sandbox";
+  const override = options.moduleSpecifier;
   const env = options.env ?? process.env;
 
   async function loadSdk(): Promise<SdkModule | null> {
     try {
-      // Dynamic, and the specifier is a constant from this module — never a
-      // caller-supplied string, so this cannot become an arbitrary-module
+      // The production path is a *literal* specifier, and that is load-bearing.
+      // A deployed function contains only the files the build's tracer can
+      // see, and the tracer cannot follow a variable into an ignored import:
+      // with one, `@vercel/sandbox` was absent from every agent route's trace,
+      // so on Vercel this import threw, was caught below, and the deployment
+      // reported "unavailable" forever without ever creating a sandbox.
+      //
+      // The override exists only for tests and is a constant they pass, never
+      // a request value, so neither branch can become an arbitrary-module
       // loader.
-      return (await import(/* webpackIgnore: true */ specifier)) as unknown as SdkModule;
+      const sdk = override
+        ? await import(/* webpackIgnore: true */ override)
+        : await import("@vercel/sandbox");
+      return sdk as unknown as SdkModule;
     } catch {
       return null;
     }
