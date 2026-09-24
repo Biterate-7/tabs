@@ -269,11 +269,13 @@ function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentContr
   if (existing) return existing;
 
   // Workspace context reaches ACP sessions through the host's session
-  // context server (Phase J.3), bound per session to one workspace.
+  // context server (Phase J.3), bound per session to one workspace — for an
+  // agent whose calls to it can be proven (J.4, `contextIdentity`).
   const adapter = createAcpControlAdapter({
     provider,
     launch: createAcpProcessLauncher({ provider, env: process.env }),
     approval: entry.approval,
+    contextIdentity: entry.contextIdentity,
   });
   localAcpByActor.set(key, adapter);
   return adapter;

@@ -1,4 +1,5 @@
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
+import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type {
@@ -169,6 +170,9 @@ export function createScriptedRuntime(
                   workspaceId: command.contextSnapshot.workspace.id,
                   workspaceName: command.contextSnapshot.workspace.name,
                   capabilities: ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as const,
+                  version: 1,
+                  syncedAt: 1_700_000_000_000,
+                  fingerprint: snapshotFingerprint(command.contextSnapshot),
                   pendingActions: [],
                 },
               }
@@ -179,7 +183,21 @@ export function createScriptedRuntime(
       }
 
       /* Phase J.3 — session workspace context. */
-      case "sync_session_context":
+      case "sync_session_context": {
+        const existing = sessions.find((s) => s.sessionId === command.sessionId)
+        if (!existing) return runtimeFailure<never>("session_not_found")
+        // Like the host: the same workspace only, and the version moves only
+        // when the content does.
+        const context = existing.context
+        if (!context || command.snapshot.workspace.id !== context.workspaceId) return runtimeFailure<never>("context_invalid")
+        const fingerprint = snapshotFingerprint(command.snapshot)
+        const version = fingerprint === context.fingerprint ? context.version : context.version + 1
+        sessions = sessions.map((s) =>
+          s.sessionId === command.sessionId ? { ...s, context: { ...context, fingerprint, version } } : s
+        )
+        return { ok: true, value: { sessionId: command.sessionId, version } }
+      }
+
       case "complete_context_action": {
         if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
         return { ok: true, value: { sessionId: command.sessionId } }
@@ -308,6 +326,7 @@ export function scriptedApproval(over: Partial<RuntimeApprovalView> = {}): Runti
   return {
     approvalId: "approval-1",
     sessionId: "session-1",
+    provider: "claude-code",
     action: "Modify file",
     scope: "write_project",
     projectId: "project-1",

@@ -1,4 +1,4 @@
-import type { AcpLauncher } from "../launcher";
+import type { AcpLaunchRequest, AcpLauncher } from "../launcher";
 import type { AcpCloseReason, AcpTransport } from "../rpc";
 
 /**
@@ -36,7 +36,7 @@ export class AgentError extends Error {
 export type FakeAgent = {
   /** Every message the client sent, parsed, in order. */
   received: Message[];
-  launches: { projectPath?: string }[];
+  launches: AcpLaunchRequest[];
   /** The launcher an adapter is built with. */
   launcher: AcpLauncher;
   /** Closes the current connection from the agent's side, as a crash would. */
@@ -59,7 +59,7 @@ export function createFakeAgent(
   options: { installed?: boolean } = {}
 ): FakeAgent {
   const received: Message[] = [];
-  const launches: { projectPath?: string }[] = [];
+  const launches: AcpLaunchRequest[] = [];
   let crashCurrent: (() => void) | undefined;
 
   const agent: FakeAgent = {

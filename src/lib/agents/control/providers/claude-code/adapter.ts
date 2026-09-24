@@ -5,6 +5,7 @@ import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
 import { normalizeClaudeMessage, providerSessionIdOf } from "./normalize";
 import { actionForTool, contextToolNames, isToolPermitted, planForGrant, scopeForTool } from "./permissions";
+import type { ContextAuthority } from "@/lib/agents/session-context/authorization";
 import { withContext } from "./context-prompt";
 import type { AdapterApprovalDetails } from "../../approval-details";
 import type { AgentCapabilitySet } from "../../capabilities";
@@ -92,7 +93,12 @@ export const CLAUDE_CODE_CONTROL_CAPABILITIES: AgentCapabilitySet = capabilitySe
   "run_commands",
   "approvals",
   "working_directory",
-  "additional_directories"
+  "additional_directories",
+  // J.4: the session's context server is the only MCP server Claude Code can
+  // load (`strictMcpConfig`), under a per-session name TabDump chose, and the
+  // SDK names every call `mcp__<that name>__<tool>` — so the identity of a
+  // context call is structural. Not `mcp`: no other server is granted.
+  "workspace_context"
 );
 
 /** Maps a runtime failure onto the control plane's fixed error table. */
@@ -137,6 +143,8 @@ type LiveSession = {
   pendingContext?: readonly AgentContextAttachment[];
   /** Approvals awaiting an answer, by the id the adapter minted for them. */
   pending: Map<string, (decision: ClaudePermissionDecision) => void>;
+  /** What the runtime established for the session's context server (J.4). Absent: none. */
+  context?: ContextAuthority;
 };
 
 export type ClaudeCodeControlAdapterOptions = {
@@ -322,6 +330,16 @@ export function createClaudeCodeControlAdapter(
     session: LiveSession,
     request: ClaudePermissionRequest
   ): Promise<ClaudePermissionDecision> {
+    // A call in the session's context server's namespace (J.4). Every tool
+    // the shared decision permits was pre-allowed (`contextToolNames`), so
+    // one that reaches this callback is one it does not permit — refused
+    // here, never granted on the grant's say-so, and refused again by the
+    // server. There is no allow on this path: nothing here approves.
+    const context = session.context;
+    if (context && request.toolName.startsWith(`mcp__${context.serverName}__`)) {
+      return { behavior: "deny", message: "This session is not allowed to do that in the TabDump workspace." };
+    }
+
     if (!isToolPermitted(request.toolName, session.grant, session.project?.id)) {
       return {
         behavior: "deny",
@@ -477,6 +495,16 @@ export function createClaudeCodeControlAdapter(
       pending: new Map(),
       ...(attachments.length > 0 ? { pendingContext: attachments } : {}),
       ...(resume ? { providerSessionId: resume } : {}),
+      ...(contextServer
+        ? {
+            context: {
+              sessionId,
+              workspaceId: contextServer.workspaceId,
+              serverName: contextServer.name,
+              capabilities: [...contextServer.capabilities],
+            },
+          }
+        : {}),
     };
 
     const started = await options.runtime.start({
@@ -488,9 +516,10 @@ export function createClaudeCodeControlAdapter(
       additionalDirectories: project ? project.additionalDirectories : [],
       permissionMode: plan.mode,
       // TabDump's own session tools join the pre-allowed list only when the
-      // session has a context server — see `contextToolNames`.
+      // session has a context server, and only those its capabilities permit
+      // — see `contextToolNames`.
       allowedTools: contextServer
-        ? [...plan.allowedTools, ...contextToolNames(contextServer.name)]
+        ? [...plan.allowedTools, ...contextToolNames(contextServer.name, contextServer.capabilities)]
         : plan.allowedTools,
       disallowedTools: plan.disallowedTools,
       ...(resume ? { resume } : {}),

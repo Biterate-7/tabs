@@ -36,10 +36,13 @@ import type {
   CreateSessionRequest,
   SessionHandle,
 } from "../../types";
-import type { AcpApprovalPolicy, AcpLauncher, AcpMcpServerEntry } from "./launcher";
+import type { AcpApprovalPolicy, AcpContextIdentity, AcpLauncher, AcpMcpServerEntry } from "./launcher";
+import type { ToolPolicy } from "./policy";
 import type { AcpPermissionRequest, AcpStopReason, AcpToolCall } from "./protocol";
 import type { JsonRpcPeer, RpcFailure, RpcReply } from "./rpc";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import { authorizeContextRequest } from "@/lib/agents/session-context/authorization";
+import type { ContextAuthority } from "@/lib/agents/session-context/authorization";
 
 /**
  * One control adapter for every agent that speaks the Agent Client Protocol.
@@ -63,14 +66,22 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * Not `resume_session` — ACP's `session/load` exists but replays a whole
  * history, and reattaching a TabDump session to it is not built. Not
  * `additional_directories` — ACP has one working directory per session. Not
- * `mcp` — TabDump does not *grant* an ACP agent MCP tools; the one MCP server
- * it may attach is the session's own TabDump context server (Phase J.3), which
- * enforces its workspace and capabilities itself and routes its one write
- * through TabDump's approval. Any tool the agent brings from its own
- * configuration still has to ask (see `policy.ts`, kind `other`) — and so,
- * when the agent asks before an MCP call, does a TabDump one: the permission
- * request names no server, so it cannot be told apart and is refused like
- * any other `mcp_tools` use.
+ * `mcp` — TabDump does not *grant* an ACP agent MCP tools. Any tool the agent
+ * brings from its own configuration still has to ask (see `policy.ts`, kind
+ * `other`) and is refused unless granted.
+ *
+ * ## Workspace context (Phase J.4)
+ *
+ * `workspace_context` is declared only for an agent whose launch entry has an
+ * `exclusive-mcp` context identity. ACP's permission request names no MCP
+ * server, so a TabDump context call is recognised structurally, never by name:
+ * the agent was launched so that the session's context server is the only
+ * MCP server it can load, and the request carries the option ids only that
+ * agent's MCP confirmations carry. Such a request is answered by the one
+ * shared decision (`authorizeContextRequest`) — allowed once, never always —
+ * and the server then authorizes the actual tool, and raises a TabDump
+ * approval for every write. A request without the marker is an ordinary tool.
+ * An agent without such an identity is never handed the server at all.
  *
  * ## The approval model, end to end
  *
@@ -119,6 +130,20 @@ export const ACP_CAPABILITIES: AgentCapabilitySet = capabilitySet(
   "working_directory"
 );
 
+/** An asking agent that can also carry the session's context server with a proven identity (J.4). */
+export const ACP_CONTEXT_CAPABILITIES: AgentCapabilitySet = capabilitySet(
+  "create_session",
+  "message",
+  "cancel_run",
+  "stream_events",
+  "approvals",
+  "read_files",
+  "write_files",
+  "run_commands",
+  "working_directory",
+  "workspace_context"
+);
+
 /**
  * What an agent TabDump cannot hold to its approvals declares: nothing.
  * It can still be reached and signed in to; it cannot be given a session.
@@ -139,6 +164,8 @@ export type AcpControlAdapterOptions = {
   launch: AcpLauncher;
   /** Which modes ask before every privileged action, from the launch entry. Required: there is no default. */
   approval: AcpApprovalPolicy;
+  /** How this agent's calls to the context server are proven (J.4), from the launch entry. Absent: never handed one. */
+  contextIdentity?: AcpContextIdentity;
   now?: () => number;
   createId?: () => string;
   setTimer?: (callback: () => void, ms: number) => unknown;
@@ -151,7 +178,36 @@ type TrackedTool = {
   approved: boolean;
   started: boolean;
   finished: boolean;
+  /** A call proven to be the session's context server's (J.4). */
+  context?: boolean;
 };
+
+/** What a context call is shown as. It reads or proposes; the server decides which, per tool. */
+const CONTEXT_TOOL_POLICY: ToolPolicy = {
+  scope: "read_workspace",
+  privileged: false,
+  label: "TabDump",
+  description: "Using your TabDump workspace",
+  started: "tool_started",
+  finished: "tool_finished",
+};
+
+/**
+ * Whether a permission request is, structurally, a call to the one MCP server
+ * this session could load — the context server (J.4). Kind `other` (an MCP
+ * call's kind) and every option id the agent's MCP confirmations alone carry.
+ * Never the title, never the tool's name.
+ */
+export function attestsContextCall(
+  request: AcpPermissionRequest,
+  identity: Extract<AcpContextIdentity, { kind: "exclusive-mcp" }>
+): boolean {
+  if (request.call.kind !== undefined && request.call.kind !== "other") return false;
+  if (identity.mcpConfirmationOptionIds.length === 0) return false;
+  return identity.mcpConfirmationOptionIds.every((optionId) =>
+    request.options.some((option) => option.optionId === optionId)
+  );
+}
 
 type Turn = {
   messageId: string;
@@ -181,6 +237,14 @@ type LiveSession = {
    * from then on a `current_mode_update` to any other mode stops it.
    */
   askingModes?: readonly string[];
+  /**
+   * The session's context server (J.4): its identity, as launched exclusive,
+   * and what the runtime established the session may do. Absent: no context.
+   */
+  context?: {
+    identity: Extract<AcpContextIdentity, { kind: "exclusive-mcp" }>;
+    authority: ContextAuthority;
+  };
   ended: boolean;
 };
 
@@ -215,7 +279,14 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   let authState: AdapterAuthenticationState = "unknown";
   let authMethods: readonly AdapterAuthMethod[] = [];
   let probe: Probe | undefined;
-  const capabilities = options.approval.kind === "asking-mode" ? ACP_CAPABILITIES : ACP_REACH_ONLY_CAPABILITIES;
+  const contextIdentity =
+    options.contextIdentity?.kind === "exclusive-mcp" ? options.contextIdentity : undefined;
+  const capabilities =
+    options.approval.kind !== "asking-mode"
+      ? ACP_REACH_ONLY_CAPABILITIES
+      : contextIdentity
+        ? ACP_CONTEXT_CAPABILITIES
+        : ACP_CAPABILITIES;
 
   function setStatus(next: Omit<ControlStatus, "since">): void {
     status = { ...next, since: now() };
@@ -256,6 +327,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
    */
   async function open(
     projectPath: string | undefined,
+    contextServerName: string | undefined,
     handlers: {
       onRequest: (method: string, params: unknown) => Promise<RpcReply> | RpcReply;
       onNotification: (method: string, params: unknown) => void;
@@ -265,7 +337,10 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     | { ok: true; peer: JsonRpcPeer; cwd: string; release: () => void; mcpHttp: boolean; sessionClose: boolean }
     | { ok: false; code: ControlErrorCode }
   > {
-    const launched = await options.launch(projectPath ? { projectPath } : {});
+    const launched = await options.launch({
+      ...(projectPath ? { projectPath } : {}),
+      ...(contextServerName ? { contextServerName } : {}),
+    });
     if (!launched.ok) {
       if (launched.reason === "not-installed") {
         setStatus({ kind: "unavailable", detail: "This agent is not installed on this machine." });
@@ -397,7 +472,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
 
     if (!isUpdate || !existing) closeSegment(session);
 
-    const policy = policyFor(merged.kind);
+    const policy = tracked.context ? CONTEXT_TOOL_POLICY : policyFor(merged.kind);
     const running = merged.status === "in_progress" || merged.status === "completed";
 
     if (running && policy.privileged && !tracked.approved) {
@@ -489,6 +564,31 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     const session = request ? bySessionIdOfAgent.get(request.sessionId) : undefined;
     if (!request || !session || session.ended) {
       return { result: { outcome: { outcome: "cancelled" } } };
+    }
+
+    // The session's own context server (J.4), proven structurally — then the
+    // one shared decision answers. Allowed once, never "always": each call
+    // asks again, and the server authorizes the tool itself.
+    if (session.context && attestsContextCall(request, session.context.identity)) {
+      const decision = authorizeContextRequest(
+        {
+          sessionId: session.sessionId,
+          provider,
+          origin: "acp",
+          serverName: session.context.authority.serverName,
+        },
+        session.context.authority
+      );
+      if (!decision.allowed) return { result: permissionOutcome(request, "denied") };
+      const existing = session.tools.get(request.call.toolCallId);
+      session.tools.set(request.call.toolCallId, {
+        call: existing?.call ?? request.call,
+        approved: true,
+        started: existing?.started ?? false,
+        finished: existing?.finished ?? false,
+        context: true,
+      });
+      return { result: permissionOutcome(request, "granted") };
     }
 
     const known = session.tools.get(request.call.toolCallId)?.call;
@@ -618,7 +718,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   async function connect(): Promise<ControlResult<ControlStatus>> {
     if (!probe?.peer.isOpen()) {
       setStatus({ kind: "connecting" });
-      const opened = await open(undefined, {
+      const opened = await open(undefined, undefined, {
         onRequest: () => refuseRequest(),
         onNotification: () => {},
         onClose: () => {
@@ -669,7 +769,13 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     // Filled once the session exists; the handlers only ever see it after.
     const live: { session?: LiveSession } = {};
 
-    const opened = await open(request.project?.path, {
+    // The context server is handed over only with a proven identity (J.4):
+    // the agent is launched limited to that one server. The service never
+    // offers one to an adapter without `workspace_context`; if one arrives
+    // anyway it is left out rather than attached unprovable.
+    const contextServer = contextIdentity && request.contextServer ? request.contextServer : undefined;
+
+    const opened = await open(request.project?.path, contextServer?.name, {
       onRequest,
       onNotification,
       onClose: () => {
@@ -691,12 +797,12 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     // stdin — never on a command line. Revoked by the runtime when the
     // session ends; this adapter holds nothing to release.
     const mcp: AcpMcpServerEntry | undefined =
-      opened.mcpHttp && request.contextServer
+      opened.mcpHttp && contextServer
         ? {
             type: "http",
-            name: request.contextServer.name,
-            url: request.contextServer.url,
-            headers: [{ name: "Authorization", value: `Bearer ${request.contextServer.token}` }],
+            name: contextServer.name,
+            url: contextServer.url,
+            headers: [{ name: "Authorization", value: `Bearer ${contextServer.token}` }],
           }
         : undefined;
 
@@ -725,6 +831,19 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       tools: new Map(),
       pending: new Map(),
       ...(request.attachments.length > 0 ? { pendingContext: request.attachments } : {}),
+      ...(mcp && contextServer && contextIdentity
+        ? {
+            context: {
+              identity: contextIdentity,
+              authority: {
+                sessionId: request.sessionId,
+                workspaceId: contextServer.workspaceId,
+                serverName: contextServer.name,
+                capabilities: [...contextServer.capabilities],
+              },
+            },
+          }
+        : {}),
       ended: false,
     };
     live.session = session;

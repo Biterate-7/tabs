@@ -1,4 +1,4 @@
-# The Agent Connector Platform (Phases J, J.1, J.2, J.3)
+# The Agent Connector Platform (Phases J, J.1, J.2, J.3, J.4)
 
 TabDump connects external AI agents through **one** connector framework.
 Claude Code, Gemini CLI, Grok Build, Codex and any MCP-compatible agent are
@@ -236,6 +236,7 @@ the desktop app too.
 | Process isolation | One process per ACP session, in the authorized project or a private scratch dir. Grok is pinned `--no-leader`: in leader mode (configurable in `config.toml`) a session would run in a shared background process outside TabDump's tree and working directory. |
 | Windows Job Object cleanup | The desktop shell puts the sidecar — and so every agent it starts — in a `KILL_ON_JOB_CLOSE` job (Phase J.1). |
 | Session-scoped MCP credentials | Minted per session by the runtime, memory only, hashed, bound to one session + one workspace + a capability set; revoked on session end, disconnect and shutdown; 12 h ceiling (§12). There is no global MCP token. |
+| Context identity | A context call is recognised from the agent's own structure — never a tool name or title — or the agent is not given the context server at all (§13.2). |
 | No arbitrary executables | No custom agent is ever launched; the registry has no field that could name a program (`registry.test.ts`). |
 
 **Inside the agent, not TabDump:** codex-acp 1.13 on Windows starts its own
@@ -365,7 +366,7 @@ the Rust shell tests pass (9 passed, 1 opt-in ignored).
 - **Remote runtime:** only Claude runs in the sandbox; ACP agents are local.
 - **Unsigned desktop builds** are blocked by Smart App Control where it is
   enforcing (above).
-- **Session context** — see §12.8.
+- **Session context** — see §12.8 and §13.9.
 
 ## 12. Session Context Architecture (Phase J.3)
 
@@ -439,11 +440,11 @@ revocation takes effect on the very next call.
 
 | Capability | Tools | Granted when |
 | --- | --- | --- |
-| `workspace.read` | `get_current_workspace`, `list_workspaces` (this one only), `get_workspace` | project grant has `read_workspace` |
-| `tabs.read` | `get_tabs`, `search_tabs` | 〃 |
-| `collections.read` | `get_collection` | 〃 |
+| `workspace.read` | `get_current_workspace`, `list_workspaces` (this one only), `get_workspace`, `get_context_status`, `get_context_changes` (J.4) | project grant has `read_workspace` |
+| `tabs.read` | `get_tabs`, `search_tabs`, `list_tabs` (J.4) | 〃 |
+| `collections.read` | `get_collection`, `list_collections` (J.4) | 〃 |
 | `relationships.read` | `get_tab_graph` | 〃 |
-| `collections.write` | `create_collection` (asks every time) | grant also has `write_workspace` |
+| `collections.write` | `create_collection`, `rename_collection`, `add_tabs_to_collection` (J.4) — each asks every time | grant also has `write_workspace` |
 
 Access is derived by the host from the session's grant
 (`sessionContextAccessFor`); the request cannot ask for more. Read never
@@ -475,7 +476,9 @@ The host, registry, server and approval path know nothing about providers.
 Each adapter only translates `CreateSessionRequest.contextServer` into its
 agent's MCP configuration: Claude via the Agent SDK's `mcpServers` (context
 tool names added to `allowedTools`, `strictMcpConfig` kept), ACP agents via
-`session/new` `mcpServers` when the agent advertises HTTP MCP.
+`session/new` `mcpServers` when the agent advertises HTTP MCP. In J.3 an ACP
+agent that asked before an MCP call could not use it (§12.8); Phase J.4
+(§13) replaced that with a proven context identity.
 
 ### 12.7 Verification (2026-09-24)
 
@@ -524,19 +527,294 @@ same machine, so upper bounds):
 | Approval machinery (request → approved → applied → tool returns, human excluded) | p50 32 ms |
 | Approval round trip with real Claude (approve → Claude's reply complete) | 2.0 s, dominated by the model |
 
-### 12.8 Limitations
+### 12.8 Limitations (as of J.3 — see §13 for what J.4 changed)
 
-- **ACP agents (Gemini, Grok)** are handed the context server, but an agent
-  that asks before each MCP call is refused: ACP's permission request names
-  no server, so a TabDump tool cannot be told apart from any other MCP tool
-  (`mcp_tools`, which TabDump does not grant). Not verified live: neither
-  agent is signed in on the test machine.
+- **ACP agents (Gemini, Grok)** were handed the context server, but an agent
+  that asks before each MCP call was refused: ACP's permission request names
+  no server, so a TabDump tool could not be told apart from any other MCP
+  tool. *J.4 (§13.2): Gemini is now launched limited to the session's server
+  and its calls are recognised structurally; Grok is no longer handed a
+  server it could not safely use.*
 - **Hosted/remote runtime:** no context server — the sandbox cannot reach a
   loopback port on the user's machine. Sessions there fall back to the
   attached-context bridge.
-- **One write** (`create_collection`). Renaming, moving and deleting are not
-  offered.
+- **One write** (`create_collection`). *J.4 adds renaming a collection and
+  adding tabs to one; deleting is still not offered.*
 - **Freshness:** the agent sees the last snapshot synced (debounced 400 ms).
   Changes made while the Command Centre is closed reach a live session when
-  it is next opened.
+  it is next opened. *J.4 adds versions, so this is now detectable (§13.6).*
 - **Custom MCP clients** (§8) are unaffected and remain read-only, web-only.
+
+## 13. Provider-Neutral Context (Phase J.4)
+
+J.3 gave every session a workspace-bound TabDump MCP server. J.4 makes the
+permission side of that provider-neutral: one authorization model, one
+identity rule, one approval path — and an honest "not available" for an
+agent that cannot meet the rule.
+
+```
+                 ┌──────────────────┐
+                 │  Command Centre  │  snapshot + version sync, approval card, applies changes
+                 └────────┬─────────┘
+                          │ create_session / sync_session_context / respond_to_approval
+                     Agent Session   (runtime host: access from the grant, never the request)
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+          Claude / ACP            Custom MCP   (account server, read-only, web only — §8)
+              │                       │
+              └───────────┬───────────┘
+                          │
+                 Context Identity    per-session server name + the agent's own structure
+                          │           (Claude: strictMcpConfig + mcp__<name>__tool;
+                          │            Gemini: --allowed-mcp-server-names + MCP-only option ids)
+                   TabDump MCP        127.0.0.1, bearer credential → one binding
+                          │
+                 Authorization        authorizeContextRequest — the one decision
+                          │
+                  Approval Broker     every write, every time (write_workspace / change_workspace)
+                          │
+                  Workspace Store     applied by the Command Centre, once
+```
+
+### 13.1 Where provider-specific behaviour entered (the J.3 audit)
+
+```
+Command Centre ─create_session─▶ host ─bind─▶ registry ─▶ service ─▶ adapter ─▶ agent ─MCP─▶ server ─▶ broker ─▶ store
+```
+
+In J.3 everything left of "adapter" and right of "agent" was already
+provider-neutral. Provider behaviour entered in exactly two places:
+
+1. **How the server reaches the agent** — Claude's `mcpServers` + env
+   credential; ACP's `session/new` `mcpServers`. Transport only; unchanged.
+2. **How the agent's own permission step is answered** — the gap. Claude
+   pre-allowed the context tools by name under `strictMcpConfig`. An ACP
+   agent's `session/request_permission` for an MCP call carries no server
+   identity, so it fell into the generic `other` → `mcp_tools` path and was
+   refused. The server name was the fixed string `tabdump`, which any user,
+   extension or administrator configuration could also use.
+
+J.4 closes (2) with a shared decision and a structural identity, and leaves
+(1) as the only per-provider code.
+
+### 13.2 MCP identity
+
+**What the agents actually expose** (read from their shipped code):
+
+| Agent | Server identity in its permission request? | What *is* structural |
+| --- | --- | --- |
+| Claude Code 2.1.x (Agent SDK) | Tool name `mcp__<server>__<tool>`, built by Claude Code from the server key TabDump configured | `strictMcpConfig`: no MCP server but TabDump's can exist in the session |
+| Gemini CLI 0.61.0 | **No.** `toolCall` = `{toolCallId, status, title, content, locations, kind: "other"}`; the title is the tool's display name (or a `command` argument) | `--allowed-mcp-server-names` is enforced for every server it loads (`McpClientManager.maybeDiscoverMcpServer` → `isBlockedBySettings`: settings, extensions, admin-required, `mcp.serverCommand`, and session servers). Only an MCP confirmation (`DiscoveredMCPToolInvocation`, type `mcp`) offers the option ids `proceed_always_server` and `proceed_always_tool` |
+| Grok Build 1.0.41 | Not observable without a signed-in account (Rust binary; the request shape could not be captured) | Its MCP allowlist exists only in managed settings files — no launch flag |
+| codex-acp 1.13.1 | — | Sessions refused (§5) |
+
+**The rule.** Every session's server gets a name minted from 80 random bits
+(`tabdump_` + 16 base32 characters, `session-context/identity.ts`). Nothing
+configured before the session existed can share it, which removes every
+same-name merge or override an agent does. The name is an identity, not a
+secret; the bearer credential is still what authorizes a request.
+
+- **Claude:** the name is the `mcpServers` key; `strictMcpConfig` is kept;
+  only tools the shared decision permits are pre-allowed
+  (`mcp__<name>__<tool>`). A context-namespace tool that still reaches
+  `canUseTool` is one the session may not use and is refused — that path
+  never allows. A lookalike (`mcp__tabdump__…`) is an ordinary MCP tool.
+- **Gemini (ACP, `exclusive-mcp`):** launched with
+  `--allowed-mcp-server-names <that name>`, appended by the launcher only
+  in the minted shape (anything else refuses the launch). A permission
+  request is a context call only if its kind is `other` **and** it carries
+  every MCP-only option id. Together: the request is an MCP call, and the only
+  MCP server that process can load is the session's. The model controls
+  neither the options nor which servers load; a server cannot add options.
+  A request without the marker — for example a user who set
+  `security.disableAlwaysAllow` — is an ordinary tool and is refused
+  (fails closed).
+- **Grok, Codex (`unavailable`):** the adapter does not declare
+  `workspace_context`, the host does not bind, and the session starts
+  **without** context. The view says so (`contextUnavailable: "provider"`)
+  and the Command Centre shows "No workspace context".
+
+What is never used: tool names or titles as proof, request descriptions,
+anything containing "TabDump", client-supplied metadata, "always" answers.
+
+### 13.3 One authorization model
+
+`session-context/authorization.ts`:
+
+```ts
+SessionContextRequest { sessionId, provider?, origin, serverName?, tool?, workspaceId? }
+ContextAuthority      { sessionId, workspaceId, serverName, capabilities }   // from the runtime only
+authorizeContextRequest(request, authority) →
+  { allowed: true, access: "read" | "write" | "per-tool", capability?, approval: "none" | "every-time" | "at-server" }
+  | { allowed: false, reason: "no_session" | "wrong_session" | "unattested" | "wrong_workspace" | "unknown_tool" | "not_permitted" }
+```
+
+(Named `SessionContextRequest` because `AgentContextRequest` is the Phase E
+resolver's request type.) It is asked by the **context server on every tool
+call** (the authority), by the **Claude adapter** (the pre-allow list is
+`contextToolsFor(capabilities)`), and by the **ACP adapter** once a request
+is attested (`origin: "acp"`, no tool: allowed once, the server decides the
+tool — `at-server`). `provider` is carried for display and audit and never
+changes an answer; `authorization.test.ts` holds every provider, origin and
+authority to identical decisions.
+
+### 13.4 Capability model
+
+```
+read_workspace   (grant)  →  workspace.read · tabs.read · collections.read · relationships.read
+write_workspace  (grant)  →  collections.write    — and every write still asks
+```
+
+Capabilities are derived once, by the host, from **session authorization +
+the user's grant + the workspace binding** (`sessionContextAccessFor`,
+`capabilitiesFor`). No request field is read for them: a `create_session`
+carrying `capabilities: ["collections.write"]`, or a tool call carrying a
+`capabilities` argument, changes nothing (tested at the host and the server).
+
+### 13.5 Approval flow
+
+```
+agent ─ tool call ─▶ server ─ authorizeContextRequest ─▶ registry.requestChange (validated against the bound snapshot)
+      ─▶ ControlService.requestWorkspaceApproval ─▶ broker (write_workspace, change_workspace, workspaceId, change summary)
+      ─▶ approval card: "<Agent> wants to create a collection: Launch reading · Workspace Launch Plan · [Deny] [Allow]"
+      ─▶ granted ─▶ view.context.pendingActions ─▶ Command Centre applies once ─▶ complete_context_action ─▶ tool returns
+```
+
+- Three changes, each an existing collection-store operation:
+  `create_collection`, `rename_collection` (reversible), `add_tabs_to_collection`
+  (tabs move out of any other collection, said on the card). Nothing deletes.
+- A change naming another workspace's tab or collection, an empty name or a
+  change that changes nothing is refused **without asking**.
+- The card shows the agent (catalog name), the action, the collection by name
+  (a rename as `old → new`), sample tab titles, what moves, and the workspace
+  name. No ids. Ask every time; no "always", no auto-approval, no bypass.
+- Denied, expired, ended or not applied within 60 s: nothing changes. An
+  action completes at most once and only for its own session; a second answer
+  to the same approval is refused; another actor is refused at every command.
+
+### 13.6 Synchronization and versions
+
+- Each binding has a **context version**: 1 at bind, +1 per accepted
+  snapshot whose content differs (identical syncs do not bump it). Monotonic;
+  never reset while the session lives; a sync of any other workspace is
+  refused and leaves the version alone.
+- The webview and runtime compute the same `snapshotFingerprint`. The Command
+  Centre compares its own with the runtime's: equal → **"Context · Launch
+  Plan ✓"**, different → **"Context · Launch Plan · Update available"** until
+  the next sync lands. The popover shows `Version N · Current` and the
+  reads/writes. Nothing extra is sent to find out.
+- The agent sees versions too: every read carries `contextVersion`;
+  `get_context_status { knownVersion }` says whether a version is `fresh`;
+  `get_context_changes { sinceVersion }` returns **ids** of tabs and
+  collections changed or removed since (≤ 100 per list, `truncated` when
+  more; `complete: false` when older removals were forgotten — at most 2000
+  are remembered). No workspace is pasted into a prompt.
+
+### 13.7 Provider support matrix
+
+| Provider | Context server | Reads | Writes (ask every time) | Verified |
+| --- | --- | --- | --- | --- |
+| Claude Code | yes | yes | yes | **Live**, packaged runtime, real signed-in Claude (§13.8) |
+| Gemini CLI 0.61.0 | yes (exclusive) | yes | yes | Source-verified; real binary accepts the launch flag and handshakes; end-to-end with a real agent process (Gemini's request shape) + real loopback server. **No live turn: not signed in** |
+| Grok Build 1.0.41 | **no** — session starts without context | — | — | Intentionally restricted (§13.2) |
+| Codex (codex-acp) | **no** — no sessions at all | — | — | Intentionally restricted (§5) |
+| Custom MCP agent | account server (§8) | yes, read-only | none | Unchanged; its tool list and read-only annotations are still pinned |
+
+### 13.8 Verification (2026-09-24)
+
+**Packaged runtime, real Claude — 34/34.** The desktop sidecar bundle
+(`npm run desktop:runtime`) run by the installed app's
+`tabdump-agent-node.exe`, the Rust shell's environment allowlist and line
+protocol; the driver played the webview. Checked: session with context
+(version 1, five capabilities) and no credential or server name in the view;
+the credential only in `claude.exe`'s environment (not on any command line,
+response, event or stderr); the per-session server name in the minted shape;
+one listener on 127.0.0.1; live credential 200, forged/missing 401; Claude
+read the workspace and searched it; `ws-private-finances` **denied at the
+server**; `create_collection` → approval (agent, change, workspace — no ids)
+before anything to apply → approved → listed → applied → second completion and
+second answer refused → Claude confirmed; sync → version 2, identical sync
+stays 2, other workspace refused; `rename_collection` asked as old → new,
+declined, nothing changed; `get_context_status` → Claude reported version 2
+and version 1 stale; disconnect → no agent process, old credential 401;
+nothing written to the project; shutdown → server gone.
+
+**Real agents (ACP).** Gemini 0.61.0 and Grok 1.0.41 each answered, through
+the production launcher, that they are signed out (`-32000`), so no live turn
+was possible; codex-acp was refused before launch. Gemini 0.61.0 launched with
+`--acp --approval-mode default --allowed-mcp-server-names tabdump_…`
+completes the handshake (HTTP MCP advertised) — the flag is accepted.
+
+**Automated.** `authorization.test.ts` (identity shape, every denial, forged
+fields, parity across providers/origins/authorities); `registry.test.ts`
+(distinct names and credentials, duplicate bind, expiry, monotonic versions,
+bounded/incomplete change lists, validation without asking, summaries without
+ids, once-only completion, release); `context.integration.test.ts` (new
+reads, paging bounds, schema refusals, rename/add through approval,
+cross-workspace changes refused, forged capabilities); the ACP adapter
+(genuine call allowed once with no prompt and no enforcement; unmarked,
+forged-kind, no-server, non-exclusive and no-capability calls refused;
+unasked tools still stop the session); the Claude adapter (pre-allow set,
+refusals, lookalikes); the host (versions, stale detection, capability claims
+ignored, another actor refused at every door, replay refused, two sessions
+isolated, Grok-like agent gets no credential); `launch/context.process.test.ts`
+(a real agent process with Gemini's request shape against the real server:
+read, cross-workspace denial, write through approval, revocation); the
+launcher (flag appended only for a minted name; malformed names refuse the
+launch); Command Centre (freshness, sync, unavailable state, card, apply
+rename/add once).
+
+**Latency** (loopback, 40 samples each; the ~16 ms floor on HTTP calls is
+the Windows timer tick, not context work):
+
+| Measure | 50 tabs p50 / p95 | 800 tabs p50 / p95 |
+| --- | --- | --- |
+| Session start with context (packaged runtime, real Claude) | 30 ms | — |
+| Bind (parse + credential + hash + name) | 0.2 / 2.7 ms | 3.0 / 11.9 ms |
+| MCP initialize | 15.8 / 19.1 ms | 16.0 / 20.5 ms |
+| `get_current_workspace` | 15.9 / 20.2 ms | 16.2 / 24.3 ms |
+| `search_tabs` | 15.9 / 17.8 ms | 16.0 / 22.1 ms |
+| `list_collections` | 15.8 / 18.1 ms | 15.7 / 18.6 ms |
+| `list_tabs` (100) | 16.2 / 26.4 ms | 16.0 / 23.3 ms |
+| Sync (changed snapshot) | 0.3 / 0.6 ms | 2.8 / 6.0 ms |
+| `get_context_changes` | 16.1 / 19.0 ms | 15.9 / 18.5 ms |
+| Approval machinery (request → approved → applied → result, human excluded) | 15.9 / 16.4 ms | 15.9 / 16.3 ms |
+| Approve → real Claude's reply complete | 1.55 s, dominated by the model | — |
+
+**Tests** (Windows, `npx vitest run`, on the committed J.4 tree): 365 files
+passed, 5 skipped · **5668 passed, 35 skipped, 0 failed** (5703) in one run,
+with no load-sensitive timeouts. Typecheck and lint pass.
+
+### 13.9 Limitations that remain
+
+- **Gemini** is verified from its source, its real binary's launch and a
+  faithful process-level test — not with a signed-in account and a real
+  model turn. The identity rests on Gemini 0.61.0's confirmation structure;
+  if a later version drops the MCP-only option ids, its context calls are
+  refused (fails closed), not misattributed. Gemini also requires a trusted
+  folder before it loads any MCP server; in an untrusted folder the session
+  simply has no context tools.
+- **Grok** sessions have no workspace context until Grok exposes a launch
+  option limiting MCP servers, or a typed server identity in its permission
+  requests, verified against a signed-in session.
+- **Codex** sessions remain refused (§5).
+- **Exclusivity has a cost:** a Gemini session with context loads no MCP
+  server but TabDump's — as a Claude session never has.
+- **Freshness** is still bounded by the Command Centre being open to sync;
+  what changes is that staleness is now visible to the user and the agent.
+- **Hosted runtime:** unchanged — no context server (§12.8).
+
+### 13.10 Security invariants
+
+- No live session → no valid credential; one credential → exactly one
+  session and one workspace; a restarted runtime invalidates every credential.
+- The client or provider never grants a capability; the runtime derives it
+  from the grant and the binding.
+- A context call is recognised structurally or not at all; an agent that
+  cannot be recognised is not given the server.
+- Every write goes MCP → shared decision → broker approval → Command Centre →
+  existing collection store. The MCP server never mutates anything.
+- Ask every time. No "always", no auto-approval, no provider-specific bypass.
+- No workspace is pasted into a prompt; every answer is bounded, redacted and
+  versioned.

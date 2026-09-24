@@ -302,6 +302,8 @@ export function CommandCentreView({
     world,
     collections: collectionStore.collections,
     createCollection: collectionStore.createCollection,
+    renameCollection: collectionStore.renameCollection,
+    addTabsToCollection: collectionStore.addTabsToCollection,
   })
 
   const handleCreate = useCallback(
@@ -480,7 +482,13 @@ export function CommandCentreView({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
                 onDispose={() => void sessions.disposeSession(selected.view.sessionId)}
-                {...(selected.view.context ? { workspaceContext: selected.view.context } : {})}
+                {...(selected.view.context
+                  ? {
+                      workspaceContext: selected.view.context,
+                      contextFreshness: sessionContext.freshnessOf(selected.view.context),
+                    }
+                  : {})}
+                contextUnavailable={selected.view.contextUnavailable === "provider"}
               />
 
               <EventStream events={session.events}>

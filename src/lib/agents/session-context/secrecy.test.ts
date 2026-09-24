@@ -75,7 +75,10 @@ describe("the session context credential stays inside the runtime", () => {
     const view = protocol.match(/export type RuntimeSessionContextView = \{[\s\S]*?\n\};/)?.[0];
     expect(view).toBeDefined();
     const fields = [...view!.matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => match[1]);
-    expect(fields).toEqual(["workspaceId", "workspaceName", "capabilities", "pendingActions"]);
+    // J.4 added the version, when it was synced and a content fingerprint —
+    // none of which could carry a credential. Pinned so a new field is a
+    // deliberate edit here too.
+    expect(fields).toEqual(["workspaceId", "workspaceName", "capabilities", "version", "syncedAt", "fingerprint", "pendingActions"]);
   });
 
   it("is never stored, logged or put in a URL by the modules that hold it", () => {

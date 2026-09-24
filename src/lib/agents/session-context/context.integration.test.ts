@@ -252,7 +252,7 @@ describe("capabilities and approval", () => {
     const attempt = await client.callTool({ name: "create_collection", arguments: { name: "x", tabIds: ["t-press"] } });
     expect(attempt.isError).toBe(true);
     expect(h.approvals).toEqual([]);
-    expect(await h.registry.requestCreateCollection("s1", { name: "x", tabIds: ["t-press"] })).toEqual({
+    expect(await h.registry.requestChange("s1", { kind: "create_collection", name: "x", tabIds: ["t-press"] })).toEqual({
       ok: false,
       reason: "not_permitted",
     });
@@ -267,14 +267,14 @@ describe("capabilities and approval", () => {
     const call = client.callTool({ name: "create_collection", arguments: { name: "Launch sources", tabIds: ["t-press", "t-launch"] } });
     await until(() => h.approvals.length === 1);
     expect(h.approvals[0]).toMatchObject({ sessionId: "s1", workspaceId: "ws-launch" });
-    expect(h.approvals[0].targets[0]).toBe('New collection "Launch sources" with 2 tabs');
+    expect(h.approvals[0].targets[0]).toBe('New collection "Launch sources"');
     // Waiting on the user: nothing to apply yet.
     expect(h.registry.pendingApplications("s1")).toEqual([]);
 
     h.answer("denied");
     const declined = await call;
     expect(declined.isError).toBe(true);
-    expect(text(declined)).toBe("The user declined this change. Nothing was created.");
+    expect(text(declined)).toBe("The user declined this change. Nothing was changed.");
     expect(h.registry.pendingApplications("s1")).toEqual([]);
     await client.close();
   });
@@ -304,7 +304,7 @@ describe("capabilities and approval", () => {
     await until(() => h.registry.pendingApplications("s1").length === 1);
 
     const [action] = h.registry.pendingApplications("s1");
-    expect(action).toMatchObject({ kind: "create_collection", name: "Launch sources", tabIds: ["t-press"], workspaceId: "ws-launch" });
+    expect(action).toMatchObject({ change: { kind: "create_collection", name: "Launch sources", tabIds: ["t-press"] }, workspaceId: "ws-launch" });
     // The Command Centre cannot complete an action for another session, or one never approved.
     expect(h.registry.complete("someone-else", action.id, { ok: true, collectionId: "c-9" })).toBe(false);
     expect(h.registry.complete("s1", "made-up", { ok: true, collectionId: "c-9" })).toBe(false);
@@ -344,9 +344,9 @@ describe("binding", () => {
     const h = harness();
     expect(await h.registry.bind({ sessionId: "s1", ownerId: "local", workspaceId: "ws-launch", access: "read", snapshot: PRIVATE })).toBeUndefined();
     await bind(h, "s1", LAUNCH_PLAN, "ws-launch");
-    expect(h.registry.update("s1", PRIVATE)).toBe(false);
+    expect(h.registry.update("s1", PRIVATE)).toBeUndefined();
     expect(h.registry.binding("s1")?.workspaceId).toBe("ws-launch");
-    expect(h.registry.update("s1", { ...LAUNCH_PLAN, workspace: { ...LAUNCH_PLAN.workspace, name: "Launch Plan v2" } })).toBe(true);
+    expect(h.registry.update("s1", { ...LAUNCH_PLAN, workspace: { ...LAUNCH_PLAN.workspace, name: "Launch Plan v2" } })).toEqual({ version: 2, changed: true });
     expect(h.registry.binding("s1")?.snapshot.workspace.name).toBe("Launch Plan v2");
   });
 });
@@ -358,3 +358,102 @@ async function until(predicate: () => boolean, ms = 5000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Phase J.4 — the expanded surface, still bounded and still gated
+ * ------------------------------------------------------------------ */
+
+describe("the J.4 reads", () => {
+  it("lists collections and pages through tabs within bounds, redacted, with the context version on every answer", async () => {
+    const h = harness();
+    const many = snapshot(
+      "ws-launch",
+      "Launch Plan",
+      Array.from({ length: 230 }, (_, index) => ({ id: `t${index}`, title: `Tab ${index}`, url: `https://example.com/${index}?api_key=zz${index}` }))
+    );
+    const token = await bind(h, "s1", many, "ws-launch");
+    const client = await connect(await h.server.url(), token);
+
+    const collections = JSON.parse(text(await client.callTool({ name: "list_collections", arguments: {} })));
+    expect(collections).toEqual({
+      collections: [{ collectionId: "ws-launch-c1", name: "Existing", tabCount: 1, updatedAt: 1 }],
+      contextVersion: 1,
+    });
+
+    const first = JSON.parse(text(await client.callTool({ name: "list_tabs", arguments: { limit: 100 } })));
+    expect(first).toMatchObject({ total: 230, nextOffset: 100, contextVersion: 1 });
+    expect(first.items.filter((item: { sourceType: string }) => item.sourceType === "tab")).toHaveLength(100);
+    expect(JSON.stringify(first)).not.toMatch(/zz\d/);
+    const last = JSON.parse(text(await client.callTool({ name: "list_tabs", arguments: { offset: 200, limit: 100 } })));
+    expect(last.total).toBe(230);
+    expect(last.nextOffset).toBeUndefined();
+    const past = JSON.parse(text(await client.callTool({ name: "list_tabs", arguments: { offset: 5000 } })));
+    expect(past).toMatchObject({ items: [], total: 230 });
+
+    // Oversized or malformed arguments are refused by the schema, not clamped silently.
+    expect((await client.callTool({ name: "list_tabs", arguments: { limit: 101 } })).isError).toBe(true);
+    expect((await client.callTool({ name: "get_context_changes", arguments: { sinceVersion: -1 } })).isError).toBe(true);
+    await client.close();
+  });
+});
+
+describe("the J.4 writes", () => {
+  it("renames a collection and adds tabs to one only after approval, each applied once, described without ids", async () => {
+    const h = harness();
+    const token = await bind(h, "s1", LAUNCH_PLAN, "ws-launch", "read_write");
+    const client = await connect(await h.server.url(), token);
+    const tools = (await client.listTools()).tools;
+    for (const name of ["rename_collection", "add_tabs_to_collection"]) {
+      expect(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(false);
+    }
+
+    const rename = client.callTool({ name: "rename_collection", arguments: { collectionId: "ws-launch-c1", name: "Launch sources" } });
+    await until(() => h.approvals.length === 1);
+    expect(h.approvals[0].change).toEqual({ kind: "rename_collection", subject: "Existing", to: "Launch sources", details: ["1 tab in it, unchanged"] });
+    // Nothing to apply until the user answers.
+    expect(h.registry.pendingApplications("s1")).toEqual([]);
+    h.answer("granted");
+    await until(() => h.registry.pendingApplications("s1").length === 1);
+    const [renaming] = h.registry.pendingApplications("s1");
+    expect(renaming.change).toEqual({ kind: "rename_collection", collectionId: "ws-launch-c1", name: "Launch sources" });
+    expect(h.registry.complete("s1", renaming.id, { ok: true, collectionId: "ws-launch-c1" })).toBe(true);
+    expect(JSON.parse(text(await rename))).toEqual({ renamed: true, collectionId: "ws-launch-c1", name: "Launch sources" });
+
+    const add = client.callTool({ name: "add_tabs_to_collection", arguments: { collectionId: "ws-launch-c1", tabIds: ["t-press"] } });
+    await until(() => h.approvals.length === 2);
+    h.answer("denied");
+    const declined = await add;
+    expect(declined.isError).toBe(true);
+    expect(text(declined)).toBe("The user declined this change. Nothing was changed.");
+    expect(h.registry.pendingApplications("s1")).toEqual([]);
+    await client.close();
+  });
+
+  it("refuses a change to another workspace's collection or tab at the server, without asking", async () => {
+    const h = harness();
+    const token = await bind(h, "s1", LAUNCH_PLAN, "ws-launch", "read_write");
+    await bind(h, "s2", PRIVATE, "ws-private", "read_write");
+    const client = await connect(await h.server.url(), token);
+    const renamed = await client.callTool({ name: "rename_collection", arguments: { collectionId: "ws-private-c1", name: "Mine now" } });
+    const added = await client.callTool({ name: "add_tabs_to_collection", arguments: { collectionId: "ws-launch-c1", tabIds: ["t-bank"] } });
+    expect(renamed.isError).toBe(true);
+    expect(added.isError).toBe(true);
+    expect(h.approvals).toEqual([]);
+    await client.close();
+  });
+
+  it("ignores a client that sends capabilities or a workspace it was not bound to", async () => {
+    const h = harness();
+    const token = await bind(h, "s1", LAUNCH_PLAN, "ws-launch", "read");
+    const client = await connect(await h.server.url(), token);
+    const forged = await client.callTool({
+      name: "rename_collection",
+      arguments: { collectionId: "ws-launch-c1", name: "x", capabilities: ["collections.write"], workspaceId: "ws-launch" },
+    });
+    expect(forged.isError).toBe(true);
+    const elsewhere = await client.callTool({ name: "get_workspace", arguments: { workspaceId: "ws-private" } });
+    expect(text(elsewhere)).toBe("This session can only read the TabDump workspace it was started from.");
+    expect(h.approvals).toEqual([]);
+    await client.close();
+  });
+});

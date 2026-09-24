@@ -1,4 +1,5 @@
-import { SESSION_CONTEXT_TOOLS } from "@/lib/agents/session-context/capabilities";
+import { contextToolsFor } from "@/lib/agents/session-context/authorization";
+import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
 import type { ApprovalAction } from "../../approval-details";
 import { isGranted } from "../../permissions";
 import type { AgentPermissionGrant, AgentPermissionScope } from "../../permissions";
@@ -217,11 +218,16 @@ export function planForGrant(
  * workspace the session is bound to, and its one write, `create_collection`,
  * raises a TabDump approval itself and changes nothing until the user says
  * yes. Asking here as well would put the same question to the user twice.
- * No other MCP server can exist in the session (`strictMcpConfig`), so no
- * other `mcp__` name can match.
+ * No other MCP server can exist in the session (`strictMcpConfig`), and the
+ * server's name is minted per session (J.4), so no other `mcp__` name can
+ * match. Only the tools the session's capabilities permit are listed — the
+ * same answer `authorizeContextRequest` gives every provider.
  */
-export function contextToolNames(serverName: string): readonly string[] {
-  return SESSION_CONTEXT_TOOLS.map((tool) => `mcp__${serverName}__${tool}`);
+export function contextToolNames(
+  serverName: string,
+  capabilities: readonly SessionContextCapability[]
+): readonly string[] {
+  return contextToolsFor(capabilities).map((tool) => `mcp__${serverName}__${tool}`);
 }
 
 /** The tools a grant authorizes, each still subject to `canUseTool`. */

@@ -202,6 +202,10 @@ export function requiredScopeFor(capability: AgentCapability): AgentPermissionSc
     case "approvals":
     case "working_directory":
     case "additional_directories":
+    // What a session may do with its workspace is derived from the grant by
+    // the runtime when it binds the context (read_workspace, write_workspace),
+    // and every write asks. Carrying the server needs no scope of its own.
+    case "workspace_context":
       return null;
   }
 }

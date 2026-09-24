@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { validateProjectPath } from "@/lib/agents/control/projects";
+import { isContextServerName } from "@/lib/agents/session-context/identity";
 import { launchEntryFor } from "./allowlist";
 import { agentEnvironment } from "./env";
 import { detectProviders } from "./detect";
@@ -233,8 +234,22 @@ export function createAcpProcessLauncher(options: ProcessLauncherOptions): AcpLa
       if (exited) removeScratch();
     };
 
+    // The one argument a launch can add (Phase J.4): the session's context
+    // server name, after the agent's own MCP allowlist flag — and only in the
+    // shape the runtime mints. Anything else refuses the launch rather than
+    // starting an agent that could load other MCP servers beside TabDump's.
+    const contextArgs: string[] = [];
+    if (request.contextServerName !== undefined) {
+      if (entry.contextIdentity.kind !== "exclusive-mcp" || !isContextServerName(request.contextServerName)) {
+        removeScratch();
+        return { ok: false, reason: "failed" };
+      }
+      contextArgs.push(entry.contextIdentity.allowlistFlag, request.contextServerName);
+    }
+
     const file = resolved.kind === "native" ? resolved.file : process.execPath;
-    const args = resolved.kind === "native" ? [...entry.args] : [resolved.script, ...entry.args];
+    const args =
+      resolved.kind === "native" ? [...entry.args, ...contextArgs] : [resolved.script, ...entry.args, ...contextArgs];
 
     let child: ReturnType<typeof spawn>;
     try {

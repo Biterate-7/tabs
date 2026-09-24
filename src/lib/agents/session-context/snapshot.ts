@@ -216,6 +216,26 @@ function encodedSize(snapshot: SessionContextSnapshot): number {
 }
 
 /**
+ * A short, stable fingerprint of a snapshot's content (Phase J.4).
+ *
+ * Computed the same way on both sides — the webview over the snapshot it
+ * would send, the runtime over the one it holds — so the Command Centre can
+ * tell whether a session's context is current without sending anything. Not a
+ * security boundary: two FNV-1a passes, for equality, not secrecy.
+ */
+export function snapshotFingerprint(snapshot: SessionContextSnapshot): string {
+  const text = JSON.stringify(snapshot);
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    a = Math.imul(a ^ code, 0x01000193) >>> 0;
+    b = Math.imul(b ^ code, 0x5bd1e995) >>> 0;
+  }
+  return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
+}
+
+/**
  * The webview's side: the snapshot of one workspace from the app's own data.
  * `undefined` when the workspace does not exist.
  */

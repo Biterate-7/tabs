@@ -14,6 +14,8 @@ import {
 import type { ScriptedRuntime } from "@/lib/agents/command-centre/__fixtures__/runtime-client"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
 import type { Workspace } from "@/lib/workspace/types"
+import type { RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
+import { loadCollectionState, saveCollectionState } from "@/lib/collections/persistence"
 
 /**
  * The command centre's behaviour, driven through the real component against a
@@ -1010,12 +1012,21 @@ describe("the event stream", () => {
 describe("session workspace context", () => {
   const FULL = ["workspace.read", "tabs.read", "collections.read", "relationships.read", "collections.write"] as const
 
-  function contextSession(over: Parameters<typeof scriptedSession>[0] = {}) {
-    return scriptedSession({
+  function contextView(over: Partial<RuntimeSessionContextView> = {}): RuntimeSessionContextView {
+    return {
       workspaceId: "w1",
-      context: { workspaceId: "w1", workspaceName: "Research", capabilities: FULL, pendingActions: [] },
+      workspaceName: "Research",
+      capabilities: FULL,
+      version: 3,
+      syncedAt: 1_700_000_000_000,
+      fingerprint: "stale-fingerprint",
+      pendingActions: [],
       ...over,
-    })
+    }
+  }
+
+  function contextSession(over: Parameters<typeof scriptedSession>[0] = {}) {
+    return scriptedSession({ workspaceId: "w1", context: contextView(), ...over })
   }
 
   it("sends the session's own workspace with it — its tabs and collections, and nothing like a credential", async () => {
@@ -1032,42 +1043,74 @@ describe("session workspace context", () => {
     expect(created.workspaceId).toBe("w1")
     expect(created.contextSnapshot?.workspace).toMatchObject({ id: "w1", name: "Research" })
     expect(created.contextSnapshot?.workspace.tabs.map((tab) => tab.id)).toEqual(["w1-tab-0", "w1-tab-1", "w1-tab-2"])
-    expect(JSON.stringify(created)).not.toMatch(/token|bearer|authorization|tdctx_/i)
+    expect(JSON.stringify(created)).not.toMatch(/token|bearer|authorization|tdctx_|capabilit/i)
   })
 
-  it("shows which workspace the agent can see, and what it may do there", async () => {
+  it("shows which workspace the agent can see, what it reads, and that writes ask", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({ sessions: [contextSession()] })
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    const indicator = await screen.findByRole("button", { name: "Workspace context: Research" })
+    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
     await user.click(indicator)
-    const access = await screen.findByRole("list", { name: "What the agent can read" })
-    expect(within(access).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "Workspace search",
-      "Tabs",
-      "Collections",
-      "Relationships",
-    ])
-    expect(screen.getByText("Require your approval")).toBeTruthy()
+    expect((await screen.findByLabelText("What the agent can read")).textContent).toBe(
+      "Workspace · Tabs and search · Collections · Relationships"
+    )
+    expect(screen.getByText("Collections — approval required")).toBeTruthy()
     // Nothing about the machinery.
-    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port/i)
+    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port|tabdump_[a-z2-7]{16}/i)
   })
 
   it("says a read-only session cannot change anything", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({
-      sessions: [
-        contextSession({
-          context: { workspaceId: "w1", workspaceName: "Research", capabilities: FULL.slice(0, 4), pendingActions: [] },
-        }),
-      ],
+      sessions: [contextSession({ context: contextView({ capabilities: FULL.slice(0, 4) }) })],
     })
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    await user.click(await screen.findByRole("button", { name: "Workspace context: Research" }))
+    await user.click(await screen.findByRole("button", { name: /^Workspace context: Research/ }))
     expect(await screen.findByText("Not allowed in this session")).toBeTruthy()
+  })
+
+  it("is current right after the session starts from this window's workspace", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, vi.fn(), undefined, "w1")
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+    await user.click(await screen.findByRole("button", { name: /start session/i }))
+
+    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
+    expect(indicator.getAttribute("aria-label")).toBe("Workspace context: Research")
+    await user.click(indicator)
+    expect(await screen.findByText("Version 1 · Current")).toBeTruthy()
+  })
+
+  it("says an update is available when the runtime holds an older copy, then syncs the same workspace", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession()] })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByRole("button", { name: "Workspace context: Research, update available" })).toBeTruthy()
+    await waitFor(() => expect(runtime.commands.some((command) => command.name === "sync_session_context")).toBe(true))
+    const sync = runtime.commands.find((command) => command.name === "sync_session_context")
+    if (sync?.name !== "sync_session_context") throw new Error("no sync")
+    // Its own workspace, bounded, never a switch to another.
+    expect(sync.sessionId).toBe("session-1")
+    expect(sync.snapshot.workspace.id).toBe("w1")
+  })
+
+  it("says so when the agent cannot be given workspace context", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [scriptedSession({ provider: "grok", workspaceId: "w1", contextUnavailable: "provider" })],
+    })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+    await user.click(await screen.findByRole("button", { name: "Workspace context unavailable for this agent" }))
+    expect(await screen.findByText("No workspace context")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^Workspace context: / })).toBeNull()
   })
 
   it("keeps the workspace across a reload — it is the runtime's, not the page's", async () => {
@@ -1075,15 +1118,44 @@ describe("session workspace context", () => {
     const runtime = createScriptedRuntime({ sessions: [contextSession()] })
     const first = renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    expect(await screen.findByRole("button", { name: "Workspace context: Research" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
     first.unmount()
 
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    expect(await screen.findByRole("button", { name: "Workspace context: Research" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
   })
 
-  it("names a workspace change and its workspace on the approval card", async () => {
+  it("names the agent, the change and the workspace on the approval card — never an id", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ provider: "gemini", status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([
+      scriptedApproval({
+        provider: "gemini",
+        action: "change_workspace",
+        scope: "write_workspace",
+        projectId: undefined,
+        workspaceId: "w1",
+        targets: ['New collection "Launch reading"', "2 tabs"],
+        change: { kind: "create_collection", subject: "Launch reading", tabCount: 2, details: ["2 tabs", "Tab: Tab 1"] },
+      }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    const prompt = await screen.findByRole("group", { name: /approval required/i })
+    expect(within(prompt).getByText("Change your TabDump workspace")).toBeTruthy()
+    expect(within(prompt).getByText("Gemini CLI wants to create a collection:")).toBeTruthy()
+    expect(within(prompt).getByText("Launch reading")).toBeTruthy()
+    expect(within(prompt).getByText("Research")).toBeTruthy()
+    expect(within(prompt).getByRole("button", { name: "Allow" })).toBeTruthy()
+    expect(within(prompt).getByRole("button", { name: "Deny" })).toBeTruthy()
+    expect(prompt.textContent).not.toMatch(/w1|ctxa-|approval-1|session-1/)
+  })
+
+  it("shows a rename as old name → new name", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({
       sessions: [contextSession({ status: "waiting_for_approval", awaitingApproval: true })],
@@ -1094,28 +1166,24 @@ describe("session workspace context", () => {
         scope: "write_workspace",
         projectId: undefined,
         workspaceId: "w1",
-        targets: ['New collection "Reading list" with 2 tabs'],
+        targets: ['Rename "Sources" to "Primary sources"'],
+        change: { kind: "rename_collection", subject: "Sources", to: "Primary sources", details: [] },
       }),
     ])
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
-
     const prompt = await screen.findByRole("group", { name: /approval required/i })
-    expect(within(prompt).getByText("Change your TabDump workspace")).toBeTruthy()
-    expect(within(prompt).getByText("Research")).toBeTruthy()
-    expect(within(prompt).getByText('New collection "Reading list" with 2 tabs')).toBeTruthy()
+    expect(within(prompt).getByText("Claude Code wants to rename a collection:")).toBeTruthy()
+    expect(within(prompt).getByText("Sources → Primary sources")).toBeTruthy()
   })
 
   it("applies an approved change exactly once, then tells the runtime what it made", async () => {
     const runtime = createScriptedRuntime({
       sessions: [
         contextSession({
-          context: {
-            workspaceId: "w1",
-            workspaceName: "Research",
-            capabilities: FULL,
+          context: contextView({
             pendingActions: [{ actionId: "ctxa-1", kind: "create_collection", name: "Reading list", tabIds: ["w1-tab-1", "w1-tab-2"] }],
-          },
+          }),
         }),
       ],
     })
@@ -1139,16 +1207,49 @@ describe("session workspace context", () => {
     })
   })
 
+  it("applies an approved rename and an approved add through the same store", async () => {
+    saveCollectionState({
+      version: 1,
+      collections: [{ id: "c1", workspaceId: "w1", name: "Sources", tabIds: ["w1-tab-0"], createdAt: 1, updatedAt: 1 }],
+    })
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              { actionId: "ctxa-r", kind: "rename_collection", collectionId: "c1", name: "Primary sources" },
+              { actionId: "ctxa-a", kind: "add_tabs_to_collection", collectionId: "c1", tabIds: ["w1-tab-2"] },
+              { actionId: "ctxa-x", kind: "rename_collection", collectionId: "c-other-workspace", name: "Nope" },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() =>
+      expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(3)
+    )
+    const outcomes = Object.fromEntries(
+      runtime.commands
+        .filter((command) => command.name === "complete_context_action")
+        .map((command) => (command.name === "complete_context_action" ? [command.actionId, command.outcome] : []))
+    )
+    expect(outcomes["ctxa-r"]).toEqual({ ok: true, collectionId: "c1" })
+    expect(outcomes["ctxa-a"]).toEqual({ ok: true, collectionId: "c1" })
+    expect(outcomes["ctxa-x"]).toEqual({ ok: false })
+    await waitFor(() => {
+      const stored = loadCollectionState().collections.find((collection) => collection.id === "c1")
+      expect(stored).toMatchObject({ name: "Primary sources", tabIds: ["w1-tab-0", "w1-tab-2"] })
+    })
+  })
+
   it("refuses to apply a change naming tabs that are not in the session's workspace", async () => {
     const runtime = createScriptedRuntime({
       sessions: [
         contextSession({
-          context: {
-            workspaceId: "w1",
-            workspaceName: "Research",
-            capabilities: FULL,
+          context: contextView({
             pendingActions: [{ actionId: "ctxa-2", kind: "create_collection", name: "Elsewhere", tabIds: ["w2-tab-0"] }],
-          },
+          }),
         }),
       ],
     })

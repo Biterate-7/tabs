@@ -97,13 +97,18 @@ describe("the custom agent explains exactly what it connects", () => {
     expect(registrations.length).toBe(TABDUMP_MCP_TOOLS.length);
     expect(readOnly.length).toBe(registrations.length);
 
-    // Session mode has exactly one tool that is not read-only: creating a
-    // collection, which asks the user every time.
+    // Session mode has exactly three tools that are not read-only (J.4):
+    // create, rename and add tabs to a collection. None writes: each only
+    // proposes a change, which asks the user every time.
     const sessionSource = fullSource.slice(marker);
     const sessionRegistrations = sessionSource.match(/registerTool\(/g) ?? [];
     const sessionReadOnly = sessionSource.match(/annotations:\s*READ_ONLY/g) ?? [];
-    expect(sessionRegistrations.length - sessionReadOnly.length).toBe(1);
-    expect(sessionSource).toMatch(/"create_collection"[\s\S]*readOnlyHint: false/);
+    expect(sessionRegistrations.length - sessionReadOnly.length).toBe(3);
+    expect(sessionSource).toMatch(/const WRITE_TOOL = \{ readOnlyHint: false, destructiveHint: false/);
+    for (const write of ["create_collection", "rename_collection", "add_tabs_to_collection"]) {
+      expect(sessionSource).toContain(`propose("${write}", { kind: "${write}"`);
+    }
+    expect(sessionSource.match(/scope\.requestChange\(/g)).toHaveLength(1);
 
     expect(custom.explainer).toEqual([
       expect.stringMatching(/TabDump never starts it/),

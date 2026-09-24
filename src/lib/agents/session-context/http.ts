@@ -99,7 +99,9 @@ export function createSessionContextServer(options: {
       scope: {
         // Read live, so a session released while this request runs answers as ended.
         binding: () => options.registry.binding(sessionId),
-        createCollection: (input) => options.registry.requestCreateCollection(sessionId, input),
+        authority: () => options.registry.authority(sessionId),
+        changesSince: (since) => options.registry.changesSince(sessionId, since),
+        requestChange: (change) => options.registry.requestChange(sessionId, change),
       },
       ...(options.now ? { now: options.now } : {}),
     });

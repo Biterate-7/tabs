@@ -57,7 +57,16 @@ export type AgentCapability =
   /** A session can be given one working directory. */
   | "working_directory"
   /** A session can be given further authorized directories beyond the working one. */
-  | "additional_directories";
+  | "additional_directories"
+  /**
+   * A session can be handed its TabDump workspace context server (Phase J.4),
+   * and the adapter can prove — from the agent's own structure, never from a
+   * name or a title — which of the agent's tool calls are that server's.
+   * An adapter that cannot prove it does not declare this, and its sessions
+   * start without workspace context rather than with context they cannot
+   * safely use.
+   */
+  | "workspace_context";
 
 export const AGENT_CAPABILITIES: readonly AgentCapability[] = [
   "observe",
@@ -73,6 +82,7 @@ export const AGENT_CAPABILITIES: readonly AgentCapability[] = [
   "approvals",
   "working_directory",
   "additional_directories",
+  "workspace_context",
 ] as const;
 
 export function isAgentCapability(value: unknown): value is AgentCapability {
@@ -133,6 +143,7 @@ export const CAPABILITY_LABELS: Record<AgentCapability, string> = {
   approvals: "Ask for approval",
   working_directory: "Working directory",
   additional_directories: "Additional directories",
+  workspace_context: "TabDump workspace context",
 };
 
 /**

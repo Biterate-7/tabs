@@ -157,13 +157,34 @@ describe("how it starts it", () => {
     }
   });
 
-  it("passes the allowlist's arguments and appends nothing", () => {
+  it("passes the allowlist's arguments, plus only a validated context server name after the entry's own flag (J.4)", () => {
     const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
     // The only two argument shapes: the entry's own, or Node running the
-    // package script with the entry's own.
-    expect(processCode).toContain("[...entry.args]");
-    expect(processCode).toContain("[resolved.script, ...entry.args]");
-    expect(processCode).not.toMatch(/args\.push|\.concat\(/);
+    // package script with the entry's own — each followed by the context
+    // arguments, which are empty unless the session has a context server.
+    expect(processCode).toContain("[...entry.args, ...contextArgs]");
+    expect(processCode).toContain("[resolved.script, ...entry.args, ...contextArgs]");
+    expect(processCode).not.toMatch(/\bargs\.push|\.concat\(/);
+    // The one push: the entry's literal flag and a name in the minted shape.
+    expect(processCode.match(/contextArgs\.push\([^)]*\)/g)).toEqual([
+      "contextArgs.push(entry.contextIdentity.allowlistFlag, request.contextServerName)",
+    ]);
+    expect(processCode).toContain(
+      'entry.contextIdentity.kind !== "exclusive-mcp" || !isContextServerName(request.contextServerName)'
+    );
+  });
+
+  it("pins how each agent's context calls are proven, verified from its source (J.4)", () => {
+    const identity = Object.fromEntries(
+      PROVIDER_LAUNCH_TABLE.filter((entry) => entry.acp).map((entry) => [entry.provider, entry.acp!.contextIdentity])
+    );
+    expect(identity.gemini).toEqual({
+      kind: "exclusive-mcp",
+      allowlistFlag: "--allowed-mcp-server-names",
+      mcpConfirmationOptionIds: ["proceed_always_server", "proceed_always_tool"],
+    });
+    expect(identity.grok?.kind).toBe("unavailable");
+    expect(identity["openai-codex"]?.kind).toBe("unavailable");
   });
 
   it("revalidates the working directory with the project validator", () => {

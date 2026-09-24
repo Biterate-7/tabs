@@ -258,3 +258,44 @@ describe("launching a real ACP agent", () => {
     expect(existsSync(launched.cwd)).toBe(false);
   });
 });
+
+describe("limiting a real agent to its session's context server (J.4)", () => {
+  it("adds only the entry's own MCP allowlist flag and the minted name — never the credential", async () => {
+    const adapter = createAcpControlAdapter({
+      provider: "gemini",
+      launch: createAcpProcessLauncher({ provider: "gemini", env: environment() }),
+      approval: launchEntryFor("gemini")!.acp!.approval,
+      contextIdentity: launchEntryFor("gemini")!.acp!.contextIdentity,
+    });
+    const events: AgentControlEvent[] = [];
+    adapter.subscribeToEvents((event) => events.push(event));
+    const p = project();
+    const created = await adapter.createSession({
+      sessionId: "c1",
+      project: p,
+      permissions: p.permissions,
+      attachments: [],
+      contextServer: {
+        name: "tabdump_abcdefghijklmnop",
+        url: "http://127.0.0.1:5123/mcp",
+        token: `tdctx_${SECRET}`,
+        workspaceId: "ws",
+        capabilities: ["workspace.read"],
+      },
+    });
+    expect(created.ok).toBe(true);
+    await adapter.sendMessage({ sessionId: "c1", text: "report", context: { attachments: [] } });
+    await until(() => events.some((event) => event.kind === "run_completed"));
+    const facts = JSON.parse(events.find((event) => event.kind === "message_received")!.text!) as { argv: string[] };
+    expect(facts.argv).toEqual(["--acp", "--approval-mode", "default", "--allowed-mcp-server-names", "tabdump_abcdefghijklmnop"]);
+    expect(facts.argv.join(" ")).not.toContain(SECRET);
+    adapter.dispose();
+  }, 30_000);
+
+  it("refuses to launch at all with a name the runtime did not mint", async () => {
+    const gemini = createAcpProcessLauncher({ provider: "gemini", env: environment() });
+    for (const contextServerName of ["tabdump", "--yolo", "tabdump_abcdefghijklmnop --yolo", "x".repeat(300)]) {
+      expect(await gemini({ projectPath: projectDir, contextServerName }), contextServerName).toEqual({ ok: false, reason: "failed" });
+    }
+  });
+});

@@ -1,6 +1,8 @@
 import { requiresApproval } from "./permissions";
+import { readWorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 import type { AgentPermissionScope } from "./permissions";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 
 /**
  * The approval broker.
@@ -137,6 +139,13 @@ export type AgentApproval = {
   targets: readonly string[];
   /** The provider's own explanation, when it supplies one. Already bounded and safe. */
   reason?: string;
+  /**
+   * For `write_workspace` only (Phase J.4): the change itself, structured,
+   * so the card can say "Gemini CLI wants to create a collection: Launch
+   * reading" instead of a list of lines. Bounded and read strictly here; a
+   * malformed one is dropped, and the targets still describe the change.
+   */
+  change?: WorkspaceChangeSummary;
   status: ApprovalStatus;
   requestedAt: number;
   /** After this instant the request is no longer answerable. */
@@ -156,6 +165,7 @@ export type ApprovalRequestInput = {
   targets: readonly string[];
   runId?: string;
   reason?: string;
+  change?: WorkspaceChangeSummary;
   /** How long the user has to answer. */
   ttlMs?: number;
 };
@@ -314,6 +324,10 @@ export function createApprovalBroker(): ApprovalBroker {
       };
 
       if (input.runId) approval.runId = input.runId;
+      if (input.change && input.scope === "write_workspace") {
+        const change = readWorkspaceChangeSummary(input.change);
+        if (change) approval.change = change;
+      }
       if (input.reason) {
         const bounded = boundReason(input.reason);
         if (bounded) approval.reason = bounded;

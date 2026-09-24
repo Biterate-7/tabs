@@ -44,6 +44,7 @@ import type {
   RuntimeErrorCode,
   RuntimeProviderStatus,
   RuntimeResult,
+  RuntimeContextActionView,
   RuntimeSessionContextView,
   RuntimeSessionView,
   RuntimeStatus,
@@ -361,6 +362,12 @@ type HostSession = {
    * creation and delivers it with the first message itself.
    */
   undeliveredContextSnapshotId?: string;
+  /**
+   * The session was started from a workspace, but its agent cannot prove
+   * which of its calls are TabDump's (J.4), so it was not given the context
+   * server. Said on the view rather than left to be guessed from an absence.
+   */
+  contextUnavailable?: true;
 };
 
 export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
@@ -660,6 +667,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     return serviceFor(ownerId).requestWorkspaceApproval(request.sessionId, {
       targets: request.targets,
       reason: request.reason,
+      change: request.change,
     });
   });
 
@@ -678,12 +686,20 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       workspaceId: binding.workspaceId,
       workspaceName: binding.snapshot.workspace.name,
       capabilities: [...binding.capabilities],
-      pendingActions: registry.pendingApplications(sessionId).map((action) => ({
-        actionId: action.id,
-        kind: action.kind,
-        name: action.name,
-        tabIds: [...action.tabIds],
-      })),
+      version: binding.version,
+      syncedAt: binding.syncedAt,
+      fingerprint: binding.fingerprint,
+      pendingActions: registry.pendingApplications(sessionId).map((action): RuntimeContextActionView => {
+        const change = action.change;
+        switch (change.kind) {
+          case "create_collection":
+            return { actionId: action.id, kind: change.kind, name: change.name, tabIds: [...change.tabIds] };
+          case "rename_collection":
+            return { actionId: action.id, kind: change.kind, collectionId: change.collectionId, name: change.name };
+          case "add_tabs_to_collection":
+            return { actionId: action.id, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] };
+        }
+      }),
     };
   }
 
@@ -742,6 +758,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     if (host?.activeRunId) view.activeRunId = host.activeRunId;
     const context = contextViewOf(session.id);
     if (context) view.context = context;
+    else if (host?.contextUnavailable) view.contextUnavailable = "provider";
 
     return view;
   }
@@ -992,21 +1009,35 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const grant = grantFor(actor.id, command.projectId);
         const access = sessionContextAccessFor(grant, command.projectId);
         const sessionContext = options.sessionContext;
+        const workspaceId = command.workspaceId;
+        const wantsContext = Boolean(sessionContext && access && workspaceId && command.contextSnapshot);
+        // Only an adapter that can prove which calls are the context server's
+        // is handed one (J.4). Any other still starts — without context, and
+        // the view says so.
+        const providerAdapter = options.resolveAdapter(command.provider, actor.id);
+        const carriesContext = Boolean(providerAdapter && adapterSupports(providerAdapter, "workspace_context"));
         const started = await actorService.startSession({
-          ...(sessionContext && access && command.workspaceId && command.contextSnapshot
+          ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
             ? {
                 bindContext: async (sessionId: string) => {
                   const bound = await sessionContext.registry.bind({
                     sessionId,
                     ownerId: actor.id,
-                    workspaceId: command.workspaceId!,
+                    workspaceId,
                     access,
                     snapshot: command.contextSnapshot,
                   });
                   if (!bound) return "refused" as const;
                   // Handed to the service, which hands it to the one adapter starting
-                  // the agent. It goes nowhere else.
-                  const entry: SessionContextServerEntry = { name: "tabdump", url: await sessionContext.url(), token: bound.token };
+                  // the agent. It goes nowhere else. The capabilities are the
+                  // runtime's, from the grant — never the request's.
+                  const entry: SessionContextServerEntry = {
+                    name: bound.serverName,
+                    url: await sessionContext.url(),
+                    token: bound.token,
+                    workspaceId,
+                    capabilities: [...(sessionContext.registry.binding(sessionId)?.capabilities ?? [])],
+                  };
                   return entry;
                 },
               }
@@ -1039,6 +1070,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           provider: command.provider,
           runIds: [],
           correlationId: correlation.id,
+          ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
         };
         hosted.set(started.value.id, host);
 
@@ -1347,8 +1379,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const registry = options.sessionContext?.registry;
         if (!registry?.binding(command.sessionId)) return runtimeFailure("invalid_session_state");
         // The binding's workspace is fixed; a snapshot of any other is refused here.
-        if (!registry.update(command.sessionId, command.snapshot)) return runtimeFailure("context_invalid");
-        return { ok: true, value: { sessionId: command.sessionId } };
+        const updated = registry.update(command.sessionId, command.snapshot);
+        if (!updated) return runtimeFailure("context_invalid");
+        return { ok: true, value: { sessionId: command.sessionId, version: updated.version } };
       }
 
       case "complete_context_action": {
@@ -1523,6 +1556,7 @@ function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
   const view: RuntimeApprovalView = {
     approvalId: approval.id,
     sessionId: approval.sessionId,
+    provider: approval.provider,
     action: approval.action,
     scope: approval.scope,
     ...(approval.projectId ? { projectId: approval.projectId } : {}),
@@ -1534,6 +1568,7 @@ function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
 
   if (approval.runId) view.runId = approval.runId;
   if (approval.reason) view.reason = approval.reason;
+  if (approval.change) view.change = { ...approval.change, details: [...approval.change.details] };
   return view;
 }
 

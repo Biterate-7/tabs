@@ -1,5 +1,5 @@
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
-import type { AcpApprovalPolicy } from "@/lib/agents/control/providers/acp/launcher";
+import type { AcpApprovalPolicy, AcpContextIdentity } from "@/lib/agents/control/providers/acp/launcher";
 
 /**
  * Every program TabDump will ever start, and exactly how.
@@ -48,6 +48,13 @@ export type AcpLaunchEntry = {
    */
   npmPackages?: readonly string[];
   approval: AcpApprovalPolicy;
+  /**
+   * Whether a session can be handed its TabDump context server, and how its
+   * calls are told apart (Phase J.4). See `AcpContextIdentity`. The one
+   * argument this can add is `[allowlistFlag, <per-session server name>]`,
+   * and the launcher accepts the name only in the minted shape.
+   */
+  contextIdentity: AcpContextIdentity;
 };
 
 /**
@@ -112,6 +119,23 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
       args: ["--acp", "--approval-mode", "default"],
       npmPackages: ["@google/gemini-cli"],
       approval: { kind: "asking-mode", modeIds: ["default"] },
+      // Verified against @google/gemini-cli 0.61.0 (Phase J.4):
+      //   - `--allowed-mcp-server-names` is checked for every server Gemini
+      //     would load — settings, extensions, admin-required, the legacy
+      //     serverCommand, and the session's own (McpClientManager
+      //     `isBlockedBySettings`, in `maybeDiscoverMcpServer`). With the
+      //     session's name alone, no other MCP server can exist in it.
+      //   - `proceed_always_server` and `proceed_always_tool` are offered only
+      //     by a confirmation of type `mcp` (`toPermissionOptions`), which only
+      //     `DiscoveredMCPToolInvocation` produces. The request itself names no
+      //     server (kind `other`, title = the tool's display name).
+      // A user who sets `security.disableAlwaysAllow` removes the marker; the
+      // request is then refused as an ordinary tool (fails closed).
+      contextIdentity: {
+        kind: "exclusive-mcp",
+        allowlistFlag: "--allowed-mcp-server-names",
+        mcpConfirmationOptionIds: ["proceed_always_server", "proceed_always_tool"],
+      },
     },
   },
   {
@@ -135,6 +159,10 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
         reason:
           "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so TabDump cannot approve its actions.",
       },
+      contextIdentity: {
+        kind: "unavailable",
+        reason: "TabDump does not start Codex sessions, so there is no session to give workspace context to.",
+      },
     },
   },
   {
@@ -155,6 +183,17 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
       args: ["agent", "--no-leader", "stdio"],
       npmPackages: ["@xai-official/grok"],
       approval: { kind: "asking-mode", modeIds: ["ask", "default"] },
+      // Checked against 1.0.41 (Phase J.4): its MCP allowlist exists only in
+      // managed settings files — there is no launch flag that limits a session
+      // to one server — and the shape of its permission request for an MCP
+      // call could not be observed without a signed-in xAI account. Without
+      // both, TabDump cannot prove a call is its own, so Grok sessions start
+      // without workspace context instead of with context they cannot use.
+      contextIdentity: {
+        kind: "unavailable",
+        reason:
+          "Grok Build cannot be limited to TabDump's context server, and its approval requests do not say which server a tool belongs to, so TabDump cannot tell its own tools apart from others.",
+      },
     },
   },
 ] as const;

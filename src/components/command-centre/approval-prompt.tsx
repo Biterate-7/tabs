@@ -3,6 +3,9 @@
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
+import { WORKSPACE_CHANGE_HEADLINE } from "@/lib/agents/session-context/changes"
+import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { platformProvider } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
 
@@ -63,6 +66,8 @@ export function ApprovalPrompt({
 }) {
   const denyRef = useRef<HTMLButtonElement | null>(null)
   const expiry = expiryLabel(approval.expiresAt, now)
+  // The name the connector surfaces use ("Gemini CLI"), whichever agent asks.
+  const agentName = platformProvider(approval.provider)?.displayName ?? agentVisualIdentity(approval.provider).displayName
 
   /*
     Focus lands on Deny.
@@ -113,11 +118,37 @@ export function ApprovalPrompt({
         into debug output. See `permissionScopeLabel`.
       */}
       <p className="mt-2 text-body font-medium text-foreground">{approvalActionLabel(approval.action)}</p>
-      <p className="mt-0.5 text-body-sm text-muted-foreground">
-        {permissionScopeLabel(approval.scope)}
-      </p>
+      {approval.change ? (
+        /*
+          A workspace change (J.4), said the same way whichever agent asks:
+          who, what, to which collection — names and titles, never ids.
+        */
+        <div className="mt-0.5">
+          <p className="text-body-sm text-muted-foreground">
+            {agentName} wants to {WORKSPACE_CHANGE_HEADLINE[approval.change.kind]}:
+          </p>
+          <p className="mt-1 text-body-sm font-medium text-foreground">
+            {approval.change.kind === "rename_collection" && approval.change.to
+              ? `${approval.change.subject} → ${approval.change.to}`
+              : approval.change.subject}
+          </p>
+          {approval.change.details.length > 0 && (
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {approval.change.details.map((detail) => (
+                <li key={detail} className="truncate text-meta text-muted-foreground">
+                  {detail}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <p className="mt-0.5 text-body-sm text-muted-foreground">
+          {permissionScopeLabel(approval.scope)}
+        </p>
+      )}
 
-      {approval.targets.length > 0 && (
+      {!approval.change && approval.targets.length > 0 && (
         <ul className="mt-1.5 flex flex-col gap-0.5">
           {approval.targets.map((target) => (
             <li key={target} className="truncate font-mono text-meta text-muted-foreground">
@@ -127,7 +158,7 @@ export function ApprovalPrompt({
         </ul>
       )}
 
-      {approval.reason && <p className="mt-1.5 text-body-sm text-tertiary">{approval.reason}</p>}
+      {approval.reason && !approval.change && <p className="mt-1.5 text-body-sm text-tertiary">{approval.reason}</p>}
 
       {projectName && (
         <p className="mt-1.5 text-label text-tertiary">
@@ -136,7 +167,7 @@ export function ApprovalPrompt({
       )}
       {workspaceName && (
         <p className="mt-1.5 text-label text-tertiary">
-          In the TabDump workspace <span className="text-muted-foreground">{workspaceName}</span>
+          Workspace <span className="text-muted-foreground">{workspaceName}</span>
         </p>
       )}
 

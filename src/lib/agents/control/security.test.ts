@@ -937,9 +937,11 @@ describe("the control plane persists no secret", () => {
   });
 
   it("builds the session context header only from the session's own entry", () => {
-    // ACP: the token comes from the request's contextServer, nowhere else.
+    // ACP: the token comes from the request's contextServer, nowhere else —
+    // and only when the agent has a proven context identity (J.4).
     const acp = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "acp", "adapter.ts"), "utf8"));
-    expect(acp.match(/Bearer \$\{[^}]+\}/g)).toEqual(["Bearer ${request.contextServer.token}"]);
+    expect(acp.match(/Bearer \$\{[^}]+\}/g)).toEqual(["Bearer ${contextServer.token}"]);
+    expect(acp).toContain("const contextServer = contextIdentity && request.contextServer ? request.contextServer : undefined;");
     // Claude: the header is a template Claude Code expands from its own
     // environment, so the token is never on the command line.
     const claude = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "claude-code", "sdk-runtime.ts"), "utf8"));

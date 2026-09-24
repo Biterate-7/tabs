@@ -107,6 +107,9 @@ describe("capabilities", () => {
       "run_commands",
       "stream_events",
       "working_directory",
+      // J.4: carries the session's own context server, whose calls it can
+      // prove structurally (strictMcpConfig + a per-session server name).
+      "workspace_context",
       "write_files",
     ]);
     expect(CLAUDE_CODE_CONTROL_CAPABILITIES.has("mcp")).toBe(false);
@@ -701,5 +704,61 @@ describe("lifecycle", () => {
     runtime.latest().emit(assistantText(CLAUDE_SESSION, "two"));
 
     expect(seen).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Workspace context (Phase J.4)
+ * ------------------------------------------------------------------ */
+
+describe("workspace context (J.4)", () => {
+  const SERVER = "tabdump_abcdefghijklmnop";
+  const READS = ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as const;
+
+  async function withContext(capabilities: readonly (typeof READS)[number][] | readonly string[]) {
+    const context = setup();
+    const created = await context.adapter.createSession({
+      sessionId: SESSION,
+      project: context.project,
+      permissions: context.grant,
+      attachments: [],
+      contextServer: {
+        name: SERVER,
+        url: "http://127.0.0.1:5123/mcp",
+        token: "tdctx_session-credential",
+        workspaceId: "ws-launch",
+        capabilities: capabilities as never,
+      },
+    });
+    if (!created.ok) throw new Error(created.error.code);
+    return context;
+  }
+
+  it("pre-allows exactly the context tools the session may use, under its own server name", async () => {
+    const readOnly = await withContext(READS);
+    const allowed = readOnly.runtime.latest().options.allowedTools.filter((tool) => tool.startsWith("mcp__"));
+    expect(allowed.length).toBeGreaterThan(0);
+    expect(allowed.every((tool) => tool.startsWith(`mcp__${SERVER}__`))).toBe(true);
+    expect(allowed).not.toContain(`mcp__${SERVER}__create_collection`);
+    expect(allowed).not.toContain(`mcp__${SERVER}__rename_collection`);
+
+    const readWrite = await withContext([...READS, "collections.write"]);
+    expect(readWrite.runtime.latest().options.allowedTools).toContain(`mcp__${SERVER}__add_tabs_to_collection`);
+  });
+
+  it("refuses a context tool the session may not use, without raising an approval", async () => {
+    const { runtime, events } = await withContext(READS);
+    const decision = await runtime.latest().requestPermission({ toolName: `mcp__${SERVER}__create_collection` });
+    expect(decision.behavior).toBe("deny");
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+  });
+
+  it("treats a lookalike server's tool as any other MCP tool — refused, never a context call", async () => {
+    const { runtime, events } = await withContext([...READS, "collections.write"]);
+    for (const toolName of ["mcp__tabdump__get_tabs", "mcp__tabdump_zzzzzzzzzzzzzzzz__create_collection"]) {
+      const decision = await runtime.latest().requestPermission({ toolName });
+      expect(decision.behavior, toolName).toBe("deny");
+    }
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
   });
 });

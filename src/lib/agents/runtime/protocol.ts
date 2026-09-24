@@ -6,6 +6,7 @@ import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import { readSessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
+import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 
 /**
@@ -328,6 +329,12 @@ export type RuntimeSessionView = {
   updatedAt: number;
   /** The session's TabDump workspace context, when it has one (Phase J.3). */
   context?: RuntimeSessionContextView;
+  /**
+   * Set when the session was started from a workspace but has no context
+   * (J.4): its agent cannot prove which of its tool calls are TabDump's, so
+   * it was not given the context server. Never set alongside `context`.
+   */
+  contextUnavailable?: "provider";
 };
 
 /**
@@ -341,16 +348,24 @@ export type RuntimeSessionContextView = {
   workspaceId: string;
   workspaceName: string;
   capabilities: readonly SessionContextCapability[];
+  /** Monotonic context version (J.4): 1 at start, +1 per synced change. */
+  version: number;
+  /** When the runtime last accepted a snapshot. */
+  syncedAt: number;
+  /**
+   * `snapshotFingerprint` of what the runtime holds. The Command Centre
+   * compares it with its own to show "Update available" — nothing is sent.
+   */
+  fingerprint: string;
   /** Changes the user approved, for the Command Centre — which owns the workspace — to apply. */
   pendingActions: readonly RuntimeContextActionView[];
 };
 
-export type RuntimeContextActionView = {
-  actionId: string;
-  kind: "create_collection";
-  name: string;
-  tabIds: readonly string[];
-};
+/** An approved change, exactly as the Command Centre applies it (J.3–J.4). */
+export type RuntimeContextActionView =
+  | { actionId: string; kind: "create_collection"; name: string; tabIds: readonly string[] }
+  | { actionId: string; kind: "rename_collection"; collectionId: string; name: string }
+  | { actionId: string; kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] };
 
 /**
  * One event, with the ordering the wire needs.
@@ -415,6 +430,8 @@ export type AuthorizedProjectsResult = {
 export type RuntimeApprovalView = {
   approvalId: string;
   sessionId: string;
+  /** Which agent is asking, so the card can say so (J.4). */
+  provider: AgentProviderId;
   runId?: string;
   action: string;
   scope: string;
@@ -424,6 +441,8 @@ export type RuntimeApprovalView = {
   /** Project-relative paths, or plain descriptions of a workspace change. Never absolute. */
   targets: readonly string[];
   reason?: string;
+  /** A workspace change, structured for the card (J.4). Names and titles only — never ids. */
+  change?: WorkspaceChangeSummary;
   requestedAt: number;
   expiresAt: number;
 };
@@ -621,7 +640,7 @@ export type RuntimeCommandResults = {
   detach_context: RuntimeSessionView;
   respond_to_approval: RuntimeSessionView;
   dispose_session: { sessionId: string };
-  sync_session_context: { sessionId: string };
+  sync_session_context: { sessionId: string; version: number };
   complete_context_action: { sessionId: string };
   link_observation: RuntimeCorrelationView;
   detect_providers: {

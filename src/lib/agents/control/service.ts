@@ -34,6 +34,7 @@ import type {
   SessionHandle,
 } from "./types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 
 /**
  * The control service: the only thing that may drive an adapter.
@@ -215,7 +216,7 @@ export type ControlService = {
    */
   requestWorkspaceApproval(
     sessionId: string,
-    request: { targets: readonly string[]; reason: string }
+    request: { targets: readonly string[]; reason: string; change?: WorkspaceChangeSummary }
   ): Promise<WorkspaceApprovalOutcome>;
 
   /** Withdraws a session's outstanding workspace approvals — it ended. */
@@ -600,7 +601,10 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       // Workspace context (J.3): bound now that the session has an id, and
       // before the agent starts, so the agent's first request can use it.
       let contextServer: SessionContextServerEntry | undefined;
-      if (input.bindContext) {
+      // Only an adapter that can tell its agent's calls to the context server
+      // apart from every other tool is handed one (J.4). The runtime checks
+      // this too; here it is the service's own refusal, before any binding.
+      if (input.bindContext && adapterSupports(gated.value, "workspace_context")) {
         const bound = await input.bindContext(session.id);
         if (bound === "refused") {
           move(session, "failed");
@@ -819,6 +823,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
           workspaceId: session.workspaceId,
           targets: request.targets,
           reason: request.reason,
+          ...(request.change ? { change: request.change } : {}),
         },
         now()
       );

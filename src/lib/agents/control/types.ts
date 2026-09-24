@@ -5,6 +5,7 @@ import type { AgentPermissionGrant } from "./permissions";
 import type { AgentProject } from "./projects";
 import type { AgentSessionStatus } from "./session";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
 
 /**
  * The control plane's provider seam.
@@ -147,9 +148,18 @@ export type ControlStatus = {
  * command line, never in an event, never back to a client.
  */
 export type SessionContextServerEntry = {
+  /** The per-session server name (session-context/identity.ts). An identity, not a secret. */
   name: string;
   url: string;
   token: string;
+  /** The one workspace the session is bound to. */
+  workspaceId: string;
+  /**
+   * What the runtime established the session may do (J.4), for an adapter
+   * answering its agent before a call reaches the server. Never widened by an
+   * adapter; the server checks every call against the live binding anyway.
+   */
+  capabilities: readonly SessionContextCapability[];
 };
 
 export type CreateSessionRequest = {

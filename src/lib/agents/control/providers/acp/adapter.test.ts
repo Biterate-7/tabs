@@ -8,12 +8,30 @@ import type { AgentControlEvent } from "../../events";
 import type { AgentPermissionScope } from "../../permissions";
 import type { FakeAgentHandler } from "./__fixtures__/fake-agent";
 import type { AcpApprovalPolicy } from "./launcher";
+import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
 
 const T0 = 1_700_000_000_000;
 const ROOT = "C:/work/research";
 
 /** The policy a real entry declares for an agent with an asking mode (Gemini's). */
 const ASKING: AcpApprovalPolicy = { kind: "asking-mode", modeIds: ["default"] };
+
+/** Gemini CLI 0.61.0's context identity, as its launch entry declares it (J.4). */
+const GEMINI_IDENTITY = {
+  kind: "exclusive-mcp",
+  allowlistFlag: "--allowed-mcp-server-names",
+  mcpConfirmationOptionIds: ["proceed_always_server", "proceed_always_tool"],
+} as const;
+
+const SERVER_NAME = "tabdump_abcdefghijklmnop";
+
+const CONTEXT_SERVER = {
+  name: SERVER_NAME,
+  url: "http://127.0.0.1:5123/mcp",
+  token: "tdctx_session-credential",
+  workspaceId: "ws-launch",
+  capabilities: ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as readonly SessionContextCapability[],
+};
 
 /** `session/new` as an agent in its asking mode answers it. */
 function inAskingMode(sessionId = "acp-1") {
@@ -188,30 +206,52 @@ describe("sessions", () => {
     expect(adapter.providerSessionIdFor("s1")).toBe("acp-1");
   });
 
-  it("gives the agent the session's own TabDump MCP server, with its credential in the request (Phase J.3)", async () => {
-    const { agent, adapter } = setup();
+  it("gives the agent the session's own TabDump MCP server, limited to it at launch, with its credential in the request (J.3–J.4)", async () => {
+    const { agent, adapter } = setup({}, { contextIdentity: GEMINI_IDENTITY });
+    expect(adapter.getCapabilities().has("workspace_context")).toBe(true);
     const p = project();
     const created = await adapter.createSession({
       sessionId: "s1",
       project: p,
       permissions: p.permissions,
       attachments: [],
-      contextServer: { name: "tabdump", url: "http://127.0.0.1:5123/mcp", token: "tdctx_session-credential" },
+      contextServer: CONTEXT_SERVER,
     });
     expect(created.ok).toBe(true);
 
+    // The launch names the server so the agent loads no other; never the credential.
+    expect(agent.launches).toEqual([{ projectPath: ROOT, contextServerName: SERVER_NAME }]);
     // Over the agent's stdin, in session/new — never on a command line.
     expect(agent.received.find((message) => message.method === "session/new")?.params).toMatchObject({
       mcpServers: [
         {
           type: "http",
-          name: "tabdump",
+          name: SERVER_NAME,
           url: "http://127.0.0.1:5123/mcp",
           headers: [{ name: "Authorization", value: "Bearer tdctx_session-credential" }],
         },
       ],
     });
     adapter.dispose();
+  });
+
+  it("never hands the context server to an agent whose calls to it cannot be proven (J.4)", async () => {
+    for (const contextIdentity of [undefined, { kind: "unavailable", reason: "no identity" } as const]) {
+      const { agent, adapter } = setup({}, contextIdentity ? { contextIdentity } : {});
+      expect(adapter.getCapabilities().has("workspace_context")).toBe(false);
+      const p = project();
+      const created = await adapter.createSession({
+        sessionId: "s1",
+        project: p,
+        permissions: p.permissions,
+        attachments: [],
+        contextServer: CONTEXT_SERVER,
+      });
+      expect(created.ok).toBe(true);
+      expect(agent.launches).toEqual([{ projectPath: ROOT }]);
+      expect(agent.received.find((message) => message.method === "session/new")?.params).toEqual({ cwd: ROOT, mcpServers: [] });
+      adapter.dispose();
+    }
   });
 
   it("puts the agent in its asking mode when it starts in another", async () => {
@@ -816,5 +856,110 @@ describe("an agent TabDump cannot hold to its approvals (Phase J.2)", () => {
     });
     expect(created).toMatchObject({ ok: false, error: { code: "unsupported" } });
     expect(agent.launches).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Workspace context attribution (Phase J.4)
+ * ------------------------------------------------------------------ */
+
+describe("telling the session's context server apart from every other tool (J.4)", () => {
+  /** Exactly what Gemini CLI 0.61.0 offers for an MCP confirmation (`toPermissionOptions`, type "mcp"). */
+  const GEMINI_MCP_OPTIONS = [
+    { optionId: "proceed_always_server", name: "Allow all server tools for this session", kind: "allow_always" },
+    { optionId: "proceed_always_tool", name: "Allow tool for this session", kind: "allow_always" },
+    { optionId: "proceed_once", name: "Allow", kind: "allow_once" },
+    { optionId: "cancel", name: "Reject", kind: "reject_once" },
+  ];
+  /** A confirmation with "always allow" switched off by the user: no marker. */
+  const BASIC_OPTIONS = GEMINI_MCP_OPTIONS.slice(2);
+
+  let answers: unknown[] = [];
+
+  function toolPrompt(toolCall: Record<string, unknown>, options: readonly Record<string, unknown>[]): FakeAgentHandler {
+    return async (params, agent) => {
+      const id = params.sessionId as string;
+      const answer = await agent.ask("session/request_permission", { sessionId: id, toolCall, options });
+      const outcome = (answer.result as { outcome: { outcome: string; optionId?: string } }).outcome;
+      answers.push(outcome);
+      if (outcome.optionId === "proceed_once") {
+        agent.update(id, { sessionUpdate: "tool_call_update", toolCallId: toolCall.toolCallId, status: "completed", kind: "other" });
+      }
+      await flush();
+      return { stopReason: "end_turn" };
+    };
+  }
+
+  async function run(
+    handler: FakeAgentHandler,
+    contextServer: typeof CONTEXT_SERVER | null = CONTEXT_SERVER,
+    extra: Partial<Parameters<typeof createAcpControlAdapter>[0]> = { contextIdentity: GEMINI_IDENTITY }
+  ) {
+    answers = [];
+    const { adapter, events } = setup({ "session/prompt": handler }, extra);
+    const p = project(["read_project"]);
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      project: p,
+      permissions: p.permissions,
+      attachments: [],
+      ...(contextServer ? { contextServer } : {}),
+    });
+    if (!created.ok) throw new Error(created.error.code);
+    await adapter.sendMessage({ sessionId: "s1", text: "look at my tabs", context: { attachments: [] } });
+    await flush(30);
+    return { adapter, events };
+  }
+
+  const MCP_CALL = { toolCallId: "get_tabs-1", status: "pending", title: "get_tabs (tabdump_abcdefghijklmnop MCP Server)", kind: "other" };
+
+  it("accepts the genuine context call — allowed once, never always, with no extra prompt and no enforcement", async () => {
+    const { events } = await run(toolPrompt(MCP_CALL, GEMINI_MCP_OPTIONS));
+    expect(answers).toEqual([{ outcome: "selected", optionId: "proceed_once" }]);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(events.some((event) => event.kind === "error")).toBe(false);
+    expect(events.filter((event) => event.kind === "tool_started").map((event) => event.tool?.name)).toEqual(["TabDump"]);
+    expect(events.at(-1)?.kind).toBe("run_completed");
+  });
+
+  it("rejects an MCP call without the structural marker, whatever its title says", async () => {
+    // Title claims the context server; options lack the MCP-only ids.
+    const { events } = await run(toolPrompt(MCP_CALL, BASIC_OPTIONS));
+    expect(answers).toEqual([{ outcome: "selected", optionId: "cancel" }]);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+  });
+
+  it("rejects a forged identity: the marker on a tool of another kind is not a context call", async () => {
+    const forged = { ...MCP_CALL, kind: "execute", title: "tabdump" };
+    const { events } = await run(toolPrompt(forged, GEMINI_MCP_OPTIONS));
+    // An ungranted command is refused before anyone is asked.
+    expect(answers).toEqual([{ outcome: "selected", optionId: "cancel" }]);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+  });
+
+  it("rejects the marker in a session that has no context server — there is nothing for it to be", async () => {
+    await run(toolPrompt(MCP_CALL, GEMINI_MCP_OPTIONS), null);
+    expect(answers).toEqual([{ outcome: "selected", optionId: "cancel" }]);
+  });
+
+  it("rejects the marker for an agent that was never launched exclusive", async () => {
+    await run(toolPrompt(MCP_CALL, GEMINI_MCP_OPTIONS), CONTEXT_SERVER, {});
+    expect(answers).toEqual([{ outcome: "selected", optionId: "cancel" }]);
+  });
+
+  it("rejects a context call for a session the runtime gave no capability", async () => {
+    await run(toolPrompt(MCP_CALL, GEMINI_MCP_OPTIONS), { ...CONTEXT_SERVER, capabilities: [] });
+    expect(answers).toEqual([{ outcome: "selected", optionId: "cancel" }]);
+  });
+
+  it("still stops an agent that runs a connected tool without asking — context does not relax enforcement", async () => {
+    const unasked: FakeAgentHandler = async (params, agent) => {
+      const id = params.sessionId as string;
+      agent.update(id, { sessionUpdate: "tool_call", toolCallId: "x1", kind: "other", status: "in_progress" });
+      await flush();
+      return { stopReason: "end_turn" };
+    };
+    const { events } = await run(unasked);
+    expect(events.find((event) => event.kind === "error")?.summary).toMatch(/acted without asking/i);
   });
 });
