@@ -20,10 +20,14 @@ import type { AgentApproval } from "@/lib/agents/control/approvals";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentProject } from "@/lib/agents/control/projects";
 import type { AgentSession } from "@/lib/agents/control/session";
+import type { SessionContextAccess } from "@/lib/agents/session-context/capabilities";
+import type { SessionContextRegistry } from "@/lib/agents/session-context/registry";
+import type { AgentPermissionGrant } from "@/lib/agents/control/permissions";
 import type {
   AgentControlAdapter,
   ControlError,
   ControlUnsubscribe,
+  SessionContextServerEntry,
 } from "@/lib/agents/control/types";
 import type { CorrelationRegistry } from "./correlation";
 import type { EventJournal } from "./journal";
@@ -40,6 +44,7 @@ import type {
   RuntimeErrorCode,
   RuntimeProviderStatus,
   RuntimeResult,
+  RuntimeSessionContextView,
   RuntimeSessionView,
   RuntimeStatus,
 } from "./protocol";
@@ -227,7 +232,31 @@ export type RuntimeHostOptions = {
    * `lib/agents/launch/detect.ts` — it returns booleans, never paths.
    */
   detect?: () => readonly ProviderDetection[];
+  /**
+   * Workspace context for agent sessions (Phase J.3): the registry of
+   * session bindings and the loopback MCP server agents reach them through.
+   * Supplied only by a local runtime's wiring. Absent: sessions get no
+   * workspace context, exactly as before.
+   */
+  sessionContext?: { registry: SessionContextRegistry; url(): Promise<string> };
 };
+
+/**
+ * How much of its workspace a session may touch, from its grant — never from
+ * the request (Phase J.3).
+ *
+ * Reading needs `read_workspace` in the project's grant; a session started
+ * from a workspace with no project reads that one workspace and nothing else.
+ * Writing needs `write_workspace`, which the user turns on for an agent, and
+ * even then each change asks. `undefined`: no context at all.
+ */
+export function sessionContextAccessFor(
+  grant: AgentPermissionGrant,
+  projectId: string | undefined
+): SessionContextAccess | undefined {
+  if (projectId && !grant.scopes.includes("read_workspace")) return undefined;
+  return projectId && grant.scopes.includes("write_workspace") ? "read_write" : "read";
+}
 
 export type RuntimeHost = {
   /** This process's identity, for the generation check. See `RuntimeStatus.runtimeId`. */
@@ -510,6 +539,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       resolveProject: (projectId) => projectFor(actorId, projectId),
       now,
       createId: () => `cs-${createId()}`,
+      // A session that ends takes its workspace credential with it (J.3).
+      onSessionEnded: (sessionId) => releaseContext(sessionId),
     });
 
     service.subscribe((event) => onEvent(event));
@@ -617,6 +648,45 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     return runId;
   }
 
+  /* ---------------------------------------------------------------- *
+   * Session workspace context (Phase J.3)
+   * ---------------------------------------------------------------- */
+
+  // A change an agent proposes goes to the service of the actor who owns the
+  // session — the same broker, the same approval card as every other.
+  options.sessionContext?.registry.setApprover(async (request) => {
+    const ownerId = hosted.get(request.sessionId)?.ownerId;
+    if (ownerId === undefined) return "cancelled";
+    return serviceFor(ownerId).requestWorkspaceApproval(request.sessionId, {
+      targets: request.targets,
+      reason: request.reason,
+    });
+  });
+
+  /** Revokes a session's credential and withdraws its pending workspace approvals. Idempotent. */
+  function releaseContext(sessionId: string): void {
+    options.sessionContext?.registry.release(sessionId);
+    const ownerId = hosted.get(sessionId)?.ownerId;
+    if (ownerId !== undefined) serviceFor(ownerId).cancelWorkspaceApprovals(sessionId);
+  }
+
+  function contextViewOf(sessionId: string): RuntimeSessionContextView | undefined {
+    const registry = options.sessionContext?.registry;
+    const binding = registry?.binding(sessionId);
+    if (!registry || !binding) return undefined;
+    return {
+      workspaceId: binding.workspaceId,
+      workspaceName: binding.snapshot.workspace.name,
+      capabilities: [...binding.capabilities],
+      pendingActions: registry.pendingApplications(sessionId).map((action) => ({
+        actionId: action.id,
+        kind: action.kind,
+        name: action.name,
+        tabIds: [...action.tabIds],
+      })),
+    };
+  }
+
   function approvalsFor(sessionId: string): RuntimeApprovalView[] {
     const ownerId = hosted.get(sessionId)?.ownerId;
     if (ownerId === undefined) return [];
@@ -670,6 +740,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     if (session.title) view.title = session.title;
     if (session.contextSnapshotId) view.contextSnapshotId = session.contextSnapshotId;
     if (host?.activeRunId) view.activeRunId = host.activeRunId;
+    const context = contextViewOf(session.id);
+    if (context) view.context = context;
 
     return view;
   }
@@ -917,7 +989,28 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       case "create_session": {
+        const grant = grantFor(actor.id, command.projectId);
+        const access = sessionContextAccessFor(grant, command.projectId);
+        const sessionContext = options.sessionContext;
         const started = await actorService.startSession({
+          ...(sessionContext && access && command.workspaceId && command.contextSnapshot
+            ? {
+                bindContext: async (sessionId: string) => {
+                  const bound = await sessionContext.registry.bind({
+                    sessionId,
+                    ownerId: actor.id,
+                    workspaceId: command.workspaceId!,
+                    access,
+                    snapshot: command.contextSnapshot,
+                  });
+                  if (!bound) return "refused" as const;
+                  // Handed to the service, which hands it to the one adapter starting
+                  // the agent. It goes nowhere else.
+                  const entry: SessionContextServerEntry = { name: "tabdump", url: await sessionContext.url(), token: bound.token };
+                  return entry;
+                },
+              }
+            : {}),
           provider: command.provider,
           ...(command.projectId ? { projectId: command.projectId } : {}),
           ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
@@ -926,7 +1019,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           // client cannot ask for permissions; it can only name a project the
           // user already authorized, and the grant is whatever that project
           // carries. A session with no project gets nothing.
-          permissions: grantFor(actor.id, command.projectId),
+          permissions: grant,
           ...(command.context ? { context: command.context } : {}),
         });
 
@@ -1146,6 +1239,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           await actorService.cancelRun(command.sessionId);
         }
         releaseAdapterSession(actor.id, command.sessionId);
+        releaseContext(command.sessionId);
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
@@ -1233,6 +1327,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
             await actorService.cancelRun(sessionId);
           }
           releaseAdapterSession(actor.id, sessionId);
+          releaseContext(sessionId);
           hosted.delete(sessionId);
           journal.forget(sessionId);
           correlations.removeControlSession(sessionId);
@@ -1240,6 +1335,32 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
         await adapter.disconnect();
         return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      /* ------------------------------------------------------------ *
+       * Phase J.3 — session workspace context
+       * ------------------------------------------------------------ */
+
+      case "sync_session_context": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const registry = options.sessionContext?.registry;
+        if (!registry?.binding(command.sessionId)) return runtimeFailure("invalid_session_state");
+        // The binding's workspace is fixed; a snapshot of any other is refused here.
+        if (!registry.update(command.sessionId, command.snapshot)) return runtimeFailure("context_invalid");
+        return { ok: true, value: { sessionId: command.sessionId } };
+      }
+
+      case "complete_context_action": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const registry = options.sessionContext?.registry;
+        if (!registry) return runtimeFailure("invalid_session_state");
+        // Only an action the user approved, of this session, can be completed.
+        if (!registry.complete(command.sessionId, command.actionId, command.outcome)) {
+          return runtimeFailure("invalid_request");
+        }
+        return { ok: true, value: { sessionId: command.sessionId } };
       }
     }
   }
@@ -1312,6 +1433,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         correlations.removeControlSession(sessionId);
       }
 
+      // Every workspace credential stops working with the runtime (J.3).
+      options.sessionContext?.registry.releaseAll();
+
       hosted.clear();
       journal.clear();
       listeners.clear();
@@ -1377,6 +1501,8 @@ function sessionIdOf(command: RuntimeCommand): string | undefined {
     case "detach_context":
     case "dispose_session":
     case "link_observation":
+    case "sync_session_context":
+    case "complete_context_action":
       return command.sessionId;
     case "get_status":
     case "list_sessions":
@@ -1399,7 +1525,8 @@ function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
     sessionId: approval.sessionId,
     action: approval.action,
     scope: approval.scope,
-    projectId: approval.projectId,
+    ...(approval.projectId ? { projectId: approval.projectId } : {}),
+    ...(approval.workspaceId ? { workspaceId: approval.workspaceId } : {}),
     targets: [...approval.targets],
     requestedAt: approval.requestedAt,
     expiresAt: approval.expiresAt,

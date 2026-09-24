@@ -2,9 +2,7 @@ import "server-only";
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
 import { ACP_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
-import { createMcpLinker } from "@/lib/agents/launch/mcp-link";
 import { createAcpProcessLauncher, detectLocalProviders } from "@/lib/agents/launch/process";
-import { getMcpTokenStore } from "@/lib/mcp/tokens-postgres";
 import { createRemoteClaudeRuntime } from "@/lib/agents/control/providers/claude-code/remote-runtime";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
 import { createRemoteBindings } from "@/lib/agents/remote/bindings";
@@ -14,10 +12,12 @@ import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
 import { resolveProviderCredential } from "@/lib/agents/credentials/server";
 import { assertExecutionAllowed, denyRemoteExecution } from "./gate";
 import { createRuntimeHost } from "./host";
+import { createSessionContextServer } from "@/lib/agents/session-context/http";
+import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
+import type { SessionContextServer } from "@/lib/agents/session-context/http";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { ClaudeCredentialSource } from "@/lib/agents/control/providers/claude-code/runtime";
 import type { AgentControlAdapter } from "@/lib/agents/control/types";
-import type { AcpMcpLinker } from "@/lib/agents/control/providers/acp/launcher";
 import type { ProviderDetection } from "./protocol";
 import type { RemoteSandboxService } from "@/lib/agents/remote/sandbox";
 import type { RemoteStore } from "@/lib/agents/remote/store";
@@ -257,42 +257,8 @@ function localAdapter(ownerId: string): AgentControlAdapter {
  */
 const localAcpByActor = new Map<string, AgentControlAdapter>();
 
-const ACP_AGENT_NAMES: Partial<Record<AgentProviderId, string>> = {
-  gemini: "Gemini CLI",
-  grok: "Grok Build",
-  "openai-codex": "Codex",
-};
-
-/**
- * TabDump's own MCP endpoint on this machine, for per-session links.
- *
- * Built from this process's own configuration, never from a request header:
- * a `Host` header is chosen by the caller, and a link built from one would
- * send a session's token to wherever the caller said.
- */
-function localMcpUrl(): string {
-  const explicit = process.env.TABDUMP_MCP_LOCAL_URL;
-  if (explicit && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/api\/mcp$/.test(explicit)) return explicit;
-  const port = /^\d{2,5}$/.test(process.env.PORT ?? "") ? process.env.PORT : "3000";
-  return `http://127.0.0.1:${port}/api/mcp`;
-}
-
-/**
- * A per-session TabDump MCP link for a signed-in actor, when this server has
- * the token store. Signed-out local use has no account to scope a token to,
- * so it gets no link — and the session still runs, with attached context.
- */
-async function mcpLinkerFor(provider: AgentProviderId, ownerId: string) {
-  if (!ownerId.startsWith("account:")) return undefined;
-  const store = await getMcpTokenStore().catch(() => undefined);
-  if (!store) return undefined;
-  return createMcpLinker({
-    store,
-    url: localMcpUrl(),
-    userId: ownerId.slice("account:".length),
-    agentName: ACP_AGENT_NAMES[provider] ?? provider,
-  });
-}
+/** The loopback MCP server agent sessions reach their workspace through (J.3). */
+let localContextServer: SessionContextServer | undefined;
 
 function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentControlAdapter | undefined {
   const entry = launchEntryFor(provider)?.acp;
@@ -302,18 +268,12 @@ function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentContr
   const existing = localAcpByActor.get(key);
   if (existing) return existing;
 
-  // Resolved lazily, per session: the token store is a database connection
-  // that a signed-out developer's runtime never needs to open.
-  let linker: Promise<AcpMcpLinker | undefined> | undefined;
+  // Workspace context reaches ACP sessions through the host's session
+  // context server (Phase J.3), bound per session to one workspace.
   const adapter = createAcpControlAdapter({
     provider,
     launch: createAcpProcessLauncher({ provider, env: process.env }),
     approval: entry.approval,
-    mcpLink: async (request) => {
-      linker ??= mcpLinkerFor(provider, ownerId);
-      const resolved = await linker;
-      return resolved ? resolved(request) : undefined;
-    },
   });
   localAcpByActor.set(key, adapter);
   return adapter;
@@ -434,12 +394,23 @@ function localHostWith(
 ): RuntimeHost {
   if (localHost) return localHost;
 
+  // Workspace context for agent sessions (J.3): local runtimes only — an
+  // agent here can reach this machine's loopback interface.
+  let sessionContext: { registry: ReturnType<typeof createSessionContextRegistry>; url(): Promise<string> } | undefined;
+  if (local) {
+    const registry = createSessionContextRegistry({});
+    localContextServer = createSessionContextServer({ registry });
+    const server = localContextServer;
+    sessionContext = { registry, url: () => server.url() };
+  }
+
   localHost = createRuntimeHost({
     gate,
     resolveAdapter,
     providers: local?.providers ?? REPORTED_PROVIDERS,
     // Only a local runtime can say what is installed on the user's machine.
     ...(local ? { detect: local.detect } : {}),
+    ...(sessionContext ? { sessionContext } : {}),
   });
   registerShutdown();
   return localHost;
@@ -473,6 +444,11 @@ export async function disposeRuntimeHost(): Promise<void> {
   resolved = undefined;
 
   if (current) await current.dispose();
+  // Every session credential is already revoked by the host; the loopback
+  // listener goes with it.
+  const contextServer = localContextServer;
+  localContextServer = undefined;
+  await contextServer?.close();
 
   // The adapters outlive the host by design — disposing them is what actually
   // releases the provider processes, so it happens last and only when the host

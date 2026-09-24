@@ -1,3 +1,4 @@
+import { APPROVAL_ACTION_LABELS } from "@/lib/agents/control/approvals";
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import type { AgentControlEventKind } from "@/lib/agents/control/events";
@@ -226,6 +227,16 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
  * ------------------------------------------------------------------ */
 
 /**
+ * An approval's action in words — "Create files", "Change your TabDump
+ * workspace" — rather than its identifier. Unknown actions (a newer runtime)
+ * fall back to the identifier rather than to nothing.
+ */
+export function approvalActionLabel(action: string): string {
+  const label = (APPROVAL_ACTION_LABELS as Record<string, string>)[action];
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : action;
+}
+
+/**
  * What a permission scope is called when a person has to decide about it.
  *
  * `AgentPermissionScope` is an internal identifier — `write_project`,
@@ -248,6 +259,7 @@ export const PERMISSION_SCOPE_LABEL: Record<AgentPermissionScope, string> = {
   run_commands: "Run commands",
   network_access: "Use the network",
   mcp_tools: "Use connected tools",
+  write_workspace: "Change TabDump content",
 };
 
 /**

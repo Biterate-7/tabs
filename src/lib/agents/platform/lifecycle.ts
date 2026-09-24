@@ -308,6 +308,8 @@ export const APPROVABLE_SCOPES: readonly { scope: AgentPermissionScope; defaultO
   { scope: "read_project", defaultOn: true },
   { scope: "write_project", defaultOn: false },
   { scope: "run_commands", defaultOn: false },
+  // Creating a collection in the workspace a session was started from (J.3).
+  { scope: "write_workspace", defaultOn: false },
 ];
 
 export function defaultApprovedScopes(provider: PlatformProvider): AgentPermissionScope[] {

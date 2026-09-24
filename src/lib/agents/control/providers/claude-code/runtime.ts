@@ -176,6 +176,11 @@ export type ClaudeRuntimeStartOptions = {
   disallowedTools: readonly string[];
   /** The provider's session id to reattach to, when resuming. */
   resume?: string;
+  /**
+   * TabDump's own MCP server for this session (Phase J.3), when it has
+   * workspace context. The only MCP server a session can have.
+   */
+  contextServer?: { name: string; url: string; token: string };
   /** Receives every provider message, in order. */
   onMessage: (message: ClaudeRuntimeMessage) => void;
   /** Called when the provider asks permission. Must resolve, or the run stays blocked. */

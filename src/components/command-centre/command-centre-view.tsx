@@ -24,6 +24,8 @@ import { useNow } from "@/hooks/use-now"
 import { useRemoteProjects } from "@/hooks/use-remote-projects"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
 import { useAgentPlatform } from "@/hooks/use-agent-platform"
+import { useCollectionStore } from "@/hooks/use-collection-store"
+import { useSessionContext } from "@/hooks/use-session-context"
 import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { isChatReady } from "@/lib/agents/platform/lifecycle"
@@ -35,6 +37,7 @@ import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/a
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
 import { cn } from "@/lib/utils"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
+import type { Workspace } from "@/lib/workspace/types"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
 
@@ -286,6 +289,21 @@ export function CommandCentreView({
     [world.workspaces]
   )
 
+  /*
+    Session workspace context (Phase J.3): the Command Centre's own collection
+    store — the same one the workspace view uses — so an approved change is
+    made exactly as a person making it by hand would make it, and the
+    snapshots it sends are current.
+  */
+  const collectionStore = useCollectionStore(world.workspaces as Workspace[])
+  const sessionContext = useSessionContext({
+    client: runtime.client,
+    sessions: sessions.sessions,
+    world,
+    collections: collectionStore.collections,
+    createCollection: collectionStore.createCollection,
+  })
+
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
       setCreateError(null)
@@ -303,7 +321,10 @@ export function CommandCentreView({
       }
 
       setCreating(true)
-      const outcome = await sessions.createSession(input)
+      // The workspace the session is started from goes with it, for the agent
+      // to query. What the agent may do with it is the runtime's decision.
+      const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
+      const outcome = await sessions.createSession({ ...input, ...(contextSnapshot ? { contextSnapshot } : {}) })
       setCreating(false)
 
       if (typeof outcome === "string") {
@@ -315,7 +336,7 @@ export function CommandCentreView({
       setRequestedSessionId(outcome.sessionId)
       setNewSessionOpen(false)
     },
-    [platform, projects.projects, sessions]
+    [platform, projects.projects, sessionContext, sessions]
   )
 
   /*
@@ -459,6 +480,7 @@ export function CommandCentreView({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
                 onDispose={() => void sessions.disposeSession(selected.view.sessionId)}
+                {...(selected.view.context ? { workspaceContext: selected.view.context } : {})}
               />
 
               <EventStream events={session.events}>
@@ -468,6 +490,9 @@ export function CommandCentreView({
                     approval={approval}
                     {...(projectNameOf(approval.projectId)
                       ? { projectName: projectNameOf(approval.projectId) }
+                      : {})}
+                    {...(approval.workspaceId && workspaceNameOf(approval.workspaceId)
+                      ? { workspaceName: workspaceNameOf(approval.workspaceId) }
                       : {})}
                     pending={session.pending}
                     now={now}

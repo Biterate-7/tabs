@@ -1,9 +1,11 @@
 "use client"
 
-import { PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react"
+import { Check, Minus, PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AgentStatusPill } from "@/components/agents/agent-status-pill"
 import { IconButton } from "@/components/ui/icon-button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { READ_CAPABILITIES, SESSION_CONTEXT_ACCESS_LABELS } from "@/lib/agents/session-context/capabilities"
 import {
   SESSION_ORIGIN_LABEL,
   SESSION_STATUS_LABEL,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/agents/command-centre/presentation"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import type { RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
 
 /**
  * Who is working, on what, and in what state.
@@ -38,12 +41,15 @@ export function SessionHeader({
   contextPanelOpen,
   onToggleContextPanel,
   onDispose,
+  workspaceContext,
 }: {
   session: CommandCentreSession
   projectName?: string
   contextPanelOpen: boolean
   onToggleContextPanel: () => void
   onDispose: () => void
+  /** The TabDump workspace the agent works in, when the session has one (Phase J.3). */
+  workspaceContext?: RuntimeSessionContextView
 }) {
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
@@ -76,6 +82,7 @@ export function SessionHeader({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        {workspaceContext && <WorkspaceContextIndicator context={workspaceContext} />}
         <AgentStatusPill
           tone={sessionStatusTone(view.status)}
           label={SESSION_STATUS_LABEL[view.status]}
@@ -103,5 +110,62 @@ export function SessionHeader({
         </IconButton>
       </div>
     </header>
+  )
+}
+
+/**
+ * "This agent can see your workspace" — said once, small, and without the
+ * machinery (Phase J.3). Opening it says exactly what the agent can read and
+ * that any change asks first. Nothing here names MCP, a port or a token.
+ */
+function WorkspaceContextIndicator({ context }: { context: RuntimeSessionContextView }) {
+  const canWrite = context.capabilities.includes("collections.write")
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label={`Workspace context: ${context.workspaceName}`}
+        className="flex max-w-48 items-center gap-1 rounded-full border border-subtle px-2 py-0.5 text-label text-muted-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <span className="text-tertiary">Context</span>
+        <span className="truncate text-foreground">{context.workspaceName}</span>
+        <Check className="size-3 shrink-0 text-success" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64">
+        <div className="flex flex-col gap-2.5">
+          <div>
+            <p className="text-eyebrow text-tertiary">Workspace</p>
+            <p className="truncate text-body-sm text-foreground">{context.workspaceName}</p>
+          </div>
+          <div>
+            <p className="text-eyebrow text-tertiary">Access</p>
+            <ul aria-label="What the agent can read" className="mt-1 flex flex-col gap-0.5">
+              {READ_CAPABILITIES.filter((capability) => context.capabilities.includes(capability)).map((capability) => (
+                <li key={capability} className="flex items-center gap-1.5 text-body-sm text-foreground">
+                  <Check className="size-3.5 shrink-0 text-success" aria-hidden />
+                  {SESSION_CONTEXT_ACCESS_LABELS[capability]}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-eyebrow text-tertiary">Write actions</p>
+            <p className="flex items-center gap-1.5 text-body-sm text-muted-foreground">
+              {canWrite ? (
+                <>
+                  <Check className="size-3.5 shrink-0 text-success" aria-hidden />
+                  Require your approval
+                </>
+              ) : (
+                <>
+                  <Minus className="size-3.5 shrink-0" aria-hidden />
+                  Not allowed in this session
+                </>
+              )}
+            </p>
+          </div>
+          <p className="text-meta text-tertiary">Only this workspace. Switching workspaces does not move this session.</p>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

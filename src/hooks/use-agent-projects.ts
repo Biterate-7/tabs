@@ -48,6 +48,10 @@ export const DEFAULT_PROJECT_SCOPES: readonly AgentPermissionScope[] = [
   "read_workspace",
   "read_project",
   "write_project",
+  // Offered, not assumed: the Command Centre narrows this list to what the
+  // user approved for the agent in Connect Agent (projectScopesFor), where it
+  // is off by default — and each use still asks (J.3).
+  "write_workspace",
 ] as const
 
 export type ProjectSyncState = "idle" | "syncing" | "synced" | "failed"

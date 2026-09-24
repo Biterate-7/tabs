@@ -240,3 +240,37 @@ describe("starting a run", () => {
     expect(JSON.stringify(call.prompt)).not.toContain(LEAK_CANARY);
   });
 });
+
+describe("the session's TabDump context server (Phase J.3)", () => {
+  const TOKEN = "tdctx_SESSION-CREDENTIAL-MUST-NOT-REACH-ARGV";
+
+  it("configures no MCP server at all for a session without workspace context", async () => {
+    const runtime = createSdkClaudeRuntime({ moduleSpecifier: FAKE_SDK, credentials: staticCredentialSource() });
+    await runtime.start(startOptions());
+    const options = recordedCalls()[0]?.options as Record<string, unknown>;
+    expect(options.mcpServers).toEqual({});
+    expect(options.strictMcpConfig).toBe(true);
+    expect((options.env as Record<string, string>).TABDUMP_CONTEXT_TOKEN).toBeUndefined();
+  });
+
+  it("gives the agent exactly TabDump's server, with the credential in its environment and only a placeholder in its config", async () => {
+    const runtime = createSdkClaudeRuntime({ moduleSpecifier: FAKE_SDK, credentials: staticCredentialSource() });
+    await runtime.start(
+      startOptions({ contextServer: { name: "tabdump", url: "http://127.0.0.1:5123/mcp", token: TOKEN } })
+    );
+    const options = recordedCalls()[0]?.options as Record<string, unknown>;
+
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.mcpServers).toEqual({
+      tabdump: {
+        type: "http",
+        url: "http://127.0.0.1:5123/mcp",
+        headers: { Authorization: "Bearer ${TABDUMP_CONTEXT_TOKEN}" },
+      },
+    });
+    // The SDK turns mcpServers into `--mcp-config <json>` on the command line:
+    // the token must not be anywhere in what becomes argv.
+    expect(JSON.stringify(options.mcpServers)).not.toContain(TOKEN);
+    expect((options.env as Record<string, string>).TABDUMP_CONTEXT_TOKEN).toBe(TOKEN);
+  });
+});

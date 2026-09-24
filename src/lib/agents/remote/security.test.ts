@@ -181,13 +181,17 @@ describe("no arbitrary shell or filesystem surface", () => {
 
     expect(codeOf(protocol)).not.toMatch(/sandbox/i);
     // And the vocabulary did not grow a bytes-carrying verb. Phase J added
-    // four, pinned by name: none carries a path, a sandbox or a byte.
-    expect(RUNTIME_COMMAND_NAMES).toHaveLength(18);
+    // four and Phase J.3 two, pinned by name: none carries a path, a sandbox
+    // or a byte. The J.3 pair carry a session id, a workspace snapshot of that
+    // session's own workspace, and an action outcome.
+    expect(RUNTIME_COMMAND_NAMES).toHaveLength(20);
     expect(RUNTIME_COMMAND_NAMES.slice(14)).toEqual([
       "detect_providers",
       "connect_provider",
       "authenticate_provider",
       "disconnect_provider",
+      "sync_session_context",
+      "complete_context_action",
     ]);
   });
 

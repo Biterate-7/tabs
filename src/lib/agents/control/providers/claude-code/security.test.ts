@@ -496,13 +496,16 @@ describe("MCP is closed rather than merely unused", () => {
     expect(CLAUDE_CODE_CONTROL_CAPABILITIES.has("mcp")).toBe(false);
   });
 
-  it("starts the runtime with no servers and strict config", () => {
+  it("starts the runtime with strict config and no MCP server but TabDump's own session server", () => {
     // Without `strictMcpConfig`, a session would silently inherit whatever
     // MCP servers the user's own Claude configuration defines — tools
-    // TabDump never authorized and cannot map to a scope.
+    // TabDump never authorized and cannot map to a scope. Since Phase J.3 the
+    // one server a session may have is TabDump's own, built from the
+    // session's context binding; sdk-runtime.test.ts proves the behaviour.
     const runtime = codeOf(sources.find((entry) => entry.name === "sdk-runtime.ts")!.source);
 
-    expect(runtime).toContain("mcpServers: {}");
+    expect(runtime).toContain("mcpServers: contextMcpServers(start.contextServer)");
+    expect(runtime).toContain("if (!server) return {};");
     expect(runtime).toContain("strictMcpConfig: true");
   });
 

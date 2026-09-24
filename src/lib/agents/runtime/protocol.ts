@@ -4,6 +4,9 @@ import type { AgentCapability } from "@/lib/agents/control/capabilities";
 import type { AgentAttachedContext } from "@/lib/agents/control/context";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
+import { readSessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
+import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
+import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 
 /**
  * The browser to local-runtime command contract.
@@ -323,6 +326,30 @@ export type RuntimeSessionView = {
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
+  /** The session's TabDump workspace context, when it has one (Phase J.3). */
+  context?: RuntimeSessionContextView;
+};
+
+/**
+ * What a client may know about a session's workspace context (Phase J.3).
+ *
+ * The workspace, what the agent may do in it, and the approved changes
+ * waiting for the Command Centre to apply. **Never the credential**: there is
+ * no field here, or anywhere in this protocol, that could carry it.
+ */
+export type RuntimeSessionContextView = {
+  workspaceId: string;
+  workspaceName: string;
+  capabilities: readonly SessionContextCapability[];
+  /** Changes the user approved, for the Command Centre — which owns the workspace — to apply. */
+  pendingActions: readonly RuntimeContextActionView[];
+};
+
+export type RuntimeContextActionView = {
+  actionId: string;
+  kind: "create_collection";
+  name: string;
+  tabIds: readonly string[];
 };
 
 /**
@@ -391,8 +418,10 @@ export type RuntimeApprovalView = {
   runId?: string;
   action: string;
   scope: string;
-  projectId: string;
-  /** Project-relative, always. See lib/agents/control/approvals.ts. */
+  /** Exactly one of these: a project for file and command actions, a workspace for workspace changes (J.3). */
+  projectId?: string;
+  workspaceId?: string;
+  /** Project-relative paths, or plain descriptions of a workspace change. Never absolute. */
   targets: readonly string[];
   reason?: string;
   requestedAt: number;
@@ -426,7 +455,10 @@ export type RuntimeCommandName =
   | "detect_providers"
   | "connect_provider"
   | "authenticate_provider"
-  | "disconnect_provider";
+  | "disconnect_provider"
+  /* Phase J.3 — session workspace context. Neither names a credential. */
+  | "sync_session_context"
+  | "complete_context_action";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -447,6 +479,8 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "connect_provider",
   "authenticate_provider",
   "disconnect_provider",
+  "sync_session_context",
+  "complete_context_action",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -515,6 +549,13 @@ export type RuntimeCommand =
       title?: string;
       /** Already resolved by the context bridge. Validated again on arrival. */
       context?: AgentAttachedContext;
+      /**
+       * The workspace the session is started from, for the agent to query
+       * (J.3) — bounded, and only ever of `workspaceId`. What the agent may do
+       * with it is decided by the runtime from the session's grant, not asked
+       * for here.
+       */
+      contextSnapshot?: SessionContextSnapshot;
     }
   | {
       name: "resume_session";
@@ -548,7 +589,19 @@ export type RuntimeCommand =
    */
   | { name: "authenticate_provider"; provider: AgentProviderId; methodId: string }
   /** Ends this actor's sessions with the provider and releases its connection. */
-  | { name: "disconnect_provider"; provider: AgentProviderId };
+  | { name: "disconnect_provider"; provider: AgentProviderId }
+  /** A fresher copy of the session's own workspace. Refused for any other workspace. */
+  | { name: "sync_session_context"; sessionId: string; snapshot: SessionContextSnapshot }
+  /**
+   * The Command Centre applied (or could not apply) a change the user
+   * approved. Only an approved action of this session can be completed.
+   */
+  | {
+      name: "complete_context_action";
+      sessionId: string;
+      actionId: string;
+      outcome: { ok: true; collectionId: string } | { ok: false };
+    };
 
 /** What each command answers with. Keyed by name so the client can type one call generically. */
 export type RuntimeCommandResults = {
@@ -568,6 +621,8 @@ export type RuntimeCommandResults = {
   detach_context: RuntimeSessionView;
   respond_to_approval: RuntimeSessionView;
   dispose_session: { sessionId: string };
+  sync_session_context: { sessionId: string };
+  complete_context_action: { sessionId: string };
   link_observation: RuntimeCorrelationView;
   detect_providers: {
     /** `false` on any runtime that is not the user's own machine. */
@@ -803,6 +858,14 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
         command.context = context;
       }
 
+      if (raw.contextSnapshot !== undefined && raw.contextSnapshot !== null) {
+        // Only ever of the workspace the session is started from.
+        if (!workspaceId) return null;
+        const snapshot = readSessionContextSnapshot(raw.contextSnapshot, workspaceId);
+        if (!snapshot) return null;
+        command.contextSnapshot = snapshot;
+      }
+
       return command;
     }
 
@@ -897,6 +960,31 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       if (!isAgentProviderId(raw.provider)) return null;
       const methodId = id(raw.methodId);
       return methodId ? { name: "authenticate_provider", provider: raw.provider, methodId } : null;
+    }
+
+    case "sync_session_context": {
+      const sessionId = id(raw.sessionId);
+      const workspace = (raw.snapshot as { workspace?: { id?: unknown } } | null | undefined)?.workspace;
+      const workspaceId = id(workspace?.id);
+      if (!sessionId || !workspaceId) return null;
+      // Shape-checked here; the host re-reads it against the session's own
+      // workspace and refuses any other.
+      const snapshot = readSessionContextSnapshot(raw.snapshot, workspaceId);
+      return snapshot ? { name: "sync_session_context", sessionId, snapshot } : null;
+    }
+
+    case "complete_context_action": {
+      const sessionId = id(raw.sessionId);
+      const actionId = id(raw.actionId);
+      const outcome = raw.outcome as { ok?: unknown; collectionId?: unknown } | null | undefined;
+      if (!sessionId || !actionId || !outcome || typeof outcome !== "object") return null;
+      if (outcome.ok === true) {
+        const collectionId = id(outcome.collectionId);
+        return collectionId
+          ? { name: "complete_context_action", sessionId, actionId, outcome: { ok: true, collectionId } }
+          : null;
+      }
+      return outcome.ok === false ? { name: "complete_context_action", sessionId, actionId, outcome: { ok: false } } : null;
     }
   }
 }

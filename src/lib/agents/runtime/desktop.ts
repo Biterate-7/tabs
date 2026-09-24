@@ -14,6 +14,8 @@ import {
   resolveNativeExecutable,
   runNativeOperation,
 } from "@/lib/agents/launch/process";
+import { createSessionContextServer } from "@/lib/agents/session-context/http";
+import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
 import { allowDesktopExecution } from "./gate";
 import { createRuntimeHost, LOCAL_ACTOR } from "./host";
 import { isHandshakeCommand, parseRuntimeRequest, runtimeFailure } from "./protocol";
@@ -45,9 +47,10 @@ import type { ProviderDetection } from "./protocol";
  *   - **Claude signs in with its own login.** No database, so no stored key:
  *     the user's installed Claude Code runs with its own login, which
  *     `claude auth login` establishes. See `launch/native-auth.ts`.
- *   - **No MCP link.** TabDump's MCP server reads the synced account store,
- *     which the desktop app does not have. Sessions get their TabDump context
- *     through the attached-context bridge instead.
+ *   - **Workspace context (Phase J.3).** An agent session started from a
+ *     workspace queries it through TabDump's session MCP server, which this
+ *     process serves on the loopback interface from the bounded snapshot the
+ *     Command Centre sends — no account store needed. Closed with the runtime.
  *
  * `env` is passed in, never read here: the desktop entry reads the process
  * environment once and hands it over, which is what keeps "reads the real
@@ -128,8 +131,12 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRun
     return built;
   }
 
+  const contextRegistry = createSessionContextRegistry({});
+  const contextServer = createSessionContextServer({ registry: contextRegistry });
+
   const host = createRuntimeHost({
     gate: allowDesktopExecution(),
+    sessionContext: { registry: contextRegistry, url: () => contextServer.url() },
     resolveAdapter: (provider) => resolveAdapter(provider),
     providers: PROVIDERS,
     detect: options.detect ?? (() => detectLocalProviders(options.env)),
@@ -156,6 +163,8 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRun
     dispose() {
       disposed ??= (async () => {
         await host.dispose();
+        // Every credential was revoked by the host; the listener goes too.
+        await contextServer.close();
         for (const adapter of adapters.values()) adapter.dispose();
         adapters.clear();
       })();

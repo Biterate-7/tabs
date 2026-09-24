@@ -36,7 +36,7 @@ import type {
   CreateSessionRequest,
   SessionHandle,
 } from "../../types";
-import type { AcpApprovalPolicy, AcpLauncher, AcpMcpLink, AcpMcpLinker } from "./launcher";
+import type { AcpApprovalPolicy, AcpLauncher, AcpMcpServerEntry } from "./launcher";
 import type { AcpPermissionRequest, AcpStopReason, AcpToolCall } from "./protocol";
 import type { JsonRpcPeer, RpcFailure, RpcReply } from "./rpc";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -64,8 +64,13 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * history, and reattaching a TabDump session to it is not built. Not
  * `additional_directories` — ACP has one working directory per session. Not
  * `mcp` — TabDump does not *grant* an ACP agent MCP tools; the one MCP server
- * it may attach is its own read-only one, and any tool the agent brings from
- * its own configuration still has to ask (see `policy.ts`, kind `other`).
+ * it may attach is the session's own TabDump context server (Phase J.3), which
+ * enforces its workspace and capabilities itself and routes its one write
+ * through TabDump's approval. Any tool the agent brings from its own
+ * configuration still has to ask (see `policy.ts`, kind `other`) — and so,
+ * when the agent asks before an MCP call, does a TabDump one: the permission
+ * request names no server, so it cannot be told apart and is refused like
+ * any other `mcp_tools` use.
  *
  * ## The approval model, end to end
  *
@@ -134,8 +139,6 @@ export type AcpControlAdapterOptions = {
   launch: AcpLauncher;
   /** Which modes ask before every privileged action, from the launch entry. Required: there is no default. */
   approval: AcpApprovalPolicy;
-  /** Per-session TabDump MCP access, when this runtime can mint it. */
-  mcpLink?: AcpMcpLinker;
   now?: () => number;
   createId?: () => string;
   setTimer?: (callback: () => void, ms: number) => unknown;
@@ -164,7 +167,6 @@ type LiveSession = {
   grant: AgentPermissionGrant;
   peer: JsonRpcPeer;
   release: () => void;
-  mcp?: AcpMcpLink;
   acpSessionId: string;
   runId?: string;
   turn?: Turn;
@@ -550,7 +552,6 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     bySessionIdOfAgent.delete(session.acpSessionId);
     session.peer.close();
     session.release();
-    session.mcp?.release();
   }
 
   function finishTurn(session: LiveSession, reason: AcpStopReason | undefined): void {
@@ -674,24 +675,40 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       onClose: () => {
         const session = live.session;
         if (!session || session.ended) return;
-        if (session.busy) emit(session, "error", "Agent disconnected unexpectedly.");
+        // Said whether or not a turn was running: an agent that exits while
+        // idle has ended the session just the same, and the service must hear
+        // it — that is what ends the session's workspace credential (J.3). A
+        // deliberate end marks the session ended before closing, so it is
+        // never reported as unexpected.
+        emit(session, "error", "Agent disconnected unexpectedly.");
         end(session);
       },
     });
     if (!opened.ok) return controlFailure(opened.code);
 
-    const mcp = opened.mcpHttp && options.mcpLink ? await options.mcpLink({ sessionId: request.sessionId }) : undefined;
+    // The session's own TabDump MCP server (J.3), for an agent that speaks
+    // MCP over HTTP. Its credential travels in this request, over the agent's
+    // stdin — never on a command line. Revoked by the runtime when the
+    // session ends; this adapter holds nothing to release.
+    const mcp: AcpMcpServerEntry | undefined =
+      opened.mcpHttp && request.contextServer
+        ? {
+            type: "http",
+            name: request.contextServer.name,
+            url: request.contextServer.url,
+            headers: [{ name: "Authorization", value: `Bearer ${request.contextServer.token}` }],
+          }
+        : undefined;
 
     const created = await opened.peer.request(
       "session/new",
-      { cwd: opened.cwd, mcpServers: mcp ? [mcp.server] : [] },
+      { cwd: opened.cwd, mcpServers: mcp ? [mcp] : [] },
       { timeoutMs: HANDSHAKE_TIMEOUT_MS }
     );
     const result = created.ok ? readNewSessionResult(created.value) : undefined;
     if (!result) {
       opened.peer.close();
       opened.release();
-      mcp?.release();
       return controlFailure(created.ok ? "malformed-response" : codeFor(created));
     }
     authState = "authenticated";
@@ -702,7 +719,6 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       grant: request.permissions,
       peer: opened.peer,
       release: opened.release,
-      ...(mcp ? { mcp } : {}),
       acpSessionId: result.sessionId,
       busy: false,
       segment: 0,

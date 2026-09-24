@@ -86,10 +86,24 @@ describe("the custom agent explains exactly what it connects", () => {
       "list_agent_projects",
       "list_agent_sessions",
     ]);
-    const serverSource = readFileSync(path.resolve(__dirname, "../../mcp/server.ts"), "utf8");
+    const fullSource = readFileSync(path.resolve(__dirname, "../../mcp/server.ts"), "utf8");
+    // Account mode — what a custom agent connects to — is everything before
+    // the session-mode section (Phase J.3), which a custom agent never reaches.
+    const marker = fullSource.indexOf("Session mode (Phase J.3)");
+    expect(marker).toBeGreaterThan(0);
+    const serverSource = fullSource.slice(0, marker);
     const registrations = serverSource.match(/registerTool\(/g) ?? [];
     const readOnly = serverSource.match(/annotations:\s*READ_ONLY/g) ?? [];
+    expect(registrations.length).toBe(TABDUMP_MCP_TOOLS.length);
     expect(readOnly.length).toBe(registrations.length);
+
+    // Session mode has exactly one tool that is not read-only: creating a
+    // collection, which asks the user every time.
+    const sessionSource = fullSource.slice(marker);
+    const sessionRegistrations = sessionSource.match(/registerTool\(/g) ?? [];
+    const sessionReadOnly = sessionSource.match(/annotations:\s*READ_ONLY/g) ?? [];
+    expect(sessionRegistrations.length - sessionReadOnly.length).toBe(1);
+    expect(sessionSource).toMatch(/"create_collection"[\s\S]*readOnlyHint: false/);
 
     expect(custom.explainer).toEqual([
       expect.stringMatching(/TabDump never starts it/),

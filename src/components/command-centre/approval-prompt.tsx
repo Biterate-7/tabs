@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { permissionScopeLabel } from "@/lib/agents/command-centre/presentation"
+import { permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
 import { cn } from "@/lib/utils"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
 
@@ -46,6 +46,7 @@ function expiryLabel(expiresAt: number, now: number): { text: string; expired: b
 export function ApprovalPrompt({
   approval,
   projectName,
+  workspaceName,
   onRespond,
   pending,
   now,
@@ -53,6 +54,8 @@ export function ApprovalPrompt({
   approval: RuntimeApprovalView
   /** The project's name. Falls back to nothing rather than printing an id at the user. */
   projectName?: string
+  /** The workspace's name, for a change to a TabDump workspace (Phase J.3). */
+  workspaceName?: string
   onRespond: (approvalId: string, decision: "granted" | "denied") => void
   pending: boolean
   /** Supplied by the caller so the countdown ticks without an impure render. */
@@ -109,7 +112,7 @@ export function ApprovalPrompt({
         printing it raw turned the one authorization prompt in the product
         into debug output. See `permissionScopeLabel`.
       */}
-      <p className="mt-2 text-body font-medium text-foreground">{approval.action}</p>
+      <p className="mt-2 text-body font-medium text-foreground">{approvalActionLabel(approval.action)}</p>
       <p className="mt-0.5 text-body-sm text-muted-foreground">
         {permissionScopeLabel(approval.scope)}
       </p>
@@ -129,6 +132,11 @@ export function ApprovalPrompt({
       {projectName && (
         <p className="mt-1.5 text-label text-tertiary">
           In <span className="text-muted-foreground">{projectName}</span>
+        </p>
+      )}
+      {workspaceName && (
+        <p className="mt-1.5 text-label text-tertiary">
+          In the TabDump workspace <span className="text-muted-foreground">{workspaceName}</span>
         </p>
       )}
 

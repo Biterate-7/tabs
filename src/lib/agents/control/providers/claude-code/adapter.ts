@@ -4,7 +4,7 @@ import { capabilitySet } from "../../capabilities";
 import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
 import { normalizeClaudeMessage, providerSessionIdOf } from "./normalize";
-import { actionForTool, isToolPermitted, planForGrant, scopeForTool } from "./permissions";
+import { actionForTool, contextToolNames, isToolPermitted, planForGrant, scopeForTool } from "./permissions";
 import { withContext } from "./context-prompt";
 import type { AdapterApprovalDetails } from "../../approval-details";
 import type { AgentCapabilitySet } from "../../capabilities";
@@ -21,6 +21,7 @@ import type {
   ControlUnsubscribe,
   CreateSessionRequest,
   ResumeSessionRequest,
+  SessionContextServerEntry,
   SessionHandle,
 } from "../../types";
 import type {
@@ -456,7 +457,8 @@ export function createClaudeCodeControlAdapter(
     project: AgentProject | undefined,
     grant: AgentPermissionGrant,
     resume?: string,
-    attachments: readonly AgentContextAttachment[] = []
+    attachments: readonly AgentContextAttachment[] = [],
+    contextServer?: SessionContextServerEntry
   ): Promise<ControlResult<SessionHandle>> {
     // Note what the attachments do NOT reach. The plan below — the
     // permission mode, the allowed and disallowed tool lists — is derived
@@ -485,9 +487,14 @@ export function createClaudeCodeControlAdapter(
       // and revalidated on load — see ../../projects.ts.
       additionalDirectories: project ? project.additionalDirectories : [],
       permissionMode: plan.mode,
-      allowedTools: plan.allowedTools,
+      // TabDump's own session tools join the pre-allowed list only when the
+      // session has a context server — see `contextToolNames`.
+      allowedTools: contextServer
+        ? [...plan.allowedTools, ...contextToolNames(contextServer.name)]
+        : plan.allowedTools,
       disallowedTools: plan.disallowedTools,
       ...(resume ? { resume } : {}),
+      ...(contextServer ? { contextServer } : {}),
       onMessage: (message) => handleMessage(session, message),
       onPermissionRequest: (request) => handlePermission(session, request),
       onExit: (error) => finishSession(session, error),
@@ -626,7 +633,8 @@ export function createClaudeCodeControlAdapter(
         request.project,
         request.permissions,
         undefined,
-        request.attachments
+        request.attachments,
+        request.contextServer
       );
     },
 

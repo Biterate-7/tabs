@@ -35,7 +35,13 @@ export type AgentPermissionScope =
   /** Reach the network from inside a run. */
   | "network_access"
   /** Use MCP-connected tools. */
-  | "mcp_tools";
+  | "mcp_tools"
+  /**
+   * Change TabDump workspace content — create a collection, for now (Phase
+   * J.3). Scoped to the one workspace a session was started from, and every
+   * single use asks. Reading never implies it.
+   */
+  | "write_workspace";
 
 export const AGENT_PERMISSION_SCOPES: readonly AgentPermissionScope[] = [
   "read_workspace",
@@ -44,6 +50,7 @@ export const AGENT_PERMISSION_SCOPES: readonly AgentPermissionScope[] = [
   "run_commands",
   "network_access",
   "mcp_tools",
+  "write_workspace",
 ] as const;
 
 export function isAgentPermissionScope(value: unknown): value is AgentPermissionScope {
@@ -81,6 +88,7 @@ export function isProjectScoped(scope: AgentPermissionScope): boolean {
 export const APPROVAL_REQUIRED_PERMISSIONS: readonly AgentPermissionScope[] = [
   "write_project",
   "run_commands",
+  "write_workspace",
 ] as const;
 
 export function requiresApproval(scope: AgentPermissionScope): boolean {
@@ -95,6 +103,7 @@ export const PERMISSION_LABELS: Record<AgentPermissionScope, string> = {
   run_commands: "Run commands",
   network_access: "Access the network",
   mcp_tools: "Use MCP tools",
+  write_workspace: "Change workspace content",
 };
 
 /**

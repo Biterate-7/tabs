@@ -30,6 +30,7 @@ import type {
   AgentControlAdapter,
   ControlResult,
   ControlUnsubscribe,
+  SessionContextServerEntry,
   SessionHandle,
 } from "./types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -96,7 +97,15 @@ export type ControlServiceOptions = {
   now?: () => number;
   /** Mints ids. Injected so tests are deterministic. */
   createId?: () => string;
+  /**
+   * Told when a session reaches a terminal status, so whatever the caller
+   * holds for it — its workspace-context credential — ends with it (J.3).
+   */
+  onSessionEnded?: (sessionId: string) => void;
 };
+
+/** How a workspace approval ended, as the context layer that asked hears it. */
+export type WorkspaceApprovalOutcome = "granted" | "denied" | "expired" | "cancelled";
 
 export type StartSessionInput = {
   provider: AgentProviderId;
@@ -105,6 +114,14 @@ export type StartSessionInput = {
   title?: string;
   /** The grant for this session. Defaults to nothing granted. */
   permissions?: AgentPermissionGrant;
+  /**
+   * Binds the new session to its workspace context, once its id exists
+   * (Phase J.3). Supplied by the runtime per call; the service knows nothing
+   * of workspaces beyond carrying the result to the adapter. `"refused"`
+   * fails the start — a session asked for context it could not be given
+   * does not quietly start without it.
+   */
+  bindContext?: (sessionId: string) => Promise<SessionContextServerEntry | "refused" | undefined>;
   /**
    * Context to seed the session with, already resolved by the bridge.
    *
@@ -189,6 +206,22 @@ export type ControlService = {
   ): Promise<ControlResult<void>>;
 
   /**
+   * Puts a change to the session's own workspace to the user (Phase J.3).
+   *
+   * The same broker, the same approval card, the same Approve/Deny — the
+   * request simply comes from TabDump's session MCP server rather than from
+   * an adapter, so its answer goes back there. Resolves when the user
+   * answers, the request expires, or the session ends.
+   */
+  requestWorkspaceApproval(
+    sessionId: string,
+    request: { targets: readonly string[]; reason: string }
+  ): Promise<WorkspaceApprovalOutcome>;
+
+  /** Withdraws a session's outstanding workspace approvals — it ended. */
+  cancelWorkspaceApprovals(sessionId: string): void;
+
+  /**
    * The context a session currently holds, or undefined for one holding none.
    *
    * The attachments, not the snapshot: the bridge owns that record, and this
@@ -260,6 +293,8 @@ export function createControlService(options: ControlServiceOptions): ControlSer
   const contexts = new Map<string, AgentAttachedContext>();
   const listeners = new Set<(event: AgentControlEvent) => void>();
   const adapterSubscriptions = new Map<AgentProviderId, ControlUnsubscribe>();
+  /** Workspace approvals (J.3) waiting on the user, and whom to tell. */
+  const workspaceApprovals = new Map<string, (outcome: WorkspaceApprovalOutcome) => void>();
 
   function put(session: AgentSession): AgentSession {
     sessions.set(session.id, session);
@@ -271,8 +306,45 @@ export function createControlService(options: ControlServiceOptions): ControlSer
     // A refused transition leaves the session exactly as it was. The caller
     // is already returning an error; corrupting the record on the way out
     // would turn a refusal into a second bug.
-    return result.ok ? put(result.session) : session;
+    if (!result.ok) return session;
+    const moved = put(result.session);
+    if (isTerminalSessionStatus(moved.status)) options.onSessionEnded?.(moved.id);
+    return moved;
   }
+
+  /** An event the service itself raises — for workspace approvals, which no adapter emits. */
+  function emitOwn(session: AgentSession, kind: AgentControlEvent["kind"], summary: string, approvalId: string): void {
+    const event: AgentControlEvent = {
+      id: createId(),
+      sessionId: session.id,
+      provider: session.provider,
+      kind,
+      timestamp: now(),
+      summary,
+      approvalId,
+    };
+    if (!isWellFormedControlEvent(event)) return;
+    applyEventToSession(session, event);
+    for (const listener of [...listeners]) listener(event);
+  }
+
+  // A workspace approval is settled in the broker first — by the user, by
+  // expiry, by cancellation — and only then is the context layer told.
+  broker.watch((approval) => {
+    const notify = workspaceApprovals.get(approval.id);
+    if (!notify || approval.status === "requested") return;
+    workspaceApprovals.delete(approval.id);
+    const session = sessions.get(approval.sessionId);
+    if (session && (approval.status === "granted" || approval.status === "denied")) {
+      emitOwn(
+        session,
+        approval.status === "granted" ? "approval_granted" : "approval_denied",
+        approval.status === "granted" ? "Workspace change approved" : "Workspace change declined",
+        approval.id
+      );
+    }
+    notify(approval.status as WorkspaceApprovalOutcome);
+  });
 
   /**
    * The gate, for an operation that needs an adapter.
@@ -525,6 +597,18 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       grants.set(session.id, grant);
       if (input.context) contexts.set(session.id, input.context);
 
+      // Workspace context (J.3): bound now that the session has an id, and
+      // before the agent starts, so the agent's first request can use it.
+      let contextServer: SessionContextServerEntry | undefined;
+      if (input.bindContext) {
+        const bound = await input.bindContext(session.id);
+        if (bound === "refused") {
+          move(session, "failed");
+          return controlFailure("invalid-request");
+        }
+        contextServer = bound;
+      }
+
       ensureSubscribed(input.provider, gated.value);
       const connecting = move(session, "connecting");
 
@@ -534,6 +618,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
         permissions: grant,
         attachments: input.context?.attachments ?? [],
         title: input.title,
+        ...(contextServer ? { contextServer } : {}),
       });
 
       if (!created.ok) {
@@ -702,6 +787,11 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const settled = broker.resolve(approvalId, decision, now());
       if (!settled.ok) return controlFailure("invalid-request");
 
+      // A workspace change was asked for by TabDump's session MCP server, not
+      // by the adapter. The broker's watcher has already told it; there is no
+      // adapter to answer.
+      if (approval.workspaceId) return { ok: true, value: undefined };
+
       const gated = gate(
         session.provider,
         "approvals",
@@ -711,6 +801,41 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       if (!gated.ok) return { ok: false, error: gated.error };
 
       return gated.value.respondToApproval(approvalId, decision);
+    },
+
+    requestWorkspaceApproval(sessionId, request) {
+      const session = sessions.get(sessionId);
+      if (!session || !session.workspaceId || isTerminalSessionStatus(session.status)) {
+        return Promise.resolve("cancelled");
+      }
+      const id = `wa-${createId()}`;
+      const requested = broker.request(
+        {
+          id,
+          sessionId,
+          provider: session.provider,
+          action: "change_workspace",
+          scope: "write_workspace",
+          workspaceId: session.workspaceId,
+          targets: request.targets,
+          reason: request.reason,
+        },
+        now()
+      );
+      // An approval nobody can answer must not become one nobody has to.
+      if (!requested.ok) return Promise.resolve("denied");
+
+      const outcome = new Promise<WorkspaceApprovalOutcome>((resolve) => {
+        workspaceApprovals.set(id, resolve);
+      });
+      emitOwn(session, "approval_requested", "Wants to change your TabDump workspace", id);
+      return outcome;
+    },
+
+    cancelWorkspaceApprovals(sessionId) {
+      for (const approval of broker.forSession(sessionId)) {
+        if (approval.workspaceId && approval.status === "requested") broker.cancel(approval.id, now());
+      }
     },
 
     contextFor(sessionId) {

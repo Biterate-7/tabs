@@ -137,6 +137,21 @@ export type ControlStatus = {
 };
 
 /** What the adapter is asked to start. Every field is TabDump's vocabulary, not a provider's. */
+/**
+ * TabDump's own MCP server for one session (Phase J.3), as an adapter hands it
+ * to its agent. Prepared by the runtime; the control plane only carries it.
+ *
+ * `token` is that session's credential: minted for this session alone, bound
+ * to one workspace, revoked when the session ends. An adapter passes it to
+ * the agent by the least visible route the agent supports — never on a
+ * command line, never in an event, never back to a client.
+ */
+export type SessionContextServerEntry = {
+  name: string;
+  url: string;
+  token: string;
+};
+
 export type CreateSessionRequest = {
   /** TabDump's session id. The adapter maps it to whatever the provider calls one. */
   sessionId: string;
@@ -151,6 +166,8 @@ export type CreateSessionRequest = {
   /** Context to seed the session with. */
   attachments: readonly AgentContextAttachment[];
   title?: string;
+  /** The session's TabDump MCP server, when it has workspace context (Phase J.3). */
+  contextServer?: SessionContextServerEntry;
 };
 
 export type ResumeSessionRequest = {

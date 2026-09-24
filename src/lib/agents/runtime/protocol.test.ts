@@ -58,6 +58,17 @@ describe("what the parser accepts", () => {
       },
       detect_providers: { name: "detect_providers" },
       connect_provider: { name: "connect_provider", provider: "gemini" },
+      sync_session_context: {
+        name: "sync_session_context",
+        sessionId: "s1",
+        snapshot: { workspace: { id: "w1", name: "Launch Plan", tabs: [], createdAt: 1, updatedAt: 2 }, collections: [], dependencies: [] },
+      },
+      complete_context_action: {
+        name: "complete_context_action",
+        sessionId: "s1",
+        actionId: "a1",
+        outcome: { ok: true, collectionId: "c1" },
+      },
       authenticate_provider: {
         name: "authenticate_provider",
         provider: "gemini",

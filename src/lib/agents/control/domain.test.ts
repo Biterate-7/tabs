@@ -123,9 +123,10 @@ describe("permissions", () => {
     expect(isValidGrant({ scopes: ["read_workspace"], grantedAt: Number.NaN })).toBe(false);
   });
 
-  it("requires an approval for exactly the two destructive scopes", () => {
+  it("requires an approval for exactly the three scopes that change something", () => {
     const needing = AGENT_PERMISSION_SCOPES.filter(requiresApproval);
-    expect(needing.sort()).toEqual(["run_commands", "write_project"]);
+    // write_workspace (Phase J.3): every workspace change asks, like every file write.
+    expect(needing.sort()).toEqual(["run_commands", "write_project", "write_workspace"]);
   });
 
   it("allows a non-local capability with no grant at all", () => {

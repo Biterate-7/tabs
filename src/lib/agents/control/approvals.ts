@@ -70,7 +70,9 @@ export type ApprovalAction =
   | "delete_files"
   | "run_command"
   | "network_request"
-  | "use_mcp_tool";
+  | "use_mcp_tool"
+  /** Change the TabDump workspace the session was started from (Phase J.3). */
+  | "change_workspace";
 
 export const APPROVAL_ACTIONS: readonly ApprovalAction[] = [
   "modify_files",
@@ -79,6 +81,7 @@ export const APPROVAL_ACTIONS: readonly ApprovalAction[] = [
   "run_command",
   "network_request",
   "use_mcp_tool",
+  "change_workspace",
 ] as const;
 
 export function isApprovalAction(value: unknown): value is ApprovalAction {
@@ -93,6 +96,7 @@ export const APPROVAL_ACTION_LABELS: Record<ApprovalAction, string> = {
   run_command: "run a command",
   network_request: "access the network",
   use_mcp_tool: "use an MCP tool",
+  change_workspace: "change your TabDump workspace",
 };
 
 /** Cap on the provider-supplied reason. Bounded for the same reasons an event summary is. */
@@ -116,8 +120,13 @@ export type AgentApproval = {
   action: ApprovalAction;
   /** The permission scope this action falls under. Checked against the grant before it is ever shown. */
   scope: AgentPermissionScope;
-  /** The project the action would happen inside. Required — an unscoped approval is refused. */
-  projectId: string;
+  /**
+   * Where the action would happen: exactly one of a project (files, commands)
+   * or — for `write_workspace` only — the TabDump workspace the session was
+   * started from (Phase J.3). An approval naming neither, or both, is refused.
+   */
+  projectId?: string;
+  workspaceId?: string;
   /**
    * What would be affected, as project-relative paths or command labels.
    *
@@ -142,7 +151,8 @@ export type ApprovalRequestInput = {
   provider: AgentProviderId;
   action: ApprovalAction;
   scope: AgentPermissionScope;
-  projectId: string;
+  projectId?: string;
+  workspaceId?: string;
   targets: readonly string[];
   runId?: string;
   reason?: string;
@@ -157,6 +167,7 @@ export type ApprovalRejection =
   | "invalid-action"
   | "invalid-scope"
   | "missing-project"
+  | "missing-workspace"
   | "no-targets"
   | "too-many-targets"
   | "scope-needs-no-approval"
@@ -265,7 +276,17 @@ export function createApprovalBroker(): ApprovalBroker {
   return {
     request(input, now) {
       if (!isApprovalAction(input.action)) return { ok: false, reason: "invalid-action" };
-      if (!input.projectId) return { ok: false, reason: "missing-project" };
+      // A workspace change happens in one workspace and nowhere else; every
+      // other action happens in one project and nowhere else. Never both, and
+      // never neither — an approval with no place is not one a person can
+      // evaluate.
+      if (input.scope === "write_workspace") {
+        if (!input.workspaceId || input.projectId) return { ok: false, reason: "missing-workspace" };
+        if (input.action !== "change_workspace") return { ok: false, reason: "invalid-action" };
+      } else {
+        if (!input.projectId || input.workspaceId) return { ok: false, reason: "missing-project" };
+        if (input.action === "change_workspace") return { ok: false, reason: "invalid-action" };
+      }
       if (approvals.has(input.id)) return { ok: false, reason: "duplicate-id" };
 
       // An approval for a scope that is already sufficient on its grant alone
@@ -284,7 +305,8 @@ export function createApprovalBroker(): ApprovalBroker {
         provider: input.provider,
         action: input.action,
         scope: input.scope,
-        projectId: input.projectId,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         targets,
         status: "requested",
         requestedAt: now,

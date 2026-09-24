@@ -136,10 +136,12 @@ describe("Connect Agent", () => {
     await user.click(await within(dialog).findByRole("button", { name: /Log in with Google/i }))
 
     // Once the agent says it is signed in, the flow moves on by itself.
-    // Reading is on by default; changing files and running commands are not.
+    // Reading is on by default; changing files, running commands and
+    // changing TabDump content (Phase J.3) are not.
     const approve = await within(dialog).findByRole("group")
     const boxes = within(approve).getAllByRole("checkbox")
-    expect(boxes.map((box) => box.getAttribute("aria-checked"))).toEqual(["true", "true", "false", "false"])
+    expect(boxes.map((box) => box.getAttribute("aria-checked"))).toEqual(["true", "true", "false", "false", "false"])
+    expect(within(approve).getByText("Change TabDump content")).toBeTruthy()
     expect(within(dialog).getByText(/Run a shell command through TabDump/)).toBeTruthy()
 
     await user.click(within(dialog).getByRole("button", { name: /approve and connect/i }))

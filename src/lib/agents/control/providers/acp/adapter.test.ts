@@ -188,21 +188,30 @@ describe("sessions", () => {
     expect(adapter.providerSessionIdFor("s1")).toBe("acp-1");
   });
 
-  it("attaches TabDump's own MCP server for the session when a link is available, and releases it", async () => {
-    let released = 0;
-    const server = { type: "http" as const, name: "tabdump", url: "http://127.0.0.1:3000/api/mcp", headers: [] };
-    const { agent, adapter } = setup({}, {
-      mcpLink: async () => ({ server, release: () => (released += 1) }),
+  it("gives the agent the session's own TabDump MCP server, with its credential in the request (Phase J.3)", async () => {
+    const { agent, adapter } = setup();
+    const p = project();
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      project: p,
+      permissions: p.permissions,
+      attachments: [],
+      contextServer: { name: "tabdump", url: "http://127.0.0.1:5123/mcp", token: "tdctx_session-credential" },
     });
-    await start(adapter);
+    expect(created.ok).toBe(true);
 
+    // Over the agent's stdin, in session/new — never on a command line.
     expect(agent.received.find((message) => message.method === "session/new")?.params).toMatchObject({
-      mcpServers: [server],
+      mcpServers: [
+        {
+          type: "http",
+          name: "tabdump",
+          url: "http://127.0.0.1:5123/mcp",
+          headers: [{ name: "Authorization", value: "Bearer tdctx_session-credential" }],
+        },
+      ],
     });
-
     adapter.dispose();
-    expect(released).toBe(1);
-    expect(agent.released).toBe(1);
   });
 
   it("puts the agent in its asking mode when it starts in another", async () => {

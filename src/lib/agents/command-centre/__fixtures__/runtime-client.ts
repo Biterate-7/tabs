@@ -160,9 +160,29 @@ export function createScriptedRuntime(
           ...(command.projectId ? { projectId: command.projectId } : {}),
           ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
           ...(command.title ? { title: command.title } : {}),
+          // Phase J.3: like the host, a session started with its workspace
+          // gets that workspace's context — read-only here; tests that need
+          // more script the session directly.
+          ...(command.contextSnapshot
+            ? {
+                context: {
+                  workspaceId: command.contextSnapshot.workspace.id,
+                  workspaceName: command.contextSnapshot.workspace.name,
+                  capabilities: ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as const,
+                  pendingActions: [],
+                },
+              }
+            : {}),
         })
         sessions = [...sessions, created]
         return { ok: true, value: created }
+      }
+
+      /* Phase J.3 — session workspace context. */
+      case "sync_session_context":
+      case "complete_context_action": {
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: { sessionId: command.sessionId } }
       }
 
       case "dispose_session":

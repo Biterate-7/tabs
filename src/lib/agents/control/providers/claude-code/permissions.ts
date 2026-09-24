@@ -1,3 +1,4 @@
+import { SESSION_CONTEXT_TOOLS } from "@/lib/agents/session-context/capabilities";
 import type { ApprovalAction } from "../../approval-details";
 import { isGranted } from "../../permissions";
 import type { AgentPermissionGrant, AgentPermissionScope } from "../../permissions";
@@ -67,6 +68,10 @@ export const TOOLS_BY_SCOPE: Readonly<Record<AgentPermissionScope, readonly stri
   // is resolved by TabDump and sent as message text, so there is no Claude
   // tool that reads a workspace and nothing here to allow.
   read_workspace: [],
+  // Workspace changes are never a Claude tool either: they arrive through
+  // TabDump's own session MCP server, which asks for each one itself (Phase
+  // J.3, lib/agents/session-context).
+  write_workspace: [],
 };
 
 /**
@@ -97,6 +102,7 @@ export const MAPPED_SCOPES: readonly AgentPermissionScope[] = [
   "network_access",
   "mcp_tools",
   "read_workspace",
+  "write_workspace",
 ] as const;
 
 export type ClaudePermissionPlan = {
@@ -199,6 +205,23 @@ export function planForGrant(
     allowedTools: [...ALWAYS_ALLOWED_TOOLS].sort(),
     disallowedTools: disallowed.sort(),
   };
+}
+
+/**
+ * The one exception to "only TodoWrite is pre-allowed" (Phase J.3): TabDump's
+ * own session MCP server, when the session has workspace context.
+ *
+ * Its tools are Claude's names for the session server's tools
+ * (`mcp__<server>__<tool>`). They are allowed without an agent-level prompt
+ * because the boundary is the server, not the agent: it reads only the one
+ * workspace the session is bound to, and its one write, `create_collection`,
+ * raises a TabDump approval itself and changes nothing until the user says
+ * yes. Asking here as well would put the same question to the user twice.
+ * No other MCP server can exist in the session (`strictMcpConfig`), so no
+ * other `mcp__` name can match.
+ */
+export function contextToolNames(serverName: string): readonly string[] {
+  return SESSION_CONTEXT_TOOLS.map((tool) => `mcp__${serverName}__${tool}`);
 }
 
 /** The tools a grant authorizes, each still subject to `canUseTool`. */

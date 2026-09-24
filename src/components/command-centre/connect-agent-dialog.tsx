@@ -371,7 +371,7 @@ export function ConnectAgentDialog({
                           }
                         />
                         {PERMISSION_SCOPE_LABEL[scope]}
-                        {(scope === "write_project" || scope === "run_commands") && (
+                        {(scope === "write_project" || scope === "run_commands" || scope === "write_workspace") && (
                           <span className="text-meta text-tertiary">· asks every time</span>
                         )}
                       </label>

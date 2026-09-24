@@ -35,11 +35,9 @@ export type AcpLaunchResult =
 export type AcpLauncher = (request: AcpLaunchRequest) => Promise<AcpLaunchResult>;
 
 /**
- * A TabDump MCP server entry for `session/new`, prepared server-side.
- *
- * Opaque to the adapter: it is forwarded exactly as built, and the adapter has
- * no code that reads a header. It exists only for the life of one session and
- * `release` revokes whatever access it carried.
+ * A TabDump MCP server entry for `session/new` (ACP's HTTP MCP server shape).
+ * Built by the adapter from the session's context server (Phase J.3); lives
+ * as long as the session's credential does.
  */
 export type AcpMcpServerEntry = {
   type: "http";
@@ -48,10 +46,6 @@ export type AcpMcpServerEntry = {
   headers: readonly { name: string; value: string }[];
 };
 
-export type AcpMcpLink = { server: AcpMcpServerEntry; release(): void };
-
-/** Supplies a per-session TabDump MCP link, or nothing when this runtime cannot mint one. */
-export type AcpMcpLinker = (request: { sessionId: string }) => Promise<AcpMcpLink | undefined>;
 
 /**
  * How TabDump stays the one that approves what an ACP agent does (Phase J.2).

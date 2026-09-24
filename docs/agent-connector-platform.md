@@ -1,4 +1,4 @@
-# The Agent Connector Platform (Phases J, J.1, J.2)
+# The Agent Connector Platform (Phases J, J.1, J.2, J.3)
 
 TabDump connects external AI agents through **one** connector framework.
 Claude Code, Gemini CLI, Grok Build, Codex and any MCP-compatible agent are
@@ -16,6 +16,7 @@ Command Centre ─ Connect Agent: choose → detect → sign in → approve → 
         │  closed protocol verbs: detect/connect/authenticate/disconnect_provider,
         ▼  create_session, send_message, respond_to_approval, …
   RuntimeHost ── ControlService (gate, broker, permissions, approvals)
+        │   └─ session context: registry + loopback MCP server (J.3, §12)
         │
         ├── Claude adapter  ── Claude Agent SDK (canUseTool)
         └── ACP adapter     ── ONE adapter, JSON-RPC over stdio
@@ -208,17 +209,19 @@ that keeps it from getting there — **modes**:
 
 ## 6. Workspace scoping
 
-Unchanged: the workspace chosen at session start is recorded on the session;
-TabDump context reaches the agent only through the Phase E attached-context
-bridge (the `<tabdump-context>` block, resolved from that workspace and
-revalidated by the host); projects are named by id and revalidated by the host
-and again by the launcher before `spawn`; tool locations outside the project
-are dropped from every event. No provider gains access to another workspace.
+The workspace chosen at session start is recorded on the session and is the
+only one it can ever see. Since Phase J.3 the agent *queries* it through the
+session's own TabDump MCP server (§12) — bound to that session and that
+workspace, enforced by the server, and revoked when the session ends. The
+Phase E attached-context bridge (the `<tabdump-context>` block) still exists
+for a user who wants to hand the agent a specific selection. Projects are named
+by id and revalidated by the host and again by the launcher before `spawn`;
+tool locations outside the project are dropped from every event. No provider
+gains access to another workspace.
 
-Per-session TabDump MCP access (ephemeral tokens, 8h, revoked when the session
-ends) is attached for ACP agents on a runtime that has the token store (the
-web, signed in). The desktop app has no token store, so desktop sessions get
-their context through the attached-context bridge only.
+The J.2 per-session MCP tokens (database rows, web only) are gone: they were
+replaced by the runtime-owned, memory-only credentials of §12, which work in
+the desktop app too.
 
 ## 7. Security boundaries
 
@@ -232,7 +235,7 @@ their context through the attached-context bridge only.
 | Workspace boundaries | §6. |
 | Process isolation | One process per ACP session, in the authorized project or a private scratch dir. Grok is pinned `--no-leader`: in leader mode (configurable in `config.toml`) a session would run in a shared background process outside TabDump's tree and working directory. |
 | Windows Job Object cleanup | The desktop shell puts the sidecar — and so every agent it starts — in a `KILL_ON_JOB_CLOSE` job (Phase J.1). |
-| Session-scoped MCP credentials | Minted per session, revoked on release (§6). |
+| Session-scoped MCP credentials | Minted per session by the runtime, memory only, hashed, bound to one session + one workspace + a capability set; revoked on session end, disconnect and shutdown; 12 h ceiling (§12). There is no global MCP token. |
 | No arbitrary executables | No custom agent is ever launched; the registry has no field that could name a program (`registry.test.ts`). |
 
 **Inside the agent, not TabDump:** codex-acp 1.13 on Windows starts its own
@@ -362,3 +365,178 @@ the Rust shell tests pass (9 passed, 1 opt-in ignored).
 - **Remote runtime:** only Claude runs in the sandbox; ACP agents are local.
 - **Unsigned desktop builds** are blocked by Smart App Control where it is
   enforcing (above).
+- **Session context** — see §12.8.
+
+## 12. Session Context Architecture (Phase J.3)
+
+An agent session started from a workspace can *query* that workspace — its
+tabs, collections and relationships — through TabDump's MCP server, and can
+*propose* one kind of change, which the user approves in TabDump. Nothing is
+pasted into the prompt; the agent asks for what it needs.
+
+```
+ Command Centre (webview)                      Agent runtime (Node: sidecar / Next route)
+ ───────────────────────                       ───────────────────────────────────────────
+ New session ── create_session ─────────────▶  RuntimeHost
+   { workspaceId, contextSnapshot }              │ access = sessionContextAccessFor(grant)   ← never the request
+                                                 │ registry.bind(session, workspace, access, snapshot)
+                                                 │   → tdctx_… (256-bit, returned once, SHA-256 kept)
+                                                 ▼
+                                               ControlService.startSession ─▶ adapter
+                                                 Claude: mcpServers { tabdump: http, Bearer ${TABDUMP_CONTEXT_TOKEN} }
+                                                         + TABDUMP_CONTEXT_TOKEN in the agent's env only
+                                                 ACP:    session/new mcpServers [{ http, Authorization header }]
+                                                              │
+ view.context { workspaceId, name,                            ▼
+   capabilities, pendingActions }     Agent ──HTTP──▶ 127.0.0.1:<random>/mcp  (session context server)
+   — no credential field exists —                   bearer → binding (one session, one workspace)
+                                                    tools registered per capability; any other workspace id → refused
+ sync_session_context (own workspace only) ──▶      reads served from the bound snapshot (bounded, redacted)
+                                                    create_collection ─▶ approval broker ─▶ Approval UI
+ ApprovalPrompt ── respond_to_approval ─────▶        granted ─▶ view.context.pendingActions
+ useSessionContext applies it (collection store)
+   ── complete_context_action ──────────────▶        ─▶ tool call returns { created, collectionId }
+```
+
+### 12.1 Why the webview sends the workspace
+
+TabDump's workspace lives in the app (local storage, synced to the account when
+signed in). The desktop app has no server and no database, so the runtime
+cannot read it. The webview therefore sends a **bounded snapshot of the
+session's own workspace** with `create_session`, and re-sends it (debounced,
+only when it changed) while the session lives. `readSessionContextSnapshot`
+copies an allowlist of fields (no favicons, logos or anything else), caps it
+(800 tabs, 200 collections, 2000 relationships, 500 notes, 600 KB) and refuses
+a snapshot of any workspace other than the one named. The runtime refuses a
+sync for any other workspace (`context_invalid`), so switching workspaces in
+the UI never moves an agent.
+
+### 12.2 The credential
+
+| Property | How |
+| --- | --- |
+| Per session | `registry.bind` mints a 256-bit `tdctx_` token per session. The raw value is returned once, to the host, which hands it to the service, which hands it to the one adapter starting the agent. |
+| Bound | Exactly one session, one workspace, one capability set — fixed at bind; `update` accepts only a fresher snapshot of the same workspace. |
+| Not stored | Only its SHA-256 is kept, in the runtime's memory. Never persisted, never in a protocol message, event, log, URL or the webview. |
+| Off the command line | Claude Code gets the header as the literal `Bearer ${TABDUMP_CONTEXT_TOKEN}`, which it expands from its own environment (the SDK puts `mcpServers` on argv). |
+| Revoked | On a terminal session status (including an agent crash), `dispose_session`, `disconnect_provider` and runtime shutdown. A restarted runtime has an empty registry and a new port, so a pre-restart credential cannot work. |
+| Expires | 12 h after bind (`CREDENTIAL_MAX_AGE_MS`), even for a session that never ends. It is forgotten, not paused. |
+
+There is **no global MCP token**. The account-level tokens a custom MCP client
+uses (§8) are a separate, web-only mechanism and cannot reach this server.
+
+### 12.3 The server
+
+`session-context/http.ts`: Node `http` on `127.0.0.1` with a random port,
+started with the runtime (desktop and local web). It accepts only `POST /mcp`,
+refuses **any** `Origin` header (no browser can call it), pins `Host` to
+`127.0.0.1:<port>` (no DNS rebinding), caps bodies at 64 KiB, and answers
+401 to a missing, malformed, unknown, revoked or expired credential. Each
+request builds a fresh stateless MCP server that reads the binding *live*, so a
+revocation takes effect on the very next call.
+
+### 12.4 Capabilities
+
+| Capability | Tools | Granted when |
+| --- | --- | --- |
+| `workspace.read` | `get_current_workspace`, `list_workspaces` (this one only), `get_workspace` | project grant has `read_workspace` |
+| `tabs.read` | `get_tabs`, `search_tabs` | 〃 |
+| `collections.read` | `get_collection` | 〃 |
+| `relationships.read` | `get_tab_graph` | 〃 |
+| `collections.write` | `create_collection` (asks every time) | grant also has `write_workspace` |
+
+Access is derived by the host from the session's grant
+(`sessionContextAccessFor`); the request cannot ask for more. Read never
+implies write: a read-only session is not even shown `create_collection`, and
+calling it anyway is refused before anyone is asked. `write_workspace` is a
+new approval-required scope, off by default in Connect Agent ("asks every
+time").
+
+### 12.5 Writes go through the existing approval system
+
+`create_collection` → the registry validates the name and that **every** tab
+id belongs to the bound workspace (a request naming anything else is refused
+without asking) → the host's approver calls
+`ControlService.requestWorkspaceApproval` → the broker records an approval
+with scope `write_workspace`, action `change_workspace` and a `workspaceId`
+(the broker requires the workspace and no project for this scope) → the
+Command Centre shows it as an ordinary approval ("Change your TabDump
+workspace — in the TabDump workspace Launch Plan") → **approved**: the action
+is listed on `view.context.pendingActions`; `useSessionContext` applies it
+exactly once through the same collection store the workspace view uses and
+reports `complete_context_action`; only then does the agent's tool call return
+`{ created, collectionId }`. Denied, expired, or not applied within 60 s:
+nothing is created and the agent is told so in a fixed sentence. A session
+that ends answers its waiting write as ended.
+
+### 12.6 Provider neutrality
+
+The host, registry, server and approval path know nothing about providers.
+Each adapter only translates `CreateSessionRequest.contextServer` into its
+agent's MCP configuration: Claude via the Agent SDK's `mcpServers` (context
+tool names added to `allowedTools`, `strictMcpConfig` kept), ACP agents via
+`session/new` `mcpServers` when the agent advertises HTTP MCP.
+
+### 12.7 Verification (2026-09-24)
+
+**Packaged runtime, real Claude.** The desktop sidecar bundle
+(`npm run desktop:runtime`) run by the bundled Node binary over the Rust
+relay's stdin/stdout protocol and stripped environment, with the user's
+signed-in Claude Code. The driver played the webview; the Rust relay itself
+was not in the loop (Smart App Control blocks the unsigned `tabdump.exe`, §10),
+and J.3 does not change it. 35/35:
+
+- Launch Plan session → context view shows the workspace and capabilities, no credential.
+- One listener, on `127.0.0.1` only.
+- Claude called `mcp__tabdump__get_current_workspace` and listed the four tabs.
+- Asked for `ws-private-finances`, it got *"This session can only read the TabDump workspace it was started from."* — **denied at the server**.
+- The credential was present only in the agent's own environment: not on any command line, runtime response, event or stderr. The live credential got 200; a missing or forged one 401.
+- "Create a collection *Launch reading*" → approval `change_workspace` in `ws-launch-plan`, with nothing to apply before approval → approved → listed → applied → completing it twice refused → re-synced → Claude confirmed it and read the collection back with `get_collection`.
+- A sync of another workspace was refused.
+- Disconnect → no agent process left → **the old credential got 401**.
+- Shutdown → the server is gone.
+- Nothing was written to the project folder.
+
+**Automated.** `session-context/context.integration.test.ts` (real loopback
+server + the official MCP client) covers workspace isolation, session
+isolation, missing/forged credentials, release, restart, expiry, browser and
+Host refusal, secrecy of outputs, read-only sessions, and deny, expire,
+approve and apply. It also covers cross-workspace tab refusal, writes after
+the session ends, and binding immutability. `runtime/session-context.test.ts`
+covers the host: automatic context, access derived from the grant, mismatched
+snapshots, sync refusal, approvals, and revocation on dispose, disconnect,
+agent crash and shutdown. `session-context/secrecy.test.ts` pins exactly
+which modules may name the credential, that none of them stores, logs or puts
+it in a URL, and that the webview-facing view has no field for it. The Command
+Centre tests cover the snapshot sent, the indicator and its popover,
+read-only wording, persistence across a reload, the approval card, and
+exactly-once application.
+
+**Latency** (loopback, measured while the full test suite was running on the
+same machine, so upper bounds):
+
+| Measure | Result |
+| --- | --- |
+| Session start with context (`create_session`, packaged runtime) | 29 ms |
+| Bind (snapshot parse + token + hash), 800 tabs | p50 2.5 ms, p95 5.1 ms |
+| MCP connect (initialize) | 27 ms; 34 ms from the smoke driver |
+| Workspace query (`get_current_workspace`, `search_tabs`, `get_tabs`, `get_tab_graph`, `get_collection`), 50 or 800 tabs | p50 ≈ 15–16 ms, p95 ≤ 21 ms — flat in workspace size |
+| Approval machinery (request → approved → applied → tool returns, human excluded) | p50 32 ms |
+| Approval round trip with real Claude (approve → Claude's reply complete) | 2.0 s, dominated by the model |
+
+### 12.8 Limitations
+
+- **ACP agents (Gemini, Grok)** are handed the context server, but an agent
+  that asks before each MCP call is refused: ACP's permission request names
+  no server, so a TabDump tool cannot be told apart from any other MCP tool
+  (`mcp_tools`, which TabDump does not grant). Not verified live: neither
+  agent is signed in on the test machine.
+- **Hosted/remote runtime:** no context server — the sandbox cannot reach a
+  loopback port on the user's machine. Sessions there fall back to the
+  attached-context bridge.
+- **One write** (`create_collection`). Renaming, moving and deleting are not
+  offered.
+- **Freshness:** the agent sees the last snapshot synced (debounced 400 ms).
+  Changes made while the Command Centre is closed reach a live session when
+  it is next opened.
+- **Custom MCP clients** (§8) are unaffected and remain read-only, web-only.
