@@ -1,7 +1,7 @@
 import "server-only";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { validateProjectPath } from "@/lib/agents/control/projects";
 import { launchEntryFor } from "./allowlist";
@@ -62,20 +62,7 @@ export const realResolverFs: ResolverFs = {
 export function detectLocalProviders(
   env: Readonly<Record<string, string | undefined>>
 ): ProviderDetection[] {
-  return detectProviders({
-    env,
-    platform: process.platform,
-    homeDirectory: safeHome(),
-    fs: realResolverFs,
-  });
-}
-
-function safeHome(): string | undefined {
-  try {
-    return homedir();
-  } catch {
-    return undefined;
-  }
+  return detectProviders({ env, platform: process.platform, fs: realResolverFs });
 }
 
 /** Lines out of a byte stream. Bounded: a line that never ends is discarded. */

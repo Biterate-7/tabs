@@ -19,6 +19,11 @@ const eslintConfig = defineConfig([
     // of git; this keeps it out of eslint, which does not read that file.
     "src-tauri/target/**",
     "src-tauri/gen/**",
+    // The desktop agent runtime sidecar, bundled by `npm run desktop:runtime`
+    // (Phase J.1): one generated file of the whole runtime plus its
+    // dependencies, gitignored like the Node binary beside it.
+    "src-tauri/agent-runtime/**",
+    "src-tauri/binaries/**",
   ]),
 ]);
 

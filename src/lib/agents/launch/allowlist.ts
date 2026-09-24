@@ -1,4 +1,5 @@
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { AcpApprovalPolicy } from "@/lib/agents/control/providers/acp/launcher";
 
 /**
  * Every program TabDump will ever start, and exactly how.
@@ -16,13 +17,19 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * `launch/security.test.ts` pins the table: every `args` array is a literal,
  * and the set of executables is exactly the list below.
  *
- * ## Sign-in markers are presence checks, never reads
+ * ## Nothing here says whether an agent is signed in (Phase J.2)
  *
- * `signInMarkers` are files an agent's own sign-in leaves behind. Detection
- * asks whether one *exists* — it never opens it — and even then only claims
- * "signed in" on presence. Absence proves nothing (Claude Code on macOS keeps
- * its login in the Keychain), so absence is reported as `unknown`, never as
- * "signed out".
+ * An earlier version listed files an agent's sign-in leaves behind and called
+ * the agent "signed in" when one existed. That was a guess about someone
+ * else's credential store, and it was wrong in both directions: a file can
+ * outlive its token, and some agents keep no file at all. Sign-in state now
+ * comes only from the agent itself — see `control/providers/acp/adapter.ts`
+ * (`connect`) and `./native-auth.ts`.
+ *
+ * ## `approval` is read from each agent's source, not its mode names
+ *
+ * See `AcpApprovalPolicy`. codex-acp's mode called `read-only` lets Codex
+ * write inside the project, which is why every entry cites what it checked.
  */
 
 export type AcpLaunchEntry = {
@@ -40,11 +47,7 @@ export type AcpLaunchEntry = {
    * package named here.
    */
   npmPackages?: readonly string[];
-  /**
-   * The ACP session mode in which the agent asks before editing or running
-   * anything, when it has named modes. TabDump puts every new session in it.
-   */
-  askingModeId?: string;
+  approval: AcpApprovalPolicy;
 };
 
 /**
@@ -69,8 +72,6 @@ export type ProviderLaunchEntry = {
   provider: AgentProviderId;
   /** Executables whose presence means the agent is installed. */
   detect: readonly string[];
-  /** Relative to the user's home directory. Presence only. */
-  signInMarkers: readonly string[];
   /** How TabDump drives it, when it can. Absent: detect only. */
   acp?: AcpLaunchEntry;
   /** The agent's own CLI, for an SDK-driven agent's executable and native sign-in. */
@@ -83,7 +84,6 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     // spawns its own process. Detection only here.
     provider: "claude-code",
     detect: ["claude"],
-    signInMarkers: [".claude/.credentials.json"],
     // The desktop app drives the user's installed Claude Code (where their
     // own login lives) and can start that login. Verified against 2.1.229:
     // `claude auth status --json` → {"loggedIn": …}; `claude auth login`.
@@ -101,37 +101,60 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     },
   },
   {
+    // `--approval-mode default` is pinned on the command line because Gemini
+    // lets it override the user's own settings, which may ask for `yolo` or
+    // `auto_edit`. Verified against @google/gemini-cli 0.61.0: its ACP modes
+    // are `default` ("Prompts for approval"), `autoEdit`, `yolo` and `plan`.
     provider: "gemini",
     detect: ["gemini"],
-    signInMarkers: [".gemini/oauth_creds.json"],
     acp: {
       executables: ["gemini"],
-      args: ["--acp"],
+      args: ["--acp", "--approval-mode", "default"],
       npmPackages: ["@google/gemini-cli"],
-      askingModeId: "default",
+      approval: { kind: "asking-mode", modeIds: ["default"] },
     },
   },
   {
     // Codex speaks ACP through its adapter, which bundles Codex itself.
+    //
+    // Verified against @agentclientprotocol/codex-acp 1.13.1 (src/AgentMode):
+    // every mode it offers runs Codex with a `workspace-write` sandbox or
+    // none. Its `read-only` mode ("Ask for approval") is on-request approval
+    // *inside a writable workspace* — Codex edits project files and runs
+    // sandboxed commands without asking. The mode is sent on every turn, so
+    // no launch option or user config narrows it. TabDump cannot be the one
+    // that approves, so it does not start Codex sessions at all.
     provider: "openai-codex",
     detect: ["codex-acp", "codex"],
-    signInMarkers: [".codex/auth.json"],
     acp: {
       executables: ["codex-acp"],
       args: [],
-      npmPackages: ["@agentclientprotocol/codex-acp", "@zed-industries/codex-acp"],
-      askingModeId: "read-only",
+      npmPackages: ["@agentclientprotocol/codex-acp"],
+      approval: {
+        kind: "unavailable",
+        reason:
+          "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so TabDump cannot approve its actions.",
+      },
     },
   },
   {
-    // Grok Build ships ACP in its own binary. Its sign-in store is not
-    // documented, so TabDump claims nothing about it.
+    // Grok Build's own ACP server, verified against @xai-official/grok 1.0.41
+    // (published by xai-security@x.ai). `--no-leader` is pinned: in leader
+    // mode — which the user's config.toml can turn on — the session runs in a
+    // shared background process outside TabDump's process tree, so it would
+    // escape the job object and the working directory TabDump chose.
+    //
+    // Grok's permission modes are Default ("currently equivalent to Ask"),
+    // Ask, Auto (a classifier approves "safe" tools unasked) and Always
+    // approve. Only the asking ones are accepted; a session in which the
+    // agent offers neither is refused rather than guessed at.
     provider: "grok",
     detect: ["grok"],
-    signInMarkers: [],
     acp: {
       executables: ["grok"],
-      args: ["agent", "stdio"],
+      args: ["agent", "--no-leader", "stdio"],
+      npmPackages: ["@xai-official/grok"],
+      approval: { kind: "asking-mode", modeIds: ["ask", "default"] },
     },
   },
 ] as const;

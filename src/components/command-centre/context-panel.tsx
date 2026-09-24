@@ -9,7 +9,7 @@ import {
   summarizeAvailable,
   summarizeSnapshot,
 } from "@/lib/agents/command-centre/context-selection"
-import { PROVIDER_CONNECTION_LABEL, PROVIDER_CONNECTION_TONE } from "@/lib/agents/command-centre/presentation"
+import { providerRowState } from "@/lib/agents/command-centre/presentation"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { cn } from "@/lib/utils"
 import type { ContextDelta } from "@/lib/agents/command-centre/context-selection"
@@ -276,13 +276,8 @@ export function ContextPanel({
               <span className="min-w-0 truncate text-label text-muted-foreground">
                 {agentVisualIdentity(provider.provider).displayName}
               </span>
-              <span
-                className={cn(
-                  "shrink-0 text-label",
-                  AGENT_TONE_TEXT_CLASS[PROVIDER_CONNECTION_TONE[provider.connection]]
-                )}
-              >
-                {PROVIDER_CONNECTION_LABEL[provider.connection]}
+              <span className={cn("shrink-0 text-label", AGENT_TONE_TEXT_CLASS[providerRowState(provider).tone])}>
+                {providerRowState(provider).label}
               </span>
             </div>
           ))

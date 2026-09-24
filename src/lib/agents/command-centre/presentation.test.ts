@@ -10,6 +10,7 @@ import {
   SESSION_VISUAL_STATE,
   TERMINAL_SESSION_STATUSES,
   canCreateSession,
+  providerRowState,
   canSendMessage,
   isLiveSession,
   isTerminalSession,
@@ -177,5 +178,15 @@ describe("origin is a function of the correlation, not of the provider", () => {
     // The specific failure this guards: a session that exists because a
     // provider exists is not evidence that TabDump started it.
     expect(sessionOrigin({})).toBe("unknown")
+  })
+})
+
+describe("provider rows (Phase J.2)", () => {
+  const base = { provider: "gemini" as const, available: true, capabilities: [] }
+  it("says sign-in required for an agent that was reached but says it is signed out", () => {
+    expect(providerRowState({ ...base, connection: "connected", authentication: "required" })).toEqual({ label: "Sign-in required", tone: "idle" })
+  })
+  it("says connected only when the agent did not say otherwise", () => {
+    expect(providerRowState({ ...base, connection: "connected", authentication: "authenticated" }).label).toBe("Connected")
   })
 })

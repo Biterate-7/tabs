@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createGrant } from "@/lib/agents/control/permissions";
 import { createProject } from "@/lib/agents/control/projects";
+import { launchEntryFor } from "./allowlist";
 import { createAcpProcessLauncher } from "./process";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 
@@ -72,6 +73,15 @@ async function until(predicate: () => boolean, ms = 10_000): Promise<void> {
   }
 }
 
+/** The real adapter, wired exactly as the runtimes wire it: the allowlist's own entry. */
+function geminiAdapter() {
+  return createAcpControlAdapter({
+    provider: "gemini",
+    launch: createAcpProcessLauncher({ provider: "gemini", env: environment() }),
+    approval: launchEntryFor("gemini")!.acp!.approval,
+  });
+}
+
 function project() {
   const grant = createGrant(["read_project", "write_project"], 1, "p1");
   const made = createProject(
@@ -84,10 +94,7 @@ function project() {
 
 describe("launching a real ACP agent", () => {
   it("starts the allowlisted agent in the project, with its fixed arguments and none of the server's secrets", async () => {
-    const adapter = createAcpControlAdapter({
-      provider: "gemini",
-      launch: createAcpProcessLauncher({ provider: "gemini", env: environment() }),
-    });
+    const adapter = geminiAdapter();
     const events: AgentControlEvent[] = [];
     adapter.subscribeToEvents((event) => events.push(event));
 
@@ -101,7 +108,7 @@ describe("launching a real ACP agent", () => {
     const reply = events.find((event) => event.kind === "message_received")!;
     const facts = JSON.parse(reply.text!) as { argv: string[]; cwd: string; sessionCwd: string; envKeys: string[] };
 
-    expect(facts.argv).toEqual(["--acp"]);
+    expect(facts.argv).toEqual(["--acp", "--approval-mode", "default"]);
     expect(path.resolve(facts.cwd).toLowerCase()).toBe(path.resolve(projectDir).toLowerCase());
     expect(path.resolve(facts.sessionCwd).toLowerCase()).toBe(path.resolve(projectDir).toLowerCase());
     expect(facts.envKeys).not.toContain("ANTHROPIC_API_KEY");
@@ -113,10 +120,7 @@ describe("launching a real ACP agent", () => {
   }, 30_000);
 
   it("carries a real approval round trip over stdio", async () => {
-    const adapter = createAcpControlAdapter({
-      provider: "gemini",
-      launch: createAcpProcessLauncher({ provider: "gemini", env: environment() }),
-    });
+    const adapter = geminiAdapter();
     const events: AgentControlEvent[] = [];
     adapter.subscribeToEvents((event) => events.push(event));
 
@@ -136,6 +140,96 @@ describe("launching a real ACP agent", () => {
 
     expect(events.find((event) => event.kind === "message_received")?.text).toBe("permission:no");
     adapter.dispose();
+  }, 30_000);
+
+  it("carries a granted approval back over stdio as the agent's one-time option (Phase J.2)", async () => {
+    const adapter = geminiAdapter();
+    const events: AgentControlEvent[] = [];
+    adapter.subscribeToEvents((event) => events.push(event));
+
+    const p = project();
+    await adapter.createSession({ sessionId: "s3", project: p, permissions: p.permissions, attachments: [] });
+    await adapter.sendMessage({ sessionId: "s3", text: "edit", context: { attachments: [] } });
+    await until(() => events.some((event) => event.kind === "approval_requested"));
+    const requested = events.find((event) => event.kind === "approval_requested")!;
+
+    await adapter.respondToApproval(requested.approvalId!, "granted");
+    await until(() => events.some((event) => event.kind === "run_completed"));
+
+    expect(events.find((event) => event.kind === "message_received")?.text).toBe("permission:yes");
+    adapter.dispose();
+  }, 30_000);
+
+  it("stops a real agent process that switches itself into a mode that does not ask (Phase J.2)", async () => {
+    const adapter = geminiAdapter();
+    const events: AgentControlEvent[] = [];
+    adapter.subscribeToEvents((event) => events.push(event));
+
+    const p = project();
+    await adapter.createSession({ sessionId: "s4", project: p, permissions: p.permissions, attachments: [] });
+    await adapter.sendMessage({ sessionId: "s4", text: "yolo", context: { attachments: [] } });
+    await until(() => events.some((event) => event.kind === "error"));
+
+    expect(events.find((event) => event.kind === "error")?.summary).toBe(
+      "The agent switched to a mode where it approves its own actions, so TabDump stopped it."
+    );
+    expect(await adapter.sendMessage({ sessionId: "s4", text: "again", context: { attachments: [] } })).toMatchObject({
+      ok: false,
+    });
+    adapter.dispose();
+  }, 30_000);
+
+  it("asks a real agent process whether it is signed in, and lets the process go afterwards (Phase J.2)", async () => {
+    const adapter = geminiAdapter();
+    const connected = await adapter.connect();
+    expect(connected.ok).toBe(true);
+    expect(adapter.describeAuthentication().state).toBe("authenticated");
+    adapter.dispose();
+  }, 30_000);
+
+  /*
+    Process cleanup, against the real process (Phase J.2). A session with no
+    project runs in a private scratch directory that the launcher removes only
+    once the agent process has actually exited — Windows will not delete a
+    directory a live process stands in — so the directory disappearing is the
+    process ending.
+  */
+  async function liveScratchSession(sessionId: string) {
+    const adapter = geminiAdapter();
+    const events: AgentControlEvent[] = [];
+    adapter.subscribeToEvents((event) => events.push(event));
+    const created = await adapter.createSession({
+      sessionId,
+      permissions: { scopes: [], grantedAt: 1 },
+      attachments: [],
+    });
+    if (!created.ok) throw new Error(`session failed: ${created.error.code}`);
+    await adapter.sendMessage({ sessionId, text: "report", context: { attachments: [] } });
+    await until(() => events.some((event) => event.kind === "run_completed"));
+    const facts = JSON.parse(events.find((event) => event.kind === "message_received")!.text!) as { cwd: string };
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(facts.cwd)).toBe(true);
+    return { adapter, cwd: facts.cwd, existsSync };
+  }
+
+  it("ends the agent process when a session is released (dispose_session)", async () => {
+    const { adapter, cwd, existsSync } = await liveScratchSession("s-release");
+    adapter.releaseSession("s-release");
+    await until(() => !existsSync(cwd));
+    adapter.dispose();
+  }, 30_000);
+
+  it("ends the agent process when the agent is disconnected (disconnect_provider)", async () => {
+    const { adapter, cwd, existsSync } = await liveScratchSession("s-disconnect");
+    await adapter.disconnect();
+    await until(() => !existsSync(cwd));
+    adapter.dispose();
+  }, 30_000);
+
+  it("ends the agent process when the runtime shuts down", async () => {
+    const { adapter, cwd, existsSync } = await liveScratchSession("s-shutdown");
+    adapter.dispose();
+    await until(() => !existsSync(cwd));
   }, 30_000);
 
   it("reports an agent that is not on PATH as not installed", async () => {

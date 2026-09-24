@@ -93,7 +93,9 @@ export type RuntimeErrorCode =
   /** The command did not parse, or named something this runtime does not do. */
   | "invalid_request"
   /** The adapter does not implement this. */
-  | "unsupported";
+  | "unsupported"
+  /** The agent would not work in a mode where it asks TabDump before acting. */
+  | "approval_unenforceable";
 
 export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "runtime_unavailable",
@@ -112,6 +114,7 @@ export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "timeout",
   "invalid_request",
   "unsupported",
+  "approval_unenforceable",
 ] as const;
 
 export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
@@ -144,6 +147,7 @@ const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   timeout: "The agent did not respond in time.",
   invalid_request: "TabDump could not read that request.",
   unsupported: "This agent cannot do that yet.",
+  approval_unenforceable: "That agent would not agree to ask before acting.",
 };
 
 export type RuntimeError = { code: RuntimeErrorCode; message: string };
@@ -256,9 +260,9 @@ export type RuntimeStatus = {
  * and a leak. Carries no path — `installed` and `launchable` are booleans on
  * purpose.
  *
- * `signIn` is `signed_in` only when the agent's own sign-in left a marker
- * TabDump could see without opening it; otherwise `unknown`. There is no
- * `signed_out`: absence of a marker proves nothing.
+ * Nothing about sign-in: that is reported by the agent itself, through
+ * `connect_provider` (`RuntimeProviderStatus.authentication`), never guessed
+ * from what files exist (Phase J.2).
  */
 export type ProviderDetection = {
   provider: AgentProviderId;
@@ -267,7 +271,6 @@ export type ProviderDetection = {
   transport: "sdk" | "acp";
   /** Whether the executable TabDump would start was found. */
   launchable: boolean;
-  signIn: "signed_in" | "unknown";
 };
 
 /** A sign-in method the agent itself advertised. Labels only. */

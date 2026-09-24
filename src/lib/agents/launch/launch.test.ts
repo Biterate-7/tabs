@@ -99,7 +99,7 @@ describe("resolving an allowlisted executable", () => {
 });
 
 describe("detecting installed agents", () => {
-  it("reports installation, launchability and sign-in presence — and no path at all", () => {
+  it("reports installation and launchability — and no path, and nothing about sign-in", () => {
     const fs = memoryFs({
       "/usr/local/bin/claude": "",
       "/usr/local/bin/gemini": "",
@@ -110,16 +110,15 @@ describe("detecting installed agents", () => {
     const detections = detectProviders({
       env: { PATH: "/usr/local/bin" },
       platform: "linux",
-      homeDirectory: "/home/alice",
       fs,
     });
 
     expect(detections).toEqual([
-      { provider: "claude-code", installed: true, transport: "sdk", launchable: false, signIn: "unknown" },
-      { provider: "gemini", installed: true, transport: "acp", launchable: true, signIn: "signed_in" },
+      { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
+      { provider: "gemini", installed: true, transport: "acp", launchable: true },
       // Codex is installed but its ACP adapter is not, so it cannot be driven yet.
-      { provider: "openai-codex", installed: true, transport: "acp", launchable: false, signIn: "unknown" },
-      { provider: "grok", installed: false, transport: "acp", launchable: false, signIn: "unknown" },
+      { provider: "openai-codex", installed: true, transport: "acp", launchable: false },
+      { provider: "grok", installed: false, transport: "acp", launchable: false },
     ]);
 
     const serialized = JSON.stringify(detections);
@@ -128,14 +127,18 @@ describe("detecting installed agents", () => {
     expect(serialized).not.toContain("never-read");
   });
 
-  it("never claims signed out: absence of a marker is unknown", () => {
-    const detections = detectProviders({
+  it("never looks in the home directory: a login file is not evidence of a sign-in (Phase J.2)", () => {
+    const looked: string[] = [];
+    const base = memoryFs({ "/usr/local/bin/gemini": "" });
+    detectProviders({
       env: { PATH: "/usr/local/bin" },
       platform: "linux",
-      homeDirectory: undefined,
-      fs: memoryFs({}),
+      fs: {
+        isFile: (candidate) => (looked.push(candidate), base.isFile(candidate)),
+        readText: (candidate) => (looked.push(candidate), base.readText(candidate)),
+      },
     });
-    expect(detections.every((entry) => entry.signIn === "unknown")).toBe(true);
+    expect(looked.every((candidate) => candidate.startsWith("/usr/local/bin/"))).toBe(true);
   });
 });
 

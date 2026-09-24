@@ -24,10 +24,11 @@ import { useNow } from "@/hooks/use-now"
 import { useRemoteProjects } from "@/hooks/use-remote-projects"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
 import { useAgentPlatform } from "@/hooks/use-agent-platform"
+import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { isChatReady } from "@/lib/agents/platform/lifecycle"
 import { grantWithinApproval } from "@/lib/agents/platform/roster"
-import { agentProjectFolderPicker } from "@/lib/platform"
+import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
@@ -228,10 +229,22 @@ export function CommandCentreView({
     [connections]
   )
 
+  /*
+    Where TabDump is running, asked once through the platform seam, and —
+    on the web only — whether the user has issued a TabDump MCP token, which
+    is what a custom MCP agent connects with. The desktop app has no MCP
+    server, so it asks nothing and the registry says why (Phase J.2).
+  */
+  const [surface] = useState(() => agentConnectorSurface())
+  const mcpTokens = useMcpTokens({ enabled: surface === "web" })
+  const mcpTokenIssued = hasUsableMcpToken(mcpTokens.state, now)
+
   const platform = useAgentPlatform({
     client: runtime.client,
     status: runtime.status,
     providerKeyConnected,
+    surface,
+    ...(mcpTokenIssued !== undefined ? { mcpTokenIssued } : {}),
   })
   const [connectOpen, setConnectOpen] = useState(false)
   const [connectProvider, setConnectProvider] = useState<AgentProviderId | null>(null)
@@ -425,8 +438,11 @@ export function CommandCentreView({
             onConnect={openConnect}
             onOpenAgent={(agent, latest) => {
               const chat = platformProvider(agent.provider)?.chat === true
+              const startable =
+                chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
               if (latest) setRequestedSessionId(latest.view.sessionId)
-              else if (chat && isChatReady(platform.phaseOf(agent.provider))) setNewSessionOpen(true)
+              else if (startable) setNewSessionOpen(true)
+              // Anything else is explained where it is decided: in Connect Agent.
               else openConnect(agent.provider)
             }}
           />
@@ -575,7 +591,11 @@ export function CommandCentreView({
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
         workspaces={workspaceChoices}
         {...(activeWorkspaceId ? { defaultWorkspaceId: activeWorkspaceId } : {})}
-        connectionBlocker={(provider) => (platform.identity(provider) ? undefined : "Not connected")}
+        connectionBlocker={(provider) => {
+          if (!platform.identity(provider)) return "Not connected"
+          const sessions = platform.sessionsFor(provider)
+          return sessions.available ? undefined : sessions.reason
+        }}
         onConnectAgent={openConnect}
         {...(pickFolder ? { pickFolder } : {})}
         projectScopesFor={projectScopesFor}

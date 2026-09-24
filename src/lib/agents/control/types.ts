@@ -73,6 +73,11 @@ export type ControlErrorCode =
   | "malformed-response"
   /** The provider needs configuration the user has not supplied. */
   | "configuration"
+  /**
+   * The agent would not work in a mode where it asks before acting, so
+   * TabDump could not be the one approving what it does (Phase J.2).
+   */
+  | "approval-unenforceable"
   | "unknown";
 
 export type ControlError = {
@@ -93,6 +98,7 @@ const CONTROL_ERROR_MESSAGES: Record<ControlErrorCode, string> = {
   timeout: "The agent did not respond in time.",
   "malformed-response": "The agent returned something TabDump could not read.",
   configuration: "This agent needs to be set up first.",
+  "approval-unenforceable": "This agent would not agree to ask before acting, so TabDump did not start it.",
   unknown: "The agent stopped unexpectedly.",
 };
 

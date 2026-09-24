@@ -308,7 +308,7 @@ function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentContr
   const adapter = createAcpControlAdapter({
     provider,
     launch: createAcpProcessLauncher({ provider, env: process.env }),
-    ...(entry.askingModeId ? { askingModeId: entry.askingModeId } : {}),
+    approval: entry.approval,
     mcpLink: async (request) => {
       linker ??= mcpLinkerFor(provider, ownerId);
       const resolved = await linker;

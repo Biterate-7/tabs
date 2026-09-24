@@ -376,6 +376,11 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     action: "This provider does not implement that yet.",
     reconnect: false,
   },
+  approval_unenforceable: {
+    title: "Agent would not ask before acting",
+    action: "TabDump only runs agents that ask for approval. Check the agent's own approval settings, then start a new session.",
+    reconnect: false,
+  },
 };
 
 /* ------------------------------------------------------------------ *
@@ -547,6 +552,20 @@ export const PROVIDER_CONNECTION_TONE: Record<
   configuration_required: "idle",
   error: "bad",
 };
+
+/**
+ * What a provider row says, from both of the runtime's facts (Phase J.2).
+ *
+ * "Connected" alone describes the process — TabDump reached the agent. An
+ * agent that was reached and then said it is signed out is not connected in
+ * any sense a person means, so the agent's own answer wins.
+ */
+export function providerRowState(provider: RuntimeProviderStatus): { label: string; tone: AgentVisualTone } {
+  if (provider.connection === "connected" && provider.authentication === "required") {
+    return { label: "Sign-in required", tone: "idle" };
+  }
+  return { label: PROVIDER_CONNECTION_LABEL[provider.connection], tone: PROVIDER_CONNECTION_TONE[provider.connection] };
+}
 
 /**
  * Whether this provider can start a session here.

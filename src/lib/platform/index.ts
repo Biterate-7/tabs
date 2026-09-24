@@ -6,7 +6,7 @@
  * functions, so the Tauri runtime stays out of the web bundle while the
  * adapter itself costs a few bytes.
  */
-import { isDesktop } from "./detect";
+import { isDesktop, platformKind } from "./detect";
 import { desktopAgentBridge, desktopPlatform } from "./desktop";
 import { webPlatform } from "./web";
 import type { PlatformAdapter } from "./types";
@@ -57,4 +57,15 @@ export function agentProjectFolderPicker():
   | (() => Promise<{ path: string; name: string } | null>)
   | undefined {
   return isDesktop() ? () => desktopAgentBridge.pickProjectFolder() : undefined;
+}
+
+/**
+ * Which surface the agent connectors are offered on (Phase J.2).
+ *
+ * Some connectors only work on one: a custom MCP agent connects to TabDump's
+ * MCP server, which only a TabDump server with an account store runs. The
+ * connector registry says which; this says where we are.
+ */
+export function agentConnectorSurface(): "web" | "desktop" {
+  return platformKind();
 }

@@ -36,7 +36,7 @@ import type {
   CreateSessionRequest,
   SessionHandle,
 } from "../../types";
-import type { AcpLauncher, AcpMcpLink, AcpMcpLinker } from "./launcher";
+import type { AcpApprovalPolicy, AcpLauncher, AcpMcpLink, AcpMcpLinker } from "./launcher";
 import type { AcpPermissionRequest, AcpStopReason, AcpToolCall } from "./protocol";
 import type { JsonRpcPeer, RpcFailure, RpcReply } from "./rpc";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -80,6 +80,26 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  *      approval TabDump gave — an agent the user configured to auto-accept —
  *      makes the adapter cancel the turn and fail the session. An agent that
  *      does not ask is not an agent TabDump will drive.
+ *
+ * ## Modes (Phase J.2)
+ *
+ * Step 5 catches an agent *after* it has acted. Modes are how it is kept from
+ * getting there. The launch entry's `AcpApprovalPolicy` names the modes in
+ * which this agent asks before every privileged action. A session is started
+ * only in one of them (refused with `approval-unenforceable` otherwise), and
+ * a `current_mode_update` out of them stops the session at once. An agent
+ * with no such mode declares no session capability at all, so the service
+ * refuses its sessions without any provider-specific check.
+ *
+ * ## Sign-in state comes from the agent (Phase J.2)
+ *
+ * ACP has no "am I signed in" request, but it has a defined answer to
+ * `session/new` when the agent is not: error `-32000`. `connect` therefore
+ * asks — a `session/new` in an empty scratch directory, on the probe
+ * connection, where no prompt is ever sent and every client request is
+ * refused. Verified against Gemini CLI 0.61.0, codex-acp 1.13.1 and Grok
+ * 1.0.41. The probe session is closed where the agent supports it, and a
+ * signed-in probe connection is released at once.
  */
 
 export const ACP_CAPABILITIES: AgentCapabilitySet = capabilitySet(
@@ -94,6 +114,12 @@ export const ACP_CAPABILITIES: AgentCapabilitySet = capabilitySet(
   "working_directory"
 );
 
+/**
+ * What an agent TabDump cannot hold to its approvals declares: nothing.
+ * It can still be reached and signed in to; it cannot be given a session.
+ */
+export const ACP_REACH_ONLY_CAPABILITIES: AgentCapabilitySet = capabilitySet();
+
 /** A prompt turn may legitimately run for a long time. It is ended by the user, not a clock. */
 const PROMPT_TIMEOUT_MS = 60 * 60 * 1000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -106,12 +132,8 @@ const DELTA_FLUSH_MS = 200;
 export type AcpControlAdapterOptions = {
   provider: AgentProviderId;
   launch: AcpLauncher;
-  /**
-   * The mode to put a new session in, when the agent offers modes and this
-   * one is among them. Chosen per provider as the one in which the agent
-   * asks before editing or running anything. Absent: the agent's default.
-   */
-  askingModeId?: string;
+  /** Which modes ask before every privileged action, from the launch entry. Required: there is no default. */
+  approval: AcpApprovalPolicy;
   /** Per-session TabDump MCP access, when this runtime can mint it. */
   mcpLink?: AcpMcpLinker;
   now?: () => number;
@@ -152,8 +174,16 @@ type LiveSession = {
   tools: Map<string, TrackedTool>;
   pending: Map<string, { request: AcpPermissionRequest; reply: (answer: RpcReply) => void }>;
   pendingContext?: readonly AgentContextAttachment[];
+  /**
+   * The modes this session may be in. Set once the session is in one of them;
+   * from then on a `current_mode_update` to any other mode stops it.
+   */
+  askingModes?: readonly string[];
   ended: boolean;
 };
+
+/** The connection `connect()` opened, kept for sign-in. Separate from any session's. */
+type Probe = { peer: JsonRpcPeer; release: () => void; cwd: string; sessionClose: boolean };
 
 export type AcpControlAdapter = AgentControlAdapter & {
   takeApprovalDetails(approvalId: string): AdapterApprovalDetails | undefined;
@@ -161,6 +191,7 @@ export type AcpControlAdapter = AgentControlAdapter & {
   bindRun(sessionId: string, runId: string): void;
   describeAuthentication(): AdapterAuthentication;
   authenticate(methodId: string): Promise<ControlResult<AdapterAuthentication>>;
+  releaseSession(sessionId: string): void;
 };
 
 export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpControlAdapter {
@@ -181,8 +212,8 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   let status: ControlStatus = { kind: "disconnected", since: now() };
   let authState: AdapterAuthenticationState = "unknown";
   let authMethods: readonly AdapterAuthMethod[] = [];
-  /** The connection `connect()` opened, kept for sign-in. Separate from any session's. */
-  let probe: { peer: JsonRpcPeer; release: () => void } | undefined;
+  let probe: Probe | undefined;
+  const capabilities = options.approval.kind === "asking-mode" ? ACP_CAPABILITIES : ACP_REACH_ONLY_CAPABILITIES;
 
   function setStatus(next: Omit<ControlStatus, "since">): void {
     status = { ...next, since: now() };
@@ -229,7 +260,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       onClose: () => void;
     }
   ): Promise<
-    | { ok: true; peer: JsonRpcPeer; cwd: string; release: () => void; mcpHttp: boolean }
+    | { ok: true; peer: JsonRpcPeer; cwd: string; release: () => void; mcpHttp: boolean; sessionClose: boolean }
     | { ok: false; code: ControlErrorCode }
   > {
     const launched = await options.launch(projectPath ? { projectPath } : {});
@@ -260,7 +291,14 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     }
 
     authMethods = result.authMethods;
-    return { ok: true, peer, cwd: launched.cwd, release: launched.release, mcpHttp: result.mcpHttp };
+    return {
+      ok: true,
+      peer,
+      cwd: launched.cwd,
+      release: launched.release,
+      mcpHttp: result.mcpHttp,
+      sessionClose: result.sessionClose,
+    };
   }
 
   function codeFor(failure: RpcFailure): ControlErrorCode {
@@ -361,7 +399,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     const running = merged.status === "in_progress" || merged.status === "completed";
 
     if (running && policy.privileged && !tracked.approved) {
-      enforce(session);
+      enforce(session, "The agent acted without asking for approval, so TabDump stopped it.");
       return;
     }
 
@@ -389,16 +427,17 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   }
 
   /**
-   * An agent ran a privileged tool TabDump never approved.
+   * An agent ran a privileged tool TabDump never approved, or moved itself
+   * into a mode where it would.
    *
-   * The turn is cancelled and the session failed, with one sentence saying
-   * why. The user can start a new session once the agent is back in a mode
-   * where it asks — which is the mode TabDump requests on every new session.
+   * The turn is cancelled and the session failed, with one fixed sentence
+   * saying why. The user can start a new session, which TabDump puts back in
+   * a mode where the agent asks.
    */
-  function enforce(session: LiveSession): void {
+  function enforce(session: LiveSession, reason: string): void {
     if (session.ended) return;
     session.peer.notify("session/cancel", { sessionId: session.acpSessionId });
-    emit(session, "error", "The agent acted without asking for approval, so TabDump stopped it.");
+    emit(session, "error", reason);
     end(session);
   }
 
@@ -426,6 +465,15 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
         return;
       case "tool_call_update":
         onToolCall(session, read.update.call, true);
+        return;
+      case "mode_changed":
+        // Before the session settles into an asking mode, a report of the mode
+        // it started in is expected and already being corrected. After, any
+        // move out of the asking modes — by the agent, by a hook, by a user in
+        // another client of the same agent — ends the session.
+        if (session.askingModes && !session.askingModes.includes(read.update.modeId)) {
+          enforce(session, "The agent switched to a mode where it approves its own actions, so TabDump stopped it.");
+        }
         return;
     }
   }
@@ -523,34 +571,99 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     emit(session, "run_completed", summary);
   }
 
+  function releaseProbe(): void {
+    const current = probe;
+    probe = undefined;
+    current?.peer.close();
+    current?.release();
+  }
+
   /**
-   * Proves the agent can be launched and speaks ACP, and learns how it signs
-   * in. Opens no session and runs no tool. The connection is kept so
-   * `authenticate` can use it, and closed by `disconnect`.
+   * Asks the agent whether it is signed in, in the one way ACP defines.
+   *
+   * A `session/new` on the probe connection: `-32000` is "sign in first", a
+   * session id is "signed in", anything else is honestly `unknown`. The probe
+   * connection refuses every request from the agent and never sends a
+   * prompt, so nothing can run in it. A session it did create is closed when
+   * the agent supports that, so connecting leaves nothing in its history.
+   */
+  async function askAuthentication(current: Probe): Promise<AdapterAuthenticationState> {
+    const asked = await current.peer.request(
+      "session/new",
+      { cwd: current.cwd, mcpServers: [] },
+      { timeoutMs: HANDSHAKE_TIMEOUT_MS }
+    );
+    if (!asked.ok) {
+      return asked.kind === "remote" && asked.code === ACP_AUTH_REQUIRED ? "required" : "unknown";
+    }
+    const created = readNewSessionResult(asked.value);
+    if (!created) return "unknown";
+    if (current.sessionClose) {
+      await current.peer.request("session/close", { sessionId: created.sessionId }, { timeoutMs: HANDSHAKE_TIMEOUT_MS });
+    }
+    return "authenticated";
+  }
+
+  /**
+   * Proves the agent can be launched and speaks ACP, learns how it signs in,
+   * and asks it whether it is signed in. Opens no working session and runs
+   * no tool.
+   *
+   * Asked again on every call, so signing in or out in a terminal is noticed
+   * the next time the user presses Connect. A signed-out agent's connection is
+   * kept so `authenticate` can use it; a signed-in one is released, since
+   * nothing else needs it and the agent may hold processes of its own open.
    */
   async function connect(): Promise<ControlResult<ControlStatus>> {
-    if (probe?.peer.isOpen()) return { ok: true, value: status };
-    setStatus({ kind: "connecting" });
-    const opened = await open(undefined, {
-      onRequest: () => refuseRequest(),
-      onNotification: () => {},
-      onClose: () => {
-        probe = undefined;
-      },
-    });
-    if (!opened.ok) {
-      if (status.kind === "connecting") {
-        setStatus({ kind: "error", lastError: controlError(opened.code) });
+    if (!probe?.peer.isOpen()) {
+      setStatus({ kind: "connecting" });
+      const opened = await open(undefined, {
+        onRequest: () => refuseRequest(),
+        onNotification: () => {},
+        onClose: () => {
+          probe = undefined;
+        },
+      });
+      if (!opened.ok) {
+        if (status.kind === "connecting") {
+          setStatus({ kind: "error", lastError: controlError(opened.code) });
+        }
+        return controlFailure(opened.code);
       }
-      return controlFailure(opened.code);
+      probe = { peer: opened.peer, release: opened.release, cwd: opened.cwd, sessionClose: opened.sessionClose };
     }
-    probe = { peer: opened.peer, release: opened.release };
+
+    const current = probe;
+    if (!current) return controlFailure("unreachable");
+    authState = await askAuthentication(current);
+    if (authState === "authenticated" && probe === current) releaseProbe();
     setStatus({ kind: "connected" });
     return { ok: true, value: status };
   }
 
+  async function settleAskingMode(
+    peer: JsonRpcPeer,
+    created: { sessionId: string; currentModeId?: string; availableModeIds: readonly string[] },
+    askingModes: readonly string[]
+  ): Promise<boolean> {
+    if (created.currentModeId && askingModes.includes(created.currentModeId)) return true;
+    const target = askingModes.find((modeId) => created.availableModeIds.includes(modeId));
+    if (!target) return false;
+    const moded = await peer.request(
+      "session/set_mode",
+      { sessionId: created.sessionId, modeId: target },
+      { timeoutMs: HANDSHAKE_TIMEOUT_MS }
+    );
+    return moded.ok;
+  }
+
   async function createSession(request: CreateSessionRequest): Promise<ControlResult<SessionHandle>> {
     if (sessions.has(request.sessionId)) return controlFailure("invalid-session");
+    // The service never gets here for such an agent — it declares no
+    // `create_session` — but the refusal is also the adapter's own, before
+    // anything is launched.
+    const approval = options.approval;
+    if (approval.kind !== "asking-mode") return controlFailure("unsupported");
 
     // Filled once the session exists; the handlers only ever see it after.
     const live: { session?: LiveSession } = {};
@@ -561,7 +674,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       onClose: () => {
         const session = live.session;
         if (!session || session.ended) return;
-        if (session.busy) emit(session, "error", "The agent stopped unexpectedly.");
+        if (session.busy) emit(session, "error", "Agent disconnected unexpectedly.");
         end(session);
       },
     });
@@ -602,22 +715,17 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     sessions.set(request.sessionId, session);
     bySessionIdOfAgent.set(result.sessionId, session);
 
-    // Put the agent in the mode where it asks, when it offers one. A mode it
-    // does not offer is left alone rather than guessed at.
-    const asking = options.askingModeId;
-    if (asking && result.currentModeId !== asking && result.availableModeIds.includes(asking)) {
-      const moded = await opened.peer.request(
-        "session/set_mode",
-        { sessionId: result.sessionId, modeId: asking },
-        { timeoutMs: HANDSHAKE_TIMEOUT_MS }
-      );
-      if (!moded.ok) {
-        // An agent that will not enter the asking mode is not driven.
-        end(session);
-        sessions.delete(request.sessionId);
-        return controlFailure("unknown");
-      }
+    // Put the agent in a mode where it asks. Already in one: nothing to do.
+    // Offers one: switch to it. Offers none, or refuses the switch: the
+    // session is not driven — TabDump does not start an agent that would be
+    // approving its own actions, and does not guess at a mode it cannot see.
+    const settled = await settleAskingMode(opened.peer, result, approval.modeIds);
+    if (!settled) {
+      end(session);
+      sessions.delete(request.sessionId);
+      return controlFailure("approval-unenforceable");
     }
+    session.askingModes = approval.modeIds;
 
     setStatus({ kind: "connected" });
     emit(session, "session_started", mcp ? "Session started with TabDump tools." : "Session started.");
@@ -717,7 +825,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   return {
     provider,
 
-    getCapabilities: () => ACP_CAPABILITIES,
+    getCapabilities: () => capabilities,
 
     getConnectionStatus: () => status,
 
@@ -728,11 +836,24 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
      */
     connect,
 
+    /**
+     * Ends every session with this agent and lets go of the probe. The host
+     * has already cancelled the runs; this is what ends the processes.
+     */
     async disconnect() {
-      probe?.peer.close();
-      probe?.release();
-      probe = undefined;
+      for (const session of [...sessions.values()]) {
+        end(session);
+        sessions.delete(session.sessionId);
+      }
+      releaseProbe();
       if (status.kind !== "unavailable") setStatus({ kind: "disconnected" });
+    },
+
+    releaseSession(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) return;
+      end(session);
+      sessions.delete(sessionId);
     },
 
     createSession,
@@ -759,9 +880,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     dispose() {
       for (const session of sessions.values()) end(session);
       sessions.clear();
-      probe?.peer.close();
-      probe?.release();
-      probe = undefined;
+      releaseProbe();
       eventListeners.clear();
       statusListeners.clear();
     },
@@ -794,9 +913,13 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
       }
       if (!probe?.peer.isOpen()) {
         const connected = await connect();
-        if (!connected.ok || !probe) return controlFailure("unreachable");
+        if (!connected.ok) return controlFailure("unreachable");
+        // Signed in meanwhile — in a terminal, or another window.
+        if (authState === "authenticated") return { ok: true, value: authentication() };
       }
-      const result = await probe.peer.request(
+      const current = probe;
+      if (!current) return controlFailure("unreachable");
+      const result = await current.peer.request(
         "authenticate",
         { methodId },
         { timeoutMs: AUTHENTICATE_TIMEOUT_MS }
@@ -805,7 +928,14 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
         authState = "required";
         return controlFailure(codeFor(result) === "configuration" ? "configuration" : codeFor(result));
       }
-      authState = "authenticated";
+      // The agent said the sign-in finished. It is asked once more, the same
+      // way `connect` asks, so what TabDump shows is the agent's answer to
+      // "can a session start now" rather than the sign-in flow's own report.
+      // An agent that cannot answer is reported as exactly that — `unknown`,
+      // which the UI shows as "could not be verified" — not as signed in.
+      authState = await askAuthentication(current);
+      if (authState === "authenticated" && probe === current) releaseProbe();
+      if (authState === "required") return controlFailure("configuration");
       return { ok: true, value: authentication() };
     },
   };

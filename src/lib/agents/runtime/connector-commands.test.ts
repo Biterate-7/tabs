@@ -31,12 +31,18 @@ const ALICE: RuntimeActor = { id: "account:alice" };
 const BOB: RuntimeActor = { id: "account:bob" };
 
 const DETECTIONS: ProviderDetection[] = [
-  { provider: "gemini", installed: true, transport: "acp", launchable: true, signIn: "unknown" },
+  { provider: "gemini", installed: true, transport: "acp", launchable: true },
 ];
+
+/** How an ACP agent in the mode where it asks answers session/new. */
+const ASKING_SESSION = {
+  sessionId: "acp-1",
+  modes: { currentModeId: "default", availableModes: [{ id: "default" }] },
+};
 
 function build(gate: ExecutionGateResult = LOCAL, handlers = {}) {
   const agent = createFakeAgent({
-    "session/new": () => ({ sessionId: "acp-1" }),
+    "session/new": () => ASKING_SESSION,
     "session/prompt": async (params: Record<string, unknown>, context: { update: (id: string, u: Record<string, unknown>) => void }) => {
       context.update(params.sessionId as string, {
         sessionUpdate: "agent_message_chunk",
@@ -55,7 +61,15 @@ function build(gate: ExecutionGateResult = LOCAL, handlers = {}) {
       if (provider !== "gemini") return undefined;
       const key = `${provider}:${ownerId}`;
       if (!adapters.has(key)) {
-        adapters.set(key, createAcpControlAdapter({ provider, launch: agent.launcher, now: () => T0 }));
+        adapters.set(
+          key,
+          createAcpControlAdapter({
+            provider,
+            launch: agent.launcher,
+            approval: { kind: "asking-mode", modeIds: ["default"] },
+            now: () => T0,
+          })
+        );
       }
       return adapters.get(key);
     },
@@ -88,7 +102,7 @@ describe("connect and sign in", () => {
     const { host, agent } = build(LOCAL, {
       "session/new": () => {
         if (!signedIn) throw new AgentError(-32000);
-        return { sessionId: "acp-1" };
+        return ASKING_SESSION;
       },
       authenticate: () => {
         signedIn = true;
@@ -96,13 +110,15 @@ describe("connect and sign in", () => {
       },
     });
 
+    // The agent is asked on connect (Phase J.2), so the view already carries
+    // its own answer rather than "unknown".
     const connected = await host.execute(ALICE, { name: "connect_provider", provider: "gemini" });
     expect(connected).toMatchObject({
       ok: true,
       value: {
         provider: "gemini",
         connection: "connected",
-        authentication: "unknown",
+        authentication: "required",
         authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
       },
     });
@@ -204,5 +220,18 @@ describe("a conversation through the host", () => {
     const gone = await host.execute(ALICE, { name: "get_session", sessionId: created.value.sessionId });
     expect(gone).toMatchObject({ ok: false, error: { code: "session_not_found" } });
     expect(agent.received.some((message) => message.method === "session/cancel")).toBe(true);
+    // And the agent's process is let go, not left running unreachable (Phase J.2).
+    expect(agent.released).toBe(1);
+  });
+
+  it("ends the agent's process when a session is disposed, not only its run (Phase J.2)", async () => {
+    const { host, agent } = build();
+    const created = await host.execute(ALICE, { name: "create_session", provider: "gemini" });
+    if (!created.ok) throw new Error(created.error.code);
+    expect(agent.released).toBe(0);
+
+    await host.execute(ALICE, { name: "dispose_session", sessionId: created.value.sessionId });
+
+    expect(agent.released).toBe(1);
   });
 });

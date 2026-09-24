@@ -115,7 +115,7 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRun
       launch: options.acpLauncher
         ? options.acpLauncher(provider)
         : createAcpProcessLauncher({ provider, env: options.env }),
-      ...(entry.askingModeId ? { askingModeId: entry.askingModeId } : {}),
+      approval: entry.approval,
       ...(options.now ? { now: options.now } : {}),
     });
   }

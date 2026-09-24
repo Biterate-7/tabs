@@ -13,7 +13,7 @@ import { seedConnectedAgent } from "@/lib/agents/platform/__fixtures__/roster"
 import { AGENT_ROSTER_KEY, loadAgentRoster } from "@/lib/agents/platform/roster"
 import { scopedKey } from "@/lib/storage/namespace"
 import type { ScriptedRuntime } from "@/lib/agents/command-centre/__fixtures__/runtime-client"
-import type { RuntimeProviderStatus } from "@/lib/agents/runtime/protocol"
+import type { RuntimeCommand, RuntimeProviderStatus } from "@/lib/agents/runtime/protocol"
 
 /**
  * The agent connector platform (Phase J), through the real command centre.
@@ -33,7 +33,8 @@ function geminiStatus(over: Partial<RuntimeProviderStatus> = {}): RuntimeProvide
   }
 }
 
-function runtimeWithGemini(): ScriptedRuntime {
+/** `connect_provider` for Gemini answers with the agent's own sign-in state, as the J.2 runtime does. */
+function runtimeWithGemini(authentication: RuntimeProviderStatus["authentication"] = "required"): ScriptedRuntime {
   const runtime = createScriptedRuntime({
     status: scriptedStatus({
       providers: [
@@ -49,14 +50,14 @@ function runtimeWithGemini(): ScriptedRuntime {
     }),
   })
   runtime.setDetections([
-    { provider: "claude-code", installed: true, transport: "sdk", launchable: false, signIn: "unknown" },
-    { provider: "gemini", installed: true, transport: "acp", launchable: true, signIn: "unknown" },
-    { provider: "openai-codex", installed: true, transport: "acp", launchable: false, signIn: "signed_in" },
-    { provider: "grok", installed: false, transport: "acp", launchable: false, signIn: "unknown" },
+    { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
+    { provider: "gemini", installed: true, transport: "acp", launchable: true },
+    { provider: "openai-codex", installed: true, transport: "acp", launchable: false },
+    { provider: "grok", installed: false, transport: "acp", launchable: false },
   ])
   runtime.setConnection({
-    ...geminiStatus({ connection: "connected" }),
-    authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
+    ...geminiStatus({ connection: "connected", authentication, nativeSignIn: true }),
+    authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
   })
   return runtime
 }
@@ -126,11 +127,13 @@ describe("Connect Agent", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: /Gemini CLI/ }))
 
-    // Installed, so straight to sign-in — which starts by reaching the agent.
-    await user.click(await within(dialog).findByRole("button", { name: /Reach Gemini CLI/i }))
-    // Reached but not yet known to be signed in: the methods stay on screen.
-    expect(within(dialog).getByRole("button", { name: /continue/i })).toBeTruthy()
-    await user.click(await within(dialog).findByRole("button", { name: /Sign in with Google/i }))
+    // Installed, so straight to sign-in — where the agent is asked at once,
+    // and its own answer is what the step says (Phase J.2).
+    expect(await within(dialog).findByText("Gemini CLI is installed but not authenticated.")).toBeTruthy()
+    expect(runtime.commands).toContainEqual({ name: "connect_provider", provider: "gemini" })
+    // Not signed in: there is no moving on past it.
+    expect(within(dialog).getByRole("button", { name: /continue/i }).hasAttribute("disabled")).toBe(true)
+    await user.click(await within(dialog).findByRole("button", { name: /Log in with Google/i }))
 
     // Once the agent says it is signed in, the flow moves on by itself.
     // Reading is on by default; changing files and running commands are not.
@@ -166,9 +169,87 @@ describe("Connect Agent", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: /Grok Build/ }))
 
-    expect(await within(dialog).findByText(/not installed on this machine/i)).toBeTruthy()
-    expect(within(dialog).getByText("curl -fsSL https://x.ai/cli/install.sh | bash")).toBeTruthy()
+    expect(await within(dialog).findByText("Grok Build is not installed.")).toBeTruthy()
+    // xAI's own npm package — never a script piped into a shell.
+    expect(within(dialog).getByText("npm install -g @xai-official/grok")).toBeTruthy()
+    expect(within(dialog).queryByText(/\| bash|iex/)).toBeNull()
     expect(within(dialog).queryByRole("button", { name: /continue/i })).toBeNull()
+  })
+
+  it("says so when the agent could not say whether it is signed in, and does not let it through (Phase J.2)", async () => {
+    const user = userEvent.setup()
+    const runtime = runtimeWithGemini("unknown")
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /Gemini CLI/ }))
+
+    expect(await within(dialog).findByText("Authentication could not be verified.")).toBeTruthy()
+    expect(within(dialog).getByRole("button", { name: /continue/i }).hasAttribute("disabled")).toBe(true)
+
+    const before = runtime.commands.filter((command) => command.name === "connect_provider").length
+    await user.click(within(dialog).getByRole("button", { name: /check again/i }))
+    await waitFor(() =>
+      expect(runtime.commands.filter((command) => command.name === "connect_provider").length).toBe(before + 1)
+    )
+  })
+
+  it("tells the user Codex cannot start sessions before asking anything of them, and never asks them to sign in (Phase J.2)", async () => {
+    const user = userEvent.setup()
+    const runtime = runtimeWithGemini()
+    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "acp", launchable: true }])
+    runtime.setConnection({
+      provider: "openai-codex",
+      connection: "connected",
+      available: true,
+      authentication: "required",
+      capabilities: [],
+      nativeSignIn: true,
+      authMethods: [{ id: "chat-gpt", name: "ChatGPT" }],
+    })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    // In the list, before it is even chosen.
+    expect(within(dialog).getByRole("button", { name: /Codex.*sessions unavailable/ })).toBeTruthy()
+    await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
+
+    // Its real state is still asked for and shown…
+    expect(await within(dialog).findByText("Codex is installed but not authenticated.")).toBeTruthy()
+    expect(runtime.commands).toContainEqual({ name: "connect_provider", provider: "openai-codex" })
+    // …with the reason, and nothing to sign in to, continue past or approve.
+    expect(within(dialog).getByText(/TabDump will not start sessions with Codex/)).toBeTruthy()
+    expect(within(dialog).queryByRole("button", { name: /Sign in with ChatGPT/i })).toBeNull()
+    expect(within(dialog).queryByRole("button", { name: /continue/i })).toBeNull()
+    expect(within(dialog).queryByRole("button", { name: /approve and connect/i })).toBeNull()
+    expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
+  })
+
+  it("says it is waiting on the person while an agent's own sign-in is open (Phase J.2)", async () => {
+    const user = userEvent.setup()
+    const runtime = runtimeWithGemini()
+    // The agent's sign-in page is open and the person has not finished yet.
+    let finish: () => void = () => {}
+    const send = runtime.client.send.bind(runtime.client) as (command: RuntimeCommand) => Promise<unknown>
+    const held = (command: RuntimeCommand): Promise<unknown> =>
+      command.name === "authenticate_provider"
+        ? new Promise((resolve) => {
+            finish = () => resolve(send(command))
+          })
+        : send(command)
+    runtime.client.send = held as unknown as typeof runtime.client.send
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /Gemini CLI/ }))
+    await user.click(await within(dialog).findByRole("button", { name: /Log in with Google/i }))
+
+    expect(await within(dialog).findByText("Waiting for you to finish signing in to Gemini CLI…")).toBeTruthy()
+    finish()
+    expect(await within(dialog).findByRole("group")).toBeTruthy()
   })
 
   it("says Codex needs its ACP adapter when only Codex itself is installed", async () => {
@@ -192,6 +273,10 @@ describe("Connect Agent", () => {
     const dialog = await screen.findByRole("dialog")
     const before = runtime.commands.length
     await user.click(within(dialog).getByRole("button", { name: /Custom MCP agent/ }))
+    // Exactly what is being connected, before anything is approved.
+    const explained = await within(dialog).findByRole("list", { name: /What connecting Custom MCP agent means/ })
+    expect(within(explained).getByText(/TabDump never starts it/)).toBeTruthy()
+    expect(within(explained).getByText(/cannot change anything/)).toBeTruthy()
     await user.click(await within(dialog).findByRole("button", { name: /approve and connect/i }))
 
     expect(await within(dialog).findByText(/Custom MCP agent is connected/)).toBeTruthy()
@@ -204,7 +289,8 @@ describe("Connect Agent", () => {
   it("disconnects: ends the agent's sessions in the runtime and forgets the approval", async () => {
     const user = userEvent.setup()
     seedConnectedAgent("gemini")
-    const runtime = runtimeWithGemini()
+    // Signed out since it was approved: disconnecting must still be possible.
+    const runtime = runtimeWithGemini("required")
     renderCentre(runtime)
 
     await user.click(await screen.findByRole("button", { name: /connect agent/i }))
@@ -286,7 +372,7 @@ describe("the desktop app (Phase J.1)", () => {
     }
     const runtime = createScriptedRuntime({ status: scriptedStatus({ providers: [claude] }) })
     runtime.setDetections([
-      { provider: "claude-code", installed: true, transport: "sdk", launchable: false, signIn: "signed_in" },
+      { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
     ])
     runtime.setConnection({
       ...claude,
@@ -310,8 +396,8 @@ describe("the desktop app (Phase J.1)", () => {
     expect(await within(dialog).findByText(/through Claude Code's login/i)).toBeTruthy()
     expect(within(dialog).queryByRole("button", { name: /open ai connectors/i })).toBeNull()
 
-    await user.click(within(dialog).getByRole("button", { name: /Reach Claude Code/i }))
-    await user.click(await within(dialog).findByRole("button", { name: /Sign in with Claude/i }))
+    // Claude Code is asked at once; it says it is signed out.
+    await user.click(await within(dialog).findByRole("button", { name: /^Sign in with Claude$/i }))
 
     // Signed in: straight to approval. Turn on changing files, which asks each time.
     const approve = await within(dialog).findByRole("group")
@@ -328,5 +414,34 @@ describe("the desktop app (Phase J.1)", () => {
       provider: "claude-code",
       approvedScopes: ["read_workspace", "read_project", "write_project"],
     })
+  })
+})
+
+describe("re-checking approved agents (Phase J.2)", () => {
+  it("asks each approved agent once whether it is still signed in, and shows its answer", async () => {
+    seedConnectedAgent("gemini")
+    const runtime = runtimeWithGemini("required")
+    renderCentre(runtime)
+
+    await waitFor(() => expect(runtime.commands).toContainEqual({ name: "connect_provider", provider: "gemini" }))
+    const roster = await screen.findByRole("region", { name: /connected agents/i })
+    expect(await within(roster).findByText(/Sign-in required/)).toBeTruthy()
+  })
+})
+
+describe("the custom agent in the desktop app (Phase J.2)", () => {
+  it("is shown as unavailable, with the reason, because the desktop app runs no MCP server", async () => {
+    const user = userEvent.setup()
+    window.__TAURI_INTERNALS__ = {}
+    try {
+      renderCentre(runtimeWithGemini())
+      await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+      const dialog = await screen.findByRole("dialog")
+      await user.click(within(dialog).getByRole("button", { name: /Custom MCP agent/ }))
+      expect(await within(dialog).findByText(/desktop app does not run one/)).toBeTruthy()
+      expect(within(dialog).queryByRole("button", { name: /approve and connect/i })).toBeNull()
+    } finally {
+      delete window.__TAURI_INTERNALS__
+    }
   })
 })

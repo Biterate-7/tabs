@@ -64,7 +64,7 @@ export function AgentRoster({
 
       {agents.length === 0 ? (
         <p className="px-1.5 pb-1 text-body-sm text-tertiary">
-          No agents connected. Connect Claude Code, Codex, Gemini CLI, Grok or any MCP agent.
+          No agents connected. Connect Claude Code, Codex, Gemini CLI, Grok Build or any MCP agent.
         </p>
       ) : (
         <ul className="flex flex-col gap-0.5">
@@ -75,6 +75,7 @@ export function AgentRoster({
                 key={agent.id}
                 agent={agent}
                 phase={platform.phaseOf(agent.provider)}
+                sessionsAvailable={platform.sessionsFor(agent.provider).available}
                 latest={latest}
                 events={latest && latest.view.sessionId === selectedSessionId ? selectedEvents : []}
                 workspaceName={workspaceNameOf(latest?.view.workspaceId ?? agent.workspaceId)}
@@ -104,6 +105,7 @@ function latestSessionFor(
 const AgentRow = memo(function AgentRow({
   agent,
   phase,
+  sessionsAvailable,
   latest,
   events,
   workspaceName,
@@ -112,6 +114,8 @@ const AgentRow = memo(function AgentRow({
 }: {
   agent: AgentIdentity
   phase: ReturnType<UseAgentPlatform["phaseOf"]>
+  /** False for an agent TabDump will not start sessions with; the row says so. */
+  sessionsAvailable: boolean
   latest: CommandCentreSession | undefined
   events: readonly SequencedControlEvent[]
   workspaceName: string | undefined
@@ -126,7 +130,9 @@ const AgentRow = memo(function AgentRow({
     ? CONNECTION_PHASE_LABEL[phase]
     : mcpOnly
       ? "Reads TabDump over MCP"
-      : liveActivity(latest?.view, events)
+      : !sessionsAvailable
+        ? "Connected · sessions unavailable"
+        : liveActivity(latest?.view, events)
   const state = latest && ready ? SESSION_VISUAL_STATE[latest.view.status] : "idle"
 
   return (

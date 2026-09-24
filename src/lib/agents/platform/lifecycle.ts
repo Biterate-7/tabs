@@ -1,4 +1,4 @@
-import type { PlatformProvider } from "./catalog";
+import type { PlatformProvider, PlatformSurface } from "./catalog";
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
 import type {
   ProviderConnectionView,
@@ -43,9 +43,19 @@ export type ConnectionPhase =
   | "not_installed"
   | "needs_adapter"
   | "detected"
+  | "connecting"
+  /** The agent's own sign-in is open and TabDump is waiting on the person (Phase J.2). */
+  | "authenticating"
   | "sign_in_required"
+  /** The agent was reached, but could not say whether it is signed in (Phase J.2). */
+  | "unverified"
   | "awaiting_approval"
   | "connected"
+  /**
+   * Approved earlier, and not reached by this runtime since it started — so
+   * not shown as connected on the strength of a remembered approval (J.2).
+   */
+  | "disconnected"
   | "error"
   | "unknown";
 
@@ -54,15 +64,25 @@ export const CONNECTION_PHASE_LABEL: Record<ConnectionPhase, string> = {
   not_installed: "Not installed",
   needs_adapter: "Needs its ACP adapter",
   detected: "Installed",
+  connecting: "Connecting…",
+  authenticating: "Signing in…",
   sign_in_required: "Sign-in required",
+  unverified: "Sign-in not verified",
   awaiting_approval: "Awaiting your approval",
   connected: "Connected",
-  error: "Connection failed",
+  disconnected: "Disconnected",
+  error: "Error",
   unknown: "Not checked yet",
 };
 
 export type ConnectionFacts = {
   provider: PlatformProvider;
+  /** Where TabDump is running. Absent means the web. */
+  surface?: PlatformSurface;
+  /** TabDump is reaching this agent right now. */
+  connecting?: boolean;
+  /** The agent's own sign-in is open, waiting on the person. */
+  authenticating?: boolean;
   /** Whether the runtime can execute agents at all. */
   executable: boolean;
   /** Whether the runtime is on the user's own machine (only then is detection meaningful). */
@@ -81,6 +101,10 @@ export type ConnectionFacts = {
 export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
   const { provider } = facts;
 
+  // A connector that cannot work where TabDump is running (a custom MCP
+  // agent in the desktop app, which runs no MCP server) says so first.
+  if (!provider.surfaces.includes(facts.surface ?? "web")) return "runtime_unavailable";
+
   // An MCP client is the one kind TabDump never starts, so neither the
   // runtime nor the machine is a question for it.
   if (provider.transport === "mcp") {
@@ -91,6 +115,9 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
   }
 
   if (!facts.executable) return "runtime_unavailable";
+
+  if (facts.connecting) return "connecting";
+  if (facts.authenticating) return "authenticating";
 
   if (facts.status?.connection === "error") return "error";
 
@@ -120,8 +147,92 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
   }
   if (facts.status?.authentication === "required") return "sign_in_required";
 
+  // An agent that signs in with its own login was just asked, and could not
+  // say. That is not "signed in", and it is not shown as connected (Phase J.2).
+  if (
+    signInKind(provider, facts.status) === "native" &&
+    facts.status?.connection === "connected" &&
+    facts.status.authentication === "unknown"
+  ) {
+    return "unverified";
+  }
+
   if (!facts.approvedScopes) return facts.status?.connection === "connected" ? "awaiting_approval" : "detected";
+
+  // An agent that signs in with its own login is connected only once this
+  // runtime has reached it and it said it is signed in. An approval from an
+  // earlier run proves neither.
+  if (signInKind(provider, facts.status) === "native" && facts.status?.connection !== "connected") {
+    return "disconnected";
+  }
   return "connected";
+}
+
+/**
+ * The one sentence a person reads about where an agent stands.
+ *
+ * Written once, from the provider's name and the phase, so every provider
+ * fails in the same words and no component composes its own. Never a path,
+ * a command line or anything the agent itself printed.
+ */
+export function phaseSentence(
+  provider: PlatformProvider,
+  phase: ConnectionPhase,
+  facts: { surface?: PlatformSurface; installed?: boolean } = {}
+): string {
+  const name = provider.displayName;
+  switch (phase) {
+    case "runtime_unavailable": {
+      const surface = facts.surface ?? "web";
+      if (!provider.surfaces.includes(surface)) {
+        return provider.unavailableOn?.[surface] ?? `${name} is unavailable here.`;
+      }
+      return provider.transport === "acp"
+        ? `${name} is unavailable on this runtime. It runs on your own machine, from the desktop app or a local TabDump.`
+        : "Agents cannot run in this TabDump.";
+    }
+    case "not_installed":
+      return `${name} is not installed.`;
+    case "needs_adapter":
+      return `${name} is installed, but the program TabDump drives it through is not.`;
+    case "detected":
+      return `${name} is installed.`;
+    case "connecting":
+      return `Connecting to ${name}…`;
+    case "authenticating":
+      return `Waiting for you to finish signing in to ${name}…`;
+    case "sign_in_required":
+      return facts.installed ? `${name} is installed but not authenticated.` : `${name} is not signed in.`;
+    case "unverified":
+      return "Authentication could not be verified.";
+    case "awaiting_approval":
+      return `${name} is ready. Approve what it may do to finish connecting.`;
+    case "connected":
+      return `${name} is connected.`;
+    case "disconnected":
+      return `${name} is not connected right now.`;
+    case "error":
+      return `${name} could not be reached.`;
+    case "unknown":
+      return "TabDump has not checked this machine yet.";
+  }
+}
+
+/**
+ * Whether TabDump will start a session with this agent, and if not, why.
+ *
+ * The registry's word, and then the runtime's: an adapter that declares no
+ * `create_session` cannot be given one whatever the registry says.
+ */
+export function sessionAvailability(
+  provider: PlatformProvider,
+  status: ConnectionFacts["status"] | undefined
+): { available: true } | { available: false; reason: string } {
+  if (!provider.sessions.available) return provider.sessions;
+  if (status && status.available && !status.capabilities.includes("create_session")) {
+    return { available: false, reason: `${provider.displayName} cannot start sessions on this runtime yet.` };
+  }
+  return { available: true };
 }
 
 /**
@@ -169,7 +280,11 @@ export function stepFor(phase: ConnectionPhase): ConnectStep {
     case "error":
       return "detect";
     case "detected":
+    case "connecting":
+    case "authenticating":
     case "sign_in_required":
+    case "unverified":
+    case "disconnected":
       return "sign_in";
     case "awaiting_approval":
       return "approve";

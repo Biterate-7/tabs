@@ -76,6 +76,8 @@ export type AcpInitializeResult = {
   protocolVersion: number;
   loadSession: boolean;
   mcpHttp: boolean;
+  /** The agent can close a session it created (`session/close`). */
+  sessionClose: boolean;
   authMethods: readonly AcpAuthMethod[];
 };
 
@@ -104,6 +106,7 @@ export function readInitializeResult(value: unknown): AcpInitializeResult | unde
 
   const capabilities = record(result.agentCapabilities);
   const mcp = record(capabilities?.mcpCapabilities);
+  const sessionCapabilities = record(capabilities?.sessionCapabilities);
 
   const authMethods: AcpAuthMethod[] = [];
   for (const raw of list(result.authMethods)) {
@@ -122,6 +125,7 @@ export function readInitializeResult(value: unknown): AcpInitializeResult | unde
     protocolVersion: result.protocolVersion,
     loadSession: capabilities?.loadSession === true,
     mcpHttp: mcp?.http === true,
+    sessionClose: record(sessionCapabilities?.close) !== undefined,
     authMethods,
   };
 }
@@ -247,7 +251,9 @@ export type AcpSessionUpdate =
   | { type: "message_chunk"; text: string; messageId?: string }
   | { type: "thought_chunk" }
   | { type: "tool_call"; call: AcpToolCall }
-  | { type: "tool_call_update"; call: AcpToolCall };
+  | { type: "tool_call_update"; call: AcpToolCall }
+  /** The agent says its session is now in another mode. Enforced, see adapter.ts. */
+  | { type: "mode_changed"; modeId: string };
 
 /** Reads a `session/update` notification's params. `undefined` for anything TabDump ignores. */
 export function readSessionUpdate(
@@ -283,9 +289,17 @@ export function readSessionUpdate(
       const call = readToolCall(update);
       return call ? { sessionId, update: { type: "tool_call_update", call } } : undefined;
     }
+    case "current_mode_update": {
+      // Read so it can be enforced: a mode switch is how an agent moves
+      // itself into approving its own actions (Phase J.2).
+      const modeId = str(update.currentModeId ?? update.modeId);
+      return modeId && modeId.length <= 100
+        ? { sessionId, update: { type: "mode_changed", modeId } }
+        : undefined;
+    }
     default:
-      // user_message_chunk (a replay echo), plan, available_commands_update,
-      // current_mode_update and anything newer.
+      // user_message_chunk (a replay echo), plan, available_commands_update
+      // and anything newer.
       return undefined;
   }
 }

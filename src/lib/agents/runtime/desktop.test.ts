@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { AgentError, createFakeAgent } from "@/lib/agents/control/providers/acp/__fixtures__/fake-agent";
 import { createNativeLoginState } from "@/lib/agents/launch/native-auth";
 import { createDesktopRuntime } from "./desktop";
 import { handleDesktopLine } from "./desktop-protocol";
+import type { FakeAgent } from "@/lib/agents/control/providers/acp/__fixtures__/fake-agent";
 import type { NativeOperation } from "@/lib/agents/launch/process";
 import type { RuntimeCommand, SequencedControlEvent } from "./protocol";
 
@@ -79,7 +81,7 @@ function build(loggedIn: { value: boolean }) {
     claudeExecutable: "C:/Tools/claude.exe",
     claudeLogin: login,
     loadClaudeSdk: async () => scriptedSdk(record),
-    detect: () => [{ provider: "claude-code", installed: true, transport: "sdk", launchable: false, signIn: "unknown" }],
+    detect: () => [{ provider: "claude-code", installed: true, transport: "sdk", launchable: false }],
     runtimeId: "desktop-1",
   });
 
@@ -293,5 +295,146 @@ describe("the desktop gate cannot be reached from the web", () => {
     const importers = files.filter(({ code }) => /from\s+["'][^"']*runtime\/desktop["']/.test(code));
     expect(importers.map(({ file }) => file)).toEqual(["desktop-runtime/main.ts"]);
     expect(files.some(({ file, code }) => file.startsWith("app/") && code.includes("desktop-runtime"))).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Phase J.2 — every ACP agent through the same desktop runtime
+ * ------------------------------------------------------------------ */
+
+describe("ACP agents in the desktop runtime (Phase J.2)", () => {
+  function buildAcp(options: { signedIn: boolean }) {
+    const agents = new Map<string, FakeAgent>();
+    const agentFor = (provider: string) => {
+      let agent = agents.get(provider);
+      if (!agent) {
+        agent = createFakeAgent({
+          "session/new": () => {
+            if (!options.signedIn) throw new AgentError(-32000);
+            return { sessionId: `${provider}-1`, modes: { currentModeId: "default", availableModes: [{ id: "default" }] } };
+          },
+          "session/prompt": async (params, context) => {
+            const id = params.sessionId as string;
+            context.update(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Editing." } });
+            context.update(id, {
+              sessionUpdate: "tool_call",
+              toolCallId: "t1",
+              kind: "edit",
+              status: "pending",
+              locations: [{ path: `${PROJECT_ROOT}/notes.md` }],
+            });
+            const answer = await context.ask("session/request_permission", {
+              sessionId: id,
+              toolCall: { toolCallId: "t1", kind: "edit" },
+              options: [
+                { optionId: "once", kind: "allow_once" },
+                { optionId: "always", kind: "allow_always" },
+                { optionId: "no", kind: "reject_once" },
+              ],
+            });
+            const chose = (answer.result as { outcome?: { optionId?: string } })?.outcome?.optionId ?? "cancelled";
+            context.update(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Chose ${chose}.` } });
+            return { stopReason: "end_turn" };
+          },
+        });
+        agents.set(provider, agent);
+      }
+      return agent;
+    };
+    const runtime = createDesktopRuntime({
+      env: { PATH: "C:/Tools", USERPROFILE: "C:/Users/alice" },
+      claudeExecutable: null,
+      acpLauncher: (provider) => agentFor(provider).launcher,
+      detect: () => [
+        { provider: "gemini", installed: true, transport: "acp", launchable: true },
+        { provider: "openai-codex", installed: true, transport: "acp", launchable: true },
+        { provider: "grok", installed: true, transport: "acp", launchable: true },
+      ],
+      runtimeId: "desktop-1",
+    });
+    async function send(command: RuntimeCommand) {
+      return (await runtime.handle({ runtimeId: "desktop-1", command })) as {
+        ok: boolean;
+        value?: Record<string, unknown>;
+        error?: { code: string };
+      };
+    }
+    return { runtime, send, agentFor };
+  }
+
+  it("declares sessions for the agents that ask, and none for Codex, which cannot", async () => {
+    const { send } = buildAcp({ signedIn: true });
+    const status = await send({ name: "get_status" });
+    const providers = (status.value as { providers: { provider: string; capabilities: string[] }[] }).providers;
+    const capabilitiesOf = (provider: string) => providers.find((entry) => entry.provider === provider)!.capabilities;
+    expect(capabilitiesOf("gemini")).toContain("create_session");
+    expect(capabilitiesOf("grok")).toContain("create_session");
+    expect(capabilitiesOf("openai-codex")).toEqual([]);
+
+    expect(await send({ name: "create_session", provider: "openai-codex" })).toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+  });
+
+  it("reports each agent's own sign-in answer on connect", async () => {
+    const signedOut = buildAcp({ signedIn: false });
+    for (const provider of ["gemini", "openai-codex", "grok"] as const) {
+      expect(await signedOut.send({ name: "connect_provider", provider })).toMatchObject({
+        ok: true,
+        value: { connection: "connected", authentication: "required", nativeSignIn: true },
+      });
+    }
+    const signedIn = buildAcp({ signedIn: true });
+    expect(await signedIn.send({ name: "connect_provider", provider: "gemini" })).toMatchObject({
+      ok: true,
+      value: { authentication: "authenticated" },
+    });
+  });
+
+  it("runs a session like Claude's: project, workspace, streamed reply, one-time approval, disconnect", async () => {
+    const { send, agentFor } = buildAcp({ signedIn: true });
+    await send({ name: "connect_provider", provider: "gemini" });
+    await send({
+      name: "authorize_projects",
+      projects: [
+        {
+          id: "p1",
+          name: "Research",
+          path: PROJECT_ROOT,
+          providers: ["gemini"],
+          permissions: { scopes: ["read_workspace", "read_project", "write_project"], projectId: "p1", grantedAt: 1 },
+        },
+      ],
+    });
+
+    const created = await send({ name: "create_session", provider: "gemini", projectId: "p1", workspaceId: "w1" });
+    expect(created).toMatchObject({ ok: true, value: { provider: "gemini", projectId: "p1", workspaceId: "w1" } });
+    const sessionId = String(created.value!.sessionId);
+    expect(agentFor("gemini").launches.at(-1)).toEqual({ projectPath: PROJECT_ROOT });
+
+    await send({ name: "send_message", sessionId, text: "please edit the notes" });
+    await settle(40);
+    const waiting = await send({ name: "get_session", sessionId });
+    const approvals = (waiting.value as { approvals: { approvalId: string; targets: string[]; action: string }[] })
+      .approvals;
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ action: "modify_files", targets: ["notes.md"] });
+
+    await send({ name: "respond_to_approval", approvalId: approvals[0].approvalId, decision: "granted" });
+    await settle(40);
+
+    const read = await send({ name: "get_events", sessionId });
+    const events = (read.value as { events: SequencedControlEvent[] }).events;
+    // The agent's own one-time option — never "always".
+    expect(events.filter((event) => event.kind === "message_received").map((event) => event.text)).toEqual([
+      "Editing.",
+      "Chose once.",
+    ]);
+
+    const released = agentFor("gemini").released;
+    expect(await send({ name: "disconnect_provider", provider: "gemini" })).toMatchObject({ ok: true });
+    expect(agentFor("gemini").released).toBeGreaterThan(released);
+    expect(await send({ name: "get_session", sessionId })).toMatchObject({ ok: false });
   });
 });

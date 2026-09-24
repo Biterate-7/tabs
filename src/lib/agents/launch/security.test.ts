@@ -25,7 +25,10 @@ function walk(dir: string): string[] {
 }
 
 function codeOf(source: string): string {
+  // A Windows checkout (core.autocrlf) ends lines in \r\n; the checks below
+  // are about the code, not its line endings.
   return source
+    .replace(/\r\n/g, "\n")
     .split("\n")
     .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
     .join("\n");
@@ -47,9 +50,55 @@ describe("what TabDump can start", () => {
       }))
     ).toEqual([
       { provider: "claude-code", executables: [], args: [] },
-      { provider: "gemini", executables: ["gemini"], args: ["--acp"] },
+      { provider: "gemini", executables: ["gemini"], args: ["--acp", "--approval-mode", "default"] },
       { provider: "openai-codex", executables: ["codex-acp"], args: [] },
-      { provider: "grok", executables: ["grok"], args: ["agent", "stdio"] },
+      { provider: "grok", executables: ["grok"], args: ["agent", "--no-leader", "stdio"] },
+    ]);
+  });
+
+  it("pins, per agent, the modes in which it asks before acting — or that none does (Phase J.2)", () => {
+    expect(
+      PROVIDER_LAUNCH_TABLE.filter((entry) => entry.acp).map((entry) => ({
+        provider: entry.provider,
+        approval: entry.acp!.approval.kind === "asking-mode" ? entry.acp!.approval.modeIds : "unavailable",
+      }))
+    ).toEqual([
+      { provider: "gemini", approval: ["default"] },
+      // Every codex-acp mode lets Codex write inside the workspace unasked.
+      { provider: "openai-codex", approval: "unavailable" },
+      { provider: "grok", approval: ["ask", "default"] },
+    ]);
+  });
+
+  it("never lists a mode in which an agent approves its own actions as an asking mode", () => {
+    for (const entry of PROVIDER_LAUNCH_TABLE) {
+      const approval = entry.acp?.approval;
+      if (approval?.kind !== "asking-mode") continue;
+      for (const modeId of approval.modeIds) {
+        expect(modeId).not.toMatch(/yolo|auto|always|bypass|full|accept|dont/i);
+      }
+    }
+  });
+
+  it("pins the flags that keep a session inside TabDump's approvals and process tree", () => {
+    const gemini = PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "gemini")!.acp!.args;
+    // Overrides a user setting of yolo or auto_edit.
+    const at = gemini.indexOf("--approval-mode");
+    expect(gemini.slice(at, at + 2)).toEqual(["--approval-mode", "default"]);
+    // Grok's leader mode would run the session in a shared process outside the job object.
+    expect(PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "grok")!.acp!.args).toContain("--no-leader");
+    for (const entry of PROVIDER_LAUNCH_TABLE) {
+      for (const arg of entry.acp?.args ?? []) {
+        expect(arg).not.toMatch(/yolo|always-approve|dangerously|bypass|^--leader$/);
+      }
+    }
+  });
+
+  it("follows npm shims only into the vendors' own packages", () => {
+    expect(PROVIDER_LAUNCH_TABLE.flatMap((entry) => entry.acp?.npmPackages ?? [])).toEqual([
+      "@google/gemini-cli",
+      "@agentclientprotocol/codex-acp",
+      "@xai-official/grok",
     ]);
   });
 
@@ -151,9 +200,10 @@ describe("who can reach it", () => {
     ]);
   });
 
-  it("never reads a sign-in marker's contents — presence only", () => {
+  it("does not decide sign-in from files: detection has no home directory and no marker (Phase J.2)", () => {
     const detect = sources.find((entry) => entry.name === "detect.ts")!.code;
-    expect(detect).toContain("isFile(");
-    expect(detect).not.toContain("readText(");
+    expect(detect).not.toMatch(/homeDirectory|homedir|signIn|marker/i);
+    const allowlist = sources.find((entry) => entry.name === "allowlist.ts")!.code;
+    expect(allowlist).not.toMatch(/signInMarkers|credentials\.json|oauth_creds|auth\.json/);
   });
 });

@@ -1,4 +1,5 @@
 import { hasAdapterAuthentication } from "@/lib/agents/control/authentication";
+import { hasSessionRelease } from "@/lib/agents/control/session-release";
 import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
 import { boundMessageText, normalizeControlSummary } from "@/lib/agents/control/events";
 import { NO_PERMISSIONS } from "@/lib/agents/control/permissions";
@@ -286,6 +287,8 @@ function runtimeCodeFor(error: ControlError): RuntimeErrorCode {
       return "provider_error";
     case "configuration":
       return "authentication_required";
+    case "approval-unenforceable":
+      return "approval_unenforceable";
     case "unknown":
       return "provider_error";
   }
@@ -1142,6 +1145,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!isTerminalSessionStatus(owned.value.session.status)) {
           await actorService.cancelRun(command.sessionId);
         }
+        releaseAdapterSession(actor.id, command.sessionId);
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
@@ -1228,6 +1232,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           if (session && !isTerminalSessionStatus(session.status)) {
             await actorService.cancelRun(sessionId);
           }
+          releaseAdapterSession(actor.id, sessionId);
           hosted.delete(sessionId);
           journal.forget(sessionId);
           correlations.removeControlSession(sessionId);
@@ -1237,6 +1242,17 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         return { ok: true, value: connectionViewOf(command.provider, actor.id) };
       }
     }
+  }
+
+  /**
+   * Lets the adapter end a session the host is about to forget (Phase J.2).
+   * Cancelling a run does not end an ACP agent's process; without this, the
+   * process outlived every reference to it until the runtime shut down.
+   */
+  function releaseAdapterSession(ownerId: string, sessionId: string): void {
+    const provider = hosted.get(sessionId)?.provider;
+    const adapter = provider ? options.resolveAdapter(provider, ownerId) : undefined;
+    if (adapter && hasSessionRelease(adapter)) adapter.releaseSession(sessionId);
   }
 
   /** One provider's status plus the agent's own sign-in methods. */

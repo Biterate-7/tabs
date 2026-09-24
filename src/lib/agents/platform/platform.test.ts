@@ -33,7 +33,6 @@ const INSTALLED: ProviderDetection = {
   installed: true,
   transport: "acp",
   launchable: true,
-  signIn: "unknown",
 };
 
 describe("the catalogue", () => {

@@ -52,3 +52,18 @@ export type AcpMcpLink = { server: AcpMcpServerEntry; release(): void };
 
 /** Supplies a per-session TabDump MCP link, or nothing when this runtime cannot mint one. */
 export type AcpMcpLinker = (request: { sessionId: string }) => Promise<AcpMcpLink | undefined>;
+
+/**
+ * How TabDump stays the one that approves what an ACP agent does (Phase J.2).
+ *
+ * ACP agents have session *modes*, and in most of them the agent approves its
+ * own actions. So each agent's launch entry says — from the agent's source,
+ * not its mode names — which modes ask before **every** privileged action, or
+ * that none does. The adapter enforces it: a session starts only in an asking
+ * mode, and an agent that leaves one mid-session is stopped.
+ */
+export type AcpApprovalPolicy =
+  /** Modes in which the agent asks before editing, deleting, running or fetching anything, in order of preference. */
+  | { kind: "asking-mode"; modeIds: readonly string[] }
+  /** The agent has no such mode. No session is started with it. One sentence, shown to the user. */
+  | { kind: "unavailable"; reason: string };

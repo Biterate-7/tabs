@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Check, ChevronLeft, Copy, Minus, RotateCw } from "lucide-react"
 import {
   Dialog,
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { PERMISSION_SCOPE_LABEL, RUNTIME_ERROR_PRESENTATION } from "@/lib/agents/command-centre/presentation"
-import { PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
+import { PLATFORM_FEATURE_LABEL, PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
 import {
   APPROVABLE_SCOPES,
   CONNECTION_PHASE_LABEL,
@@ -43,11 +43,15 @@ import type { ConnectStep } from "@/lib/agents/platform/lifecycle"
  *   - **Detect** — the runtime's `detect_providers`: a PATH walk on the user's
  *     machine that runs nothing and returns no path. The install command is
  *     shown for the user to run. TabDump never runs it.
- *   - **Sign in** — the agent's *own* sign-in. For an ACP agent, the methods
- *     it advertised, started through `authenticate_provider` with a method id
- *     and nothing else; the agent opens its provider's page itself. For Claude,
- *     the user's own key in Settings. For an MCP client, a token issued in
- *     Settings. No credential is ever typed into this dialog.
+ *   - **Sign in** — the agent's *own* sign-in. The agent is asked whether it
+ *     is signed in as soon as this step shows, and what it answers is what the
+ *     step says (Phase J.2): signed in, sign-in required, or could not be
+ *     verified. For an ACP agent the sign-in buttons are the methods it
+ *     advertised, started through `authenticate_provider` with a method id and
+ *     nothing else; the agent opens its provider's page itself. For Claude on
+ *     the web, the user's own key in Settings; in the desktop app, Claude
+ *     Code's own login. For an MCP client, a token issued in Settings. No
+ *     credential is ever typed into this dialog.
  *   - **Approve** — what the user lets the agent do. Changing files and running
  *     commands are off by default, and even on, each use still asks.
  *
@@ -82,22 +86,19 @@ export function ConnectAgentDialog({
   // How this agent signs in *here*: the runtime knows whether it can start
   // the agent's own login in this shell (Claude, in the desktop app).
   const signIn = spec ? signInKind(spec, chosen ? platform.statusOf(chosen) : undefined) : undefined
-  const derived: ConnectStep = !chosen || !phase ? "choose" : stepFor(phase)
-  const step = ((): ConnectStep => {
-    if (advanced && order(advanced) > order(derived) && derived !== "detect") return advanced
-    // An agent that only reveals its sign-in state when a session starts is
-    // "reached" rather than "signed in" — so the sign-in methods stay on
-    // screen until the user says they are done with them.
-    if (
-      derived === "approve" &&
-      signIn === "native" &&
-      !advanced &&
-      connection?.authentication === "unknown"
-    ) {
-      return "sign_in"
-    }
-    return derived
-  })()
+  /*
+    An agent TabDump will not start sessions with (Codex today) is never taken
+    past Sign in: there is nothing for the user to sign in to or approve, and
+    asking them to would be asking for a login that buys nothing. The step
+    shows what is true of it instead — installed, signed in or not — and why.
+  */
+  const sessionsBlocked = Boolean(spec?.chat && chosen && !platform.sessionsFor(chosen).available)
+  const uncapped: ConnectStep = !chosen || !phase ? "choose" : stepFor(phase)
+  const derived: ConnectStep = sessionsBlocked && order(uncapped) > order("sign_in") ? "sign_in" : uncapped
+  const step: ConnectStep =
+    !sessionsBlocked && advanced && order(advanced) > order(derived) && derived !== "detect" && derived !== "sign_in"
+      ? advanced
+      : derived
 
   function reset(next: AgentProviderId | null) {
     setChosen(next)
@@ -108,6 +109,21 @@ export function ConnectAgentDialog({
 
   const busy = chosen !== null && platform.pending === chosen
   const error = chosen ? platform.errors[chosen] : undefined
+  const sentence = chosen ? platform.sentenceOf(chosen) : ""
+  const sessions = chosen ? platform.sessionsFor(chosen) : undefined
+
+  /*
+    Reaching the Sign in step asks the agent where it stands — once per
+    opening, never on a timer. The same runtime command as the "Check again"
+    button, so the answer shown is always the agent's own.
+  */
+  const asked = useRef<string | null>(null)
+  useEffect(() => {
+    if (!open || !chosen || step !== "sign_in" || signIn !== "native") return
+    if (connection || busy || asked.current === chosen) return
+    asked.current = chosen
+    void platform.connect(chosen)
+  })
   const detection = chosen ? platform.detections?.find((entry) => entry.provider === chosen) : undefined
   const approvedScopes = scopes ?? (spec ? defaultApprovedScopes(spec) : [])
 
@@ -154,6 +170,7 @@ export function ConnectAgentDialog({
           <ul aria-label="Agents" className="flex flex-col gap-1">
             {PLATFORM_PROVIDERS.map((entry) => {
               const entryPhase = platform.phaseOf(entry.provider)
+              const entryBlocked = entry.chat && !platform.sessionsFor(entry.provider).available
               return (
                 <li key={entry.provider}>
                   <button
@@ -166,7 +183,10 @@ export function ConnectAgentDialog({
                       <span className="block text-body-sm text-foreground">{entry.displayName}</span>
                       <span className="block truncate text-meta text-tertiary">{entry.vendor}</span>
                     </span>
-                    <span className="shrink-0 text-label text-tertiary">{CONNECTION_PHASE_LABEL[entryPhase]}</span>
+                    <span className="shrink-0 text-label text-tertiary">
+                      {CONNECTION_PHASE_LABEL[entryPhase]}
+                      {entryBlocked && entryPhase !== "not_installed" ? " · sessions unavailable" : ""}
+                    </span>
                   </button>
                 </li>
               )
@@ -177,19 +197,13 @@ export function ConnectAgentDialog({
         {spec && step === "detect" && (
           <section aria-label="Detect" className="flex flex-col gap-2">
             <p className="text-body-sm text-foreground">{CONNECTION_PHASE_LABEL[phase!]}</p>
-            <p className="text-body-sm text-muted-foreground">
-              {phase === "runtime_unavailable"
-                ? spec.transport === "acp"
-                  ? `${spec.displayName} runs on your own machine. Open TabDump from a local runtime to connect it.`
-                  : "Agents cannot run in this TabDump."
-                : phase === "not_installed"
-                  ? `${spec.displayName} is not installed on this machine.`
-                  : phase === "needs_adapter"
-                    ? `${spec.displayName} is installed, but the program TabDump drives it through is not.`
-                    : phase === "error"
-                      ? "TabDump could not reach this agent."
-                      : "TabDump has not checked this machine yet."}
-            </p>
+            <p className="text-body-sm text-muted-foreground">{sentence}</p>
+            {/* Before anyone installs it expecting a chat it will not get. */}
+            {sessionsBlocked && sessions && !sessions.available && (
+              <p role="note" className="text-body-sm text-warning">
+                Sessions are unavailable. {sessions.reason}
+              </p>
+            )}
             {spec.installCommand && (phase === "not_installed" || phase === "needs_adapter") && (
               <div className="flex items-center gap-2 rounded-md border border-subtle bg-surface px-2.5 py-1.5">
                 {/* Shown to copy. TabDump does not install software. */}
@@ -218,7 +232,12 @@ export function ConnectAgentDialog({
               <p className="flex items-center gap-1.5 text-body-sm text-muted-foreground">
                 <Check className="size-3.5 text-success" aria-hidden />
                 Installed on this machine
-                {detection.signIn === "signed_in" ? " · signed in" : ""}
+              </p>
+            )}
+            {/* Said before sign-in, so nobody signs in to an agent expecting a chat it will not get. */}
+            {spec.chat && sessions && !sessions.available && (
+              <p role="note" className="text-body-sm text-warning">
+                TabDump will not start sessions with {spec.displayName}. {sessions.reason}
               </p>
             )}
             <p className="text-body-sm text-muted-foreground">
@@ -227,45 +246,66 @@ export function ConnectAgentDialog({
                 : spec.signIn.summary}
             </p>
 
+            {spec.explainer && (
+              <ul aria-label={`What connecting ${spec.displayName} means`} className="flex flex-col gap-1">
+                {spec.explainer.map((line) => (
+                  <li key={line} className="flex gap-1.5 text-meta text-muted-foreground">
+                    <Minus className="mt-1 size-3 shrink-0" aria-hidden />
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            )}
+
             {signIn === "native" && (
-              <>
-                {!connection ? (
-                  <Button type="button" size="sm" className="self-start" disabled={busy} onClick={() => void platform.connect(spec.provider)}>
-                    {busy ? "Reaching the agent…" : `Reach ${spec.displayName}`}
-                  </Button>
-                ) : (
-                  <div className="flex flex-col gap-1.5">
-                    <p className="text-body-sm text-foreground">
-                      {connection.authentication === "authenticated"
-                        ? "Signed in."
-                        : connection.authentication === "required"
-                          ? "Sign-in required."
-                          : "Reached. If you have not signed in on this machine yet, sign in now."}
-                    </p>
-                    {connection.authMethods.length > 0 && connection.authentication !== "authenticated" && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {connection.authMethods.map((method) => (
-                          <Button
-                            key={method.id}
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={busy}
-                            title={method.description}
-                            onClick={() => void platform.authenticate(spec.provider, method.id)}
-                          >
-                            {method.name}
-                          </Button>
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-meta text-tertiary">
-                      Sign-in happens in {spec.displayName}&apos;s own window or browser page. TabDump never sees
-                      your password or token.
-                    </p>
+              <div className="flex flex-col gap-1.5">
+                {/* The agent's own answer, asked when this step appeared. */}
+                <p role="status" className="text-body-sm text-foreground">
+                  {busy
+                    ? sentence
+                    : connection?.authentication === "authenticated"
+                      ? "Signed in."
+                      : connection
+                        ? sentence
+                        : `TabDump has not asked ${spec.displayName} yet.`}
+                </p>
+                {!sessionsBlocked && connection && connection.authMethods.length > 0 && connection.authentication !== "authenticated" && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {connection.authMethods.map((method) => (
+                      <Button
+                        key={method.id}
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        title={method.description}
+                        onClick={() => void platform.authenticate(spec.provider, method.id)}
+                      >
+                        {signInLabel(method.name)}
+                      </Button>
+                    ))}
                   </div>
                 )}
-              </>
+                {connection?.authentication !== "authenticated" && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="self-start"
+                    disabled={busy}
+                    onClick={() => void platform.connect(spec.provider)}
+                  >
+                    <RotateCw />
+                    Check again
+                  </Button>
+                )}
+                {!sessionsBlocked && (
+                  <p className="text-meta text-tertiary">
+                    Sign-in happens in {spec.displayName}&apos;s own window or browser page. TabDump never sees
+                    your password or token, and keeps none.
+                  </p>
+                )}
+              </div>
             )}
 
             {signIn !== "native" && onOpenSettings && (
@@ -278,6 +318,36 @@ export function ConnectAgentDialog({
 
         {spec && step === "approve" && (
           <section aria-label="Approve" className="flex flex-col gap-3">
+            {spec.chat && sessions && !sessions.available ? (
+              <p role="note" className="text-body-sm text-warning">
+                {spec.displayName} can be connected and signed in, but TabDump will not start sessions with it.{" "}
+                {sessions.reason}
+              </p>
+            ) : spec.explainer ? (
+              <div>
+                <p className="text-eyebrow text-tertiary">What you are connecting</p>
+                <ul aria-label={`What connecting ${spec.displayName} means`} className="mt-1 flex flex-col gap-1">
+                  {spec.explainer.map((line) => (
+                    <li key={line} className="flex gap-1.5 text-meta text-muted-foreground">
+                      <Minus className="mt-1 size-3 shrink-0" aria-hidden />
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div>
+                <p className="text-eyebrow text-tertiary">Once connected</p>
+                <ul className="mt-1 flex flex-col gap-0.5">
+                  {spec.features.map((feature) => (
+                    <li key={feature} className="flex items-center gap-1.5 text-meta text-muted-foreground">
+                      <Check className="size-3 shrink-0 text-success" aria-hidden />
+                      {PLATFORM_FEATURE_LABEL[feature]}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <fieldset>
               <legend className="text-eyebrow text-tertiary">{spec.displayName} may</legend>
               <ul className="mt-1.5 flex flex-col gap-1.5">
@@ -330,16 +400,25 @@ export function ConnectAgentDialog({
         )}
 
         {spec && step === "done" && (
-          <section aria-label="Connected" className="flex items-center gap-2.5">
-            <AgentIcon connector={spec.provider} size="md" />
-            <p className="text-body-sm text-foreground">
-              {spec.displayName} is connected.{" "}
-              <span className="text-muted-foreground">
-                {spec.chat
-                  ? "Start a session to work with it."
-                  : "Point it at TabDump's MCP server with the token from Settings."}
-              </span>
-            </p>
+          <section aria-label="Connected" className="flex flex-col gap-2">
+            <div className="flex items-center gap-2.5">
+              <AgentIcon connector={spec.provider} size="md" />
+              <p className="text-body-sm text-foreground">
+                {spec.displayName} is connected.{" "}
+                <span className="text-muted-foreground">
+                  {!spec.chat
+                    ? "Point it at TabDump's MCP server with the token from Settings."
+                    : sessions?.available
+                      ? "Start a session to work with it."
+                      : ""}
+                </span>
+              </p>
+            </div>
+            {spec.chat && sessions && !sessions.available && (
+              <p role="note" className="text-body-sm text-warning">
+                Sessions are not available. {sessions.reason}
+              </p>
+            )}
           </section>
         )}
 
@@ -357,6 +436,14 @@ export function ConnectAgentDialog({
             </Button>
           )}
 
+          {/* On every step for an agent already in the roster, so one that
+              needs signing in again can still be let go of. */}
+          {spec && step !== "done" && platform.identity(spec.provider) && (
+            <Button type="button" variant="ghost" className="text-destructive" disabled={busy} onClick={() => void platform.disconnect(spec.provider).then(() => reset(null))}>
+              Disconnect
+            </Button>
+          )}
+
           {spec && step === "detect" && (
             <Button type="button" variant="outline" onClick={() => void platform.detect()}>
               <RotateCw />
@@ -364,7 +451,7 @@ export function ConnectAgentDialog({
             </Button>
           )}
 
-          {spec && step === "sign_in" && (
+          {spec && step === "sign_in" && !sessionsBlocked && (
             <Button
               type="button"
               disabled={!canLeaveSignIn()}
@@ -402,7 +489,7 @@ export function ConnectAgentDialog({
             </Button>
           )}
 
-          {spec && step === "done" && spec.chat && onStartSession && (
+          {spec && step === "done" && spec.chat && sessions?.available && onStartSession && (
             <Button type="button" onClick={() => onStartSession(spec.provider)}>
               Start a session
             </Button>
@@ -421,7 +508,8 @@ export function ConnectAgentDialog({
   function canLeaveSignIn(): boolean {
     if (!spec || phase === "sign_in_required") return false
     if (signIn === "native") {
-      return connection !== undefined && connection.connection === "connected" && connection.authentication !== "required"
+      // The agent itself said it is signed in. "Could not verify" is not that.
+      return connection !== undefined && connection.connection === "connected" && connection.authentication === "authenticated"
     }
     return true
   }
@@ -432,6 +520,11 @@ const STEP_LABEL: Record<Exclude<ConnectStep, "choose">, string> = {
   sign_in: "Sign in",
   approve: "Approve",
   done: "Connected",
+}
+
+/** A method the agent named "ChatGPT" reads as a button: "Sign in with ChatGPT". Its own verb is kept. */
+function signInLabel(name: string): string {
+  return /^(sign|log)\s?in\b/i.test(name) ? name : `Sign in with ${name}`
 }
 
 function order(step: ConnectStep): number {

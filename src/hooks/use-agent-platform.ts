@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
 import { createPlatformConnector } from "@/lib/agents/platform/connector"
-import { connectionPhase } from "@/lib/agents/platform/lifecycle"
+import { connectionPhase, phaseSentence, sessionAvailability } from "@/lib/agents/platform/lifecycle"
 import {
   EMPTY_ROSTER,
   approveAgent,
@@ -13,6 +13,7 @@ import {
   recordAgentSession,
   saveAgentRoster,
 } from "@/lib/agents/platform/roster"
+import type { PlatformSurface } from "@/lib/agents/platform/catalog"
 import type { AgentPlatformConnector } from "@/lib/agents/platform/connector"
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import type { AgentIdentity, AgentRoster } from "@/lib/agents/platform/roster"
@@ -50,9 +51,17 @@ export type UseAgentPlatform = {
   connections: Partial<Record<AgentProviderId, ProviderConnectionView>>
   /** The provider an action is in flight for. */
   pending: AgentProviderId | null
+  /** Which action that is — so reaching an agent and waiting on its sign-in read differently. */
+  pendingAction: PendingAction | null
   errors: Partial<Record<AgentProviderId, RuntimeErrorCode>>
+  /** Where TabDump is running, for connectors that only work on one surface. */
+  surface: PlatformSurface
   connectorFor: (provider: AgentProviderId) => AgentPlatformConnector
   phaseOf: (provider: AgentProviderId) => ConnectionPhase
+  /** The one sentence a person reads about where this agent stands. */
+  sentenceOf: (provider: AgentProviderId) => string
+  /** Whether TabDump will start a session with it, and if not, why. */
+  sessionsFor: (provider: AgentProviderId) => { available: true } | { available: false; reason: string }
   /** The runtime's latest word on a provider: a connect/sign-in reply, else its status. */
   statusOf: (provider: AgentProviderId) => RuntimeProviderStatus | ProviderConnectionView | undefined
   identity: (provider: AgentProviderId) => AgentIdentity | undefined
@@ -64,6 +73,8 @@ export type UseAgentPlatform = {
   recordSession: (provider: AgentProviderId, sessionId: string, workspaceId?: string) => void
 }
 
+export type PendingAction = "connect" | "authenticate" | "disconnect"
+
 export function useAgentPlatform(options: {
   client: RuntimeClient
   status: RuntimeStatus | null
@@ -71,9 +82,12 @@ export function useAgentPlatform(options: {
   providerKeyConnected?: (provider: AgentProviderId) => boolean | undefined
   /** Whether a TabDump MCP token exists, for the MCP client. */
   mcpTokenIssued?: boolean
+  /** Where TabDump is running. Absent means the web. */
+  surface?: PlatformSurface
   now?: () => number
 }): UseAgentPlatform {
   const { client, status, providerKeyConnected, mcpTokenIssued } = options
+  const surface = options.surface ?? "web"
   const now = options.now ?? Date.now
 
   // Read once, lazily, exactly as the control plane's projects are
@@ -85,6 +99,7 @@ export function useAgentPlatform(options: {
   const [thisMachine, setThisMachine] = useState(false)
   const [connections, setConnections] = useState<Partial<Record<AgentProviderId, ProviderConnectionView>>>({})
   const [pending, setPending] = useState<AgentProviderId | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [errors, setErrors] = useState<Partial<Record<AgentProviderId, RuntimeErrorCode>>>({})
   const alive = useRef(true)
 
@@ -138,9 +153,11 @@ export function useAgentPlatform(options: {
   const run = useCallback(
     async (
       provider: AgentProviderId,
+      kind: PendingAction,
       action: () => Promise<{ ok: true; value: ProviderConnectionView } | { ok: false; error: { code: RuntimeErrorCode } }>
     ): Promise<boolean> => {
       setPending(provider)
+      setPendingAction(kind)
       setError(provider, undefined)
       try {
         const reply = await action()
@@ -152,22 +169,53 @@ export function useAgentPlatform(options: {
         setConnections((current) => ({ ...current, [provider]: reply.value }))
         return true
       } finally {
-        if (alive.current) setPending(null)
+        if (alive.current) {
+          setPending(null)
+          setPendingAction(null)
+        }
       }
     },
     [setError]
   )
 
   const connect = useCallback(
-    (provider: AgentProviderId) => run(provider, () => connectorFor(provider).connect()),
+    (provider: AgentProviderId) => run(provider, "connect", () => connectorFor(provider).connect()),
     [connectorFor, run]
   )
 
   const authenticate = useCallback(
     (provider: AgentProviderId, methodId: string) =>
-      run(provider, () => connectorFor(provider).authenticate(methodId)),
+      run(provider, "authenticate", () => connectorFor(provider).authenticate(methodId)),
     [connectorFor, run]
   )
+
+  /*
+    Agents the user already approved are asked, once per runtime, whether
+    they are still signed in — so "Connected" after a restart is the agent's
+    answer today rather than an approval remembered from last week (Phase
+    J.2). Only installed agents that TabDump can start, one at a time, and
+    never an MCP client, which TabDump does not start.
+  */
+  const refreshedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!status?.executable || !detections) return
+    if (refreshedFor.current === status.runtimeId) return
+    refreshedFor.current = status.runtimeId
+    const approved = roster.agents
+      .map((agent) => agent.provider)
+      .filter((provider) => {
+        const spec = platformProvider(provider)
+        if (!spec || spec.transport === "mcp") return false
+        const detection = detections.find((entry) => entry.provider === provider)
+        return spec.transport === "sdk" ? Boolean(detection?.installed || status.environment !== "local") : Boolean(detection?.launchable)
+      })
+    void (async () => {
+      for (const provider of approved) {
+        if (!alive.current) return
+        await connect(provider)
+      }
+    })()
+  }, [connect, detections, roster.agents, status])
 
   const approve = useCallback(
     (provider: AgentProviderId, scopes: readonly AgentPermissionScope[]) => {
@@ -183,7 +231,7 @@ export function useAgentPlatform(options: {
       // An MCP client has no runtime connection to end; forgetting it is the
       // whole of disconnecting. Its token is revoked in Settings, where it lives.
       if (spec && spec.transport !== "mcp" && status?.executable) {
-        await run(provider, () => connectorFor(provider).disconnect())
+        await run(provider, "disconnect", () => connectorFor(provider).disconnect())
       }
       if (!alive.current) return
       update((current) => forgetAgent(current, provider))
@@ -223,6 +271,9 @@ export function useAgentPlatform(options: {
       const keyConnected = providerKeyConnected?.(provider)
       return connectionPhase({
         provider: spec,
+        surface,
+        connecting: pending === provider && pendingAction === "connect",
+        authenticating: pending === provider && pendingAction === "authenticate",
         executable: status?.executable ?? false,
         local: status?.environment === "local",
         ...(detection ? { detection } : {}),
@@ -232,7 +283,26 @@ export function useAgentPlatform(options: {
         ...(approved ? { approvedScopes: approved.approvedScopes } : {}),
       })
     },
-    [detections, mcpTokenIssued, providerKeyConnected, roster, status, statusOf]
+    [detections, mcpTokenIssued, pending, pendingAction, providerKeyConnected, roster, status, statusOf, surface]
+  )
+
+  const sentenceOf = useCallback(
+    (provider: AgentProviderId): string => {
+      const spec = platformProvider(provider)
+      if (!spec) return ""
+      const installed = detections?.find((entry) => entry.provider === provider)?.installed
+      return phaseSentence(spec, phaseOf(provider), { surface, ...(installed !== undefined ? { installed } : {}) })
+    },
+    [detections, phaseOf, surface]
+  )
+
+  const sessionsFor = useCallback(
+    (provider: AgentProviderId) => {
+      const spec = platformProvider(provider)
+      if (!spec) return { available: false as const, reason: "" }
+      return sessionAvailability(spec, statusOf(provider))
+    },
+    [statusOf]
   )
 
   return {
@@ -241,9 +311,13 @@ export function useAgentPlatform(options: {
     thisMachine,
     connections,
     pending,
+    pendingAction,
     errors,
+    surface,
     connectorFor,
     phaseOf,
+    sentenceOf,
+    sessionsFor,
     statusOf,
     identity,
     detect,

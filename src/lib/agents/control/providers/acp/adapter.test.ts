@@ -7,9 +7,18 @@ import { createProject } from "../../projects";
 import type { AgentControlEvent } from "../../events";
 import type { AgentPermissionScope } from "../../permissions";
 import type { FakeAgentHandler } from "./__fixtures__/fake-agent";
+import type { AcpApprovalPolicy } from "./launcher";
 
 const T0 = 1_700_000_000_000;
 const ROOT = "C:/work/research";
+
+/** The policy a real entry declares for an agent with an asking mode (Gemini's). */
+const ASKING: AcpApprovalPolicy = { kind: "asking-mode", modeIds: ["default"] };
+
+/** `session/new` as an agent in its asking mode answers it. */
+function inAskingMode(sessionId = "acp-1") {
+  return { sessionId, modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "yolo" }] } };
+}
 
 function project(scopes: AgentPermissionScope[] = ["read_project", "write_project", "run_commands"]) {
   const grant = createGrant(scopes, T0, "p1");
@@ -28,7 +37,7 @@ function setup(
   extra: Partial<Parameters<typeof createAcpControlAdapter>[0]> = {}
 ) {
   const agent = createFakeAgent({
-    "session/new": () => ({ sessionId: "acp-1" }),
+    "session/new": () => inAskingMode(),
     ...handlers,
   });
   const timers: (() => void)[] = [];
@@ -36,6 +45,7 @@ function setup(
   const adapter = createAcpControlAdapter({
     provider: "gemini",
     launch: agent.launcher,
+    approval: ASKING,
     now: () => T0,
     createId: () => `id-${id++}`,
     // Coalescing timers fire only when a test says so.
@@ -73,7 +83,7 @@ async function start(
 }
 
 describe("the ACP adapter's connection", () => {
-  it("launches the agent, advertises no filesystem or terminal, and learns its sign-in methods", async () => {
+  it("launches the agent, advertises no filesystem or terminal, learns its sign-in methods, and asks whether it is signed in", async () => {
     const { agent, adapter } = setup();
 
     const connected = await adapter.connect();
@@ -85,15 +95,22 @@ describe("the ACP adapter's connection", () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
     });
+    // The agent's own answer, from a session/new in the scratch directory.
+    expect(agent.launches).toEqual([{}]);
+    expect(agent.received.find((message) => message.method === "session/new")?.params).toEqual({
+      cwd: "C:/scratch/tabdump-agent-1",
+      mcpServers: [],
+    });
+    expect(agent.received.some((message) => message.method === "session/prompt")).toBe(false);
     expect(adapter.describeAuthentication()).toEqual({
-      state: "unknown",
+      state: "authenticated",
       methods: [{ id: "oauth-personal", name: "Sign in with Google", description: "Opens your browser" }],
     });
   });
 
   it("reports an agent that is not installed as unavailable rather than pretending", async () => {
     const agent = createFakeAgent({}, { installed: false });
-    const adapter = createAcpControlAdapter({ provider: "gemini", launch: agent.launcher });
+    const adapter = createAcpControlAdapter({ provider: "gemini", launch: agent.launcher, approval: ASKING });
 
     const connected = await adapter.connect();
 
@@ -188,17 +205,14 @@ describe("sessions", () => {
     expect(agent.released).toBe(1);
   });
 
-  it("puts the agent in its asking mode when it offers one", async () => {
-    const { agent, adapter } = setup(
-      {
-        "session/new": () => ({
-          sessionId: "acp-1",
-          modes: { currentModeId: "yolo", availableModes: [{ id: "default" }, { id: "yolo" }] },
-        }),
-        "session/set_mode": () => ({}),
-      },
-      { askingModeId: "default" }
-    );
+  it("puts the agent in its asking mode when it starts in another", async () => {
+    const { agent, adapter } = setup({
+      "session/new": () => ({
+        sessionId: "acp-1",
+        modes: { currentModeId: "yolo", availableModes: [{ id: "default" }, { id: "yolo" }] },
+      }),
+      "session/set_mode": () => ({}),
+    });
     await start(adapter);
 
     expect(agent.received.find((message) => message.method === "session/set_mode")?.params).toEqual({
@@ -535,5 +549,263 @@ describe("approvals", () => {
       { code: -32601, message: "Method not found" },
       { code: -32601, message: "Method not found" },
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Phase J.2 — sign-in state from the agent, and modes that ask
+ * ------------------------------------------------------------------ */
+
+describe("asking the agent whether it is signed in (Phase J.2)", () => {
+  it("reports sign-in required when the agent answers session/new with -32000, and keeps the connection for sign-in", async () => {
+    const { agent, adapter } = setup({
+      "session/new": () => {
+        throw new AgentError(-32000);
+      },
+    });
+
+    await adapter.connect();
+
+    expect(adapter.describeAuthentication().state).toBe("required");
+    // Kept open: the sign-in that follows runs on it.
+    expect(agent.released).toBe(0);
+  });
+
+  it("says unknown — not signed in, not signed out — when the agent fails some other way", async () => {
+    const { adapter } = setup({
+      "session/new": () => {
+        throw new AgentError(-32603);
+      },
+    });
+
+    await adapter.connect();
+
+    expect(adapter.describeAuthentication().state).toBe("unknown");
+  });
+
+  it("closes the session it asked with, when the agent can, and releases a signed-in agent's connection", async () => {
+    const { agent, adapter } = setup({
+      initialize: () => ({
+        protocolVersion: 1,
+        agentCapabilities: { sessionCapabilities: { close: {} } },
+        authMethods: [{ id: "grok.com", name: "Grok", description: "Sign in with Grok" }],
+      }),
+      "session/close": () => ({}),
+    });
+
+    await adapter.connect();
+
+    expect(agent.received.find((message) => message.method === "session/close")?.params).toEqual({
+      sessionId: "acp-1",
+    });
+    expect(agent.released).toBe(1);
+    expect(adapter.describeAuthentication().state).toBe("authenticated");
+  });
+
+  it("asks again on every connect, so a sign-in finished in a terminal is noticed", async () => {
+    let signedIn = false;
+    const { adapter } = setup({
+      "session/new": () => {
+        if (!signedIn) throw new AgentError(-32000);
+        return inAskingMode();
+      },
+    });
+
+    await adapter.connect();
+    expect(adapter.describeAuthentication().state).toBe("required");
+
+    signedIn = true;
+    await adapter.connect();
+    expect(adapter.describeAuthentication().state).toBe("authenticated");
+  });
+
+  it("confirms a finished sign-in with the agent rather than trusting the sign-in flow's own reply", async () => {
+    const { adapter } = setup({
+      "session/new": () => {
+        throw new AgentError(-32000);
+      },
+      // The flow says it finished, but the agent still cannot start a session.
+      authenticate: () => ({}),
+    });
+    await adapter.connect();
+
+    const result = await adapter.authenticate("oauth-personal");
+
+    expect(result).toMatchObject({ ok: false, error: { code: "configuration" } });
+    expect(adapter.describeAuthentication().state).toBe("required");
+  });
+
+  it("reports a sign-in it could not confirm as unknown, never as signed in", async () => {
+    let asked = 0;
+    const { adapter } = setup({
+      "session/new": () => {
+        asked += 1;
+        // Signed out before the sign-in; unable to say afterwards.
+        throw new AgentError(asked === 1 ? -32000 : -32603);
+      },
+      authenticate: () => ({}),
+    });
+    await adapter.connect();
+
+    const result = await adapter.authenticate("oauth-personal");
+
+    expect(result).toMatchObject({ ok: true, value: { state: "unknown" } });
+  });
+});
+
+describe("modes that ask (Phase J.2)", () => {
+  it("does not switch an agent that is already in an asking mode", async () => {
+    const { agent, adapter } = setup();
+    await start(adapter);
+    expect(agent.received.some((message) => message.method === "session/set_mode")).toBe(false);
+  });
+
+  it("refuses a session with an agent that offers no asking mode, and leaves nothing running", async () => {
+    const { agent, adapter, events } = setup({
+      "session/new": () => ({
+        sessionId: "acp-1",
+        modes: { currentModeId: "auto", availableModes: [{ id: "auto" }, { id: "always-approve" }] },
+      }),
+    });
+
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      permissions: { scopes: [], grantedAt: T0 },
+      attachments: [],
+    });
+
+    expect(created).toMatchObject({ ok: false, error: { code: "approval-unenforceable" } });
+    expect(agent.released).toBe(1);
+    expect(events.some((event) => event.kind === "session_started")).toBe(false);
+    expect(adapter.providerSessionIdFor("s1")).toBeUndefined();
+  });
+
+  it("refuses a session with an agent that reports no modes at all, rather than assuming it asks", async () => {
+    const { adapter } = setup({ "session/new": () => ({ sessionId: "acp-1" }) });
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      permissions: { scopes: [], grantedAt: T0 },
+      attachments: [],
+    });
+    expect(created).toMatchObject({ ok: false, error: { code: "approval-unenforceable" } });
+  });
+
+  it("refuses a session when the agent will not enter its asking mode", async () => {
+    const { adapter } = setup({
+      "session/new": () => ({
+        sessionId: "acp-1",
+        modes: { currentModeId: "yolo", availableModes: [{ id: "default" }, { id: "yolo" }] },
+      }),
+      "session/set_mode": () => {
+        throw new AgentError(-32603);
+      },
+    });
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      permissions: { scopes: [], grantedAt: T0 },
+      attachments: [],
+    });
+    expect(created).toMatchObject({ ok: false, error: { code: "approval-unenforceable" } });
+  });
+
+  it("takes the first asking mode the agent offers, in the entry's order", async () => {
+    const { agent, adapter } = setup(
+      {
+        "session/new": () => ({
+          sessionId: "acp-1",
+          modes: { currentModeId: "auto", availableModes: [{ id: "default" }, { id: "ask" }, { id: "auto" }] },
+        }),
+        "session/set_mode": () => ({}),
+      },
+      { approval: { kind: "asking-mode", modeIds: ["ask", "default"] } }
+    );
+    await start(adapter);
+    expect(agent.received.find((message) => message.method === "session/set_mode")?.params).toEqual({
+      sessionId: "acp-1",
+      modeId: "ask",
+    });
+  });
+
+  it("stops a session the moment the agent switches itself out of the asking mode", async () => {
+    const { agent, adapter, events } = setup({
+      "session/prompt": async (params, context) => {
+        context.update(params.sessionId as string, { sessionUpdate: "current_mode_update", currentModeId: "yolo" });
+        return new Promise(() => {});
+      },
+    });
+    await start(adapter);
+
+    await adapter.sendMessage({ sessionId: "s1", text: "go", context: { attachments: [] } });
+    await flush();
+
+    expect(events.at(-1)).toMatchObject({
+      kind: "error",
+      summary: "The agent switched to a mode where it approves its own actions, so TabDump stopped it.",
+    });
+    expect(agent.received.some((message) => message.method === "session/cancel")).toBe(true);
+    expect(agent.released).toBe(1);
+    expect(await adapter.sendMessage({ sessionId: "s1", text: "again", context: { attachments: [] } })).toMatchObject({
+      ok: false,
+      error: { code: "invalid-session" },
+    });
+  });
+
+  it("lets an agent move between modes that both ask", async () => {
+    const { adapter, events } = setup(
+      {
+        "session/new": () => ({
+          sessionId: "acp-1",
+          modes: { currentModeId: "ask", availableModes: [{ id: "default" }, { id: "ask" }] },
+        }),
+        "session/prompt": async (params, context) => {
+          context.update(params.sessionId as string, { sessionUpdate: "current_mode_update", currentModeId: "default" });
+          await flush();
+          return { stopReason: "end_turn" };
+        },
+      },
+      { approval: { kind: "asking-mode", modeIds: ["ask", "default"] } }
+    );
+    await start(adapter);
+    await adapter.sendMessage({ sessionId: "s1", text: "go", context: { attachments: [] } });
+    await flush();
+    expect(events.some((event) => event.kind === "error")).toBe(false);
+    expect(events.at(-1)?.kind).toBe("run_completed");
+  });
+
+  it("says the agent disconnected unexpectedly when it dies mid-turn", async () => {
+    const { adapter, events, agent } = setup({ "session/prompt": () => new Promise(() => {}) });
+    await start(adapter);
+    await adapter.sendMessage({ sessionId: "s1", text: "go", context: { attachments: [] } });
+    await flush();
+    agent.crash();
+    await flush();
+    expect(events.at(-1)).toMatchObject({ kind: "error", summary: "Agent disconnected unexpectedly." });
+  });
+});
+
+describe("an agent TabDump cannot hold to its approvals (Phase J.2)", () => {
+  const UNAVAILABLE: AcpApprovalPolicy = { kind: "unavailable", reason: "It has no mode that asks." };
+
+  it("declares no capability, so the service refuses its sessions without a provider check", () => {
+    const { adapter } = setup({}, { approval: UNAVAILABLE });
+    expect([...adapter.getCapabilities()]).toEqual([]);
+  });
+
+  it("can still be reached and asked about its sign-in", async () => {
+    const { adapter } = setup({}, { approval: UNAVAILABLE });
+    const connected = await adapter.connect();
+    expect(connected.ok).toBe(true);
+    expect(adapter.describeAuthentication().state).toBe("authenticated");
+  });
+
+  it("refuses a session itself, before launching anything", async () => {
+    const { agent, adapter } = setup({}, { approval: UNAVAILABLE });
+    const created = await adapter.createSession({
+      sessionId: "s1",
+      permissions: { scopes: [], grantedAt: T0 },
+      attachments: [],
+    });
+    expect(created).toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(agent.launches).toEqual([]);
   });
 });

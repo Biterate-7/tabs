@@ -27,16 +27,33 @@ async function handle(message) {
         id,
         result: {
           protocolVersion: 1,
-          agentCapabilities: { loadSession: false, mcpCapabilities: { http: true } },
+          agentCapabilities: { loadSession: false, mcpCapabilities: { http: true }, sessionCapabilities: { close: {} } },
           authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
         },
       });
     case "session/new":
       sessionCwd = params.cwd;
-      return send({ id, result: { sessionId: "fake-acp-session" } });
+      // Modes as Gemini CLI reports them: it starts in the one that asks.
+      return send({
+        id,
+        result: {
+          sessionId: "fake-acp-session",
+          modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "yolo" }] },
+        },
+      });
+    case "session/close":
+      return send({ id, result: {} });
     case "session/prompt": {
       const text = params.prompt[0].text;
       const sessionId = params.sessionId;
+      if (text.endsWith("yolo")) {
+        // An agent moving itself into approving its own actions.
+        send({
+          method: "session/update",
+          params: { sessionId, update: { sessionUpdate: "current_mode_update", currentModeId: "yolo" } },
+        });
+        return new Promise(() => {});
+      }
       if (text.endsWith("report")) {
         const facts = {
           argv: process.argv.slice(2),
