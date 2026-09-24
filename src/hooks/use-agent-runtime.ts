@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRuntimeClient } from "@/lib/agents/runtime/client"
+import { agentRuntimeTransport } from "@/lib/platform"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeErrorCode, RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
@@ -84,7 +85,13 @@ export function useAgentRuntime(options: UseAgentRuntimeOptions = {}): AgentRunt
     discard a `useMemo` and re-run it, and a second client would address a
     session set the first one had already been told about.
   */
-  const [client] = useState<RuntimeClient>(() => options.client ?? createRuntimeClient())
+  const [client] = useState<RuntimeClient>(() => {
+    if (options.client) return options.client
+    // The desktop app's runtime is its bundled sidecar, reached through the
+    // Tauri shell rather than an HTTP route (Phase J.1). Same client above it.
+    const post = agentRuntimeTransport()
+    return createRuntimeClient(post ? { post } : {})
+  })
 
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
   const [loading, setLoading] = useState(true)

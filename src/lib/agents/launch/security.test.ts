@@ -53,6 +53,34 @@ describe("what TabDump can start", () => {
     ]);
   });
 
+  it("pins the only CLI operations TabDump runs itself: Claude Code's own sign-in (Phase J.1)", () => {
+    const natives = PROVIDER_LAUNCH_TABLE.filter((entry) => entry.native).map((entry) => ({
+      provider: entry.provider,
+      executables: entry.native!.executables,
+      statusArgs: entry.native!.statusArgs,
+      loginArgs: entry.native!.loginArgs,
+    }));
+    expect(natives).toEqual([
+      {
+        provider: "claude-code",
+        executables: ["claude"],
+        statusArgs: ["auth", "status", "--json"],
+        loginArgs: {
+          claudeai: ["auth", "login", "--claudeai"],
+          console: ["auth", "login", "--console"],
+        },
+      },
+    ]);
+  });
+
+  it("looks the operation's arguments up in the table rather than accepting them", () => {
+    const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
+    expect(processCode).toContain("entry.statusArgs");
+    expect(processCode).toContain("entry.loginArgs[operation.methodId]");
+    // Own-property check, so a method id like "__proto__" cannot reach argv.
+    expect(processCode).toContain("Object.prototype.hasOwnProperty.call(entry.loginArgs, operation.methodId)");
+  });
+
   it("has no entry for a custom agent — a user-named program is never launched", () => {
     expect(PROVIDER_LAUNCH_TABLE.some((entry) => entry.provider === "custom")).toBe(false);
   });
@@ -116,7 +144,11 @@ describe("who can reach it", () => {
       const code = codeOf(readFileSync(file, "utf8"));
       if (/from\s+["'][^"']*agents\/launch\//.test(code)) importers.push(path.relative(SRC_DIR, file));
     }
-    expect(importers.map((file) => file.replace(/\\/g, "/"))).toEqual(["lib/agents/runtime/server.ts"]);
+    // The web's local runtime and the desktop app's runtime sidecar (Phase J.1).
+    expect(importers.map((file) => file.replace(/\\/g, "/")).sort()).toEqual([
+      "lib/agents/runtime/desktop.ts",
+      "lib/agents/runtime/server.ts",
+    ]);
   });
 
   it("never reads a sign-in marker's contents — presence only", () => {

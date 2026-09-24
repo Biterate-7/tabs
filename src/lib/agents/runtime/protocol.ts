@@ -207,6 +207,13 @@ export type RuntimeProviderStatus = {
   available: boolean;
   authentication: ProviderAuthenticationState;
   capabilities: readonly AgentCapability[];
+  /**
+   * The agent signs in with its **own** login, which this runtime can start
+   * (`authenticate_provider`) — rather than with a key the user stores in
+   * TabDump. True for the ACP agents everywhere, and for Claude Code in the
+   * desktop app (Phase J.1). Absent means false.
+   */
+  nativeSignIn?: boolean;
 };
 
 /**

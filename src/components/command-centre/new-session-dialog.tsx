@@ -33,6 +33,7 @@ import type {
   CreateRemoteProjectOutcome,
 } from "@/hooks/use-remote-projects"
 import type { ExecutionMode, RemoteProjectSummary } from "@/lib/agents/command-centre/remote"
+import type { AgentPermissionScope } from "@/lib/agents/control/permissions"
 import type { AgentProject } from "@/lib/agents/control/projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { ProviderConnectionView } from "@/lib/agents/credentials/types"
@@ -81,6 +82,8 @@ export function NewSessionDialog({
   defaultWorkspaceId,
   connectionBlocker,
   onConnectAgent,
+  pickFolder,
+  projectScopesFor,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -133,13 +136,28 @@ export function NewSessionDialog({
   /** Opens Connect Agent for a provider the user has not connected yet. */
   onConnectAgent?: (provider: AgentProviderId) => void
   /**
+   * The native folder picker (the desktop app, Phase J.1).
+   *
+   * When present, a project folder can only be chosen with it: the path field
+   * becomes read-only and is filled by the dialog, because the desktop shell
+   * refuses to authorize any folder that did not come from its own picker.
+   */
+  pickFolder?: () => Promise<{ path: string; name: string } | null>
+  /**
+   * The scopes a newly authorized folder grants for an agent: never more than
+   * the agent was approved for when it was connected. Without this, a folder
+   * would grant writes to an agent approved only to read, and the session
+   * would be refused as exceeding its approval.
+   */
+  projectScopesFor?: (provider: AgentProviderId) => readonly AgentPermissionScope[]
+  /**
    * Takes the user to where they connect their own provider credentials.
    *
    * Optional: a surface that has nowhere to send them simply shows the
    * sentence without a button, rather than offering an action that goes
    * nowhere.
    */
-  onConnectProvider?: () => void
+  onConnectProvider?: (provider?: AgentProviderId) => void
   creating: boolean
   /** A sentence from the runtime's refusal of the last attempt. */
   error?: string
@@ -213,6 +231,7 @@ export function NewSessionDialog({
       // connected — `AgentProject.providers` is an explicit list for exactly
       // this reason.
       providers: [chosen],
+      ...(projectScopesFor ? { scopes: projectScopesFor(chosen) } : {}),
     })
 
     if (!outcome.ok) {
@@ -433,13 +452,39 @@ export function NewSessionDialog({
                   <label htmlFor="project-path" className="text-label text-tertiary">
                     Folder
                   </label>
-                  <Input
-                    id="project-path"
-                    value={projectPath}
-                    onChange={(event) => setProjectPath(event.target.value)}
-                    placeholder="/Users/you/code/tabdump"
-                    className="font-mono"
-                  />
+                  {pickFolder ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="project-path"
+                        value={projectPath}
+                        readOnly
+                        placeholder="No folder chosen"
+                        className="font-mono"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          void pickFolder().then((picked) => {
+                            if (!picked) return
+                            setProjectPath(picked.path)
+                            if (!projectName.trim()) setProjectName(picked.name)
+                          })
+                        }}
+                      >
+                        Choose folder…
+                      </Button>
+                    </div>
+                  ) : (
+                    <Input
+                      id="project-path"
+                      value={projectPath}
+                      onChange={(event) => setProjectPath(event.target.value)}
+                      placeholder="/Users/you/code/tabdump"
+                      className="font-mono"
+                    />
+                  )}
                   {/*
                     The honest limitation, stated where the decision is made.
 
@@ -449,8 +494,9 @@ export function NewSessionDialog({
                     native folder picker as the fix.
                   */}
                   <p className="text-body-sm text-tertiary">
-                    Type the full path. TabDump checks it is a real project folder, not a drive or
-                    your home directory.
+                    {pickFolder
+                      ? "Choose the folder in the system dialog. TabDump checks it is a real project folder, not a drive or your home directory."
+                      : "Type the full path. TabDump checks it is a real project folder, not a drive or your home directory."}
                   </p>
                 </div>
                 {projectError && <p className="text-body-sm text-destructive">{projectError}</p>}
@@ -522,7 +568,12 @@ export function NewSessionDialog({
                 settings is how a product loses somebody at the last step.
               */}
               {blocker === "authentication-required" && onConnectProvider && (
-                <Button type="button" size="sm" variant="outline" onClick={onConnectProvider}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onConnectProvider(chosen ?? undefined)}
+                >
                   Connect
                 </Button>
               )}

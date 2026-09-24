@@ -1,4 +1,5 @@
 import {
+  allowDesktopRuntime,
   allowRemoteRuntime,
   decideRemoteRuntime,
   decideServerRuntime,
@@ -197,6 +198,21 @@ function describeRemote(decision: RemoteRuntimeDecision): ExecutionGateResult {
  */
 export function denyLocalExecution(): ExecutionGateResult {
   return describe(denyNonServerRuntime());
+}
+
+/**
+ * The gate for the packaged desktop app's agent runtime (Phase J.1).
+ *
+ * The one allowing decision that consults nothing, because what it would
+ * consult is settled before this code can run: the desktop runtime is a
+ * sidecar process started by the Tauri shell, on the user's own machine, over
+ * a pipe nothing else can write to. There is no request, header or
+ * environment variable that could make a hosted server take this path —
+ * `runtime/security.test.ts` asserts that only `runtime/desktop.ts` calls it,
+ * and nothing under `src/app` imports that.
+ */
+export function allowDesktopExecution(): ExecutionGateResult {
+  return describe(allowDesktopRuntime());
 }
 
 function describe(decision: RuntimeDecision): ExecutionGateResult {

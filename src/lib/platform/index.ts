@@ -7,7 +7,7 @@
  * adapter itself costs a few bytes.
  */
 import { isDesktop } from "./detect";
-import { desktopPlatform } from "./desktop";
+import { desktopAgentBridge, desktopPlatform } from "./desktop";
 import { webPlatform } from "./web";
 import type { PlatformAdapter } from "./types";
 
@@ -32,4 +32,29 @@ export function openExternal(url: string): Promise<void> {
 /** Saves `text` as a file: a browser download on web, a native Save dialog on desktop. */
 export function saveTextFile(filename: string, text: string, mimeType: string): Promise<boolean> {
   return adapter().saveTextFile(filename, text, mimeType);
+}
+
+export type { PickedProjectFolder } from "./desktop";
+
+/**
+ * How the agent runtime client reaches the runtime in this shell (Phase J.1).
+ *
+ * `undefined` on the web, where the client posts to `/api/agents/control` as
+ * it always has. On the desktop, the bundled runtime sidecar, through Rust.
+ */
+export function agentRuntimeTransport(): ((body: unknown) => Promise<unknown>) | undefined {
+  return isDesktop() ? (body) => desktopAgentBridge.request(body) : undefined;
+}
+
+/**
+ * The native folder picker for agent projects, on the desktop only.
+ *
+ * On the desktop a project folder can only come from here — Rust refuses one
+ * that did not. On the web there is no trusted path source, so the typed path
+ * and the runtime's validator remain what they were.
+ */
+export function agentProjectFolderPicker():
+  | (() => Promise<{ path: string; name: string } | null>)
+  | undefined {
+  return isDesktop() ? () => desktopAgentBridge.pickProjectFolder() : undefined;
 }

@@ -27,6 +27,8 @@ import { useAgentPlatform } from "@/hooks/use-agent-platform"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { isChatReady } from "@/lib/agents/platform/lifecycle"
 import { grantWithinApproval } from "@/lib/agents/platform/roster"
+import { agentProjectFolderPicker } from "@/lib/platform"
+import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
@@ -239,6 +241,27 @@ export function CommandCentreView({
     setNewSessionOpen(false)
     setConnectOpen(true)
   }, [])
+
+  /*
+    The desktop app (Phase J.1): a project folder comes only from the native
+    picker, and Claude signs in with its own login rather than a stored key.
+    Both are answered by the shell and the runtime, never guessed here.
+  */
+  const [pickFolder] = useState(() => agentProjectFolderPicker())
+  const projectScopesFor = useCallback(
+    (provider: AgentProviderId) => {
+      const approved = platform.identity(provider)?.approvedScopes ?? []
+      return DEFAULT_PROJECT_SCOPES.filter((scope) => approved.includes(scope))
+    },
+    [platform]
+  )
+  const signInFor = useCallback(
+    (provider?: AgentProviderId) => {
+      if (provider && platform.statusOf(provider)?.nativeSignIn) openConnect(provider)
+      else onOpenConnectors?.()
+    },
+    [onOpenConnectors, openConnect, platform]
+  )
 
   const workspaceChoices = useMemo(
     () => world.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
@@ -546,7 +569,7 @@ export function CommandCentreView({
           : {})}
         connectionFor={connections.forProvider}
         onCreate={(input) => void handleCreate(input)}
-        {...(onOpenConnectors ? { onConnectProvider: onOpenConnectors } : {})}
+        {...(onOpenConnectors || pickFolder ? { onConnectProvider: signInFor } : {})}
         creating={creating}
         now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
@@ -554,18 +577,26 @@ export function CommandCentreView({
         {...(activeWorkspaceId ? { defaultWorkspaceId: activeWorkspaceId } : {})}
         connectionBlocker={(provider) => (platform.identity(provider) ? undefined : "Not connected")}
         onConnectAgent={openConnect}
+        {...(pickFolder ? { pickFolder } : {})}
+        projectScopesFor={projectScopesFor}
       />
 
       <ConnectAgentDialog
         // Remounted per opening so it starts from the provider it was opened for.
         key={`${connectOpen}-${connectProvider ?? ""}`}
         open={connectOpen}
-        onOpenChange={setConnectOpen}
+        onOpenChange={(next) => {
+          setConnectOpen(next)
+          // A sign-in may have changed what the runtime reports; ask again so
+          // the start dialog does not show a stale "sign in first".
+          if (!next) void runtime.refresh()
+        }}
         platform={platform}
         initialProvider={connectProvider}
         {...(onOpenConnectors ? { onOpenSettings: onOpenConnectors } : {})}
         onStartSession={() => {
           setConnectOpen(false)
+          void runtime.refresh()
           setNewSessionOpen(true)
         }}
       />

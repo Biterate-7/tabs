@@ -140,6 +140,24 @@ export type SdkClaudeRuntimeOptions = {
    * explicitly. Production passes nothing and gets the package name.
    */
   moduleSpecifier?: string;
+  /**
+   * Supplies the SDK module directly instead of importing it by specifier.
+   *
+   * The desktop runtime (Phase J.1) is a single bundled file with no
+   * `node_modules` beside it, so the SDK has to be part of the bundle — which
+   * needs a literal `import()` the bundler can see. That import lives in the
+   * desktop entry, and is handed in here.
+   */
+  loadModule?: () => Promise<unknown>;
+  /**
+   * The Claude Code executable to drive, when it is not the SDK's own bundled
+   * binary.
+   *
+   * The desktop runtime drives the user's *installed* Claude Code, resolved
+   * from the launch allowlist — which is also where that user's own login
+   * lives. Never taken from a request.
+   */
+  executablePath?: string;
   idleTimeoutMs?: number;
   /**
    * The signed-in user's own provider credential.
@@ -212,6 +230,13 @@ export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): Claude
   };
 
   async function loadSdk(): Promise<SdkModule | null> {
+    if (options.loadModule) {
+      try {
+        return (await options.loadModule()) as SdkModule;
+      } catch {
+        return null;
+      }
+    }
     try {
       // Dynamic, and the specifier is a constant from this module — never a
       // caller-supplied string, so this cannot become an arbitrary-module
@@ -290,6 +315,7 @@ export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): Claude
             // nowhere else in this call: not in `allowedTools`, not in a
             // prompt, not in a path, not in anything the queue carries.
             env: environmentFor(credential.env),
+            ...(options.executablePath ? { pathToClaudeCodeExecutable: options.executablePath } : {}),
             ...(start.cwd ? { cwd: start.cwd } : {}),
             ...(start.additionalDirectories.length > 0
               ? { additionalDirectories: [...start.additionalDirectories] }

@@ -19,6 +19,7 @@ import {
   APPROVABLE_SCOPES,
   CONNECTION_PHASE_LABEL,
   defaultApprovedScopes,
+  signInKind,
   stepFor,
 } from "@/lib/agents/platform/lifecycle"
 import { cn } from "@/lib/utils"
@@ -78,6 +79,9 @@ export function ConnectAgentDialog({
   const spec = chosen ? platformProvider(chosen) : undefined
   const phase = chosen ? platform.phaseOf(chosen) : null
   const connection = chosen ? platform.connections[chosen] : undefined
+  // How this agent signs in *here*: the runtime knows whether it can start
+  // the agent's own login in this shell (Claude, in the desktop app).
+  const signIn = spec ? signInKind(spec, chosen ? platform.statusOf(chosen) : undefined) : undefined
   const derived: ConnectStep = !chosen || !phase ? "choose" : stepFor(phase)
   const step = ((): ConnectStep => {
     if (advanced && order(advanced) > order(derived) && derived !== "detect") return advanced
@@ -86,7 +90,7 @@ export function ConnectAgentDialog({
     // screen until the user says they are done with them.
     if (
       derived === "approve" &&
-      spec?.signIn.kind === "native" &&
+      signIn === "native" &&
       !advanced &&
       connection?.authentication === "unknown"
     ) {
@@ -217,9 +221,13 @@ export function ConnectAgentDialog({
                 {detection.signIn === "signed_in" ? " · signed in" : ""}
               </p>
             )}
-            <p className="text-body-sm text-muted-foreground">{spec.signIn.summary}</p>
+            <p className="text-body-sm text-muted-foreground">
+              {signIn === "native" && spec.signIn.kind !== "native"
+                ? (spec.nativeSignInSummary ?? spec.signIn.summary)
+                : spec.signIn.summary}
+            </p>
 
-            {spec.signIn.kind === "native" && (
+            {signIn === "native" && (
               <>
                 {!connection ? (
                   <Button type="button" size="sm" className="self-start" disabled={busy} onClick={() => void platform.connect(spec.provider)}>
@@ -260,7 +268,7 @@ export function ConnectAgentDialog({
               </>
             )}
 
-            {spec.signIn.kind !== "native" && onOpenSettings && (
+            {signIn !== "native" && onOpenSettings && (
               <Button type="button" size="sm" variant="outline" className="self-start" onClick={onOpenSettings}>
                 Open AI connectors
               </Button>
@@ -412,7 +420,7 @@ export function ConnectAgentDialog({
   /** Whether sign-in has answered enough to move on. Each kind has its own proof. */
   function canLeaveSignIn(): boolean {
     if (!spec || phase === "sign_in_required") return false
-    if (spec.signIn.kind === "native") {
+    if (signIn === "native") {
       return connection !== undefined && connection.connection === "connected" && connection.authentication !== "required"
     }
     return true

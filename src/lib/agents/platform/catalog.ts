@@ -45,6 +45,11 @@ export type PlatformProvider = {
   vendor: string;
   transport: PlatformTransport;
   signIn: PlatformSignIn;
+  /**
+   * The sentence for a runtime that can start this agent's own login when
+   * `signIn` says otherwise — Claude Code in the desktop app (Phase J.1).
+   */
+  nativeSignInSummary?: string;
   /** One sentence: what connecting this agent gives you. */
   pitch: string;
   /** How to install it, for the user to run. Never run by TabDump. */
@@ -64,6 +69,8 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
       kind: "provider-key",
       summary: "Runs on your own Anthropic API key, connected in Settings → AI connectors.",
     },
+    nativeSignInSummary:
+      "Signs in with your own Claude account through Claude Code's login. TabDump never sees or stores the token.",
     pitch: "Anthropic's coding agent, driven through the Claude Agent SDK with per-action approval.",
     installCommand: "npm install -g @anthropic-ai/claude-code",
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",

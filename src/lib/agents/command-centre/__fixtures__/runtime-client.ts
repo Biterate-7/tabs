@@ -196,7 +196,11 @@ export function createScriptedRuntime(
         const view = connectionViews.get(command.provider)
         if (!view) return runtimeFailure<never>("provider_unavailable")
         if (command.name === "authenticate_provider") {
-          const signedIn = { ...view, authentication: "authenticated" as const }
+          const signedIn = {
+            ...view,
+            connection: "connected" as const,
+            authentication: "authenticated" as const,
+          }
           connectionViews.set(command.provider, signedIn)
           return { ok: true, value: signedIn }
         }

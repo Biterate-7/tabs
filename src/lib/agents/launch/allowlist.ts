@@ -47,6 +47,24 @@ export type AcpLaunchEntry = {
   askingModeId?: string;
 };
 
+/**
+ * An agent TabDump drives through its own SDK but whose *login* it can start
+ * (Phase J.1, the desktop app).
+ *
+ * Every argument list here is a literal. The login ones open the provider's
+ * own sign-in page in the user's browser; the credential they produce is
+ * written by the agent into its own store and never passes through TabDump.
+ */
+export type NativeCliEntry = {
+  executables: readonly string[];
+  /** Answers "is this agent signed in", as JSON. Reads nothing TabDump keeps. */
+  statusArgs: readonly string[];
+  /** One literal argument list per sign-in method TabDump offers. */
+  loginArgs: Readonly<Record<string, readonly string[]>>;
+  /** What each sign-in method is called on the button. */
+  loginLabels: Readonly<Record<string, string>>;
+};
+
 export type ProviderLaunchEntry = {
   provider: AgentProviderId;
   /** Executables whose presence means the agent is installed. */
@@ -55,6 +73,8 @@ export type ProviderLaunchEntry = {
   signInMarkers: readonly string[];
   /** How TabDump drives it, when it can. Absent: detect only. */
   acp?: AcpLaunchEntry;
+  /** The agent's own CLI, for an SDK-driven agent's executable and native sign-in. */
+  native?: NativeCliEntry;
 };
 
 export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
@@ -64,6 +84,21 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     provider: "claude-code",
     detect: ["claude"],
     signInMarkers: [".claude/.credentials.json"],
+    // The desktop app drives the user's installed Claude Code (where their
+    // own login lives) and can start that login. Verified against 2.1.229:
+    // `claude auth status --json` → {"loggedIn": …}; `claude auth login`.
+    native: {
+      executables: ["claude"],
+      statusArgs: ["auth", "status", "--json"],
+      loginArgs: {
+        claudeai: ["auth", "login", "--claudeai"],
+        console: ["auth", "login", "--console"],
+      },
+      loginLabels: {
+        claudeai: "Sign in with Claude",
+        console: "Sign in with Anthropic Console",
+      },
+    },
   },
   {
     provider: "gemini",

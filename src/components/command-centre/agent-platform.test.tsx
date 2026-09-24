@@ -273,3 +273,60 @@ describe("the agent chat", () => {
     expect(reply.closest("li")?.getAttribute("aria-busy")).toBe("true")
   })
 })
+
+describe("the desktop app (Phase J.1)", () => {
+  function desktopRuntime() {
+    const claude = {
+      provider: "claude-code" as const,
+      connection: "configuration_required" as const,
+      available: true,
+      authentication: "required" as const,
+      capabilities: ["create_session" as const, "message" as const, "approvals" as const],
+      nativeSignIn: true,
+    }
+    const runtime = createScriptedRuntime({ status: scriptedStatus({ providers: [claude] }) })
+    runtime.setDetections([
+      { provider: "claude-code", installed: true, transport: "sdk", launchable: false, signIn: "signed_in" },
+    ])
+    runtime.setConnection({
+      ...claude,
+      authMethods: [
+        { id: "claudeai", name: "Sign in with Claude" },
+        { id: "console", name: "Sign in with Anthropic Console" },
+      ],
+    })
+    return runtime
+  }
+
+  it("signs Claude in with its own login — no key, no settings page — then approves writes", async () => {
+    const user = userEvent.setup()
+    const runtime = desktopRuntime()
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /Claude Code/ }))
+
+    expect(await within(dialog).findByText(/through Claude Code's login/i)).toBeTruthy()
+    expect(within(dialog).queryByRole("button", { name: /open ai connectors/i })).toBeNull()
+
+    await user.click(within(dialog).getByRole("button", { name: /Reach Claude Code/i }))
+    await user.click(await within(dialog).findByRole("button", { name: /Sign in with Claude/i }))
+
+    // Signed in: straight to approval. Turn on changing files, which asks each time.
+    const approve = await within(dialog).findByRole("group")
+    await user.click(within(approve).getByRole("checkbox", { name: /Change project files/i }))
+    await user.click(within(dialog).getByRole("button", { name: /approve and connect/i }))
+    expect(await within(dialog).findByText(/Claude Code is connected/)).toBeTruthy()
+
+    expect(runtime.commands).toContainEqual({
+      name: "authenticate_provider",
+      provider: "claude-code",
+      methodId: "claudeai",
+    })
+    expect(loadAgentRoster().agents[0]).toMatchObject({
+      provider: "claude-code",
+      approvedScopes: ["read_workspace", "read_project", "write_project"],
+    })
+  })
+})

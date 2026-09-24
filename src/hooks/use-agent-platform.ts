@@ -23,6 +23,7 @@ import type {
   ProviderConnectionView,
   ProviderDetection,
   RuntimeErrorCode,
+  RuntimeProviderStatus,
   RuntimeStatus,
 } from "@/lib/agents/runtime/protocol"
 
@@ -52,6 +53,8 @@ export type UseAgentPlatform = {
   errors: Partial<Record<AgentProviderId, RuntimeErrorCode>>
   connectorFor: (provider: AgentProviderId) => AgentPlatformConnector
   phaseOf: (provider: AgentProviderId) => ConnectionPhase
+  /** The runtime's latest word on a provider: a connect/sign-in reply, else its status. */
+  statusOf: (provider: AgentProviderId) => RuntimeProviderStatus | ProviderConnectionView | undefined
   identity: (provider: AgentProviderId) => AgentIdentity | undefined
   detect: () => Promise<void>
   connect: (provider: AgentProviderId) => Promise<boolean>
@@ -204,12 +207,17 @@ export function useAgentPlatform(options: {
 
   const identity = useCallback((provider: AgentProviderId) => identityFor(roster, provider), [roster])
 
+  const statusOf = useCallback(
+    (provider: AgentProviderId) =>
+      connections[provider] ?? status?.providers.find((entry) => entry.provider === provider),
+    [connections, status]
+  )
+
   const phaseOf = useCallback(
     (provider: AgentProviderId): ConnectionPhase => {
       const spec = platformProvider(provider)
       if (!spec) return "error"
-      const reported =
-        connections[provider] ?? status?.providers.find((entry) => entry.provider === provider)
+      const reported = statusOf(provider)
       const detection = detections?.find((entry) => entry.provider === provider)
       const approved = identityFor(roster, provider)
       const keyConnected = providerKeyConnected?.(provider)
@@ -224,7 +232,7 @@ export function useAgentPlatform(options: {
         ...(approved ? { approvedScopes: approved.approvedScopes } : {}),
       })
     },
-    [connections, detections, mcpTokenIssued, providerKeyConnected, roster, status]
+    [detections, mcpTokenIssued, providerKeyConnected, roster, status, statusOf]
   )
 
   return {
@@ -236,6 +244,7 @@ export function useAgentPlatform(options: {
     errors,
     connectorFor,
     phaseOf,
+    statusOf,
     identity,
     detect,
     connect,

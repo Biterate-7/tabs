@@ -101,18 +101,42 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
       if (provider.transport !== "sdk") return "not_installed";
     }
     if (provider.transport === "acp" && !facts.detection.launchable) return "needs_adapter";
+    // An SDK agent that drives the *installed* CLI (the desktop app) has no
+    // runtime to offer when that CLI is absent.
+    if (!facts.detection.installed && facts.status?.connection === "unavailable") return "not_installed";
   } else if (provider.transport === "acp") {
     // ACP agents run on the user's machine. A remote runtime cannot reach one.
     return "runtime_unavailable";
   }
 
-  if (provider.signIn.kind === "provider-key" && facts.providerKeyConnected === false) {
+  // A stored key matters only where the runtime has no native sign-in for
+  // this agent. In the desktop app Claude uses its own login (Phase J.1), and
+  // whether a key is stored in a server TabDump does not have is irrelevant.
+  if (
+    signInKind(provider, facts.status) === "provider-key" &&
+    facts.providerKeyConnected === false
+  ) {
     return "sign_in_required";
   }
   if (facts.status?.authentication === "required") return "sign_in_required";
 
   if (!facts.approvedScopes) return facts.status?.connection === "connected" ? "awaiting_approval" : "detected";
   return "connected";
+}
+
+/**
+ * How this agent signs in *here*.
+ *
+ * The catalogue says how it usually does; the runtime says whether it can
+ * start the agent's own login in this shell. The runtime's answer wins — it is
+ * the one that knows which adapter it built.
+ */
+export function signInKind(
+  provider: PlatformProvider,
+  status: ConnectionFacts["status"] | undefined
+): PlatformProvider["signIn"]["kind"] {
+  if (status?.nativeSignIn) return "native";
+  return provider.signIn.kind;
 }
 
 /** Phases in which the agent can be talked to. */

@@ -714,6 +714,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
             ? ("required" as const)
             : ("unknown" as const),
         capabilities: [...adapter.getCapabilities()],
+        ...(hasAdapterAuthentication(adapter) ? { nativeSignIn: true } : {}),
       };
     });
   }

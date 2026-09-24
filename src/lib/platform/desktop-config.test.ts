@@ -32,7 +32,16 @@ describe("tauri.conf.json", () => {
 
   it("packages the static export the desktop build script produces", () => {
     expect(conf.build.frontendDist).toBe("../out");
-    expect(conf.build.beforeBuildCommand).toBe("npm run desktop:export");
+    // Phase J.1: the agent runtime sidecar is built first, then the export.
+    expect(conf.build.beforeBuildCommand).toBe("npm run desktop:runtime && npm run desktop:export");
+  });
+
+  it("ships the agent runtime sidecar and nothing else beside the app (Phase J.1)", () => {
+    // Exactly one external binary — the Node that runs the runtime — and
+    // exactly one resource, the bundled runtime. Anything more here is a new
+    // program the installer puts on the user's machine.
+    expect(conf.bundle.externalBin).toEqual(["binaries/tabdump-agent-node"]);
+    expect(conf.bundle.resources).toEqual({ "agent-runtime/runtime.mjs": "agent-runtime/runtime.mjs" });
   });
 
   it("points desktop development at the Next dev server so hot reload works", () => {
@@ -152,14 +161,22 @@ describe("the Rust shell", () => {
     expect(commandsRs).not.toMatch(/fn\s+\w+\([^)]*path:\s*String/);
   });
 
-  it("exposes exactly two commands to the frontend", () => {
+  it("exposes exactly four commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    expect(names).toEqual(["commands::open_external", "commands::export_text_file"]);
+    // The two originals, plus the agent runtime bridge (Phase J.1): one relay
+    // for the closed runtime protocol, and the native folder picker that is
+    // the only source of a project path. No shell, fs or process command.
+    expect(names).toEqual([
+      "commands::open_external",
+      "commands::export_text_file",
+      "agent_runtime::agent_runtime",
+      "agent_runtime::agent_pick_project_folder",
+    ]);
   });
 });
 

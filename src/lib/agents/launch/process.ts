@@ -94,6 +94,105 @@ function lineSplitter(onLine: (line: string) => void) {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * An SDK-driven agent's own CLI (Phase J.1)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The installed executable of an agent TabDump drives through its SDK.
+ *
+ * Resolved by name from the allowlist, like everything else here. A shim is
+ * not followed for these: an SDK needs a real binary to hand to its own
+ * spawner, and Claude Code installs one.
+ */
+export function resolveNativeExecutable(
+  provider: AgentProviderId,
+  env: Readonly<Record<string, string | undefined>>
+): string | undefined {
+  const entry = launchEntryFor(provider)?.native;
+  if (!entry) return undefined;
+  for (const name of entry.executables) {
+    const resolved = resolveExecutable(name, { env, platform: process.platform, fs: realResolverFs });
+    if (resolved?.kind === "native") return resolved.file;
+  }
+  return undefined;
+}
+
+/** What may be asked of an agent's own CLI. An operation, never an argument list. */
+export type NativeOperation = { kind: "status" } | { kind: "login"; methodId: string };
+
+export type NativeRunResult =
+  | { ok: true; exitCode: number | null; stdout: string }
+  | { ok: false; reason: "not-installed" | "unknown-operation" | "failed" | "timeout" };
+
+const MAX_NATIVE_STDOUT = 64 * 1024;
+
+/**
+ * Runs one allowlisted operation of an agent's own CLI and waits for it.
+ *
+ * The caller names the provider and the operation; the argument list comes
+ * from the allowlist's literal table, so there is no parameter through which
+ * text could reach argv. Same rules as `createAcpProcessLauncher`: `shell:
+ * false`, allowlisted environment, a scratch working directory. stdout is
+ * returned bounded (the status command answers in JSON); stderr is drained
+ * and discarded.
+ */
+export async function runNativeOperation(
+  provider: AgentProviderId,
+  operation: NativeOperation,
+  options: { env: Readonly<Record<string, string | undefined>>; timeoutMs: number }
+): Promise<NativeRunResult> {
+  const entry = launchEntryFor(provider)?.native;
+  if (!entry) return { ok: false, reason: "not-installed" };
+
+  const args =
+    operation.kind === "status"
+      ? entry.statusArgs
+      : Object.prototype.hasOwnProperty.call(entry.loginArgs, operation.methodId)
+        ? entry.loginArgs[operation.methodId]
+        : undefined;
+  if (!args) return { ok: false, reason: "unknown-operation" };
+
+  const file = resolveNativeExecutable(provider, options.env);
+  if (!file) return { ok: false, reason: "not-installed" };
+
+  return new Promise<NativeRunResult>((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(file, [...args], {
+        cwd: tmpdir(),
+        env: agentEnvironment(options.env) as NodeJS.ProcessEnv,
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      resolve({ ok: false, reason: "failed" });
+      return;
+    }
+
+    let stdout = "";
+    let settled = false;
+    const done = (result: NativeRunResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      done({ ok: false, reason: "timeout" });
+    }, options.timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdout.length < MAX_NATIVE_STDOUT) stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", () => {});
+    child.on("error", () => done({ ok: false, reason: "failed" }));
+    child.on("exit", (code) => done({ ok: true, exitCode: code, stdout: stdout.slice(0, MAX_NATIVE_STDOUT) }));
+  });
+}
+
 export type ProcessLauncherOptions = {
   provider: AgentProviderId;
   /** The server's environment. Read for PATH and the allowlist in ./env.ts only. */
