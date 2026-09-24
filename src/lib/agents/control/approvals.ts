@@ -1,8 +1,10 @@
 import { requiresApproval } from "./permissions";
 import { readWorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import { readWorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 import type { AgentPermissionScope } from "./permissions";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 
 /**
  * The approval broker.
@@ -146,6 +148,13 @@ export type AgentApproval = {
    * malformed one is dropped, and the targets still describe the change.
    */
   change?: WorkspaceChangeSummary;
+  /**
+   * For `write_workspace` only (Phase J.5): a plan of several changes, every
+   * step as the user reads it. Approving it approves exactly these steps,
+   * once — never the agent, never a later plan. Read strictly here; a
+   * malformed one is dropped, and the targets still list every step.
+   */
+  plan?: WorkspacePlanPreview;
   status: ApprovalStatus;
   requestedAt: number;
   /** After this instant the request is no longer answerable. */
@@ -166,6 +175,7 @@ export type ApprovalRequestInput = {
   runId?: string;
   reason?: string;
   change?: WorkspaceChangeSummary;
+  plan?: WorkspacePlanPreview;
   /** How long the user has to answer. */
   ttlMs?: number;
 };
@@ -327,6 +337,10 @@ export function createApprovalBroker(): ApprovalBroker {
       if (input.change && input.scope === "write_workspace") {
         const change = readWorkspaceChangeSummary(input.change);
         if (change) approval.change = change;
+      }
+      if (input.plan && input.scope === "write_workspace") {
+        const plan = readWorkspacePlanPreview(input.plan);
+        if (plan) approval.plan = plan;
       }
       if (input.reason) {
         const bounded = boundReason(input.reason);

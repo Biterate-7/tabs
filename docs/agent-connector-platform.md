@@ -1,4 +1,4 @@
-# The Agent Connector Platform (Phases J, J.1, J.2, J.3, J.4)
+# The Agent Connector Platform (Phases J, J.1, J.2, J.3, J.4, J.5)
 
 TabDump connects external AI agents through **one** connector framework.
 Claude Code, Gemini CLI, Grok Build, Codex and any MCP-compatible agent are
@@ -17,6 +17,7 @@ Command Centre ─ Connect Agent: choose → detect → sign in → approve → 
         ▼  create_session, send_message, respond_to_approval, …
   RuntimeHost ── ControlService (gate, broker, permissions, approvals)
         │   └─ session context: registry + loopback MCP server (J.3, §12)
+        │       workspace plans: validate → approve → apply → verify (J.5, §14)
         │
         ├── Claude adapter  ── Claude Agent SDK (canUseTool)
         └── ACP adapter     ── ONE adapter, JSON-RPC over stdio
@@ -440,11 +441,11 @@ revocation takes effect on the very next call.
 
 | Capability | Tools | Granted when |
 | --- | --- | --- |
-| `workspace.read` | `get_current_workspace`, `list_workspaces` (this one only), `get_workspace`, `get_context_status`, `get_context_changes` (J.4) | project grant has `read_workspace` |
-| `tabs.read` | `get_tabs`, `search_tabs`, `list_tabs` (J.4) | 〃 |
-| `collections.read` | `get_collection`, `list_collections` (J.4) | 〃 |
+| `workspace.read` | `get_current_workspace`, `list_workspaces` (this one only), `get_workspace`, `get_context_status`, `get_context_changes` (J.4), `get_workspace_summary` (J.5) | project grant has `read_workspace` |
+| `tabs.read` | `get_tabs`, `search_tabs`, `list_tabs` (J.4), `find_duplicate_tabs` (J.5) | 〃 |
+| `collections.read` | `get_collection`, `list_collections` (J.4), `preview_workspace_plan` (J.5, changes nothing) | 〃 |
 | `relationships.read` | `get_tab_graph` | 〃 |
-| `collections.write` | `create_collection`, `rename_collection`, `add_tabs_to_collection` (J.4) — each asks every time | grant also has `write_workspace` |
+| `collections.write` | `create_collection`, `rename_collection`, `add_tabs_to_collection` (J.4), `propose_workspace_plan` (J.5) — each asks every time | grant also has `write_workspace` |
 
 Access is derived by the host from the session's grant
 (`sessionContextAccessFor`); the request cannot ask for more. Read never
@@ -818,3 +819,362 @@ with no load-sensitive timeouts. Typecheck and lint pass.
 - Ask every time. No "always", no auto-approval, no provider-specific bypass.
 - No workspace is pasted into a prompt; every answer is bounded, redacted and
   versioned.
+
+## 14. Agent Workspace Intelligence & Operations (Phase J.5)
+
+J.4 made the session context safe. J.5 makes it useful: an agent can read a
+workspace's shape, reason about it, and propose an organization **as one
+plan** that the user sees in full and approves once. Agents reason freely;
+mutations stay explicit, bounded, validated, reviewable and user-approved.
+Nothing is autonomous and nothing runs in the background.
+
+```
+                    Agent
+                      │
+                      ▼
+              Workspace Context          get_workspace_summary, search_tabs, list_tabs,
+                      │                  find_duplicate_tabs, list/get_collection, …
+                      ▼
+               Agent Reasoning           (the model — TabDump only answers reads)
+                      │
+                      ▼
+             Operation Proposal          propose_workspace_plan { basedOnVersion, operations[] }
+                      │
+                      ▼
+                Validation               session-context/plan.ts — against the bound snapshot,
+                      │                  at the current version; refused before anyone is asked
+                      ▼
+              Approval Broker            one write_workspace / change_workspace approval
+                      │                  carrying every step; bound by hash to session,
+              ┌───────┴───────┐          workspace, version and the exact operations
+              │               │
+            Deny            Approve      (re-validated if the workspace moved meanwhile:
+              │               │           same effect → proceed, otherwise stale)
+              ▼               ▼
+           No-op       Workspace Executor        Command Centre: use-session-context
+                              │
+                              ▼
+                       Validated Store API       useCollectionStore.applyBatch →
+                              │                  lib/collections/batch.ts (all or nothing)
+                              ▼
+                       Context Version N+1       the result is synced, then reported with the plan's hash
+                              │
+                              ▼
+                       Agent Verification        the registry checks every operation against the synced
+                                                 workspace; the agent is told applied + verified + vN+1
+                                                 and can re-read with get_context_changes / get_collection
+```
+
+### 14.1 The operation model
+
+J.5 adds **no new kind of change**. An operation is exactly one of J.4's three
+changes (`session-context/changes.ts`), as data, plus two optional fields
+that are the agent's own words:
+
+```ts
+type WorkspaceOperation = (
+  | { kind: "create_collection"; name: string; tabIds: string[] }
+  | { kind: "rename_collection"; collectionId: string; name: string }
+  | { kind: "add_tabs_to_collection"; collectionId: string; tabIds: string[] }
+) & { reason?: string /* ≤160, shown as the agent's */; confidence?: "high" | "medium" | "unclear" };
+
+propose_workspace_plan { basedOnVersion: number; workspaceId?: string; operations: WorkspaceOperation[] }
+```
+
+Operations are workspace-scoped (the session's own workspace; naming any
+other refuses), bounded, deterministic (applied in order, and order can never
+decide where a tab ends up — see conflicts below), serializable, previewable
+and approval-aware. An agent cannot express a store call, JavaScript,
+storage, SQL, a path or a command: the MCP schema is a discriminated union of
+the three kinds, `plan.ts` re-reads every field and copies only known ones,
+and `operations.security.test.ts` pins every argument name any session tool
+accepts. **Deletion is not offered** — TabDump has no safe, validated agent
+deletion path, so duplicates are reported, never removed.
+
+Confidence is a word the agent chooses, shown as the agent's ("Claude Code:
+Fairly sure."). There is no numeric score anywhere.
+
+### 14.2 The planner (`session-context/plan.ts`)
+
+`validateWorkspacePlan(snapshot, input, { workspaceId, version })` simulates
+the plan against the session's bound snapshot and reports **every** problem
+by operation index with a fixed code and sentence (nothing from the plan is
+echoed back):
+
+| Check | Code |
+| --- | --- |
+| well-formed; known kind | `malformed`, `unknown_kind` |
+| 1–20 operations; ≤ 48 KiB encoded; ≤ 200 tabs per operation; ≤ 400 distinct tabs per plan | `empty_plan`, `too_many_operations`, `too_large`, `too_many_tabs`, `too_many_affected_tabs` |
+| this session's workspace | `wrong_workspace` |
+| made against the version held now | `stale` |
+| every tab and collection is this workspace's | `unknown_tab`, `unknown_collection` |
+| names non-empty and not colliding (case-insensitively) with an existing or earlier-created collection | `empty_name`, `duplicate_name` |
+| no tab placed twice, no collection renamed twice (dependencies) | `tab_conflict`, `collection_conflict` |
+| every operation changes something; a new collection has tabs | `no_change`, `no_tabs` |
+
+A plan cannot reference a collection it creates by id; a create carries its
+own tabs. `preview_workspace_plan` runs the same validation and returns
+exactly the lines the user would be shown — a dry run that changes nothing
+and asks no one (a read-only session can use it too).
+
+### 14.3 Approval: one exact, immutable plan
+
+A valid plan is frozen, hashed (SHA-256 over a canonical encoding of session,
+workspace, version and operations) and put to the user through the **same
+broker** as every other approval: scope `write_workspace`, action
+`change_workspace`, the workspace, the agent, and a `plan` preview — every
+step as a sentence (`Create collection "College Research" with 6 tabs`,
+`Rename collection "Collection 2" to "Physics"`, `Add 2 tabs to "Product
+launch" (moves 1 tab out of Inbox)`) and, on **Review changes**, the titles of
+the tabs each step places and the agent's reasoning. No ids, no credential.
+The approval's targets are the same lines from the same function
+(`planStepLine`), so the card cannot say anything the plan does not do.
+
+"Approve 3 changes" approves **this plan, once** — never the agent, never a
+later plan. There is no "always", no auto-approval and no second approval
+system.
+
+**Replay protection.** A broker approval resolves once. The registry's action
+completes once, only for its own session, and only with the plan's own hash
+and exactly one created id per create; a single change's answer cannot finish
+a plan. A re-proposed plan is a new approval; a modified plan has a different
+hash and is refused at completion.
+
+**Stale plans.** A plan against an older version is refused before anyone is
+asked (`The workspace changed since this plan was made; it is now at context
+version N…`). If the workspace changes *while the user decides*, the approved
+operations are re-validated at grant time against the new snapshot: an
+identical effect (same operations, same steps, same moves) proceeds; anything
+else — an invalid plan, or one that would now move a tab the user just filed —
+is **stale** and nothing is applied.
+
+### 14.4 Execution and atomicity
+
+The Command Centre owns the workspace, so it executes. An approved plan is
+listed on `view.context.pendingActions` as `{ kind: "apply_plan", planHash,
+operations }`; `use-session-context` applies it **once** with
+`useCollectionStore.applyBatch`, which folds the operations through the same
+reducers the workspace view uses (`lib/collections/batch.ts`: create, rename,
+add — nothing that deletes or removes) and commits **one** write only if every
+operation holds against the live store. The store is a pure reducer over one
+array, so this is transactional without a transaction engine: either every
+operation happens or none does, and no rollback is ever needed.
+
+- If the live workspace no longer fits (a collection deleted by hand in the
+  moment since approval), nothing is committed and the runtime is told which
+  operation failed; the agent hears "…could not apply it (operation k no
+  longer fit the workspace). Plans apply all at once, so nothing was
+  changed." There is no silent partial success.
+- Otherwise the resulting workspace is **synced first**, then the completion
+  is reported with the plan's hash and created ids.
+- An approved plan nobody applies within 60 s is reported as not applied.
+
+### 14.5 Versioning and post-action verification
+
+An applied plan changes the snapshot, so the sync moves the context version
+N → N+1. On completion the registry verifies each operation against the
+workspace it now holds: the created collection exists with that name and
+those tabs, the rename's name is there, the added tabs are members. The
+agent's tool result:
+
+```json
+{ "applied": true, "verified": true, "previousVersion": 1, "contextVersion": 2,
+  "results": [{ "step": 1, "change": "Create collection \"College Applications\" with 6 tabs", "verified": true, "collectionId": "…" }] }
+```
+
+If any step cannot be found, the result says `verified: false` for that step
+and tells the agent to check with `get_collection` before reporting success;
+the Command Centre says "Applied, but only k of n changes could be
+confirmed". The agent is instructed to report only what the result says, and
+old knowledge is detectably stale through `contextVersion`,
+`get_context_status` and `get_context_changes`.
+
+### 14.6 Reads that make it useful
+
+| Tool | Capability | Returns (all bounded, redacted, versioned) |
+| --- | --- | --- |
+| `get_workspace_summary` *(new; the preferred first call)* | `workspace.read` | tab counts (total, uncategorized, pinned, favorites, with notes), collections by size (≤30), top domains (≤12), relationships, duplicate groups — never the tabs |
+| `find_duplicate_tabs` *(new)* | `tabs.read` | TabDump's own detection (`lib/tabs/duplicates.ts`): high = same address, medium = www/protocol variant; ≤25 groups × 10 tabs, with each tab's collection |
+| `preview_workspace_plan` *(new)* | `collections.read` | the validated plan's lines, or every problem |
+| `propose_workspace_plan` *(new)* | `collections.write` | asks the user; returns applied / verified / version, or why nothing changed |
+| `search_tabs` *(improved)* | `tabs.read` | every word matches the title, site or **redacted** address (notes only with `includeNotes`); ranked title > site > address; `uncategorizedOnly`; each tab's collection (`memberships`); `totalMatches` |
+| `list_tabs` *(improved)* | `tabs.read` | `uncategorizedOnly`; `memberships` |
+
+Search now matches the redacted URL rather than the stored one, so it can no
+longer be used as an oracle for a secret query value. `find_related_tabs` and
+`get_workspace_graph` were not added: `get_tab_graph` already serves the
+relationships the data model makes reliable.
+
+### 14.7 Command Centre and chat
+
+No redesign. The existing surfaces gained:
+
+- **The approval card's plan variant** — "Claude Code wants to organize
+  Launch Plan · 3 changes · 10 tabs", one line per step, "No other tabs or
+  collections will change. Nothing is deleted. Approving applies exactly these
+  changes, once.", **Review changes**, **Deny** (focused) / **Approve 3
+  changes**.
+- **A result line** on the "Approval granted" row: "3 changes applied ·
+  Context updated to v2", or the not-applied / stale / unverified sentence,
+  matched by approval id from `view.context.planOutcomes` (≤10 per session:
+  counts, a version, the approval id).
+- **Tool rows** name TabDump's tools in words ("TabDump · Summarized the
+  workspace") instead of `mcp__tabdump_<name>__…`; no MCP JSON is shown.
+- The context indicator is unchanged ("Launch Plan ✓", the version in its
+  popover).
+
+### 14.8 Provider support
+
+The operation, planner, approval and executor code has no provider branch.
+Authorization is J.4's `authorizeContextRequest` with the new tools added to
+the capability table, so each adapter's existing translation carries them
+(Claude pre-allows them by capability; ACP answers `at-server`).
+
+| Provider | Plans | Verified |
+| --- | --- | --- |
+| Claude Code | read + propose (asks every time) | **Live**: packaged runtime, real signed-in Claude, 42/42 (§14.10) |
+| Gemini CLI 0.61.0 | read + propose (same path) | Real binary: handshake and allowlist flag accepted; `session/new` −32000 (**signed out — no live turn**). Real-process test with Gemini's request shape: summary, plan, approval, batch, verification |
+| Grok Build 1.0.41 | none — its sessions have no context | Restricted (§13.2), unchanged |
+| Codex | none — no sessions | Restricted (§5), unchanged |
+| Custom MCP agent | none — the account server stays read-only | Unchanged; its tool list and read-only annotations are still pinned |
+
+**What a custom MCP agent would need** to propose plans: to be reached through
+a per-session context server (a session binding and a `tdctx_` credential,
+not an account token), a structural identity under §13.2's rule, and a place
+where the user answers its approvals — in effect, to become a runtime
+session. Giving the account server write tools would bypass all three, and is
+not done.
+
+### 14.9 Security invariants (added in J.5)
+
+- An agent sends operations as data; the three kinds are the whole
+  vocabulary. No store method, storage, JavaScript, filesystem, shell or SQL
+  is reachable (`operations.security.test.ts`).
+- Every mutation goes validation → broker approval → webview batch → sync →
+  verification. The MCP server and the runtime never mutate the workspace.
+- The approved object is the executed object (frozen, hashed); a different
+  hash, another session or a replay is refused.
+- Stale plans are refused; a plan whose effect changed while waiting is
+  stale.
+- Plans are all or nothing; there is no silent partial success.
+- No credential, server name or id appears in a plan preview, approval,
+  result line or event; the credential stays in the agent's environment only
+  (checked live).
+- Nothing deletes; Grok, Codex and custom MCP remain restricted.
+
+### 14.10 Verification (2026-09-25)
+
+**Packaged runtime, real Claude — 42/42.** The desktop sidecar bundle built
+from this tree, run by the installed app's `tabdump-agent-node.exe` with the
+Rust shell's environment allowlist and line protocol; the driver played the
+webview and applied the approved plan with the webview's own
+`applyCollectionBatch` and `buildSessionContextSnapshot` (bundled from
+`src/`). A dedicated test workspace, "Launch Plan": 13 tabs (college
+applications, physics, product launch, a duplicate, a recipe, a URL carrying
+a secret token) and two existing collections. Checked:
+
+1. session with context (v1, writes ask), no credential or server name in
+   the view; the J.5 tools pre-allowed; the credential only in `claude.exe`'s
+   environment; one 127.0.0.1 listener; live 200, forged and missing 401;
+2. "Summarize" → Claude called `get_workspace_summary` and reported 13 tabs;
+3. "Which groupings?" → described with confidence, **reads only**, still v1,
+   nothing pending;
+4. "Organize" → `preview_workspace_plan`, then `propose_workspace_plan`;
+   **one** approval: `Create collection "College Applications" with 6 tabs |
+   Add 2 tabs to "Collection 2" | Add 2 tabs to "Product launch"` (Claude left
+   the recipe out as uncertain); no ids, no credential; **no mutation before
+   approval**;
+5. approved → listed once as `apply_plan` → batch applied whole → sync →
+   **v2** → completed; completing again and answering again refused;
+6. the runtime verified 3/3; the webview's fingerprint equals the runtime's;
+   `list_collections` over the agent's own credential equals the approved plan
+   applied (**the exact expected collections**); `get_context_changes` since
+   v1 lists them; a plan against v1 refused as stale without an approval;
+7. "Look again" → Claude re-read with `list_collections` and named the new
+   collection with its count;
+8. the credential in no response, event or stderr; the secret query value
+   never reached the agent;
+9. disconnect → no agent process, **the old credential 401**; nothing written
+   to the project folder; shutdown → server gone.
+
+Timings: session start 35 ms; approval machinery (approve → listed → applied
+→ synced → completed) 3 ms; approve → Claude's reply complete 2.3 s,
+dominated by the model.
+
+**Gemini.** Not signed in on this machine (no OAuth credentials, no API key);
+TabDump did not sign in on the user's behalf. Real Gemini CLI 0.61.0 launched
+as the launcher does: `initialize` ok (HTTP MCP advertised),
+`--allowed-mcp-server-names` accepted, `session/new` → −32000 (signed out).
+`launch/context.process.test.ts` runs a real agent process with Gemini's
+request shape against the real server: summary, plan proposal, one approval,
+batch apply, verified at v2.
+
+**Visual.** The plan card (collapsed and under review) and the result line
+were rendered from the real components with the app's stylesheet in headless
+Chrome.
+
+**Performance** (`plan.performance.test.ts`, p50 / p95 in ms; the ~16 ms
+floor on MCP calls is the Windows timer tick, not context work):
+
+| Measure | 50 tabs · 5 collections | 800 tabs · 30 collections |
+| --- | --- | --- |
+| Workspace summary (in process) | 0.05 / 0.18 | 0.56 / 0.78 |
+| Duplicate detection | 0.06 / 0.24 | 0.47 / 0.69 |
+| Search | 0.06 / 0.11 | 0.66 / 1.19 |
+| Plan validation | 0.02 / 0.06 | 0.07 / 0.11 |
+| Execution (batch) | 0.01 / 0.03 | 0.03 / 0.13 |
+| Verification | < 0.01 | < 0.01 |
+| `get_workspace_summary` over MCP | 15.9 / 20.6 | 15.6 / 19.0 |
+| `search_tabs` over MCP | 15.8 / 22.1 | 16.0 / 20.6 |
+| `preview_workspace_plan` over MCP | 15.9 / 18.8 | 15.9 / 20.5 |
+| Proposal → approval → apply → sync (version +1) → verified, human excluded | 0.29 / 1.26 | 2.8 / 3.0 |
+
+**Automated.** `plan.test.ts` (every validation code, normalization, preview
+lines, canonical-hash sensitivity, verification catching a missing, foreign
+or half-applied state, strict preview reading; seeded property tests — 3000
+random plans never accept anything outside the bound workspace, and every
+accepted plan applies cleanly and verifies; oversized and stale always
+refused); `batch.test.ts` (all or nothing, the failure index, no deletion);
+`plan-flow.test.ts` (refusal before asking, a preview asks no one, one exact
+approval without ids or credential, deny and expiry change nothing,
+once-only completion, wrong hash / session / answer / created ids refused,
+unverified and not-applied reported, apply timeout, stale by content and by
+effect, an unrelated change still applies, a refreshed plan succeeds, session
+end); `plan.integration.test.ts` (real server + official client: tools by
+capability, summary/search/duplicates redacted and versioned, preview, schema
+and cross-workspace refusals, full propose → approve → apply → verify, the
+agent's own re-read, decline); `runtime/workspace-plans.test.ts` (real host,
+service and broker: the approval's shape, another actor refused, a second
+answer refused, a forged hash and a replay refused, `planOutcomes` tied to the
+approval, dispose ends a waiting plan and revokes the credential);
+`insight.test.ts`; `protocol.test.ts` (plan completion parsing);
+`operations.security.test.ts`; the Command Centre (plan card, review, approve
+label, atomic apply with sync before report, once only, a plan that no longer
+fits applies nothing, the result line, tool names).
+
+**Tests** (Windows, `npx vitest run`, on the committed J.5 tree): 373 files
+passed, 5 skipped · **5727 passed, 35 skipped, 0 failed** (5762). Typecheck
+(after `next typegen`) and lint pass.
+
+Pinned guards deliberately updated: `platform/registry.test.ts` (session mode
+now has four non-read-only tools; `scope.requestPlan(` exactly once),
+`authorization.test.ts` (the plan tool is a write), `secrecy.test.ts` (the
+context view gains `planOutcomes`).
+
+### 14.11 Limitations
+
+- **Gemini** has no live turn (signed out). Grok, Codex and custom MCP agents
+  do not plan (§14.8).
+- **Three operations only.** No delete, no removing a tab from a collection,
+  no moving tabs between workspaces, no editing tabs. Duplicates are
+  reported, not removed.
+- **A plan cannot reference a collection it creates** by id; a create carries
+  its own tabs.
+- **The Command Centre is the executor.** An approved plan with no Command
+  Centre open to apply it is reported as not applied after 60 s.
+- **Snapshot bounds.** Tabs beyond the snapshot's bounds (800 tabs / 600 KB)
+  cannot be planned or verified.
+- **Hosted runtime:** unchanged — no context server, so no plans (§12.8).
+- **Web dev runtime:** Claude there runs on bring-your-own provider
+  credentials (§3), so the live verification used the packaged desktop
+  runtime.

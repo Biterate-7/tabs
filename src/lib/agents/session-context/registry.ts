@@ -1,8 +1,10 @@
 import { capabilitiesFor } from "./capabilities";
 import { CHANGE_LIMITS, cleanCollectionName } from "./changes";
 import { mintContextServerName } from "./identity";
+import { canonicalPlan, freezeOperations, planEffect, planStepLine, previewOf, validateWorkspacePlan, verifyWorkspacePlan } from "./plan";
 import { readSessionContextSnapshot, snapshotFingerprint } from "./snapshot";
 import type { ContextAuthority } from "./authorization";
+import type { PlanProblem, PlanVerification, WorkspaceOperation, WorkspacePlanInput, WorkspacePlanPreview } from "./plan";
 import type { SessionContextAccess, SessionContextCapability } from "./capabilities";
 import type { WorkspaceChange, WorkspaceChangeKind, WorkspaceChangeSummary } from "./changes";
 import type { SessionContextSnapshot } from "./snapshot";
@@ -41,6 +43,21 @@ import type { SessionContextSnapshot } from "./snapshot";
  * version at which it last changed (and, bounded, which ones went away), so
  * an agent can ask "what changed since version 7" and get ids, not a dump.
  *
+ * ## Plans (J.5)
+ *
+ * An agent may also propose several changes as one plan (./plan.ts). A plan
+ * is validated against the snapshot the session holds, at the version it
+ * names — an older version is stale and refused before anyone is asked. The
+ * validated operations are frozen, hashed together with the session, the
+ * workspace and the version, and put to the user as one approval showing
+ * every step. If the workspace changed while the user was deciding, the plan
+ * is re-validated and applied only if it would still do exactly what was
+ * shown; otherwise it is stale and nothing happens. The Command Centre
+ * applies an approved plan all at once, reports the ids it created and the
+ * plan's hash (a different hash is refused), and syncs the result — which the
+ * registry then checks, operation by operation, against the workspace it now
+ * holds. The agent is told what was applied *and* what could be verified.
+ *
  * ## Changes
  *
  * A proposed change never touches data here. It becomes an action that waits
@@ -69,13 +86,19 @@ export const MAX_REMEMBERED_REMOVALS = 2000;
 /** Most ids `changesSince` returns per list. */
 export const MAX_CHANGE_IDS = 100;
 
+/** Plan outcomes remembered per session, newest last, for the Command Centre. */
+export const MAX_PLAN_OUTCOMES = 10;
+
 export type ApprovalOutcome = "granted" | "denied" | "expired" | "cancelled";
 
 export type ContextApprovalRequest = {
   sessionId: string;
   workspaceId: string;
   actionId: string;
-  change: WorkspaceChangeSummary;
+  /** A single change (J.3–J.4). Absent for a plan, which carries every step in `plan`. */
+  change?: WorkspaceChangeSummary;
+  /** A plan (J.5): every step, as the user will read it. */
+  plan?: WorkspacePlanPreview;
   /** The same change as plain lines, for surfaces that show a list. */
   targets: readonly string[];
   reason: string;
@@ -92,11 +115,23 @@ export type ContextActionStatus =
   | "failed"
   | "cancelled";
 
+/** An approved plan, exactly as it will be applied: frozen, and bound by hash to its session, workspace and version. */
+export type PendingPlan = {
+  planId: string;
+  hash: string;
+  basedOnVersion: number;
+  operations: readonly WorkspaceOperation[];
+  preview: WorkspacePlanPreview;
+};
+
 export type ContextAction = {
   id: string;
   sessionId: string;
   workspaceId: string;
-  change: WorkspaceChange;
+  /** A single change (J.3–J.4). Exactly one of `change` and `plan` is set. */
+  change?: WorkspaceChange;
+  /** A plan of several changes (J.5). */
+  plan?: PendingPlan;
   status: ContextActionStatus;
   requestedAt: number;
   collectionId?: string;
@@ -107,6 +142,50 @@ export type ContextChangeFailure = "denied" | "expired" | "invalid" | "ended" | 
 export type ContextChangeResult =
   | { ok: true; kind: WorkspaceChangeKind; collectionId: string; name: string; tabCount: number }
   | { ok: false; reason: ContextChangeFailure };
+
+export type PlanResultEntry = PlanVerification["results"][number] & { line: string };
+
+/** How a plan ended, as the agent is told. */
+export type ContextPlanResult =
+  | {
+      ok: true;
+      planId: string;
+      basedOnVersion: number;
+      /** The version the session holds after the Command Centre synced the result. */
+      contextVersion: number;
+      /** Every operation's result was found in the synced workspace. */
+      verified: boolean;
+      results: readonly PlanResultEntry[];
+    }
+  | { ok: false; reason: "invalid"; problems: readonly PlanProblem[]; currentVersion: number }
+  | { ok: false; reason: "stale"; currentVersion: number }
+  | { ok: false; reason: "not_applied"; failedAt?: number }
+  | { ok: false; reason: "denied" | "expired" | "ended" | "not_permitted" };
+
+export type PlanPreviewResult =
+  | { ok: true; preview: WorkspacePlanPreview; lines: readonly string[]; canApply: boolean }
+  | { ok: false; reason: "invalid"; problems: readonly PlanProblem[]; currentVersion: number }
+  | { ok: false; reason: "stale"; currentVersion: number }
+  | { ok: false; reason: "ended" };
+
+export type PlanOutcomeStatus = "applied" | "unverified" | "not_applied" | "stale" | "denied" | "expired" | "cancelled";
+
+/** What became of a plan, for the Command Centre's result line. Counts and a version — no ids but the plan's own. */
+export type PlanOutcome = {
+  planId: string;
+  status: PlanOutcomeStatus;
+  operationCount: number;
+  /** Operations whose result was found in the synced workspace. */
+  verifiedCount: number;
+  contextVersion: number;
+  at: number;
+};
+
+/** How the Command Centre reports an action it applied (or could not). */
+export type ContextActionCompletion =
+  | { ok: true; collectionId: string }
+  | { ok: true; planHash: string; created: readonly string[] }
+  | { ok: false; failedAt?: number };
 
 export type SessionContextBinding = {
   sessionId: string;
@@ -165,10 +244,16 @@ export type SessionContextRegistry = {
   changesSince(sessionId: string, since: number): ContextChanges | undefined;
   /** Proposes a change. Resolves when the user has answered and, if approved, the Command Centre has applied it. */
   requestChange(sessionId: string, change: WorkspaceChange): Promise<ContextChangeResult>;
+  /** Validates a plan and describes it, without asking anyone (J.5). */
+  previewPlan(sessionId: string, input: WorkspacePlanInput): PlanPreviewResult;
+  /** Proposes a plan. Resolves when it was refused, answered, or applied and verified (J.5). */
+  requestPlan(sessionId: string, input: WorkspacePlanInput): Promise<ContextPlanResult>;
+  /** How this session's recent plans ended, oldest first. */
+  planOutcomes(sessionId: string): readonly PlanOutcome[];
   /** Approved actions the Command Centre has yet to apply, oldest first. */
   pendingApplications(sessionId: string): ContextAction[];
   /** The Command Centre applied (or failed to apply) an approved action. */
-  complete(sessionId: string, actionId: string, outcome: { ok: true; collectionId: string } | { ok: false }): boolean;
+  complete(sessionId: string, actionId: string, outcome: ContextActionCompletion): boolean;
   /** Revokes the credential and abandons the session's actions. Idempotent. */
   release(sessionId: string): void;
   releaseAll(): void;
@@ -279,7 +364,10 @@ function idsSince(map: Map<string, number>, since: number): { ids: string[]; tru
 }
 
 /** How a waiting action ends, before it is described back to the agent. */
-type Settlement = { ok: true; collectionId: string } | { ok: false; reason: ContextChangeFailure };
+type Settlement =
+  | { ok: true; collectionId: string }
+  | { ok: true; plan: Extract<ContextPlanResult, { ok: true }> }
+  | { ok: false; reason: ContextChangeFailure | "stale"; failedAt?: number };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
@@ -303,6 +391,13 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
   const actions = new Map<string, ContextAction>();
   /** Actions whose tool call is still waiting, with how to answer it. */
   const waiting = new Map<string, { resolve: (result: Settlement) => void; timer?: unknown }>();
+  const outcomes = new Map<string, PlanOutcome[]>();
+
+  function recordOutcome(sessionId: string, outcome: Omit<PlanOutcome, "at">): void {
+    const list = outcomes.get(sessionId) ?? [];
+    list.push({ ...outcome, at: now() });
+    outcomes.set(sessionId, list.slice(-MAX_PLAN_OUTCOMES));
+  }
 
   function settle(actionId: string, result: Settlement, status: ContextActionStatus): void {
     const action = actions.get(actionId);
@@ -421,6 +516,61 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
     rename_collection: "Rename a collection in this workspace.",
     add_tabs_to_collection: "Add tabs to a collection in this workspace.",
   };
+
+  /** A plan refused before anyone was asked: stale on its own, otherwise every problem found. */
+  function refusalOf(checked: Extract<ReturnType<typeof validateWorkspacePlan>, { ok: false }>) {
+    const stale = checked.problems.length === 1 && checked.problems[0].code === "stale";
+    return stale
+      ? ({ ok: false, reason: "stale", currentVersion: checked.currentVersion } as const)
+      : ({ ok: false, reason: "invalid", problems: checked.problems, currentVersion: checked.currentVersion } as const);
+  }
+
+  /**
+   * The Command Centre applied (or could not apply) an approved plan.
+   *
+   * Refused — and the plan left waiting for a truthful answer — when the
+   * answer is not for this plan: a single change's answer, a different hash
+   * (not the operations the user approved), or a list of created ids that
+   * does not match the plan's creates. Accepted, the plan is then checked
+   * against the workspace the session now holds, operation by operation.
+   */
+  function completePlan(action: ContextAction, plan: PendingPlan, outcome: ContextActionCompletion): boolean {
+    const record = (status: PlanOutcomeStatus, verifiedCount: number, contextVersion: number) =>
+      recordOutcome(action.sessionId, { planId: plan.planId, status, operationCount: plan.operations.length, verifiedCount, contextVersion });
+
+    if (!outcome.ok) {
+      record("not_applied", 0, bindings.get(action.sessionId)?.version ?? plan.basedOnVersion);
+      const failedAt =
+        outcome.failedAt !== undefined && Number.isInteger(outcome.failedAt) && outcome.failedAt >= 0 && outcome.failedAt < plan.operations.length
+          ? { failedAt: outcome.failedAt }
+          : {};
+      settle(action.id, { ok: false, reason: "not_applied", ...failedAt }, "failed");
+      return true;
+    }
+    if (!("planHash" in outcome) || outcome.planHash !== plan.hash) return false;
+    const creates = plan.operations.filter((operation) => operation.kind === "create_collection").length;
+    if (outcome.created.length !== creates || new Set(outcome.created).size !== creates) return false;
+
+    const binding = bindings.get(action.sessionId);
+    const verification = binding
+      ? verifyWorkspacePlan(binding.snapshot, plan.operations, outcome.created)
+      : { verified: false, results: plan.operations.map((operation, index) => ({ index, kind: operation.kind, verified: false })) };
+    const results = verification.results.map((result) => ({ ...result, line: planStepLine(plan.preview.steps[result.index]) }));
+    const verifiedCount = results.filter((result) => result.verified).length;
+    const contextVersion = binding?.version ?? plan.basedOnVersion;
+
+    actions.set(action.id, { ...action, status: "applied" });
+    record(verification.verified ? "applied" : "unverified", verifiedCount, contextVersion);
+    settle(
+      action.id,
+      {
+        ok: true,
+        plan: { ok: true, planId: plan.planId, basedOnVersion: plan.basedOnVersion, contextVersion, verified: verification.verified, results },
+      },
+      "applied"
+    );
+    return true;
+  }
 
   const api: SessionContextRegistry = {
     async bind(input) {
@@ -559,10 +709,13 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
 
       const result = new Promise<ContextChangeResult>((resolve) => {
         waiting.set(action.id, {
-          resolve: (outcome) =>
-            resolve(
-              outcome.ok ? { ...outcome, kind: checked.change.kind, name: checked.name, tabCount: checked.tabCount } : outcome
-            ),
+          resolve: (outcome) => {
+            if (!outcome.ok) return resolve({ ok: false, reason: outcome.reason === "stale" ? "not_applied" : outcome.reason });
+            if ("collectionId" in outcome) {
+              return resolve({ ok: true, collectionId: outcome.collectionId, kind: checked.change.kind, name: checked.name, tabCount: checked.tabCount });
+            }
+            resolve({ ok: false, reason: "not_applied" });
+          },
         });
       });
 
@@ -591,6 +744,125 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       return result;
     },
 
+    previewPlan(sessionId, input) {
+      const binding = bindings.get(sessionId);
+      if (!binding) return { ok: false, reason: "ended" };
+      const checked = validateWorkspacePlan(binding.snapshot, input, binding);
+      if (!checked.ok) return refusalOf(checked);
+      const preview = previewOf(checked.plan, "preview");
+      return {
+        ok: true,
+        preview,
+        lines: preview.steps.map(planStepLine),
+        canApply: binding.capabilities.includes("collections.write"),
+      };
+    },
+
+    async requestPlan(sessionId, input) {
+      const binding = bindings.get(sessionId);
+      if (!binding) return { ok: false, reason: "ended" };
+      if (!binding.capabilities.includes("collections.write")) return { ok: false, reason: "not_permitted" };
+      // Refused before anyone is asked: malformed, foreign, colliding, oversized — or made against an older version.
+      const checked = validateWorkspacePlan(binding.snapshot, input, binding);
+      if (!checked.ok) return refusalOf(checked);
+
+      const { basedOnVersion } = checked.plan;
+      const operations = freezeOperations(checked.plan.operations);
+      const hash = await sha256(canonicalPlan({ sessionId, workspaceId: binding.workspaceId, basedOnVersion, operations }));
+      // The session may have ended, or the workspace moved on, while the hash was computed.
+      const live = bindings.get(sessionId);
+      if (!live) return { ok: false, reason: "ended" };
+      if (live.version !== basedOnVersion) return { ok: false, reason: "stale", currentVersion: live.version };
+
+      const planId = `plan-${createId()}`;
+      const preview = previewOf(checked.plan, planId);
+      const effect = planEffect(checked.plan);
+      const action: ContextAction = {
+        id: createId(),
+        sessionId,
+        workspaceId: binding.workspaceId,
+        plan: { planId, hash, basedOnVersion, operations, preview },
+        status: "awaiting_approval",
+        requestedAt: now(),
+      };
+      actions.set(action.id, action);
+      const ended = (status: PlanOutcomeStatus) =>
+        recordOutcome(sessionId, {
+          planId,
+          status,
+          operationCount: operations.length,
+          verifiedCount: 0,
+          contextVersion: bindings.get(sessionId)?.version ?? basedOnVersion,
+        });
+
+      const result = new Promise<ContextPlanResult>((resolve) => {
+        waiting.set(action.id, {
+          resolve: (outcome) => {
+            if (outcome.ok) return resolve("plan" in outcome ? outcome.plan : { ok: false, reason: "not_applied" });
+            switch (outcome.reason) {
+              case "stale":
+                return resolve({ ok: false, reason: "stale", currentVersion: bindings.get(sessionId)?.version ?? basedOnVersion });
+              case "not_applied":
+              case "invalid":
+                return resolve({ ok: false, reason: "not_applied", ...(outcome.failedAt !== undefined ? { failedAt: outcome.failedAt } : {}) });
+              default:
+                return resolve({ ok: false, reason: outcome.reason });
+            }
+          },
+        });
+      });
+
+      void approve({
+        sessionId,
+        workspaceId: binding.workspaceId,
+        actionId: action.id,
+        plan: preview,
+        targets: preview.steps.map(planStepLine),
+        reason: `Apply ${plural(operations.length, "change", "changes")} to this workspace.`,
+      }).then((outcome) => {
+        const current = actions.get(action.id);
+        if (!current || current.status !== "awaiting_approval") return;
+        if (outcome === "denied") {
+          ended("denied");
+          return settle(action.id, { ok: false, reason: "denied" }, "denied");
+        }
+        if (outcome === "expired") {
+          ended("expired");
+          return settle(action.id, { ok: false, reason: "expired" }, "expired");
+        }
+        if (outcome === "cancelled") {
+          ended("cancelled");
+          return settle(action.id, { ok: false, reason: "ended" }, "cancelled");
+        }
+
+        // Approved. Is the plan still exactly what the user was shown? If the
+        // workspace moved on meanwhile, the same operations are re-validated
+        // against it, and anything but an identical effect is stale.
+        const latest = bindings.get(sessionId);
+        if (!latest) return settle(action.id, { ok: false, reason: "ended" }, "cancelled");
+        if (latest.version !== basedOnVersion) {
+          const again = validateWorkspacePlan(latest.snapshot, { basedOnVersion: latest.version, operations }, latest);
+          if (!again.ok || planEffect(again.plan) !== effect) {
+            ended("stale");
+            return settle(action.id, { ok: false, reason: "stale" }, "failed");
+          }
+        }
+
+        actions.set(action.id, { ...current, status: "approved" });
+        const waiter = waiting.get(action.id);
+        if (waiter) {
+          waiter.timer = setTimer(() => {
+            ended("not_applied");
+            settle(action.id, { ok: false, reason: "not_applied" }, "failed");
+          }, APPLY_TIMEOUT_MS);
+        }
+      });
+
+      return result;
+    },
+
+    planOutcomes: (sessionId) => [...(outcomes.get(sessionId) ?? [])],
+
     pendingApplications(sessionId) {
       return [...actions.values()]
         .filter((action) => action.sessionId === sessionId && action.status === "approved")
@@ -603,6 +875,9 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       // and only once: the Command Centre cannot make one up, finish one that
       // was denied, or replay one it already applied.
       if (!action || action.sessionId !== sessionId || action.status !== "approved") return false;
+      if (action.plan) return completePlan(action, action.plan, outcome);
+      // A plan's answer cannot finish a single change.
+      if (outcome.ok && !("collectionId" in outcome)) return false;
       if (outcome.ok) {
         actions.set(actionId, { ...action, status: "applied", collectionId: outcome.collectionId });
         settle(actionId, { ok: true, collectionId: outcome.collectionId }, "applied");
@@ -618,6 +893,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       credentialOf.delete(sessionId);
       bindings.delete(sessionId);
       logs.delete(sessionId);
+      outcomes.delete(sessionId);
       for (const action of [...actions.values()]) {
         if (action.sessionId !== sessionId) continue;
         if (action.status === "awaiting_approval" || action.status === "approved") {

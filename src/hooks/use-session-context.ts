@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { isTerminalSession } from "@/lib/agents/command-centre/presentation"
 import { buildSessionContextSnapshot, snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import type { CollectionBatchOperation, CollectionBatchResult } from "@/lib/collections/batch"
 import type { Collection } from "@/lib/collections/types"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
@@ -31,7 +32,9 @@ import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapsh
  *     session; this applies it with the same collection store the workspace
  *     view uses, then reports the outcome. Nothing is applied that the
  *     runtime does not list, the runtime lists only approved changes, and
- *     each is applied at most once.
+ *     each is applied at most once. An approved **plan** (J.5) is applied
+ *     whole through the store's batch, synced, and then reported with its
+ *     hash, so the runtime can check the result against what was approved.
  *
  * No prompt is built here and nothing is sent to an agent. There is no
  * credential anywhere in this hook: the protocol has no field for one.
@@ -50,11 +53,14 @@ export function useSessionContext(options: {
   createCollection: (workspaceId: string, name: string, tabIds: string[]) => Collection
   renameCollection: (id: string, name: string) => void
   addTabsToCollection: (collectionId: string, tabIds: string[]) => void
+  /** The store's all-or-nothing batch (J.5): how an approved plan is applied. */
+  applyCollectionBatch: (workspaceId: string, operations: readonly CollectionBatchOperation[]) => CollectionBatchResult
 }): {
   snapshotFor: (workspaceId: string) => SessionContextSnapshot | undefined
   freshnessOf: (context: RuntimeSessionContextView) => ContextFreshness
 } {
-  const { client, sessions, world, collections, createCollection, renameCollection, addTabsToCollection } = options
+  const { client, sessions, world, collections, createCollection, renameCollection, addTabsToCollection, applyCollectionBatch } =
+    options
 
   const snapshotFor = useCallback(
     (workspaceId: string) =>
@@ -98,12 +104,27 @@ export function useSessionContext(options: {
 
   const applied = useRef(new Set<string>())
   useEffect(() => {
+    /*
+      A plan is computed from this render's collections and committed whole,
+      so it must be the only thing applied in its pass: anything applied
+      before it in the same pass would not be in the array it replaces. A
+      plan waiting behind another change is left for the next pass, which
+      the store's own update triggers.
+    */
+    let appliedThisPass = false
     for (const { view } of sessions) {
       const context = view.context
       if (!context) continue
       for (const action of context.pendingActions) {
         if (applied.current.has(action.actionId)) continue
+        if (action.kind === "apply_plan" && appliedThisPass) return
         applied.current.add(action.actionId)
+        appliedThisPass = true
+
+        if (action.kind === "apply_plan") {
+          applyPlan(view.sessionId, context.workspaceId, action)
+          return
+        }
 
         let outcome: { ok: true; collectionId: string } | { ok: false }
         try {
@@ -142,9 +163,66 @@ export function useSessionContext(options: {
           addTabsToCollection(collection.id, tabIds)
           return { ok: true, collectionId: collection.id }
         }
+        case "apply_plan":
+          // Applied whole by applyPlan, never one operation at a time.
+          return { ok: false }
       }
     }
-  }, [addTabsToCollection, client, collections, createCollection, renameCollection, sessions, world.workspaces])
+
+    /**
+     * An approved plan (J.5), all at once through the store's batch — every
+     * operation or none. The workspace as it now stands is synced first,
+     * because that is what the runtime checks the plan against when told it
+     * was applied; then the plan's own hash and the ids it created are
+     * reported. A plan that no longer fits the live workspace changes
+     * nothing and says which operation failed.
+     */
+    function applyPlan(sessionId: string, workspaceId: string, action: Extract<RuntimeContextActionView, { kind: "apply_plan" }>): void {
+      let result: CollectionBatchResult
+      try {
+        result = applyCollectionBatch(workspaceId, action.operations)
+      } catch {
+        result = { ok: false, failedAt: 0, reason: "unknown_kind" }
+      }
+      if (!result.ok) {
+        void client.send({
+          name: "complete_context_action",
+          sessionId,
+          actionId: action.actionId,
+          outcome: { ok: false, failedAt: result.failedAt },
+        })
+        return
+      }
+
+      const created = result.created
+      const snapshot = buildSessionContextSnapshot(
+        { workspaces: world.workspaces, collections: result.collections, dependencies: world.dependencies },
+        workspaceId
+      )
+      void (async () => {
+        if (snapshot) {
+          sent.current.set(sessionId, snapshotFingerprint(snapshot))
+          await client.send({ name: "sync_session_context", sessionId, snapshot }).catch(() => undefined)
+        }
+        await client.send({
+          name: "complete_context_action",
+          sessionId,
+          actionId: action.actionId,
+          outcome: { ok: true, planHash: action.planHash, created },
+        })
+      })()
+    }
+  }, [
+    addTabsToCollection,
+    applyCollectionBatch,
+    client,
+    collections,
+    createCollection,
+    renameCollection,
+    sessions,
+    world.dependencies,
+    world.workspaces,
+  ])
 
   return { snapshotFor, freshnessOf }
 }

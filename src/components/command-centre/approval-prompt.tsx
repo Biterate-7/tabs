@@ -1,13 +1,16 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
+import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
+import { PLAN_CONFIDENCE_LABEL, permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
 import { WORKSPACE_CHANGE_HEADLINE } from "@/lib/agents/session-context/changes"
+import { planStepLine } from "@/lib/agents/session-context/plan"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
+import type { WorkspacePlanPreview, WorkspacePlanStep } from "@/lib/agents/session-context/plan"
 
 /**
  * The decision the run is stopped on.
@@ -46,6 +49,98 @@ function expiryLabel(expiresAt: number, now: number): { text: string; expired: b
   return { text: `Expires in ${Math.ceil(seconds / 60)}m`, expired: false }
 }
 
+const changeCount = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`
+
+const STEP_MARK: Record<WorkspacePlanStep["kind"], string> = {
+  create_collection: "+",
+  rename_collection: "~",
+  add_tabs_to_collection: "→",
+}
+
+/**
+ * A plan of workspace changes (J.5): every step, before anything changes.
+ *
+ * The lines are `planStepLine` over the plan's own steps — the same function
+ * that wrote the approval's targets in the runtime — so the card cannot say
+ * something the approved plan does not do. "Review changes" opens the tabs
+ * each step places and the agent's own reasoning, labelled as the agent's.
+ */
+function PlanSummary({
+  plan,
+  agentName,
+  workspaceName,
+  reviewing,
+  onToggleReview,
+}: {
+  plan: WorkspacePlanPreview
+  agentName: string
+  workspaceName?: string
+  reviewing: boolean
+  onToggleReview: () => void
+}) {
+  const verb =
+    plan.operationCount === 1 && plan.steps[0] ? WORKSPACE_CHANGE_HEADLINE[plan.steps[0].kind] : "organize"
+  return (
+    <div className="mt-0.5">
+      <p className="text-body-sm text-muted-foreground">
+        {agentName} wants to {verb}
+        {plan.operationCount === 1 ? " in " : " "}
+        <span className="text-foreground">{workspaceName ?? "this workspace"}</span>
+      </p>
+      <p className="mt-1.5 text-label text-foreground">
+        {changeCount(plan.operationCount)}
+        {plan.tabCount > 0 && <span className="text-tertiary"> · {plan.tabCount} {plan.tabCount === 1 ? "tab" : "tabs"}</span>}
+      </p>
+      <ol aria-label="Proposed changes" className="mt-1 flex flex-col gap-1">
+        {plan.steps.map((step, index) => (
+          <li key={index} className="text-body-sm text-foreground">
+            <div className="flex items-baseline gap-2">
+              <span aria-hidden className="w-4 shrink-0 text-center text-meta text-tertiary">
+                {STEP_MARK[step.kind]}
+              </span>
+              <span className="min-w-0">{planStepLine(step)}</span>
+            </div>
+            {reviewing && (
+              <div className="mt-0.5 ml-6 flex flex-col gap-0.5">
+                {step.tabs.length > 0 && (
+                  <ul aria-label="Tabs in this change" className="flex flex-col">
+                    {step.tabs.map((title, tabIndex) => (
+                      <li key={tabIndex} className="truncate text-meta text-muted-foreground">
+                        {title}
+                      </li>
+                    ))}
+                    {step.moreTabs ? <li className="text-meta text-tertiary">and {step.moreTabs} more</li> : null}
+                  </ul>
+                )}
+                {(step.reason || step.confidence) && (
+                  <p className="text-meta text-tertiary">
+                    {agentName}:{step.confidence ? ` ${PLAN_CONFIDENCE_LABEL[step.confidence]}.` : ""}
+                    {step.reason ? ` “${step.reason}”` : ""}
+                  </p>
+                )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-1.5 text-meta text-tertiary">
+        No other tabs or collections will change. Nothing is deleted. Approving applies exactly these changes, once.
+      </p>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        className="mt-1 -ml-2 text-muted-foreground"
+        aria-expanded={reviewing}
+        onClick={onToggleReview}
+      >
+        <ChevronDown className={cn("transition-transform", reviewing && "rotate-180")} />
+        {reviewing ? "Hide details" : "Review changes"}
+      </Button>
+    </div>
+  )
+}
+
 export function ApprovalPrompt({
   approval,
   projectName,
@@ -65,6 +160,7 @@ export function ApprovalPrompt({
   now: number
 }) {
   const denyRef = useRef<HTMLButtonElement | null>(null)
+  const [reviewing, setReviewing] = useState(false)
   const expiry = expiryLabel(approval.expiresAt, now)
   // The name the connector surfaces use ("Gemini CLI"), whichever agent asks.
   const agentName = platformProvider(approval.provider)?.displayName ?? agentVisualIdentity(approval.provider).displayName
@@ -118,7 +214,15 @@ export function ApprovalPrompt({
         into debug output. See `permissionScopeLabel`.
       */}
       <p className="mt-2 text-body font-medium text-foreground">{approvalActionLabel(approval.action)}</p>
-      {approval.change ? (
+      {approval.plan ? (
+        <PlanSummary
+          plan={approval.plan}
+          agentName={agentName}
+          {...(workspaceName ? { workspaceName } : {})}
+          reviewing={reviewing}
+          onToggleReview={() => setReviewing((open) => !open)}
+        />
+      ) : approval.change ? (
         /*
           A workspace change (J.4), said the same way whichever agent asks:
           who, what, to which collection — names and titles, never ids.
@@ -148,7 +252,7 @@ export function ApprovalPrompt({
         </p>
       )}
 
-      {!approval.change && approval.targets.length > 0 && (
+      {!approval.change && !approval.plan && approval.targets.length > 0 && (
         <ul className="mt-1.5 flex flex-col gap-0.5">
           {approval.targets.map((target) => (
             <li key={target} className="truncate font-mono text-meta text-muted-foreground">
@@ -158,14 +262,16 @@ export function ApprovalPrompt({
         </ul>
       )}
 
-      {approval.reason && !approval.change && <p className="mt-1.5 text-body-sm text-tertiary">{approval.reason}</p>}
+      {approval.reason && !approval.change && !approval.plan && (
+        <p className="mt-1.5 text-body-sm text-tertiary">{approval.reason}</p>
+      )}
 
       {projectName && (
         <p className="mt-1.5 text-label text-tertiary">
           In <span className="text-muted-foreground">{projectName}</span>
         </p>
       )}
-      {workspaceName && (
+      {workspaceName && !approval.plan && (
         <p className="mt-1.5 text-label text-tertiary">
           Workspace <span className="text-muted-foreground">{workspaceName}</span>
         </p>
@@ -193,8 +299,11 @@ export function ApprovalPrompt({
           className="min-w-20"
           disabled={pending || expiry.expired}
           onClick={() => onRespond(approval.approvalId, "granted")}
+          {...(approval.plan
+            ? { "aria-label": `Approve these ${approval.plan.operationCount} changes, once` }
+            : {})}
         >
-          Allow
+          {approval.plan ? `Approve ${changeCount(approval.plan.operationCount)}` : "Allow"}
         </Button>
         {expiry.expired && (
           <span className="ml-1 text-body-sm text-tertiary">

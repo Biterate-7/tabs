@@ -7,6 +7,7 @@ import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import { readSessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
 import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 
 /**
@@ -359,13 +360,43 @@ export type RuntimeSessionContextView = {
   fingerprint: string;
   /** Changes the user approved, for the Command Centre — which owns the workspace — to apply. */
   pendingActions: readonly RuntimeContextActionView[];
+  /**
+   * How this session's recent plans ended (J.5), oldest first, for the
+   * result line under the approval. Absent when there are none.
+   */
+  planOutcomes?: readonly RuntimePlanOutcomeView[];
 };
 
-/** An approved change, exactly as the Command Centre applies it (J.3–J.4). */
+/** One operation of an approved plan, exactly as the Command Centre applies it (J.5). */
+export type RuntimePlanOperationView =
+  | { kind: "create_collection"; name: string; tabIds: readonly string[] }
+  | { kind: "rename_collection"; collectionId: string; name: string }
+  | { kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] };
+
+/** An approved change, exactly as the Command Centre applies it (J.3–J.4) — or an approved plan, applied all at once (J.5). */
 export type RuntimeContextActionView =
   | { actionId: string; kind: "create_collection"; name: string; tabIds: readonly string[] }
   | { actionId: string; kind: "rename_collection"; collectionId: string; name: string }
-  | { actionId: string; kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] };
+  | { actionId: string; kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] }
+  | {
+      actionId: string;
+      kind: "apply_plan";
+      planId: string;
+      /** Echoed back on completion; any other value is refused. Not a secret — a binding. */
+      planHash: string;
+      operations: readonly RuntimePlanOperationView[];
+    };
+
+/** What became of a plan (J.5). Counts and a version; the approval it answered, when known. */
+export type RuntimePlanOutcomeView = {
+  planId: string;
+  approvalId?: string;
+  status: "applied" | "unverified" | "not_applied" | "stale" | "denied" | "expired" | "cancelled";
+  operationCount: number;
+  verifiedCount: number;
+  contextVersion: number;
+  at: number;
+};
 
 /**
  * One event, with the ordering the wire needs.
@@ -443,6 +474,8 @@ export type RuntimeApprovalView = {
   reason?: string;
   /** A workspace change, structured for the card (J.4). Names and titles only — never ids. */
   change?: WorkspaceChangeSummary;
+  /** A plan of workspace changes (J.5): every step the user is approving, as one immutable whole. */
+  plan?: WorkspacePlanPreview;
   requestedAt: number;
   expiresAt: number;
 };
@@ -613,13 +646,18 @@ export type RuntimeCommand =
   | { name: "sync_session_context"; sessionId: string; snapshot: SessionContextSnapshot }
   /**
    * The Command Centre applied (or could not apply) a change the user
-   * approved. Only an approved action of this session can be completed.
+   * approved. Only an approved action of this session can be completed. A
+   * plan (J.5) is answered with its hash and the ids it created, in order —
+   * or, when it could not be applied, the operation that no longer fit.
    */
   | {
       name: "complete_context_action";
       sessionId: string;
       actionId: string;
-      outcome: { ok: true; collectionId: string } | { ok: false };
+      outcome:
+        | { ok: true; collectionId: string }
+        | { ok: true; planHash: string; created: readonly string[] }
+        | { ok: false; failedAt?: number };
     };
 
 /** What each command answers with. Keyed by name so the client can type one call generically. */
@@ -995,15 +1033,31 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
     case "complete_context_action": {
       const sessionId = id(raw.sessionId);
       const actionId = id(raw.actionId);
-      const outcome = raw.outcome as { ok?: unknown; collectionId?: unknown } | null | undefined;
+      const outcome = raw.outcome as
+        | { ok?: unknown; collectionId?: unknown; planHash?: unknown; created?: unknown; failedAt?: unknown }
+        | null
+        | undefined;
       if (!sessionId || !actionId || !outcome || typeof outcome !== "object") return null;
+      if (outcome.ok === true && outcome.planHash !== undefined) {
+        // A plan (J.5): its hash, and the id of each collection it created, in order.
+        const planHash = id(outcome.planHash);
+        if (!planHash || !Array.isArray(outcome.created) || outcome.created.length > 20) return null;
+        const created = outcome.created.map(id);
+        if (created.some((entry) => !entry)) return null;
+        return { name: "complete_context_action", sessionId, actionId, outcome: { ok: true, planHash, created: created as string[] } };
+      }
       if (outcome.ok === true) {
         const collectionId = id(outcome.collectionId);
         return collectionId
           ? { name: "complete_context_action", sessionId, actionId, outcome: { ok: true, collectionId } }
           : null;
       }
-      return outcome.ok === false ? { name: "complete_context_action", sessionId, actionId, outcome: { ok: false } } : null;
+      if (outcome.ok !== false) return null;
+      const failedAt =
+        typeof outcome.failedAt === "number" && Number.isInteger(outcome.failedAt) && outcome.failedAt >= 0 && outcome.failedAt < 20
+          ? { failedAt: outcome.failedAt }
+          : {};
+      return { name: "complete_context_action", sessionId, actionId, outcome: { ok: false, ...failedAt } };
     }
   }
 }

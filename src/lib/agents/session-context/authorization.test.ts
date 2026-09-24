@@ -56,7 +56,7 @@ describe("the one decision", () => {
       const decision = ask({ tool });
       expect(decision.allowed).toBe(true);
       if (!decision.allowed) continue;
-      const writes = ["create_collection", "rename_collection", "add_tabs_to_collection"].includes(tool);
+      const writes = ["create_collection", "rename_collection", "add_tabs_to_collection", "propose_workspace_plan"].includes(tool);
       expect(decision).toMatchObject(writes ? { access: "write", approval: "every-time" } : { access: "read", approval: "none" });
     }
   });

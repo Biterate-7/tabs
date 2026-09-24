@@ -73,6 +73,7 @@ export function capabilitiesFor(access: SessionContextAccess): readonly SessionC
  * tool is authorized again when called (./authorization.ts).
  */
 export const SESSION_TOOL_CAPABILITY = {
+  get_workspace_summary: "workspace.read",
   get_context_status: "workspace.read",
   get_context_changes: "workspace.read",
   get_current_workspace: "workspace.read",
@@ -81,12 +82,16 @@ export const SESSION_TOOL_CAPABILITY = {
   list_tabs: "tabs.read",
   get_tabs: "tabs.read",
   search_tabs: "tabs.read",
+  find_duplicate_tabs: "tabs.read",
   list_collections: "collections.read",
   get_collection: "collections.read",
+  // A dry run: validates a plan and describes it, changes nothing, asks no one (J.5).
+  preview_workspace_plan: "collections.read",
   get_tab_graph: "relationships.read",
   create_collection: "collections.write",
   rename_collection: "collections.write",
   add_tabs_to_collection: "collections.write",
+  propose_workspace_plan: "collections.write",
 } as const satisfies Record<string, SessionContextCapability>;
 
 export type SessionContextTool = keyof typeof SESSION_TOOL_CAPABILITY;

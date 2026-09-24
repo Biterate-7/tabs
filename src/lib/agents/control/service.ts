@@ -35,6 +35,7 @@ import type {
 } from "./types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 
 /**
  * The control service: the only thing that may drive an adapter.
@@ -216,7 +217,7 @@ export type ControlService = {
    */
   requestWorkspaceApproval(
     sessionId: string,
-    request: { targets: readonly string[]; reason: string; change?: WorkspaceChangeSummary }
+    request: { targets: readonly string[]; reason: string; change?: WorkspaceChangeSummary; plan?: WorkspacePlanPreview }
   ): Promise<WorkspaceApprovalOutcome>;
 
   /** Withdraws a session's outstanding workspace approvals — it ended. */
@@ -824,6 +825,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
           targets: request.targets,
           reason: request.reason,
           ...(request.change ? { change: request.change } : {}),
+          ...(request.plan ? { plan: request.plan } : {}),
         },
         now()
       );

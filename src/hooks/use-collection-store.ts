@@ -17,8 +17,10 @@ import {
   pruneCollectionState,
   saveCollectionState,
 } from "@/lib/collections/persistence"
+import { applyCollectionBatch } from "@/lib/collections/batch"
 import { createTimestamp } from "@/lib/timestamps"
 import { publishSyncDirty, subscribeRemoteEntities } from "@/lib/sync/notify"
+import type { CollectionBatchOperation, CollectionBatchResult } from "@/lib/collections/batch"
 import type { Collection } from "@/lib/collections/types"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -198,6 +200,23 @@ export function useCollectionStore(workspaces: Workspace[]) {
         setCollections((prev) => moveTabToCollection(prev, tabId, targetCollectionId, now))
         publishCollections([targetCollectionId, ...holdersOf(collections, [tabId])])
       },
+      /**
+       * Several changes to one workspace's collections as one (Phase J.5):
+       * all of them, or none. The batch is folded through the same reducers
+       * the single operations above use (lib/collections/batch.ts) against
+       * this render's collections, and only a batch that holds throughout is
+       * committed — in one write, announced once. Returned so the caller
+       * knows the ids it created, or which operation did not fit.
+       */
+      applyBatch: (workspaceId: string, operations: readonly CollectionBatchOperation[]): CollectionBatchResult => {
+        const tabIds = new Set<string>()
+        for (const [tabId, owner] of tabWorkspaceOf) if (owner === workspaceId) tabIds.add(tabId)
+        const result = applyCollectionBatch(collections, { workspaceId, tabIds }, operations, createTimestamp())
+        if (!result.ok) return result
+        setCollections(result.collections)
+        publishCollections(result.touched, workspaceId)
+        return result
+      },
     }
-  }, [collections])
+  }, [collections, tabWorkspaceOf])
 }

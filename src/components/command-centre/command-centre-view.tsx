@@ -304,6 +304,7 @@ export function CommandCentreView({
     createCollection: collectionStore.createCollection,
     renameCollection: collectionStore.renameCollection,
     addTabsToCollection: collectionStore.addTabsToCollection,
+    applyCollectionBatch: collectionStore.applyBatch,
   })
 
   const handleCreate = useCallback(
@@ -491,7 +492,10 @@ export function CommandCentreView({
                 contextUnavailable={selected.view.contextUnavailable === "provider"}
               />
 
-              <EventStream events={session.events}>
+              <EventStream
+                events={session.events}
+                {...(selected.view.context?.planOutcomes ? { planOutcomes: selected.view.context.planOutcomes } : {})}
+              >
                 {session.approvals.map((approval) => (
                   <ApprovalPrompt
                     key={approval.approvalId}

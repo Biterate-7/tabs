@@ -1243,6 +1243,226 @@ describe("session workspace context", () => {
     })
   })
 
+  /* ---------------- Phase J.5 — plans */
+
+  const PLAN_PREVIEW = {
+    planId: "plan-1",
+    basedOnVersion: 3,
+    operationCount: 3,
+    tabCount: 3,
+    steps: [
+      {
+        kind: "create_collection" as const,
+        subject: "College Research",
+        tabCount: 2,
+        tabs: ["Tab 1", "Tab 2"],
+        movesFrom: [],
+        reason: "Both are admissions pages",
+        confidence: "high" as const,
+      },
+      { kind: "rename_collection" as const, subject: "Sources", to: "Primary sources", tabCount: 1, tabs: [], movesFrom: [] },
+      {
+        kind: "add_tabs_to_collection" as const,
+        subject: "Primary sources",
+        tabCount: 1,
+        tabs: ["Tab 0"],
+        movesFrom: ["Inbox"],
+        movedCount: 1,
+        confidence: "unclear" as const,
+      },
+    ],
+  }
+
+  it("shows a plan as one decision: who, which workspace, every change — details on review, never an id", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([
+      scriptedApproval({
+        action: "change_workspace",
+        scope: "write_workspace",
+        projectId: undefined,
+        workspaceId: "w1",
+        targets: ["one", "two", "three"],
+        reason: "Apply 3 changes to this workspace.",
+        plan: PLAN_PREVIEW,
+      }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    const prompt = await screen.findByRole("group", { name: /approval required/i })
+    expect(prompt.textContent).toContain("Claude Code wants to organize Research")
+    expect(prompt.textContent).toContain("3 changes · 3 tabs")
+    const steps = within(prompt).getByRole("list", { name: "Proposed changes" })
+    expect(within(steps).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      '+Create collection "College Research" with 2 tabs',
+      '~Rename collection "Sources" to "Primary sources"',
+      '→Add 1 tab to "Primary sources" (moves 1 tab out of Inbox)',
+    ])
+    expect(prompt.textContent).toContain("No other tabs or collections will change.")
+    // Details only on review: the tabs each change places, and the agent's own words, as the agent's.
+    expect(within(prompt).queryByText("Tab 1")).toBeNull()
+    await user.click(within(prompt).getByRole("button", { name: "Review changes" }))
+    expect(within(prompt).getByText("Tab 1")).toBeTruthy()
+    expect(prompt.textContent).toContain("Claude Code: Confident. “Both are admissions pages”")
+    expect(prompt.textContent).toContain("Claude Code: Unsure.")
+    expect(prompt.textContent).not.toMatch(/\d+%|score/i)
+
+    // Approving approves this plan, once — said on the button, not "always".
+    const approve = within(prompt).getByRole("button", { name: "Approve these 3 changes, once" })
+    expect(approve.textContent).toBe("Approve 3 changes")
+    expect(prompt.textContent).not.toMatch(/always|w1|plan-1|approval-1|session-1|ctxa-/i)
+
+    await user.click(approve)
+    await waitFor(() => expect(runtime.commands.some((command) => command.name === "respond_to_approval")).toBe(true))
+    expect(runtime.commands.find((command) => command.name === "respond_to_approval")).toMatchObject({ decision: "granted" })
+  })
+
+  it("applies an approved plan whole, syncs the result, then reports its hash and what it created — once", async () => {
+    saveCollectionState({
+      version: 1,
+      collections: [{ id: "c1", workspaceId: "w1", name: "Sources", tabIds: ["w1-tab-0"], createdAt: 1, updatedAt: 1 }],
+    })
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              {
+                actionId: "ctxa-p",
+                kind: "apply_plan",
+                planId: "plan-1",
+                planHash: "hash-of-the-approved-plan",
+                operations: [
+                  { kind: "create_collection", name: "College Research", tabIds: ["w1-tab-1", "w1-tab-2"] },
+                  { kind: "rename_collection", collectionId: "c1", name: "Primary sources" },
+                ],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    const view = renderCentre(runtime)
+
+    await waitFor(() => expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1))
+    const names = runtime.commands.map((command) => command.name)
+    const completion = runtime.commands.find((command) => command.name === "complete_context_action")
+    if (completion?.name !== "complete_context_action" || !completion.outcome.ok || !("planHash" in completion.outcome)) {
+      throw new Error("expected a plan completion")
+    }
+    expect(completion.outcome.planHash).toBe("hash-of-the-approved-plan")
+    expect(completion.outcome.created).toHaveLength(1)
+    const createdId = completion.outcome.created[0]
+
+    // The synced workspace went first — it is what the runtime verifies against — and it holds the result.
+    const syncIndex = names.lastIndexOf("sync_session_context", names.indexOf("complete_context_action"))
+    expect(syncIndex).toBeGreaterThanOrEqual(0)
+    const sync = runtime.commands[syncIndex]
+    if (sync.name !== "sync_session_context") throw new Error("no sync")
+    expect(sync.snapshot.collections.map((collection) => collection.name).sort()).toEqual(["College Research", "Primary sources"])
+
+    await waitFor(() => {
+      const stored = loadCollectionState().collections
+      expect(stored.find((collection) => collection.id === "c1")?.name).toBe("Primary sources")
+      expect(stored.find((collection) => collection.id === createdId)).toMatchObject({
+        name: "College Research",
+        tabIds: ["w1-tab-1", "w1-tab-2"],
+      })
+    })
+
+    view.rerender(<CommandCentreView world={world()} onClose={vi.fn()} client={runtime.client} poll={false} />)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1)
+  })
+
+  it("keeps a single change and a plan approved together — neither overwrites the other", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              { actionId: "ctxa-single", kind: "create_collection", name: "Single change", tabIds: ["w1-tab-1"] },
+              {
+                actionId: "ctxa-plan",
+                kind: "apply_plan",
+                planId: "plan-3",
+                planHash: "h3",
+                operations: [{ kind: "create_collection", name: "From the plan", tabIds: ["w1-tab-2"] }],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() => expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(2))
+    await waitFor(() => {
+      const names = loadCollectionState().collections.map((collection) => collection.name)
+      expect(names).toEqual(expect.arrayContaining(["Single change", "From the plan"]))
+    })
+  })
+
+  it("applies none of a plan that no longer fits the workspace, and says which operation failed", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              {
+                actionId: "ctxa-q",
+                kind: "apply_plan",
+                planId: "plan-2",
+                planHash: "h",
+                operations: [
+                  { kind: "create_collection", name: "Would be created", tabIds: ["w1-tab-1"] },
+                  { kind: "rename_collection", collectionId: "c-another-workspace", name: "Nope" },
+                ],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() =>
+      expect(runtime.commands.find((command) => command.name === "complete_context_action")).toMatchObject({
+        actionId: "ctxa-q",
+        outcome: { ok: false, failedAt: 1 },
+      })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(JSON.stringify(loadCollectionState())).not.toContain("Would be created")
+  })
+
+  it("says what became of an approved plan on the row where it was approved, and names TabDump's tools plainly", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            version: 4,
+            planOutcomes: [
+              { planId: "plan-1", approvalId: "approval-9", status: "applied", operationCount: 3, verifiedCount: 3, contextVersion: 4, at: 1 },
+            ],
+          }),
+        }),
+      ],
+    })
+    runtime.pushEvents([
+      scriptedEvent({ id: "e1", kind: "tool_finished", summary: "Done", tool: { name: "mcp__tabdump_abcdefghijklmnop__get_workspace_summary" } }),
+      scriptedEvent({ id: "e2", kind: "approval_granted", summary: "Workspace change approved", approvalId: "approval-9" }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByText(/3 changes applied · Context updated to v4/)).toBeTruthy()
+    expect(screen.getByText("TabDump · Summarized the workspace")).toBeTruthy()
+    expect(document.body.textContent).not.toContain("mcp__tabdump_")
+  })
+
   it("refuses to apply a change naming tabs that are not in the session's workspace", async () => {
     const runtime = createScriptedRuntime({
       sessions: [

@@ -259,3 +259,30 @@ describe("errors", () => {
     }
   });
 });
+
+describe("completing an approved plan (Phase J.5)", () => {
+  const base = { name: "complete_context_action", sessionId: "s1", actionId: "a1" };
+
+  it("carries the plan's hash and the ids it created — and nothing else", () => {
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: true, planHash: "h-1", created: ["c9", "c10"], operations: ["x"] } })).toEqual({
+      ...base,
+      outcome: { ok: true, planHash: "h-1", created: ["c9", "c10"] },
+    });
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: true, planHash: "h-1", created: [] } })).toMatchObject({ outcome: { created: [] } });
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: false, failedAt: 2 } })).toEqual({ ...base, outcome: { ok: false, failedAt: 2 } });
+    // A failure index outside any plan is dropped, not trusted.
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: false, failedAt: 99 } })).toEqual({ ...base, outcome: { ok: false } });
+  });
+
+  it("refuses a malformed plan completion", () => {
+    for (const outcome of [
+      { ok: true, planHash: "", created: [] },
+      { ok: true, planHash: "h", created: "c9" },
+      { ok: true, planHash: "h", created: [7] },
+      { ok: true, planHash: "h", created: Array.from({ length: 21 }, (_, index) => `c${index}`) },
+      { ok: "yes", planHash: "h", created: [] },
+    ]) {
+      expect(parseRuntimeCommand({ ...base, outcome }), JSON.stringify(outcome)).toBeNull();
+    }
+  });
+});

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
+import { applyCollectionBatch } from "@/lib/collections/batch";
 import { createRuntimeHost } from "@/lib/agents/runtime/host";
 import { createSessionContextServer } from "@/lib/agents/session-context/http";
 import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
@@ -191,6 +192,44 @@ describe("an ACP agent using its session's TabDump context through a real proces
     expect(reply).toMatch(/^context:proceed_once:/);
     expect(reply).toContain('"created":true');
     expect(reply).toContain('"collectionId":"c-new"');
+    await h.host.dispose();
+  }, 60_000);
+
+  it("reads the summary and proposes a plan (J.5): the same approval, applied by the webview's batch, verified", async () => {
+    const h = build(["read_workspace", "read_project", "write_workspace"]);
+    const sessionId = await h.start();
+    const summary = await h.turn(sessionId, "context get_workspace_summary {}");
+    expect(summary).toMatch(/^context:proceed_once:/);
+    expect(summary).toContain('"uncategorized":2');
+
+    const plan = { basedOnVersion: 1, operations: [{ kind: "create_collection", name: "Launch reading", tabIds: ["t1", "t2"], confidence: "high" }] };
+    const reply = await h.turn(sessionId, `context propose_workspace_plan ${JSON.stringify(plan)}`, async () => {
+      let approvalId = "";
+      await until(async () => {
+        const view = await h.send<{ approvals: { approvalId: string; provider: string; plan?: { operationCount: number } }[] }>({ name: "get_session", sessionId });
+        const approval = view.value?.approvals?.[0];
+        if (approval) {
+          expect(approval).toMatchObject({ provider: "gemini", plan: { operationCount: 1 } });
+          approvalId = approval.approvalId;
+        }
+        return Boolean(approvalId);
+      });
+      await h.send({ name: "respond_to_approval", approvalId, decision: "granted" });
+      let action: { actionId: string; planHash: string; operations: { kind: "create_collection"; name: string; tabIds: string[] }[] } | undefined;
+      await until(async () => {
+        const view = await h.send<{ session: { context: { pendingActions: NonNullable<typeof action>[] } } }>({ name: "get_session", sessionId });
+        action = view.value?.session.context.pendingActions[0];
+        return Boolean(action);
+      });
+      const applied = applyCollectionBatch([], { workspaceId: "w-launch", tabIds: new Set(["t1", "t2"]) }, action!.operations, 1);
+      if (!applied.ok) throw new Error("apply failed");
+      await h.send({ name: "sync_session_context", sessionId, snapshot: { ...LAUNCH_PLAN, collections: applied.collections } });
+      await h.send({ name: "complete_context_action", sessionId, actionId: action!.actionId, outcome: { ok: true, planHash: action!.planHash, created: applied.created } });
+    });
+    expect(reply).toMatch(/^context:proceed_once:/);
+    expect(reply).toContain('"applied":true');
+    expect(reply).toContain('"verified":true');
+    expect(reply).toContain('"contextVersion":2');
     await h.host.dispose();
   }, 60_000);
 

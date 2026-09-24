@@ -97,13 +97,16 @@ describe("the custom agent explains exactly what it connects", () => {
     expect(registrations.length).toBe(TABDUMP_MCP_TOOLS.length);
     expect(readOnly.length).toBe(registrations.length);
 
-    // Session mode has exactly three tools that are not read-only (J.4):
-    // create, rename and add tabs to a collection. None writes: each only
-    // proposes a change, which asks the user every time.
+    // Session mode has exactly four tools that are not read-only: create,
+    // rename and add tabs to a collection (J.4), and propose a plan of those
+    // same changes (J.5). None writes: each only proposes, which asks the
+    // user every time. preview_workspace_plan is read-only; it changes nothing.
     const sessionSource = fullSource.slice(marker);
     const sessionRegistrations = sessionSource.match(/registerTool\(/g) ?? [];
     const sessionReadOnly = sessionSource.match(/annotations:\s*READ_ONLY/g) ?? [];
-    expect(sessionRegistrations.length - sessionReadOnly.length).toBe(3);
+    expect(sessionRegistrations.length - sessionReadOnly.length).toBe(4);
+    expect(sessionSource.match(/scope\.requestPlan\(/g)).toHaveLength(1);
+    expect(sessionSource).toMatch(/"propose_workspace_plan",[\s\S]*?annotations: WRITE_TOOL/);
     expect(sessionSource).toMatch(/const WRITE_TOOL = \{ readOnlyHint: false, destructiveHint: false/);
     for (const write of ["create_collection", "rename_collection", "add_tabs_to_collection"]) {
       expect(sessionSource).toContain(`propose("${write}", { kind: "${write}"`);

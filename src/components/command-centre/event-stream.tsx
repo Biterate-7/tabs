@@ -2,10 +2,11 @@
 
 import { memo, useEffect, useMemo, useRef } from "react"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import { EVENT_PRESENTATION } from "@/lib/agents/command-centre/presentation"
+import { EVENT_PRESENTATION, planOutcomeLabel, toolDisplayName } from "@/lib/agents/command-centre/presentation"
 import { buildTranscript } from "@/lib/agents/platform/chat"
 import { cn } from "@/lib/utils"
-import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { RuntimePlanOutcomeView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { AgentVisualTone } from "@/lib/agents/visual/types"
 
 /**
  * The session's normalized event stream.
@@ -37,7 +38,14 @@ import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
  */
 
 /** A single-line row: activity and lifecycle both use it, at the same density. */
-const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEvent }) {
+const QuietRow = memo(function QuietRow({
+  event,
+  outcome,
+}: {
+  event: SequencedControlEvent
+  /** What became of the plan this row approved (J.5), said on the row where the user approved it. */
+  outcome?: { text: string; tone: AgentVisualTone }
+}) {
   const presentation = EVENT_PRESENTATION[event.kind]
 
   /*
@@ -64,6 +72,11 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
       <span className="shrink-0 text-label text-muted-foreground">{presentation.label}</span>
       <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">
         {restatesLabel ? "" : event.summary}
+        {outcome && (
+          <span className={cn("ml-1.5", AGENT_TONE_TEXT_CLASS[outcome.tone])}>
+            · {outcome.text}
+          </span>
+        )}
       </span>
       {/*
         The tool or file the event concerns, when it named one.
@@ -80,7 +93,9 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
           {event.file.relativePath}
         </span>
       ) : event.tool ? (
-        <span className="shrink-0 text-label text-tertiary">{event.tool.name}</span>
+        <span className="shrink-0 text-label text-tertiary" title={event.tool.name}>
+          {toolDisplayName(event.tool.name)}
+        </span>
       ) : null}
     </li>
   )
@@ -122,14 +137,22 @@ const AgentMessage = memo(function AgentMessage({ text, streaming }: { text: str
 
 export function EventStream({
   events,
+  planOutcomes,
   /** Rendered under the last event — the approval block and the live indicator live there. */
   children,
   className,
 }: {
   events: readonly SequencedControlEvent[]
+  /** How the session's approved plans ended (J.5), matched to their approvals by id. */
+  planOutcomes?: readonly RuntimePlanOutcomeView[]
   children?: React.ReactNode
   className?: string
 }) {
+  const outcomeByApproval = useMemo(() => {
+    const map = new Map<string, { text: string; tone: AgentVisualTone }>()
+    for (const outcome of planOutcomes ?? []) if (outcome.approvalId) map.set(outcome.approvalId, planOutcomeLabel(outcome))
+    return map
+  }, [planOutcomes])
   const endRef = useRef<HTMLDivElement | null>(null)
   const countRef = useRef(events.length)
   // The conversation, derived from the window of events on every render —
@@ -166,7 +189,11 @@ export function EventStream({
             )
           }
 
-          return <QuietRow key={item.id} event={item.event} />
+          const outcome =
+            item.event.kind === "approval_granted" && item.event.approvalId
+              ? outcomeByApproval.get(item.event.approvalId)
+              : undefined
+          return <QuietRow key={item.id} event={item.event} {...(outcome ? { outcome } : {})} />
         })}
         {children}
       </ol>

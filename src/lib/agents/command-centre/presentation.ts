@@ -7,9 +7,11 @@ import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
 import type { AgentVisualState, AgentVisualTone } from "@/lib/agents/visual/types";
 import type {
   RuntimeErrorCode,
+  RuntimePlanOutcomeView,
   RuntimeProviderStatus,
   RuntimeStatus,
 } from "@/lib/agents/runtime/protocol";
+import type { OperationConfidence } from "@/lib/agents/session-context/plan";
 
 /**
  * How the command centre says what the control plane means.
@@ -221,6 +223,79 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   run_completed: { register: "lifecycle", label: "Run completed", tone: "good" },
   run_cancelled: { register: "lifecycle", label: "Run cancelled", tone: "muted" },
 };
+
+/* ------------------------------------------------------------------ *
+ * Workspace plans (Phase J.5)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What became of an approved plan, in one line, for the row where the user
+ * approved it. Counts and a version only; "applied" is said only when the
+ * runtime found every change in the synced workspace.
+ */
+export function planOutcomeLabel(outcome: RuntimePlanOutcomeView): { text: string; tone: AgentVisualTone } {
+  const changes = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
+  switch (outcome.status) {
+    case "applied":
+      return { text: `${changes(outcome.operationCount)} applied · Context updated to v${outcome.contextVersion}`, tone: "good" };
+    case "unverified":
+      return {
+        text: `Applied, but only ${outcome.verifiedCount} of ${changes(outcome.operationCount)} could be confirmed — check the workspace`,
+        tone: "bad",
+      };
+    case "not_applied":
+      return { text: "Not applied — the workspace no longer matched. Nothing was changed.", tone: "bad" };
+    case "stale":
+      return { text: "Not applied — the workspace changed while you were deciding. Nothing was changed.", tone: "muted" };
+    case "denied":
+      return { text: "Declined. Nothing was changed.", tone: "muted" };
+    case "expired":
+      return { text: "Expired. Nothing was changed.", tone: "muted" };
+    case "cancelled":
+      return { text: "The session ended. Nothing was changed.", tone: "muted" };
+  }
+}
+
+/** How sure the agent said it was about one step — its words, shown as such. Never a number. */
+export const PLAN_CONFIDENCE_LABEL: Record<OperationConfidence, string> = {
+  high: "Confident",
+  medium: "Fairly sure",
+  unclear: "Unsure",
+};
+
+/** A TabDump context tool as a person reads it. */
+const CONTEXT_TOOL_LABEL: Partial<Record<string, string>> = {
+  get_workspace_summary: "Summarized the workspace",
+  get_context_status: "Checked the workspace version",
+  get_context_changes: "Checked what changed",
+  get_current_workspace: "Read the workspace",
+  list_workspaces: "Read the workspace",
+  get_workspace: "Read the workspace",
+  list_tabs: "Listed tabs",
+  get_tabs: "Read tabs",
+  search_tabs: "Searched tabs",
+  find_duplicate_tabs: "Looked for duplicates",
+  list_collections: "Listed collections",
+  get_collection: "Read a collection",
+  preview_workspace_plan: "Checked a plan",
+  get_tab_graph: "Read related tabs",
+  create_collection: "Proposed a collection",
+  rename_collection: "Proposed a rename",
+  add_tabs_to_collection: "Proposed adding tabs",
+  propose_workspace_plan: "Proposed changes",
+};
+
+/**
+ * `mcp__tabdump_<16 base32>__search_tabs` — how Claude Code names a call to
+ * the session's context server — as "TabDump · Searched tabs". Only a name in
+ * the minted server shape is recognised; anything else is shown as it came.
+ * Display only: nothing is decided from it.
+ */
+export function toolDisplayName(name: string): string {
+  const match = /^mcp__tabdump_[a-z2-7]{16}__([a-z_]+)$/.exec(name);
+  const label = match ? CONTEXT_TOOL_LABEL[match[1]] : undefined;
+  return label ? `TabDump · ${label}` : name;
+}
 
 /* ------------------------------------------------------------------ *
  * Permission scopes
