@@ -59,7 +59,7 @@ describe("the operation model is data, not code", () => {
 
 describe("reasoning cannot write (Phase J.6)", () => {
   it("keeps the reasoning modules away from every write path", () => {
-    for (const file of ["lib/agents/session-context/terms.ts", "lib/agents/session-context/topics.ts", "lib/agents/session-context/relevance.ts"]) {
+    for (const file of ["lib/agents/session-context/terms.ts", "lib/agents/session-context/topics.ts", "lib/agents/session-context/relevance.ts", "lib/agents/session-context/insight.ts"]) {
       const source = code(file);
       expect(source, file).not.toMatch(/requestPlan|requestChange|pendingApplications|\.complete\(|approve|setApprover|registry|applyBatch|applyCollectionBatch/);
       expect(source, file).not.toMatch(/from "\.\/(registry|http)"|from "@\/lib\/collections\/(batch|relations)"|use-collection-store/);

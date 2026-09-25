@@ -216,11 +216,31 @@ export function findRelatedTabs(
  * Collections
  * ------------------------------------------------------------------ */
 
+/**
+ * The words J.6 uses about existing collections, each with one definition:
+ *
+ *   relevant   any evidence at all (score > 0) — listed, with that evidence;
+ *   covers     score ≥ `RELEVANCE_LIMITS.reuseScore` for the same inputs,
+ *              with its name or its members among the evidence (shared
+ *              words in its other tabs alone never make a collection a
+ *              home) — prefer adding to it over creating a near-duplicate;
+ *   partial    it already holds some, not all, of the given tabs
+ *              (0 < alreadyHolds < the number given);
+ *   overlap    a proposed *new* collection that an existing one covers
+ *              (`collectionOverlap`) — what `preview_workspace_plan` warns
+ *              about, and what a suggestion never proposes.
+ *
+ * All of it is advice. None of it blocks a plan: the one blocking rule about
+ * existing collections is J.5's `duplicate_name` (the same name,
+ * case-insensitively), which the plan validator enforces on its own.
+ */
 export type CollectionRelevance = {
   collectionId: string;
   name: string;
   tabCount: number;
   score: number;
+  /** Present (true) when it covers the topic/tabs asked about well enough to reuse (see above); absent otherwise. */
+  covers?: true;
   /** Of the given tabs, how many are already in it. */
   alreadyHolds: number;
   evidence: readonly string[];
@@ -293,11 +313,15 @@ export function rankCollections(
     const contentHits = topic.filter((term) => memberTerms.has(term) && !nameHits.includes(term)).slice(0, 3);
     if (contentHits.length > 0) evidence.push(`Its tabs also mention ${contentHits.map((term) => quote(displayTerm(index, term))).join(", ")}`);
 
+    const rounded = Math.round(score * 100) / 100;
     ranked.push({
       collectionId: collection.id,
       name,
       tabCount: collection.tabIds.length,
-      score: Math.round(score * 100) / 100,
+      score: rounded,
+      // Covers: enough evidence, and at least some of it from the collection itself — its name or the tabs it
+      // already holds. Other tabs that merely share words make a collection relevant, never a home by themselves.
+      ...(rounded >= RELEVANCE_LIMITS.reuseScore && (nameScore > 0 || holds > 0) ? { covers: true as const } : {}),
       alreadyHolds: holds,
       evidence,
     });
@@ -308,6 +332,21 @@ export function rankCollections(
     understoodAs: words.map((term) => displayTerm(index, term)),
     unknownTabIds: requested.length - given.length,
   };
+}
+
+/**
+ * The existing collection a proposed new one would near-duplicate: the best
+ * ranked for the new collection's name (as the topic) and its tabs, if it
+ * covers them. The one definition of "overlap" — `preview_workspace_plan`'s
+ * warning and `recommendPlacement`'s refusal to suggest a near-duplicate both
+ * call this, so a suggested create is never warned about. Advice only.
+ */
+export function collectionOverlap(
+  snapshot: SessionContextSnapshot,
+  input: { name: string; tabIds: readonly string[] }
+): CollectionRelevance | undefined {
+  const [best] = rankCollections(snapshot, { query: input.name, tabIds: input.tabIds }).collections;
+  return best?.covers ? best : undefined;
 }
 
 /**
@@ -352,7 +391,7 @@ export type Placement =
  */
 export function recommendPlacement(
   snapshot: SessionContextSnapshot,
-  input: { tabIds: readonly string[]; name?: string; terms?: readonly string[]; confidence?: TopicConfidence }
+  input: { tabIds: readonly string[]; name?: string; query?: string; terms?: readonly string[]; confidence?: TopicConfidence }
 ): Placement {
   const index = termIndex(snapshot);
   const filed = collectionIndex(snapshot);
@@ -379,18 +418,23 @@ export function recommendPlacement(
     };
   }
 
-  const ranked = rankCollections(snapshot, { tabIds: known, terms: input.terms });
+  // Ranked on the same inputs a caller lists collections by (the query, when there is one), so the
+  // recommendation never contradicts the ranking shown beside it.
+  const ranked = rankCollections(snapshot, { ...(input.query !== undefined ? { query: input.query } : {}), tabIds: known, terms: input.terms });
   const cleaned = input.name ? cleanCollectionName(input.name) : undefined;
   const sameName = cleaned
     ? snapshot.collections.find((collection) => collection.name.trim().toLowerCase() === cleaned.toLowerCase())
     : undefined;
+  const tabIds = unfiled.slice(0, CHANGE_LIMITS.tabs);
   const best = ranked.collections[0];
   const reuse = sameName
     ? ranked.collections.find((entry) => entry.collectionId === sameName.id) ?? { collectionId: sameName.id, name: sanitizeText(sameName.name) ?? cleaned!, evidence: ["It already has this name"], score: 0, alreadyHolds: 0, tabCount: sameName.tabIds.length }
-    : best && best.score >= RELEVANCE_LIMITS.reuseScore
+    : best?.covers
       ? best
-      : undefined;
-  const tabIds = unfiled.slice(0, CHANGE_LIMITS.tabs);
+      : // A create preview_workspace_plan would flag as an overlap is never suggested.
+        cleaned
+        ? collectionOverlap(snapshot, { name: cleaned, tabIds })
+        : undefined;
 
   if (reuse) {
     return {

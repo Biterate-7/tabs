@@ -307,9 +307,13 @@ function contextToolOf(name: string): string | undefined {
 
 /**
  * Where an agent is in the loop, for a call to the session's context server
- * (J.6): reading the workspace, analyzing it, checking a plan, or proposing a
- * change — the one stage an approval follows. Waiting for approval, applied
- * and verified are the approval card's and its result line's to say.
+ * (J.6): **Reading** the workspace, **Analyzing** it (topics, related tabs,
+ * sites), **Checking** (duplicates, which collections already cover
+ * something, a plan's preview) or **Proposing** a change — the one stage an
+ * approval card follows, and the only one whose tools are not read-only (a
+ * test holds the stages to the server's annotations). Proposed is not
+ * approved and not executed: waiting for approval, applied and verified are
+ * the approval card's and its result line's to say, never a tool row's.
  */
 export type ContextToolStage = "reading" | "analyzing" | "checking" | "proposing";
 
@@ -326,12 +330,12 @@ const CONTEXT_TOOL_STAGE: Partial<Record<string, ContextToolStage>> = {
   list_collections: "reading",
   get_collection: "reading",
   get_tab_graph: "reading",
-  find_duplicate_tabs: "analyzing",
   analyze_topics: "analyzing",
   get_topic_group: "analyzing",
   find_related_tabs: "analyzing",
-  find_relevant_collections: "analyzing",
   list_domains: "analyzing",
+  find_duplicate_tabs: "checking",
+  find_relevant_collections: "checking",
   preview_workspace_plan: "checking",
   create_collection: "proposing",
   rename_collection: "proposing",

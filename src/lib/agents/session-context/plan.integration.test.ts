@@ -166,13 +166,25 @@ describe("plans over MCP", () => {
     const h = harness();
     const { client } = await bind(h);
     const good = (await call(client, "preview_workspace_plan", PLAN)).json();
+    // J.6 hardening: the preview states the whole proposal contract — workspace, version, the exact
+    // (normalized) operations, what they touch, and that approval is required and not yet requested.
     expect(good).toEqual({
       valid: true,
-      contextVersion: 1,
+      workspace: { workspaceId: "ws-launch", name: "Launch Plan" },
+      basedOnVersion: 1,
+      operations: PLAN.operations,
       changes: ['Create collection "College Research" with 2 tabs', 'Rename collection "Collection 2" to "Physics"'],
-      tabsAffected: 2,
+      affected: {
+        tabs: 2,
+        createsCollections: ["College Research"],
+        renamesCollections: [{ from: "Collection 2", to: "Physics" }],
+        addsToCollections: [],
+        movesTabsOutOf: [],
+      },
+      approval: expect.stringMatching(/^required — not requested yet/),
       canApply: true,
-      note: "Nothing has changed. No other tabs or collections would change.",
+      contextVersion: 1,
+      note: "Checked only. Nothing has changed and no one was asked. No other tabs or collections would change.",
     });
     const bad = (
       await call(client, "preview_workspace_plan", {
@@ -240,7 +252,7 @@ describe("plans over MCP", () => {
 
     // The agent's own verification, through ordinary reads.
     const status = (await call(client, "get_context_status", { knownVersion: 1 })).json();
-    expect(status).toMatchObject({ contextVersion: 2, fresh: false });
+    expect(status).toMatchObject({ contextVersion: 2, knownVersion: 1, stale: true });
     const changes = (await call(client, "get_context_changes", { sinceVersion: 1 })).json();
     expect(new Set(changes.collections.changed)).toEqual(new Set([created, "c1"]));
     const collection = (await call(client, "get_collection", { collectionId: created })).json();

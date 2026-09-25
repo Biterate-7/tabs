@@ -1471,6 +1471,8 @@ describe("session workspace context", () => {
       scriptedEvent({ id: "s1", kind: "tool_finished", summary: "Done", tool: { name: `${server}get_workspace_summary` } }),
       scriptedEvent({ id: "s2", kind: "tool_finished", summary: "Done", tool: { name: `${server}analyze_topics` } }),
       scriptedEvent({ id: "s3", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_related_tabs` } }),
+      // Checking: whether an existing collection already covers something, and the plan preview (J.6 hardening).
+      scriptedEvent({ id: "s3b", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_relevant_collections` } }),
       scriptedEvent({ id: "s4", kind: "tool_finished", summary: "Done", tool: { name: `${server}preview_workspace_plan` } }),
       scriptedEvent({ id: "s5", kind: "tool_started", summary: "Asking", tool: { name: `${server}propose_workspace_plan` } }),
       // Not TabDump's: another tool, and a lookalike server name. No stage is claimed for either.
@@ -1487,6 +1489,7 @@ describe("session workspace context", () => {
       ["reading", "Reading"],
       ["analyzing", "Analyzing"],
       ["analyzing", "Analyzing"],
+      ["checking", "Checking"],
       ["checking", "Checking"],
       ["proposing", "Proposing"],
     ])

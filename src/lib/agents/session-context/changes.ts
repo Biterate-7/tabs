@@ -62,9 +62,29 @@ export const CHANGE_LIMITS = {
   details: 6,
 } as const;
 
+/**
+ * Characters that change how text displays without being visible text: C0
+ * and C1 controls, DEL, zero-width and direction marks, bidi embeddings,
+ * overrides and isolates, line/paragraph separators and the BOM. A title or
+ * name carrying them could render on an approval card as something other than
+ * what it is, so everything the user reads before approving — and every name
+ * an agent can give a collection — has them replaced with a space. The same
+ * set `sanitizeText` removes from what agents read. Visible text, including
+ * text that reads like an instruction, is kept as it is.
+ */
+export const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g;
+
+/** One display line: unsafe characters out, whitespace collapsed, bounded. `undefined` when nothing is left. */
+export function displayLine(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.replace(UNSAFE_TEXT, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > max ? cleaned.slice(0, max) : cleaned;
+}
+
 function clean(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = value.replace(UNSAFE_TEXT, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return undefined;
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
 }
@@ -100,5 +120,5 @@ export function readWorkspaceChangeSummary(raw: unknown): WorkspaceChangeSummary
 
 /** Normalizes a proposed collection name. Empty after cleaning means invalid. */
 export function cleanCollectionName(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CHANGE_LIMITS.name);
+  return value.replace(UNSAFE_TEXT, " ").replace(/\s+/g, " ").trim().slice(0, CHANGE_LIMITS.name);
 }

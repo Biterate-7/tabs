@@ -254,7 +254,7 @@ describe("multi-turn reasoning against a changing workspace", () => {
 
     // "Tell me more about the second one."
     const more = (await call(client, "get_topic_group", { groupId: second.groupId, basedOnVersion: 1 })).json();
-    expect(more).toMatchObject({ found: true, label: "General Relativity", workspaceChangedSince: false, contextVersion: 1 });
+    expect(more).toMatchObject({ found: true, label: "General Relativity", basedOnVersion: 1, stale: false, contextVersion: 1 });
     expect(more.tabs.map((row: { tabId: string; why: string }) => [row.tabId, row.why])).toEqual([
       ["p2", "Title mentions “Relativity” and “General”"],
       ["p4", "Title mentions “Relativity” and “General”"],
@@ -265,7 +265,7 @@ describe("multi-turn reasoning against a changing workspace", () => {
     const held = h.registry.binding("s1")!.snapshot;
     h.registry.update("s1", { ...held, workspace: { ...held.workspace, tabs: [...held.workspace.tabs, tab("n1", "Tax return checklist", "https://tax.example.gov")] } });
     const still = (await call(client, "get_topic_group", { groupId: second.groupId, basedOnVersion: 1 })).json();
-    expect(still).toMatchObject({ found: true, workspaceChangedSince: true, contextVersion: 2, note: expect.stringMatching(/exactly as it was/) });
+    expect(still).toMatchObject({ found: true, basedOnVersion: 1, stale: true, contextVersion: 2, note: expect.stringMatching(/still exactly the same tabs/) });
 
     // The user renames a member away from the topic: the old group is gone, and the agent is told so.
     const now = h.registry.binding("s1")!.snapshot;
@@ -274,7 +274,7 @@ describe("multi-turn reasoning against a changing workspace", () => {
       workspace: { ...now.workspace, tabs: now.workspace.tabs.map((entry) => (entry.id === "p5" ? { ...entry, title: "Cookie decorating ideas" } : entry)) },
     });
     const gone = (await call(client, "get_topic_group", { groupId: second.groupId, basedOnVersion: 1 })).json();
-    expect(gone).toMatchObject({ found: false, workspaceChangedSince: true, contextVersion: 3, note: expect.stringMatching(/Run analyze_topics again/) });
+    expect(gone).toMatchObject({ found: false, basedOnVersion: 1, stale: true, contextVersion: 3, note: expect.stringMatching(/Run analyze_topics again/) });
     expect(gone.label).toBeUndefined();
     expectUntouched(h, 3);
     await client.close();

@@ -100,7 +100,7 @@ describe("findRelatedTabs", () => {
 describe("rankCollections", () => {
   it("ranks an existing collection by its name, with the evidence", () => {
     expect(rankCollections(studentSnapshot(), { query: "physics" }).collections).toEqual([
-      { collectionId: "col-physics", name: "Physics", tabCount: 2, score: 3.5, alreadyHolds: 0, evidence: ["Its name matches “Physics”"] },
+      { collectionId: "col-physics", name: "Physics", tabCount: 2, score: 3.5, covers: true, alreadyHolds: 0, evidence: ["Its name matches “Physics”"] },
     ]);
   });
 

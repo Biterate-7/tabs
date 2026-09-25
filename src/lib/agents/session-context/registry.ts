@@ -1,5 +1,5 @@
 import { capabilitiesFor } from "./capabilities";
-import { CHANGE_LIMITS, cleanCollectionName } from "./changes";
+import { CHANGE_LIMITS, cleanCollectionName, displayLine } from "./changes";
 import { mintContextServerName } from "./identity";
 import { canonicalPlan, freezeOperations, planEffect, planStepLine, previewOf, validateWorkspacePlan, verifyWorkspacePlan } from "./plan";
 import { readSessionContextSnapshot, snapshotFingerprint } from "./snapshot";
@@ -97,12 +97,20 @@ export const MAX_PLAN_OUTCOMES = 10;
 export const ATTENDED_WINDOW_MS = 15_000;
 
 /**
- * Whether anything is keeping a session's snapshot current (J.6).
+ * Whether the Command Centre is currently keeping a session's snapshot in
+ * sync (J.6). A fact about the webview, not about any answer.
  *
- * `live`: the Command Centre is open, and a change the user makes reaches the
- * session within a second. `paused`: it has not asked about this session for
- * a while — it is closed — so edits made since `lastSeenAt` may not be here.
- * Advisory: it never blocks a read and never moves a version.
+ * `live`: the Command Centre synced or polled this session within
+ * `ATTENDED_WINDOW_MS`, so it is open and a change the user makes there is
+ * normally synced within about a second. It does not mean nothing has changed
+ * since an answer was given. `paused`: it has not done so since `lastSeenAt` —
+ * it is closed — so edits made since then may not be in the snapshot yet.
+ *
+ * Distinct from **stale**, which is about one answer or plan: the version it
+ * was based on is no longer the session's `version`. A reasoning result can
+ * be stale while sync is live (the user edited since), and a paused session
+ * can hold a snapshot nobody has changed. The version is what decides; this
+ * is advisory, never blocks a read and never moves a version.
  */
 export type ContextFreshness = { sync: "live" | "paused"; lastSeenAt: number };
 
@@ -139,6 +147,13 @@ export type PendingPlan = {
   basedOnVersion: number;
   operations: readonly WorkspaceOperation[];
   preview: WorkspacePlanPreview;
+  /**
+   * Set when the workspace moved on while the user was deciding and the plan
+   * was re-validated at this version with an identical effect. Reported to
+   * the agent, so a plan that proceeded across a version change never does so
+   * silently.
+   */
+  revalidatedAtVersion?: number;
 };
 
 export type ContextAction = {
@@ -173,6 +188,8 @@ export type ContextPlanResult =
       /** Every operation's result was found in the synced workspace. */
       verified: boolean;
       results: readonly PlanResultEntry[];
+      /** The workspace changed while the user decided; the plan was re-checked here and did exactly what was shown. */
+      revalidatedAtVersion?: number;
     }
   | { ok: false; reason: "invalid"; problems: readonly PlanProblem[]; currentVersion: number }
   | { ok: false; reason: "stale"; currentVersion: number }
@@ -180,7 +197,14 @@ export type ContextPlanResult =
   | { ok: false; reason: "denied" | "expired" | "ended" | "not_permitted" };
 
 export type PlanPreviewResult =
-  | { ok: true; preview: WorkspacePlanPreview; lines: readonly string[]; canApply: boolean }
+  | {
+      ok: true;
+      preview: WorkspacePlanPreview;
+      /** The operations as validated and normalized — exactly what propose_workspace_plan would put to the user. */
+      operations: readonly WorkspaceOperation[];
+      lines: readonly string[];
+      canApply: boolean;
+    }
   | { ok: false; reason: "invalid"; problems: readonly PlanProblem[]; currentVersion: number }
   | { ok: false; reason: "stale"; currentVersion: number }
   | { ok: false; reason: "ended" };
@@ -454,7 +478,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
     }
 
     function tabLines(tabIds: readonly string[]): string[] {
-      return tabIds.slice(0, 3).map((tabId) => `Tab: ${(titles.get(tabId) ?? "tab").slice(0, 120)}`);
+      return tabIds.slice(0, 3).map((tabId) => `Tab: ${displayLine(titles.get(tabId), 120) ?? "tab"}`);
     }
 
     /** A tab belongs to at most one collection, so placing it moves it. Said up front. */
@@ -464,7 +488,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
         (collection) => collection.id !== except && collection.tabIds.some((tabId) => chosen.has(tabId))
       );
       if (moved.length === 0) return [];
-      const names = moved.slice(0, 3).map((collection) => collection.name.slice(0, 60)).join(", ");
+      const names = moved.slice(0, 3).map((collection) => displayLine(collection.name, 60) ?? "a collection").join(", ");
       return [`Moves tabs out of: ${names}${moved.length > 3 ? ", …" : ""}`];
     }
 
@@ -495,7 +519,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
           tabCount: collection.tabIds.length,
           summary: {
             kind: "rename_collection",
-            subject: collection.name,
+            subject: displayLine(collection.name, CHANGE_LIMITS.subject) ?? "Untitled collection",
             to: name,
             details: [plural(collection.tabIds.length, "tab", "tabs") + " in it, unchanged"],
           },
@@ -514,7 +538,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
           tabCount: tabIds.length,
           summary: {
             kind: "add_tabs_to_collection",
-            subject: collection.name,
+            subject: displayLine(collection.name, CHANGE_LIMITS.subject) ?? "Untitled collection",
             tabCount: tabIds.length,
             details: [`Adds ${plural(tabIds.length, "tab", "tabs")}`, ...movedLine(tabIds, collection.id), ...tabLines(tabIds)],
           },
@@ -588,7 +612,15 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       action.id,
       {
         ok: true,
-        plan: { ok: true, planId: plan.planId, basedOnVersion: plan.basedOnVersion, contextVersion, verified: verification.verified, results },
+        plan: {
+          ok: true,
+          planId: plan.planId,
+          basedOnVersion: plan.basedOnVersion,
+          contextVersion,
+          verified: verification.verified,
+          results,
+          ...(plan.revalidatedAtVersion !== undefined ? { revalidatedAtVersion: plan.revalidatedAtVersion } : {}),
+        },
       },
       "applied"
     );
@@ -790,6 +822,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       return {
         ok: true,
         preview,
+        operations: checked.plan.operations,
         lines: preview.steps.map(planStepLine),
         canApply: binding.capabilities.includes("collections.write"),
       };
@@ -877,15 +910,17 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
         // against it, and anything but an identical effect is stale.
         const latest = bindings.get(sessionId);
         if (!latest) return settle(action.id, { ok: false, reason: "ended" }, "cancelled");
+        let approved: ContextAction = { ...current, status: "approved" };
         if (latest.version !== basedOnVersion) {
           const again = validateWorkspacePlan(latest.snapshot, { basedOnVersion: latest.version, operations }, latest);
           if (!again.ok || planEffect(again.plan) !== effect) {
             ended("stale");
             return settle(action.id, { ok: false, reason: "stale" }, "failed");
           }
+          approved = { ...approved, plan: { ...current.plan!, revalidatedAtVersion: latest.version } };
         }
 
-        actions.set(action.id, { ...current, status: "approved" });
+        actions.set(action.id, approved);
         const waiter = waiting.get(action.id);
         if (waiter) {
           waiter.timer = setTimer(() => {

@@ -375,7 +375,7 @@ describe("versions and synchronization (J.4)", () => {
     const text = (result: unknown) => JSON.parse((result as { content: { text: string }[] }).content[0].text);
     const status = async (knownVersion: number) =>
       text(await client.callTool({ name: "get_context_status", arguments: { knownVersion } }));
-    expect(await status(1)).toMatchObject({ contextVersion: 1, fresh: true, workspace: { name: "Launch Plan" } });
+    expect(await status(1)).toMatchObject({ contextVersion: 1, knownVersion: 1, stale: false, workspace: { name: "Launch Plan" } });
 
     const added = {
       ...LAUNCH_PLAN,
@@ -388,7 +388,7 @@ describe("versions and synchronization (J.4)", () => {
       },
     };
     await h.send({ name: "sync_session_context", sessionId, snapshot: added } as never);
-    expect(await status(1)).toMatchObject({ contextVersion: 2, fresh: false });
+    expect(await status(1)).toMatchObject({ contextVersion: 2, knownVersion: 1, stale: true });
 
     expect(text(await client.callTool({ name: "get_context_changes", arguments: { sinceVersion: 1 } }))).toMatchObject({
       version: 2,

@@ -1,4 +1,4 @@
-import { CHANGE_LIMITS, cleanCollectionName, isWorkspaceChangeKind } from "./changes";
+import { CHANGE_LIMITS, UNSAFE_TEXT, cleanCollectionName, displayLine, isWorkspaceChangeKind } from "./changes";
 import type { WorkspaceChange, WorkspaceChangeKind } from "./changes";
 import type { SessionContextSnapshot } from "./snapshot";
 
@@ -174,7 +174,7 @@ function readIds(value: unknown): string[] | undefined {
 
 function cleanReason(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = value.replace(UNSAFE_TEXT, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return undefined;
   return cleaned.length > PLAN_LIMITS.reason ? `${cleaned.slice(0, PLAN_LIMITS.reason - 1)}…` : cleaned;
 }
@@ -276,7 +276,7 @@ export function validateWorkspacePlan(
 
   const titleOf = (tabId: string) => {
     const tab = tabs.get(tabId);
-    return (tab?.title ?? tab?.domain ?? "Tab").replace(/\s+/g, " ").trim().slice(0, 120);
+    return displayLine(tab?.title, 120) ?? displayLine(tab?.domain, 120) ?? "Tab";
   };
 
   /** Describes and records the tabs a step places; moves them in the simulation. */
@@ -298,7 +298,7 @@ export function validateWorkspacePlan(
     return {
       tabs: tabIds.slice(0, PLAN_LIMITS.titlesPerStep).map(titleOf),
       ...(tabIds.length > PLAN_LIMITS.titlesPerStep ? { moreTabs: tabIds.length - PLAN_LIMITS.titlesPerStep } : {}),
-      movesFrom: [...movedFrom.keys()].slice(0, 3).map((id) => (collectionName.get(id) ?? "another collection").slice(0, 80)),
+      movesFrom: [...movedFrom.keys()].slice(0, 3).map((id) => displayLine(collectionName.get(id), 80) ?? "another collection"),
       ...(moved > 0 ? { movedCount: moved } : {}),
     };
   }
@@ -352,7 +352,7 @@ export function validateWorkspacePlan(
         operations.push({ kind: "rename_collection", collectionId: read.collectionId, name, ...extras });
         steps.push({
           kind: "rename_collection",
-          subject: current,
+          subject: displayLine(current, CHANGE_LIMITS.subject) ?? "Untitled collection",
           to: name,
           tabs: [],
           movesFrom: [],
@@ -370,7 +370,7 @@ export function validateWorkspacePlan(
         const tabIds = read.tabIds.filter((tabId) => !members.has(tabId));
         if (tabIds.length === 0) return void problems.push({ operation: index, code: "no_change" });
         operations.push({ kind: "add_tabs_to_collection", collectionId: read.collectionId, tabIds, ...extras });
-        steps.push({ kind: "add_tabs_to_collection", subject: current, tabCount: tabIds.length, ...place(tabIds, read.collectionId), ...extras });
+        steps.push({ kind: "add_tabs_to_collection", subject: displayLine(current, CHANGE_LIMITS.subject) ?? "Untitled collection", tabCount: tabIds.length, ...place(tabIds, read.collectionId), ...extras });
         return;
       }
     }
@@ -515,7 +515,7 @@ export function verifyWorkspacePlan(
 
 function clean(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = value.replace(UNSAFE_TEXT, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return undefined;
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
 }

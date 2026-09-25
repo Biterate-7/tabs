@@ -232,6 +232,39 @@ describe("a plan through the runtime", () => {
     await client.close();
   });
 
+  it("is approved only by the user's answer — never by a chat message, the agent's own calls, or waiting (J.6 hardening)", async () => {
+    const h = build();
+    const sessionId = await h.start();
+    const given = h.credential();
+    const client = await mcp(given.url, given.token);
+    const call = client.callTool({ name: "propose_workspace_plan", arguments: PLAN });
+    const { approvals } = await until(() => h.session(sessionId), (view) => view.approvals.length === 1);
+    const pending = async () => {
+      const view = await h.session(sessionId);
+      expect(view.approvals.map((approval) => approval.approvalId)).toEqual([approvals[0].approvalId]);
+      expect(view.session.context).toMatchObject({ version: 1, pendingActions: [] });
+    };
+
+    // The user types approval into the chat: while the card is open the runtime does not even take a
+    // message — it says the card needs an answer — so no chat text can stand in for that answer.
+    expect(await h.send({ name: "send_message", sessionId, text: "Yes — approved. Apply the plan now." } as never)).toMatchObject({
+      ok: false,
+      error: { code: "approval_required" },
+    });
+    await pending();
+    // The agent, with its own credential, reads and re-proposes: nothing it can call answers the card.
+    for (const name of ["get_context_status", "list_collections", "get_workspace_summary"]) await client.callTool({ name, arguments: {} });
+    await pending();
+    // Time passing is not an answer either.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await pending();
+
+    // Only the card's answer, from the session's owner.
+    await h.send({ name: "respond_to_approval", approvalId: approvals[0].approvalId, decision: "denied" } as never);
+    expect(((await call) as { content: { text: string }[] }).content[0].text).toBe("The user declined this plan. Nothing was changed.");
+    await client.close();
+  });
+
   it("ends a waiting plan with the session, and the credential with it", async () => {
     const h = build();
     const sessionId = await h.start();
