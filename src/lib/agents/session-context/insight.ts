@@ -2,6 +2,7 @@ import { redactUrl, sanitizeText } from "@/lib/agents/context/sanitize";
 import { findDuplicateGroups } from "@/lib/tabs/duplicates";
 import type { DuplicateConfidence } from "@/lib/tabs/duplicates";
 import type { Tab } from "@/lib/tabs/types";
+import { termIndex } from "./terms";
 import type { SessionContextSnapshot } from "./snapshot";
 
 /**
@@ -24,6 +25,12 @@ export const INSIGHT_LIMITS = {
   duplicateGroups: 25,
   tabsPerDuplicateGroup: 10,
   searchResults: 25,
+  /** Sites listed by `list_domains` (J.6). */
+  domains: 50,
+  /** Collections named per site. */
+  collectionsPerDomain: 3,
+  /** "Possibly the same page" groups (J.6). */
+  possibleDuplicateGroups: 15,
 } as const;
 
 /** A tab as the organizing tools show it: enough to decide where it goes, nothing more. */
@@ -160,6 +167,98 @@ export function duplicateTabGroups(snapshot: SessionContextSnapshot): { groups: 
     moreTabs: Math.max(0, group.ids.length - INSIGHT_LIMITS.tabsPerDuplicateGroup),
   }));
   return { groups, totalGroups: found.length, truncated: found.length > groups.length };
+}
+
+/**
+ * A looser tier, kept apart on purpose (J.6): the same title on the same site
+ * at different addresses — a page saved once with a session parameter and
+ * once without, say. Often the same page, sometimes not (two different
+ * "Dashboard"s), so it is never counted as a duplicate, never in the summary,
+ * and says "check before treating them as the same page". A title needs two
+ * significant words to count; tabs already in a same-address group are left
+ * out, so nothing is reported twice.
+ */
+export function possibleDuplicateTabGroups(snapshot: SessionContextSnapshot): {
+  groups: { reason: string; tabs: TabRow[]; moreTabs: number }[];
+  totalGroups: number;
+  truncated: boolean;
+} {
+  const index = termIndex(snapshot);
+  const inCollection = collectionIndex(snapshot);
+  const certain = new Set(
+    findDuplicateGroups(snapshot.workspace.tabs.map((tab) => ({ id: tab.id, normalizedUrl: tab.normalizedUrl, domain: tab.domain }))).flatMap(
+      (group) => group.ids
+    )
+  );
+  const buckets = new Map<string, Tab[]>();
+  for (const entry of index.entries) {
+    if (certain.has(entry.tab.id) || entry.termSource !== "title" || entry.terms.length < 2) continue;
+    const title = (sanitizeText(entry.tab.title) ?? "").toLowerCase();
+    const key = `${entry.site}\n${title}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(entry.tab);
+    else buckets.set(key, [entry.tab]);
+  }
+  const found = [...buckets.values()].filter((tabs) => tabs.length >= 2 && new Set(tabs.map((tab) => tab.normalizedUrl)).size >= 2);
+  const groups = found.slice(0, INSIGHT_LIMITS.possibleDuplicateGroups).map((tabs) => ({
+    reason: `${tabs.length} tabs with the same title on the same site, at different addresses. Possibly the same page — check before treating them as duplicates.`,
+    tabs: tabs.slice(0, INSIGHT_LIMITS.tabsPerDuplicateGroup).map((tab) => tabRow(tab, inCollection)),
+    moreTabs: Math.max(0, tabs.length - INSIGHT_LIMITS.tabsPerDuplicateGroup),
+  }));
+  return { groups, totalGroups: found.length, truncated: found.length > groups.length };
+}
+
+/* ------------------------------------------------------------------ *
+ * Sites (J.6)
+ * ------------------------------------------------------------------ */
+
+export type DomainRow = {
+  /** The site as a person names it: "YouTube", "Wikipedia". */
+  site: string;
+  /** Its host, as the tabs' redacted addresses show it. */
+  domain: string;
+  tabs: number;
+  /** Tabs of this site in no collection. */
+  unorganized: number;
+  /** Where its organized tabs are, most first. */
+  collections: { collectionId: string; name: string; tabs: number }[];
+};
+
+/** Every site in the workspace (or among its unorganized tabs), biggest first, with where its tabs are filed. */
+export function domainBreakdown(
+  snapshot: SessionContextSnapshot,
+  options: { uncategorizedOnly?: boolean } = {}
+): { domains: DomainRow[]; distinct: number; more: number; tabsConsidered: number } {
+  const index = termIndex(snapshot);
+  const inCollection = collectionIndex(snapshot);
+  const rows = new Map<string, DomainRow & { held: Map<string, { name: string; tabs: number }> }>();
+  let considered = 0;
+  for (const entry of index.entries) {
+    const holder = inCollection.get(entry.tab.id);
+    if (options.uncategorizedOnly === true && holder) continue;
+    considered += 1;
+    const key = entry.site || "unknown";
+    const row = rows.get(key) ?? { site: entry.siteName, domain: key, tabs: 0, unorganized: 0, collections: [], held: new Map() };
+    row.tabs += 1;
+    if (!holder) row.unorganized += 1;
+    else row.held.set(holder.collectionId, { name: holder.name, tabs: (row.held.get(holder.collectionId)?.tabs ?? 0) + 1 });
+    rows.set(key, row);
+  }
+  const all = [...rows.values()]
+    .sort((a, b) => b.tabs - a.tabs || a.domain.localeCompare(b.domain))
+    .map(({ held, ...row }) => ({
+      ...row,
+      collections: [...held.entries()]
+        .sort((a, b) => b[1].tabs - a[1].tabs || a[1].name.localeCompare(b[1].name))
+        .slice(0, INSIGHT_LIMITS.collectionsPerDomain)
+        .map(([collectionId, value]) => ({ collectionId, name: value.name, tabs: value.tabs })),
+    }));
+  return {
+    domains: all.slice(0, INSIGHT_LIMITS.domains),
+    distinct: all.length,
+    more: Math.max(0, all.length - INSIGHT_LIMITS.domains),
+    tabsConsidered: considered,
+  };
 }
 
 /* ------------------------------------------------------------------ *

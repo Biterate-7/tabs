@@ -2,7 +2,13 @@
 
 import { memo, useEffect, useMemo, useRef } from "react"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import { EVENT_PRESENTATION, planOutcomeLabel, toolDisplayName } from "@/lib/agents/command-centre/presentation"
+import {
+  CONTEXT_TOOL_STAGE_LABEL,
+  EVENT_PRESENTATION,
+  planOutcomeLabel,
+  toolDisplayName,
+  toolStage,
+} from "@/lib/agents/command-centre/presentation"
 import { buildTranscript } from "@/lib/agents/platform/chat"
 import { cn } from "@/lib/utils"
 import type { RuntimePlanOutcomeView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
@@ -93,13 +99,38 @@ const QuietRow = memo(function QuietRow({
           {event.file.relativePath}
         </span>
       ) : event.tool ? (
-        <span className="shrink-0 text-label text-tertiary" title={event.tool.name}>
-          {toolDisplayName(event.tool.name)}
+        <span className="flex shrink-0 items-baseline gap-1.5">
+          <ToolStage name={event.tool.name} />
+          <span className="text-label text-tertiary" title={event.tool.name}>
+            {toolDisplayName(event.tool.name)}
+          </span>
         </span>
       ) : null}
     </li>
   )
 })
+
+/**
+ * Where the agent is in the loop, for a TabDump context call (J.6): Reading,
+ * Analyzing, Checking a plan, or Proposing — the one stage an approval card
+ * follows. Other tools get nothing: a stage is only claimed for calls TabDump
+ * itself serves.
+ */
+function ToolStage({ name }: { name: string }) {
+  const stage = toolStage(name)
+  if (!stage) return null
+  return (
+    <span
+      data-stage={stage}
+      className={cn(
+        "rounded-sm border px-1 text-meta",
+        stage === "proposing" ? "border-strong text-foreground" : "border-subtle text-muted-foreground"
+      )}
+    >
+      {CONTEXT_TOOL_STAGE_LABEL[stage]}
+    </span>
+  )
+}
 
 /** What the user said. Boxed, because it is an instruction rather than prose. */
 const UserMessage = memo(function UserMessage({ text }: { text: string }) {

@@ -21,10 +21,18 @@ const read = (relative: string) => readFileSync(path.join(SRC, relative), "utf8"
 /** Source without comments, so a guard reads what runs, not what is said about it. */
 const code = (relative: string) => read(relative).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-const PURE = ["lib/agents/session-context/plan.ts", "lib/agents/session-context/insight.ts", "lib/collections/batch.ts"];
+const PURE = [
+  "lib/agents/session-context/plan.ts",
+  "lib/agents/session-context/insight.ts",
+  "lib/collections/batch.ts",
+  // J.6 reasoning: pure functions of the snapshot.
+  "lib/agents/session-context/terms.ts",
+  "lib/agents/session-context/topics.ts",
+  "lib/agents/session-context/relevance.ts",
+];
 
 describe("the operation model is data, not code", () => {
-  it("keeps the plan, insight and batch modules pure: no filesystem, process, network, storage or evaluation", () => {
+  it("keeps the plan, insight, batch and reasoning modules pure: no filesystem, process, network, storage or evaluation", () => {
     for (const file of PURE) {
       const source = code(file);
       expect(source, file).not.toMatch(/from "node:|from "(fs|child_process|path|os|net|http)"|require\(/);
@@ -46,6 +54,31 @@ describe("the operation model is data, not code", () => {
     expect(hook).not.toMatch(/setCollections|localStorage|indexedDB|deleteCollection|removeTab/);
     // The plan names no method: its operations are matched by kind inside the batch, never looked up by name.
     expect(code("lib/collections/batch.ts")).not.toMatch(/\[operation\.kind\]|\[kind\]\(/);
+  });
+});
+
+describe("reasoning cannot write (Phase J.6)", () => {
+  it("keeps the reasoning modules away from every write path", () => {
+    for (const file of ["lib/agents/session-context/terms.ts", "lib/agents/session-context/topics.ts", "lib/agents/session-context/relevance.ts"]) {
+      const source = code(file);
+      expect(source, file).not.toMatch(/requestPlan|requestChange|pendingApplications|\.complete\(|approve|setApprover|registry|applyBatch|applyCollectionBatch/);
+      expect(source, file).not.toMatch(/from "\.\/(registry|http)"|from "@\/lib\/collections\/(batch|relations)"|use-collection-store/);
+    }
+  });
+
+  it("registers the reasoning tools in a block of the session server that reaches no write path", () => {
+    // The working tree may be CRLF (core.autocrlf); the guard reads the code, not its line endings.
+    const server = code("lib/mcp/server.ts").replace(/\r\n/g, "\n");
+    const start = server.indexOf('if (has("analyze_topics"))');
+    const end = server.indexOf('if (has("list_collections"))');
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const block = server.slice(start, end);
+    for (const tool of ["analyze_topics", "get_topic_group", "find_related_tabs", "find_relevant_collections", "list_domains"]) {
+      expect(block).toContain(`registerTool(\n      "${tool}"`);
+    }
+    expect(block).not.toMatch(/requestPlan|requestChange|proposePlan|propose\(|WRITE_TOOL/);
+    expect(block.match(/annotations: READ_ONLY/g)).toHaveLength(5);
   });
 });
 
@@ -91,10 +124,12 @@ describe("what an agent can send", () => {
         "collectionId",
         "confidence",
         "depth",
+        "groupId",
         "includeNotes",
         "kind",
         "knownVersion",
         "limit",
+        "maxGroups",
         "maxResults",
         "maxTabs",
         "name",

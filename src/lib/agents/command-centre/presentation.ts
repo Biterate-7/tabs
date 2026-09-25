@@ -275,6 +275,11 @@ const CONTEXT_TOOL_LABEL: Partial<Record<string, string>> = {
   get_tabs: "Read tabs",
   search_tabs: "Searched tabs",
   find_duplicate_tabs: "Looked for duplicates",
+  analyze_topics: "Grouped tabs by topic",
+  get_topic_group: "Looked closer at a group",
+  find_related_tabs: "Found related tabs",
+  find_relevant_collections: "Checked existing collections",
+  list_domains: "Listed sites",
   list_collections: "Listed collections",
   get_collection: "Read a collection",
   preview_workspace_plan: "Checked a plan",
@@ -292,9 +297,58 @@ const CONTEXT_TOOL_LABEL: Partial<Record<string, string>> = {
  * Display only: nothing is decided from it.
  */
 export function toolDisplayName(name: string): string {
-  const match = /^mcp__tabdump_[a-z2-7]{16}__([a-z_]+)$/.exec(name);
-  const label = match ? CONTEXT_TOOL_LABEL[match[1]] : undefined;
+  const label = CONTEXT_TOOL_LABEL[contextToolOf(name) ?? ""];
   return label ? `TabDump · ${label}` : name;
+}
+
+function contextToolOf(name: string): string | undefined {
+  return /^mcp__tabdump_[a-z2-7]{16}__([a-z_]+)$/.exec(name)?.[1];
+}
+
+/**
+ * Where an agent is in the loop, for a call to the session's context server
+ * (J.6): reading the workspace, analyzing it, checking a plan, or proposing a
+ * change — the one stage an approval follows. Waiting for approval, applied
+ * and verified are the approval card's and its result line's to say.
+ */
+export type ContextToolStage = "reading" | "analyzing" | "checking" | "proposing";
+
+const CONTEXT_TOOL_STAGE: Partial<Record<string, ContextToolStage>> = {
+  get_workspace_summary: "reading",
+  get_context_status: "reading",
+  get_context_changes: "reading",
+  get_current_workspace: "reading",
+  list_workspaces: "reading",
+  get_workspace: "reading",
+  list_tabs: "reading",
+  get_tabs: "reading",
+  search_tabs: "reading",
+  list_collections: "reading",
+  get_collection: "reading",
+  get_tab_graph: "reading",
+  find_duplicate_tabs: "analyzing",
+  analyze_topics: "analyzing",
+  get_topic_group: "analyzing",
+  find_related_tabs: "analyzing",
+  find_relevant_collections: "analyzing",
+  list_domains: "analyzing",
+  preview_workspace_plan: "checking",
+  create_collection: "proposing",
+  rename_collection: "proposing",
+  add_tabs_to_collection: "proposing",
+  propose_workspace_plan: "proposing",
+};
+
+export const CONTEXT_TOOL_STAGE_LABEL: Record<ContextToolStage, string> = {
+  reading: "Reading",
+  analyzing: "Analyzing",
+  checking: "Checking",
+  proposing: "Proposing",
+};
+
+/** The stage of a TabDump context call, or `undefined` for any other tool. Display only. */
+export function toolStage(name: string): ContextToolStage | undefined {
+  return CONTEXT_TOOL_STAGE[contextToolOf(name) ?? ""];
 }
 
 /* ------------------------------------------------------------------ *

@@ -89,6 +89,23 @@ export const MAX_CHANGE_IDS = 100;
 /** Plan outcomes remembered per session, newest last, for the Command Centre. */
 export const MAX_PLAN_OUTCOMES = 10;
 
+/**
+ * How recently the Command Centre must have asked about a session for its
+ * context to count as live (J.6). It polls every 4 s while open and syncs a
+ * change within 0.4 s, so three missed polls means it is closed.
+ */
+export const ATTENDED_WINDOW_MS = 15_000;
+
+/**
+ * Whether anything is keeping a session's snapshot current (J.6).
+ *
+ * `live`: the Command Centre is open, and a change the user makes reaches the
+ * session within a second. `paused`: it has not asked about this session for
+ * a while — it is closed — so edits made since `lastSeenAt` may not be here.
+ * Advisory: it never blocks a read and never moves a version.
+ */
+export type ContextFreshness = { sync: "live" | "paused"; lastSeenAt: number };
+
 export type ApprovalOutcome = "granted" | "denied" | "expired" | "cancelled";
 
 export type ContextApprovalRequest = {
@@ -242,6 +259,10 @@ export type SessionContextRegistry = {
   update(sessionId: string, snapshot: unknown): SessionContextUpdate | undefined;
   /** What changed since a version, as bounded id lists. */
   changesSince(sessionId: string, since: number): ContextChanges | undefined;
+  /** The Command Centre asked about this session: something is keeping its snapshot current (J.6). */
+  attend(sessionId: string): void;
+  /** Whether the session's snapshot is being kept current, and since when (J.6). */
+  freshness(sessionId: string): ContextFreshness | undefined;
   /** Proposes a change. Resolves when the user has answered and, if approved, the Command Centre has applied it. */
   requestChange(sessionId: string, change: WorkspaceChange): Promise<ContextChangeResult>;
   /** Validates a plan and describes it, without asking anyone (J.5). */
@@ -392,6 +413,8 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
   /** Actions whose tool call is still waiting, with how to answer it. */
   const waiting = new Map<string, { resolve: (result: Settlement) => void; timer?: unknown }>();
   const outcomes = new Map<string, PlanOutcome[]>();
+  /** When the Command Centre last asked about each session. A fact about the webview, not the workspace: never versioned. */
+  const attended = new Map<string, number>();
 
   function recordOutcome(sessionId: string, outcome: Omit<PlanOutcome, "at">): void {
     const list = outcomes.get(sessionId) ?? [];
@@ -596,6 +619,8 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
         fingerprint: snapshotFingerprint(snapshot),
       });
       logs.set(input.sessionId, newChangeLog(snapshot));
+      // The Command Centre is what starts a session, so at bind it is open.
+      attended.set(input.sessionId, at);
       credentials.set(hash, input.sessionId);
       credentialOf.set(input.sessionId, hash);
       return { token, serverName };
@@ -641,6 +666,8 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       if (!snapshot) return undefined;
       const fingerprint = snapshotFingerprint(snapshot);
       const at = now();
+      // Only the Command Centre syncs, and only while it is open.
+      attended.set(sessionId, at);
       if (fingerprint === binding.fingerprint) {
         bindings.set(sessionId, { ...binding, syncedAt: at });
         return { version: binding.version, changed: false };
@@ -687,6 +714,16 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
         truncated:
           tabsChanged.truncated || tabsRemoved.truncated || collectionsChanged.truncated || collectionsRemoved.truncated,
       };
+    },
+
+    attend(sessionId) {
+      if (bindings.has(sessionId)) attended.set(sessionId, now());
+    },
+
+    freshness(sessionId) {
+      if (!bindings.has(sessionId)) return undefined;
+      const lastSeenAt = attended.get(sessionId) ?? 0;
+      return { sync: now() - lastSeenAt <= ATTENDED_WINDOW_MS ? "live" : "paused", lastSeenAt };
     },
 
     async requestChange(sessionId, proposed) {
@@ -894,6 +931,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       bindings.delete(sessionId);
       logs.delete(sessionId);
       outcomes.delete(sessionId);
+      attended.delete(sessionId);
       for (const action of [...actions.values()]) {
         if (action.sessionId !== sessionId) continue;
         if (action.status === "awaiting_approval" || action.status === "approved") {

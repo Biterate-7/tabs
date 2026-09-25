@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createFakeAgent } from "@/lib/agents/control/providers/acp/__fixtures__/fake-agent";
 import { createSessionContextServer } from "@/lib/agents/session-context/http";
-import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
+import { ATTENDED_WINDOW_MS, createSessionContextRegistry } from "@/lib/agents/session-context/registry";
 import { createRuntimeHost, sessionContextAccessFor } from "./host";
 import { launchEntryFor } from "@/lib/agents/launch/allowlist";
 import type { ExecutionGateResult } from "./gate";
@@ -52,12 +52,12 @@ afterEach(async () => {
   for (const server of servers.splice(0)) await server.close();
 });
 
-function build(scopes: string[] = ["read_workspace", "read_project", "write_workspace"]) {
+function build(scopes: string[] = ["read_workspace", "read_project", "write_workspace"], clock?: { now: number }) {
   const agent = createFakeAgent({
     "session/new": () => ({ sessionId: "acp-1", modes: { currentModeId: "default", availableModes: [{ id: "default" }] } }),
     "session/prompt": () => new Promise(() => {}),
   });
-  const registry = createSessionContextRegistry({});
+  const registry = createSessionContextRegistry(clock ? { now: () => clock.now } : {});
   const server = createSessionContextServer({ registry });
   servers.push(server);
   const adapter = createAcpControlAdapter({
@@ -519,5 +519,35 @@ describe("an agent whose context calls cannot be proven (J.4)", () => {
     const opened = agent.received.filter((message) => message.method === "session/new").at(-1);
     expect((opened?.params as { mcpServers: unknown[] }).mcpServers).toEqual([]);
     await host.dispose();
+  });
+});
+
+describe("freshness through the host (Phase J.6)", () => {
+  it("counts the Command Centre asking about a session — its own, and only its owner's — as live", async () => {
+    const clock = { now: 5_000_000 };
+    const h = build(undefined, clock);
+    const created = await h.start();
+    const sessionId = created.value!.sessionId;
+    expect(h.registry.freshness(sessionId)).toEqual({ sync: "live", lastSeenAt: 5_000_000 });
+
+    clock.now += ATTENDED_WINDOW_MS + 1;
+    expect(h.registry.freshness(sessionId)?.sync).toBe("paused");
+
+    // Somebody else polling says nothing about whether Alice's Command Centre is open.
+    await h.host.execute({ id: "bob" }, { name: "list_sessions" } as never);
+    expect(h.registry.freshness(sessionId)?.sync).toBe("paused");
+
+    await h.send({ name: "list_sessions" } as never);
+    expect(h.registry.freshness(sessionId)).toEqual({ sync: "live", lastSeenAt: clock.now });
+
+    clock.now += ATTENDED_WINDOW_MS + 1;
+    await h.send({ name: "get_session", sessionId } as never);
+    expect(h.registry.freshness(sessionId)?.sync).toBe("live");
+
+    // Attendance never moves a version.
+    expect(h.registry.binding(sessionId)?.version).toBe(1);
+
+    await h.send({ name: "dispose_session", sessionId } as never);
+    expect(h.registry.freshness(sessionId)).toBeUndefined();
   });
 });

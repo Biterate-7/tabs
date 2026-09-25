@@ -101,6 +101,7 @@ export function createSessionContextServer(options: {
         binding: () => options.registry.binding(sessionId),
         authority: () => options.registry.authority(sessionId),
         changesSince: (since) => options.registry.changesSince(sessionId, since),
+        freshness: () => options.registry.freshness(sessionId),
         requestChange: (change) => options.registry.requestChange(sessionId, change),
         previewPlan: (plan) => options.registry.previewPlan(sessionId, plan),
         requestPlan: (plan) => options.registry.requestPlan(sessionId, plan),

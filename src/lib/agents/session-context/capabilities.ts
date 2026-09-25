@@ -83,6 +83,12 @@ export const SESSION_TOOL_CAPABILITY = {
   get_tabs: "tabs.read",
   search_tabs: "tabs.read",
   find_duplicate_tabs: "tabs.read",
+  // Reasoning (J.6): read-only analysis of the bound snapshot. Suggestions are data; nothing here asks or applies.
+  analyze_topics: "tabs.read",
+  get_topic_group: "tabs.read",
+  find_related_tabs: "tabs.read",
+  list_domains: "tabs.read",
+  find_relevant_collections: "collections.read",
   list_collections: "collections.read",
   get_collection: "collections.read",
   // A dry run: validates a plan and describes it, changes nothing, asks no one (J.5).

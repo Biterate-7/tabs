@@ -1463,6 +1463,36 @@ describe("session workspace context", () => {
     expect(document.body.textContent).not.toContain("mcp__tabdump_")
   })
 
+  it("shows where the agent is — reading, analyzing, checking, proposing — for TabDump's own tools only (J.6)", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession({ context: contextView({}) })] })
+    const server = "mcp__tabdump_abcdefghijklmnop__"
+    runtime.pushEvents([
+      scriptedEvent({ id: "s1", kind: "tool_finished", summary: "Done", tool: { name: `${server}get_workspace_summary` } }),
+      scriptedEvent({ id: "s2", kind: "tool_finished", summary: "Done", tool: { name: `${server}analyze_topics` } }),
+      scriptedEvent({ id: "s3", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_related_tabs` } }),
+      scriptedEvent({ id: "s4", kind: "tool_finished", summary: "Done", tool: { name: `${server}preview_workspace_plan` } }),
+      scriptedEvent({ id: "s5", kind: "tool_started", summary: "Asking", tool: { name: `${server}propose_workspace_plan` } }),
+      // Not TabDump's: another tool, and a lookalike server name. No stage is claimed for either.
+      scriptedEvent({ id: "s6", kind: "tool_finished", summary: "Done", tool: { name: "Read" } }),
+      scriptedEvent({ id: "s7", kind: "tool_finished", summary: "Done", tool: { name: "mcp__tabdump__analyze_topics" } }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByText("TabDump · Grouped tabs by topic")).toBeTruthy()
+    expect(screen.getByText("TabDump · Found related tabs")).toBeTruthy()
+    const stages = [...document.querySelectorAll("[data-stage]")].map((element) => [element.getAttribute("data-stage"), element.textContent])
+    expect(stages).toEqual([
+      ["reading", "Reading"],
+      ["analyzing", "Analyzing"],
+      ["analyzing", "Analyzing"],
+      ["checking", "Checking"],
+      ["proposing", "Proposing"],
+    ])
+    expect(screen.getByText("mcp__tabdump__analyze_topics")).toBeTruthy()
+  })
+
   it("refuses to apply a change naming tabs that are not in the session's workspace", async () => {
     const runtime = createScriptedRuntime({
       sessions: [

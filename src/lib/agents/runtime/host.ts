@@ -985,10 +985,11 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       case "list_sessions": {
-        const sessions = actorService
-          .sessions()
-          .filter((session) => hosted.get(session.id)?.ownerId === actor.id)
-          .map(viewOf);
+        const actorSessions = actorService.sessions().filter((session) => hosted.get(session.id)?.ownerId === actor.id);
+        // The Command Centre polls this while it is open — and only while it
+        // is open is anything syncing these sessions' workspaces (J.6).
+        for (const session of actorSessions) options.sessionContext?.registry.attend(session.id);
+        const sessions = actorSessions.map(viewOf);
 
         // Sessions this process has not picked up are listed from durable
         // state as `disconnected`, which is exactly what they are *to this
@@ -1026,6 +1027,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       case "get_session": {
         const owned = own(actor, command.sessionId);
         if (!owned.ok) return owned;
+        options.sessionContext?.registry.attend(command.sessionId);
         return {
           ok: true,
           value: {

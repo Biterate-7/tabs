@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INSIGHT_LIMITS, duplicateTabGroups, searchWorkspaceTabs, summarizeWorkspace } from "./insight";
+import { INSIGHT_LIMITS, domainBreakdown, duplicateTabGroups, possibleDuplicateTabGroups, searchWorkspaceTabs, summarizeWorkspace } from "./insight";
 import { readSessionContextSnapshot } from "./snapshot";
 
 /**
@@ -111,5 +111,54 @@ describe("searchWorkspaceTabs", () => {
     const found = searchWorkspaceTabs(data(tabs, []), "match", { limit: 1000 });
     expect(found.total).toBe(200);
     expect(found.matches).toHaveLength(INSIGHT_LIMITS.searchResults);
+  });
+});
+
+describe("possibleDuplicateTabGroups (J.6)", () => {
+  it("reports the same title on the same site at different addresses — separately, and never twice", () => {
+    const tabs = [
+      ...TABS,
+      tab("p1", "https://docs.example.com/d/1?session=a", "Team roadmap planning doc"),
+      tab("p2", "https://docs.example.com/d/1?view=print", "Team roadmap planning doc"),
+      tab("p3", "https://other.example.org/d/1", "Team roadmap planning doc"),
+      tab("p4", "https://docs.example.com/inbox", "Inbox"),
+      tab("p5", "https://docs.example.com/inbox2", "Inbox"),
+    ];
+    const possible = possibleDuplicateTabGroups(data(tabs));
+    // p3 is another site; the "Inbox" pair has one word, too little to call it the same page.
+    expect(possible.groups.map((group) => group.tabs.map((row) => row.tabId))).toEqual([["p1", "p2"]]);
+    expect(possible.groups[0].reason).toMatch(/Possibly the same page — check before treating them as duplicates\.$/);
+    // Same-address copies (t1/t2) are the certain tier's; not repeated here.
+    expect(JSON.stringify(possible)).not.toMatch(/"t1"|"t2"/);
+    expect(JSON.stringify(possible)).not.toContain("session=a");
+  });
+
+  it("is empty for an empty workspace", () => {
+    expect(possibleDuplicateTabGroups(data([], []))).toEqual({ groups: [], totalGroups: 0, truncated: false });
+  });
+});
+
+describe("domainBreakdown (J.6)", () => {
+  it("lists every site with how many of its tabs are unorganized and where the rest are", () => {
+    const breakdown = domainBreakdown(data());
+    expect(breakdown.distinct).toBe(4);
+    expect(breakdown.domains[0]).toEqual({
+      site: "Mit",
+      domain: "mit.edu",
+      tabs: 2,
+      unorganized: 1,
+      collections: [{ collectionId: "c1", name: "Colleges", tabs: 1 }],
+    });
+    // www. and http/https are one site.
+    expect(breakdown.domains.find((row) => row.domain === "stanford.edu")).toMatchObject({ tabs: 2, unorganized: 1 });
+    expect(domainBreakdown(data(), { uncategorizedOnly: true })).toMatchObject({ tabsConsidered: 4 });
+    expect(domainBreakdown(data([], [])).domains).toEqual([]);
+  });
+
+  it("is bounded", () => {
+    const many = Array.from({ length: 120 }, (_, index) => tab(`s${index}`, `https://site${index}.example.com/`, `Page ${index}`));
+    const breakdown = domainBreakdown(data(many, []));
+    expect(breakdown.domains).toHaveLength(INSIGHT_LIMITS.domains);
+    expect(breakdown.more).toBe(120 - INSIGHT_LIMITS.domains);
   });
 });
