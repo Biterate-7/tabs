@@ -204,10 +204,14 @@ function collection(id: string, workspaceId: string, name: string, tabIds: strin
   return { id, workspaceId, name, tabIds, createdAt: DEMO_NOW - 2 * DAY, updatedAt: DEMO_NOW - 2 * DAY }
 }
 
+// Each collection's tabs share one section. The graph draws a collection as
+// the box around its members and keeps each member in its own category's
+// ground, so a collection spanning two sections is drawn as a box stretched
+// across the gap between them — right for a real workspace, wrong for a demo.
 export const DEMO_COLLECTIONS: readonly Collection[] = [
-  collection("c-ai-research", RESEARCH_ID, "AI Research", ["t-attention", "t-react", "t-toolformer", "t-claude-code"]),
+  collection("c-ai-research", RESEARCH_ID, "AI Research", ["t-attention", "t-react", "t-toolformer"]),
   collection("c-product-ideas", RESEARCH_ID, "Product Ideas", ["t-linear", "t-figma", "t-hn"]),
-  collection("c-hubble", RESEARCH_ID, "Hubble", ["t-hubble-docs", "t-hubble-context", "t-mcp", "t-acp"]),
+  collection("c-hubble", RESEARCH_ID, "Hubble", ["t-hubble-docs", "t-hubble-context"]),
   collection("c-school", RESEARCH_ID, "School", ["t-ocw", "t-khan"]),
   collection("c-release", BUILD_ID, "Release checklist", ["b-next", "b-vercel", "b-changelog"]),
   collection("c-essay", SEMESTER_ID, "Essay sources", ["m-scholar", "m-zotero"]),

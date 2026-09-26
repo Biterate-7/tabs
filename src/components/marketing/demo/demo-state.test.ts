@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
+import { buildClusterTree } from "@/lib/graph/clusters"
 import {
   BUILD_ID,
   CLAUDE_SESSION,
@@ -84,6 +85,18 @@ describe("demo state initialization", () => {
       return c.tabIds.filter((id) => !workspace?.tabs.some((t) => t.id === id)).map((id) => `${c.name}: ${id}`)
     })
     expect(misplaced).toEqual([])
+  })
+
+  it("keeps every collection inside one graph category, so its box is not stretched between clusters", () => {
+    const spanning = DEMO_WORKSPACES.flatMap((workspace) => {
+      const collections = DEMO_COLLECTIONS.filter((c) => c.workspaceId === workspace.id)
+      const tree = buildClusterTree(workspace.tabs, workspace.sections ?? [], collections)
+      return collections.flatMap((c) => {
+        const categories = new Set(c.tabIds.map((id) => tree.clusterPathOfTab.get(id)?.[0]))
+        return categories.size > 1 ? [c.name] : []
+      })
+    })
+    expect(spanning).toEqual([])
   })
 })
 
