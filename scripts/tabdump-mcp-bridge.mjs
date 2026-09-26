@@ -19,7 +19,8 @@
  *   TABDUMP_MCP_TOKEN  required. A token from Hubble → Settings → AI Agent
  *                      Connectors → Claude Desktop. Sent only as an
  *                      `Authorization: Bearer` header to TABDUMP_MCP_URL.
- *   TABDUMP_MCP_URL    optional. Defaults to https://tabsdump.vercel.app/api/mcp.
+ *   TABDUMP_MCP_URL    optional. Defaults to /api/mcp on Hubble's production
+ *                      origin (src/lib/production-origin.mjs).
  *                      Must be https, except for localhost during development.
  *
  * The token is read from the environment rather than an argument so it never
@@ -31,7 +32,9 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const DEFAULT_URL = "https://tabsdump.vercel.app/api/mcp";
+import { CANONICAL_PRODUCTION_ORIGIN } from "../src/lib/production-origin.mjs";
+
+const DEFAULT_URL = `${CANONICAL_PRODUCTION_ORIGIN}/api/mcp`;
 const TOKEN_PATTERN = /^tdmcp_[A-Za-z0-9_-]{43}$/;
 
 function log(message) {

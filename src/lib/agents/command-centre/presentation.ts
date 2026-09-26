@@ -565,7 +565,7 @@ export type RuntimeBanner = {
  * `REMOTE · Ready` rather than `Agent runtime unavailable`, when remote
  * execution is genuinely available — which is the specific change the brief
  * asks for, and the reason it matters is that the old sentence was *true* for
- * a hosted deployment and is now false. A user on tabsdump.vercel.app whose
+ * a hosted deployment and is now false. A user on the hosted deployment whose
  * agent is running in a sandbox should not be told agents cannot run.
  */
 export function runtimeBadge(status: RuntimeStatus | null): string {

@@ -127,7 +127,7 @@ absent from the static export.
          "args": ["/absolute/path/to/tabs/scripts/tabdump-mcp-bridge.mjs"],
          "env": {
            "TABDUMP_MCP_TOKEN": "tdmcp_…",
-           "TABDUMP_MCP_URL": "https://tabsdump.vercel.app/api/mcp"
+           "TABDUMP_MCP_URL": "https://tabs-ayaan-viswanathans-projects.vercel.app/api/mcp"
          }
        }
      }

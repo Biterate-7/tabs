@@ -131,11 +131,14 @@ read a page's content, only to manage the tab/window objects themselves.
 
 ## Changing the Hubble origin
 
-**Production:** edit `CANONICAL_PRODUCTION_ORIGIN` in
-`../scripts/build-extension-zip.mjs` — that's the single source of truth for
-the production domain, and it's what gets baked into `manifest.json` and
-`src/config.js` when the production ZIP is built (see that file's header
-comment). Don't hardcode the production domain anywhere else.
+**Production:** usually nothing to edit. A Vercel production build bakes in
+the project's own production domain (`VERCEL_PROJECT_PRODUCTION_URL`), so a
+domain added in the Vercel dashboard reaches the next ZIP on its own. The
+fallback for builds outside Vercel is `CANONICAL_PRODUCTION_ORIGIN` in
+`../src/lib/production-origin.mjs` — the single source of truth, shared with
+the site's canonical URL; see `resolveProductionOrigin()` there for the full
+precedence. Don't hardcode the production domain anywhere else, and never a
+per-deployment `*-<hash>-*.vercel.app` URL.
 
 **Local dev:** edit `TABDUMP_ORIGIN` in `src/config.js`, and update the
 matching `host_permissions` and `content_scripts.matches` entries in

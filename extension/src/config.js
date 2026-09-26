@@ -2,10 +2,11 @@
 // `content_scripts` match pattern in manifest.json (manifest patterns are
 // static, so those need updating by hand too if this changes).
 //
-// The production origin is NOT set here — it's substituted into this file's
-// copy inside the packaged ZIP at build time, from the single canonical
-// CANONICAL_PRODUCTION_ORIGIN in scripts/build-extension-zip.mjs. Change the
-// production domain there, not here.
+// The production origin is NOT set here — scripts/build-extension-zip.mjs
+// substitutes it into this file's copy inside the packaged ZIP at build time,
+// from resolveProductionOrigin() in src/lib/production-origin.mjs (on Vercel,
+// the project's own production domain). Change the production domain there,
+// not here.
 export const TABDUMP_ORIGIN = "http://localhost:3000";
 
 // The one route that mounts Hubble's app shell — and therefore the only
