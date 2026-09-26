@@ -1,7 +1,7 @@
 /**
- * Per-account namespacing for TabDump's local storage.
+ * Per-account namespacing for Hubble's local storage.
  *
- * TabDump is local-first: workspaces, tabs, collections, dependencies and
+ * Hubble is local-first: workspaces, tabs, collections, dependencies and
  * graph layout live in the browser, not on a server (see
  * src/lib/workspace/persistence.ts and its neighbours). Adding accounts
  * therefore doesn't move that data anywhere — it partitions it, so two
@@ -54,7 +54,7 @@ export const SCOPED_STORAGE_KEYS = [
   // state, but personal layout state — it describes their workspace, so it
   // partitions with the rest rather than staying global.
   "tabdump:agent-layout:v1",
-  // Which AI connectors the user has asked TabDump to observe (see
+  // Which AI connectors the user has asked Hubble to observe (see
   // src/lib/agents/connectors/persistence.ts). Scoped because "this person
   // watches Claude Code" is a fact about them, not about the device — and
   // because one account must never inherit another's observation settings.
@@ -67,6 +67,11 @@ export const SCOPED_STORAGE_KEYS = [
   // into the same browser must never inherit that authorization.
   "tabdump:agent-sessions:v1",
   "tabdump:agent-projects:v1",
+  // The agents a user has connected, and what they approved each for (see
+  // src/lib/agents/platform/roster.ts). Scoped because which agents one
+  // person connected — and what they let each do — is theirs. It holds
+  // identities and consent only; no credential of any kind.
+  "tabdump:agent-roster:v1",
 ] as const;
 
 /**
@@ -129,7 +134,7 @@ function readRaw(key: string): string | null {
   }
 }
 
-/** True when the signed-out namespace holds any TabDump content at all — the question "is there anything here to bring into the account?". */
+/** True when the signed-out namespace holds any Hubble content at all — the question "is there anything here to bring into the account?". */
 export function hasAnonymousData(): boolean {
   return SCOPED_STORAGE_KEYS.some((key) => readRaw(key) !== null);
 }

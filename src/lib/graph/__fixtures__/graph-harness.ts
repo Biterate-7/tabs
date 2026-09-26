@@ -43,7 +43,7 @@ export function makeRandom(seed: number) {
 const CATEGORY_NAMES: [string, string[]][] = [
   ["Claude", ["Prompts", "Agents", "Docs"]],
   ["9Mod", ["Builds", "Textures"]],
-  ["Projects", ["TabDump", "Portfolio", "Scratch"]],
+  ["Projects", ["Hubble", "Portfolio", "Scratch"]],
   ["YouTube", ["Music", "Tutorials"]],
   ["AI Tools", ["LLMs", "Research"]],
   ["Dev", ["Frontend", "Backend"]],

@@ -8,12 +8,12 @@
 // production domain there, not here.
 export const TABDUMP_ORIGIN = "http://localhost:3000";
 
-// The one route that mounts TabDump's app shell — and therefore the only
+// The one route that mounts Hubble's app shell — and therefore the only
 // route whose page can actually ingest a dump. The legal pages (/privacy,
 // /terms, /cookies) are served from the same origin, so they match
 // `content_scripts`/`host_permissions` and chrome.tabs.query's url filter
 // just as well, but they never mount AppShell; a dump handed to one of them
-// would land nowhere. findOrOpenTabDumpTab uses this to prefer (and, failing
+// would land nowhere. findOrOpenHubbleTab uses this to prefer (and, failing
 // that, to open) a tab that can genuinely receive the payload.
 //
 // This is a preference, never a trust boundary: the real proof that a tab can
@@ -50,7 +50,7 @@ export const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
 // listener attaches between 1ms and 105ms AFTER the load event — i.e. always
 // after the moment chrome.tabs.onUpdated reports `status: "complete"`, which
 // is exactly when background.js used to fire the payload. A machine that
-// already had a warm, hydrated TabDump tab open reused that tab and landed
+// already had a warm, hydrated Hubble tab open reused that tab and landed
 // fine; on a fresh machine/profile the tab is always created from scratch,
 // the payload lost that race, and the dump reported success with nothing
 // imported. The ack is what turns "delivered" into "ingested".
@@ -70,10 +70,10 @@ export const MSG_TABDUMP_PAGE_READY = "TABDUMP_PAGE_READY";
 // returns focus ids instead of using them) and popup.js's finishWithSuccess.
 export const MSG_FOCUS_TABDUMP = "TABDUMP_FOCUS";
 
-// Round-trip query the popup uses to ask the (already-open) TabDump page
+// Round-trip query the popup uses to ask the (already-open) Hubble page
 // which candidate tabs are already in its currently selected workspace, so
 // it can show "31 new · 16 already imported" instead of a raw count. Only
-// answerable when a TabDump tab is already open — see background.js's
+// answerable when a Hubble tab is already open — see background.js's
 // checkImported for the fallback when one isn't.
 export const MSG_CHECK_IMPORTED = "TABDUMP_CHECK_IMPORTED";
 export const MSG_CHECK_IMPORTED_RESULT = "TABDUMP_CHECK_IMPORTED_RESULT";

@@ -945,7 +945,7 @@ export function GraphView({
   if (scopedTabs.length === 0) {
     emptyState = {
       title: "No tabs to visualize yet.",
-      description: "Import some tabs into TabDump to build your graph.",
+      description: "Import some tabs into Hubble to build your graph.",
     }
   } else if (scopedTabs.length === 1) {
     emptyState = {
@@ -971,14 +971,14 @@ export function GraphView({
 
   return (
     <div
-      className="relative h-screen min-w-0 flex-1 bg-background"
+      className="relative h-screen max-h-screen min-w-0 flex-1 bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
         <IconButton aria-label="Back to workspace" tooltip="Back to workspace" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
-        <div className="hidden items-center gap-1.5 rounded-lg border border-subtle bg-popover/90 px-2.5 py-1 text-label text-tertiary shadow-sm backdrop-blur-sm sm:flex">
+        <div className="hidden items-center gap-1.5 rounded-md border border-border bg-popover px-2.5 py-1 text-label text-tertiary shadow-sm sm:flex">
           <Waypoints className="size-3.5" />
           Graph
           <span aria-hidden>·</span>

@@ -6,7 +6,7 @@ import { Slider } from "@/components/ui/slider"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useAppearanceContext } from "@/components/appearance-provider"
 import { isValidColor, normalizeHex } from "@/lib/appearance/contrast"
-import { FieldRow, SectionHeading, SliderRow } from "./section-ui"
+import { FieldRow, SectionHeading, SliderRow, SectionStack } from "./section-ui"
 
 const SIZE_OPTIONS = [
   { value: "cover", label: "Cover" },
@@ -34,10 +34,10 @@ export function BackgroundSection() {
 
   return (
     <div>
-      <SectionHeading title="Background" description="Give TabDump a solid color, a gradient, or an image behind the UI." />
+      <SectionHeading title="Background" description="Give Hubble a solid color, a gradient, or an image behind the UI." />
 
-      <div className="flex flex-col gap-2.5">
-        <FieldRow label="Type" stacked>
+      <SectionStack>
+        <FieldRow label="Type">
           <SegmentedControl
             value={bg.type}
             onValueChange={(v) => setBackground({ type: v })}
@@ -104,20 +104,17 @@ export function BackgroundSection() {
                 placeholder="https://…"
               />
             </FieldRow>
-            <div className="grid gap-2.5 sm:grid-cols-2">
-              <div>
-                <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">SIZE</p>
-                <Select value={bg.size} onValueChange={(v) => setBackground({ size: v as typeof bg.size })} options={[...SIZE_OPTIONS]} />
-              </div>
-              <div>
-                <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">POSITION</p>
-                <Select
-                  value={bg.position}
-                  onValueChange={(v) => setBackground({ position: v as typeof bg.position })}
-                  options={[...POSITION_OPTIONS]}
-                />
-              </div>
-            </div>
+            <FieldRow label="Size">
+              <Select className="w-40" value={bg.size} onValueChange={(v) => setBackground({ size: v as typeof bg.size })} options={[...SIZE_OPTIONS]} />
+            </FieldRow>
+            <FieldRow label="Position">
+              <Select
+                className="w-40"
+                value={bg.position}
+                onValueChange={(v) => setBackground({ position: v as typeof bg.position })}
+                options={[...POSITION_OPTIONS]}
+              />
+            </FieldRow>
             <SliderRow label="Blur" valueLabel={`${bg.blur} px`}>
               <Slider min={0} max={40} step={1} value={bg.blur} onValueChange={(v) => setBackground({ blur: v })} />
             </SliderRow>
@@ -142,7 +139,7 @@ export function BackgroundSection() {
             <Slider min={0} max={100} step={5} value={bg.opacity} onValueChange={(v) => setBackground({ opacity: v })} />
           </SliderRow>
         )}
-      </div>
+      </SectionStack>
     </div>
   )
 }

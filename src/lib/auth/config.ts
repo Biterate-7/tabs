@@ -10,7 +10,7 @@ import type { CookieOptions } from "./cookies";
  * The Google **client ID** is public by design — it ships in the browser
  * bundle because Google Identity Services needs it there. The Google
  * **client secret** is not read anywhere in this file, or anywhere else in
- * the codebase: the flow TabDump uses (verifying an ID token against
+ * the codebase: the flow Hubble uses (verifying an ID token against
  * Google's published keys, see ./google.ts) has no step that requires it.
  */
 

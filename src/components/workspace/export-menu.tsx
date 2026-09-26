@@ -28,7 +28,7 @@ function urlsLabel(n: number) {
 }
 
 function jsonFilename(label: string) {
-  return `tabdump-${label}-${new Date().toISOString().slice(0, 10)}.json`
+  return `hubble-${label}-${new Date().toISOString().slice(0, 10)}.json`
 }
 
 export function ExportMenu({
@@ -63,7 +63,7 @@ export function ExportMenu({
   }
 
   async function handleExportTxt() {
-    const ok = await downloadTextFile("tabdump-export.txt", buildExportText(tabs))
+    const ok = await downloadTextFile("hubble-export.txt", buildExportText(tabs))
     if (ok) toast.success("Workspace exported")
     else toast.error("Couldn't export workspace")
   }

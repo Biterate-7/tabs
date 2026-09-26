@@ -13,7 +13,7 @@ export function GraphControls({
   onFit: () => void
 }) {
   return (
-    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-0.5 rounded-lg border border-subtle bg-popover/95 p-1 shadow-md ring-1 ring-foreground/10 backdrop-blur-sm">
+    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-0.5 rounded-md border border-border bg-popover p-1 border border-border shadow-md">
       <IconButton aria-label="Zoom in" onClick={onZoomIn}>
         <Plus />
       </IconButton>

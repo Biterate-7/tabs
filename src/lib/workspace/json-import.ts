@@ -94,7 +94,7 @@ function sanitizeTabs(
     const rawSectionId = typeof entry.sectionId === "string" ? entry.sectionId : undefined;
     const sectionId = rawSectionId ? sectionIdMap.get(rawSectionId) : undefined;
 
-    // The spread is kept on purpose: an export written by a NEWER TabDump
+    // The spread is kept on purpose: an export written by a NEWER Hubble
     // may carry fields this build has never heard of, and passing them
     // through means a round trip through an older version doesn't silently
     // strip them. The cost is that it also copies wrong-typed values, so the

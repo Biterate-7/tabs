@@ -63,11 +63,11 @@ export function FilteredTabList({
   }
 
   return (
-    <div className="rounded-lg border border-subtle bg-card px-2">
+    <div className="rounded-md border border-border bg-card px-2">
       {tabs.map((tab, index) => (
         <div
           key={tab.id}
-          className={cn(index === highlightedIndex && "rounded-md ring-2 ring-primary/50")}
+          className={cn(index === highlightedIndex && "rounded-md ring-2 ring-ring/60")}
         >
           <TabCard
             tab={tab}

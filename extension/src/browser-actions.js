@@ -67,9 +67,9 @@ async function findExistingOpenTab(url) {
 }
 
 /**
- * `reuseCurrentTab` (set only by TabDump's own "click a saved tab" flow —
+ * `reuseCurrentTab` (set only by Hubble's own "click a saved tab" flow —
  * see src/lib/browser/open-tab.ts — never by an AI-originated open_url call)
- * means "navigate the TabDump tab that sent this command to `url`, instead
+ * means "navigate the Hubble tab that sent this command to `url`, instead
  * of creating a new one" — but only once findExistingOpenTab has ruled out a
  * duplicate, so we never leave two tabs open on the same url. `ctx.senderTabId`
  * comes from background.js's onMessage sender and is undefined when the

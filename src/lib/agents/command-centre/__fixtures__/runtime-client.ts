@@ -1,5 +1,11 @@
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
+import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import type {
+  ProviderConnectionView,
+  ProviderDetection,
+} from "@/lib/agents/runtime/protocol"
 import type {
   RuntimeApprovalView,
   RuntimeCommand,
@@ -42,6 +48,10 @@ export type ScriptedRuntime = {
   /** Makes the named command fail with this code until cleared. */
   failCommand: (name: RuntimeCommandName, code: RuntimeErrorCode) => void
   clearFailure: (name: RuntimeCommandName) => void
+  /** What `detect_providers` reports is installed (Phase J). */
+  setDetections: (detections: readonly ProviderDetection[]) => void
+  /** What `connect_provider` answers for a provider; sign-in flips it to authenticated. */
+  setConnection: (view: ProviderConnectionView) => void
 }
 
 export const FIXTURE_RUNTIME_ID = "runtime-fixture"
@@ -94,6 +104,8 @@ export function createScriptedRuntime(
 
   const commands: RuntimeCommand[] = []
   const failures = new Map<RuntimeCommandName, RuntimeErrorCode>()
+  let detections: readonly ProviderDetection[] = []
+  const connectionViews = new Map<AgentProviderId, ProviderConnectionView>()
 
   let runtimeId: string | undefined
 
@@ -147,10 +159,48 @@ export function createScriptedRuntime(
           sessionId: `session-${sessions.length + 1}`,
           provider: command.provider,
           ...(command.projectId ? { projectId: command.projectId } : {}),
+          ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
           ...(command.title ? { title: command.title } : {}),
+          // Phase J.3: like the host, a session started with its workspace
+          // gets that workspace's context — read-only here; tests that need
+          // more script the session directly.
+          ...(command.contextSnapshot
+            ? {
+                context: {
+                  workspaceId: command.contextSnapshot.workspace.id,
+                  workspaceName: command.contextSnapshot.workspace.name,
+                  capabilities: ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as const,
+                  version: 1,
+                  syncedAt: 1_700_000_000_000,
+                  fingerprint: snapshotFingerprint(command.contextSnapshot),
+                  pendingActions: [],
+                },
+              }
+            : {}),
         })
         sessions = [...sessions, created]
         return { ok: true, value: created }
+      }
+
+      /* Phase J.3 — session workspace context. */
+      case "sync_session_context": {
+        const existing = sessions.find((s) => s.sessionId === command.sessionId)
+        if (!existing) return runtimeFailure<never>("session_not_found")
+        // Like the host: the same workspace only, and the version moves only
+        // when the content does.
+        const context = existing.context
+        if (!context || command.snapshot.workspace.id !== context.workspaceId) return runtimeFailure<never>("context_invalid")
+        const fingerprint = snapshotFingerprint(command.snapshot)
+        const version = fingerprint === context.fingerprint ? context.version : context.version + 1
+        sessions = sessions.map((s) =>
+          s.sessionId === command.sessionId ? { ...s, context: { ...context, fingerprint, version } } : s
+        )
+        return { ok: true, value: { sessionId: command.sessionId, version } }
+      }
+
+      case "complete_context_action": {
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: { sessionId: command.sessionId } }
       }
 
       case "dispose_session":
@@ -173,6 +223,30 @@ export function createScriptedRuntime(
 
       case "link_observation":
         return runtimeFailure<never>("unsupported")
+
+      /* Phase J — the connector lifecycle. */
+      case "detect_providers":
+        return { ok: true, value: { thisMachine: status.environment === "local", detections } }
+
+      case "connect_provider":
+      case "authenticate_provider":
+      case "disconnect_provider": {
+        const view = connectionViews.get(command.provider)
+        if (!view) return runtimeFailure<never>("provider_unavailable")
+        if (command.name === "authenticate_provider") {
+          const signedIn = {
+            ...view,
+            connection: "connected" as const,
+            authentication: "authenticated" as const,
+          }
+          connectionViews.set(command.provider, signedIn)
+          return { ok: true, value: signedIn }
+        }
+        if (command.name === "disconnect_provider") {
+          return { ok: true, value: { ...view, connection: "disconnected" as const } }
+        }
+        return { ok: true, value: view }
+      }
 
       default:
         return runtimeFailure<never>("invalid_request")
@@ -215,6 +289,12 @@ export function createScriptedRuntime(
     },
     failCommand: (name, code) => failures.set(name, code),
     clearFailure: (name) => failures.delete(name),
+    setDetections: (next) => {
+      detections = next
+    },
+    setConnection: (view) => {
+      connectionViews.set(view.provider, view)
+    },
   }
 }
 
@@ -246,6 +326,7 @@ export function scriptedApproval(over: Partial<RuntimeApprovalView> = {}): Runti
   return {
     approvalId: "approval-1",
     sessionId: "session-1",
+    provider: "claude-code",
     action: "Modify file",
     scope: "write_project",
     projectId: "project-1",

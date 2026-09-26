@@ -2,7 +2,7 @@ import Link from "next/link"
 import { ArrowLeft, Mail } from "lucide-react"
 import type { ReactNode } from "react"
 
-const CONTACT_EMAIL = "tabdump.team@gmail.com"
+const CONTACT_EMAIL = "hubbleai.team@gmail.com"
 
 const LEGAL_LINKS = [
   { href: "/privacy", label: "Privacy Policy" },
@@ -31,38 +31,41 @@ export function LegalPage({
 }) {
   return (
     <main className="min-h-screen bg-background">
-      <div className="mx-auto flex w-full max-w-3xl flex-col px-6 py-12 sm:py-16">
+      {/* A reading page in the reference's documentation grammar: a 36px
+          title in the display face, 16px body at a 680px measure, 18px
+          section heads, links in the one chromatic colour. */}
+      <div className="mx-auto flex w-full max-w-[680px] flex-col px-6 py-12 font-display sm:py-20">
         <Link
           href="/"
-          className="inline-flex w-fit items-center gap-1.5 rounded-md text-body-sm text-muted-foreground transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="inline-flex w-fit items-center gap-1.5 rounded-xs text-[14px] text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
-          Back to TabDump
+          Back to Hubble
         </Link>
 
-        <h1 className="mt-8 text-h1 text-foreground sm:text-display">{title}</h1>
-        <p className="mt-2 text-body-sm text-tertiary">Last updated: {lastUpdated}</p>
+        <h1 className="mt-10 text-display text-foreground">{title}</h1>
+        <p className="mt-2 text-[14px] text-muted-foreground">Last updated: {lastUpdated}</p>
 
         <div
           className={[
-            "mt-8 flex flex-col gap-8 text-body text-muted-foreground",
-            "[&_h2]:text-h2 [&_h2]:text-foreground",
+            "mt-10 flex flex-col gap-8 text-[16px] leading-6 tracking-[0.005em] text-muted-foreground",
+            "[&_h2]:text-[18px] [&_h2]:leading-7 [&_h2]:font-medium [&_h2]:tracking-[-0.005em] [&_h2]:text-foreground",
             "[&_h2+p]:mt-3 [&_h2+ul]:mt-3",
             "[&_p+p]:mt-3 [&_p+ul]:mt-2 [&_ul+p]:mt-3",
             "[&_ul]:list-disc [&_ul]:space-y-1.5 [&_ul]:pl-5",
             "[&_li]:leading-relaxed [&_p]:leading-relaxed",
-            "[&_a]:text-accent-text [&_a]:underline [&_a]:underline-offset-4 [&_a]:hover:no-underline",
+            "[&_a]:text-link [&_a]:underline [&_a]:underline-offset-4 [&_a]:hover:no-underline",
           ].join(" ")}
         >
           {children}
         </div>
 
-        <nav aria-label="Legal pages" className="mt-16 flex flex-wrap gap-x-6 gap-y-2 border-t border-subtle pt-6 text-body-sm">
+        <nav aria-label="Legal pages" className="mt-16 flex flex-wrap gap-x-6 gap-y-2 border-t border-border pt-6 text-[14px]">
           {LEGAL_LINKS.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="rounded-xs text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
               {link.label}
             </Link>
@@ -82,7 +85,7 @@ export function LegalPage({
  */
 export function ConfigNote({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-warning/30 bg-warning-subtle px-4 py-3 text-body-sm text-foreground">
+    <div className="rounded-md border border-border bg-card px-4 py-3 text-[14px] text-foreground">
       <p className="font-medium">Needs configuration</p>
       <div className="mt-1 [&_p]:mt-1.5 [&_p]:leading-relaxed">{children}</div>
     </div>
@@ -90,7 +93,7 @@ export function ConfigNote({ children }: { children: ReactNode }) {
 }
 
 /**
- * Single source of truth for TabDump's published contact address, so every
+ * Single source of truth for Hubble's published contact address, so every
  * legal page links the same mailto: target instead of restating the string.
  */
 export function ContactEmail() {

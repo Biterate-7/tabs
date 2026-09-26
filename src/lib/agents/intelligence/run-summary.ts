@@ -152,7 +152,7 @@ export function selectPrimaryWorkItem(
  * - the newest `createdAt` among its artifact links.
  *
  * It is never `Date.now()`. Reading the wall clock here would answer "when
- * did TabDump last look at this?" while appearing to answer "when did this
+ * did Hubble last look at this?" while appearing to answer "when did this
  * last happen?" - and the two diverge exactly when it matters, on a run that
  * has gone quiet.
  *

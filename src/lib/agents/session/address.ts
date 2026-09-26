@@ -3,7 +3,7 @@
  *
  * ## Why this is not a router
  *
- * TabDump has no router. `AppShell` switches views with a `useState` union,
+ * Hubble has no router. `AppShell` switches views with a `useState` union,
  * and the brief for this phase is explicit that a routing abstraction must
  * not be introduced to serve one surface. So this is the minimum that the
  * navigation requirement actually needs: a serialisable value identifying a

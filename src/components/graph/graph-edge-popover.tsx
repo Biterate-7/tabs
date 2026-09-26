@@ -58,7 +58,7 @@ export function GraphEdgePopover({
       ref={panelRef}
       role="dialog"
       aria-label="Why are these connected?"
-      className="fixed z-50 w-72 rounded-lg bg-popover p-3 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+      className="fixed z-50 w-72 rounded-lg bg-popover p-3 text-popover-foreground border border-border shadow-md"
       style={style}
     >
       {state.kind === "dependency" ? (

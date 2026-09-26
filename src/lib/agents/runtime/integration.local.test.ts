@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
+import { machineCredentials } from "@/lib/agents/credentials/__fixtures__/source";
 import { decideServerRuntime } from "@/lib/agents/control/runtime";
 import { assertLocalExecutionAllowed } from "./gate";
 import { createRuntimeHost } from "./host";
@@ -38,7 +39,7 @@ import type { AuthorizedProjectInput, SequencedControlEvent } from "./protocol";
  * ```
  *
  * The second is the product's own execution gate rather than a switch
- * invented here, so this suite cannot run anywhere TabDump itself would
+ * invented here, so this suite cannot run anywhere Hubble itself would
  * refuse to execute.
  *
  * ## What "verified" means in each test below
@@ -46,7 +47,7 @@ import type { AuthorizedProjectInput, SequencedControlEvent } from "./protocol";
  * Kept deliberately separate, because they are different claims:
  *
  *   - **runtime verified** — a Claude process started and the SDK accepted
- *     what TabDump sent it. Provable without a model turn.
+ *     what Hubble sent it. Provable without a model turn.
  *   - **authenticated model turn verified** — Claude answered. Needs credit
  *     and credentials, and is the only thing that proves the whole path.
  *   - **cancellation verified** — the interrupt reached the provider.
@@ -85,7 +86,9 @@ describeLocal("the local execution surface, against real Claude Code", () => {
       permissions: { scopes: ["read_project"], projectId: "p-int", grantedAt: Date.now() },
     };
 
-    adapter = createClaudeCodeControlAdapter({ runtime: createSdkClaudeRuntime() });
+    adapter = createClaudeCodeControlAdapter({
+      runtime: createSdkClaudeRuntime({ credentials: machineCredentials }),
+    });
     await adapter.connect();
   });
 

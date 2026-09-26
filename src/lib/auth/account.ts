@@ -3,7 +3,7 @@ import { createRecordId } from "./tokens";
 import type { AuthStore, AuthUser, GoogleIdentity } from "./types";
 
 /**
- * Account lifecycle: turning a verified Google identity into a TabDump
+ * Account lifecycle: turning a verified Google identity into a Hubble
  * user, whether or not one already exists.
  *
  * The lookup key is `googleSub` and only `googleSub`. Using the email

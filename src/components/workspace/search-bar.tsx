@@ -28,7 +28,7 @@ export function SearchBar({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search tabs..."
-        className="h-8 pl-7"
+        className="h-7 pl-7 text-body-sm"
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             onChange("")
@@ -48,7 +48,7 @@ export function SearchBar({
       {value && (
         <IconButton
           aria-label="Clear search"
-          className="absolute top-1/2 right-1 size-6 -translate-y-1/2"
+          className="absolute top-1/2 right-0.5 size-6 -translate-y-1/2"
           onClick={() => onChange("")}
         >
           <X className="size-3.5" />

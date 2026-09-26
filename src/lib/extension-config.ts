@@ -1,5 +1,5 @@
 /**
- * Single source of truth for how onboarding offers the TabDump extension.
+ * Single source of truth for how onboarding offers the Hubble extension.
  * There is deliberately no fake Chrome Web Store URL here — until
  * `NEXT_PUBLIC_EXTENSION_STORE_URL` is set to a real listing, onboarding
  * offers the packaged extension ZIP (see scripts/build-extension-zip.mjs)
@@ -21,4 +21,4 @@ export function getExtensionInstallInfo(): ExtensionInstallInfo {
 }
 
 /** Where the packaged extension ZIP is served from (see the build script). */
-export const EXTENSION_DOWNLOAD_URL = "/tabdump-extension.zip";
+export const EXTENSION_DOWNLOAD_URL = "/hubble-extension.zip";

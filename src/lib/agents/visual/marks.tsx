@@ -6,7 +6,7 @@ import type { AgentMarkProps } from "./types";
  * ## On branding
  *
  * Every mark in this file is an **original geometric device**, drawn for
- * TabDump. None of them reproduces, approximates or parodies a provider's
+ * Hubble. None of them reproduces, approximates or parodies a provider's
  * real logo, wordmark or mascot, and that is a deliberate constraint rather
  * than an artistic choice: a hand-drawn near-copy of someone else's mark is
  * both a trademark problem and a worse design, because it invites the
@@ -87,7 +87,7 @@ export function GenericAgentMark(props: AgentMarkProps): React.ReactElement {
  *
  * The caret is the shell prompt this provider is observed through; the
  * broken ring around it is the observation. The gap in the ring is the point
- * — TabDump watches, it does not close the loop and drive anything.
+ * — Hubble watches, it does not close the loop and drive anything.
  */
 export function ClaudeCodeMark(props: AgentMarkProps): React.ReactElement {
   return (

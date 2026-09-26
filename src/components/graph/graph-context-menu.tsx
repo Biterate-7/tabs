@@ -86,7 +86,7 @@ export function GraphContextMenu({
     <div
       ref={panelRef}
       role="menu"
-      className="fixed z-50 min-w-44 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+      className="fixed z-50 min-w-44 rounded-lg bg-popover p-1 text-popover-foreground border border-border shadow-md"
       style={style}
     >
       <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onOpenTab}>
@@ -129,7 +129,7 @@ export function GraphContextMenu({
             <FolderInput /> Move to workspace
           </button>
           {moveOpen && (
-            <div className="absolute top-0 left-full ml-1 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+            <div className="absolute top-0 left-full ml-1 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground border border-border shadow-md">
               {otherWorkspaces.map((w) => (
                 <button
                   key={w.id}
@@ -173,7 +173,7 @@ export function GraphContextMenu({
           <Layers /> Add to collection
         </button>
         {collectionOpen && (
-          <div className="absolute top-0 left-full ml-1 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+          <div className="absolute top-0 left-full ml-1 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground border border-border shadow-md">
             {collections.map((c) => (
               <button
                 key={c.id}

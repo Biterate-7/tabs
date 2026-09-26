@@ -44,7 +44,7 @@ function ColorRow({
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-subtle p-2">
+    <div className="flex items-center gap-2 rounded-md border border-border p-2">
       <input
         type="color"
         aria-label={`${label} color`}
@@ -154,8 +154,8 @@ export function CustomThemeEditor({ colors, onChange }: { colors: ThemeColors; o
   }
 
   async function handleExport() {
-    const json = serializeCustomTheme("My TabDump theme", colors)
-    await downloadTextFile("tabdump-theme.json", json)
+    const json = serializeCustomTheme("My Hubble theme", colors)
+    await downloadTextFile("hubble-theme.json", json)
   }
 
   function handleImportClick() {
@@ -180,7 +180,7 @@ export function CustomThemeEditor({ colors, onChange }: { colors: ThemeColors; o
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
       <div className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
-          <p className="text-body-sm text-muted-foreground">Every change below applies live across TabDump — nothing here needs to be saved.</p>
+          <p className="text-body-sm text-muted-foreground">Every change below applies live across Hubble — nothing here needs to be saved.</p>
           <div className="flex shrink-0 gap-1.5">
             <Button type="button" variant="outline" size="sm" onClick={handleImportClick}>
               <Upload /> Import

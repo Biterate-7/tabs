@@ -1,3 +1,4 @@
+import { APPROVAL_ACTION_LABELS } from "@/lib/agents/control/approvals";
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import type { AgentControlEventKind } from "@/lib/agents/control/events";
@@ -6,9 +7,11 @@ import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
 import type { AgentVisualState, AgentVisualTone } from "@/lib/agents/visual/types";
 import type {
   RuntimeErrorCode,
+  RuntimePlanOutcomeView,
   RuntimeProviderStatus,
   RuntimeStatus,
 } from "@/lib/agents/runtime/protocol";
+import type { OperationConfidence } from "@/lib/agents/session-context/plan";
 
 /**
  * How the command centre says what the control plane means.
@@ -38,7 +41,7 @@ import type {
  * The session's state in the vocabulary the rest of the product already
  * draws.
  *
- * TabDump has exactly one answer to "what colour is a working agent" —
+ * Hubble has exactly one answer to "what colour is a working agent" —
  * `AgentVisualState`, shared by the graph's agent layer, the activity list and
  * the status pill. A control session mapping into that union rather than
  * inventing tones is what stops a session that the header calls *running* from
@@ -203,6 +206,7 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   session_resumed: { register: "lifecycle", label: "Session resumed", tone: "muted" },
   message_sent: { register: "message", label: "", tone: "idle", speaker: "user" },
   message_received: { register: "message", label: "", tone: "idle", speaker: "agent" },
+  message_delta: { register: "message", label: "", tone: "live", speaker: "agent" },
   thinking: { register: "activity", label: "Thinking", tone: "live" },
   tool_started: { register: "activity", label: "Tool", tone: "live" },
   tool_finished: { register: "activity", label: "Tool", tone: "idle" },
@@ -221,8 +225,149 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
 };
 
 /* ------------------------------------------------------------------ *
+ * Workspace plans (Phase J.5)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What became of an approved plan, in one line, for the row where the user
+ * approved it. Counts and a version only; "applied" is said only when the
+ * runtime found every change in the synced workspace.
+ */
+export function planOutcomeLabel(outcome: RuntimePlanOutcomeView): { text: string; tone: AgentVisualTone } {
+  const changes = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
+  switch (outcome.status) {
+    case "applied":
+      return { text: `${changes(outcome.operationCount)} applied · Context updated to v${outcome.contextVersion}`, tone: "good" };
+    case "unverified":
+      return {
+        text: `Applied, but only ${outcome.verifiedCount} of ${changes(outcome.operationCount)} could be confirmed — check the workspace`,
+        tone: "bad",
+      };
+    case "not_applied":
+      return { text: "Not applied — the workspace no longer matched. Nothing was changed.", tone: "bad" };
+    case "stale":
+      return { text: "Not applied — the workspace changed while you were deciding. Nothing was changed.", tone: "muted" };
+    case "denied":
+      return { text: "Declined. Nothing was changed.", tone: "muted" };
+    case "expired":
+      return { text: "Expired. Nothing was changed.", tone: "muted" };
+    case "cancelled":
+      return { text: "The session ended. Nothing was changed.", tone: "muted" };
+  }
+}
+
+/** How sure the agent said it was about one step — its words, shown as such. Never a number. */
+export const PLAN_CONFIDENCE_LABEL: Record<OperationConfidence, string> = {
+  high: "Confident",
+  medium: "Fairly sure",
+  unclear: "Unsure",
+};
+
+/** A Hubble context tool as a person reads it. */
+const CONTEXT_TOOL_LABEL: Partial<Record<string, string>> = {
+  get_workspace_summary: "Summarized the workspace",
+  get_context_status: "Checked the workspace version",
+  get_context_changes: "Checked what changed",
+  get_current_workspace: "Read the workspace",
+  list_workspaces: "Read the workspace",
+  get_workspace: "Read the workspace",
+  list_tabs: "Listed tabs",
+  get_tabs: "Read tabs",
+  search_tabs: "Searched tabs",
+  find_duplicate_tabs: "Looked for duplicates",
+  analyze_topics: "Grouped tabs by topic",
+  get_topic_group: "Looked closer at a group",
+  find_related_tabs: "Found related tabs",
+  find_relevant_collections: "Checked existing collections",
+  list_domains: "Listed sites",
+  list_collections: "Listed collections",
+  get_collection: "Read a collection",
+  preview_workspace_plan: "Checked a plan",
+  get_tab_graph: "Read related tabs",
+  create_collection: "Proposed a collection",
+  rename_collection: "Proposed a rename",
+  add_tabs_to_collection: "Proposed adding tabs",
+  propose_workspace_plan: "Proposed changes",
+};
+
+/**
+ * `mcp__tabdump_<16 base32>__search_tabs` — how Claude Code names a call to
+ * the session's context server — as "Hubble · Searched tabs". Only a name in
+ * the minted server shape is recognised; anything else is shown as it came.
+ * Display only: nothing is decided from it.
+ */
+export function toolDisplayName(name: string): string {
+  const label = CONTEXT_TOOL_LABEL[contextToolOf(name) ?? ""];
+  return label ? `Hubble · ${label}` : name;
+}
+
+function contextToolOf(name: string): string | undefined {
+  return /^mcp__tabdump_[a-z2-7]{16}__([a-z_]+)$/.exec(name)?.[1];
+}
+
+/**
+ * Where an agent is in the loop, for a call to the session's context server
+ * (J.6): **Reading** the workspace, **Analyzing** it (topics, related tabs,
+ * sites), **Checking** (duplicates, which collections already cover
+ * something, a plan's preview) or **Proposing** a change — the one stage an
+ * approval card follows, and the only one whose tools are not read-only (a
+ * test holds the stages to the server's annotations). Proposed is not
+ * approved and not executed: waiting for approval, applied and verified are
+ * the approval card's and its result line's to say, never a tool row's.
+ */
+export type ContextToolStage = "reading" | "analyzing" | "checking" | "proposing";
+
+const CONTEXT_TOOL_STAGE: Partial<Record<string, ContextToolStage>> = {
+  get_workspace_summary: "reading",
+  get_context_status: "reading",
+  get_context_changes: "reading",
+  get_current_workspace: "reading",
+  list_workspaces: "reading",
+  get_workspace: "reading",
+  list_tabs: "reading",
+  get_tabs: "reading",
+  search_tabs: "reading",
+  list_collections: "reading",
+  get_collection: "reading",
+  get_tab_graph: "reading",
+  analyze_topics: "analyzing",
+  get_topic_group: "analyzing",
+  find_related_tabs: "analyzing",
+  list_domains: "analyzing",
+  find_duplicate_tabs: "checking",
+  find_relevant_collections: "checking",
+  preview_workspace_plan: "checking",
+  create_collection: "proposing",
+  rename_collection: "proposing",
+  add_tabs_to_collection: "proposing",
+  propose_workspace_plan: "proposing",
+};
+
+export const CONTEXT_TOOL_STAGE_LABEL: Record<ContextToolStage, string> = {
+  reading: "Reading",
+  analyzing: "Analyzing",
+  checking: "Checking",
+  proposing: "Proposing",
+};
+
+/** The stage of a Hubble context call, or `undefined` for any other tool. Display only. */
+export function toolStage(name: string): ContextToolStage | undefined {
+  return CONTEXT_TOOL_STAGE[contextToolOf(name) ?? ""];
+}
+
+/* ------------------------------------------------------------------ *
  * Permission scopes
  * ------------------------------------------------------------------ */
+
+/**
+ * An approval's action in words — "Create files", "Change your Hubble
+ * workspace" — rather than its identifier. Unknown actions (a newer runtime)
+ * fall back to the identifier rather than to nothing.
+ */
+export function approvalActionLabel(action: string): string {
+  const label = (APPROVAL_ACTION_LABELS as Record<string, string>)[action];
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : action;
+}
 
 /**
  * What a permission scope is called when a person has to decide about it.
@@ -241,12 +386,13 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
  * here.
  */
 export const PERMISSION_SCOPE_LABEL: Record<AgentPermissionScope, string> = {
-  read_workspace: "Read TabDump content",
+  read_workspace: "Read Hubble content",
   read_project: "Read project files",
   write_project: "Change project files",
   run_commands: "Run commands",
   network_access: "Use the network",
   mcp_tools: "Use connected tools",
+  write_workspace: "Change Hubble content",
 };
 
 /**
@@ -255,7 +401,7 @@ export const PERMISSION_SCOPE_LABEL: Record<AgentPermissionScope, string> = {
  * `RuntimeApprovalView.scope` is a `string` on the wire rather than the narrow
  * union, because the host is a separate process that may be a version ahead.
  * An unrecognized scope is therefore possible, and it is returned **verbatim**
- * rather than prettified: this is an authorization prompt, and a scope TabDump
+ * rather than prettified: this is an authorization prompt, and a scope Hubble
  * does not have words for is something the user should see exactly as the
  * runtime named it, not a guess dressed up as a sentence.
  */
@@ -297,12 +443,12 @@ export type RuntimeErrorPresentation = {
 export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPresentation> = {
   runtime_unavailable: {
     title: "Agent runtime unavailable",
-    action: "This build of TabDump cannot run agents. Workspaces, tabs and context still work.",
+    action: "This build of Hubble cannot run agents. Workspaces, tabs and context still work.",
     reconnect: false,
   },
   runtime_disconnected: {
     title: "Runtime disconnected",
-    action: "TabDump lost the local runtime. Reconnect to continue.",
+    action: "Hubble lost the local runtime. Reconnect to continue.",
     reconnect: true,
   },
   ownership_denied: {
@@ -366,13 +512,18 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     reconnect: false,
   },
   invalid_request: {
-    title: "TabDump sent something the runtime refused",
-    action: "This is a bug in TabDump. Reload and try again.",
+    title: "Hubble sent something the runtime refused",
+    action: "This is a bug in Hubble. Reload and try again.",
     reconnect: false,
   },
   unsupported: {
     title: "Not supported by this agent",
     action: "This provider does not implement that yet.",
+    reconnect: false,
+  },
+  approval_unenforceable: {
+    title: "Agent would not ask before acting",
+    action: "Hubble only runs agents that ask for approval. Check the agent's own approval settings, then start a new session.",
     reconnect: false,
   },
 };
@@ -398,38 +549,131 @@ export type RuntimeBanner = {
   detail: string;
   /** Whether the UI should offer a reconnect affordance. */
   reconnectable: boolean;
+  /**
+   * Which plane is executing, when one is.
+   *
+   * `null` means nothing is. Kept separate from `title` so a caller can render
+   * the short `REMOTE · Ready` form the brief asks for without parsing a
+   * sentence back apart.
+   */
+  environment: "local" | "remote" | null;
 };
+
+/**
+ * The short form for the top runtime bar.
+ *
+ * `REMOTE · Ready` rather than `Agent runtime unavailable`, when remote
+ * execution is genuinely available — which is the specific change the brief
+ * asks for, and the reason it matters is that the old sentence was *true* for
+ * a hosted deployment and is now false. A user on tabsdump.vercel.app whose
+ * agent is running in a sandbox should not be told agents cannot run.
+ */
+export function runtimeBadge(status: RuntimeStatus | null): string {
+  const banner = runtimeBanner(status);
+  if (!banner.environment) return banner.title;
+  return `${banner.environment === "remote" ? "Remote" : "Local"} · ${banner.title}`;
+}
 
 export function runtimeBanner(status: RuntimeStatus | null): RuntimeBanner {
   if (!status) {
     return {
       tone: "bad",
-      title: "Runtime disconnected",
-      detail: "TabDump cannot reach a local agent runtime.",
+      title: "Disconnected",
+      detail: "Hubble cannot reach an agent runtime.",
       reconnectable: true,
+      environment: null,
     };
   }
 
   if (status.executable) {
+    // The two executing planes read differently on purpose. "Agents run on
+    // this machine" and "agents run in an isolated environment Hubble
+    // created" are different promises about where a user's files are, and
+    // collapsing them into "Ready" would conceal the one fact that decides
+    // whether the blast radius includes their home directory.
+    const remote = status.environment === "remote";
     return {
       tone: "good",
-      title: "Local runtime ready",
-      detail: "Agents run on this machine.",
+      title: "Ready",
+      detail: remote
+        ? "Agents run in an isolated environment Hubble creates for each project. They cannot reach this computer."
+        : "Agents run on this machine, in the projects you authorize.",
       reconnectable: false,
+      environment: remote ? "remote" : "local",
     };
   }
 
-  // `detail` is the gate's own sentence (RUNTIME_DENIAL_MESSAGES), which is
-  // already fixed text and already safe. Falling back rather than assuming it
-  // is present, because the protocol marks it optional.
+  // `detail` is the gate's own sentence (RUNTIME_DENIAL_MESSAGES or
+  // REMOTE_DENIAL_MESSAGES), which is already fixed text and already safe.
+  // Falling back rather than assuming it is present, because the protocol
+  // marks it optional.
   return {
     tone: "muted",
-    title: "Agent runtime unavailable",
+    title: "Unavailable",
     detail:
       status.detail ??
-      "This build of TabDump cannot run agents. Workspaces, tabs and context still work.",
+      "This build of Hubble cannot run agents. Workspaces, tabs and context still work.",
     reconnectable: false,
+    environment: null,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Remote projects
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a remote project's sandbox is doing, in words.
+ *
+ * Total over the lifecycle union, so a state added to the remote plane is a
+ * type error here rather than a silently unlabelled row. Each sentence says
+ * what the user can do next, because a status with no next step is a status
+ * that reads as an error whatever its tone.
+ */
+export const REMOTE_STATUS_LABEL: Record<string, string> = {
+  creating: "Creating environment…",
+  ready: "Ready",
+  running: "Running",
+  stopping: "Stopping",
+  stopped: "Stopped",
+  expired: "Expired",
+  failed: "Failed",
+};
+
+export const REMOTE_STATUS_DETAIL: Record<string, string> = {
+  creating: "Hubble is setting up an isolated environment for this project.",
+  ready: "The environment is warm and holds this project's files.",
+  running: "An agent is working in this project.",
+  stopping: "The environment is shutting down.",
+  stopped: "The environment was stopped. Starting a session will bring it back with your files.",
+  expired: "The environment timed out. Starting a session will bring it back with your files.",
+  failed: "The environment could not be created. Try creating the project again.",
+};
+
+export const REMOTE_STATUS_TONE: Record<string, AgentVisualTone> = {
+  creating: "idle",
+  ready: "good",
+  running: "live",
+  stopping: "idle",
+  stopped: "muted",
+  expired: "muted",
+  failed: "bad",
+};
+
+export function remoteStatusLabel(status: string): string {
+  return REMOTE_STATUS_LABEL[status] ?? status;
+}
+
+/**
+ * Whether a session can be started against this project right now.
+ *
+ * A stopped or expired environment is *not* excluded: starting a session
+ * resumes it, with the project's files intact, which is the whole point of a
+ * persistent remote project. Only the two states that genuinely cannot accept
+ * one are.
+ */
+export function canStartRemoteSession(status: string): boolean {
+  return status !== "creating" && status !== "failed";
 }
 
 /** What a provider row says about itself. */
@@ -453,6 +697,20 @@ export const PROVIDER_CONNECTION_TONE: Record<
   configuration_required: "idle",
   error: "bad",
 };
+
+/**
+ * What a provider row says, from both of the runtime's facts (Phase J.2).
+ *
+ * "Connected" alone describes the process — Hubble reached the agent. An
+ * agent that was reached and then said it is signed out is not connected in
+ * any sense a person means, so the agent's own answer wins.
+ */
+export function providerRowState(provider: RuntimeProviderStatus): { label: string; tone: AgentVisualTone } {
+  if (provider.connection === "connected" && provider.authentication === "required") {
+    return { label: "Sign-in required", tone: "idle" };
+  }
+  return { label: PROVIDER_CONNECTION_LABEL[provider.connection], tone: PROVIDER_CONNECTION_TONE[provider.connection] };
+}
 
 /**
  * Whether this provider can start a session here.
@@ -499,8 +757,8 @@ export function providerUnavailableReason(provider: RuntimeProviderStatus): stri
  * The observation and control planes are separate by design, and the brief
  * requires that the UI not merge them into a fake execution model. The honest
  * statement is a function of which halves of the correlation record actually
- * exist: a `controlRunId` means TabDump started it, an `observationRunId`
- * means TabDump saw it, and both mean both. Nothing here infers control from
+ * exist: a `controlRunId` means Hubble started it, an `observationRunId`
+ * means Hubble saw it, and both mean both. Nothing here infers control from
  * the mere existence of a provider.
  */
 export type SessionOrigin = "controlled" | "observed" | "controlled-and-observed" | "unknown";

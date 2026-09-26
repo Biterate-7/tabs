@@ -32,7 +32,7 @@ const NOOP_SOUND: IntroSound = {
 }
 
 /**
- * Owns TabDumpIntro's IntroSoundEngine for the component's lifetime. When
+ * Owns HubbleIntro's IntroSoundEngine for the component's lifetime. When
  * `enabled` is false (reduced motion, or the intro isn't playing at all)
  * every returned method is a no-op — callers can trigger sound on every
  * scene event unconditionally without branching on whether audio is on.

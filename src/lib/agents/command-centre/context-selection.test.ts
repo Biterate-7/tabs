@@ -209,6 +209,13 @@ describe("summarizing what was actually resolved", () => {
     expect(summarizeAttachment(snapshotOf(select({ workspaceIds: ["w1"] })))).toContain("tabs")
   })
 
+  it("counts one of a thing in the singular", () => {
+    expect(summarizeAttachment(snapshotOf(select({ workspaceIds: ["w1"] })))).toMatch(/^1 workspace · /)
+    const before = snapshotOf(select({ workspaceIds: ["w1"] }))
+    const after = snapshotOf(select({ workspaceIds: ["w1", "w2"] }))
+    expect(describeDelta(diffSnapshots(before, after))).toMatch(/^\+1 workspace · /)
+  })
+
   it("diffs two snapshots by source type", () => {
     const before = snapshotOf(select({ workspaceIds: ["w1"] }))
     const after = snapshotOf(select({ workspaceIds: ["w1", "w2"] }))

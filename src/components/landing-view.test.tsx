@@ -13,7 +13,7 @@ vi.mock("@/lib/onboarding", () => ({
 
 vi.mock("@/lib/extension-config", () => ({
   getExtensionInstallInfo: vi.fn(),
-  EXTENSION_DOWNLOAD_URL: "/tabdump-extension.zip",
+  EXTENSION_DOWNLOAD_URL: "/hubble-extension.zip",
 }))
 
 vi.mock("@/lib/intro", () => ({
@@ -48,7 +48,7 @@ describe("LandingView onboarding", () => {
   })
 
   /**
-   * The headline says what TabDump produces; this says what you do with it.
+   * The headline says what Hubble produces; this says what you do with it.
    * A first-time visitor who reads only the hero should still come away
    * knowing the product is a loop rather than a one-shot import, so the
    * steps are asserted in order rather than merely present.
@@ -68,10 +68,10 @@ describe("LandingView onboarding", () => {
 
     await user.click(screen.getByRole("button", { name: "Download Extension" }))
 
-    expect(screen.getByText("Install TabDump for Chrome")).toBeTruthy()
-    expect(screen.getByText("Download the TabDump extension.")).toBeTruthy()
+    expect(screen.getByText("Install Hubble for Chrome")).toBeTruthy()
+    expect(screen.getByText("Download the Hubble extension.")).toBeTruthy()
     const downloadLink = screen.getByRole("link", { name: "Download Extension" })
-    expect(downloadLink.getAttribute("href")).toBe("/tabdump-extension.zip")
+    expect(downloadLink.getAttribute("href")).toBe("/hubble-extension.zip")
     expect(downloadLink.hasAttribute("download")).toBe(true)
     // Manual pasting remains reachable even from inside the guide.
     expect(screen.getByLabelText("Paste your tabs")).toBeTruthy()
@@ -86,7 +86,7 @@ describe("LandingView onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Back" }))
 
     expect(screen.getByText("Your tabs, turned into a workspace you can see.")).toBeTruthy()
-    expect(screen.queryByText("Install TabDump for Chrome")).toBeNull()
+    expect(screen.queryByText("Install Hubble for Chrome")).toBeNull()
   })
 
   it("dismisses onboarding from inside the guide via 'Continue without extension'", async () => {
@@ -99,7 +99,7 @@ describe("LandingView onboarding", () => {
 
     expect(dismissOnboarding).toHaveBeenCalledOnce()
     expect(screen.getByText(/Your tabs are a mess/)).toBeTruthy()
-    expect(screen.queryByText("Install TabDump for Chrome")).toBeNull()
+    expect(screen.queryByText("Install Hubble for Chrome")).toBeNull()
   })
 
   it("links directly to the Chrome Web Store when a store URL is configured, skipping the guide", async () => {
@@ -145,9 +145,9 @@ describe("LandingView onboarding", () => {
     vi.mocked(getOnboardingState).mockReturnValue({ dismissed: false, extensionConnected: true })
     render(<LandingView onDump={vi.fn()} />)
 
-    expect(screen.getByText("TabDump is ready.")).toBeTruthy()
+    expect(screen.getByText("Hubble is ready.")).toBeTruthy()
     expect(
-      screen.getByText("Click the TabDump extension whenever you want to dump your open tabs.")
+      screen.getByText("Click the Hubble extension whenever you want to dump your open tabs.")
     ).toBeTruthy()
     expect(screen.queryByText("Your tabs, turned into a workspace you can see.")).toBeNull()
     // Manual pasting remains available in every state.

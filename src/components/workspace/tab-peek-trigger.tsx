@@ -19,7 +19,7 @@ const CLOSE_DELAY_MS = 200
 
 /**
  * Wraps a tab's title/domain text (or any other tab-identity element) with
- * TabDump's shared "Tab Peek" hover/focus preview — the one implementation
+ * Hubble's shared "Tab Peek" hover/focus preview — the one implementation
  * every tab-rendering surface reuses, per the design brief. Built on Base
  * UI's PreviewCard (same portal/positioner/popup shape as Tooltip and
  * DropdownMenu elsewhere in this codebase), which already provides the hard
@@ -95,7 +95,7 @@ export function TabPeekTrigger({
         >
           <PreviewCard.Popup
             className={cn(
-              "rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10",
+              "rounded-lg bg-popover text-popover-foreground border border-border shadow-lg",
               "origin-(--transform-origin) transition-[transform,opacity] duration-(--duration-base) ease-(--ease-standard)",
               "data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
             )}

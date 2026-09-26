@@ -345,7 +345,7 @@ describe("tabs and files", () => {
     const { session } = multiTaskRun();
     renderSession(session);
 
-    expect(screen.getByText("This tab is no longer saved in TabDump")).toBeTruthy();
+    expect(screen.getByText("This tab is no longer saved in Hubble")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Open tab tab-gone/ })).toBeNull();
   });
 
@@ -408,7 +408,7 @@ describe("empty states", () => {
 
     renderSession(result.session);
     expect(screen.getByText("No recorded work items.")).toBeTruthy();
-    expect(screen.getByText("No saved TabDump tabs are linked to this session.")).toBeTruthy();
+    expect(screen.getByText("No saved Hubble tabs are linked to this session.")).toBeTruthy();
     expect(screen.getByText("No recorded events for this session.")).toBeTruthy();
   });
 });

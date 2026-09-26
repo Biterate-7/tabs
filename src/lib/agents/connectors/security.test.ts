@@ -156,7 +156,7 @@ describe("the connector contract offers no control surface", () => {
 
     expect(members).toContain("subscribe");
 
-    // `connect`/`disconnect` are about TabDump's own observation and are
+    // `connect`/`disconnect` are about Hubble's own observation and are
     // allowed. These would be about the agent, and are not — whatever else
     // the interface grows.
     for (const forbidden of [

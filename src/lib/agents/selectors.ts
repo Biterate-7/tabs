@@ -232,7 +232,7 @@ export function getPrimaryWorkItem(
 /**
  * How far a run has got through its work items.
  *
- * **This is the only progress TabDump ever computes, and it is evidence-based
+ * **This is the only progress Hubble ever computes, and it is evidence-based
  * by construction**: `total` is how many work items actually exist, and
  * `completed` is how many of them actually reached the `completed` status.
  * Neither number is inferred from event counts, elapsed time, transcript

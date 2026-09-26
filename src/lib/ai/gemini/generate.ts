@@ -36,7 +36,7 @@ function logGeminiFailure(op: string, status: number | undefined, detail: string
  * and returns the parsed JSON body of the model's response — the caller is
  * responsible for validating the specific shape (this function only
  * guarantees the response was well-formed JSON, not that it matches any
- * particular schema). This is TabDump's only text-generation Gemini call,
+ * particular schema). This is Hubble's only text-generation Gemini call,
  * powering src/lib/sections/ai/organize.ts's batch section-organization
  * step; embedTexts (src/lib/ai/gemini/client.ts) remains the only embedding
  * call. Same server-only/timeout/typed-failure-result contract as

@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useAppearanceContext } from "@/components/appearance-provider"
 import { isValidColor, normalizeHex } from "@/lib/appearance/contrast"
-import { FieldRow, SectionHeading } from "./section-ui"
+import { FieldRow, SectionHeading, SectionStack } from "./section-ui"
 
 export function AccentSection() {
   const { settings, resolvedColors, setAccentOverride } = useAppearanceContext()
@@ -20,7 +20,7 @@ export function AccentSection() {
         description="An accent color independent from the theme — drives buttons, links, selected navigation, focus rings, toggles, and graph selection."
       />
 
-      <div className="flex flex-col gap-2.5">
+      <SectionStack>
         <FieldRow label="Use theme's accent" description="Turn off to pick your own color below.">
           <Button type="button" variant={active ? "outline" : "default"} size="sm" onClick={() => setAccentOverride(null)} disabled={!active}>
             {active ? "Use theme default" : "Using theme default"}
@@ -47,7 +47,7 @@ export function AccentSection() {
             />
           </div>
         </FieldRow>
-      </div>
+      </SectionStack>
     </div>
   )
 }

@@ -30,8 +30,8 @@ import { resetConnectorManager } from "@/lib/agents/connectors/app-manager"
 import { loadAnonymousWorkspaceStore } from "@/lib/workspace/persistence"
 
 /**
- * Owns TabDump's client-side view of "who is signed in", and — because
- * TabDump keeps its data locally — decides which local namespace the rest
+ * Owns Hubble's client-side view of "who is signed in", and — because
+ * Hubble keeps its data locally — decides which local namespace the rest
  * of the app reads from.
  *
  * Three states, never collapsed into a boolean: `loading` is genuinely
@@ -94,7 +94,7 @@ type AdoptionOffer = { userId: string; workspaceCount: number }
  * When no client ID is baked into the bundle, accounts are impossible on
  * this deployment — there is nothing for /api/auth/me to tell us. Starting
  * in the resolved state means such a deployment makes no auth request at
- * all and behaves exactly as TabDump did before accounts existed.
+ * all and behaves exactly as Hubble did before accounts existed.
  */
 function initialState(): State {
   return publicGoogleClientId() ? { status: "loading" } : { status: "unauthenticated", configured: false }

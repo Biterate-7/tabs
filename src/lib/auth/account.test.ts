@@ -23,7 +23,7 @@ describe("findOrCreateUser", () => {
     expect(created).toBe(true);
     expect(user.googleSub).toBe(ADA.googleSub);
     expect(user.email).toBe(ADA.email);
-    // TabDump's own id, not Google's — this is what the rest of the app
+    // Hubble's own id, not Google's — this is what the rest of the app
     // scopes data by.
     expect(user.id).not.toBe(ADA.googleSub);
   });

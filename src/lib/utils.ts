@@ -2,7 +2,7 @@ import { clsx, type ClassValue } from "clsx"
 import { extendTailwindMerge } from "tailwind-merge"
 
 /**
- * TabDump's own typography classes (see the `@layer components` block in
+ * Hubble's own typography classes (see the `@layer components` block in
  * globals.css). They are `text-*` but they are *type styles* — size, family,
  * leading, tracking — not colours.
  *
@@ -35,6 +35,7 @@ const TYPE_CLASSES = [
   "meta",
   "eyebrow",
   "content",
+  "code",
 ] as const
 
 const twMerge = extendTailwindMerge({

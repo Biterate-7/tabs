@@ -24,7 +24,7 @@ import type {
  *
  * This interface is READ-ONLY on purpose, and the omissions are the design.
  * There is no `start`, `stop`, `kill`, `prompt`, `sendMessage`, `exec` or
- * `run` here, and none may be added: TabDump observes agents, it does not
+ * `run` here, and none may be added: Hubble observes agents, it does not
  * drive them. An adapter that could control a coding agent would make this
  * app a remote-execution surface for anything that could reach its state,
  * which is a categorically different and much more dangerous product than

@@ -1,7 +1,9 @@
 import "server-only";
 import type {
+  ClaudeCredentialSource,
   ClaudePermissionDecision,
   ClaudeRuntime,
+  ClaudeRuntimeAvailability,
   ClaudeRuntimeError,
   ClaudeRuntimeHandle,
   ClaudeRuntimeMessage,
@@ -9,10 +11,13 @@ import type {
   ClaudeRuntimeStartResult,
 } from "./runtime";
 
+/** The environment variable a session's Hubble context credential travels in (Phase J.3). */
+export const CONTEXT_TOKEN_ENV = "TABDUMP_CONTEXT_TOKEN";
+
 /**
  * The real Claude runtime, on `@anthropic-ai/claude-agent-sdk`.
  *
- * **The only module in TabDump that imports the SDK.** Everything else —
+ * **The only module in Hubble that imports the SDK.** Everything else —
  * the adapter, the normalizer, the permission mapping, the control service —
  * works against the narrow interface in ./runtime.ts, so the provider's types
  * never leak and replacing it is one file.
@@ -48,7 +53,7 @@ const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
  * wants for streaming input.
  *
  * The SDK takes `prompt: AsyncIterable<SDKUserMessage>` and consumes it for
- * the life of the conversation. TabDump receives messages one at a time from
+ * the life of the conversation. Hubble receives messages one at a time from
  * a user, so this bridges the two: `push` hands a turn to whatever the
  * generator is currently awaiting, and `close` ends the conversation.
  *
@@ -138,14 +143,103 @@ export type SdkClaudeRuntimeOptions = {
    * explicitly. Production passes nothing and gets the package name.
    */
   moduleSpecifier?: string;
+  /**
+   * Supplies the SDK module directly instead of importing it by specifier.
+   *
+   * The desktop runtime (Phase J.1) is a single bundled file with no
+   * `node_modules` beside it, so the SDK has to be part of the bundle — which
+   * needs a literal `import()` the bundler can see. That import lives in the
+   * desktop entry, and is handed in here.
+   */
+  loadModule?: () => Promise<unknown>;
+  /**
+   * The Claude Code executable to drive, when it is not the SDK's own bundled
+   * binary.
+   *
+   * The desktop runtime drives the user's *installed* Claude Code, resolved
+   * from the launch allowlist — which is also where that user's own login
+   * lives. Never taken from a request.
+   */
+  executablePath?: string;
   idleTimeoutMs?: number;
+  /**
+   * The signed-in user's own provider credential.
+   *
+   * Required. Before this phase the local runtime inherited whatever Claude
+   * Code login happened to exist in the process environment — which on a
+   * developer's own machine is their own credential and is fine, and on any
+   * deployment with an `ANTHROPIC_API_KEY` set is *the operator's*, used
+   * silently for everybody. There is no way to tell those two apart from
+   * inside this function, so it no longer tries: the credential arrives
+   * explicitly or the run does not start.
+   */
+  credentials: ClaudeCredentialSource;
+  /**
+   * The environment the agent process inherits, minus its credential.
+   *
+   * Injected so the stripping below is testable without a real `process.env`.
+   */
+  baseEnv?: Readonly<Record<string, string | undefined>>;
 };
 
-export function createSdkClaudeRuntime(
-  options: SdkClaudeRuntimeOptions = {}
-): ClaudeRuntime {
+/**
+ * Provider credential variables removed from the inherited environment.
+ *
+ * The user's own key is written over the top of these anyway, so stripping
+ * them changes no outcome — it removes the *path*. A future edit that forgot
+ * to set one of them would otherwise fall through to the operator's key and
+ * work, which is precisely the silent fallback §6 forbids and precisely the
+ * kind of bug that is invisible until a billing statement arrives.
+ */
+const INHERITED_CREDENTIAL_VARS: readonly string[] = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+] as const;
+
+export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): ClaudeRuntime {
   const specifier = options.moduleSpecifier ?? "@anthropic-ai/claude-agent-sdk";
   const idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+
+  /**
+   * The environment one agent process runs in.
+   *
+   * Built fresh per run, from a copy of the base environment with every
+   * provider credential variable deleted, then the resolved credential
+   * written in. Nothing mutates `process.env`, so two concurrent sessions
+   * belonging to two different users cannot see each other's key — which they
+   * would if this set a global and cleared it afterwards.
+   */
+  /**
+   * The session's MCP configuration: Hubble's session server, or nothing.
+   *
+   * The header names the credential by environment variable. Claude Code
+   * expands `${VAR}` in MCP headers (verified against 2.1.x), so the
+   * command line the SDK builds carries the placeholder, never the token.
+   */
+  function contextMcpServers(server: ClaudeRuntimeStartOptions["contextServer"]): Record<string, unknown> {
+    if (!server) return {};
+    return {
+      [server.name]: {
+        type: "http",
+        url: server.url,
+        headers: { Authorization: "Bearer " + "$" + "{" + CONTEXT_TOKEN_ENV + "}" },
+      },
+    };
+  }
+
+  function environmentFor(credentialEnv: Readonly<Record<string, string>>): Record<string, string> {
+    const base = options.baseEnv ?? process.env;
+    const env: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(base)) {
+      if (value === undefined) continue;
+      if (INHERITED_CREDENTIAL_VARS.includes(key)) continue;
+      env[key] = value;
+    }
+
+    return { ...env, ...credentialEnv };
+  }
 
   type SdkModule = {
     query(params: { prompt: unknown; options?: Record<string, unknown> }): AsyncGenerator<
@@ -157,6 +251,13 @@ export function createSdkClaudeRuntime(
   };
 
   async function loadSdk(): Promise<SdkModule | null> {
+    if (options.loadModule) {
+      try {
+        return (await options.loadModule()) as SdkModule;
+      } catch {
+        return null;
+      }
+    }
     try {
       // Dynamic, and the specifier is a constant from this module — never a
       // caller-supplied string, so this cannot become an arbitrary-module
@@ -169,13 +270,33 @@ export function createSdkClaudeRuntime(
 
   return {
     async isAvailable(): Promise<boolean> {
-      return (await loadSdk()) !== null;
+      // Both halves. A machine with the SDK installed and no connected
+      // credential cannot run an agent, and reporting it as available is how
+      // a user gets a session that dies on its first message.
+      if ((await loadSdk()) === null) return false;
+      return (await options.credentials()).ok;
+    },
+
+    async describeAvailability(): Promise<ClaudeRuntimeAvailability> {
+      if ((await loadSdk()) === null) return { kind: "unavailable" };
+
+      const credential = await options.credentials();
+      if (!credential.ok) return { kind: "credential-required", reason: credential.reason };
+      return { kind: "available" };
     },
 
     async start(start: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeStartResult> {
       const sdk = await loadSdk();
       if (!sdk) {
         return { ok: false, error: { code: "not-installed" } };
+      }
+
+      // Resolved here, per run, and never held on the runtime. A user who
+      // disconnected their credential a minute ago cannot start a session
+      // now, even though this runtime object was built before they did.
+      const credential = await options.credentials();
+      if (!credential.ok) {
+        return { ok: false, error: { code: "authentication", detail: credential.reason } };
       }
 
       const queue = createMessageQueue();
@@ -210,6 +331,18 @@ export function createSdkClaudeRuntime(
           prompt: queue,
           options: {
             abortController: abort,
+            // The credential's only crossing on the local plane. It reaches
+            // the agent process as one entry in its environment and appears
+            // nowhere else in this call: not in `allowedTools`, not in a
+            // prompt, not in a path, not in anything the queue carries.
+            // The session's Hubble context credential (J.3) travels here too,
+            // as one variable of this agent's own environment — never on its
+            // command line, where `--mcp-config` would otherwise put it.
+            env: environmentFor({
+              ...credential.env,
+              ...(start.contextServer ? { [CONTEXT_TOKEN_ENV]: start.contextServer.token } : {}),
+            }),
+            ...(options.executablePath ? { pathToClaudeCodeExecutable: options.executablePath } : {}),
             ...(start.cwd ? { cwd: start.cwd } : {}),
             ...(start.additionalDirectories.length > 0
               ? { additionalDirectories: [...start.additionalDirectories] }
@@ -218,12 +351,12 @@ export function createSdkClaudeRuntime(
             allowedTools: [...start.allowedTools],
             disallowedTools: [...start.disallowedTools],
             ...(start.resume ? { resume: start.resume } : {}),
-            // TabDump configures no MCP servers, and says so explicitly
-            // rather than by omission: `strictMcpConfig` makes the CLI ignore
-            // every server it would otherwise inherit from the user's own
-            // configuration, so a session cannot silently gain tools TabDump
-            // never authorized. See docs/claude-code-control.md.
-            mcpServers: {},
+            // No MCP server but Hubble's own session server (J.3), and none
+            // at all without workspace context. `strictMcpConfig` makes the
+            // CLI ignore every server it would otherwise inherit from the
+            // user's own configuration, so a session cannot silently gain
+            // tools Hubble never authorized. See docs/claude-code-control.md.
+            mcpServers: contextMcpServers(start.contextServer),
             strictMcpConfig: true,
             // The permission callback. This is the whole reason the SDK was
             // chosen over the CLI: it is invoked per tool call and awaits a

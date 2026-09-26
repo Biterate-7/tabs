@@ -2,7 +2,7 @@ import type { AgentContextLimits } from "./limits";
 import type { DependencyType } from "@/lib/dependencies/types";
 
 /**
- * The TabDump Context Bridge's domain.
+ * The Hubble Context Bridge's domain.
  *
  * ## The one sentence this module exists to enforce
  *
@@ -24,7 +24,7 @@ import type { DependencyType } from "@/lib/dependencies/types";
  *
  * `lib/agents/context/` is a **sibling** of `control/` and `connectors/`,
  * for exactly the reason Phase B made control a sibling of connectors: the
- * bridge reads TabDump's domain (workspaces, tabs, collections,
+ * bridge reads Hubble's domain (workspaces, tabs, collections,
  * dependencies, the graph, agent runs), and the control plane must not. The
  * dependency runs one way — context imports the control plane's attachment
  * contract, and the control plane imports nothing from here.
@@ -43,12 +43,12 @@ import type { DependencyType } from "@/lib/dependencies/types";
  * URL, a collection name, a note — is content the user (or a web page they
  * visited) authored. It is **data**. It is never merged into a system
  * prompt, never used to build provider configuration, and never interpreted
- * as an instruction by anything in TabDump. See `sanitize.ts` for what is
+ * as an instruction by anything in Hubble. See `sanitize.ts` for what is
  * removed and, just as importantly, what is deliberately left alone.
  */
 
 /**
- * The kinds of TabDump knowledge the bridge can express.
+ * The kinds of Hubble knowledge the bridge can express.
  *
  * A closed union, and every member is implemented — there is no entry here
  * for a source that cannot yet be resolved, bounded and tested, because an
@@ -90,7 +90,7 @@ export function isAgentContextSourceType(value: unknown): value is AgentContextS
  *
  * ## Why an id is never enough
  *
- * TabDump partitions local data by account through a storage key prefix
+ * Hubble partitions local data by account through a storage key prefix
  * (see `lib/storage/namespace.ts`). That partition is applied when data is
  * *loaded*, which means a resolver handed a workspace id has no way to tell
  * whose workspace it is — the id is just a string, and two accounts in the
@@ -129,7 +129,7 @@ export function isWellFormedScope(scope: AgentContextScope): boolean {
  * ------------------------------------------------------------------ */
 
 type ItemBase = {
-  /** TabDump's own id for the thing. Stable, and the key a refresh re-resolves by. */
+  /** Hubble's own id for the thing. Stable, and the key a refresh re-resolves by. */
   sourceId: string;
   /** What to call it. Sanitized and bounded; never a raw title. */
   label: string;
@@ -196,7 +196,7 @@ export type GraphContextNode = {
 export type GraphContextEdge = {
   fromTabId: string;
   toTabId: string;
-  /** Why TabDump drew this edge — `domain`, `workspace`, `manual`, and so on. */
+  /** Why Hubble drew this edge — `domain`, `workspace`, `manual`, and so on. */
   reasons: readonly string[];
 };
 

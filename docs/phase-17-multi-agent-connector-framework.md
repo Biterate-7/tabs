@@ -1,6 +1,6 @@
 # Phase 17 — Multi-Agent Connector Framework
 
-TabDump observes AI coding agents. Phases 11–16 built the domain that
+Hubble observes AI coding agents. Phases 11–16 built the domain that
 *represents* their work and one integration that fills it. Phase 17 adds the
 layer above: a provider-neutral way to say **who** can be observed, **whether
 they currently can be**, and **what they are able to tell us** — so that
@@ -74,7 +74,7 @@ interface AgentConnector {
 }
 ```
 
-`connect` and `disconnect` are about **TabDump's own observation**. They start
+`connect` and `disconnect` are about **Hubble's own observation**. They start
 and stop this app watching; they do not reach the external agent. There is no
 `start`, `stop`, `kill`, `cancel`, `exec`, `prompt`, `sendMessage` or `write`,
 and a test fails the build if one appears.
@@ -202,7 +202,7 @@ behind the same contract, changing nothing above it.
 ### Behaviour change worth knowing
 
 Before Phase 17 the observer polled unconditionally. Now nothing is observed
-until the user connects Claude Code in **Settings → AI connectors**, and that
+until the user connects Claude Code in **Settings → Agents**, and that
 choice is remembered per account. This is deliberate: the phase introduces an
 explicit consent flow that states the security boundary, and polling someone's
 machine because the app started is the thing that flow exists to replace.
@@ -242,13 +242,13 @@ Claude Code needs none — it is observed by reading files that already belong t
 the user on the machine they are sitting at. Every network-reached provider
 would need one, and the honest position is this:
 
-> **TabDump does not persist secrets, because this platform cannot keep them.**
+> **Hubble does not persist secrets, because this platform cannot keep them.**
 
 In the browser build, `localStorage`, `sessionStorage`, IndexedDB and non-
 `HttpOnly` cookies are all readable by any script on the origin, survive across
 sessions, and sit in a profile directory other software can read. There is no
 browser API that gives a web app an encrypted store. The desktop build has an
-OS keychain available in principle, but TabDump's Tauri capabilities do not
+OS keychain available in principle, but Hubble's Tauri capabilities do not
 grant access to one, and widening native permissions to make a connector feel
 finished would trade a real boundary for a cosmetic one.
 
@@ -257,7 +257,7 @@ with the tab. It imports nothing but types, so it has no way to write a value
 anywhere. It offers no `list`, `entries` or `toJSON`, so no export or debug
 dump can sweep secrets up. The UI is told only presence and length — not even a
 masked prefix, since that habit is borrowed from services that can revoke keys
-and TabDump cannot. A provider configured this way is labelled *configured for
+and Hubble cannot. A provider configured this way is labelled *configured for
 this session*, never *persistently connected*.
 
 ### Persistence
@@ -337,9 +337,9 @@ is worse than saying nothing.
 
 ## 9. UI
 
-**Settings → AI connectors** lists every provider with its state, opens a
+**Settings → Agents** lists every provider with its state, opens a
 detail view with status, health, capabilities, activity and real usage counts,
-and gates connection behind a screen that states what TabDump will and will not
+and gates connection behind a screen that states what Hubble will and will not
 do. Those two lists are the literal security boundary, and a user agreeing to
 be observed deserves to see it in the product.
 

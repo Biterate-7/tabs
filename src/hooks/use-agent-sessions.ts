@@ -5,6 +5,7 @@ import { sessionOrigin } from "@/lib/agents/command-centre/presentation"
 import type { SessionOrigin } from "@/lib/agents/command-centre/presentation"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentAttachedContext } from "@/lib/agents/control/context"
+import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type {
   RuntimeCorrelationView,
@@ -52,6 +53,8 @@ export type CreateSessionInput = {
   workspaceId?: string
   title?: string
   context?: AgentAttachedContext
+  /** The workspace the session is started from, for the agent to query (Phase J.3). */
+  contextSnapshot?: SessionContextSnapshot
 }
 
 export type AgentSessionsApi = {
@@ -169,6 +172,7 @@ export function useAgentSessions(options: {
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         ...(input.title ? { title: input.title } : {}),
         ...(input.context ? { context: input.context } : {}),
+        ...(input.contextSnapshot ? { contextSnapshot: input.contextSnapshot } : {}),
       })
 
       if (!result.ok) return result.error.code

@@ -22,6 +22,33 @@ async function invokeCommand<T>(command: string, args: Record<string, unknown>):
   return invoke<T>(command, args);
 }
 
+/** A folder the user chose in the native dialog (Phase J.1). */
+export type PickedProjectFolder = { path: string; name: string };
+
+/**
+ * The desktop app's agent runtime bridge (Phase J.1).
+ *
+ * Not part of `PlatformAdapter`: the web has no equivalent — its agent
+ * runtime is an HTTP route — so this is a desktop-only transport rather than
+ * a capability both shells implement differently.
+ *
+ * Both calls land on app-defined Rust commands (src-tauri/src/agent_runtime.rs)
+ * that relay to the bundled runtime sidecar. The request is the same closed
+ * runtime protocol the web posts to `/api/agents/control`; Rust additionally
+ * refuses any project folder the user did not pick through
+ * `pickProjectFolder`, which is the only way a path enters.
+ */
+export const desktopAgentBridge = {
+  async request(body: unknown): Promise<unknown> {
+    const raw = await invokeCommand<string>("agent_runtime", { request: JSON.stringify(body) });
+    return JSON.parse(raw) as unknown;
+  },
+
+  async pickProjectFolder(): Promise<PickedProjectFolder | null> {
+    return invokeCommand<PickedProjectFolder | null>("agent_pick_project_folder", {});
+  },
+};
+
 export const desktopPlatform: PlatformAdapter = {
   kind: "desktop",
 

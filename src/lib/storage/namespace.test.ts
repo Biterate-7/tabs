@@ -26,7 +26,7 @@ afterEach(() => {
 describe("scopedKey", () => {
   it("leaves every key untouched while signed out", () => {
     // The guarantee that installing accounts moves nobody's existing data:
-    // signed out, these are byte for byte the keys TabDump always used.
+    // signed out, these are byte for byte the keys Hubble always used.
     for (const key of SCOPED_STORAGE_KEYS) {
       expect(scopedKey(key)).toBe(key);
     }

@@ -8,7 +8,7 @@ import { OBSERVATION_ALLOWLIST } from "./normalizer";
 /**
  * The boundary that makes this feature safe, enforced mechanically.
  *
- * TabDump observes Claude Code and must never control it. The distance
+ * Hubble observes Claude Code and must never control it. The distance
  * between those two things is a handful of imports, and nothing but a test
  * stops someone later adding one to "just check the branch" or "just stop a
  * stuck run".

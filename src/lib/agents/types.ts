@@ -1,7 +1,7 @@
 /**
  * The provider-agnostic agent domain.
  *
- * TabDump's job here is to *represent* work done by an external coding agent,
+ * Hubble's job here is to *represent* work done by an external coding agent,
  * never to perform it. The shape is deliberately four small entities:
  *
  *     Agent                 a persistent identity ("Claude Code")
@@ -84,7 +84,7 @@ export type Agent = {
  * One execution/session of an Agent, inside exactly one workspace.
  *
  * `workspaceId` is not advisory. Every relationship this run takes part in is
- * checked against it (see ./links.ts), because the workspace is TabDump's
+ * checked against it (see ./links.ts), because the workspace is Hubble's
  * existing organisation boundary and an agent run must not be the thing that
  * quietly punches through it.
  */
@@ -113,7 +113,7 @@ export type AgentRun = {
 /**
  * How a run relates to a tab.
  *
- * Intentionally two values. This is not a general edge type — TabDump already
+ * Intentionally two values. This is not a general edge type — Hubble already
  * has those (ManualConnection, TabDependency) and does not need a third
  * spelling of "related".
  */
@@ -221,7 +221,7 @@ export function isWorkArtifactKind(value: unknown): value is WorkArtifactKind {
  * same path in another are different files, and a workspace may hold several
  * projects. See ./paths.ts for how a path becomes project-relative, and note
  * what is absent — there is no field here for contents, a diff, a size, a
- * hash or a revision. TabDump records *that* a run touched a file, never what
+ * hash or a revision. Hubble records *that* a run touched a file, never what
  * the file says.
  */
 export type WorkArtifact = {

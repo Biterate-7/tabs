@@ -2,16 +2,16 @@ import { scopedKey } from "@/lib/storage/namespace";
 import { isValidTimestamp } from "@/lib/timestamps";
 
 /**
- * Which TabDump workspace a Claude Code project belongs to.
+ * Which Hubble workspace a Claude Code project belongs to.
  *
- * The mapping is **explicit and nothing else**. TabDump never guesses a
+ * The mapping is **explicit and nothing else**. Hubble never guesses a
  * session's workspace from the currently selected one, from a similar-looking
  * name, from a git branch, or from tabs that happen to resemble the project.
  * A wrong guess here would file someone's work under the wrong project and
  * link it to unrelated tabs, and there is no signal on the machine that could
- * make such a guess reliable — so the user says, once, and TabDump remembers.
+ * make such a guess reliable — so the user says, once, and Hubble remembers.
  *
- * Account-scoped through the same `scopedKey` mechanism every other TabDump
+ * Account-scoped through the same `scopedKey` mechanism every other Hubble
  * domain uses, so one account's mappings are invisible to another.
  */
 

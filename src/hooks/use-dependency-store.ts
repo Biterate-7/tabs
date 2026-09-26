@@ -23,7 +23,7 @@ const SAVE_DEBOUNCE_MS = 400
  * saved as it changes — the same "load-once-per-mount, source of truth is
  * localStorage" pattern lib/graph/persistence.ts's consumer (GraphView)
  * already uses for graph state. Safe to use from more than one call site
- * (WorkspaceView and GraphView both need it) because TabDump only ever
+ * (WorkspaceView and GraphView both need it) because Hubble only ever
  * mounts one of them at a time — see app-shell.tsx's `view` switch — so
  * there's no risk of two live copies drifting out of sync with each other.
  *

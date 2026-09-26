@@ -4,6 +4,11 @@ import type { AgentCapability } from "@/lib/agents/control/capabilities";
 import type { AgentAttachedContext } from "@/lib/agents/control/context";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
+import { readSessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
+import type { SessionContextCapability } from "@/lib/agents/session-context/capabilities";
+import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
+import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 
 /**
  * The browser to local-runtime command contract.
@@ -12,10 +17,11 @@ import type { AgentSessionStatus } from "@/lib/agents/control/session";
  *
  * The browser needs a way to ask the trusted local runtime to do something.
  * This is the entire vocabulary it may use, and the point of writing it as a
- * closed union is that the vocabulary is *small and boring*: fourteen verbs,
- * every one of them a control-plane operation the `ControlService` already
- * implements, and not one of them able to name a binary, a command line, a
- * filesystem path or a provider flag.
+ * closed union is that the vocabulary is *small and boring*: eighteen verbs —
+ * fourteen control-plane operations the `ControlService` already implements,
+ * plus Phase J's four connector-lifecycle verbs (detect, connect, sign in,
+ * disconnect) — and not one of them able to name a binary, a command line, a
+ * filesystem path, a provider flag or a credential.
  *
  * ## What is deliberately absent
  *
@@ -65,7 +71,7 @@ export type RuntimeErrorCode =
   | "runtime_unavailable"
   /** The host this client was talking to is gone - a restart, or a different process. */
   | "runtime_disconnected"
-  /** The request did not come from this TabDump instance. */
+  /** The request did not come from this Hubble instance. */
   | "ownership_denied"
   /** No adapter for this provider, or it is not registered here. */
   | "provider_unavailable"
@@ -92,7 +98,9 @@ export type RuntimeErrorCode =
   /** The command did not parse, or named something this runtime does not do. */
   | "invalid_request"
   /** The adapter does not implement this. */
-  | "unsupported";
+  | "unsupported"
+  /** The agent would not work in a mode where it asks Hubble before acting. */
+  | "approval_unenforceable";
 
 export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "runtime_unavailable",
@@ -111,6 +119,7 @@ export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "timeout",
   "invalid_request",
   "unsupported",
+  "approval_unenforceable",
 ] as const;
 
 export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
@@ -127,8 +136,8 @@ export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
  * shape of the opt-in on any screen a hosted deployment could render.
  */
 const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
-  runtime_unavailable: "TabDump cannot run agents in this environment.",
-  runtime_disconnected: "TabDump lost its connection to the local runtime.",
+  runtime_unavailable: "Hubble cannot run agents in this environment.",
+  runtime_disconnected: "Hubble lost its connection to the local runtime.",
   ownership_denied: "That session belongs to someone else.",
   provider_unavailable: "That agent is not available here.",
   authentication_required: "That agent needs to be signed in first.",
@@ -137,12 +146,13 @@ const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   permission_denied: "This agent has not been given permission for that.",
   approval_required: "That needs your approval first.",
   project_scope_violation: "This agent is not authorized for that project.",
-  context_invalid: "TabDump could not read that context.",
+  context_invalid: "Hubble could not read that context.",
   provider_error: "The agent stopped unexpectedly.",
   cancellation: "The run was cancelled.",
   timeout: "The agent did not respond in time.",
-  invalid_request: "TabDump could not read that request.",
+  invalid_request: "Hubble could not read that request.",
   unsupported: "This agent cannot do that yet.",
+  approval_unenforceable: "That agent would not agree to ask before acting.",
 };
 
 export type RuntimeError = { code: RuntimeErrorCode; message: string };
@@ -163,7 +173,7 @@ export function runtimeFailure<T = never>(code: RuntimeErrorCode): RuntimeResult
  * ------------------------------------------------------------------ */
 
 /**
- * Where the runtime believes it is, in the four terms the brief asks for.
+ * Where the runtime believes it is, in the terms the brief asks for.
  *
  * A projection of `RuntimeDecision` (lib/agents/control/runtime.ts) rather
  * than a second decision: `local-desktop` and `local-server` both project to
@@ -172,8 +182,13 @@ export function runtimeFailure<T = never>(code: RuntimeErrorCode): RuntimeResult
  * reason - they behave identically and *read* differently, and a UI that said
  * "this is a hosted deployment" to a developer who forgot the opt-in would be
  * lying about their machine.
+ *
+ * `remote` is an *executing* kind, and the only one that does not mean "this
+ * machine". It says agents run here and none of them can see the filesystem
+ * of the process reporting it - which is a different sentence from `hosted`,
+ * where nothing runs at all.
  */
-export type RuntimeEnvironmentKind = "browser" | "local" | "hosted" | "unknown";
+export type RuntimeEnvironmentKind = "browser" | "local" | "remote" | "hosted" | "unknown";
 
 /**
  * What a provider's connection actually is, kept as three separate facts.
@@ -201,6 +216,13 @@ export type RuntimeProviderStatus = {
   available: boolean;
   authentication: ProviderAuthenticationState;
   capabilities: readonly AgentCapability[];
+  /**
+   * The agent signs in with its **own** login, which this runtime can start
+   * (`authenticate_provider`) — rather than with a key the user stores in
+   * Hubble. True for the ACP agents everywhere, and for Claude Code in the
+   * desktop app (Phase J.1). Absent means false.
+   */
+  nativeSignIn?: boolean;
 };
 
 /**
@@ -229,6 +251,43 @@ export type RuntimeStatus = {
   /** Present only when execution is refused. One safe sentence. */
   detail?: string;
   providers: readonly RuntimeProviderStatus[];
+};
+
+/* ------------------------------------------------------------------ *
+ * Provider connection (Phase J)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What is installed on the machine the runtime runs on, per provider.
+ *
+ * Only ever produced by a **local** runtime: a hosted or remote deployment's
+ * binaries are not the user's, and reporting them would be both meaningless
+ * and a leak. Carries no path — `installed` and `launchable` are booleans on
+ * purpose.
+ *
+ * Nothing about sign-in: that is reported by the agent itself, through
+ * `connect_provider` (`RuntimeProviderStatus.authentication`), never guessed
+ * from what files exist (Phase J.2).
+ */
+export type ProviderDetection = {
+  provider: AgentProviderId;
+  installed: boolean;
+  /** How Hubble drives it: the provider SDK, or the Agent Client Protocol. */
+  transport: "sdk" | "acp";
+  /** Whether the executable Hubble would start was found. */
+  launchable: boolean;
+};
+
+/** A sign-in method the agent itself advertised. Labels only. */
+export type ProviderAuthMethodView = { id: string; name: string; description?: string };
+
+/**
+ * One provider's connection, as the runtime sees it after a connect or a
+ * sign-in. The same three facts `RuntimeProviderStatus` keeps apart, plus the
+ * agent's own sign-in methods.
+ */
+export type ProviderConnectionView = RuntimeProviderStatus & {
+  authMethods: readonly ProviderAuthMethodView[];
 };
 
 /* ------------------------------------------------------------------ *
@@ -269,6 +328,74 @@ export type RuntimeSessionView = {
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
+  /** The session's Hubble workspace context, when it has one (Phase J.3). */
+  context?: RuntimeSessionContextView;
+  /**
+   * Set when the session was started from a workspace but has no context
+   * (J.4): its agent cannot prove which of its tool calls are Hubble's, so
+   * it was not given the context server. Never set alongside `context`.
+   */
+  contextUnavailable?: "provider";
+};
+
+/**
+ * What a client may know about a session's workspace context (Phase J.3).
+ *
+ * The workspace, what the agent may do in it, and the approved changes
+ * waiting for the Command Centre to apply. **Never the credential**: there is
+ * no field here, or anywhere in this protocol, that could carry it.
+ */
+export type RuntimeSessionContextView = {
+  workspaceId: string;
+  workspaceName: string;
+  capabilities: readonly SessionContextCapability[];
+  /** Monotonic context version (J.4): 1 at start, +1 per synced change. */
+  version: number;
+  /** When the runtime last accepted a snapshot. */
+  syncedAt: number;
+  /**
+   * `snapshotFingerprint` of what the runtime holds. The Command Centre
+   * compares it with its own to show "Update available" — nothing is sent.
+   */
+  fingerprint: string;
+  /** Changes the user approved, for the Command Centre — which owns the workspace — to apply. */
+  pendingActions: readonly RuntimeContextActionView[];
+  /**
+   * How this session's recent plans ended (J.5), oldest first, for the
+   * result line under the approval. Absent when there are none.
+   */
+  planOutcomes?: readonly RuntimePlanOutcomeView[];
+};
+
+/** One operation of an approved plan, exactly as the Command Centre applies it (J.5). */
+export type RuntimePlanOperationView =
+  | { kind: "create_collection"; name: string; tabIds: readonly string[] }
+  | { kind: "rename_collection"; collectionId: string; name: string }
+  | { kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] };
+
+/** An approved change, exactly as the Command Centre applies it (J.3–J.4) — or an approved plan, applied all at once (J.5). */
+export type RuntimeContextActionView =
+  | { actionId: string; kind: "create_collection"; name: string; tabIds: readonly string[] }
+  | { actionId: string; kind: "rename_collection"; collectionId: string; name: string }
+  | { actionId: string; kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] }
+  | {
+      actionId: string;
+      kind: "apply_plan";
+      planId: string;
+      /** Echoed back on completion; any other value is refused. Not a secret — a binding. */
+      planHash: string;
+      operations: readonly RuntimePlanOperationView[];
+    };
+
+/** What became of a plan (J.5). Counts and a version; the approval it answered, when known. */
+export type RuntimePlanOutcomeView = {
+  planId: string;
+  approvalId?: string;
+  status: "applied" | "unverified" | "not_applied" | "stale" | "denied" | "expired" | "cancelled";
+  operationCount: number;
+  verifiedCount: number;
+  contextVersion: number;
+  at: number;
 };
 
 /**
@@ -284,7 +411,7 @@ export type SequencedControlEvent = AgentControlEvent & { sequence: number };
  *
  * Deliberately every field optional but `provider` and `origin`: the whole
  * point of the correlation layer is that *both* halves exist independently. A
- * session TabDump started has a `controlRunId` before it has a
+ * session Hubble started has a `controlRunId` before it has a
  * `providerSessionId`; a session somebody started in a terminal has a
  * `providerSessionId` and an `observationRunId` and never gets a
  * `controlRunId`. See ./correlation.ts.
@@ -334,13 +461,21 @@ export type AuthorizedProjectsResult = {
 export type RuntimeApprovalView = {
   approvalId: string;
   sessionId: string;
+  /** Which agent is asking, so the card can say so (J.4). */
+  provider: AgentProviderId;
   runId?: string;
   action: string;
   scope: string;
-  projectId: string;
-  /** Project-relative, always. See lib/agents/control/approvals.ts. */
+  /** Exactly one of these: a project for file and command actions, a workspace for workspace changes (J.3). */
+  projectId?: string;
+  workspaceId?: string;
+  /** Project-relative paths, or plain descriptions of a workspace change. Never absolute. */
   targets: readonly string[];
   reason?: string;
+  /** A workspace change, structured for the card (J.4). Names and titles only — never ids. */
+  change?: WorkspaceChangeSummary;
+  /** A plan of workspace changes (J.5): every step the user is approving, as one immutable whole. */
+  plan?: WorkspacePlanPreview;
   requestedAt: number;
   expiresAt: number;
 };
@@ -350,7 +485,7 @@ export type RuntimeApprovalView = {
  * ------------------------------------------------------------------ */
 
 /**
- * Every verb the browser may use. Adding a fifteenth is a type error in the
+ * Every verb the browser may use. Adding a nineteenth is a type error in the
  * host, in the client and in the guard suite at once.
  */
 export type RuntimeCommandName =
@@ -367,7 +502,15 @@ export type RuntimeCommandName =
   | "detach_context"
   | "respond_to_approval"
   | "dispose_session"
-  | "link_observation";
+  | "link_observation"
+  /* Phase J — the connector lifecycle. None names a binary or a path. */
+  | "detect_providers"
+  | "connect_provider"
+  | "authenticate_provider"
+  | "disconnect_provider"
+  /* Phase J.3 — session workspace context. Neither names a credential. */
+  | "sync_session_context"
+  | "complete_context_action";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -384,6 +527,12 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "respond_to_approval",
   "dispose_session",
   "link_observation",
+  "detect_providers",
+  "connect_provider",
+  "authenticate_provider",
+  "disconnect_provider",
+  "sync_session_context",
+  "complete_context_action",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -418,7 +567,7 @@ export type RuntimeCommand =
    *
    * A project is the only thing in this protocol that ultimately resolves to
    * a directory, and every other command names one by **id**. But the
-   * durable project record lives in the browser - TabDump is local-first,
+   * durable project record lives in the browser - Hubble is local-first,
    * and `lib/agents/control/persistence.ts` is where projects are kept - so
    * the host has to be told about one before an id can mean anything.
    *
@@ -452,6 +601,13 @@ export type RuntimeCommand =
       title?: string;
       /** Already resolved by the context bridge. Validated again on arrival. */
       context?: AgentAttachedContext;
+      /**
+       * The workspace the session is started from, for the agent to query
+       * (J.3) — bounded, and only ever of `workspaceId`. What the agent may do
+       * with it is decided by the runtime from the session's grant, not asked
+       * for here.
+       */
+      contextSnapshot?: SessionContextSnapshot;
     }
   | {
       name: "resume_session";
@@ -472,6 +628,36 @@ export type RuntimeCommand =
       sessionId: string;
       observationAgentId: string;
       observationRunId: string;
+    }
+  /** What is installed on this machine. A local runtime only; empty elsewhere. */
+  | { name: "detect_providers" }
+  /** Proves the agent can be reached and learns how it signs in. Starts no session. */
+  | { name: "connect_provider"; provider: AgentProviderId }
+  /**
+   * Runs the agent's **own** sign-in for a method it advertised.
+   *
+   * A method id and nothing else: there is no field here a key, a token or a
+   * password could be put in, so no credential can cross this boundary.
+   */
+  | { name: "authenticate_provider"; provider: AgentProviderId; methodId: string }
+  /** Ends this actor's sessions with the provider and releases its connection. */
+  | { name: "disconnect_provider"; provider: AgentProviderId }
+  /** A fresher copy of the session's own workspace. Refused for any other workspace. */
+  | { name: "sync_session_context"; sessionId: string; snapshot: SessionContextSnapshot }
+  /**
+   * The Command Centre applied (or could not apply) a change the user
+   * approved. Only an approved action of this session can be completed. A
+   * plan (J.5) is answered with its hash and the ids it created, in order —
+   * or, when it could not be applied, the operation that no longer fit.
+   */
+  | {
+      name: "complete_context_action";
+      sessionId: string;
+      actionId: string;
+      outcome:
+        | { ok: true; collectionId: string }
+        | { ok: true; planHash: string; created: readonly string[] }
+        | { ok: false; failedAt?: number };
     };
 
 /** What each command answers with. Keyed by name so the client can type one call generically. */
@@ -492,7 +678,17 @@ export type RuntimeCommandResults = {
   detach_context: RuntimeSessionView;
   respond_to_approval: RuntimeSessionView;
   dispose_session: { sessionId: string };
+  sync_session_context: { sessionId: string; version: number };
+  complete_context_action: { sessionId: string };
   link_observation: RuntimeCorrelationView;
+  detect_providers: {
+    /** `false` on any runtime that is not the user's own machine. */
+    thisMachine: boolean;
+    detections: readonly ProviderDetection[];
+  };
+  connect_provider: ProviderConnectionView;
+  authenticate_provider: ProviderConnectionView;
+  disconnect_provider: ProviderConnectionView;
 };
 
 export type RuntimeCommandResult<N extends RuntimeCommandName> = RuntimeResult<
@@ -719,6 +915,14 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
         command.context = context;
       }
 
+      if (raw.contextSnapshot !== undefined && raw.contextSnapshot !== null) {
+        // Only ever of the workspace the session is started from.
+        if (!workspaceId) return null;
+        const snapshot = readSessionContextSnapshot(raw.contextSnapshot, workspaceId);
+        if (!snapshot) return null;
+        command.contextSnapshot = snapshot;
+      }
+
       return command;
     }
 
@@ -800,6 +1004,60 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       const observationRunId = id(raw.observationRunId);
       if (!sessionId || !observationAgentId || !observationRunId) return null;
       return { name: "link_observation", sessionId, observationAgentId, observationRunId };
+    }
+
+    case "detect_providers":
+      return { name: "detect_providers" };
+
+    case "connect_provider":
+    case "disconnect_provider":
+      return isAgentProviderId(raw.provider) ? { name: raw.name, provider: raw.provider } : null;
+
+    case "authenticate_provider": {
+      if (!isAgentProviderId(raw.provider)) return null;
+      const methodId = id(raw.methodId);
+      return methodId ? { name: "authenticate_provider", provider: raw.provider, methodId } : null;
+    }
+
+    case "sync_session_context": {
+      const sessionId = id(raw.sessionId);
+      const workspace = (raw.snapshot as { workspace?: { id?: unknown } } | null | undefined)?.workspace;
+      const workspaceId = id(workspace?.id);
+      if (!sessionId || !workspaceId) return null;
+      // Shape-checked here; the host re-reads it against the session's own
+      // workspace and refuses any other.
+      const snapshot = readSessionContextSnapshot(raw.snapshot, workspaceId);
+      return snapshot ? { name: "sync_session_context", sessionId, snapshot } : null;
+    }
+
+    case "complete_context_action": {
+      const sessionId = id(raw.sessionId);
+      const actionId = id(raw.actionId);
+      const outcome = raw.outcome as
+        | { ok?: unknown; collectionId?: unknown; planHash?: unknown; created?: unknown; failedAt?: unknown }
+        | null
+        | undefined;
+      if (!sessionId || !actionId || !outcome || typeof outcome !== "object") return null;
+      if (outcome.ok === true && outcome.planHash !== undefined) {
+        // A plan (J.5): its hash, and the id of each collection it created, in order.
+        const planHash = id(outcome.planHash);
+        if (!planHash || !Array.isArray(outcome.created) || outcome.created.length > 20) return null;
+        const created = outcome.created.map(id);
+        if (created.some((entry) => !entry)) return null;
+        return { name: "complete_context_action", sessionId, actionId, outcome: { ok: true, planHash, created: created as string[] } };
+      }
+      if (outcome.ok === true) {
+        const collectionId = id(outcome.collectionId);
+        return collectionId
+          ? { name: "complete_context_action", sessionId, actionId, outcome: { ok: true, collectionId } }
+          : null;
+      }
+      if (outcome.ok !== false) return null;
+      const failedAt =
+        typeof outcome.failedAt === "number" && Number.isInteger(outcome.failedAt) && outcome.failedAt >= 0 && outcome.failedAt < 20
+          ? { failedAt: outcome.failedAt }
+          : {};
+      return { name: "complete_context_action", sessionId, actionId, outcome: { ok: false, ...failedAt } };
     }
   }
 }

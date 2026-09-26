@@ -9,7 +9,7 @@ export function urlsText(tabs: Tab[]): string {
 
 export function buildExportText(tabs: Tab[]): string {
   const groups = groupByCategory(tabs);
-  const lines: string[] = ["TABDUMP EXPORT", ""];
+  const lines: string[] = ["HUBBLE EXPORT", ""];
 
   for (const id of CATEGORY_ORDER) {
     const group = groups[id];

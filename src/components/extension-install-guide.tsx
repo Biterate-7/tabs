@@ -1,10 +1,11 @@
 import { Button, buttonVariants } from "@/components/ui/button"
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 
-const STEPS = [
-  "Download the TabDump extension.",
+/** The install steps, shared with Settings → Extension. */
+export const EXTENSION_INSTALL_STEPS = [
+  "Download the Hubble extension.",
   <>
-    Extract the downloaded <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">tabdump-extension.zip</code>{" "}
+    Extract the downloaded <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">hubble-extension.zip</code>{" "}
     file — do not select the .zip itself in Chrome.
   </>,
   <>
@@ -12,17 +13,17 @@ const STEPS = [
     Chrome.
   </>,
   <>
-    Turn on <strong className="font-semibold text-foreground">Developer mode</strong>.
+    Turn on <strong className="font-medium text-foreground">Developer mode</strong>.
   </>,
   <>
-    Click <strong className="font-semibold text-foreground">Load unpacked</strong>.
+    Click <strong className="font-medium text-foreground">Load unpacked</strong>.
   </>,
   <>
-    Select the extracted <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">tabdump-extension</code>{" "}
+    Select the extracted <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">hubble-extension</code>{" "}
     folder — the one containing <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">manifest.json</code>.
   </>,
-  "Pin TabDump to your Chrome toolbar.",
-  "Return to TabDump and click the TabDump extension.",
+  "Pin Hubble to your Chrome toolbar.",
+  "Return to Hubble and click the Hubble extension.",
 ]
 
 export function ExtensionInstallGuide({
@@ -34,10 +35,10 @@ export function ExtensionInstallGuide({
 }) {
   return (
     <div className="w-full max-w-sm text-left">
-      <h2 className="text-center text-h1 font-semibold text-foreground">Install TabDump for Chrome</h2>
+      <h2 className="text-center text-h1 font-medium text-foreground">Install Hubble for Chrome</h2>
 
       <ol className="mt-6 space-y-2.5">
-        {STEPS.map((step, i) => (
+        {EXTENSION_INSTALL_STEPS.map((step, i) => (
           <li key={i} className="flex gap-3 text-body text-muted-foreground">
             <span className="shrink-0 font-mono text-body-sm text-tertiary">{i + 1}.</span>
             <span>{step}</span>

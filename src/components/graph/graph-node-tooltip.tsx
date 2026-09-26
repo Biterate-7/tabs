@@ -96,7 +96,7 @@ export function GraphNodeTooltip({
     <>
       {showHoverPreview && (
         <div
-          className="pointer-events-none fixed z-50 max-w-64 -translate-x-1/2 -translate-y-[calc(100%+14px)] rounded-md bg-popover px-2.5 py-1.5 text-label text-foreground shadow-md ring-1 ring-foreground/10"
+          className="pointer-events-none fixed z-50 max-w-64 -translate-x-1/2 -translate-y-[calc(100%+14px)] rounded-md bg-popover px-2.5 py-1.5 text-label text-foreground border border-border shadow-md"
           style={{ left: hover.screenX, top: hover.screenY }}
         >
           <p className="truncate font-medium text-foreground">{nodeTitle(hover.node)}</p>
@@ -117,7 +117,7 @@ export function GraphNodeTooltip({
           return (
             <div
               key={selected.node.id}
-              className="fixed z-50 origin-(--peek-origin) overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 zoom-in-95"
+              className="fixed z-50 origin-(--peek-origin) overflow-hidden rounded-lg bg-popover text-popover-foreground border border-border shadow-lg duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0 zoom-in-95"
               style={{ left, top, "--peek-origin": origin } as CSSProperties}
             >
               <TabPeekContent

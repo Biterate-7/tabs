@@ -33,7 +33,7 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  * ## Read-only
  *
  * Every control here selects or filters. Nothing writes to the domain, and
- * there is no affordance to run, retry, resume or cancel anything - TabDump
+ * there is no affordance to run, retry, resume or cancel anything - Hubble
  * records agent work and never performs it.
  */
 
@@ -160,7 +160,7 @@ function HistoryRow({
         type="button"
         onClick={onOpen}
         aria-label={accessibleName}
-        className="flex w-full items-start gap-2.5 rounded-lg border border-subtle px-2.5 py-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        className="flex w-full items-start gap-2.5 rounded-md border border-border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         {/* A run whose agent is gone gets the fallback mark, which is what
             the visual registry already returns for an unknown provider. */}
@@ -208,17 +208,17 @@ export function AgentHistoryScreen({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
-      <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-h2 text-foreground">Agent History</h1>
           <p className="truncate text-body-sm text-muted-foreground">
-            Every agent session TabDump still holds, however long ago it ran.
+            Every agent session Hubble still holds, however long ago it ran.
           </p>
         </div>
       </header>
@@ -299,7 +299,7 @@ export function AgentHistoryScreen({
               /* Nothing has been recorded at all. Distinguished from "your
                  filter matched nothing" below, because they call for
                  different next actions. */
-              <div className="rounded-xl border border-subtle bg-background-secondary p-6 text-center">
+              <div className="rounded-lg border border-subtle bg-background-secondary p-6 text-center">
                 <History className="mx-auto size-5 text-tertiary" aria-hidden />
                 <p className="mt-2 text-body font-medium text-foreground">
                   No agent sessions recorded yet
@@ -310,7 +310,7 @@ export function AgentHistoryScreen({
                 </p>
               </div>
             ) : filtered === 0 ? (
-              <div className="rounded-xl border border-subtle bg-background-secondary p-6 text-center">
+              <div className="rounded-lg border border-subtle bg-background-secondary p-6 text-center">
                 <p className="text-body-sm text-muted-foreground">
                   No sessions match this filter.
                 </p>

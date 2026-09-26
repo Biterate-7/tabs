@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { LegalPage, ContactEmail } from "@/components/legal/legal-page"
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — TabDump",
-  description: "How TabDump handles the tabs, notes, and workspace data you bring into it.",
+  title: "Privacy Policy — Hubble",
+  description: "How Hubble handles the tabs, notes, and workspace data you bring into it.",
 }
 
 export default function PrivacyPolicyPage() {
@@ -12,16 +12,16 @@ export default function PrivacyPolicyPage() {
       <section>
         <h2>Introduction</h2>
         <p>
-          TabDump is a tool for organizing your browser tabs into workspaces. This policy explains, as
+          Hubble is a tool for organizing your browser tabs into workspaces. This policy explains, as
           accurately as we can describe it from how the application is actually built, what information
-          TabDump collects, where it is stored, and when — if ever — it leaves your device.
+          Hubble collects, where it is stored, and when — if ever — it leaves your device.
         </p>
         <p>
-          The short version: TabDump works without an account. The tabs, notes, and workspaces you create
+          The short version: Hubble works without an account. The tabs, notes, and workspaces you create
           live in your own browser&apos;s local storage, and if you never sign in, they stay there.
         </p>
         <p>
-          If you choose to sign in with Google, two things change. TabDump creates an account for you, and
+          If you choose to sign in with Google, two things change. Hubble creates an account for you, and
           your workspaces can then be synced to a database on the server so the same tabs are available in
           another browser. Both are described in detail under{" "}
           <a href="#accounts-and-sync">Accounts and Sync</a> below. Signing in is optional — the app is
@@ -31,11 +31,11 @@ export default function PrivacyPolicyPage() {
 
       <section>
         <h2>Information You Provide</h2>
-        <p>When you use TabDump, you may provide:</p>
+        <p>When you use Hubble, you may provide:</p>
         <ul>
           <li>
-            <strong>Tab data</strong> — URLs and page titles you paste directly into TabDump, or that the
-            optional TabDump browser extension sends over from your currently open tabs or browser history.
+            <strong>Tab data</strong> — URLs and page titles you paste directly into Hubble, or that the
+            optional Hubble browser extension sends over from your currently open tabs or browser history.
           </li>
           <li>
             <strong>Organizational content</strong> — workspace names, section/category names, notes you
@@ -45,23 +45,23 @@ export default function PrivacyPolicyPage() {
             <strong>An optional workspace logo image</strong> you choose to upload, if you use that feature.
           </li>
           <li>
-            <strong>Account details, only if you sign in.</strong> Signing in with Google gives TabDump the
+            <strong>Account details, only if you sign in.</strong> Signing in with Google gives Hubble the
             email address, name, and profile picture URL on your Google account, along with the account
-            identifier Google issues for it. TabDump never sees or handles your Google password.
+            identifier Google issues for it. Hubble never sees or handles your Google password.
           </li>
         </ul>
         <p>
-          None of this requires an account except the last item. Using TabDump without signing in does not
+          None of this requires an account except the last item. Using Hubble without signing in does not
           ask for your name, email address, or any contact details.
         </p>
       </section>
 
       <section>
         <h2>Automatically Collected Information</h2>
-        <p>Depending on how you use TabDump, the following may also be collected:</p>
+        <p>Depending on how you use Hubble, the following may also be collected:</p>
         <ul>
           <li>
-            <strong>Page titles fetched on your behalf.</strong> When you paste or import a URL, TabDump&apos;s
+            <strong>Page titles fetched on your behalf.</strong> When you paste or import a URL, Hubble&apos;s
             server may fetch that page (or ask an oEmbed-style API, for supported sites like YouTube) to
             resolve a readable title, since not every pasted URL comes with one. Only the URL you provided is
             sent for this lookup, and requests to private, local, or internal network addresses are blocked
@@ -77,11 +77,11 @@ export default function PrivacyPolicyPage() {
           <li>
             <strong>Standard hosting/network metadata.</strong> Whoever hosts this deployment (a hosting
             provider, CDN, or reverse proxy) may process ordinary connection metadata — such as IP address,
-            timestamps, and request logs — as a normal part of operating that infrastructure. TabDump&apos;s
+            timestamps, and request logs — as a normal part of operating that infrastructure. Hubble&apos;s
             own application code does not read, store, or forward this information.
           </li>
         </ul>
-        <p>TabDump does not use analytics scripts, advertising trackers, or session-replay tools, and does not set any tracking cookies. See the <a href="/cookies">Cookie Policy</a> for details on local storage.</p>
+        <p>Hubble does not use analytics scripts, advertising trackers, or session-replay tools, and does not set any tracking cookies. See the <a href="/cookies">Cookie Policy</a> for details on local storage.</p>
       </section>
 
       <section>
@@ -96,7 +96,7 @@ export default function PrivacyPolicyPage() {
             using. Synced workspace data is used to give you the same workspaces in another browser.
           </li>
         </ul>
-        <p>TabDump does not sell data, does not use your content to train models, and does not share it with advertisers — it does not have an advertising or data-sale mechanism of any kind.</p>
+        <p>Hubble does not sell data, does not use your content to train models, and does not share it with advertisers — it does not have an advertising or data-sale mechanism of any kind.</p>
       </section>
 
       <section id="accounts-and-sync">
@@ -105,7 +105,7 @@ export default function PrivacyPolicyPage() {
           Signing in is optional, and nothing in this section applies until you do it.
         </p>
         <p>
-          <strong>Your account.</strong> When you sign in with Google, TabDump stores an account record
+          <strong>Your account.</strong> When you sign in with Google, Hubble stores an account record
           containing your email address, name, profile picture URL, and the identifier Google uses for your
           account, plus the dates the record was created and last changed. Your email is kept for display and
           support; the Google identifier is what actually identifies you, because an email address can change
@@ -117,7 +117,7 @@ export default function PrivacyPolicyPage() {
           the browser holds is never written down on our side.
         </p>
         <p>
-          <strong>Your synced workspaces.</strong> While you are signed in, TabDump can copy your workspaces
+          <strong>Your synced workspaces.</strong> While you are signed in, Hubble can copy your workspaces
           to a PostgreSQL database so another browser signed into the same account sees the same tabs. What
           is stored there is the workspace itself — its name and logo — and its contents:
         </p>
@@ -135,7 +135,7 @@ export default function PrivacyPolicyPage() {
           read or write workspaces belonging to the signed-in account.
         </p>
         <p>
-          Deleting a workspace in TabDump while signed in is synced too: the server marks it deleted so your
+          Deleting a workspace in Hubble while signed in is synced too: the server marks it deleted so your
           other devices remove it as well, and keeps a record that the deletion happened.
         </p>
       </section>
@@ -143,14 +143,14 @@ export default function PrivacyPolicyPage() {
       <section>
         <h2>Cookies and Similar Technologies</h2>
         <p>
-          TabDump sets cookies only for signing in. If you never sign in, no cookie is set. There are no
+          Hubble sets cookies only for signing in. If you never sign in, no cookie is set. There are no
           analytics, advertising, or tracking cookies at any point.
         </p>
         <ul>
           <li>
             A <strong>session cookie</strong> that keeps you signed in. It is marked HttpOnly, so page
             scripts cannot read it, sent only over HTTPS in production, and lasts up to 30 days, extending as
-            you keep using TabDump.
+            you keep using Hubble.
           </li>
           <li>
             A <strong>short-lived sign-in cookie</strong> used once during the sign-in exchange to confirm
@@ -165,48 +165,48 @@ export default function PrivacyPolicyPage() {
 
       <section>
         <h2>Third-Party Services</h2>
-        <p>TabDump integrates with the following third parties, only when the corresponding feature is used:</p>
+        <p>Hubble integrates with the following third parties, only when the corresponding feature is used:</p>
         <ul>
           <li>
             <strong>Sign in with Google (optional).</strong> If you choose to sign in, Google handles the
-            sign-in itself and returns a signed proof of who you are, which TabDump checks against Google&apos;s
+            sign-in itself and returns a signed proof of who you are, which Hubble checks against Google&apos;s
             published keys. Your interaction with Google at that moment is covered by Google&apos;s own privacy
-            policy. If you never sign in, TabDump makes no request to Google for this.
+            policy. If you never sign in, Hubble makes no request to Google for this.
           </li>
           <li>
             <strong>Google Gemini API (optional, operator-configured).</strong> The person or organization
-            running a given TabDump deployment can optionally configure a Gemini API key to sharpen
+            running a given Hubble deployment can optionally configure a Gemini API key to sharpen
             Auto-Organize&apos;s tab clustering with semantic similarity hints. When configured, tab titles,
-            URLs, and short snippets of page text derived from your tabs are sent from TabDump&apos;s server to
+            URLs, and short snippets of page text derived from your tabs are sent from Hubble&apos;s server to
             Google&apos;s Gemini API to generate embeddings or an organization suggestion. Embedding results are
             cached in server memory (keyed by a hash of the text, not by you or your workspace) for up to
             seven days to avoid repeat calls, and are discarded when the server restarts. If no key is
-            configured, TabDump organizes tabs using only deterministic, local domain/keyword rules and never
+            configured, Hubble organizes tabs using only deterministic, local domain/keyword rules and never
             contacts Gemini at all.
           </li>
           <li>
             <strong>Sites you link to.</strong> Resolving a page title or the optional content-clustering hint
-            means TabDump&apos;s server briefly fetches the URL you provided. That site sees a request from
-            TabDump&apos;s server, not from your browser directly.
+            means Hubble&apos;s server briefly fetches the URL you provided. That site sees a request from
+            Hubble&apos;s server, not from your browser directly.
           </li>
           <li>
-            <strong>Fonts.</strong> TabDump uses Google-designed fonts, but they are downloaded once at build
+            <strong>Fonts.</strong> Hubble uses Google-designed fonts, but they are downloaded once at build
             time and served from this application&apos;s own domain — your browser never requests them from
             Google, so no font-related request is sent to Google when you use the app.
           </li>
         </ul>
-        <p>TabDump does not integrate any advertising network, error-monitoring/crash-reporting SDK, chat widget, or payment provider.</p>
+        <p>Hubble does not integrate any advertising network, error-monitoring/crash-reporting SDK, chat widget, or payment provider.</p>
       </section>
 
       <section>
         <h2>The Browser Extension</h2>
         <p>
-          The optional TabDump browser extension requests permission to read your open tabs and, for the
+          The optional Hubble browser extension requests permission to read your open tabs and, for the
           History Dump feature, your browser history. It uses these permissions only to let you pick pages to
-          bring into TabDump — tab and history data is read locally by the extension and handed directly to
-          the TabDump web app running in your browser (via the same-origin messaging bridge described in the
-          extension&apos;s source). It is never sent to any server operated by TabDump, and the extension
-          itself has no network permissions to reach anywhere other than the TabDump page it is installed to
+          bring into Hubble — tab and history data is read locally by the extension and handed directly to
+          the Hubble web app running in your browser (via the same-origin messaging bridge described in the
+          extension&apos;s source). It is never sent to any server operated by Hubble, and the extension
+          itself has no network permissions to reach anywhere other than the Hubble page it is installed to
           work with.
         </p>
       </section>
@@ -217,7 +217,7 @@ export default function PrivacyPolicyPage() {
           <li>
             <strong>Workspace data, notes, favorites, sections, dependencies, and appearance settings</strong>{" "}
             are stored in your browser&apos;s <code>localStorage</code> and remain there until you clear them
-            (via your browser&apos;s own storage controls, or TabDump&apos;s own clear/delete-workspace
+            (via your browser&apos;s own storage controls, or Hubble&apos;s own clear/delete-workspace
             actions) or until your browser removes them (e.g., clearing site data).
           </li>
           <li>
@@ -232,7 +232,7 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             <strong>Your account and any synced workspaces</strong> are stored in a PostgreSQL database and
-            kept until they are deleted. Deleting a workspace in TabDump while signed in removes it from your
+            kept until they are deleted. Deleting a workspace in Hubble while signed in removes it from your
             other devices and leaves a record that it was deleted. Signing out deletes that session from the
             server, but leaves your account and any synced workspaces in place so they are still there next
             time you sign in.
@@ -242,7 +242,7 @@ export default function PrivacyPolicyPage() {
           </li>
         </ul>
         <p>
-          TabDump does not currently offer a self-service way to delete your whole account and everything
+          Hubble does not currently offer a self-service way to delete your whole account and everything
           synced with it. If you want that done, write to <ContactEmail /> and we will handle it manually. If
           you never sign in, there is nothing on the server to delete in the first place.
         </p>
@@ -251,14 +251,14 @@ export default function PrivacyPolicyPage() {
       <section>
         <h2>Data Security</h2>
         <p>
-          TabDump takes reasonable, verifiable precautions appropriate to what it actually handles: the
+          Hubble takes reasonable, verifiable precautions appropriate to what it actually handles: the
           title/content-fetching endpoints block requests to local and internal network addresses (to prevent
           the server being used to probe internal infrastructure), and the sign-in, sync, and AI endpoints
           are rate-limited per IP address. For accounts specifically, session tokens are stored only as a
           one-way hash rather than in a form that could be read back and reused, the session cookie is marked
           HttpOnly so page scripts cannot read it and is sent only over HTTPS in production, and every sync
           request is checked against the signed-in account before it can read or write anything. No method of
-          transmission or storage is completely secure, and we do not claim TabDump — or any software — is
+          transmission or storage is completely secure, and we do not claim Hubble — or any software — is
           100% secure or guarantees against data loss.
         </p>
       </section>
@@ -267,9 +267,9 @@ export default function PrivacyPolicyPage() {
         <h2>Your Rights and Choices</h2>
         <p>Your workspace lives in your own browser, and on our server as well only if you sign in. Either way you stay in direct control of it:</p>
         <ul>
-          <li>Delete a workspace, tab, or note at any time from within TabDump. While you are signed in, that deletion syncs to your other devices too.</li>
+          <li>Delete a workspace, tab, or note at any time from within Hubble. While you are signed in, that deletion syncs to your other devices too.</li>
           <li>Export your workspace as a JSON file, or clear your browser&apos;s local storage/IndexedDB for this site to remove the local copy at once.</li>
-          <li>Use TabDump without signing in, and nothing of yours is stored on the server at all.</li>
+          <li>Use Hubble without signing in, and nothing of yours is stored on the server at all.</li>
           <li>Sign out at any time — this deletes that session on the server, so the browser is no longer signed in.</li>
           <li>Uninstall the browser extension at any time to revoke its access to your tabs and history.</li>
           <li>Avoid the optional AI features entirely — Auto-Organize works from local clustering rules alone, and nothing is sent to Gemini unless that key is configured and the feature runs.</li>
@@ -280,7 +280,7 @@ export default function PrivacyPolicyPage() {
       <section>
         <h2>Children&apos;s Privacy</h2>
         <p>
-          TabDump is a general-purpose browser tab organizer and is not directed at children. It does not
+          Hubble is a general-purpose browser tab organizer and is not directed at children. It does not
           knowingly collect personal information from children, and it does not implement age verification.
         </p>
       </section>
@@ -288,7 +288,7 @@ export default function PrivacyPolicyPage() {
       <section>
         <h2>Changes to This Privacy Policy</h2>
         <p>
-          If TabDump&apos;s data handling changes — for example, a new integration is added — this page will
+          If Hubble&apos;s data handling changes — for example, a new integration is added — this page will
           be updated and the &quot;Last updated&quot; date above will change accordingly.
         </p>
       </section>

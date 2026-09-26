@@ -73,7 +73,7 @@ export function SectionGrid({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {cardEntries.map((node) => (
           <SectionFolder
             key={node.section.id}
@@ -85,15 +85,15 @@ export function SectionGrid({
         <button
           type="button"
           onClick={() => onCreateSection(null)}
-          className="flex min-h-[100px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-subtle text-tertiary transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:text-foreground"
+          className="flex min-h-[100px] items-center justify-center gap-1.5 rounded-xs border border-dashed border-border text-tertiary transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
         >
-          <Plus className="size-4" />
-          <span className="text-body-sm">New Section</span>
+          <Plus className="size-3.5" />
+          <span className="text-body-sm">New section</span>
         </button>
       </div>
 
       {chipEntries.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-2.5 flex flex-wrap gap-2">
           {chipEntries.map((node) => (
             <SectionFolder
               key={node.section.id}

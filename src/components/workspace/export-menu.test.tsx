@@ -117,7 +117,7 @@ describe("ExportMenu", () => {
 
     expect(exportLib.downloadTextFile).toHaveBeenCalledTimes(1);
     expect(exportLib.downloadTextFile).toHaveBeenCalledWith(
-      "tabdump-export.txt",
+      "hubble-export.txt",
       expect.any(String)
     );
     expect(toastSpy).toHaveBeenCalledWith("Workspace exported");
@@ -167,7 +167,7 @@ describe("ExportMenu", () => {
 
     expect(jsonExportLib.downloadJsonFile).toHaveBeenCalledTimes(1);
     const [filename, text] = vi.mocked(jsonExportLib.downloadJsonFile).mock.calls[0];
-    expect(filename).toMatch(/^tabdump-general-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(filename).toMatch(/^hubble-general-\d{4}-\d{2}-\d{2}\.json$/);
     const parsed = JSON.parse(text);
     expect(parsed.version).toBe(1);
     expect(parsed.workspaces).toEqual([workspace]);
@@ -199,7 +199,7 @@ describe("ExportMenu", () => {
 
     expect(jsonExportLib.downloadJsonFile).toHaveBeenCalledTimes(1);
     const [filename, text] = vi.mocked(jsonExportLib.downloadJsonFile).mock.calls[0];
-    expect(filename).toMatch(/^tabdump-all-workspaces-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(filename).toMatch(/^hubble-all-workspaces-\d{4}-\d{2}-\d{2}\.json$/);
     expect(JSON.parse(text).workspaces).toEqual([workspaceA, workspaceB]);
     expect(toastSpy).toHaveBeenCalledWith("All workspaces exported as JSON");
   });

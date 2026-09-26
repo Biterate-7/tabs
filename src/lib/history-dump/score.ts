@@ -6,7 +6,7 @@ import type { AggregatedHistoryEntry } from "./aggregate";
  * call, same input always produces the same output. Four signals, each
  * capped so no single one can dominate: recency, visit frequency, title
  * quality, and content-type (via the same category classifier the rest of
- * TabDump uses — reusing it here means "this looks like research/news/docs"
+ * Hubble uses — reusing it here means "this looks like research/news/docs"
  * is one classifier, not a second guess specific to History Dump).
  */
 const MAX_SCORE = 100;

@@ -7,7 +7,7 @@ import type { AgentProviderId } from "./types";
  *
  * Claude Code needs no credential: it is observed by reading files that
  * already belong to the user on the machine they are sitting at. Every other
- * provider TabDump might one day observe is reached over a network and would
+ * provider Hubble might one day observe is reached over a network and would
  * need one. So the question is not whether to store a secret — it is what to
  * do when a provider asks for one in an environment that cannot keep it.
  *
@@ -18,12 +18,12 @@ import type { AgentProviderId } from "./types";
  * the origin, survive across sessions, and sit in a profile directory that
  * other software on the machine can read. There is no browser API that gives
  * a web app an encrypted secret store. The desktop build has an OS keychain
- * available in principle, but TabDump's Tauri capabilities do not grant
+ * available in principle, but Hubble's Tauri capabilities do not grant
  * access to one today (see src-tauri/ and docs/desktop-architecture.md), and
  * widening native permissions to make a connector feel more finished would
  * trade a real security boundary for a cosmetic one.
  *
- * So TabDump does not persist secrets. It holds them in this module — a plain
+ * So Hubble does not persist secrets. It holds them in this module — a plain
  * variable in the page's memory — where they die with the tab. A connector
  * configured this way is honestly labelled *configured for this session*
  * rather than connected, and the user re-enters it next time. That is a worse
@@ -93,7 +93,7 @@ export function clearAllSessionCredentials(): void {
  * Presence and length — enough to render "Configured for this session" and a
  * row of dots of a plausible width, and not enough to reconstruct anything.
  * Deliberately not a masked prefix: showing the first four characters of a
- * key is a habit borrowed from services that can revoke them, and TabDump
+ * key is a habit borrowed from services that can revoke them, and Hubble
  * cannot.
  */
 export type SessionCredentialDescription = {

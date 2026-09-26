@@ -1,5 +1,5 @@
 import { toProjectRelative } from "@/lib/agents/paths";
-import { normalizeControlSummary } from "../../events";
+import { boundMessageText, normalizeControlSummary } from "../../events";
 import type { AgentControlEvent, AgentControlEventKind, ControlFileInfo } from "../../events";
 import type { ClaudeRuntimeMessage } from "./runtime";
 
@@ -38,7 +38,7 @@ import type { ClaudeRuntimeMessage } from "./runtime";
 
 export type NormalizeContext = {
   sessionId: string;
-  /** TabDump's project id, for `ControlFileInfo`. Absent when the session has no project. */
+  /** Hubble's project id, for `ControlFileInfo`. Absent when the session has no project. */
   projectId?: string;
   /** The project root, for reducing absolute paths. Absent when the session has no project. */
   projectPath?: string;
@@ -133,7 +133,7 @@ function event(
  * The file event a tool call implies, if any.
  *
  * `Write` is reported as `file_modified` rather than `file_created`, because
- * the provider does not say whether the file already existed and TabDump will
+ * the provider does not say whether the file already existed and Hubble will
  * not guess. The observation plane made the same call for the same reason —
  * see the note on `AgentRunArtifactRole` in the domain types.
  */
@@ -215,7 +215,17 @@ function fromAssistant(
   }
 
   if (text) {
-    events.unshift(event("message_received", text, context));
+    // The summary stays the collapsed one-liner the durable log wants; the
+    // reply itself rides in `text` for the chat surface. See TEXT_EVENT_KINDS.
+    const full = boundMessageText(
+      list(inner.content)
+        .map((raw) => record(raw))
+        .filter((block) => block && str(block.type) === "text")
+        .map((block) => (block ? (str(block.text) ?? "") : ""))
+        .filter(Boolean)
+        .join("\n\n")
+    );
+    events.unshift(event("message_received", text, context, { text: full }));
   } else if (sawThinking && events.length === 0) {
     // A turn that is only thinking so far. Reported as `thinking` rather than
     // as an empty message, so a UI can say "working" without inventing prose.
@@ -230,7 +240,7 @@ function fromAssistant(
  *
  * In this stream a `user` message is usually the *tool result* being fed
  * back, not something a person typed. Only the result case is normalized:
- * TabDump already knows what it sent, and re-emitting its own message as
+ * Hubble already knows what it sent, and re-emitting its own message as
  * `message_sent` from the provider's echo would double-count it.
  */
 function fromUser(

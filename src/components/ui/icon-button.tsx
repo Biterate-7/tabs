@@ -14,6 +14,12 @@ export interface IconButtonProps
   destructive?: boolean
 }
 
+/**
+ * HubbleIconButton — a 28px square with a 4px corner and a 16px glyph at
+ * the secondary text tier, the measured geometry of the reference's toolbar
+ * and title-bar controls. Hover fills the square with the 3.5% tone and
+ * brings the glyph up to full ink; nothing moves.
+ */
 export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ className, tooltip, shortcut, destructive, "aria-label": ariaLabel, ...props }, ref) => (
     <Tooltip>
@@ -25,15 +31,14 @@ export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
             data-slot="icon-button"
             aria-label={ariaLabel}
             className={cn(
-              "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-transparent",
-              "transition-colors duration-(--duration-fast) ease-(--ease-standard) outline-none",
-              "active:not-aria-[haspopup]:translate-y-px",
-              "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+              "inline-flex size-7 shrink-0 items-center justify-center rounded-xs border border-transparent",
+              "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-color) outline-none",
+              "focus-visible:ring-2 focus-visible:ring-ring/60",
               "disabled:pointer-events-none disabled:opacity-50",
               "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
               destructive
-                ? "text-destructive hover:border-destructive/30 hover:bg-destructive/10"
-                : "text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+                ? "text-muted-foreground hover:bg-destructive/12 hover:text-destructive"
+                : "text-muted-foreground hover:bg-surface-hover hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground",
               className
             )}
             {...props}
@@ -42,9 +47,9 @@ export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
       />
       <TooltipContent>
         {shortcut ? (
-          <span className="flex flex-col gap-0.5">
+          <span className="flex items-center gap-2">
             <span>{tooltip ?? ariaLabel}</span>
-            <span className="text-[0.65rem] text-muted-foreground">{shortcut}</span>
+            <span className="text-tertiary">{shortcut}</span>
           </span>
         ) : (
           (tooltip ?? ariaLabel)

@@ -1,5 +1,6 @@
 import { readAdapterApprovalDetails } from "./approval-details";
 import { createApprovalBroker } from "./approvals";
+import { canReattachSession } from "./binding";
 import {
   isWellFormedAttachedContext,
   isWellFormedContext,
@@ -29,9 +30,12 @@ import type {
   AgentControlAdapter,
   ControlResult,
   ControlUnsubscribe,
+  SessionContextServerEntry,
   SessionHandle,
 } from "./types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
+import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 
 /**
  * The control service: the only thing that may drive an adapter.
@@ -95,7 +99,15 @@ export type ControlServiceOptions = {
   now?: () => number;
   /** Mints ids. Injected so tests are deterministic. */
   createId?: () => string;
+  /**
+   * Told when a session reaches a terminal status, so whatever the caller
+   * holds for it — its workspace-context credential — ends with it (J.3).
+   */
+  onSessionEnded?: (sessionId: string) => void;
 };
+
+/** How a workspace approval ended, as the context layer that asked hears it. */
+export type WorkspaceApprovalOutcome = "granted" | "denied" | "expired" | "cancelled";
 
 export type StartSessionInput = {
   provider: AgentProviderId;
@@ -105,10 +117,18 @@ export type StartSessionInput = {
   /** The grant for this session. Defaults to nothing granted. */
   permissions?: AgentPermissionGrant;
   /**
+   * Binds the new session to its workspace context, once its id exists
+   * (Phase J.3). Supplied by the runtime per call; the service knows nothing
+   * of workspaces beyond carrying the result to the adapter. `"refused"`
+   * fails the start — a session asked for context it could not be given
+   * does not quietly start without it.
+   */
+  bindContext?: (sessionId: string) => Promise<SessionContextServerEntry | "refused" | undefined>;
+  /**
    * Context to seed the session with, already resolved by the bridge.
    *
    * Optional, and absent is the default: a session starts knowing nothing
-   * about TabDump unless a caller explicitly attached something. There is
+   * about Hubble unless a caller explicitly attached something. There is
    * deliberately no branch here that resolves context on the caller's
    * behalf — the service cannot reach the bridge, and a service that
    * resolved "the current workspace" by default would be the automatic
@@ -125,6 +145,20 @@ export type StartSessionInput = {
 
 export type ResumeInput = StartSessionInput & { providerSessionId: string };
 
+export type AdoptSessionInput = {
+  /** The existing session's id. Supplied, never minted — see `adoptSession`. */
+  sessionId: string;
+  provider: AgentProviderId;
+  projectId?: string;
+  workspaceId?: string;
+  title?: string;
+  /** The provider's own id, when durable state already recorded one. */
+  providerSessionId?: string;
+  /** The grant, re-read from the project by the caller rather than restored from a cache. */
+  permissions?: AgentPermissionGrant;
+  createdAt?: number;
+};
+
 export type ControlService = {
   /** Every session the service holds, newest first. */
   sessions(): AgentSession[];
@@ -139,12 +173,55 @@ export type ControlService = {
 
   startSession(input: StartSessionInput): Promise<ControlResult<AgentSession>>;
   resumeSession(input: ResumeInput): Promise<ControlResult<AgentSession>>;
+
+  /**
+   * Rebuilds a session whose agent is already running.
+   *
+   * ## Why this is not `resumeSession`
+   *
+   * `resumeSession` starts something: it asks a provider to reattach to a
+   * conversation by the provider's own id, and it mints a *new* Hubble
+   * session to hold it. This does neither. The Hubble session already
+   * exists, its id is already known, and the agent never stopped — what has
+   * been lost is only this process's memory of it, which is the normal state
+   * of affairs on a control plane where every request is a fresh process.
+   *
+   * So the id is supplied rather than minted, and the session comes back at
+   * the status the adapter reports rather than starting from `created`. A
+   * caller that used `resumeSession` for this would get a second session
+   * record for one conversation, and the two would diverge.
+   *
+   * ## What it still does not skip
+   *
+   * The gate. An adopted session passes the same runtime, provider,
+   * capability, project and permission checks a new one does, with the grant
+   * re-read from the project rather than carried alongside the session. A
+   * project whose authorization was revoked while the agent was running is
+   * refused here, which is the point of re-reading.
+   */
+  adoptSession(input: AdoptSessionInput): Promise<ControlResult<AgentSession>>;
   sendMessage(message: AgentMessageInput): Promise<ControlResult<void>>;
   cancelRun(sessionId: string): Promise<ControlResult<void>>;
   respondToApproval(
     approvalId: string,
     decision: "granted" | "denied"
   ): Promise<ControlResult<void>>;
+
+  /**
+   * Puts a change to the session's own workspace to the user (Phase J.3).
+   *
+   * The same broker, the same approval card, the same Approve/Deny — the
+   * request simply comes from Hubble's session MCP server rather than from
+   * an adapter, so its answer goes back there. Resolves when the user
+   * answers, the request expires, or the session ends.
+   */
+  requestWorkspaceApproval(
+    sessionId: string,
+    request: { targets: readonly string[]; reason: string; change?: WorkspaceChangeSummary; plan?: WorkspacePlanPreview }
+  ): Promise<WorkspaceApprovalOutcome>;
+
+  /** Withdraws a session's outstanding workspace approvals — it ended. */
+  cancelWorkspaceApprovals(sessionId: string): void;
 
   /**
    * The context a session currently holds, or undefined for one holding none.
@@ -218,6 +295,8 @@ export function createControlService(options: ControlServiceOptions): ControlSer
   const contexts = new Map<string, AgentAttachedContext>();
   const listeners = new Set<(event: AgentControlEvent) => void>();
   const adapterSubscriptions = new Map<AgentProviderId, ControlUnsubscribe>();
+  /** Workspace approvals (J.3) waiting on the user, and whom to tell. */
+  const workspaceApprovals = new Map<string, (outcome: WorkspaceApprovalOutcome) => void>();
 
   function put(session: AgentSession): AgentSession {
     sessions.set(session.id, session);
@@ -229,8 +308,45 @@ export function createControlService(options: ControlServiceOptions): ControlSer
     // A refused transition leaves the session exactly as it was. The caller
     // is already returning an error; corrupting the record on the way out
     // would turn a refusal into a second bug.
-    return result.ok ? put(result.session) : session;
+    if (!result.ok) return session;
+    const moved = put(result.session);
+    if (isTerminalSessionStatus(moved.status)) options.onSessionEnded?.(moved.id);
+    return moved;
   }
+
+  /** An event the service itself raises — for workspace approvals, which no adapter emits. */
+  function emitOwn(session: AgentSession, kind: AgentControlEvent["kind"], summary: string, approvalId: string): void {
+    const event: AgentControlEvent = {
+      id: createId(),
+      sessionId: session.id,
+      provider: session.provider,
+      kind,
+      timestamp: now(),
+      summary,
+      approvalId,
+    };
+    if (!isWellFormedControlEvent(event)) return;
+    applyEventToSession(session, event);
+    for (const listener of [...listeners]) listener(event);
+  }
+
+  // A workspace approval is settled in the broker first — by the user, by
+  // expiry, by cancellation — and only then is the context layer told.
+  broker.watch((approval) => {
+    const notify = workspaceApprovals.get(approval.id);
+    if (!notify || approval.status === "requested") return;
+    workspaceApprovals.delete(approval.id);
+    const session = sessions.get(approval.sessionId);
+    if (session && (approval.status === "granted" || approval.status === "denied")) {
+      emitOwn(
+        session,
+        approval.status === "granted" ? "approval_granted" : "approval_denied",
+        approval.status === "granted" ? "Workspace change approved" : "Workspace change declined",
+        approval.id
+      );
+    }
+    notify(approval.status as WorkspaceApprovalOutcome);
+  });
 
   /**
    * The gate, for an operation that needs an adapter.
@@ -483,6 +599,21 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       grants.set(session.id, grant);
       if (input.context) contexts.set(session.id, input.context);
 
+      // Workspace context (J.3): bound now that the session has an id, and
+      // before the agent starts, so the agent's first request can use it.
+      let contextServer: SessionContextServerEntry | undefined;
+      // Only an adapter that can tell its agent's calls to the context server
+      // apart from every other tool is handed one (J.4). The runtime checks
+      // this too; here it is the service's own refusal, before any binding.
+      if (input.bindContext && adapterSupports(gated.value, "workspace_context")) {
+        const bound = await input.bindContext(session.id);
+        if (bound === "refused") {
+          move(session, "failed");
+          return controlFailure("invalid-request");
+        }
+        contextServer = bound;
+      }
+
       ensureSubscribed(input.provider, gated.value);
       const connecting = move(session, "connecting");
 
@@ -492,6 +623,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
         permissions: grant,
         attachments: input.context?.attachments ?? [],
         title: input.title,
+        ...(contextServer ? { contextServer } : {}),
       });
 
       if (!created.ok) {
@@ -539,6 +671,65 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       }
 
       return { ok: true, value: adoptHandle(connecting, resumed.value) };
+    },
+
+    async adoptSession(input) {
+      // Already held by this process. Idempotent rather than an error: two
+      // commands in one request can both ask, and the second finding the
+      // session there is exactly the outcome it wanted.
+      const held = sessions.get(input.sessionId);
+      if (held) return { ok: true, value: held };
+
+      const grant = input.permissions ?? NO_PERMISSIONS;
+      // `create_session` rather than a capability of its own. Adopting is not
+      // a new power — it reaches the same provider, in the same project, under
+      // the same grant — so it is gated on being allowed to have started the
+      // session in the first place.
+      const gated = gate(input.provider, "create_session", input.projectId, grant);
+      if (!gated.ok) return { ok: false, error: gated.error };
+
+      const adapter = gated.value;
+      if (!canReattachSession(adapter)) return controlFailure("unsupported");
+
+      const project = input.projectId ? resolveProject(input.projectId) : undefined;
+      const at = now();
+
+      const session = put(
+        mintSession(
+          {
+            id: input.sessionId,
+            provider: input.provider,
+            providerSessionId: input.providerSessionId,
+            projectId: input.projectId,
+            workspaceId: input.workspaceId,
+            title: input.title,
+          },
+          // The session's real age, so a rebuilt record does not claim to have
+          // been created by whichever request happened to pick it up.
+          input.createdAt ?? at
+        )
+      );
+      grants.set(session.id, grant);
+
+      ensureSubscribed(input.provider, adapter);
+      const connecting = move(session, "connecting");
+
+      const reattached = await adapter.reattachSession({
+        sessionId: input.sessionId,
+        project,
+        permissions: grant,
+      });
+
+      if (!reattached.ok) {
+        // Left as `failed` rather than removed. A session the user can see in
+        // their history, marked as unreachable, is more use than one that
+        // silently vanished — and the durable record is the caller's to clean
+        // up, not this layer's.
+        move(connecting, "failed");
+        return { ok: false, error: reattached.error };
+      }
+
+      return { ok: true, value: adoptHandle(connecting, reattached.value) };
     },
 
     async sendMessage(message) {
@@ -601,6 +792,11 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const settled = broker.resolve(approvalId, decision, now());
       if (!settled.ok) return controlFailure("invalid-request");
 
+      // A workspace change was asked for by Hubble's session MCP server, not
+      // by the adapter. The broker's watcher has already told it; there is no
+      // adapter to answer.
+      if (approval.workspaceId) return { ok: true, value: undefined };
+
       const gated = gate(
         session.provider,
         "approvals",
@@ -610,6 +806,43 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       if (!gated.ok) return { ok: false, error: gated.error };
 
       return gated.value.respondToApproval(approvalId, decision);
+    },
+
+    requestWorkspaceApproval(sessionId, request) {
+      const session = sessions.get(sessionId);
+      if (!session || !session.workspaceId || isTerminalSessionStatus(session.status)) {
+        return Promise.resolve("cancelled");
+      }
+      const id = `wa-${createId()}`;
+      const requested = broker.request(
+        {
+          id,
+          sessionId,
+          provider: session.provider,
+          action: "change_workspace",
+          scope: "write_workspace",
+          workspaceId: session.workspaceId,
+          targets: request.targets,
+          reason: request.reason,
+          ...(request.change ? { change: request.change } : {}),
+          ...(request.plan ? { plan: request.plan } : {}),
+        },
+        now()
+      );
+      // An approval nobody can answer must not become one nobody has to.
+      if (!requested.ok) return Promise.resolve("denied");
+
+      const outcome = new Promise<WorkspaceApprovalOutcome>((resolve) => {
+        workspaceApprovals.set(id, resolve);
+      });
+      emitOwn(session, "approval_requested", "Wants to change your Hubble workspace", id);
+      return outcome;
+    },
+
+    cancelWorkspaceApprovals(sessionId) {
+      for (const approval of broker.forSession(sessionId)) {
+        if (approval.workspaceId && approval.status === "requested") broker.cancel(approval.id, now());
+      }
     },
 
     contextFor(sessionId) {

@@ -54,7 +54,7 @@ export function OrganizationPreparationView({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
@@ -149,7 +149,7 @@ export function OrganizationStatusBar({
     <div
       role="status"
       aria-live="polite"
-      className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-subtle bg-card px-3 py-2"
+      className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2"
     >
       {failed ? (
         <TriangleAlert className="size-4 shrink-0 text-destructive" aria-hidden />

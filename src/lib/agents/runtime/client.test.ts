@@ -154,3 +154,40 @@ describe("what the client sends", () => {
     }
   });
 });
+
+describe("a non-HTTP transport (the desktop app, Phase J.1)", () => {
+  it("carries the same requests, handshake and generation check without fetch", async () => {
+    const sent: RuntimeRequest[] = [];
+    const fetchSpy = vi.fn();
+    const replies: unknown[] = [
+      { ok: true, value: { ...STATUS, runtimeId: "sidecar-1" } },
+      { ok: true, value: { sessions: [], correlations: [] } },
+      { ok: false, error: { code: "runtime_disconnected", message: "gone" } },
+      { ok: true, value: { ...STATUS, runtimeId: "sidecar-2" } },
+    ];
+    const client = createRuntimeClient({
+      fetch: fetchSpy as unknown as typeof fetch,
+      post: async (request) => {
+        sent.push(request);
+        return replies.shift();
+      },
+    });
+
+    await client.status();
+    await client.send({ name: "list_sessions" });
+    await client.send({ name: "list_sessions" });
+    await client.status();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sent[0]).toEqual({ command: { name: "get_status" } });
+    expect(sent[1]).toEqual({ runtimeId: "sidecar-1", command: { name: "list_sessions" } });
+    // A restarted sidecar: the stale identity is dropped, and the client
+    // re-handshakes exactly as it does against a restarted dev server.
+    expect(client.runtimeId()).toBe("sidecar-2");
+  });
+
+  it("treats an unreadable reply as a lost runtime", async () => {
+    const client = createRuntimeClient({ post: async () => "not a reply" });
+    expect(await client.status()).toMatchObject({ ok: false, error: { code: "runtime_disconnected" } });
+  });
+});

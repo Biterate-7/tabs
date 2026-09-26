@@ -1,11 +1,12 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { Plus, RotateCw, X } from "lucide-react"
+import { ArrowUp, ChevronLeft, Plus, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
-import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
+import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
+import { ConnectAgentDialog } from "./connect-agent-dialog"
 import { Composer } from "./composer"
 import { ContextPanel } from "./context-panel"
 import { ContextPicker } from "./context-picker"
@@ -19,15 +20,28 @@ import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { useAgentSession } from "@/hooks/use-agent-session"
 import { useAgentSessions } from "@/hooks/use-agent-sessions"
 import { useNow } from "@/hooks/use-now"
-import { RUNTIME_ERROR_PRESENTATION, runtimeBanner } from "@/lib/agents/command-centre/presentation"
+import { useRemoteProjects } from "@/hooks/use-remote-projects"
+import { useProviderConnections } from "@/hooks/use-provider-connections"
+import { useAgentPlatform } from "@/hooks/use-agent-platform"
+import { useCollectionStore } from "@/hooks/use-collection-store"
+import { useSessionContext } from "@/hooks/use-session-context"
+import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
+import { platformProvider } from "@/lib/agents/platform/catalog"
+import { isChatReady } from "@/lib/agents/platform/lifecycle"
+import { grantWithinApproval } from "@/lib/agents/platform/roster"
+import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
+import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
 import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
 import { cn } from "@/lib/utils"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
+import type { Workspace } from "@/lib/workspace/types"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
 
 /**
- * TabDump's command centre.
+ * Hubble's command centre.
  *
  * ## What this component is responsible for
  *
@@ -51,7 +65,7 @@ import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
  * activity count it did not receive, and no file it has not been told about.
  * When the runtime cannot execute — a hosted deployment, or the packaged
  * desktop build, which ships no route handler at all — it says so in one
- * sentence and keeps the rest of TabDump usable, rather than presenting a
+ * sentence and keeps the rest of Hubble usable, rather than presenting a
  * command centre whose every button would fail.
  */
 export function CommandCentreView({
@@ -60,11 +74,34 @@ export function CommandCentreView({
   /** Injected in tests so the surface can be driven without a network. */
   client,
   poll,
+  /**
+   * The transport the remote-projects resource uses.
+   *
+   * Separate from `client` because it is a different resource with a different
+   * shape — the control plane's typed command endpoint versus a REST resource
+   * that carries files. Injected for the same reason: so the surface can be
+   * driven without a network.
+   */
+  remoteFetch,
+  /**
+   * Takes the user to Settings → AI Connectors, where they connect their own
+   * provider credentials.
+   *
+   * Optional, and the dialog degrades to a sentence without a button when it
+   * is absent — a surface with nowhere to send somebody should not offer an
+   * action that goes nowhere.
+   */
+  onOpenConnectors,
+  activeWorkspaceId,
 }: {
   world: AgentContextWorld
   onClose: () => void
   client?: RuntimeClient
   poll?: boolean
+  remoteFetch?: typeof fetch
+  onOpenConnectors?: () => void
+  /** The workspace the user came from. The default association for a new session. */
+  activeWorkspaceId?: string
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -142,13 +179,154 @@ export function CommandCentreView({
   )
 
   const banner = runtimeBanner(runtime.status)
+  /**
+   * `REMOTE · Ready`, `LOCAL · Ready`, or the plain refusal.
+   *
+   * The brief's requirement, and the reason it is a requirement: on a hosted
+   * deployment the old sentence ("Agent runtime unavailable") was true when it
+   * was written and is now false, because agents genuinely run — in a sandbox
+   * Hubble creates, which is nobody's computer. Naming the plane is also the
+   * honest half: a user is owed the difference between an agent editing files
+   * on their laptop and one editing files in a container.
+   */
+  const badge = runtimeBadge(runtime.status)
   const startableProviders = runtime.status?.providers ?? []
+
+  /*
+    Whether to talk to the remote-projects endpoint at all.
+
+    The host's own answer, relayed: a local Hubble has no remote plane and
+    should not spend a request per mount being told 503. Never inferred from a
+    hostname or a build flag.
+  */
+  const remoteEnabled = runtime.status?.environment === "remote" && runtime.executable
+
+  const remoteProjects = useRemoteProjects({
+    enabled: remoteEnabled,
+    ...(remoteFetch ? { fetch: remoteFetch } : {}),
+  })
+
+  /*
+    This user's own provider connections.
+
+    Read so the start dialog can say whose credentials a session is about to
+    run on — and so it can offer the Connect button when the answer is "none
+    yet". Whether somebody has connected a key changes when they press a
+    button in settings, not on a timer, so there is no polling here.
+  */
+  const connections = useProviderConnections()
+
+  /*
+    The agent connector platform (Phase J): the roster of connected agents,
+    what is installed on this machine, and each agent's connection. Every
+    phase it reports is derived from the runtime's own answers.
+  */
+  const providerKeyConnected = useCallback(
+    (provider: AgentProviderId): boolean | undefined => {
+      if (platformProvider(provider)?.signIn.kind !== "provider-key") return undefined
+      // Unknown, not "no", while the credential service is loading or absent.
+      if (connections.loading || connections.unavailable) return undefined
+      return connections.forProvider(provider)?.status === "connected"
+    },
+    [connections]
+  )
+
+  /*
+    Where Hubble is running, asked once through the platform seam, and —
+    on the web only — whether the user has issued a Hubble MCP token, which
+    is what a custom MCP agent connects with. The desktop app has no MCP
+    server, so it asks nothing and the registry says why (Phase J.2).
+  */
+  const [surface] = useState(() => agentConnectorSurface())
+  const mcpTokens = useMcpTokens({ enabled: surface === "web" })
+  const mcpTokenIssued = hasUsableMcpToken(mcpTokens.state, now)
+
+  const platform = useAgentPlatform({
+    client: runtime.client,
+    status: runtime.status,
+    providerKeyConnected,
+    surface,
+    ...(mcpTokenIssued !== undefined ? { mcpTokenIssued } : {}),
+  })
+  const [connectOpen, setConnectOpen] = useState(false)
+  const [connectProvider, setConnectProvider] = useState<AgentProviderId | null>(null)
+
+  const openConnect = useCallback((provider?: AgentProviderId) => {
+    setConnectProvider(provider ?? null)
+    setNewSessionOpen(false)
+    setConnectOpen(true)
+  }, [])
+
+  /*
+    The desktop app (Phase J.1): a project folder comes only from the native
+    picker, and Claude signs in with its own login rather than a stored key.
+    Both are answered by the shell and the runtime, never guessed here.
+  */
+  const [pickFolder] = useState(() => agentProjectFolderPicker())
+  const projectScopesFor = useCallback(
+    (provider: AgentProviderId) => {
+      const approved = platform.identity(provider)?.approvedScopes ?? []
+      return DEFAULT_PROJECT_SCOPES.filter((scope) => approved.includes(scope))
+    },
+    [platform]
+  )
+  const signInFor = useCallback(
+    (provider?: AgentProviderId) => {
+      if (provider && platform.statusOf(provider)?.nativeSignIn) openConnect(provider)
+      else onOpenConnectors?.()
+    },
+    [onOpenConnectors, openConnect, platform]
+  )
+
+  const workspaceChoices = useMemo(
+    () => world.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+    [world.workspaces]
+  )
+  const workspaceNameOf = useCallback(
+    (workspaceId: string | undefined) =>
+      workspaceId ? world.workspaces.find((workspace) => workspace.id === workspaceId)?.name : undefined,
+    [world.workspaces]
+  )
+
+  /*
+    Session workspace context (Phase J.3): the Command Centre's own collection
+    store — the same one the workspace view uses — so an approved change is
+    made exactly as a person making it by hand would make it, and the
+    snapshots it sends are current.
+  */
+  const collectionStore = useCollectionStore(world.workspaces as Workspace[])
+  const sessionContext = useSessionContext({
+    client: runtime.client,
+    sessions: sessions.sessions,
+    world,
+    collections: collectionStore.collections,
+    createCollection: collectionStore.createCollection,
+    renameCollection: collectionStore.renameCollection,
+    addTabsToCollection: collectionStore.addTabsToCollection,
+    applyCollectionBatch: collectionStore.applyBatch,
+  })
 
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
-      setCreating(true)
       setCreateError(null)
-      const outcome = await sessions.createSession(input)
+
+      // Only an agent the user connected and approved, and never on a project
+      // that grants it more than they approved it for. The runtime enforces
+      // the project grant itself; this keeps the approval step meaningful.
+      const agent = platform.identity(input.provider)
+      const project = input.projectId
+        ? projects.projects.find((candidate) => candidate.id === input.projectId)
+        : undefined
+      if (!agent || (project && !grantWithinApproval(agent, project.permissions.scopes))) {
+        setCreateError("permission_denied")
+        return
+      }
+
+      setCreating(true)
+      // The workspace the session is started from goes with it, for the agent
+      // to query. What the agent may do with it is the runtime's decision.
+      const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
+      const outcome = await sessions.createSession({ ...input, ...(contextSnapshot ? { contextSnapshot } : {}) })
       setCreating(false)
 
       if (typeof outcome === "string") {
@@ -156,10 +334,11 @@ export function CommandCentreView({
         return
       }
 
+      platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
       setRequestedSessionId(outcome.sessionId)
       setNewSessionOpen(false)
     },
-    [sessions]
+    [platform, projects.projects, sessionContext, sessions]
   )
 
   /*
@@ -184,7 +363,7 @@ export function CommandCentreView({
   const errorPresentation = session.error ? RUNTIME_ERROR_PRESENTATION[session.error] : null
 
   return (
-    <div className="flex h-screen min-h-0 flex-1 flex-col">
+    <div className="flex h-screen max-h-screen min-h-0 min-w-0 flex-1 flex-col">
       {/*
         Where you are, and whether agents can run here.
 
@@ -200,18 +379,21 @@ export function CommandCentreView({
         is fine, and only the unavailable case spends the horizontal space on
         the gate's full sentence.
       */}
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-subtle px-4">
-        <span className="text-eyebrow text-tertiary">TabDump</span>
-        <span aria-hidden className="text-tertiary">
-          /
-        </span>
-        <span className="text-label text-foreground">Command Centre</span>
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+        {/* Below md the Command Centre is master–detail: this is the way
+            back from an open session to the list. */}
+        {selected && (
+          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => setRequestedSessionId(null)}>
+            <ChevronLeft />
+          </IconButton>
+        )}
+        <span className="text-h2 text-foreground">Command Centre</span>
         {selected && projectNameOf(selected.view.projectId) && (
           <>
             <span aria-hidden className="text-tertiary">
               /
             </span>
-            <span className="min-w-0 truncate text-label text-muted-foreground">
+            <span className="min-w-0 truncate text-body text-muted-foreground">
               {projectNameOf(selected.view.projectId)}
             </span>
           </>
@@ -219,10 +401,14 @@ export function CommandCentreView({
 
         {!runtime.loading && (
           <div role="status" className="ml-auto flex min-w-0 items-center gap-2">
-            <span aria-hidden className={cn("text-meta", AGENT_TONE_TEXT_CLASS[banner.tone])}>
-              ●
-            </span>
-            <span className="shrink-0 text-label text-muted-foreground">{banner.title}</span>
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                banner.tone === "good" ? "bg-success" : banner.tone === "bad" ? "bg-destructive" : banner.tone === "live" ? "bg-foreground" : "bg-tertiary"
+              )}
+            />
+            <span className="shrink-0 text-body-sm text-muted-foreground">{badge}</span>
             {/* After the title, so the row reads "● Agent runtime unavailable ·
                 <why>" rather than trailing off into the headline. Truncates
                 first, because the title is the part that must survive. */}
@@ -256,7 +442,7 @@ export function CommandCentreView({
         */}
         <IconButton
           aria-label="Close command centre"
-          className={cn("size-7 shrink-0", runtime.loading && "ml-auto")}
+          className={cn("shrink-0", runtime.loading && "ml-auto")}
           onClick={onClose}
         >
           <X />
@@ -265,6 +451,7 @@ export function CommandCentreView({
 
       <div className="flex min-h-0 flex-1">
         <SessionList
+          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={sessions.sessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
@@ -272,9 +459,27 @@ export function CommandCentreView({
           onNewSession={() => setNewSessionOpen(true)}
           canCreate={runtime.executable}
           now={now}
-        />
+        >
+          <AgentRoster
+            platform={platform}
+            sessions={sessions.sessions}
+            selectedSessionId={selectedSessionId}
+            selectedEvents={session.events}
+            workspaceNameOf={workspaceNameOf}
+            onConnect={openConnect}
+            onOpenAgent={(agent, latest) => {
+              const chat = platformProvider(agent.provider)?.chat === true
+              const startable =
+                chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
+              if (latest) setRequestedSessionId(latest.view.sessionId)
+              else if (startable) setNewSessionOpen(true)
+              // Anything else is explained where it is decided: in Connect Agent.
+              else openConnect(agent.provider)
+            }}
+          />
+        </SessionList>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && "max-md:hidden")}>
           {selected ? (
             <>
               <SessionHeader
@@ -285,15 +490,28 @@ export function CommandCentreView({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
                 onDispose={() => void sessions.disposeSession(selected.view.sessionId)}
+                {...(selected.view.context
+                  ? {
+                      workspaceContext: selected.view.context,
+                      contextFreshness: sessionContext.freshnessOf(selected.view.context),
+                    }
+                  : {})}
+                contextUnavailable={selected.view.contextUnavailable === "provider"}
               />
 
-              <EventStream events={session.events}>
+              <EventStream
+                events={session.events}
+                {...(selected.view.context?.planOutcomes ? { planOutcomes: selected.view.context.planOutcomes } : {})}
+              >
                 {session.approvals.map((approval) => (
                   <ApprovalPrompt
                     key={approval.approvalId}
                     approval={approval}
                     {...(projectNameOf(approval.projectId)
                       ? { projectName: projectNameOf(approval.projectId) }
+                      : {})}
+                    {...(approval.workspaceId && workspaceNameOf(approval.workspaceId)
+                      ? { workspaceName: workspaceNameOf(approval.workspaceId) }
                       : {})}
                     pending={session.pending}
                     now={now}
@@ -394,12 +612,57 @@ export function CommandCentreView({
       <NewSessionDialog
         open={newSessionOpen}
         onOpenChange={setNewSessionOpen}
+        status={runtime.status}
         providers={startableProviders}
         projects={projects.projects}
         onAddProject={projects.addProject}
+        {...(remoteEnabled
+          ? {
+              remote: {
+                projects: remoteProjects.projects,
+                loading: remoteProjects.loading,
+                unavailable: remoteProjects.unavailable,
+                creating: remoteProjects.creating,
+                create: remoteProjects.create,
+              },
+            }
+          : {})}
+        connectionFor={connections.forProvider}
         onCreate={(input) => void handleCreate(input)}
+        {...(onOpenConnectors || pickFolder ? { onConnectProvider: signInFor } : {})}
         creating={creating}
+        now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
+        workspaces={workspaceChoices}
+        {...(activeWorkspaceId ? { defaultWorkspaceId: activeWorkspaceId } : {})}
+        connectionBlocker={(provider) => {
+          if (!platform.identity(provider)) return "Not connected"
+          const sessions = platform.sessionsFor(provider)
+          return sessions.available ? undefined : sessions.reason
+        }}
+        onConnectAgent={openConnect}
+        {...(pickFolder ? { pickFolder } : {})}
+        projectScopesFor={projectScopesFor}
+      />
+
+      <ConnectAgentDialog
+        // Remounted per opening so it starts from the provider it was opened for.
+        key={`${connectOpen}-${connectProvider ?? ""}`}
+        open={connectOpen}
+        onOpenChange={(next) => {
+          setConnectOpen(next)
+          // A sign-in may have changed what the runtime reports; ask again so
+          // the start dialog does not show a stale "sign in first".
+          if (!next) void runtime.refresh()
+        }}
+        platform={platform}
+        initialProvider={connectProvider}
+        {...(onOpenConnectors ? { onOpenSettings: onOpenConnectors } : {})}
+        onStartSession={() => {
+          setConnectOpen(false)
+          void runtime.refresh()
+          setNewSessionOpen(true)
+        }}
       />
 
       <ContextPicker
@@ -441,20 +704,37 @@ function CommandCentreEmptyState({
       conversation would start.
     */
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-24">
-      <div className="w-full max-w-md text-center">
-        <h1 className="text-h2 text-foreground">Command Centre</h1>
-        <p className="mt-2 text-body-sm text-muted-foreground">
-          Work with your AI agents using scoped projects and the TabDump context you choose to
+      <div className="w-full max-w-[600px]">
+        <h1 className="text-statement text-foreground">Command Centre</h1>
+        <p className="mt-1.5 text-body text-muted-foreground">
+          Work with your AI agents using scoped projects and the Hubble context you choose to
           attach.
         </p>
 
         {loading ? (
           <p className="mt-6 text-body-sm text-tertiary">Checking the agent runtime…</p>
         ) : executable ? (
-          <Button type="button" className="mt-6" onClick={onNewSession}>
-            <Plus />
-            New agent session
-          </Button>
+          /*
+            The reference opens a new agent on an empty composer. A Hubble
+            session needs an agent and a scope before it can take a prompt, so
+            this composer is the door to that choice rather than a live field.
+          */
+          <button
+            type="button"
+            onClick={onNewSession}
+            className="group mt-6 flex w-full flex-col rounded-md border border-border bg-card text-left transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <span className="px-3 pt-2.5 pb-7 text-body text-tertiary">Plan, research or build anything…</span>
+            <span className="flex items-center gap-1.5 px-2 pb-2">
+              <span className="flex h-6 items-center gap-1.5 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
+                <Plus className="size-3.5" aria-hidden />
+                New agent session
+              </span>
+              <span className="ml-auto flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <ArrowUp className="size-3.5" aria-hidden />
+              </span>
+            </span>
+          </button>
         ) : (
           <p className="mt-6 text-body-sm text-tertiary">
             Agents cannot run in this build. You can still browse workspaces, tabs, collections and

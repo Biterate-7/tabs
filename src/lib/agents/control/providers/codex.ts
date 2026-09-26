@@ -2,12 +2,21 @@ import { createUnimplementedControlAdapter } from "../unimplemented";
 import type { AgentControlAdapter } from "../types";
 
 /**
- * The Codex control seam.
+ * The Codex control seam — the browser catalogue's, not the runtime's.
+ *
+ * > **Phase J update.** Codex is now driven for real on a local runtime, over
+ * > the Agent Client Protocol through `codex-acp`, by the one ACP adapter in
+ * > ./acp/ — verified against the real adapter's handshake. That adapter is
+ * > built server-side (lib/agents/runtime/server.ts). What stays here is the
+ * > browser-registered seam, which must claim nothing: the browser cannot
+ * > start a process, and `control/security.test.ts` asserts it declares no
+ * > capability. The Phase D research notes below are kept for their findings
+ * > about the Codex SDK, which is still not what Hubble uses.
  *
  * ## What this is in Phase B
  *
  * An unimplemented adapter, exactly like the Claude Code one — and unlike it,
- * Codex is not observable either. TabDump can currently say nothing at all
+ * Codex is not observable either. Hubble can currently say nothing at all
  * about Codex, and this is the file that says so.
  *
  * ## Why there is no mapping table here
@@ -47,7 +56,7 @@ import type { AgentControlAdapter } from "../types";
  */
 
 export const CODEX_CONTROL_DETAIL =
-  "TabDump cannot reach Codex from this environment. The control boundary is in place; what is missing is a verified way to drive Codex locally.";
+  "Hubble cannot reach Codex from this environment. The control boundary is in place; what is missing is a verified way to drive Codex locally.";
 
 export function createCodexControlAdapter(): AgentControlAdapter {
   return createUnimplementedControlAdapter({

@@ -1,4 +1,4 @@
--- TabDump account system — the smallest schema the auth system needs.
+-- Hubble account system — the smallest schema the auth system needs.
 --
 -- Additive and idempotent by design: every statement is IF NOT EXISTS, so
 -- running this against an existing database creates what is missing and

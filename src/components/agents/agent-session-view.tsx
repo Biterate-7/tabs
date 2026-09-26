@@ -57,7 +57,7 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
 const EMPTY = {
   workItems: "No recorded work items.",
   evidence: "No recorded evidence for this task.",
-  tabs: "No saved TabDump tabs are linked to this session.",
+  tabs: "No saved Hubble tabs are linked to this session.",
   result: "No recorded result.",
   taskResult: "No recorded result for this task.",
   events: "No recorded events for this session.",
@@ -80,7 +80,7 @@ function EmptyLine({ children }: { children: React.ReactNode }) {
  *
  * ## Why there is no open button
  *
- * TabDump has no legitimate generic "open file" capability - it is a web app
+ * Hubble has no legitimate generic "open file" capability - it is a web app
  * with no filesystem access, and a button that looked like one would imply a
  * power the product does not have. So a file is metadata: its
  * project-relative path and how it was touched. Nothing here is clickable.
@@ -128,7 +128,7 @@ function TabRow({
     return (
       <li className="rounded-md border border-dashed border-subtle px-2 py-1">
         <span className="text-meta italic text-muted-foreground">
-          This tab is no longer saved in TabDump
+          This tab is no longer saved in Hubble
         </span>
       </li>
     )
@@ -174,7 +174,7 @@ function EventRow({
         // Highlighted means "this event is evidence for the selected task".
         // The word in the margin carries that too, so the distinction is not
         // colour alone.
-        highlighted ? "border-primary/40 bg-primary/10" : "border-subtle"
+        highlighted ? "border-strong bg-surface-selected" : "border-subtle"
       )}
     >
       <span className="min-w-0 flex-1 truncate text-meta text-foreground">{event.summary}</span>
@@ -235,7 +235,7 @@ function WorkItemEvidence({
     return (
       <section
         aria-label={EVIDENCE_REGION_LABEL}
-        className="space-y-1.5 rounded-lg border border-subtle bg-background-secondary p-2.5"
+        className="space-y-1.5 rounded-md border border-border bg-background-secondary p-2.5"
       >
         <EmptyLine>{EMPTY.evidence}</EmptyLine>
       </section>
@@ -253,7 +253,7 @@ function WorkItemEvidence({
        the run-level section below. */
     <section
       aria-label={EVIDENCE_REGION_LABEL}
-      className="space-y-3 rounded-lg border border-subtle bg-background-secondary p-2.5"
+      className="space-y-3 rounded-md border border-border bg-background-secondary p-2.5"
     >
       <Section id={`evidence-events-${item.reference.workItemId}`} title="Events">
         {evidence.events.length === 0 ? (
@@ -381,10 +381,10 @@ export function AgentSessionScreen({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
-      <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
@@ -476,7 +476,7 @@ export function AgentSessionScreen({
                         className={cn(
                           "w-full rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                           isSelected
-                            ? "border-primary/40 bg-primary/10"
+                            ? "border-strong bg-surface-selected"
                             : "border-subtle hover:border-border hover:bg-surface-hover"
                         )}
                       >
@@ -518,7 +518,7 @@ export function AgentSessionScreen({
               and the subtitle says so in as many words. */}
           <section
             aria-label={RUN_CONTEXT_REGION_LABEL}
-            className="space-y-3 rounded-xl border border-subtle bg-background-secondary p-3"
+            className="space-y-3 rounded-lg border border-subtle bg-background-secondary p-3"
           >
             <div className="space-y-0.5">
               <h2 id="session-run-context-heading" className="text-eyebrow text-tertiary">
@@ -685,8 +685,8 @@ export function AgentSessionView({
 
   if (!session) {
     return (
-      <div className="relative flex h-screen min-w-0 flex-1 flex-col bg-background">
-        <header className="flex items-center gap-2 border-b border-subtle px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+      <div className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
           <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
             <ChevronLeft />
           </IconButton>
@@ -696,7 +696,7 @@ export function AgentSessionView({
           {/* The run is gone from the domain. Said plainly, with no attempt
               to show a nearby run instead. */}
           <p className="text-body-sm text-muted-foreground">
-            This session is no longer recorded in TabDump.
+            This session is no longer recorded in Hubble.
           </p>
         </div>
       </div>

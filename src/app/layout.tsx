@@ -96,7 +96,7 @@ export const metadata: Metadata = {
   // this, so a route only declares its path. See lib/site-url.ts for how the
   // origin is chosen (and why it matches the extension build's).
   metadataBase: new URL(siteOrigin()),
-  title: "TabDump",
+  title: "Hubble",
   description:
     "Turn a browser full of tabs into a workspace — and see the AI agent runs happening inside it.",
 };

@@ -1,5 +1,5 @@
 /**
- * How much TabDump an agent may be told about at once.
+ * How much Hubble an agent may be told about at once.
  *
  * ## Why limits live in their own module
  *

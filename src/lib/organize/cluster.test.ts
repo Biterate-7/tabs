@@ -119,13 +119,13 @@ describe("buildRawClusters", () => {
   it("does not let a keyword shared between two unrelated pairs transitively bridge two different site clusters", () => {
     // Regression for the reported 139/185 "Other" failure: two GitHub tabs
     // and two Notion tabs, individually unrelated, but one GitHub tab and one
-    // Notion tab happen to both mention a project name ("tabdump") — before
+    // Notion tab happen to both mention a project name ("hubble") — before
     // domain-locking, union-find's transitive closure merged the whole
     // GitHub+Notion (+ anything else in the chain) group into one cluster.
     const tabs = [
       scoped(makeTab({ id: "gh1", url: "https://github.com/1", domain: "github.com", title: "GitHub" })),
-      scoped(makeTab({ id: "gh2", url: "https://github.com/2", domain: "github.com", title: "biterate/tabdump" })),
-      scoped(makeTab({ id: "nt1", url: "https://notion.so/1", domain: "notion.so", title: "TabDump roadmap - Notion" })),
+      scoped(makeTab({ id: "gh2", url: "https://github.com/2", domain: "github.com", title: "biterate/hubble" })),
+      scoped(makeTab({ id: "nt1", url: "https://notion.so/1", domain: "notion.so", title: "Hubble roadmap - Notion" })),
       scoped(makeTab({ id: "nt2", url: "https://notion.so/2", domain: "notion.so", title: "Meeting notes - Notion" })),
     ];
     const clusters = buildRawClusters(tabs, []);

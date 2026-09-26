@@ -39,7 +39,7 @@ export function SelectionToolbar({
 }) {
   if (addToCollectionTarget) {
     return (
-      <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-2 border-t border-primary/30 bg-popover px-3 py-3 sm:sticky sm:top-0 sm:rounded-lg sm:border sm:border-primary/30 sm:bg-primary/[0.08] sm:py-2">
+      <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-2 border-t border-border bg-popover px-3 py-3 sm:sticky sm:top-0 sm:rounded-lg sm:border sm:border-border sm:bg-primary/[0.08] sm:py-2">
         <span className="shrink-0 text-body font-medium text-foreground">{count} selected</span>
         <div className="ml-auto flex items-center gap-1.5">
           <Button variant="default" size="sm" onClick={addToCollectionTarget.onConfirm} disabled={count === 0}>
@@ -54,7 +54,7 @@ export function SelectionToolbar({
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-2 border-t border-primary/30 bg-popover px-3 py-3 sm:sticky sm:top-0 sm:rounded-lg sm:border sm:border-primary/30 sm:bg-primary/[0.08] sm:py-2">
+    <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-2 border-t border-border bg-popover px-3 py-3 sm:sticky sm:top-0 sm:rounded-lg sm:border sm:border-border sm:bg-primary/[0.08] sm:py-2">
       <span className="shrink-0 text-body font-medium text-foreground">
         {count} selected
       </span>

@@ -26,12 +26,12 @@ import type { AgentProject } from "./projects";
  *
  * ## What changed, and why these replace rather than relax the old rules
  *
- * TabDump's agent layer was read-only, enforced by guard suites that fail the
+ * Hubble's agent layer was read-only, enforced by guard suites that fail the
  * build if anything under `lib/agents/` gains a way to act. The command
  * centre needs to act, so the invariant has been **split** rather than
  * softened:
  *
- * > TabDump observes agents through the observation plane, and communicates
+ * > Hubble observes agents through the observation plane, and communicates
  * > with agents through a separately permissioned control plane.
  *
  * The observation guards are **untouched**. `connectors/security.test.ts`,
@@ -899,8 +899,22 @@ describe("what the browser catalogue registers claims nothing", () => {
  * ------------------------------------------------------------------ */
 
 describe("the control plane persists no secret", () => {
+  /*
+    The one exception, and exactly where it lives (Phase J.3): the two
+    adapters that hand an agent its session's Hubble context credential put
+    it in an Authorization header. The credential is issued by the runtime per
+    session, held only in memory, revoked when the session ends — and never a
+    field of anything the control plane declares or stores. Each entry must
+    still match: an exception that is no longer needed fails this test.
+  */
+  const SESSION_CONTEXT_HEADER = new Map<string, RegExp>([
+    [path.join("src", "lib", "agents", "control", "providers", "acp", "adapter.ts"), /\bbearer\b/i],
+    [path.join("src", "lib", "agents", "control", "providers", "claude-code", "sdk-runtime.ts"), /\bbearer\b/i],
+  ]);
+
   it("declares no credential field anywhere", () => {
     const offenders: string[] = [];
+    const excused: string[] = [];
     for (const { file, source } of controlSources) {
       const code = codeOf(source);
       for (const pattern of [
@@ -912,11 +926,27 @@ describe("the control plane persists no secret", () => {
         /\bcredential\s*:/i,
         /\bbearer\b/i,
       ]) {
-        if (pattern.test(code)) offenders.push(`${file}: ${pattern}`);
+        if (!pattern.test(code)) continue;
+        if (String(SESSION_CONTEXT_HEADER.get(file)) === String(pattern)) excused.push(file);
+        else offenders.push(`${file}: ${pattern}`);
       }
     }
 
     expect(offenders).toEqual([]);
+    expect(excused.sort()).toEqual([...SESSION_CONTEXT_HEADER.keys()].sort());
+  });
+
+  it("builds the session context header only from the session's own entry", () => {
+    // ACP: the token comes from the request's contextServer, nowhere else —
+    // and only when the agent has a proven context identity (J.4).
+    const acp = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "acp", "adapter.ts"), "utf8"));
+    expect(acp.match(/Bearer \$\{[^}]+\}/g)).toEqual(["Bearer ${contextServer.token}"]);
+    expect(acp).toContain("const contextServer = contextIdentity && request.contextServer ? request.contextServer : undefined;");
+    // Claude: the header is a template Claude Code expands from its own
+    // environment, so the token is never on the command line.
+    const claude = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "claude-code", "sdk-runtime.ts"), "utf8"));
+    expect(claude).toMatch(/Authorization: "Bearer " \+ "\$" \+ "\{" \+ CONTEXT_TOKEN_ENV \+ "\}"/);
+    expect(claude).not.toMatch(/Bearer \$\{/);
   });
 
   it("registers both of its keys as account-scoped", async () => {

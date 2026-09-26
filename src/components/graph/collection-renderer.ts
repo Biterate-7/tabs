@@ -48,7 +48,7 @@ const BRACKET_MAX = 26;
  *
  * These were 0.035 fill / 0.22 stroke, multiplied by a per-tier `emphasis` of
  * 0.6 for Category boxes — an effective 0.021 fill and 0.132 stroke, which on
- * TabDump's dark background is under one JND against the canvas. That is the
+ * Hubble's dark background is under one JND against the canvas. That is the
  * "extremely faint, blends into the background" report: the boxes were being
  * drawn correctly, at an opacity that made them not worth drawing.
  *

@@ -88,7 +88,7 @@ describe("HistoryDumpView — review stage", () => {
     const existing = makeTab({ id: "existing-1", normalizedUrl: "https://existing.example/saved" })
     await renderAndScan([FREQUENT_ITEM, ALREADY_SAVED_ITEM], [existing])
 
-    await userEvent.setup().click(screen.getByRole("button", { name: /Already in TabDump/ }))
+    await userEvent.setup().click(screen.getByRole("button", { name: /Already in Hubble/ }))
     expect(await screen.findByText("Already saved page")).toBeTruthy()
     expect(screen.queryByRole("checkbox", { name: /Select existing\.example/ })).toBeNull()
   })
@@ -243,7 +243,7 @@ describe("HistoryDumpView — extension errors", () => {
     render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
 
     await user.click(screen.getByRole("button", { name: "Scan History" }))
-    expect(await screen.findByText("TabDump extension not detected.")).toBeTruthy()
+    expect(await screen.findByText("Hubble extension not detected.")).toBeTruthy()
 
     fetchBrowserHistoryMock.mockResolvedValue({ ok: true, items: [FREQUENT_ITEM] })
     await user.click(screen.getByRole("button", { name: "Retry" }))

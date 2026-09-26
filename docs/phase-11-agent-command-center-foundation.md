@@ -1,6 +1,6 @@
 # Phase 11 — Agent Command Center Foundation
 
-The provider-agnostic agent domain: the data model and local state TabDump
+The provider-agnostic agent domain: the data model and local state Hubble
 needs in order to *represent* work done by an external coding agent.
 
 **Phase 11 does not integrate Claude Code.** It reads no files, watches no
@@ -10,7 +10,7 @@ that observer must plug into.
 
 ## Why this phase exists
 
-TabDump wants to show what an agent has been doing alongside the tabs it was
+Hubble wants to show what an agent has been doing alongside the tabs it was
 doing it with. That needs somewhere to put the answer before anything can go
 looking for it. Building the observation first would have meant inventing the
 model one provider-specific field at a time, which is how a domain ends up
@@ -212,7 +212,7 @@ interface AgentAdapter {
 ```
 
 **The omissions are the design.** There is no `start`, `stop`, `kill`,
-`prompt`, `sendMessage`, `exec` or `write`, and none may be added. TabDump
+`prompt`, `sendMessage`, `exec` or `write`, and none may be added. Hubble
 observes agents; it does not drive them. An adapter that could control a
 coding agent would make this app a remote-execution surface for anything that
 could reach its state — a categorically different and much more dangerous

@@ -151,14 +151,16 @@ export function ContextPicker({
       */}
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Attach TabDump context</DialogTitle>
+          <DialogTitle>Attach Hubble context</DialogTitle>
           <DialogDescription>
-            The agent is told only what you attach here. Everything else in TabDump stays private
+            The agent is told only what you attach here. Everything else in Hubble stays private
             to it.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid max-h-[55vh] grid-cols-[minmax(18rem,1fr)_15rem] gap-4 overflow-hidden">
+        {/* One column below `sm`: two columns need ~34rem, and a phone's
+            dialog is ~22rem wide, so the preview used to be cut off. */}
+        <div className="grid max-h-[65vh] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-h-[55vh] sm:grid-cols-[minmax(18rem,1fr)_15rem] sm:grid-rows-1 sm:gap-4">
           <div className="min-h-0 overflow-y-auto pr-1">
             <Group title="Workspaces">
               {world.workspaces.length === 0 ? (

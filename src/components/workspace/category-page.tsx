@@ -47,7 +47,7 @@ export function CategoryPage({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
@@ -71,7 +71,7 @@ export function CategoryPage({
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8">
-            <div className="rounded-lg border border-subtle bg-card px-2 pb-6">
+            <div className="rounded-md border border-border bg-card px-2 pb-6">
               {tabs.map((tab) => (
                 <TabCard
                   key={tab.id}

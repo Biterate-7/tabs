@@ -193,6 +193,22 @@ const SOURCE_LABEL: Record<AgentContextSourceType, string> = {
   agent_activity: "Agent activity",
 };
 
+/** The same sources, counted: "1 workspace", "2 workspaces". */
+const SOURCE_NOUN: Record<AgentContextSourceType, readonly [one: string, many: string]> = {
+  workspace: ["workspace", "workspaces"],
+  tab: ["tab", "tabs"],
+  collection: ["collection", "collections"],
+  relationship: ["relationship", "relationships"],
+  graph: ["graph item", "graph items"],
+  project: ["project", "projects"],
+  agent_activity: ["agent activity", "agent activity"],
+};
+
+function countOf(count: number, sourceType: AgentContextSourceType): string {
+  const [one, many] = SOURCE_NOUN[sourceType];
+  return `${count} ${Math.abs(count) === 1 ? one : many}`;
+}
+
 export function summarizeSnapshot(snapshot: AgentContextSnapshot): readonly ContextSummaryRow[] {
   const rows: ContextSummaryRow[] = [];
 
@@ -298,7 +314,7 @@ export function summarizeAttachment(snapshot: AgentContextSnapshot): string {
   if (rows.length === 0) return "Nothing attached"
 
   return rows
-    .map((row) => `${row.count} ${row.label.toLowerCase()}`)
+    .map((row) => countOf(row.count, row.sourceType))
     .slice(0, 3)
     .join(" · ")
 }
@@ -345,7 +361,7 @@ export function diffSnapshots(
 export function describeDelta(deltas: readonly ContextDelta[]): string | null {
   if (deltas.length === 0) return null;
   return deltas
-    .map((delta) => `${delta.change > 0 ? "+" : ""}${delta.change} ${delta.label.toLowerCase()}`)
+    .map((delta) => `${delta.change > 0 ? "+" : ""}${countOf(delta.change, delta.sourceType)}`)
     .join(" · ");
 }
 

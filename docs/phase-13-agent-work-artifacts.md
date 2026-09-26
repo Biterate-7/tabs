@@ -12,8 +12,8 @@ Agent
 
 The invariant:
 
-> **TabDump knows what project files an agent run worked on.
-> TabDump does not own, read, modify, or execute those files.**
+> **Hubble knows what project files an agent run worked on.
+> Hubble does not own, read, modify, or execute those files.**
 
 ## Why this exists
 
@@ -264,10 +264,10 @@ verification ran.
 - **No Git** — no commits, branches-as-objects, or diff integration. Branch
   metadata observed in Phase 12 is preserved on runs; nothing more.
 - **No file viewer, preview, syntax highlighting, or open-in-editor.**
-- **No filesystem watcher or project crawler.** A file TabDump has not seen an
+- **No filesystem watcher or project crawler.** A file Hubble has not seen an
   agent touch does not exist in this model.
 - **Artifacts are only as complete as what was observed.** Work done before
-  TabDump started observing a session is not represented.
+  Hubble started observing a session is not represented.
 - **Local/self-hosted only**, inherited from Phase 12. A hosted deployment
   reports `available: false` and fabricates no artifacts.
 

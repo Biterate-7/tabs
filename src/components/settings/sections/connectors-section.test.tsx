@@ -96,7 +96,7 @@ describe("opening a connector", () => {
     await user.click(screen.getByRole("button", { name: /Gemini/ }))
 
     expect(
-      screen.getByText(/TabDump lists a capability only once it can actually observe it/i)
+      screen.getByText(/Hubble lists a capability only once it can actually observe it/i)
     ).toBeTruthy()
   })
 
@@ -113,19 +113,19 @@ describe("opening a connector", () => {
 })
 
 describe("the connect flow", () => {
-  it("shows what TabDump will and will not do before connecting", async () => {
+  it("shows what Hubble will and will not do before connecting", async () => {
     const user = userEvent.setup()
     render(<ConnectorsSection />)
 
     await user.click(screen.getByRole("button", { name: /Claude Code/ }))
 
-    expect(screen.getByText("TabDump will not")).toBeTruthy()
+    expect(screen.getByText("Hubble will not")).toBeTruthy()
     expect(screen.getByText("Run commands")).toBeTruthy()
     expect(screen.getByText("Send prompts")).toBeTruthy()
     expect(screen.getByText("Modify your files")).toBeTruthy()
     expect(screen.getByText("Control the agent")).toBeTruthy()
 
-    expect(screen.getByText("TabDump can")).toBeTruthy()
+    expect(screen.getByText("Hubble can")).toBeTruthy()
     expect(screen.getByText("Observe runs")).toBeTruthy()
   })
 
@@ -188,5 +188,57 @@ describe("accessibility", () => {
     // Gemini declares nothing, so the list is replaced by a sentence rather
     // than six "not supported" rows.
     expect(screen.queryByText("supported")).toBeNull()
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Control
+ * ------------------------------------------------------------------ */
+
+describe("the control half of a connector", () => {
+  /**
+   * The rule the brief states directly: a connector must not read "Available"
+   * merely because the UI knows the provider's name.
+   *
+   * On a test machine there is no runtime behind jsdom's fetch, so the status
+   * is `null` and control is genuinely unavailable — which is the state most
+   * at risk of being faked, and therefore the one worth asserting.
+   */
+  it("reports control as unavailable when no runtime answers", async () => {
+    const user = userEvent.setup()
+    render(<ConnectorsSection />)
+
+    await user.click(screen.getByRole("button", { name: /Claude Code/i }))
+
+    const control = await screen.findByText("Control")
+    const panel = control.closest("div")?.parentElement
+    expect(panel?.textContent).toContain("Unavailable")
+    expect(panel?.textContent).not.toContain("Remote")
+  })
+
+  it("distinguishes observation from control rather than describing only one", async () => {
+    // The old page said "Observes Claude Code sessions running on this
+    // machine" and nothing else, so a reader concluded observation was all
+    // Hubble could do with it.
+    const user = userEvent.setup()
+    render(<ConnectorsSection />)
+
+    await user.click(screen.getByRole("button", { name: /Claude Code/i }))
+
+    expect(await screen.findByText("Observe")).toBeTruthy()
+    expect(screen.getByText("Control")).toBeTruthy()
+  })
+
+  it("claims no capability it was not told about", async () => {
+    const user = userEvent.setup()
+    render(<ConnectorsSection />)
+
+    await user.click(screen.getByRole("button", { name: /Claude Code/i }))
+    await screen.findByText("Control")
+
+    // With no runtime, there is no capability list at all — rather than a
+    // hopeful one derived from what Claude Code can do in principle.
+    expect(screen.queryByText("Approvals")).toBeNull()
+    expect(screen.queryByText("Change files")).toBeNull()
   })
 })

@@ -202,7 +202,7 @@ export function useAgentStore(validTabIds?: Set<string>) {
        * Work items.
        *
        * Read-write over the *record* of work, never over the work itself:
-       * these create, describe, re-state and delete TabDump's knowledge of a
+       * these create, describe, re-state and delete Hubble's knowledge of a
        * unit of work. None of them reaches the agent, and there is
        * deliberately no operation here that would — no run, no retry, no
        * assign. Transitions go through `transitionWorkItem` alone, which is

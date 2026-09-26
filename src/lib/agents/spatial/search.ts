@@ -10,7 +10,7 @@ import type {
 /**
  * Searching agent work.
  *
- * Extends TabDump's existing search *idea* — a pure matcher over state the app
+ * Extends Hubble's existing search *idea* — a pure matcher over state the app
  * already holds, the same shape as `matchesGraphQuery` in lib/graph/search.ts
  * — rather than introducing a second search engine. Nothing is indexed and
  * nothing is fetched.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createClaudeCodeControlAdapter } from "./adapter";
 import { createSdkClaudeRuntime } from "./sdk-runtime";
+import { machineCredentials } from "@/lib/agents/credentials/__fixtures__/source";
 import { createGrant } from "../../permissions";
 import { createProject } from "../../projects";
 import { decideServerRuntime, LOCAL_RUNTIME_ENV_VALUE, LOCAL_RUNTIME_ENV_VAR } from "../../runtime";
@@ -11,7 +12,7 @@ import type { AgentControlEvent } from "../../events";
 import type { AgentProject } from "../../projects";
 
 /**
- * The real thing: TabDump driving an actual Claude Code process.
+ * The real thing: Hubble driving an actual Claude Code process.
  *
  * ## Opt-in, and why it must be
  *
@@ -89,7 +90,9 @@ describeLocal("Claude Code, for real", () => {
   });
 
   function adapterFor() {
-    const adapter = createClaudeCodeControlAdapter({ runtime: createSdkClaudeRuntime() });
+    const adapter = createClaudeCodeControlAdapter({
+      runtime: createSdkClaudeRuntime({ credentials: machineCredentials }),
+    });
     const events: AgentControlEvent[] = [];
     adapter.subscribeToEvents((event) => events.push(event));
     return { adapter, events };
@@ -159,7 +162,7 @@ describeLocal("Claude Code, for real", () => {
     "asks permission before writing, and the denial reaches the runtime",
     async () => {
       // The claim the whole phase rests on: the approval originates in Claude,
-      // TabDump's answer reaches Claude, and a denial means the file is not
+      // Hubble's answer reaches Claude, and a denial means the file is not
       // written.
       const { adapter, events } = adapterFor();
       const grant = createGrant(["read_project", "write_project"], Date.now(), project.id)!;
@@ -260,7 +263,7 @@ describeLocal("Claude Code, for real", () => {
       expect(providerSessionId).toBeTruthy();
       adapter.dispose();
 
-      // A fresh adapter, as if TabDump had been restarted.
+      // A fresh adapter, as if Hubble had been restarted.
       const second = adapterFor();
       const resumed = await second.adapter.resumeSession({
         sessionId: "int-5",

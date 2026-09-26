@@ -61,17 +61,30 @@ function borderStep(hex: string, background: string, intensity: AppearanceSettin
   }
 }
 
+/** See `ThemeDefinition.link`. */
+function linkColor(settings: AppearanceSettings, colors: ThemeColors): string {
+  if (settings.accentOverride && isValidColor(settings.accentOverride)) return colors.accent;
+  if (settings.customTheme) return colors.accent;
+  return getTheme(settings.themeId)?.link ?? colors.accent;
+}
+
+/*
+  `normal` is the system's own depth, measured off the reference: a flyout
+  (menu, popover, tooltip) barely casts at all and leans on its hairline; a
+  window casts a long, soft two-stage shadow (28px/70px over 14px/32px). The
+  other levels scale around it so the Shape setting still reads as one dial.
+*/
 const SHADOW_LEVELS: Record<AppearanceSettings["shape"]["shadowIntensity"], { sm: string; md: string; lg: string }> = {
   none: { sm: "none", md: "none", lg: "none" },
   subtle: {
-    sm: "0 1px 2px 0 rgb(0 0 0 / 0.04)",
-    md: "0 2px 8px -2px rgb(0 0 0 / 0.06)",
-    lg: "0 8px 20px -6px rgb(0 0 0 / 0.08)",
+    sm: "0 0 0.5rem rgb(0 0 0 / 0.02)",
+    md: "0 4px 12px -4px rgb(0 0 0 / 0.08)",
+    lg: "0 14px 32px rgb(0 0 0 / 0.08)",
   },
   normal: {
-    sm: "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
-    md: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
-    lg: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+    sm: "0 0 1rem rgb(0 0 0 / 0.03), 0 0 0.5rem rgb(0 0 0 / 0.02)",
+    md: "0 12px 32px -8px rgb(0 0 0 / 0.16), 0 2px 6px -2px rgb(0 0 0 / 0.08)",
+    lg: "0 28px 70px rgb(0 0 0 / 0.14), 0 14px 32px rgb(0 0 0 / 0.1)",
   },
   strong: {
     sm: "0 2px 4px 0 rgb(0 0 0 / 0.18)",
@@ -80,16 +93,16 @@ const SHADOW_LEVELS: Record<AppearanceSettings["shape"]["shadowIntensity"], { sm
   },
 };
 
-// `medium` is the default and is pinned to marketing.css's own --radius
-// (0.75rem) so a card in the product and a panel on the landing page are cut
-// to the same curve. The steps either side were re-spaced around it rather
-// than left where they were, so the scale still reads as one progression.
+// `medium` is the default: an 8px control radius, from which the whole
+// geometry scale in globals.css derives — rows and cards at half (4px),
+// windows and dialogs at 1.25× (10px). The steps either side scale that
+// entire family together, so the Shape setting stays one coherent dial.
 const RADIUS_LEVELS: Record<AppearanceSettings["shape"]["radius"], string> = {
   sharp: "0rem",
-  small: "0.375rem",
-  medium: "0.75rem",
-  rounded: "1.125rem",
-  "very-rounded": "1.5rem",
+  small: "0.3125rem",
+  medium: "0.5rem",
+  rounded: "0.875rem",
+  "very-rounded": "1.25rem",
 };
 
 const CONTENT_WIDTH_LEVELS: Record<AppearanceSettings["layout"]["contentWidth"], string> = {
@@ -201,6 +214,9 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
     "--ring": colors.focus,
     "--text-tertiary": colors.textMuted,
     "--accent-text": mix(colors.accent, isDark ? "#ffffff" : "#000000", isDark ? 0.18 : 0),
+    // Links and "you are here" marks. A user accent override wins, because
+    // picking an accent is picking the colour things are found by.
+    "--link": linkColor(settings, colors),
     "--success": colors.success,
     "--success-foreground": successFg,
     "--warning": colors.warning,
@@ -235,7 +251,10 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
       edge is brighter than its surface on a dark ground and can only be
       read as a soft inner shadow on a light one.
     */
-    "--surface-highlight": isDark ? "rgba(255, 255, 255, 0.045)" : "rgba(0, 0, 0, 0.035)",
+    "--surface-highlight": "transparent",
+    // The dim behind a modal: deeper on ink, lighter on paper, so the page
+    // recedes by about the same perceived amount in both polarities.
+    "--overlay": isDark ? "rgb(0 0 0 / 0.5)" : "rgb(20 18 11 / 0.2)",
     "--text-secondary": colors.textSecondary,
     "--text-disabled": colors.textDisabled,
     "--accent-hover": colors.accentHover,

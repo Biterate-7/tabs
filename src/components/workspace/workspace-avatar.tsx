@@ -20,7 +20,7 @@ export function WorkspaceAvatar({
   size?: number
   className?: string
 }) {
-  const { letter, colorVar } = avatarFallback(workspace.name)
+  const { letter } = avatarFallback(workspace.name)
   // A defensive `typeof` check, not just truthiness — `logo` only ever
   // reaches here from app state, but that state can originate from a
   // hand-edited localStorage value or an old export the import sanitizer
@@ -28,11 +28,16 @@ export function WorkspaceAvatar({
   const logo = typeof workspace.logo === "string" ? workspace.logo : undefined
 
   return (
-    <Avatar style={{ width: size, height: size }} className={cn("shrink-0 rounded-lg after:rounded-lg", className)}>
-      {logo && <AvatarImage src={logo} alt={workspace.name} className="rounded-lg object-cover" />}
+    // Monochrome by design: a tonal tile with the initial in ink. Identity
+    // comes from the name beside it (or an uploaded logo), not from a hue.
+    <Avatar
+      style={{ width: size, height: size, borderRadius: Math.max(3, Math.round(size * 0.22)) }}
+      className={cn("shrink-0 after:rounded-[inherit]", className)}
+    >
+      {logo && <AvatarImage src={logo} alt={workspace.name} className="rounded-[inherit] object-cover" />}
       <AvatarFallback
-        className="rounded-lg text-[0.65rem] font-semibold text-white"
-        style={{ backgroundColor: `var(${colorVar})` }}
+        className="rounded-[inherit] bg-surface-active font-medium text-muted-foreground"
+        style={{ fontSize: Math.max(9, Math.round(size * 0.5)) }}
       >
         {letter}
       </AvatarFallback>

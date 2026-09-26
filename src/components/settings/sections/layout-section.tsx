@@ -2,7 +2,7 @@
 
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useAppearanceContext } from "@/components/appearance-provider"
-import { FieldRow, SectionHeading } from "./section-ui"
+import { FieldRow, SectionHeading, SectionStack } from "./section-ui"
 
 export function LayoutSection() {
   const { settings, setLayout } = useAppearanceContext()
@@ -11,9 +11,9 @@ export function LayoutSection() {
 
   return (
     <div>
-      <SectionHeading title="Layout" description="Adjust spacing and how much of the window TabDump's content uses — purely visual, nothing here changes functionality." />
+      <SectionHeading title="Layout" description="Adjust spacing and how much of the window Hubble's content uses — purely visual, nothing here changes functionality." />
 
-      <div className="flex flex-col gap-2.5">
+      <SectionStack>
         <FieldRow label="Content width" description="How wide the main content area can grow.">
           <SegmentedControl
             value={l.contentWidth}
@@ -59,7 +59,7 @@ export function LayoutSection() {
             ]}
           />
         </FieldRow>
-      </div>
+      </SectionStack>
     </div>
   )
 }

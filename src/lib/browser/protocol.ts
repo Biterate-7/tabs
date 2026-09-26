@@ -1,5 +1,5 @@
 /**
- * The typed command protocol between this web app and the TabDump Chrome
+ * The typed command protocol between this web app and the Hubble Chrome
  * extension (see extension/src/browser-commands.js for the extension's own
  * copy of the allowlist/validators this must match). Message constants are
  * duplicated here rather than imported — the extension's content script is
@@ -39,7 +39,7 @@ export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
  * and open_url (src/lib/browser/open-tab.ts, for opening a saved tab). The
  * rest (get_active_tab, open_tabs, close_tab, close_tabs, pin_tab,
  * unpin_tab, move_tabs_to_window, create_browser_window) were only ever
- * invoked by Ask TabDump's chat-driven browser-control actions, which have
+ * invoked by Ask Hubble's chat-driven browser-control actions, which have
  * been removed — the extension still implements handlers for them, but
  * nothing here calls them anymore. `get_history` is the exception to that
  * "three actions" count: it backs History Dump (src/lib/browser/history.ts).
@@ -123,7 +123,7 @@ export type HistoryVisitItem = {
 const MAX_OPEN_URL_LENGTH = 4000;
 
 /**
- * The one definition of "a URL TabDump may open", and the rule every layer
+ * The one definition of "a URL Hubble may open", and the rule every layer
  * defers to rather than restating:
  *
  * - `parseSingleUrl` (src/lib/tabs/parse.ts) — so an unsafe scheme never

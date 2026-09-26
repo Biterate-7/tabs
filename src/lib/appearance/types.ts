@@ -6,7 +6,7 @@
  *
  * Components never read this type directly — `resolveThemeColors` +
  * `appearanceToCssVars` (see resolve.ts) turn it into CSS custom properties
- * that both TabDump's existing Tailwind tokens (--background, --primary, …)
+ * that both Hubble's existing Tailwind tokens (--background, --primary, …)
  * and the new tokens this system introduces (--surface-selected,
  * --graph-edge, --editor-background, …) read from.
  */
@@ -76,6 +76,13 @@ export type ThemeDefinition = {
   category: ThemeCategory;
   isDark: boolean;
   colors: ThemeColors;
+  /**
+   * The one chromatic colour in a theme whose `accent` is neutral — links,
+   * the current item in a list of documents, a live run. Optional: a theme
+   * without one uses its accent, which is what every palette authored before
+   * the system themes already expects.
+   */
+  link?: string;
 };
 
 export type FontKind = "sans" | "mono" | "serif";

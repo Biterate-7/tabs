@@ -5,10 +5,9 @@ import { cn } from "@/lib/utils"
 export type SegmentedOption<T extends string> = { value: T; label: string }
 
 /**
- * A small fixed set of mutually-exclusive choices rendered as one pill —
- * used throughout Settings → Appearance (Preset/Custom, density, radius,
- * intensity levels, …) instead of a dropdown when there are only a handful
- * of options worth seeing all at once.
+ * HubbleTabs (segmented) — the Monthly/Yearly switch: a pill track one tone
+ * off the ground holding pill options; the chosen one steps a tone further
+ * and takes full ink, the rest sit at the secondary tier.
  */
 function SegmentedControl<T extends string>({
   value,
@@ -26,7 +25,7 @@ function SegmentedControl<T extends string>({
   return (
     <div
       role="radiogroup"
-      className={cn("inline-flex w-fit items-center gap-0.5 rounded-full border border-subtle bg-card p-0.5", className)}
+      className={cn("inline-flex w-fit items-center gap-0.5 rounded-full bg-surface-hover p-0.5", className)}
     >
       {options.map((option) => {
         const selected = option.value === value
@@ -38,11 +37,11 @@ function SegmentedControl<T extends string>({
             aria-checked={selected}
             onClick={() => onValueChange(option.value)}
             className={cn(
-              "rounded-full text-label font-medium transition-colors duration-(--duration-fast) ease-(--ease-standard) outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-              size === "sm" ? "px-2 py-1" : "px-3 py-1.5",
+              "rounded-full text-body-sm transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              size === "sm" ? "h-5 px-2" : "h-6 px-2.5",
               selected
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ? "bg-surface-active text-foreground shadow-[0_0_0_1px_var(--border-subtle)]"
+                : "text-muted-foreground hover:text-foreground"
             )}
           >
             {option.label}

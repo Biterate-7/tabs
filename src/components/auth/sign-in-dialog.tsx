@@ -7,16 +7,16 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button"
 import { useAuth } from "@/components/auth/auth-provider"
 
 /**
- * TabDump's own sign-in surface: TabDump's mark, TabDump's wording, and
+ * Hubble's own sign-in surface: Hubble's mark, Hubble's wording, and
  * exactly one third-party element — Google's official button, which
  * Google's branding terms require to be theirs.
  *
  * There is no authentication-provider branding here beyond that button, and
  * nothing anywhere in the app says whose infrastructure runs the accounts,
- * because it is TabDump's: the session, the user record and every
+ * because it is Hubble's: the session, the user record and every
  * authorization decision belong to this app (see src/lib/auth/).
  *
- * The copy is deliberate about what signing in does and doesn't do. TabDump
+ * The copy is deliberate about what signing in does and doesn't do. Hubble
  * is local-first — signing in does not upload anyone's tabs — so promising
  * sync here would be a lie the storage layer doesn't back up.
  */
@@ -46,9 +46,9 @@ export function SignInDialog({
         <DialogHeader>
           <span className="flex items-center gap-2 text-foreground">
             <BrandMark />
-            <span className="text-body font-semibold tracking-tight">TabDump</span>
+            <span className="text-body font-medium tracking-tight">Hubble</span>
           </span>
-          <DialogTitle>Sign in to TabDump</DialogTitle>
+          <DialogTitle>Sign in to Hubble</DialogTitle>
           <DialogDescription>
             Your workspaces stay on this device — signing in keeps them yours, separate from anyone
             else who uses this browser.
@@ -60,7 +60,7 @@ export function SignInDialog({
         </div>
 
         <p className="text-center text-meta text-tertiary">
-          By continuing you agree to TabDump&apos;s{" "}
+          By continuing you agree to Hubble&apos;s{" "}
           <Link href="/terms" className="underline underline-offset-4 hover:text-foreground">
             Terms
           </Link>{" "}

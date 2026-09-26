@@ -1,4 +1,7 @@
-import { bindRunTo, providerSessionIdOf } from "@/lib/agents/control/binding";
+import { hasAdapterAuthentication } from "@/lib/agents/control/authentication";
+import { hasSessionRelease } from "@/lib/agents/control/session-release";
+import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
+import { boundMessageText, normalizeControlSummary } from "@/lib/agents/control/events";
 import { NO_PERMISSIONS } from "@/lib/agents/control/permissions";
 import {
   isBlockedSessionStatus,
@@ -17,10 +20,14 @@ import type { AgentApproval } from "@/lib/agents/control/approvals";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentProject } from "@/lib/agents/control/projects";
 import type { AgentSession } from "@/lib/agents/control/session";
+import type { SessionContextAccess } from "@/lib/agents/session-context/capabilities";
+import type { SessionContextRegistry } from "@/lib/agents/session-context/registry";
+import type { AgentPermissionGrant } from "@/lib/agents/control/permissions";
 import type {
   AgentControlAdapter,
   ControlError,
   ControlUnsubscribe,
+  SessionContextServerEntry,
 } from "@/lib/agents/control/types";
 import type { CorrelationRegistry } from "./correlation";
 import type { EventJournal } from "./journal";
@@ -32,9 +39,14 @@ import type {
   RuntimeCommandResult,
   RuntimeCommandResults,
   RuntimeCorrelationView,
+  ProviderConnectionView,
+  ProviderDetection,
   RuntimeErrorCode,
   RuntimeProviderStatus,
   RuntimeResult,
+  RuntimeContextActionView,
+  RuntimePlanOperationView,
+  RuntimeSessionContextView,
   RuntimeSessionView,
   RuntimeStatus,
 } from "./protocol";
@@ -47,7 +59,7 @@ import type {
  * One process's worth of live agent control. It holds the `ControlService`,
  * the correlation registry and the event journal; it answers the fourteen
  * commands in ./protocol.ts and nothing else. Everything a provider can be
- * asked to do goes through it, and it is the only thing in TabDump that may
+ * asked to do goes through it, and it is the only thing in Hubble that may
  * ask.
  *
  * ## Where the trust boundary is
@@ -80,7 +92,7 @@ import type {
  * than by being told it is still running.
  *
  * It does not mint domain runs either. See ./correlation.ts: the agent domain
- * owns `AgentRun`, and what this mints is a *control run id* — TabDump's own
+ * owns `AgentRun`, and what this mints is a *control run id* — Hubble's own
  * identifier for one stretch of driving — which the correlation registry then
  * joins to whatever observation independently discovers.
  */
@@ -95,7 +107,7 @@ import type {
  * Resolved by the transport from the request itself — never read out of a
  * command body, which is why `RuntimeCommand` has no actor field for a caller
  * to set. On a deployment with accounts this is the signed-in account; on a
- * purely local TabDump, which has no accounts at all, it is the anonymous
+ * purely local Hubble, which has no accounts at all, it is the anonymous
  * local actor. Both are stable strings, and both are compared exactly.
  *
  * A session id alone is never sufficient to reach a session: every command
@@ -104,12 +116,62 @@ import type {
  */
 export type RuntimeActor = { id: string };
 
-/** The actor a TabDump with no accounts configured runs as. */
+/** The actor a Hubble with no accounts configured runs as. */
 export const LOCAL_ACTOR: RuntimeActor = { id: "local" };
 
 /* ------------------------------------------------------------------ *
  * Options
  * ------------------------------------------------------------------ */
+
+/**
+ * One remote session as durable state remembers it.
+ *
+ * Deliberately not a `RuntimeSessionView`: this is what survives a process,
+ * and the things a view carries — status, runs, approvals, sequence — are all
+ * properties of a *live* session that this process has not picked up yet.
+ * Conflating the two would mean inventing a status for a session nobody has
+ * asked the provider about.
+ */
+export type RemoteSessionRef = {
+  sessionId: string;
+  provider: AgentProviderId;
+  projectId: string;
+  providerSessionId?: string;
+  createdAt: number;
+};
+
+/**
+ * How a remote host reaches the state that outlives it.
+ *
+ * ## Why the host takes this rather than a store
+ *
+ * Because the host must stay pure and drivable by tests with no database, no
+ * cloud platform and no possibility of starting anything — exactly as it is
+ * today. These three functions are the entire surface through which durable
+ * state enters, they are all owner-scoped by signature, and a test supplies
+ * them as plain async functions.
+ *
+ * Note what is absent: no sandbox, no path, no handle. The host learns that a
+ * project exists and that a session exists; *reaching* either is the
+ * adapter's business, through state the adapter resolves itself.
+ */
+export type RemoteHostBindings = {
+  /**
+   * Projects this actor owns, already resolved and owner-checked.
+   *
+   * Replaces whatever a client synced, rather than merging with it. On a
+   * remote host the browser's local projects are directories on a machine
+   * this process cannot see, and treating them as authorizations would be the
+   * one genuinely dangerous confusion in this design.
+   */
+  projects(actorId: string): Promise<readonly AgentProject[]>;
+
+  /** Sessions this actor owns, as durable state remembers them. */
+  sessions(actorId: string): Promise<readonly RemoteSessionRef[]>;
+
+  /** Drops a session's durable record. Called when the session is disposed. */
+  forget(actorId: string, sessionId: string): Promise<void>;
+};
 
 export type RuntimeHostOptions = {
   /**
@@ -121,8 +183,31 @@ export type RuntimeHostOptions = {
    */
   gate: ExecutionGateResult;
 
+  /**
+   * Durable state, for a host whose execution plane is remote.
+   *
+   * Absent on every local host, and that absence is what makes a local host
+   * incapable of rehydration — correctly, because a local agent is a child
+   * process and a process that is gone has no session still running. See
+   * `reattach` in the Claude runtime seam.
+   */
+  remote?: RemoteHostBindings;
+
   /** Resolves a provider's control adapter. Normally the connector registry's. */
-  resolveAdapter: (provider: AgentProviderId) => AgentControlAdapter | undefined;
+  /**
+   * Resolves a provider's control adapter, for one owner.
+   *
+   * The `ownerId` argument arrived with per-user provider credentials. A
+   * Claude adapter is now built around *somebody's* credential source, so
+   * "the adapter for claude-code" stopped being a well-formed question — two
+   * signed-in accounts on one deployment must get two adapters, each able to
+   * resolve only its own credential.
+   *
+   * A caller with nothing per-user to hold still writes `(provider) => ...`
+   * and still means what it did, because a function of one parameter is
+   * assignable to a type of two.
+   */
+  resolveAdapter: (provider: AgentProviderId, ownerId: string) => AgentControlAdapter | undefined;
 
   /**
    * A further source of authorized projects, consulted before the ones an
@@ -143,7 +228,37 @@ export type RuntimeHostOptions = {
   createId?: () => string;
   /** This process's identity. Injected so tests are deterministic. */
   runtimeId?: string;
+  /**
+   * What is installed on this machine (Phase J). Supplied only by a local
+   * runtime's wiring; answered only when the gate is local. See
+   * `lib/agents/launch/detect.ts` — it returns booleans, never paths.
+   */
+  detect?: () => readonly ProviderDetection[];
+  /**
+   * Workspace context for agent sessions (Phase J.3): the registry of
+   * session bindings and the loopback MCP server agents reach them through.
+   * Supplied only by a local runtime's wiring. Absent: sessions get no
+   * workspace context, exactly as before.
+   */
+  sessionContext?: { registry: SessionContextRegistry; url(): Promise<string> };
 };
+
+/**
+ * How much of its workspace a session may touch, from its grant — never from
+ * the request (Phase J.3).
+ *
+ * Reading needs `read_workspace` in the project's grant; a session started
+ * from a workspace with no project reads that one workspace and nothing else.
+ * Writing needs `write_workspace`, which the user turns on for an agent, and
+ * even then each change asks. `undefined`: no context at all.
+ */
+export function sessionContextAccessFor(
+  grant: AgentPermissionGrant,
+  projectId: string | undefined
+): SessionContextAccess | undefined {
+  if (projectId && !grant.scopes.includes("read_workspace")) return undefined;
+  return projectId && grant.scopes.includes("write_workspace") ? "read_write" : "read";
+}
 
 export type RuntimeHost = {
   /** This process's identity, for the generation check. See `RuntimeStatus.runtimeId`. */
@@ -203,6 +318,8 @@ function runtimeCodeFor(error: ControlError): RuntimeErrorCode {
       return "provider_error";
     case "configuration":
       return "authentication_required";
+    case "approval-unenforceable":
+      return "approval_unenforceable";
     case "unknown":
       return "provider_error";
   }
@@ -246,6 +363,12 @@ type HostSession = {
    * creation and delivers it with the first message itself.
    */
   undeliveredContextSnapshotId?: string;
+  /**
+   * The session was started from a workspace, but its agent cannot prove
+   * which of its calls are Hubble's (J.4), so it was not given the context
+   * server. Said on the view rather than left to be guessed from an absence.
+   */
+  contextUnavailable?: true;
 };
 
 export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
@@ -291,6 +414,101 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   }
 
   /**
+   * Loads this actor's remote projects before anything can name one.
+   *
+   * Pre-resolved rather than looked up on demand, and that is a deliberate
+   * shape rather than a convenience. `ControlService` resolves projects
+   * *synchronously*, at the moment it authorizes a filesystem scope; making
+   * that path async would mean an `await` inside the permission gate, which is
+   * where a race becomes an authorization bug. Loading first and resolving
+   * from memory keeps the security-critical path exactly as synchronous as it
+   * has always been.
+   *
+   * Replaces rather than merges, for the reason on `RemoteHostBindings`.
+   */
+  async function hydrateProjects(actorId: string): Promise<void> {
+    if (!options.remote) return;
+
+    const projects = await options.remote.projects(actorId);
+    const next = new Map<string, AgentProject>();
+    for (const project of projects) next.set(project.id, project);
+    projectsByActor.set(actorId, next);
+  }
+
+  /**
+   * Picks a remote session back up, if this process does not already hold it.
+   *
+   * ## Why this exists and `own` could not do it
+   *
+   * `own` is synchronous and is called from the middle of command handling.
+   * This has to talk to durable state and to a provider. So the rehydration
+   * happens *before* the command runs, and `own` then finds the session in
+   * memory exactly as it would on a long-lived local runtime — which is what
+   * keeps every ownership check below unchanged.
+   *
+   * Ownership is still checked twice, and not redundantly: the bindings only
+   * return sessions belonging to this actor, and `own` re-derives the same
+   * answer from the host's own record. Two independent sources agreeing is
+   * the property worth having.
+   */
+  async function ensureSession(actor: RuntimeActor, sessionId: string): Promise<void> {
+    if (!options.remote || hosted.has(sessionId)) return;
+
+    const refs = await options.remote.sessions(actor.id);
+    const ref = refs.find((candidate) => candidate.sessionId === sessionId);
+    if (!ref) return;
+
+    const adopted = await serviceFor(actor.id).adoptSession({
+      sessionId: ref.sessionId,
+      provider: ref.provider,
+      projectId: ref.projectId,
+      ...(ref.providerSessionId ? { providerSessionId: ref.providerSessionId } : {}),
+      // From the project, never from the durable session record. A grant
+      // stored beside a session would be a grant that kept applying after the
+      // user narrowed the project's permissions.
+      permissions: grantFor(actor.id, ref.projectId),
+      createdAt: ref.createdAt,
+    });
+
+    if (!adopted.ok) return;
+
+    const correlation = correlations.register(
+      {
+        provider: ref.provider,
+        origin: "control",
+        controlSessionId: ref.sessionId,
+        ...(ref.providerSessionId ? { providerSessionId: ref.providerSessionId } : {}),
+      },
+      now()
+    );
+
+    const host: HostSession = {
+      ownerId: actor.id,
+      provider: ref.provider,
+      runIds: [],
+      correlationId: correlation.id,
+    };
+    hosted.set(ref.sessionId, host);
+    startRun(ref.sessionId, host);
+  }
+
+  /**
+   * Collects whatever a non-pushing provider has said.
+   *
+   * Called before any command that reports on a session, so that what the
+   * caller is told includes everything the agent has done — rather than
+   * everything it had done as of whichever earlier request happened to be
+   * listening. A local adapter has no `drainSession` and this is a no-op.
+   */
+  async function drainSession(actor: RuntimeActor, sessionId: string): Promise<void> {
+    const host = hosted.get(sessionId);
+    if (!host || host.ownerId !== actor.id) return;
+
+    const adapter = options.resolveAdapter(host.provider, host.ownerId);
+    if (adapter) await drainAdapter(adapter, sessionId);
+  }
+
+  /**
    * One control service per actor.
    *
    * ## Why not one service for the whole host
@@ -322,10 +540,15 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       // The gate's decision, frozen at construction. Not re-read, not
       // re-decided, and not reachable from a request.
       runtime: () => options.gate.decision,
-      resolveAdapter: options.resolveAdapter,
+      // Bound to this service's actor. The control service asks for "the
+      // adapter for this provider"; which adapter that is depends on whose
+      // service is asking, and this closure is where that is decided.
+      resolveAdapter: (provider) => options.resolveAdapter(provider, actorId),
       resolveProject: (projectId) => projectFor(actorId, projectId),
       now,
       createId: () => `cs-${createId()}`,
+      // A session that ends takes its workspace credential with it (J.3).
+      onSessionEnded: (sessionId) => releaseContext(sessionId),
     });
 
     service.subscribe((event) => onEvent(event));
@@ -378,7 +601,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
    * correlatable and not resumable, which is a distinction with no meaning.
    */
   function captureProviderSession(sessionId: string, session: HostSession): void {
-    const adapter = options.resolveAdapter(session.provider);
+    const adapter = options.resolveAdapter(session.provider, session.ownerId);
     if (!adapter) return;
 
     const providerSessionId = providerSessionIdOf(adapter, sessionId);
@@ -418,9 +641,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   function startRun(sessionId: string, host: HostSession): string {
     const runId = `cr-${createId()}`;
 
-    const adapter = options.resolveAdapter(host.provider);
+    const adapter = options.resolveAdapter(host.provider, host.ownerId);
     // An adapter that cannot be bound produces events with no run id. That is
-    // recorded rather than pretended around: the run still exists as TabDump's
+    // recorded rather than pretended around: the run still exists as Hubble's
     // own unit of driving, and correlation simply has one less piece of
     // evidence for it.
     if (adapter) bindRunTo(adapter, sessionId, runId);
@@ -431,6 +654,91 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     correlations.update(host.correlationId, { controlRunId: runId }, now());
 
     return runId;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Session workspace context (Phase J.3)
+   * ---------------------------------------------------------------- */
+
+  // A change an agent proposes goes to the service of the actor who owns the
+  // session — the same broker, the same approval card as every other.
+  options.sessionContext?.registry.setApprover(async (request) => {
+    const ownerId = hosted.get(request.sessionId)?.ownerId;
+    if (ownerId === undefined) return "cancelled";
+    return serviceFor(ownerId).requestWorkspaceApproval(request.sessionId, {
+      targets: request.targets,
+      reason: request.reason,
+      ...(request.change ? { change: request.change } : {}),
+      ...(request.plan ? { plan: request.plan } : {}),
+    });
+  });
+
+  /** Revokes a session's credential and withdraws its pending workspace approvals. Idempotent. */
+  function releaseContext(sessionId: string): void {
+    options.sessionContext?.registry.release(sessionId);
+    const ownerId = hosted.get(sessionId)?.ownerId;
+    if (ownerId !== undefined) serviceFor(ownerId).cancelWorkspaceApprovals(sessionId);
+  }
+
+  function contextViewOf(sessionId: string): RuntimeSessionContextView | undefined {
+    const registry = options.sessionContext?.registry;
+    const binding = registry?.binding(sessionId);
+    if (!registry || !binding) return undefined;
+    const outcomes = registry.planOutcomes(sessionId);
+    const view: RuntimeSessionContextView = {
+      workspaceId: binding.workspaceId,
+      workspaceName: binding.snapshot.workspace.name,
+      capabilities: [...binding.capabilities],
+      version: binding.version,
+      syncedAt: binding.syncedAt,
+      fingerprint: binding.fingerprint,
+      pendingActions: registry.pendingApplications(sessionId).flatMap((action): RuntimeContextActionView[] => {
+        if (action.plan) {
+          // The approved plan, exactly as the registry froze it. The reasons
+          // and confidence were the user's to read; applying needs only the
+          // operations themselves.
+          return [
+            {
+              actionId: action.id,
+              kind: "apply_plan",
+              planId: action.plan.planId,
+              planHash: action.plan.hash,
+              operations: action.plan.operations.map((operation): RuntimePlanOperationView => {
+                switch (operation.kind) {
+                  case "create_collection":
+                    return { kind: operation.kind, name: operation.name, tabIds: [...operation.tabIds] };
+                  case "rename_collection":
+                    return { kind: operation.kind, collectionId: operation.collectionId, name: operation.name };
+                  case "add_tabs_to_collection":
+                    return { kind: operation.kind, collectionId: operation.collectionId, tabIds: [...operation.tabIds] };
+                }
+              }),
+            },
+          ];
+        }
+        const change = action.change;
+        if (!change) return [];
+        switch (change.kind) {
+          case "create_collection":
+            return [{ actionId: action.id, kind: change.kind, name: change.name, tabIds: [...change.tabIds] }];
+          case "rename_collection":
+            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, name: change.name }];
+          case "add_tabs_to_collection":
+            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] }];
+        }
+      }),
+    };
+    if (outcomes.length > 0) {
+      // Each outcome names the approval it answered, so the Command Centre
+      // can put the result where the user approved it.
+      const ownerId = hosted.get(sessionId)?.ownerId;
+      const approvals = ownerId === undefined ? [] : serviceFor(ownerId).approvals.forSession(sessionId);
+      view.planOutcomes = outcomes.map((outcome) => {
+        const approvalId = approvals.find((approval) => approval.plan?.planId === outcome.planId)?.id;
+        return { ...outcome, ...(approvalId ? { approvalId } : {}) };
+      });
+    }
+    return view;
   }
 
   function approvalsFor(sessionId: string): RuntimeApprovalView[] {
@@ -451,7 +759,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   /** The view a client gets. Assembled here so every command answers with the same shape. */
   function viewOf(session: AgentSession): RuntimeSessionView {
     const host = hosted.get(session.id);
-    const adapter = options.resolveAdapter(session.provider);
+    // A session with no host record is one this process did not create, so
+    // there is no owner to resolve an adapter for. `undefined` reads through
+    // the rest of this function as "not cancellable", which is true.
+    const adapter = host ? options.resolveAdapter(session.provider, host.ownerId) : undefined;
 
     const view: RuntimeSessionView = {
       sessionId: session.id,
@@ -483,19 +794,25 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     if (session.title) view.title = session.title;
     if (session.contextSnapshotId) view.contextSnapshotId = session.contextSnapshotId;
     if (host?.activeRunId) view.activeRunId = host.activeRunId;
+    const context = contextViewOf(session.id);
+    if (context) view.context = context;
+    else if (host?.contextUnavailable) view.contextUnavailable = "provider";
 
     return view;
   }
 
   /** The providers this host reports on, and what is true of each. */
-  function providerStatuses(): RuntimeProviderStatus[] {
+  function providerStatuses(
+    ownerId: string,
+    only?: readonly AgentProviderId[]
+  ): RuntimeProviderStatus[] {
     const ids =
-      options.providers ?? [...hosted.values()].map((session) => session.provider);
+      only ?? options.providers ?? [...hosted.values()].map((session) => session.provider);
 
     const unique = [...new Set(ids)];
 
     return unique.map((provider) => {
-      const adapter = options.resolveAdapter(provider);
+      const adapter = options.resolveAdapter(provider, ownerId);
       if (!adapter) {
         return {
           provider,
@@ -513,26 +830,31 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // Available means an adapter exists and has not declared itself
         // unusable. It is emphatically not "authenticated" — see below.
         available: status.kind !== "unavailable",
-        // Three separate facts, and this is the one TabDump usually cannot
+        // Three separate facts, and this is the one Hubble usually cannot
         // know. Claude Code authenticates lazily: the first proof either way
         // arrives when a run starts, so anything before that is a guess.
         // `configuration_required` is the one state the provider has actually
         // told us about.
-        authentication:
-          status.kind === "configuration_required"
+        //
+        // An adapter with a native sign-in (Phase J) reports what the agent
+        // itself last told it, which is the one better source there is.
+        authentication: hasAdapterAuthentication(adapter)
+          ? adapter.describeAuthentication().state
+          : status.kind === "configuration_required"
             ? ("required" as const)
             : ("unknown" as const),
         capabilities: [...adapter.getCapabilities()],
+        ...(hasAdapterAuthentication(adapter) ? { nativeSignIn: true } : {}),
       };
     });
   }
 
-  function statusOf(): RuntimeStatus {
+  function statusOf(actor: RuntimeActor): RuntimeStatus {
     const status: RuntimeStatus = {
       environment: options.gate.kind,
       executable: options.gate.allowed,
       runtimeId,
-      providers: providerStatuses(),
+      providers: providerStatuses(actor.id),
     };
 
     if (!options.gate.allowed) status.detail = options.gate.detail;
@@ -549,15 +871,80 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   ): Promise<RuntimeResult<RuntimeCommandResults[RuntimeCommandName]>> {
     // `get_status` is the one command a refused runtime still answers. It has
     // to be: a UI that cannot ask "why not" can only show a blank screen.
-    if (command.name === "get_status") return { ok: true, value: statusOf() };
+    if (command.name === "get_status") return { ok: true, value: statusOf(actor) };
 
     if (!options.gate.allowed) return gateFailure();
+
+    // Everything durable this command could need, loaded before it runs.
+    //
+    // Three steps, in this order, and the order is the design:
+    //
+    //   1. **Projects**, because a session cannot be rehydrated without the
+    //      project that gives it its scope and its grant.
+    //   2. **The session**, because every check below reads it from memory and
+    //      must not have to await anything to do so.
+    //   3. **The drain**, because what the caller is told should include
+    //      everything the agent has done, not everything it had done as of
+    //      whichever earlier request happened to be listening.
+    //
+    // All three are no-ops on a local host, which has no durable state and a
+    // provider that pushes.
+    await hydrateProjects(actor.id);
+
+    const named = sessionIdOf(command);
+    if (named) {
+      await ensureSession(actor, named);
+      await drainSession(actor, named);
+    } else if (command.name === "respond_to_approval" && options.remote) {
+      // The one command that names no session. An approval id alone does not
+      // say which conversation it belongs to, and the broker that could answer
+      // is empty until the session is picked up — so every one of this actor's
+      // sessions is, bounded by the per-owner session limit.
+      //
+      // Draining is what actually makes the approval answerable: the pending
+      // request is re-read from the provider's log and a resolver registered
+      // for it, which is how a decision reaches an agent that has been blocked
+      // since some earlier request on some other instance.
+      for (const ref of await options.remote.sessions(actor.id)) {
+        await ensureSession(actor, ref.sessionId);
+        await drainSession(actor, ref.sessionId);
+      }
+    }
 
     // This actor's control service, and the only one this command can reach.
     const actorService = serviceFor(actor.id);
 
     switch (command.name) {
       case "authorize_projects": {
+        // A remote host accepts none of them, and this is the single most
+        // important refusal in the remote design.
+        //
+        // These records describe directories on the machine running the
+        // browser. A hosted Hubble cannot see that machine, so a path from
+        // one means nothing here — but it would still *validate*, because
+        // `validateProjectPath` is checking the shape of a path and not the
+        // existence of a filesystem. Accepting one would create an authorized
+        // project whose path resolved, if it resolved at all, to a directory
+        // on the server. That is the hosted-execution hole the whole Phase B
+        // boundary exists to prevent, arriving through the one command that
+        // carries a path.
+        //
+        // So they are refused by name rather than dropped silently: the client
+        // syncs its local projects on every mount, and a silent no would leave
+        // the user believing a project was authorized when it never could be.
+        if (options.remote) {
+          return {
+            ok: true,
+            value: {
+              accepted: [],
+              rejected: command.projects.map((candidate) => ({
+                id: candidate.id,
+                reason: "remote-runtime",
+              })),
+            },
+          };
+        }
+
         const accepted: string[] = [];
         const rejected: { id: string; reason: string }[] = [];
         const next = new Map<string, AgentProject>();
@@ -598,10 +985,29 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       case "list_sessions": {
-        const sessions = actorService
-          .sessions()
-          .filter((session) => hosted.get(session.id)?.ownerId === actor.id)
-          .map(viewOf);
+        const actorSessions = actorService.sessions().filter((session) => hosted.get(session.id)?.ownerId === actor.id);
+        // The Command Centre polls this while it is open — and only while it
+        // is open is anything syncing these sessions' workspaces (J.6).
+        for (const session of actorSessions) options.sessionContext?.registry.attend(session.id);
+        const sessions = actorSessions.map(viewOf);
+
+        // Sessions this process has not picked up are listed from durable
+        // state as `disconnected`, which is exactly what they are *to this
+        // process*: the agent may well be working, and nothing here has a
+        // connection to it.
+        //
+        // Not adopted here on purpose. Adopting means a platform round trip
+        // per session, and this is the command the UI polls — so the list
+        // stays cheap and honest, and selecting a session is what reconnects
+        // it. That is the same contract `control/persistence.ts` already
+        // established for sessions restored after a reload, and the client
+        // already knows how to reattach.
+        if (options.remote) {
+          for (const ref of await options.remote.sessions(actor.id)) {
+            if (sessions.some((session) => session.sessionId === ref.sessionId)) continue;
+            sessions.push(disconnectedView(ref));
+          }
+        }
 
         const owned = new Set(sessions.map((session) => session.sessionId));
         const views: RuntimeCorrelationView[] = correlations
@@ -621,6 +1027,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       case "get_session": {
         const owned = own(actor, command.sessionId);
         if (!owned.ok) return owned;
+        options.sessionContext?.registry.attend(command.sessionId);
         return {
           ok: true,
           value: {
@@ -639,7 +1046,42 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       case "create_session": {
+        const grant = grantFor(actor.id, command.projectId);
+        const access = sessionContextAccessFor(grant, command.projectId);
+        const sessionContext = options.sessionContext;
+        const workspaceId = command.workspaceId;
+        const wantsContext = Boolean(sessionContext && access && workspaceId && command.contextSnapshot);
+        // Only an adapter that can prove which calls are the context server's
+        // is handed one (J.4). Any other still starts — without context, and
+        // the view says so.
+        const providerAdapter = options.resolveAdapter(command.provider, actor.id);
+        const carriesContext = Boolean(providerAdapter && adapterSupports(providerAdapter, "workspace_context"));
         const started = await actorService.startSession({
+          ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
+            ? {
+                bindContext: async (sessionId: string) => {
+                  const bound = await sessionContext.registry.bind({
+                    sessionId,
+                    ownerId: actor.id,
+                    workspaceId,
+                    access,
+                    snapshot: command.contextSnapshot,
+                  });
+                  if (!bound) return "refused" as const;
+                  // Handed to the service, which hands it to the one adapter starting
+                  // the agent. It goes nowhere else. The capabilities are the
+                  // runtime's, from the grant — never the request's.
+                  const entry: SessionContextServerEntry = {
+                    name: bound.serverName,
+                    url: await sessionContext.url(),
+                    token: bound.token,
+                    workspaceId,
+                    capabilities: [...(sessionContext.registry.binding(sessionId)?.capabilities ?? [])],
+                  };
+                  return entry;
+                },
+              }
+            : {}),
           provider: command.provider,
           ...(command.projectId ? { projectId: command.projectId } : {}),
           ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
@@ -648,7 +1090,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           // client cannot ask for permissions; it can only name a project the
           // user already authorized, and the grant is whatever that project
           // carries. A session with no project gets nothing.
-          permissions: grantFor(actor.id, command.projectId),
+          permissions: grant,
           ...(command.context ? { context: command.context } : {}),
         });
 
@@ -668,6 +1110,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           provider: command.provider,
           runIds: [],
           correlationId: correlation.id,
+          ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
         };
         hosted.set(started.value.id, host);
 
@@ -760,6 +1203,23 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
         if (!host.activeRunId) startRun(command.sessionId, host);
 
+        // What the user said, into the same journal as what the agent said,
+        // so the conversation reads back whole after a reload. Journalled
+        // here rather than by an adapter: the host is what received the text,
+        // and an adapter re-emitting it from a provider's echo would double
+        // it. Only the user's own words — the attached context is not
+        // repeated into the stream.
+        onEvent({
+          id: `sent-${createId()}`,
+          sessionId: command.sessionId,
+          provider: host.provider,
+          kind: "message_sent",
+          timestamp: now(),
+          summary: normalizeControlSummary(command.text),
+          text: boundMessageText(command.text),
+          ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+        });
+
         const after = actorService.session(command.sessionId);
         return after ? { ok: true, value: viewOf(after) } : runtimeFailure("session_not_found");
       }
@@ -850,10 +1310,19 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!isTerminalSessionStatus(owned.value.session.status)) {
           await actorService.cancelRun(command.sessionId);
         }
+        releaseAdapterSession(actor.id, command.sessionId);
+        releaseContext(command.sessionId);
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
         correlations.removeControlSession(command.sessionId);
+
+        // The durable record goes too, or the next request would rehydrate a
+        // session the user just disposed of — and it would succeed, because
+        // the agent is genuinely still there. The sandbox itself is left
+        // alone: it belongs to the project, not to this session, and its own
+        // deadline reclaims it.
+        await options.remote?.forget(actor.id, command.sessionId);
 
         return { ok: true, value: { sessionId: command.sessionId } };
       }
@@ -879,7 +1348,121 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           ? { ok: true, value: toCorrelationView(updated) }
           : runtimeFailure("invalid_request");
       }
+
+      /* ------------------------------------------------------------ *
+       * Phase J — the connector lifecycle
+       * ------------------------------------------------------------ */
+
+      case "detect_providers": {
+        // Only a runtime on the user's own machine may answer. A hosted or
+        // remote deployment's binaries are not the user's, and listing them
+        // would report the server's software to every visitor.
+        const thisMachine = options.gate.kind === "local" && options.detect !== undefined;
+        return {
+          ok: true,
+          value: { thisMachine, detections: thisMachine ? options.detect!() : [] },
+        };
+      }
+
+      case "connect_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+        const connected = await adapter.connect();
+        // A refusal is still an answer worth showing: the view carries the
+        // status the adapter settled into, which says why.
+        if (!connected.ok && connected.error.code === "unsupported") {
+          return runtimeFailure("unsupported");
+        }
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      case "authenticate_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+        if (!hasAdapterAuthentication(adapter)) return runtimeFailure("unsupported");
+        const signedIn = await adapter.authenticate(command.methodId);
+        if (!signedIn.ok) return fromControl(signedIn);
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      case "disconnect_provider": {
+        const adapter = options.resolveAdapter(command.provider, actor.id);
+        if (!adapter) return runtimeFailure("provider_unavailable");
+
+        // This actor's sessions with this provider end first — cancelled,
+        // forgotten, exactly as `dispose_session` does one — so disconnecting
+        // cannot leave a process running that nothing can reach.
+        for (const [sessionId, host] of [...hosted.entries()]) {
+          if (host.ownerId !== actor.id || host.provider !== command.provider) continue;
+          const session = actorService.session(sessionId);
+          if (session && !isTerminalSessionStatus(session.status)) {
+            await actorService.cancelRun(sessionId);
+          }
+          releaseAdapterSession(actor.id, sessionId);
+          releaseContext(sessionId);
+          hosted.delete(sessionId);
+          journal.forget(sessionId);
+          correlations.removeControlSession(sessionId);
+        }
+
+        await adapter.disconnect();
+        return { ok: true, value: connectionViewOf(command.provider, actor.id) };
+      }
+
+      /* ------------------------------------------------------------ *
+       * Phase J.3 — session workspace context
+       * ------------------------------------------------------------ */
+
+      case "sync_session_context": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const registry = options.sessionContext?.registry;
+        if (!registry?.binding(command.sessionId)) return runtimeFailure("invalid_session_state");
+        // The binding's workspace is fixed; a snapshot of any other is refused here.
+        const updated = registry.update(command.sessionId, command.snapshot);
+        if (!updated) return runtimeFailure("context_invalid");
+        return { ok: true, value: { sessionId: command.sessionId, version: updated.version } };
+      }
+
+      case "complete_context_action": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const registry = options.sessionContext?.registry;
+        if (!registry) return runtimeFailure("invalid_session_state");
+        // Only an action the user approved, of this session, can be completed.
+        if (!registry.complete(command.sessionId, command.actionId, command.outcome)) {
+          return runtimeFailure("invalid_request");
+        }
+        return { ok: true, value: { sessionId: command.sessionId } };
+      }
     }
+  }
+
+  /**
+   * Lets the adapter end a session the host is about to forget (Phase J.2).
+   * Cancelling a run does not end an ACP agent's process; without this, the
+   * process outlived every reference to it until the runtime shut down.
+   */
+  function releaseAdapterSession(ownerId: string, sessionId: string): void {
+    const provider = hosted.get(sessionId)?.provider;
+    const adapter = provider ? options.resolveAdapter(provider, ownerId) : undefined;
+    if (adapter && hasSessionRelease(adapter)) adapter.releaseSession(sessionId);
+  }
+
+  /** One provider's status plus the agent's own sign-in methods. */
+  function connectionViewOf(provider: AgentProviderId, ownerId: string): ProviderConnectionView {
+    const status =
+      providerStatuses(ownerId, [provider])[0] ?? {
+        provider,
+        connection: "unavailable" as const,
+        available: false,
+        authentication: "unknown" as const,
+        capabilities: [],
+      };
+    const adapter = options.resolveAdapter(provider, ownerId);
+    const methods =
+      adapter && hasAdapterAuthentication(adapter) ? adapter.describeAuthentication().methods : [];
+    return { ...status, authMethods: methods.map((method) => ({ ...method })) };
   }
 
   /**
@@ -923,6 +1506,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         correlations.removeControlSession(sessionId);
       }
 
+      // Every workspace credential stops working with the runtime (J.3).
+      options.sessionContext?.registry.releaseAll();
+
       hosted.clear();
       journal.clear();
       listeners.clear();
@@ -938,14 +1524,83 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   };
 }
 
+/**
+ * A durable session this process has not picked up, as a view.
+ *
+ * Every live-only field is reported at its empty value rather than guessed:
+ * no runs, no active run, no approvals, sequence zero. The one field that is
+ * an assertion is `resumable`, and it is true — a remote session's whole
+ * point is that the agent is still there — which is what tells the client
+ * this row is worth selecting.
+ */
+function disconnectedView(ref: RemoteSessionRef): RuntimeSessionView {
+  const view: RuntimeSessionView = {
+    sessionId: ref.sessionId,
+    provider: ref.provider,
+    // Honest, and specifically about *this process*: there is no connection
+    // to the agent from here. Selecting the session is what makes one.
+    status: "disconnected",
+    projectId: ref.projectId,
+    runIds: [],
+    awaitingApproval: false,
+    cancellable: false,
+    resumable: true,
+    latestSequence: 0,
+    createdAt: ref.createdAt,
+    updatedAt: ref.createdAt,
+  };
+  if (ref.providerSessionId) view.providerSessionId = ref.providerSessionId;
+  return view;
+}
+
+/**
+ * The session a command names, if it names one.
+ *
+ * A switch over the closed union rather than `"sessionId" in command`, so
+ * that a fifteenth command is a type error here rather than a command that
+ * silently skips rehydration and reports an empty session on a remote host.
+ *
+ * `respond_to_approval` is absent on purpose: it names an approval, and which
+ * session that belongs to cannot be known until the sessions are loaded. Its
+ * caller handles that case explicitly.
+ */
+function sessionIdOf(command: RuntimeCommand): string | undefined {
+  switch (command.name) {
+    case "get_session":
+    case "get_events":
+    case "send_message":
+    case "cancel_run":
+    case "attach_context":
+    case "detach_context":
+    case "dispose_session":
+    case "link_observation":
+    case "sync_session_context":
+    case "complete_context_action":
+      return command.sessionId;
+    case "get_status":
+    case "list_sessions":
+    case "authorize_projects":
+    case "create_session":
+    case "resume_session":
+    case "respond_to_approval":
+    case "detect_providers":
+    case "connect_provider":
+    case "authenticate_provider":
+    case "disconnect_provider":
+      return undefined;
+  }
+}
+
 /** Strips an approval to what a client may see. Targets are already project-relative. */
 function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
   const view: RuntimeApprovalView = {
     approvalId: approval.id,
     sessionId: approval.sessionId,
+    provider: approval.provider,
     action: approval.action,
     scope: approval.scope,
-    projectId: approval.projectId,
+    ...(approval.projectId ? { projectId: approval.projectId } : {}),
+    ...(approval.workspaceId ? { workspaceId: approval.workspaceId } : {}),
     targets: [...approval.targets],
     requestedAt: approval.requestedAt,
     expiresAt: approval.expiresAt,
@@ -953,6 +1608,13 @@ function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
 
   if (approval.runId) view.runId = approval.runId;
   if (approval.reason) view.reason = approval.reason;
+  if (approval.change) view.change = { ...approval.change, details: [...approval.change.details] };
+  if (approval.plan) {
+    view.plan = {
+      ...approval.plan,
+      steps: approval.plan.steps.map((step) => ({ ...step, tabs: [...step.tabs], movesFrom: [...step.movesFrom] })),
+    };
+  }
   return view;
 }
 

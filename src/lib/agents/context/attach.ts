@@ -16,7 +16,7 @@ import type { AgentContextItem, AgentContextSnapshot } from "./types";
  *
  * ## Why a projection rather than the snapshot itself
  *
- * A snapshot is TabDump's record: it has scope, limits, omissions, a capture
+ * A snapshot is Hubble's record: it has scope, limits, omissions, a capture
  * time and a provenance chain. An attachment is what crosses the boundary to
  * a provider adapter, and it is deliberately four flat fields.
  *

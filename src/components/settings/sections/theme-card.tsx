@@ -26,9 +26,8 @@ export function ThemeCard({
   return (
     <div
       className={cn(
-        "group/theme-card relative flex flex-col overflow-hidden rounded-xl border text-left transition-all duration-(--duration-fast) ease-(--ease-standard)",
-        "hover:-translate-y-0.5 hover:shadow-md",
-        selected ? "border-primary ring-2 ring-primary/40" : "border-transparent"
+        "group/theme-card relative flex flex-col overflow-hidden rounded-md border text-left transition-colors duration-(--duration-fast) ease-(--ease-color)",
+        selected ? "border-foreground/50" : "border-border hover:border-strong"
       )}
       style={{ backgroundColor: colors.surface }}
     >
@@ -36,12 +35,12 @@ export function ThemeCard({
         type="button"
         onClick={onSelect}
         aria-pressed={selected}
-        className="flex flex-1 flex-col gap-2.5 p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        className="flex flex-1 flex-col gap-2 p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         <div className="flex items-center justify-between">
           <div className="flex gap-1">
             {[colors.background, colors.accent, colors.success, colors.error].map((swatch, i) => (
-              <span key={i} className="size-3.5 rounded-full border" style={{ backgroundColor: swatch, borderColor: colors.border }} />
+              <span key={i} className="size-3 rounded-full border" style={{ backgroundColor: swatch, borderColor: colors.border }} />
             ))}
           </div>
           {selected && (
@@ -51,10 +50,10 @@ export function ThemeCard({
           )}
         </div>
         <div
-          className="rounded-md px-2 py-3 text-center"
+          className="rounded-xs px-2 py-2.5 text-left"
           style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}` }}
         >
-          <p className="text-body-sm font-medium" style={{ color: colors.text }}>
+          <p className="text-body-sm" style={{ color: colors.text }}>
             {theme.name}
           </p>
           <p className="mt-0.5 text-[0.6875rem]" style={{ color: colors.textMuted }}>

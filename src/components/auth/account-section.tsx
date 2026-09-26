@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils"
  * Read through useOptionalAuth so it disappears rather than throws when
  * mounted outside an AuthProvider (the sidebar's own unit tests do exactly
  * that), and returns null entirely on a deployment with no accounts
- * configured — TabDump then looks exactly as it did before accounts
+ * configured — Hubble then looks exactly as it did before accounts
  * existed, rather than showing a control that cannot work.
  *
  * Visually it reuses the same IconButton row shape as Favorites / Recent /
@@ -45,13 +45,13 @@ export function AccountSection({ showLabels }: { showLabels: boolean }) {
     return (
       <>
         <IconButton
-          aria-label="Sign in to TabDump"
+          aria-label="Sign in to Hubble"
           tooltip="Sign in"
           onClick={() => setSignInOpen(true)}
-          className={cn("w-full", showLabels && "justify-start gap-2 px-2")}
+          className={cn("h-[30px] w-full", showLabels && "justify-start gap-2 px-2")}
         >
           <LogIn />
-          {showLabels && <span className="text-body-sm">Sign in</span>}
+          {showLabels && <span className="text-body">Sign in</span>}
         </IconButton>
         <SignInDialog open={signInOpen} onOpenChange={setSignInOpen} />
       </>
@@ -74,7 +74,7 @@ export function AccountSection({ showLabels }: { showLabels: boolean }) {
             aria-label="Account"
             title={showLabels ? undefined : user.name}
             className={cn(
-              "flex w-full items-center rounded-lg border border-transparent p-1 transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:bg-muted",
+              "flex h-[30px] w-full items-center rounded-xs px-1.5 transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover aria-expanded:bg-surface-hover",
               showLabels ? "justify-start gap-2" : "justify-center"
             )}
           >
@@ -84,7 +84,7 @@ export function AccountSection({ showLabels }: { showLabels: boolean }) {
               {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt="" referrerPolicy="no-referrer" />}
               <AvatarFallback>{initial}</AvatarFallback>
             </Avatar>
-            {showLabels && <span className="min-w-0 truncate text-body-sm text-foreground">{user.name}</span>}
+            {showLabels && <span className="min-w-0 truncate text-body text-foreground">{user.name}</span>}
           </button>
         }
       />

@@ -12,6 +12,7 @@ const T0 = 1_700_000_000_000;
 
 const ALLOWED: ExecutionGateResult = {
   allowed: true,
+  environment: "local",
   kind: "local",
   decision: { allowed: true, kind: "local-server" },
 };
@@ -20,7 +21,7 @@ const REFUSED: ExecutionGateResult = {
   allowed: false,
   kind: "hosted",
   decision: { allowed: false, kind: "hosted", reason: "hosted-platform" },
-  detail: "Agents cannot run on a hosted TabDump deployment.",
+  detail: "Agents cannot run on a hosted Hubble deployment.",
 };
 
 const ALICE: RuntimeActor = { id: "account:alice" };

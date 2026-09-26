@@ -1,10 +1,18 @@
 "use client"
 
-import { memo, useEffect, useRef } from "react"
+import { memo, useEffect, useMemo, useRef } from "react"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import { EVENT_PRESENTATION } from "@/lib/agents/command-centre/presentation"
+import {
+  CONTEXT_TOOL_STAGE_LABEL,
+  EVENT_PRESENTATION,
+  planOutcomeLabel,
+  toolDisplayName,
+  toolStage,
+} from "@/lib/agents/command-centre/presentation"
+import { buildTranscript } from "@/lib/agents/platform/chat"
 import { cn } from "@/lib/utils"
-import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { RuntimePlanOutcomeView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { AgentVisualTone } from "@/lib/agents/visual/types"
 
 /**
  * The session's normalized event stream.
@@ -28,11 +36,22 @@ import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
  *
  * It also does not fake streaming. An event appears when the runtime has
  * reported it; there is no per-character animation pretending to be a token
- * stream, which would be motion asserting a fact TabDump does not have.
+ * stream, which would be motion asserting a fact Hubble does not have.
+ *
+ * Since Phase J the messages carry their whole text, and a provider that
+ * streams sends real pieces (`message_delta`) that are shown joined as they
+ * arrive. The grouping lives in `buildTranscript`, not here.
  */
 
 /** A single-line row: activity and lifecycle both use it, at the same density. */
-const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEvent }) {
+const QuietRow = memo(function QuietRow({
+  event,
+  outcome,
+}: {
+  event: SequencedControlEvent
+  /** What became of the plan this row approved (J.5), said on the row where the user approved it. */
+  outcome?: { text: string; tone: AgentVisualTone }
+}) {
   const presentation = EVENT_PRESENTATION[event.kind]
 
   /*
@@ -48,17 +67,30 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
   const restatesLabel =
     event.summary.replace(/[.\s]+$/, "").toLowerCase() === presentation.label.toLowerCase()
 
+  /*
+    A tool event whose summary is only the tool name says it in words once.
+    The raw name of a Hubble context tool is a protocol identifier
+    ("mcp__tabdump_<id>__list_tabs"), never something to show a person, and
+    repeating any tool name as the trailing detail says the same thing twice.
+  */
+  const namesOnlyTheTool = event.tool !== undefined && event.summary.trim() === event.tool.name
+  const summary = namesOnlyTheTool && event.tool ? toolDisplayName(event.tool.name) : event.summary
+
   return (
-    <li className="flex items-baseline gap-2 py-0.5">
-      <span
-        aria-hidden
-        className={cn("select-none text-meta leading-5", AGENT_TONE_TEXT_CLASS[presentation.tone])}
-      >
-        ●
-      </span>
-      <span className="shrink-0 text-label text-muted-foreground">{presentation.label}</span>
+    <li className="flex items-baseline gap-1.5 py-1">
+      {presentation.tone === "bad" && (
+        <span aria-hidden className="select-none text-meta text-destructive">
+          ●
+        </span>
+      )}
+      <span className="shrink-0 text-body-sm text-muted-foreground">{presentation.label}</span>
       <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">
-        {restatesLabel ? "" : event.summary}
+        {restatesLabel ? "" : summary}
+        {outcome && (
+          <span className={cn("ml-1.5", AGENT_TONE_TEXT_CLASS[outcome.tone])}>
+            · {outcome.text}
+          </span>
+        )}
       </span>
       {/*
         The tool or file the event concerns, when it named one.
@@ -69,50 +101,102 @@ const QuietRow = memo(function QuietRow({ event }: { event: SequencedControlEven
       */}
       {event.file ? (
         <span
-          className="shrink-0 truncate font-mono text-meta text-tertiary"
+          className="min-w-0 max-w-[45%] shrink truncate text-body-sm text-tertiary"
           title={event.file.relativePath}
         >
           {event.file.relativePath}
         </span>
       ) : event.tool ? (
-        <span className="shrink-0 text-label text-tertiary">{event.tool.name}</span>
+        <span className="flex min-w-0 max-w-[50%] shrink items-baseline gap-1.5 max-sm:hidden">
+          <ToolStage name={event.tool.name} />
+          {!namesOnlyTheTool && (
+            <span className="truncate text-body-sm text-tertiary">{toolDisplayName(event.tool.name)}</span>
+          )}
+        </span>
       ) : null}
     </li>
   )
 })
 
+/**
+ * Where the agent is in the loop, for a Hubble context call (J.6): Reading,
+ * Analyzing, Checking a plan, or Proposing — the one stage an approval card
+ * follows. Other tools get nothing: a stage is only claimed for calls Hubble
+ * itself serves.
+ */
+function ToolStage({ name }: { name: string }) {
+  const stage = toolStage(name)
+  if (!stage) return null
+  return (
+    <span
+      data-stage={stage}
+      className={cn(
+        "rounded-xs px-1 text-meta",
+        stage === "proposing" ? "bg-link/12 text-link" : "bg-surface-hover text-muted-foreground"
+      )}
+    >
+      {CONTEXT_TOOL_STAGE_LABEL[stage]}
+    </span>
+  )
+}
+
 /** What the user said. Boxed, because it is an instruction rather than prose. */
-const UserMessage = memo(function UserMessage({ event }: { event: SequencedControlEvent }) {
+const UserMessage = memo(function UserMessage({ text }: { text: string }) {
   return (
     <li className="py-2">
-      <p className="rounded-md border border-subtle bg-surface px-3 py-2 text-body-sm whitespace-pre-wrap text-foreground">
-        {event.summary}
+      <p className="rounded-md border border-border bg-card px-2.5 py-1.5 text-body whitespace-pre-wrap text-foreground">
+        {text}
       </p>
     </li>
   )
 })
 
-/** What the agent said. Unboxed prose — the thing the user is actually reading. */
-const AgentMessage = memo(function AgentMessage({ event }: { event: SequencedControlEvent }) {
+/**
+ * What the agent said. Unboxed prose — the thing the user is actually reading.
+ *
+ * Rendered as plain text, never as HTML or markdown-to-HTML: a reply is model
+ * output, and model output can quote a page that was written to be injected.
+ * `streaming` marks a reply whose pieces are still arriving (Phase J); the
+ * cursor is a static mark, not an animation pretending to be typing.
+ */
+const AgentMessage = memo(function AgentMessage({ text, streaming }: { text: string; streaming: boolean }) {
   return (
-    <li className="py-2">
-      <p className="text-body-sm whitespace-pre-wrap text-foreground">{event.summary}</p>
+    <li className="py-2" aria-busy={streaming || undefined}>
+      <p className="text-body whitespace-pre-wrap text-foreground">
+        {text}
+        {streaming && (
+          <span aria-hidden className="ml-0.5 text-tertiary">
+            ▍
+          </span>
+        )}
+      </p>
     </li>
   )
 })
 
 export function EventStream({
   events,
+  planOutcomes,
   /** Rendered under the last event — the approval block and the live indicator live there. */
   children,
   className,
 }: {
   events: readonly SequencedControlEvent[]
+  /** How the session's approved plans ended (J.5), matched to their approvals by id. */
+  planOutcomes?: readonly RuntimePlanOutcomeView[]
   children?: React.ReactNode
   className?: string
 }) {
+  const outcomeByApproval = useMemo(() => {
+    const map = new Map<string, { text: string; tone: AgentVisualTone }>()
+    for (const outcome of planOutcomes ?? []) if (outcome.approvalId) map.set(outcome.approvalId, planOutcomeLabel(outcome))
+    return map
+  }, [planOutcomes])
   const endRef = useRef<HTMLDivElement | null>(null)
   const countRef = useRef(events.length)
+  // The conversation, derived from the window of events on every render —
+  // one model for every provider. See lib/agents/platform/chat.ts.
+  const transcript = useMemo(() => buildTranscript(events), [events])
 
   /*
     Follows the stream only when it grows.
@@ -124,7 +208,11 @@ export function EventStream({
   useEffect(() => {
     if (events.length === countRef.current) return
     countRef.current = events.length
-    endRef.current?.scrollIntoView({ block: "end" })
+    // "nearest", not "end": inside the stream's own scroller the two are the
+    // same (the end is below the fold, so it aligns to the bottom), but "end"
+    // also scrolled every ancestor — a page hosting the stream (the landing
+    // page's demo) jumped on every new event.
+    endRef.current?.scrollIntoView({ block: "nearest" })
   }, [events.length])
 
   return (
@@ -134,19 +222,21 @@ export function EventStream({
         and a screen-reader user landing on an unnamed one has to read into it
         to find out which.
       */}
-      <ol aria-label="Session events" className="mx-auto flex w-full max-w-3xl flex-col px-6 py-4">
-        {events.map((event) => {
-          const presentation = EVENT_PRESENTATION[event.kind]
-
-          if (presentation.register === "message") {
-            return presentation.speaker === "user" ? (
-              <UserMessage key={event.id} event={event} />
+      <ol aria-label="Session events" className="mx-auto flex w-full max-w-[720px] flex-col px-6 py-5">
+        {transcript.map((item) => {
+          if (item.type === "message") {
+            return item.role === "user" ? (
+              <UserMessage key={item.id} text={item.text} />
             ) : (
-              <AgentMessage key={event.id} event={event} />
+              <AgentMessage key={item.id} text={item.text} streaming={item.streaming} />
             )
           }
 
-          return <QuietRow key={event.id} event={event} />
+          const outcome =
+            item.event.kind === "approval_granted" && item.event.approvalId
+              ? outcomeByApproval.get(item.event.approvalId)
+              : undefined
+          return <QuietRow key={item.id} event={item.event} {...(outcome ? { outcome } : {})} />
         })}
         {children}
       </ol>

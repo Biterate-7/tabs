@@ -21,14 +21,14 @@ export function AttentionStrip({
           onAction: onCleanup,
         }
       : {
-          message: `${attention.count} tabs landed in "Other" — TabDump wasn't confident where they belong.`,
+          message: `${attention.count} tabs landed in "Other" — Hubble wasn't confident where they belong.`,
           actionLabel: "Review Other",
           onAction: onViewOther,
         }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-subtle bg-primary/[0.06] px-3 py-2">
-      <AlertCircle className="size-4 shrink-0 text-accent-text" aria-hidden />
+    <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2">
+      <AlertCircle className="size-4 shrink-0 text-link" aria-hidden />
       <p className="text-body-sm text-foreground">{message}</p>
       <Button
         variant="ghost"

@@ -531,7 +531,7 @@ describe("the bridge reaches nothing it should not", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps the control plane free of TabDump's domain", () => {
+  it("keeps the control plane free of Hubble's domain", () => {
     // The Phase B rule, re-asserted now that a bridge exists. An adapter
     // must never learn what a workspace *is*.
     const controlSources = walk(CONTROL_DIR).map((file) => ({
@@ -588,7 +588,7 @@ describe("cross-account isolation", () => {
 
   it("an id alone is never enough — the same ids fail under the wrong owner", () => {
     // Both accounts hold a workspace called ws-a. Only the matching owner
-    // resolves, which is the whole point: TabDump's partition is applied at
+    // resolves, which is the whole point: Hubble's partition is applied at
     // load, so the resolver has to re-check it rather than trust the id.
     const mine = resolveOrThrow(
       { scope: scopeA("user-1"), sources: ["tab"], workspaceIds: ["ws-a"] },

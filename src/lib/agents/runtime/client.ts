@@ -51,6 +51,16 @@ export type RuntimeClientOptions = {
   endpoint?: string;
   /** Injected so tests need no network and no global. */
   fetch?: typeof fetch;
+  /**
+   * Delivers a request by some other means than HTTP, and returns the parsed
+   * reply (Phase J.1).
+   *
+   * The desktop app has no HTTP route: its runtime is a sidecar the Tauri
+   * shell relays to. Everything above the transport — the handshake, the
+   * runtime-id generation check, the reply validation — is unchanged, so the
+   * UI cannot tell which shell it is in.
+   */
+  post?: (request: RuntimeRequest) => Promise<unknown>;
 };
 
 export type RuntimeClient = {
@@ -83,6 +93,7 @@ export function createRuntimeClient(options: RuntimeClientOptions = {}): Runtime
   let runtimeId: string | undefined;
 
   async function post(request: RuntimeRequest): Promise<unknown> {
+    if (options.post) return options.post(request);
     const response = await transport(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },

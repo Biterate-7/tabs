@@ -198,7 +198,7 @@ evidence does not distinguish them. Fail closed.
 A **maximum over timestamps that already exist**: the run's `updatedAt`, its
 newest event, its work items' `updatedAt`, its artifact links' `createdAt`.
 
-It is never `Date.now()`. Reading the wall clock would answer "when did TabDump
+It is never `Date.now()`. Reading the wall clock would answer "when did Hubble
 last look?" while appearing to answer "when did this last happen?" — and the two
 diverge exactly when it matters, on a run that has gone quiet.
 

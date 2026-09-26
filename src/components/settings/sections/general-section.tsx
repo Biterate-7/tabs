@@ -1,26 +1,37 @@
 "use client"
 
-import Link from "next/link"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useAppearanceContext } from "@/components/appearance-provider"
-import { FieldRow, SectionHeading, SliderRow } from "./section-ui"
-
-const LEGAL_LINKS = [
-  { href: "/privacy", label: "Privacy Policy" },
-  { href: "/terms", label: "Terms & Conditions" },
-  { href: "/cookies", label: "Cookie Policy" },
-] as const
+import { FieldRow, SectionHeading, SliderRow, SectionStack } from "./section-ui"
 
 export function GeneralSection() {
-  const { settings, setPlayIntro, setSound } = useAppearanceContext()
+  const { settings, setPlayIntro, setSound, setThemeId } = useAppearanceContext()
   if (!settings) return null
 
   return (
     <div>
       <SectionHeading title="General" />
-      <div className="flex flex-col gap-2.5">
-        <FieldRow label="Play intro animation" description="Show the TabDump cinematic intro when opening the app.">
+      <SectionStack>
+        <FieldRow
+          label="Theme"
+          description={
+            settings.themeId === "midnight" || settings.themeId === "hubble-light"
+              ? "The Hubble palette, in ink or paper."
+              : "A library theme is active. Pick one here to return to the Hubble palette."
+          }
+        >
+          <SegmentedControl
+            value={settings.customTheme ? "" : settings.themeId === "hubble-light" ? "light" : settings.themeId === "midnight" ? "dark" : ""}
+            onValueChange={(v) => setThemeId(v === "light" ? "hubble-light" : "midnight")}
+            options={[
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+            ]}
+          />
+        </FieldRow>
+        <FieldRow label="Play intro animation" description="Show the Hubble cinematic intro when opening the app.">
           <Switch checked={settings.playIntro} onCheckedChange={setPlayIntro} aria-label="Play intro animation" />
         </FieldRow>
         <FieldRow label="Interface sounds" description="Short, subtle sound effects for interactions like opening a folder.">
@@ -41,22 +52,8 @@ export function GeneralSection() {
             />
           </SliderRow>
         )}
-      </div>
+      </SectionStack>
 
-      <div className="mt-8">
-        <SectionHeading title="Legal" description="How TabDump handles your data, and the terms that apply to using it." />
-        <nav aria-label="Legal pages" className="flex flex-col gap-1 rounded-lg border border-subtle p-1">
-          {LEGAL_LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="rounded-md px-2.5 py-2 text-body-sm text-foreground transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {link.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { BrandMark } from "@/components/brand-mark"
 import { EXIT_DURATION_MS, type IntroPhase } from "./phase"
 
 const LABEL_BY_PHASE: Partial<Record<IntroPhase, string>> = {
@@ -34,11 +35,13 @@ export function IntroTitle({ phase }: { phase: IntroPhase }) {
           transition: exiting ? `transform ${EXIT_DURATION_MS}ms var(--ease-standard)` : undefined,
         }}
       >
-        <p className="text-display font-semibold tracking-tight text-foreground">TABDUMP</p>
-        <div className="mx-auto mt-3 h-px w-24 bg-border" />
+        <p className="flex items-center justify-center gap-3 text-display text-foreground">
+          <BrandMark className="size-8" />
+          Hubble
+        </p>
         <p
           key={label}
-          className="mt-3 h-4 text-eyebrow text-tertiary transition-opacity duration-300 ease-(--ease-standard)"
+          className="mt-3 h-4 text-body text-muted-foreground transition-opacity duration-300 ease-(--ease-standard)"
           style={{ opacity: label ? 1 : 0 }}
         >
           {label}

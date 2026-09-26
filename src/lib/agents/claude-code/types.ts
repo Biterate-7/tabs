@@ -110,7 +110,7 @@ export function isClaudeTaskStatus(value: unknown): value is ClaudeTaskStatus {
 }
 
 /**
- * Raw task status -> TabDump work item status.
+ * Raw task status -> Hubble work item status.
  *
  * `in_progress` maps to `active` and `completed` to `completed`. There is no
  * mapping onto `blocked` or `cancelled`, because Claude Code writes neither —
@@ -258,7 +258,7 @@ export type ClaudeDiscoveredSession = {
    * browser is already running on. See the security note in the docs.
    */
   projectPath: string;
-  /** Mapped TabDump status, or absent when the provider status was unrecognised. */
+  /** Mapped Hubble status, or absent when the provider status was unrecognised. */
   status?: "working" | "waiting";
   title?: string;
   gitBranch?: string;
@@ -286,7 +286,7 @@ export type ClaudeDiscoveredSession = {
  */
 export type ClaudeTerminalReason = "deleted";
 
-/** Raw provider status -> TabDump status. Anything else means "no status change". */
+/** Raw provider status -> Hubble status. Anything else means "no status change". */
 export function mapClaudeStatus(raw: unknown): "working" | "waiting" | undefined {
   if (raw === "busy") return "working";
   if (raw === "idle") return "waiting";

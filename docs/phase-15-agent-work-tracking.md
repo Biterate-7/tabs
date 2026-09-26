@@ -112,7 +112,7 @@ a stale observation, not a resurrection.
 
 An item discovered *already finished* gets no `startedAt`. It plainly started
 at some point, but nothing observed when, and stamping `now` would assert a
-beginning that is merely the moment TabDump happened to look. This is the same
+beginning that is merely the moment Hubble happened to look. This is the same
 under-claiming principle that makes Claude Code's `Write` map to `edited`
 rather than `created` (Phase 13).
 
@@ -137,7 +137,7 @@ total, negatives, non-integers, `completed > total`) rather than clamping it. A
 provider that sent `12/10` has a bug; silently rendering `10/10` would turn its
 bug into a false claim that the work is finished.
 
-**Derived run progress** (`getRunWorkProgress`) is the only progress TabDump
+**Derived run progress** (`getRunWorkProgress`) is the only progress Hubble
 computes, and it is evidence-based by construction: `total` is how many work
 items actually exist, `completed` is how many actually reached `completed`.
 Cancelled items count toward neither side, so a plan whose last two items were
@@ -270,7 +270,7 @@ mis-attach one: matching is always scoped within a single run.
 
 ### Status mapping
 
-| Claude Code | TabDump |
+| Claude Code | Hubble |
 |---|---|
 | `in_progress` | `active` |
 | `completed` | `completed` |

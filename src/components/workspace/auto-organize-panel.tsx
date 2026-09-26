@@ -21,7 +21,7 @@ function tabLabel(tab: Tab | undefined, tabId: string): string {
  * Standalone card offering a just-analyzed Auto-Organize plan for review —
  * shown automatically after an import, or on demand via the "Organize"
  * button (see workspace-header.tsx). This is the only AI-facing surface
- * left in TabDump: no chat, nothing to type — the user only ever approves,
+ * left in Hubble: no chat, nothing to type — the user only ever approves,
  * edits (via the uncertain-tab quick-decision buttons), or dismisses a plan
  * that was already computed for them.
  */
@@ -46,7 +46,7 @@ export function AutoOrganizePanel({
   }
 
   return (
-    <div className="mb-6 space-y-3 rounded-lg border border-subtle bg-card p-4">
+    <div className="mb-6 space-y-3 rounded-md border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5 text-label text-tertiary">
           <FolderTree className="size-3.5" aria-hidden />

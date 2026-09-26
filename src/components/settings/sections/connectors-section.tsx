@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
+import { useProviderConnections } from "@/hooks/use-provider-connections"
+import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { loadAgentState } from "@/lib/agents/persistence"
 import {
   CAPABILITY_KEYS,
@@ -17,21 +19,28 @@ import {
   visualStateForConnector,
 } from "@/lib/agents/visual/states"
 import { EMPTY_PROVIDER_USAGE, summarizeProviderUsage } from "@/lib/agents/connectors/usage"
+import {
+  CONTROL_CAPABILITY_LABEL,
+  controlAvailability,
+} from "@/lib/agents/command-centre/remote"
 import { cn } from "@/lib/utils"
 import { SectionHeading, SectionStack } from "./section-ui"
+import { ProviderConnectionCard } from "./provider-connection-card"
+import type { UseProviderConnections } from "@/hooks/use-provider-connections"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import type { ProviderUsage } from "@/lib/agents/connectors/usage"
 import type { AgentState } from "@/lib/agents/types"
+import type { RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
 /**
  * Settings → AI Connectors.
  *
- * The command centre's front door: every provider TabDump can talk about,
+ * The command centre's front door: every provider Hubble can talk about,
  * what state each is in, what it is able to observe, and what it has actually
  * seen. Built from the settings surface's own primitives (SectionHeading,
  * SectionStack, Button) rather than a new design system, so it reads as part
- * of TabDump rather than as a developer console.
+ * of Hubble rather than as a developer console.
  *
  * Two rules shape everything below:
  *
@@ -145,7 +154,7 @@ function ConnectorRow({
       // The accessible name carries the state in words, so the row never
       // depends on the glyph or its colour being perceived.
       aria-label={`${view.descriptor.displayName} — ${statusLabel(view.status.kind)}`}
-      className="flex w-full items-start gap-3 rounded-lg border border-subtle p-3 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-border hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
     >
       {/* The provider's own mark, in the state its connector is actually in.
           It identifies who this row is about; the glyph beside the status word
@@ -161,7 +170,7 @@ function ConnectorRow({
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block text-body-sm font-medium text-foreground">
+        <span className="block text-body text-foreground">
           {view.descriptor.displayName}
         </span>
         <span className={cn("mt-0.5 block text-meta", visual.tone)}>
@@ -170,8 +179,8 @@ function ConnectorRow({
         {line && <span className="mt-0.5 block text-meta text-tertiary">{line}</span>}
       </span>
 
-      <span className="shrink-0 self-center text-meta text-tertiary">
-        {view.status.kind === "connected" ? "Manage" : "Connect"}
+      <span className="shrink-0 self-center text-body-sm text-muted-foreground">
+        {view.status.kind === "connected" ? "Manage" : "Connect"} ›
       </span>
     </button>
   )
@@ -187,6 +196,75 @@ function ConnectorRow({
  * the connector contract has no member that could execute, prompt or control
  * anything.
  */
+/**
+ * What Hubble can do *with* this agent, as two separate capabilities.
+ *
+ * ## Why these are two blocks and not one status
+ *
+ * Observation and control are different planes with different permissions,
+ * different failure modes and different answers. Collapsing them was what made
+ * the old page misleading: "Observes Claude Code sessions running on this
+ * machine" was true, and was the only thing said, so a reader concluded that
+ * observation was all Hubble could do.
+ *
+ * ## Where "available" comes from
+ *
+ * The runtime's own `get_status` reply — never from the fact that this UI has
+ * a label for the provider. A deployment with no remote plane, an agent with
+ * no adapter, and an agent that needs credentials each read differently,
+ * because each has a different next step.
+ */
+function ControlSummary({ view, status }: { view: ConnectorView; status: RuntimeStatus | null }) {
+  const control = controlAvailability(status, view.descriptor.provider)
+
+  return (
+    <div className="rounded-md border border-border bg-card px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-body text-foreground">Control</p>
+        <span
+          className={cn(
+            "text-meta",
+            control.kind === "available" ? "text-success" : "text-tertiary"
+          )}
+        >
+          {control.kind === "available"
+            ? control.environment === "remote"
+              ? "Remote"
+              : "Local"
+            : control.kind === "authentication-required"
+              ? "Authentication required"
+              : "Unavailable"}
+        </span>
+      </div>
+
+      <p className="mt-0.5 text-body-sm text-muted-foreground">
+        {control.kind === "available"
+          ? control.environment === "remote"
+            ? `Run ${view.descriptor.displayName} in a scoped Hubble project environment. Nothing is installed on your machine.`
+            : `Run ${view.descriptor.displayName} on this machine, in projects you authorize.`
+          : control.reason}
+      </p>
+
+      {control.kind === "available" && (
+        <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
+          {/* Exactly what the adapter declared. The capability model already
+              forbids claiming one that is not implemented, so the honest list
+              is the one it returned. */}
+          {control.capabilities.map((capability) => (
+            <li
+              key={capability}
+              className="flex items-center gap-1.5 text-meta text-muted-foreground"
+            >
+              <Check className="size-3 shrink-0" aria-hidden />
+              <span>{CONTROL_CAPABILITY_LABEL[capability] ?? capability}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function ConnectPrompt({
   view,
   busy,
@@ -197,14 +275,16 @@ function ConnectPrompt({
   onConnect: () => void
 }) {
   return (
-    <div className="rounded-lg border border-subtle p-4">
-      <p className="text-body-sm text-foreground">
-        TabDump can observe {view.descriptor.displayName} activity and show it in your workspace.
+    <div className="rounded-md border border-border bg-card px-4 py-3">
+      <p className="text-body text-foreground">Observe</p>
+      <p className="mt-0.5 text-body-sm text-muted-foreground">
+        Hubble can observe {view.descriptor.displayName} sessions running on this machine and show
+        them in your workspace.
       </p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div>
-          <p className="text-meta font-medium text-foreground">TabDump will not</p>
+          <p className="text-body-sm text-foreground">Hubble will not</p>
           <ul className="mt-1 space-y-0.5">
             {["Run commands", "Send prompts", "Modify your files", "Control the agent"].map((item) => (
               <li key={item} className="flex items-center gap-1.5 text-meta text-tertiary">
@@ -216,7 +296,7 @@ function ConnectPrompt({
         </div>
 
         <div>
-          <p className="text-meta font-medium text-foreground">TabDump can</p>
+          <p className="text-body-sm text-foreground">Hubble can</p>
           <ul className="mt-1 space-y-0.5">
             {["Observe runs", "Observe activity", "Show files worked on", "Link work to workspaces"].map(
               (item) => (
@@ -235,6 +315,7 @@ function ConnectPrompt({
           {busy ? "Connecting…" : "Connect"}
         </Button>
       </div>
+
     </div>
   )
 }
@@ -245,7 +326,7 @@ function CapabilityList({ view }: { view: ConnectorView }) {
   if (supported.length === 0) {
     return (
       <p className="text-meta text-tertiary">
-        Nothing yet. TabDump lists a capability only once it can actually observe it.
+        Nothing yet. Hubble lists a capability only once it can actually observe it.
       </p>
     )
   }
@@ -284,6 +365,8 @@ function ConnectorDetail({
   onBack,
   onConnect,
   onDisconnect,
+  status,
+  connections,
 }: {
   view: ConnectorView
   usage: ProviderUsage
@@ -292,6 +375,10 @@ function ConnectorDetail({
   onBack: () => void
   onConnect: () => void
   onDisconnect: () => void
+  /** The runtime's own report. What decides whether control is available, and where. */
+  status: RuntimeStatus | null
+  /** This user's own provider credentials. The third plane, beside observation and control. */
+  connections: UseProviderConnections
 }) {
   const visual = statusVisual(view.status.kind)
   const lastObservation = relativeTime(view.status.lastObservationAt, now)
@@ -321,11 +408,12 @@ function ConnectorDetail({
         />
       </div>
 
-      <SectionStack>
-        <div className="rounded-lg border border-subtle p-3">
+      <div className="flex flex-col gap-3">
+        <SectionStack>
+        <div className="px-4 py-3">
           <div className="flex items-center gap-2">
             <StatusDot kind={view.status.kind} />
-            <p className={cn("text-body-sm font-medium", visual.tone)}>{statusLabel(view.status.kind)}</p>
+            <p className={cn("text-body", visual.tone)}>{statusLabel(view.status.kind)}</p>
           </div>
 
           {view.status.detail && (
@@ -346,14 +434,14 @@ function ConnectorDetail({
           )}
         </div>
 
-        <div className="rounded-lg border border-subtle p-3">
-          <p className="mb-2 text-body-sm font-medium text-foreground">Capabilities</p>
+        <div className="px-4 py-3">
+          <p className="mb-1.5 text-body text-foreground">Capabilities</p>
           <CapabilityList view={view} />
         </div>
 
         {connected && (
-          <div className="rounded-lg border border-subtle p-3">
-            <p className="mb-2 text-body-sm font-medium text-foreground">Activity</p>
+          <div className="px-4 py-3">
+            <p className="mb-1.5 text-body text-foreground">Activity</p>
             <p className="text-meta text-tertiary">
               {lastObservation
                 ? `Last observation: ${lastObservation}`
@@ -363,8 +451,8 @@ function ConnectorDetail({
         )}
 
         {usage.totalRuns > 0 && (
-          <div className="rounded-lg border border-subtle p-3">
-            <p className="mb-2 text-body-sm font-medium text-foreground">Usage</p>
+          <div className="px-4 py-3">
+            <p className="mb-1.5 text-body text-foreground">Usage</p>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-meta">
               <div className="flex justify-between gap-2">
                 <dt className="text-tertiary">Active runs</dt>
@@ -385,13 +473,35 @@ function ConnectorDetail({
             </dl>
           </div>
         )}
+        </SectionStack>
 
         {!live && view.status.kind !== "unavailable" && view.status.kind !== "configuration_required" && (
           <ConnectPrompt view={view} busy={busy} onConnect={onConnect} />
         )}
 
+        {/* Always rendered, whether or not observation is connected: the two
+            planes are independent, and a machine with no local installation
+            can still run this agent remotely. */}
+        <ControlSummary view={view} status={status} />
+
+        {/* The third plane. Independent of both above: a provider can be
+            observable and drivable here and still have no credential from
+            this user, which is exactly the state that stops a session. */}
+        <ProviderConnectionCard
+          provider={view.descriptor.provider}
+          providerName={view.descriptor.displayName}
+          connection={connections.forProvider(view.descriptor.provider)}
+          input={connections.connectableFor(view.descriptor.provider)?.input}
+          unavailable={connections.unavailable}
+          durable={connections.durable}
+          busy={connections.busy}
+          onConnect={connections.connect}
+          onRotate={connections.rotate}
+          onDisconnect={connections.disconnect}
+        />
+
         {(view.status.kind === "unavailable" || view.status.kind === "configuration_required") && (
-          <div className="rounded-lg border border-subtle p-3">
+          <div className="rounded-md border border-border bg-card px-4 py-3">
             <p className="text-meta text-tertiary">
               {view.descriptor.requirement ??
                 "This connector cannot observe anything in this environment."}
@@ -411,7 +521,7 @@ function ConnectorDetail({
             </Button>
           </div>
         )}
-      </SectionStack>
+      </div>
     </div>
   )
 }
@@ -423,6 +533,21 @@ export function ConnectorsSection() {
    * user's machine.
    */
   const connectors = useAgentConnectors()
+  /*
+    The runtime's own report, for the control half of a connector's page.
+
+    Polling is off: whether this deployment can drive an agent changes on a
+    restart, not on a keystroke, and settings is not a surface that should be
+    making a request every few seconds. It refreshes on mount, which is when
+    somebody opened the page.
+  */
+  const runtime = useAgentRuntime({ poll: false })
+  /*
+    The user's own provider credentials. Read once on mount, like the runtime
+    status beside it: whether somebody has connected a key changes when they
+    press a button on this page, not on a timer.
+  */
+  const connections = useProviderConnections()
   const [openProvider, setOpenProvider] = useState<AgentProviderId | null>(null)
   const [busy, setBusy] = useState<AgentProviderId | null>(null)
 
@@ -460,6 +585,8 @@ export function ConnectorsSection() {
         onBack={() => setOpenProvider(null)}
         onConnect={() => void handleConnect(open.descriptor.provider)}
         onDisconnect={() => connectors.disconnect(open.descriptor.provider)}
+        status={runtime.status}
+        connections={connections}
       />
     )
   }
@@ -470,26 +597,26 @@ export function ConnectorsSection() {
   return (
     <div>
       <SectionHeading
-        title="AI connectors"
-        description="Connect the AI agents you use and watch them work inside TabDump."
+        title="Agents"
+        description="Connect the agents you use — Claude Code, Codex, Gemini CLI, Grok Build — and see what each one can do here."
       />
 
       {connected.length === 0 && (
-        <div className="mb-4 rounded-lg border border-subtle p-4">
+        <div className="mb-6 rounded-md border border-border bg-card p-4">
           <div className="flex items-center gap-2">
             <Bot className="size-4 text-tertiary" aria-hidden />
             <p className="text-body-sm font-medium text-foreground">No agents connected yet</p>
           </div>
           <p className="mt-1 text-meta text-tertiary">
-            Connect an agent below and its runs, activity and files appear in your workspace —
-            observed only, never controlled.
+            Connect an agent below and its runs, activity and files appear in your workspace.
+            Observing is read-only.
           </p>
         </div>
       )}
 
       {connected.length > 0 && (
-        <div className="mb-5">
-          <p className="mb-2 text-eyebrow text-tertiary">Connected</p>
+        <div className="mb-6">
+          <p className="mb-2 text-label text-muted-foreground">Connected</p>
           <SectionStack>
             {connected.map((view) => (
               <ConnectorRow
@@ -505,7 +632,7 @@ export function ConnectorsSection() {
 
       {others.length > 0 && (
         <div>
-          <p className="mb-2 text-eyebrow text-tertiary">
+          <p className="mb-2 text-label text-muted-foreground">
             {connected.length > 0 ? "Other" : "Available"}
           </p>
           <SectionStack>
@@ -523,7 +650,8 @@ export function ConnectorsSection() {
 
       <p className="mt-5 flex items-start gap-1.5 text-meta text-tertiary">
         <Plug className="mt-0.5 size-3 shrink-0" aria-hidden />
-        TabDump observes agents. It never runs commands, sends prompts, or changes your files.
+        Observing is read-only: through these connections Hubble never runs commands, sends prompts, or changes your
+        files. Sessions you start in the Command Centre ask before every change.
       </p>
     </div>
   )

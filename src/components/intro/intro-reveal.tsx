@@ -4,9 +4,9 @@ const IntroRevealContext = createContext(false)
 
 /**
  * Marks whether LandingView's hero should play its staggered reveal right
- * now. Only ever true for the moment TabDumpIntro's cinematic intro hands
+ * now. Only ever true for the moment HubbleIntro's cinematic intro hands
  * off into the landing page — with the "Play intro animation" setting off
- * (`shouldPlayIntro()` false), LandingView never mounts TabDumpIntro at all,
+ * (`shouldPlayIntro()` false), LandingView never mounts HubbleIntro at all,
  * so this context's default (`false`) applies and the hero just renders
  * normally with no animation.
  */

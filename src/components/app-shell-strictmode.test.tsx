@@ -104,7 +104,7 @@ async function recategorizeOneTab(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(() => {
   window.localStorage.clear();
   // Every test in this file is about the app, not about how a first-time
-  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // visitor is greeted. A cleared localStorage now means "never used Hubble",
   // which AppShell answers with the public landing page rather than the app
   // shell (see the FirstRunLanding branch) — so mark onboarding as already
   // handled here, and let the tests that care about the landing page opt back

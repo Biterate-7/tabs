@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { seedConnectedAgent } from "@/lib/agents/platform/__fixtures__/roster"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { CommandCentreView } from "./command-centre-view"
@@ -13,6 +14,8 @@ import {
 import type { ScriptedRuntime } from "@/lib/agents/command-centre/__fixtures__/runtime-client"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
 import type { Workspace } from "@/lib/workspace/types"
+import type { RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
+import { loadCollectionState, saveCollectionState } from "@/lib/collections/persistence"
 
 /**
  * The command centre's behaviour, driven through the real component against a
@@ -64,15 +67,31 @@ function world(): AgentContextWorld {
   })
 }
 
-function renderCentre(runtime: ScriptedRuntime, onClose = vi.fn()) {
+function renderCentre(
+  runtime: ScriptedRuntime,
+  onClose = vi.fn(),
+  onOpenConnectors?: () => void,
+  activeWorkspaceId?: string
+) {
   return {
     onClose,
-    ...render(<CommandCentreView world={world()} onClose={onClose} client={runtime.client} poll={false} />),
+    ...render(
+      <CommandCentreView
+        world={world()}
+        onClose={onClose}
+        client={runtime.client}
+        poll={false}
+        {...(onOpenConnectors ? { onOpenConnectors } : {})}
+        {...(activeWorkspaceId ? { activeWorkspaceId } : {})}
+      />
+    ),
   }
 }
 
 beforeEach(() => {
   window.localStorage.clear()
+  // Phase J: sessions start only for a connected agent. See the fixture.
+  seedConnectedAgent()
 })
 
 /* ------------------------------------------------------------------ *
@@ -99,12 +118,12 @@ describe("runtime status is reported truthfully", () => {
       status: scriptedStatus({
         executable: false,
         environment: "hosted",
-        detail: "Agents cannot run on a hosted TabDump deployment.",
+        detail: "Agents cannot run on a hosted Hubble deployment.",
       }),
     })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/Agents cannot run on a hosted TabDump deployment/i)).toBeTruthy()
+    expect(await screen.findByText(/Agents cannot run on a hosted Hubble deployment/i)).toBeTruthy()
     // The rail's row stays visible and inert rather than vanishing: a
     // disappearing feature reads as a bug, while a disabled one beside the
     // banner reads as the explanation it is.
@@ -112,7 +131,7 @@ describe("runtime status is reported truthfully", () => {
     expect((create as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("keeps the rest of TabDump reachable when the runtime cannot execute", async () => {
+  it("keeps the rest of Hubble reachable when the runtime cannot execute", async () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
@@ -126,7 +145,7 @@ describe("runtime status is reported truthfully", () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
-    await screen.findByText(/Agent runtime unavailable/i)
+    await screen.findByText(/Unavailable/i)
     expect(runtime.commands.some((command) => command.name === "list_sessions")).toBe(false)
   })
 
@@ -135,7 +154,7 @@ describe("runtime status is reported truthfully", () => {
     runtime.failCommand("get_status", "runtime_disconnected")
     renderCentre(runtime)
 
-    expect(await screen.findByText(/Runtime disconnected/i)).toBeTruthy()
+    expect(await screen.findByText(/Disconnected/i)).toBeTruthy()
     expect(screen.getByRole("button", { name: /reconnect/i })).toBeTruthy()
   })
 
@@ -145,12 +164,12 @@ describe("runtime status is reported truthfully", () => {
     runtime.failCommand("get_status", "runtime_disconnected")
     renderCentre(runtime)
 
-    await screen.findByText(/Runtime disconnected/i)
+    await screen.findByText(/Disconnected/i)
     runtime.clearFailure("get_status")
     await user.click(screen.getByRole("button", { name: /reconnect/i }))
 
     await waitFor(() =>
-      expect(screen.queryByText(/Runtime disconnected/i)).toBeNull()
+      expect(screen.queryByText(/Disconnected/i)).toBeNull()
     )
   })
 })
@@ -258,6 +277,68 @@ describe("creating a session", () => {
     expect(await screen.findByText(/Agent not signed in/i)).toBeTruthy()
   })
 
+  it("says the agent is not connected, and offers the way to connect it", async () => {
+    // The state a user is in before they have supplied their own provider
+    // credentials: the runtime is fine, the adapter is registered, and the
+    // *user* has authorized nothing. That is what the host reports as
+    // `authentication: "required"` once an actor's adapter cannot resolve a
+    // credential.
+    const user = userEvent.setup()
+    const onOpenConnectors = vi.fn()
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session", "message"],
+          },
+        ],
+      }),
+    })
+    renderCentre(runtime, vi.fn(), onOpenConnectors)
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+
+    // Accurate about what is missing. Not "signed in": Hubble never asks for
+    // an account, it asks for the user's own credentials.
+    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
+
+    // Start is unavailable, and there is somewhere to go instead.
+    const start = await screen.findByRole("button", { name: /start session/i })
+    expect(start.hasAttribute("disabled")).toBe(true)
+
+    await user.click(await screen.findByRole("button", { name: /^connect$/i }))
+    expect(onOpenConnectors).toHaveBeenCalled()
+  })
+
+  it("does not offer a connect button on a surface with nowhere to send the user", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session"],
+          },
+        ],
+      }),
+    })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+
+    // The sentence still appears — the user must know why Start is disabled —
+    // but an action that goes nowhere does not.
+    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^connect$/i })).toBeNull()
+  })
+
   it("ends a session through the runtime", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
@@ -285,8 +366,8 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
 
-    await user.type(screen.getByLabelText(/^name$/i), "TabDump")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/tabdump")
+    await user.type(screen.getByLabelText(/^name$/i), "Hubble")
+    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {
@@ -318,8 +399,8 @@ describe("projects", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
-    await user.type(screen.getByLabelText(/^name$/i), "TabDump")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/tabdump")
+    await user.type(screen.getByLabelText(/^name$/i), "Hubble")
+    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {
@@ -616,7 +697,7 @@ describe("context", () => {
     // Two controls open the picker — the composer's paperclip and the
     // inspector's button. Scoped to the composer so the query is unambiguous.
     const main = screen.getByRole("main")
-    await user.click(within(main).getByRole("button", { name: /attach tabdump context/i }))
+    await user.click(within(main).getByRole("button", { name: /attach hubble context/i }))
     return user
   }
 
@@ -820,14 +901,45 @@ describe("the location and runtime bar", () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: true }) })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/local runtime ready/i)).toBeTruthy()
+    expect(await screen.findByText(/LOCAL · Ready/i)).toBeTruthy()
   })
 
   it("still explains an unavailable runtime", async () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/agent runtime unavailable/i)).toBeTruthy()
+    expect(await screen.findByText(/Unavailable/i)).toBeTruthy()
+  })
+
+  it("says REMOTE · Ready rather than unavailable when agents genuinely run remotely", async () => {
+    // The specific thing Phase I changed, and the specific thing it must not
+    // have faked. The old sentence was true for a hosted deployment when it
+    // was written; it is false once a remote runtime exists, and a user whose
+    // agent is running in a sandbox must not be told agents cannot run.
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({ environment: "remote", executable: true }),
+    })
+    renderCentre(runtime)
+
+    expect(await screen.findByText(/REMOTE · Ready/i)).toBeTruthy()
+    expect(screen.queryByText(/unavailable/i)).toBeNull()
+  })
+
+  it("distinguishes the two executing planes, because the blast radius differs", async () => {
+    // "Agents run on this machine" and "agents run in a container we made" are
+    // different promises about where the user's files are.
+    const remote = createScriptedRuntime({
+      status: scriptedStatus({ environment: "remote", executable: true }),
+    })
+    const { unmount } = renderCentre(remote)
+    expect(await screen.findByText(/REMOTE · Ready/i)).toBeTruthy()
+    unmount()
+
+    const local = createScriptedRuntime({
+      status: scriptedStatus({ environment: "local", executable: true }),
+    })
+    renderCentre(local)
+    expect(await screen.findByText(/LOCAL · Ready/i)).toBeTruthy()
   })
 
   it("names where you are", async () => {
@@ -890,5 +1002,534 @@ describe("the event stream", () => {
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
     expect(await screen.findByText(/reviewing 12 attached tabs/i)).toBeTruthy()
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Session workspace context (Phase J.3)
+ * ------------------------------------------------------------------ */
+
+describe("session workspace context", () => {
+  const FULL = ["workspace.read", "tabs.read", "collections.read", "relationships.read", "collections.write"] as const
+
+  function contextView(over: Partial<RuntimeSessionContextView> = {}): RuntimeSessionContextView {
+    return {
+      workspaceId: "w1",
+      workspaceName: "Research",
+      capabilities: FULL,
+      version: 3,
+      syncedAt: 1_700_000_000_000,
+      fingerprint: "stale-fingerprint",
+      pendingActions: [],
+      ...over,
+    }
+  }
+
+  function contextSession(over: Parameters<typeof scriptedSession>[0] = {}) {
+    return scriptedSession({ workspaceId: "w1", context: contextView(), ...over })
+  }
+
+  it("sends the session's own workspace with it — its tabs and collections, and nothing like a credential", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, vi.fn(), undefined, "w1")
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+    await user.click(await screen.findByRole("button", { name: /start session/i }))
+
+    await waitFor(() => expect(runtime.commands.some((command) => command.name === "create_session")).toBe(true))
+    const created = runtime.commands.find((command) => command.name === "create_session")
+    if (created?.name !== "create_session") throw new Error("no create_session")
+    expect(created.workspaceId).toBe("w1")
+    expect(created.contextSnapshot?.workspace).toMatchObject({ id: "w1", name: "Research" })
+    expect(created.contextSnapshot?.workspace.tabs.map((tab) => tab.id)).toEqual(["w1-tab-0", "w1-tab-1", "w1-tab-2"])
+    expect(JSON.stringify(created)).not.toMatch(/token|bearer|authorization|tdctx_|capabilit/i)
+  })
+
+  it("shows which workspace the agent can see, what it reads, and that writes ask", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession()] })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
+    await user.click(indicator)
+    expect((await screen.findByLabelText("What the agent can read")).textContent).toBe(
+      "Workspace · Tabs and search · Collections · Relationships"
+    )
+    expect(screen.getByText("Collections — approval required")).toBeTruthy()
+    // Nothing about the machinery.
+    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port|tabdump_[a-z2-7]{16}/i)
+  })
+
+  it("says a read-only session cannot change anything", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ context: contextView({ capabilities: FULL.slice(0, 4) }) })],
+    })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+    await user.click(await screen.findByRole("button", { name: /^Workspace context: Research/ }))
+    expect(await screen.findByText("Not allowed in this session")).toBeTruthy()
+  })
+
+  it("is current right after the session starts from this window's workspace", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, vi.fn(), undefined, "w1")
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+    await user.click(await screen.findByRole("button", { name: /start session/i }))
+
+    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
+    expect(indicator.getAttribute("aria-label")).toBe("Workspace context: Research")
+    await user.click(indicator)
+    expect(await screen.findByText("Version 1 · Current")).toBeTruthy()
+  })
+
+  it("says an update is available when the runtime holds an older copy, then syncs the same workspace", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession()] })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByRole("button", { name: "Workspace context: Research, update available" })).toBeTruthy()
+    await waitFor(() => expect(runtime.commands.some((command) => command.name === "sync_session_context")).toBe(true))
+    const sync = runtime.commands.find((command) => command.name === "sync_session_context")
+    if (sync?.name !== "sync_session_context") throw new Error("no sync")
+    // Its own workspace, bounded, never a switch to another.
+    expect(sync.sessionId).toBe("session-1")
+    expect(sync.snapshot.workspace.id).toBe("w1")
+  })
+
+  it("says so when the agent cannot be given workspace context", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [scriptedSession({ provider: "grok", workspaceId: "w1", contextUnavailable: "provider" })],
+    })
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+    await user.click(await screen.findByRole("button", { name: "Workspace context unavailable for this agent" }))
+    expect(await screen.findByText("No workspace context")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^Workspace context: / })).toBeNull()
+  })
+
+  it("keeps the workspace across a reload — it is the runtime's, not the page's", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession()] })
+    const first = renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
+    first.unmount()
+
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
+  })
+
+  it("names the agent, the change and the workspace on the approval card — never an id", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ provider: "gemini", status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([
+      scriptedApproval({
+        provider: "gemini",
+        action: "change_workspace",
+        scope: "write_workspace",
+        projectId: undefined,
+        workspaceId: "w1",
+        targets: ['New collection "Launch reading"', "2 tabs"],
+        change: { kind: "create_collection", subject: "Launch reading", tabCount: 2, details: ["2 tabs", "Tab: Tab 1"] },
+      }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    const prompt = await screen.findByRole("group", { name: /approval required/i })
+    expect(within(prompt).getByText("Change your Hubble workspace")).toBeTruthy()
+    expect(within(prompt).getByText("Gemini CLI wants to create a collection:")).toBeTruthy()
+    expect(within(prompt).getByText("Launch reading")).toBeTruthy()
+    expect(within(prompt).getByText("Research")).toBeTruthy()
+    expect(within(prompt).getByRole("button", { name: "Allow" })).toBeTruthy()
+    expect(within(prompt).getByRole("button", { name: "Deny" })).toBeTruthy()
+    expect(prompt.textContent).not.toMatch(/w1|ctxa-|approval-1|session-1/)
+  })
+
+  it("shows a rename as old name → new name", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([
+      scriptedApproval({
+        action: "change_workspace",
+        scope: "write_workspace",
+        projectId: undefined,
+        workspaceId: "w1",
+        targets: ['Rename "Sources" to "Primary sources"'],
+        change: { kind: "rename_collection", subject: "Sources", to: "Primary sources", details: [] },
+      }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+    const prompt = await screen.findByRole("group", { name: /approval required/i })
+    expect(within(prompt).getByText("Claude Code wants to rename a collection:")).toBeTruthy()
+    expect(within(prompt).getByText("Sources → Primary sources")).toBeTruthy()
+  })
+
+  it("applies an approved change exactly once, then tells the runtime what it made", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [{ actionId: "ctxa-1", kind: "create_collection", name: "Reading list", tabIds: ["w1-tab-1", "w1-tab-2"] }],
+          }),
+        }),
+      ],
+    })
+    const view = renderCentre(runtime)
+
+    await waitFor(() =>
+      expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1)
+    )
+    const completed = runtime.commands.find((command) => command.name === "complete_context_action")
+    expect(completed).toMatchObject({ sessionId: "session-1", actionId: "ctxa-1", outcome: { ok: true } })
+
+    // Re-rendering with the same pending action listed does not apply it twice.
+    view.rerender(<CommandCentreView world={world()} onClose={vi.fn()} client={runtime.client} poll={false} />)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1)
+
+    // Made through the collection store the workspace view uses.
+    await waitFor(() => {
+      const stored = JSON.stringify(Object.fromEntries(Object.entries(window.localStorage)))
+      expect(stored).toContain("Reading list")
+    })
+  })
+
+  it("applies an approved rename and an approved add through the same store", async () => {
+    saveCollectionState({
+      version: 1,
+      collections: [{ id: "c1", workspaceId: "w1", name: "Sources", tabIds: ["w1-tab-0"], createdAt: 1, updatedAt: 1 }],
+    })
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              { actionId: "ctxa-r", kind: "rename_collection", collectionId: "c1", name: "Primary sources" },
+              { actionId: "ctxa-a", kind: "add_tabs_to_collection", collectionId: "c1", tabIds: ["w1-tab-2"] },
+              { actionId: "ctxa-x", kind: "rename_collection", collectionId: "c-other-workspace", name: "Nope" },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() =>
+      expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(3)
+    )
+    const outcomes = Object.fromEntries(
+      runtime.commands
+        .filter((command) => command.name === "complete_context_action")
+        .map((command) => (command.name === "complete_context_action" ? [command.actionId, command.outcome] : []))
+    )
+    expect(outcomes["ctxa-r"]).toEqual({ ok: true, collectionId: "c1" })
+    expect(outcomes["ctxa-a"]).toEqual({ ok: true, collectionId: "c1" })
+    expect(outcomes["ctxa-x"]).toEqual({ ok: false })
+    await waitFor(() => {
+      const stored = loadCollectionState().collections.find((collection) => collection.id === "c1")
+      expect(stored).toMatchObject({ name: "Primary sources", tabIds: ["w1-tab-0", "w1-tab-2"] })
+    })
+  })
+
+  /* ---------------- Phase J.5 — plans */
+
+  const PLAN_PREVIEW = {
+    planId: "plan-1",
+    basedOnVersion: 3,
+    operationCount: 3,
+    tabCount: 3,
+    steps: [
+      {
+        kind: "create_collection" as const,
+        subject: "College Research",
+        tabCount: 2,
+        tabs: ["Tab 1", "Tab 2"],
+        movesFrom: [],
+        reason: "Both are admissions pages",
+        confidence: "high" as const,
+      },
+      { kind: "rename_collection" as const, subject: "Sources", to: "Primary sources", tabCount: 1, tabs: [], movesFrom: [] },
+      {
+        kind: "add_tabs_to_collection" as const,
+        subject: "Primary sources",
+        tabCount: 1,
+        tabs: ["Tab 0"],
+        movesFrom: ["Inbox"],
+        movedCount: 1,
+        confidence: "unclear" as const,
+      },
+    ],
+  }
+
+  it("shows a plan as one decision: who, which workspace, every change — details on review, never an id", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [contextSession({ status: "waiting_for_approval", awaitingApproval: true })],
+    })
+    runtime.setApprovals([
+      scriptedApproval({
+        action: "change_workspace",
+        scope: "write_workspace",
+        projectId: undefined,
+        workspaceId: "w1",
+        targets: ["one", "two", "three"],
+        reason: "Apply 3 changes to this workspace.",
+        plan: PLAN_PREVIEW,
+      }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
+
+    const prompt = await screen.findByRole("group", { name: /approval required/i })
+    expect(prompt.textContent).toContain("Claude Code wants to organize Research")
+    expect(prompt.textContent).toContain("3 changes · 3 tabs")
+    const steps = within(prompt).getByRole("list", { name: "Proposed changes" })
+    expect(within(steps).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      '+Create collection "College Research" with 2 tabs',
+      '~Rename collection "Sources" to "Primary sources"',
+      '→Add 1 tab to "Primary sources" (moves 1 tab out of Inbox)',
+    ])
+    expect(prompt.textContent).toContain("No other tabs or collections will change.")
+    // Details only on review: the tabs each change places, and the agent's own words, as the agent's.
+    expect(within(prompt).queryByText("Tab 1")).toBeNull()
+    await user.click(within(prompt).getByRole("button", { name: "Review changes" }))
+    expect(within(prompt).getByText("Tab 1")).toBeTruthy()
+    expect(prompt.textContent).toContain("Claude Code: Confident. “Both are admissions pages”")
+    expect(prompt.textContent).toContain("Claude Code: Unsure.")
+    expect(prompt.textContent).not.toMatch(/\d+%|score/i)
+
+    // Approving approves this plan, once — said on the button, not "always".
+    const approve = within(prompt).getByRole("button", { name: "Approve these 3 changes, once" })
+    expect(approve.textContent).toBe("Approve 3 changes")
+    expect(prompt.textContent).not.toMatch(/always|w1|plan-1|approval-1|session-1|ctxa-/i)
+
+    await user.click(approve)
+    await waitFor(() => expect(runtime.commands.some((command) => command.name === "respond_to_approval")).toBe(true))
+    expect(runtime.commands.find((command) => command.name === "respond_to_approval")).toMatchObject({ decision: "granted" })
+  })
+
+  it("applies an approved plan whole, syncs the result, then reports its hash and what it created — once", async () => {
+    saveCollectionState({
+      version: 1,
+      collections: [{ id: "c1", workspaceId: "w1", name: "Sources", tabIds: ["w1-tab-0"], createdAt: 1, updatedAt: 1 }],
+    })
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              {
+                actionId: "ctxa-p",
+                kind: "apply_plan",
+                planId: "plan-1",
+                planHash: "hash-of-the-approved-plan",
+                operations: [
+                  { kind: "create_collection", name: "College Research", tabIds: ["w1-tab-1", "w1-tab-2"] },
+                  { kind: "rename_collection", collectionId: "c1", name: "Primary sources" },
+                ],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    const view = renderCentre(runtime)
+
+    await waitFor(() => expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1))
+    const names = runtime.commands.map((command) => command.name)
+    const completion = runtime.commands.find((command) => command.name === "complete_context_action")
+    if (completion?.name !== "complete_context_action" || !completion.outcome.ok || !("planHash" in completion.outcome)) {
+      throw new Error("expected a plan completion")
+    }
+    expect(completion.outcome.planHash).toBe("hash-of-the-approved-plan")
+    expect(completion.outcome.created).toHaveLength(1)
+    const createdId = completion.outcome.created[0]
+
+    // The synced workspace went first — it is what the runtime verifies against — and it holds the result.
+    const syncIndex = names.lastIndexOf("sync_session_context", names.indexOf("complete_context_action"))
+    expect(syncIndex).toBeGreaterThanOrEqual(0)
+    const sync = runtime.commands[syncIndex]
+    if (sync.name !== "sync_session_context") throw new Error("no sync")
+    expect(sync.snapshot.collections.map((collection) => collection.name).sort()).toEqual(["College Research", "Primary sources"])
+
+    await waitFor(() => {
+      const stored = loadCollectionState().collections
+      expect(stored.find((collection) => collection.id === "c1")?.name).toBe("Primary sources")
+      expect(stored.find((collection) => collection.id === createdId)).toMatchObject({
+        name: "College Research",
+        tabIds: ["w1-tab-1", "w1-tab-2"],
+      })
+    })
+
+    view.rerender(<CommandCentreView world={world()} onClose={vi.fn()} client={runtime.client} poll={false} />)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(1)
+  })
+
+  it("keeps a single change and a plan approved together — neither overwrites the other", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              { actionId: "ctxa-single", kind: "create_collection", name: "Single change", tabIds: ["w1-tab-1"] },
+              {
+                actionId: "ctxa-plan",
+                kind: "apply_plan",
+                planId: "plan-3",
+                planHash: "h3",
+                operations: [{ kind: "create_collection", name: "From the plan", tabIds: ["w1-tab-2"] }],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() => expect(runtime.commands.filter((command) => command.name === "complete_context_action")).toHaveLength(2))
+    await waitFor(() => {
+      const names = loadCollectionState().collections.map((collection) => collection.name)
+      expect(names).toEqual(expect.arrayContaining(["Single change", "From the plan"]))
+    })
+  })
+
+  it("applies none of a plan that no longer fits the workspace, and says which operation failed", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [
+              {
+                actionId: "ctxa-q",
+                kind: "apply_plan",
+                planId: "plan-2",
+                planHash: "h",
+                operations: [
+                  { kind: "create_collection", name: "Would be created", tabIds: ["w1-tab-1"] },
+                  { kind: "rename_collection", collectionId: "c-another-workspace", name: "Nope" },
+                ],
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() =>
+      expect(runtime.commands.find((command) => command.name === "complete_context_action")).toMatchObject({
+        actionId: "ctxa-q",
+        outcome: { ok: false, failedAt: 1 },
+      })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(JSON.stringify(loadCollectionState())).not.toContain("Would be created")
+  })
+
+  it("says what became of an approved plan on the row where it was approved, and names Hubble's tools plainly", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            version: 4,
+            planOutcomes: [
+              { planId: "plan-1", approvalId: "approval-9", status: "applied", operationCount: 3, verifiedCount: 3, contextVersion: 4, at: 1 },
+            ],
+          }),
+        }),
+      ],
+    })
+    runtime.pushEvents([
+      scriptedEvent({ id: "e1", kind: "tool_finished", summary: "Done", tool: { name: "mcp__tabdump_abcdefghijklmnop__get_workspace_summary" } }),
+      scriptedEvent({ id: "e2", kind: "approval_granted", summary: "Workspace change approved", approvalId: "approval-9" }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByText(/3 changes applied · Context updated to v4/)).toBeTruthy()
+    expect(screen.getByText("Hubble · Summarized the workspace")).toBeTruthy()
+    expect(document.body.textContent).not.toContain("mcp__tabdump_")
+  })
+
+  it("shows where the agent is — reading, analyzing, checking, proposing — for Hubble's own tools only (J.6)", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession({ context: contextView({}) })] })
+    const server = "mcp__tabdump_abcdefghijklmnop__"
+    runtime.pushEvents([
+      scriptedEvent({ id: "s1", kind: "tool_finished", summary: "Done", tool: { name: `${server}get_workspace_summary` } }),
+      scriptedEvent({ id: "s2", kind: "tool_finished", summary: "Done", tool: { name: `${server}analyze_topics` } }),
+      scriptedEvent({ id: "s3", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_related_tabs` } }),
+      // Checking: whether an existing collection already covers something, and the plan preview (J.6 hardening).
+      scriptedEvent({ id: "s3b", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_relevant_collections` } }),
+      scriptedEvent({ id: "s4", kind: "tool_finished", summary: "Done", tool: { name: `${server}preview_workspace_plan` } }),
+      scriptedEvent({ id: "s5", kind: "tool_started", summary: "Asking", tool: { name: `${server}propose_workspace_plan` } }),
+      // Not Hubble's: another tool, and a lookalike server name. No stage is claimed for either.
+      scriptedEvent({ id: "s6", kind: "tool_finished", summary: "Done", tool: { name: "Read" } }),
+      scriptedEvent({ id: "s7", kind: "tool_finished", summary: "Done", tool: { name: "mcp__tabdump__analyze_topics" } }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findByText("Hubble · Grouped tabs by topic")).toBeTruthy()
+    expect(screen.getByText("Hubble · Found related tabs")).toBeTruthy()
+    const stages = [...document.querySelectorAll("[data-stage]")].map((element) => [element.getAttribute("data-stage"), element.textContent])
+    expect(stages).toEqual([
+      ["reading", "Reading"],
+      ["analyzing", "Analyzing"],
+      ["analyzing", "Analyzing"],
+      ["checking", "Checking"],
+      ["checking", "Checking"],
+      ["proposing", "Proposing"],
+    ])
+    expect(screen.getByText("mcp__tabdump__analyze_topics")).toBeTruthy()
+  })
+
+  it("names a tool once, in words, when the adapter's summary is only the raw tool name", async () => {
+    // Claude's adapter sends the tool name as the summary; the raw name of a
+    // Hubble context tool is a protocol identifier and must never be shown.
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession({ context: contextView({}) })] })
+    const name = "mcp__tabdump_abcdefghijklmnop__list_tabs"
+    runtime.pushEvents([
+      scriptedEvent({ id: "t1", kind: "tool_started", summary: name, tool: { name } }),
+      scriptedEvent({ id: "t2", kind: "tool_started", summary: "Read", tool: { name: "Read" } }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findAllByText("Hubble · Listed tabs")).toHaveLength(1)
+    expect(screen.getAllByText("Read")).toHaveLength(1)
+    expect(document.body.textContent).not.toContain("mcp__tabdump_")
+  })
+
+  it("refuses to apply a change naming tabs that are not in the session's workspace", async () => {
+    const runtime = createScriptedRuntime({
+      sessions: [
+        contextSession({
+          context: contextView({
+            pendingActions: [{ actionId: "ctxa-2", kind: "create_collection", name: "Elsewhere", tabIds: ["w2-tab-0"] }],
+          }),
+        }),
+      ],
+    })
+    renderCentre(runtime)
+    await waitFor(() =>
+      expect(runtime.commands.find((command) => command.name === "complete_context_action")).toMatchObject({
+        actionId: "ctxa-2",
+        outcome: { ok: false },
+      })
+    )
   })
 })

@@ -13,7 +13,7 @@ import type { RuntimeCommand } from "./protocol";
  *
  * ## What this file is for
  *
- * Phase F gives TabDump something it did not have: a path by which a browser
+ * Phase F gives Hubble something it did not have: a path by which a browser
  * can cause a process to run on the user's machine. Every one of the
  * properties that makes that safe fails *silently* if it regresses — a gate
  * that stops being crossed, a command union that grows a passthrough, a
@@ -57,6 +57,7 @@ const T0 = 1_700_000_000_000;
 
 const ALLOWED: ExecutionGateResult = {
   allowed: true,
+  environment: "local",
   kind: "local",
   decision: { allowed: true, kind: "local-server" },
 };
@@ -275,7 +276,7 @@ describe("a runtime that has not proved itself local executes nothing", () => {
     ["an empty environment", assertLocalExecutionAllowed({})],
     ["a production build", assertLocalExecutionAllowed({ NODE_ENV: "production" })],
     ["a Vercel deployment", assertLocalExecutionAllowed({ VERCEL: "1", VERCEL_ENV: "production" })],
-    ["a Lambda", assertLocalExecutionAllowed({ AWS_LAMBDA_FUNCTION_NAME: "tabdump" })],
+    ["a Lambda", assertLocalExecutionAllowed({ AWS_LAMBDA_FUNCTION_NAME: "hubble" })],
     ["a generic hosted Node", assertLocalExecutionAllowed({ RENDER: "true" })],
     [
       "a hosted platform with the opt-in pasted in",
@@ -317,10 +318,68 @@ describe("a runtime that has not proved itself local executes nothing", () => {
 
   it("does not even hold a resolver on a refused runtime, in the shipped wiring", () => {
     // The host refuses before dispatch anyway; withholding the resolver means
-    // a hosted process has no code path that could construct a provider
-    // runtime at all.
+    // a process that may not execute has no code path that could construct a
+    // provider runtime at all.
+    //
+    // Asserted as a property of the source rather than as one exact sentence,
+    // because the previous version of this test pinned a literal expression
+    // and broke the moment the wiring grew a second execution plane — while
+    // the property it cared about was still true. What matters is that the
+    // resolver is *conditional on the gate*, and that the refusing branch
+    // yields nothing.
     const server = codeOf(readFileSync(path.join(RUNTIME_DIR, "server.ts"), "utf8"));
-    expect(server).toContain("gate.allowed ? resolveAdapter : () => undefined");
+
+    // The invariant is now carried by a closed union rather than by a chain of
+    // conjuncts: a resolution is `remote`, `local` or `refused`, and the
+    // remote arm *carries* the infrastructure it needs. There is therefore no
+    // way to reach an adapter-bearing branch without having proved the
+    // adapter can be built, and no fourth state to fall through to.
+    expect(server).toMatch(/mode:\s*"remote"/);
+    expect(server).toMatch(/mode:\s*"local"/);
+    expect(server).toMatch(/mode:\s*"refused"/);
+
+    // Dispatch is an exhaustive switch, not an `if` with a fallthrough. A
+    // fourth mode would be a type error rather than a silent local host
+    // carrying an allowing remote gate.
+    expect(server).toMatch(/switch \(resolution\.mode\)/);
+    expect(server).not.toMatch(/gate\.allowed && gate\.environment === "remote" && store/);
+
+    // The refusing arm hands back nothing, spelled exactly one way.
+    expect(server).toContain("() => undefined");
+    expect(server).toMatch(/case "refused":[\s\S]{0,400}?\(\) => undefined/);
+
+    // And a remote decision is downgraded to a refusal when the platform
+    // cannot actually be reached, rather than carried forward incomplete.
+    expect(server).toMatch(/denyRemoteExecution\("no-durable-store"\)/);
+    expect(server).toMatch(/denyRemoteExecution\("no-sandbox-credentials"\)/);
+  });
+
+  it("never pairs an executable gate with an empty resolver, on any environment", async () => {
+    // The behavioural half of the guard above. Asserted through the real
+    // shipped wiring rather than by reading it: every environment that
+    // reports `executable` must reach a provider, and every one that does not
+    // must refuse with `runtime_unavailable`.
+    const { disposeRuntimeHost, getRuntimeHost } = await import("./server");
+
+    try {
+      const host = await getRuntimeHost(LOCAL_ACTOR);
+      const status = await host.execute(LOCAL_ACTOR, { name: "get_status" });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+
+      const created = await host.execute(LOCAL_ACTOR, {
+        name: "create_session",
+        provider: "claude-code",
+      });
+
+      if (status.value.executable) {
+        expect(created.ok || created.error.code !== "runtime_unavailable").toBe(true);
+      } else {
+        expect(created).toMatchObject({ ok: false, error: { code: "runtime_unavailable" } });
+      }
+    } finally {
+      await disposeRuntimeHost();
+    }
   });
 });
 

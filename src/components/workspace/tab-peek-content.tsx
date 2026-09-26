@@ -73,7 +73,7 @@ export function TabPeekContent({
         </div>
       </div>
 
-      {/* No real page-snapshot mechanism exists in TabDump — this is the
+      {/* No real page-snapshot mechanism exists in Hubble — this is the
           "beautiful fallback" the spec calls for, not a degraded state: a
           category-tinted panel built entirely from data the tab already
           carries, so it never depends on a network fetch succeeding. Purely

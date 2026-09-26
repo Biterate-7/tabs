@@ -32,7 +32,7 @@ import type { AgentConnector, AgentProviderId, ProviderDescriptor } from "./type
  *
  *   - `createControl` is **optional**. A provider with no control adapter is
  *     ordinary, not broken — it is observable and not drivable, which is the
- *     true state of every provider TabDump ships today.
+ *     true state of every provider Hubble ships today.
  *   - They are constructed independently, so asking for a connector never
  *     builds a control adapter, and a provider that is only being watched
  *     never instantiates the plane that could act.
@@ -50,7 +50,7 @@ export type ConnectorRegistration = {
   /**
    * Builds the control adapter, for a provider that has one.
    *
-   * Optional on purpose. Absent means TabDump can watch this provider and
+   * Optional on purpose. Absent means Hubble can watch this provider and
    * cannot drive it — and a caller asking for control gets `undefined`, which
    * every consumer must handle as "not drivable" rather than as an error.
    */

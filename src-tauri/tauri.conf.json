@@ -1,13 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TabDump",
+  "productName": "Hubble",
+  "mainBinaryName": "Hubble",
   "version": "0.1.0",
   "identifier": "app.tabdump.desktop",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run desktop:export"
+    "beforeBuildCommand": "npm run desktop:runtime && npm run desktop:export"
   },
   "app": {
     "withGlobalTauri": false,
@@ -30,9 +31,10 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
+    "publisher": "Hubble",
     "category": "Productivity",
     "shortDescription": "Turn browser-tab chaos into an organized workspace.",
-    "longDescription": "TabDump turns a pile of open browser tabs into an organized, searchable spatial workspace. Your workspaces stay on this device.",
+    "longDescription": "Hubble turns a pile of open browser tabs into an organized, searchable spatial workspace. Your workspaces stay on this device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,7 +43,18 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "upgradeCode": "778d87a8-77ea-516f-b314-46696aa85a7c"
+      }
+    },
+    "externalBin": [
+      "binaries/tabdump-agent-node"
+    ],
+    "resources": {
+      "agent-runtime/runtime.mjs": "agent-runtime/runtime.mjs"
     }
   }
 }

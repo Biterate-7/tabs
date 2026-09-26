@@ -103,7 +103,7 @@ function CleanupBody({
         <div className="grid grid-cols-2 gap-4 py-2 sm:grid-cols-4">
           {stats.map((stat) => (
             <div key={stat.label}>
-              <p className="text-2xl font-semibold tracking-tight text-foreground">
+              <p className="text-2xl font-medium tracking-tight text-foreground">
                 {stat.value}
               </p>
               <p className="text-xs text-tertiary">{stat.label}</p>
@@ -118,7 +118,7 @@ function CleanupBody({
               return (
                 <div
                   key={group.key}
-                  className="rounded-lg border border-subtle bg-card p-3"
+                  className="rounded-md border border-border bg-card p-3"
                 >
                   <div className="flex items-start gap-3">
                     <TabFavicon domain={group.domain} />
@@ -158,7 +158,7 @@ function CleanupBody({
                             className={
                               "shrink-0 rounded-md border px-2 py-1 text-label transition-colors disabled:cursor-not-allowed " +
                               (keeping
-                                ? "border-primary/30 bg-primary/15 text-accent-text"
+                                ? "border-transparent bg-surface-active text-foreground"
                                 : "border-subtle text-tertiary hover:text-foreground")
                             }
                           >

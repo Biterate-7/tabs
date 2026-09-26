@@ -164,7 +164,7 @@ describe("on the desktop app", () => {
  * itself. `javascript://example.com/%0aalert(1)` parses as a perfectly valid
  * URL with a dotted hostname — `//example.com/` is a JS line comment and
  * `%0a` is a newline — so handing it to location.assign() runs script in
- * TabDump's own origin.
+ * Hubble's own origin.
  *
  * The guard sits at the top of openTab() rather than in front of each sink,
  * so it also covers URLs already sitting in a user's localStorage from
@@ -269,7 +269,7 @@ describe("unsafe URL schemes never reach a navigation API", () => {
 })
 
 /**
- * TabDump is local-first, so a workspace saved before parseSingleUrl started
+ * Hubble is local-first, so a workspace saved before parseSingleUrl started
  * rejecting unsafe schemes can still hold one. Those rows are deliberately
  * NOT migrated or deleted — the user's data is theirs — which makes the
  * opening guard the thing that actually protects them. A fix that only

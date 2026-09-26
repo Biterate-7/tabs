@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "TabDump",
+  "name": "Hubble",
   "version": "0.2.0",
-  "description": "Dump your open browser tabs straight into TabDump.",
+  "description": "Dump your open browser tabs straight into Hubble.",
   "minimum_chrome_version": "102",
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Dump tabs into TabDump",
+    "default_title": "Dump tabs into Hubble",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

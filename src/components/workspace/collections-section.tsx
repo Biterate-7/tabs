@@ -83,7 +83,7 @@ export function CollectionsSection({
         <button
           type="button"
           onClick={onNewCollection}
-          className="flex items-center gap-1 text-label text-accent-text hover:underline"
+          className="flex items-center gap-1 text-label text-link hover:underline"
         >
           <Plus className="size-3.5" aria-hidden /> New collection
         </button>

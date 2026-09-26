@@ -1,5 +1,40 @@
+/*
+ * Hubble for Chrome — the app, compressed into a popup.
+ *
+ * The same system as the web and desktop app (see src/app/globals.css):
+ * warm paper and warm ink, every tier the foreground at a fixed alpha, the
+ * platform UI face at 11–13px, 4px product controls, 8px containers and a
+ * 10% hairline. It follows the browser's own light/dark preference.
+ */
+
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
+
+  --bg: #f7f7f4;
+  --card: #f2f1ed;
+  --hover: #ebeae5;
+  --fg: #26251e;
+  --fg-rgb: 38 37 30;
+  --primary: #26251e;
+  --primary-fg: #f7f7f4;
+  --primary-hover: #3b3a33;
+  --success: #17775a;
+  --error: #bf2a50;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14120b;
+    --card: #1b1913;
+    --hover: #201e18;
+    --fg: #edecec;
+    --fg-rgb: 237 236 236;
+    --primary: #edecec;
+    --primary-fg: #14120b;
+    --primary-hover: #d7d6d5;
+    --success: #3fae83;
+    --error: #e5667f;
+  }
 }
 
 * {
@@ -8,67 +43,79 @@
 
 body {
   margin: 0;
-  width: 280px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #0a0a0a;
-  color: #f5f5f5;
+  width: 320px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
 }
 
-.popup {
-  padding: 16px;
-}
-
+/* ---- Header: the mark in the logo's slot, then where you are ---------- */
 .popup__header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgb(var(--fg-rgb) / 0.1);
 }
 
 .popup__brand-mark {
-  width: 14px;
-  height: 14px;
-  color: #a1a1aa;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
 .popup__title {
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #a1a1aa;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.popup__subtitle {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0.0044em;
+  color: rgb(var(--fg-rgb) / 0.55);
+}
+
+.popup__body {
+  padding: 14px;
 }
 
 .popup__state p {
-  margin: 0 0 12px;
-  font-size: 14px;
+  margin: 0 0 10px;
 }
 
 .popup__muted {
-  color: #a1a1aa;
+  color: rgb(var(--fg-rgb) / 0.6);
 }
 
 .popup__count {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
 }
 
+/* ---- The tabs about to be saved: hairline-divided rows in a card ------- */
 .popup__preview {
   list-style: none;
   margin: 0 0 12px;
   padding: 0;
-  max-height: 120px;
+  max-height: 150px;
   overflow-y: auto;
-  border: 1px solid #27272a;
+  background: var(--card);
+  border: 1px solid rgb(var(--fg-rgb) / 0.1);
   border-radius: 8px;
 }
 
 .popup__preview li {
   padding: 6px 10px;
   font-size: 12px;
-  color: #d4d4d8;
-  border-bottom: 1px solid #27272a;
+  color: rgb(var(--fg-rgb) / 0.75);
+  border-bottom: 1px solid rgb(var(--fg-rgb) / 0.05);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -79,20 +126,26 @@ body {
 }
 
 .popup__preview-more {
-  color: #71717a !important;
-  font-style: italic;
+  color: rgb(var(--fg-rgb) / 0.45) !important;
 }
 
+/* ---- Product control: a 4px corner, ink on paper ----------------------- */
 .popup__button {
+  display: flex;
   width: 100%;
-  padding: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #ffffff;
-  background: #4f46e5;
-  border: none;
-  border-radius: 8px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--primary-fg);
+  background: var(--primary);
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
+  transition: background-color 140ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .popup__button:disabled {
@@ -101,26 +154,67 @@ body {
 }
 
 .popup__button:hover:not(:disabled) {
-  background: #4338ca;
+  background: var(--primary-hover);
+}
+
+.popup__button:focus-visible {
+  outline: 2px solid rgb(var(--fg-rgb) / 0.4);
+  outline-offset: 2px;
 }
 
 .popup__button--secondary {
   background: transparent;
-  border: 1px solid #3f3f46;
-  color: #f5f5f5;
+  border-color: rgb(var(--fg-rgb) / 0.2);
+  color: var(--fg);
 }
 
-.popup__button--secondary:hover {
-  background: #18181b;
+.popup__button--secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+/* ---- States ---------------------------------------------------------- */
+.popup__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.popup__spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 1.5px solid rgb(var(--fg-rgb) / 0.2);
+  border-top-color: rgb(var(--fg-rgb) / 0.7);
+  border-radius: 9999px;
+  animation: popup-spin 1.4s linear infinite;
+}
+
+@keyframes popup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popup__spinner {
+    animation: none;
+  }
 }
 
 .popup__success {
-  color: #4ade80;
-  font-weight: 600;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.popup__success::before {
+  content: "✓ ";
+  color: var(--success);
 }
 
 .popup__error {
-  color: #f87171;
+  color: var(--error);
+  font-weight: 500;
 }
 
 .popup__detail {

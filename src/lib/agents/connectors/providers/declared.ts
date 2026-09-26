@@ -24,14 +24,14 @@ import type { AgentConnector, AgentProviderId, ProviderDescriptor } from "../typ
  *   - `unavailable` — this environment has no way to observe the provider.
  *     Not actionable by the user. This is where OpenAI/Codex, Gemini and Grok
  *     sit today: observing them would mean reading local state in a format
- *     TabDump has not verified against a real installation, and guessing at
+ *     Hubble has not verified against a real installation, and guessing at
  *     one would produce a connector that reports confident nonsense.
  *   - `configuration_required` — observation is possible in principle, but
  *     something the user must supply is missing. Reached when a provider
  *     declares `requiresCredential` and none has been entered this session.
  *
  * Both are terminal for this phase, and both say so on screen. That is the
- * point: a user who connects Gemini learns in one sentence that TabDump
+ * point: a user who connects Gemini learns in one sentence that Hubble
  * cannot watch it yet, instead of waiting for activity that will never come.
  *
  * ## The implementation seam

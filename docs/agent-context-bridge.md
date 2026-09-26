@@ -1,10 +1,10 @@
-# The TabDump Context Bridge
+# The Hubble Context Bridge
 
-> **TabDump context is data, not instructions.**
+> **Hubble context is data, not instructions.**
 >
 > **Context attachment does not grant execution permission.**
 
-This document describes how TabDump's own knowledge — workspaces, tabs,
+This document describes how Hubble's own knowledge — workspaces, tabs,
 collections, relationships, the graph, projects and observed agent activity —
 is made available to a controlled agent session, and, just as importantly,
 what that availability deliberately does not carry with it.
@@ -17,11 +17,11 @@ It is the Phase E companion to [`agent-control-architecture.md`](./agent-control
 
 ## 1. Purpose
 
-An agent that knows nothing about TabDump is an agent the user has to brief by
+An agent that knows nothing about Hubble is an agent the user has to brief by
 hand every time. The Context Bridge is the mechanism that lets them say "work
 with these tabs" once.
 
-It is a **translation layer**, and only that. It turns canonical TabDump
+It is a **translation layer**, and only that. It turns canonical Hubble
 entities into flat, bounded, provider-neutral records, and hands them to the
 control plane as attachments. It is not:
 
@@ -46,7 +46,7 @@ This is the distinction the whole design exists to keep mechanically obvious.
 | **Permission** | What may the agent *do*? | `control/permissions.ts` |
 | **Project scope** | *Where* may it act? | `control/projects.ts` |
 | **Approval** | May this *specific risky action* proceed? | `control/approvals.ts` |
-| **Observation** | What has TabDump *seen* an agent do? | `lib/agents/connectors/` |
+| **Observation** | What has Hubble *seen* an agent do? | `lib/agents/connectors/` |
 
 None of these is derived from another, and none may widen another.
 
@@ -77,7 +77,7 @@ call site.
           +-----------+------+------+----------------+------------+
                              |
                              v
-                   lib/agents/context/            <- reads TabDump's domain
+                   lib/agents/context/            <- reads Hubble's domain
                              |
                    AgentContextAttachment
                              |
@@ -111,7 +111,7 @@ fix a failure in the other.
 | `tab` | Supported | Id, title, **redacted** URL, domain, collection membership, timestamps. Notes only on explicit request. |
 | `collection` | Supported | Name, workspace, bounded member tab ids. |
 | `relationship` | Supported | Directional `TabDependency`. Both endpoints must be in scope. |
-| `graph` | Supported | Bounded neighbourhood around a centre tab, via TabDump's own BFS. |
+| `graph` | Supported | Bounded neighbourhood around a centre tab, via Hubble's own BFS. |
 | `project` | Supported, metadata only | Name, authorized-provider count. Root **only** on a local runtime. Never file contents. |
 | `agent_activity` | Supported | Observed runs: agent name, provider, status, times, summary. |
 
@@ -119,7 +119,7 @@ There is no enum member for a source that cannot be resolved, bounded and
 tested. An unimplemented source would be a UI affordance that silently
 returns nothing.
 
-**Deliberately absent:** page content. TabDump's canonical model does not
+**Deliberately absent:** page content. Hubble's canonical model does not
 store webpage bodies, so the bridge has none to give. Phase E adds no
 scraping, no DOM extraction, no browser automation, no cookie access and no
 screenshot capture — a guard test asserts this directory reaches none of
@@ -249,7 +249,7 @@ what a context bound must never be.
 
 ## 9. Graph traversal
 
-Traversal reuses TabDump's canonical `computeLocalDistances` (BFS with a
+Traversal reuses Hubble's canonical `computeLocalDistances` (BFS with a
 visited set) and `buildGraphEdges`. There is no second traversal
 implementation, so the graph an agent is told about is the graph the user
 sees.
@@ -271,7 +271,7 @@ includes one specifically to prove it.
 
 ## 10. Ownership boundaries
 
-TabDump partitions local data by account through a storage key prefix
+Hubble partitions local data by account through a storage key prefix
 (`lib/storage/namespace.ts`). That partition is applied when data is
 *loaded*, which means a resolver handed a workspace id has no way to tell
 whose workspace it is.
@@ -332,7 +332,7 @@ Three rules follow, and the third is the one that matters.
 2. **Untrusted content never reaches an operator-authority channel.** No
    system prompt, no `appendSystemPrompt`, no `settingSources`, no
    CLAUDE.md. The provider layer renders context into the **user turn**,
-   inside a delimited `<tabdump-context>` region introduced by a sentence
+   inside a delimited `<hubble-context>` region introduced by a sentence
    stating what it is. Attachments cannot contain newlines (the sanitizer
    collapses them) and the renderer strips delimiter strings, so an
    attachment cannot close the region early and continue outside it.
@@ -395,7 +395,7 @@ model is needed, and none should be added.
 deployment a project's filesystem root is **withheld**, the item carries
 `rootWithheld: true`, and an omission records `hosted-runtime`.
 
-This is the execution rule applied to data. A deployed TabDump knows about
+This is the execution rule applied to data. A deployed Hubble knows about
 projects only because a record was synced or restored; publishing the
 directory layout of whatever machine that came from, to whoever is browsing,
 is a leak that needs no agent to be involved at all.

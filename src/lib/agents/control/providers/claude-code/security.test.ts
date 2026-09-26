@@ -21,7 +21,7 @@ import type { AgentPermissionScope } from "../../permissions";
 import type { AgentProject } from "../../projects";
 
 /**
- * The guards on the one path in TabDump that executes anything.
+ * The guards on the one path in Hubble that executes anything.
  *
  * Phase C turns the control plane from a design into a thing that spawns a
  * process with filesystem access. Every rule that keeps that safe is checked
@@ -82,7 +82,7 @@ describe("no arbitrary execution reaches the provider", () => {
   });
 
   it("spawns nothing itself", () => {
-    // The SDK owns the process. TabDump never assembles an argv, so there is
+    // The SDK owns the process. Hubble never assembles an argv, so there is
     // no command line for a caller to influence.
     const offenders: string[] = [];
     for (const { file, source } of sources) {
@@ -327,7 +327,7 @@ describe("the provider receives only authorized directories", () => {
  * ------------------------------------------------------------------ */
 
 describe("the permission mapping is total and fails closed", () => {
-  it("classifies every TabDump scope", () => {
+  it("classifies every Hubble scope", () => {
     for (const scope of AGENT_PERMISSION_SCOPES) {
       expect(MAPPED_SCOPES, scope).toContain(scope);
       expect(TOOLS_BY_SCOPE[scope]).toBeDefined();
@@ -496,13 +496,16 @@ describe("MCP is closed rather than merely unused", () => {
     expect(CLAUDE_CODE_CONTROL_CAPABILITIES.has("mcp")).toBe(false);
   });
 
-  it("starts the runtime with no servers and strict config", () => {
+  it("starts the runtime with strict config and no MCP server but Hubble's own session server", () => {
     // Without `strictMcpConfig`, a session would silently inherit whatever
     // MCP servers the user's own Claude configuration defines — tools
-    // TabDump never authorized and cannot map to a scope.
+    // Hubble never authorized and cannot map to a scope. Since Phase J.3 the
+    // one server a session may have is Hubble's own, built from the
+    // session's context binding; sdk-runtime.test.ts proves the behaviour.
     const runtime = codeOf(sources.find((entry) => entry.name === "sdk-runtime.ts")!.source);
 
-    expect(runtime).toContain("mcpServers: {}");
+    expect(runtime).toContain("mcpServers: contextMcpServers(start.contextServer)");
+    expect(runtime).toContain("if (!server) return {};");
     expect(runtime).toContain("strictMcpConfig: true");
   });
 
@@ -548,11 +551,62 @@ describe("the old control mechanism stays buried", () => {
  * ------------------------------------------------------------------ */
 
 describe("no credential is handled or stored", () => {
-  it("declares no credential field and reads no key from the environment", () => {
-    // Claude Code authenticates itself. TabDump reuses that installation's
-    // own auth rather than introducing a second credential system.
+  /**
+   * The two modules allowed to know a credential exists, and why.
+   *
+   * ## What changed in Phase I.2, and in which direction
+   *
+   * This guard used to permit exactly one module — `remote-runtime.ts` — to
+   * *read* `ANTHROPIC_API_KEY` from the deployment's environment. That was
+   * the operator-key model: one key on the deployment, used for every user's
+   * session, with the whole cost falling on whoever ran Hubble.
+   *
+   * Per-user credentials removed that read entirely. Both runtimes now
+   * receive a `ClaudeCredentialSource` bound to one actor and resolve it per
+   * run. So the guard got *stronger*, not weaker, and it is now split in two:
+   *
+   *   - every module, including these two, is forbidden from reading a
+   *     credential out of `process.env` (asserted below, and this assertion
+   *     is new);
+   *   - every module except these two is forbidden from naming one at all.
+   *
+   * `sdk-runtime.ts` joined the list not because it gained a read but because
+   * it gained a *deletion*: it strips inherited provider variables out of the
+   * agent process's environment before writing the user's own over the top,
+   * so a future edit that forgot to set one cannot silently fall through to
+   * an operator key that happened to be present.
+   */
+  const CREDENTIAL_BEARING = new Set(["remote-runtime.ts", "sdk-runtime.ts"]);
+
+  it("reads no provider credential out of the process environment, anywhere", () => {
+    // The invariant the whole phase rests on: there is no code path by which
+    // a deployment-wide key can reach an agent. A credential arrives through
+    // a `ClaudeCredentialSource` — resolved from the signed-in user's own
+    // provider connection — or it does not arrive.
     const offenders: string[] = [];
     for (const { file, source } of sources) {
+      const code = codeOf(source);
+      for (const pattern of [
+        // process.env.ANTHROPIC_API_KEY, and the bracket form beside it.
+        /process.env.ANTHROPIC/,
+        /process.env[[^]]*ANTHROPIC/,
+        /process.env.CLAUDE_[A-Z_]*(KEY|TOKEN)/,
+        // The shape the old operator read had: an injected env map indexed by
+        // the credential variable's name.
+        /env[PROVIDER_CREDENTIAL_ENV_VAR]/,
+      ]) {
+        if (pattern.test(code)) offenders.push(`${file}: ${pattern}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("declares no credential field outside the two runtimes that inject one", () => {
+    const offenders: string[] = [];
+    for (const { file, name, source } of sources) {
+      if (CREDENTIAL_BEARING.has(name)) continue;
+
       const code = codeOf(source);
       for (const pattern of [
         /\bapiKey\b/i,
@@ -567,6 +621,60 @@ describe("no credential is handled or stored", () => {
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it("confines the remote credential to handing one variable straight on", () => {
+    const remote = sources.find((entry) => entry.name === "remote-runtime.ts");
+    expect(remote, "remote-runtime.ts should exist").toBeDefined();
+    const code = codeOf(remote!.source);
+
+    // It may name exactly one credential variable. A second would be a second
+    // decision nobody made.
+    for (const pattern of [/\baccessToken\b/i, /\brefreshToken\b/i, /\bpassword\b/i]) {
+      expect(pattern.test(code), `must not name ${pattern}`).toBe(false);
+    }
+
+    // The value is read and passed on. It must never be written anywhere that
+    // survives the call, nor rendered into anything a person or a model sees.
+    for (const forbidden of [
+      "localStorage",
+      "sessionStorage",
+      "console.log",
+      "console.error",
+      "console.warn",
+      // The store is where durable rows are written. A credential must not
+      // reach one, and the schema has no column for it either.
+      "createProject(",
+    ]) {
+      expect(code.includes(forbidden), `must not use ${forbidden}`).toBe(false);
+    }
+
+    // It never becomes part of a prompt, a message or an event. Each of those
+    // is a path to a model, a screen or a log.
+    expect(/summary\s*:/.test(code), "must not build an event summary").toBe(false);
+    expect(code.includes("withContext"), "must not touch prompt assembly").toBe(false);
+  });
+
+  it("keeps the credential out of the durable remote records", () => {
+    // The row a remote project or session becomes. If a credential ever gains
+    // a home here, it gains one in every backup and every `SELECT *`.
+    const remoteDir = path.resolve(DIR, "../../../remote");
+    const records = readFileSync(path.join(remoteDir, "types.ts"), "utf8");
+    const schema = readFileSync(path.join(remoteDir, "schema.sql"), "utf8");
+
+    for (const pattern of [/\bapiKey\b/i, /ANTHROPIC/i, /\btoken\b/i, /\bsecret\b/i, /\bpassword\b/i]) {
+      expect(pattern.test(codeOf(records)), `types.ts must not name ${pattern}`).toBe(false);
+    }
+
+    for (const forbidden of ["api_key", "token", "secret", "password", "credential"]) {
+      const columns = schema
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n");
+      expect(columns.toLowerCase().includes(forbidden), `schema must have no ${forbidden} column`).toBe(
+        false
+      );
+    }
   });
 
   it("writes to no storage", () => {

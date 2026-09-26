@@ -12,11 +12,11 @@ import { isDarkColor } from "@/lib/appearance/contrast"
  * Google's own "Continue with Google" button, rendered by Google Identity
  * Services into the container below.
  *
- * It is Google's rendered widget rather than a TabDump-styled button on
+ * It is Google's rendered widget rather than a Hubble-styled button on
  * purpose: Google's branding guidelines govern the mark, the wording and
  * the button's proportions, and a hand-built lookalike would both breach
  * them and — worse — teach users that a Google sign-in can look like
- * anything. Everything *around* it is TabDump's own design.
+ * anything. Everything *around* it is Hubble's own design.
  *
  * The button only ever produces a credential. It never decides anything:
  * the credential goes straight to /api/auth/google, which is where identity
@@ -132,7 +132,9 @@ export function GoogleSignInButton({
         text: "continue_with",
         shape: "pill",
         logo_alignment: "left",
-        width: BUTTON_WIDTH,
+        // The column is narrower than 320px on a phone; GIS draws an
+        // iframe at exactly the width it is given, so give it what fits.
+        width: Math.min(BUTTON_WIDTH, Math.floor(container.clientWidth) || BUTTON_WIDTH),
       })
 
       if (!cancelled) setPhase({ kind: "ready" })

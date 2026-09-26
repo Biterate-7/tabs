@@ -32,7 +32,7 @@ export function SortControl({
         render={
           <button
             type="button"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
           >
             <ArrowUpDown className="size-3.5" />
             {LABELS[value]}

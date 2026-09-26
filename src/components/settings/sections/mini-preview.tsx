@@ -1,7 +1,7 @@
 import { FolderGit2, Link2, Search } from "lucide-react"
 
 /**
- * A miniature TabDump composed from the same semantic Tailwind classes the
+ * A miniature Hubble composed from the same semantic Tailwind classes the
  * real UI uses — sidebar sliver, workspace switcher, tab cards, a graph
  * node/edge, a notes snippet, buttons, an input, and success/error text.
  * Because edits in the Custom tab already apply globally the moment they're
@@ -10,7 +10,7 @@ import { FolderGit2, Link2, Search } from "lucide-react"
  */
 export function MiniPreview() {
   return (
-    <div className="overflow-hidden rounded-xl border border-border shadow-md">
+    <div className="overflow-hidden rounded-lg border border-border shadow-md">
       <div className="flex h-64 bg-background text-foreground">
         <div className="flex w-16 flex-col gap-2 border-r border-subtle bg-background-secondary p-2">
           <div className="rounded-md bg-surface-selected px-1.5 py-1 text-center text-[0.55rem] font-medium text-foreground">Work</div>

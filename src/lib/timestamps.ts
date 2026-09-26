@@ -1,5 +1,5 @@
 /**
- * The one place TabDump reads the clock for persistent entity metadata.
+ * The one place Hubble reads the clock for persistent entity metadata.
  *
  * ## Why epoch milliseconds and not ISO-8601
  *

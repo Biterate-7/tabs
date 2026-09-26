@@ -40,7 +40,7 @@ const FALLBACK: Record<string, string> = {
 };
 
 /**
- * Reads graph colors from TabDump's CSS custom properties once (not per
+ * Reads graph colors from Hubble's CSS custom properties once (not per
  * frame — `getComputedStyle` is comparatively expensive) so the canvas
  * renderer stays in sync with the app's design tokens without hardcoding a
  * parallel color palette.

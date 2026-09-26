@@ -691,7 +691,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       // all), instead of letting it settle once the physics has stabilized.
       img.onload = () => requestDraw()
       img.onerror = () => {}
-      img.src = faviconUrl(domain)
+      // No source for a domain that can have no favicon: the image stays
+      // incomplete and the node draws its fallback, with no request made.
+      const src = faviconUrl(domain)
+      if (src) img.src = src
       cache.set(domain, img)
     }
     return img
@@ -765,7 +768,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     if (!canvas) return
     const ctx = canvas.getContext("2d")
     if (!ctx) return
-    if (!paletteRef.current) paletteRef.current = resolveGraphPalette()
+    if (!paletteRef.current) paletteRef.current = resolveGraphPalette(wrapperRef.current ?? undefined)
     const palette = paletteRef.current
     const { width, height } = sizeRef.current
     const camera = cameraRef.current
@@ -1659,8 +1662,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
   // Palette reads resolved CSS custom properties, which are only reliably
   // available once the stylesheet has applied — re-resolve once after mount.
+  // Read from the canvas's own wrapper rather than :root: in the app the two
+  // inherit the same tokens, and a surface that re-scopes them on a subtree
+  // (the landing page's demo window) gets the graph in its own palette.
   useEffect(() => {
-    paletteRef.current = resolveGraphPalette()
+    paletteRef.current = resolveGraphPalette(wrapperRef.current ?? undefined)
     requestDraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

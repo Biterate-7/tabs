@@ -231,7 +231,7 @@ describe("URL safety is not widened", () => {
 });
 
 /**
- * A `Tab` in TabDump is a saved web page the user expects to re-open, and
+ * A `Tab` in Hubble is a saved web page the user expects to re-open, and
  * every opening path — web (openTab), desktop (Rust open_external) and the
  * extension (browser-commands.js) — already refuses anything that isn't
  * http(s). A non-http(s) Tab is therefore one that can never be opened

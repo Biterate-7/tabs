@@ -9,7 +9,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * ## What a project is, and what it is not
  *
  * A project is a **grant of scope over one directory**, not a discovered
- * location. TabDump never scans, never walks, never enumerates and never
+ * location. Hubble never scans, never walks, never enumerates and never
  * suggests: a project exists because a person chose a directory, and the only
  * directory an agent can ever reach is one that exists here.
  *
@@ -28,10 +28,73 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * resolves against the host's rules and its own cwd.
  */
 
+/**
+ * Where a project's files actually are.
+ *
+ * ## Why this is on the project rather than on the session
+ *
+ * Because it is a property of the *grant*, not of any particular use of it. A
+ * directory on someone's laptop and a workspace inside a microVM are two
+ * different things to authorize, they carry two different blast radiuses, and
+ * a person choosing one has not thereby chosen the other. Putting the
+ * distinction on the session would mean the same authorization could be spent
+ * in either place depending on how it was invoked.
+ *
+ * ## Why `local` is the default everywhere
+ *
+ * Every project that existed before Phase I is a local one, and every call
+ * site that does not mention a source still produces one. A stored record
+ * with no `source` field revives as `local`, which is what it was — see
+ * ./persistence.ts.
+ */
+export type AgentProjectSource =
+  /** A directory on the machine running the runtime. The original, and the default. */
+  | "local"
+  /** Files the user uploaded, unpacked into a sandbox workspace Hubble created. */
+  | "remote_upload"
+  /**
+   * A repository cloned into a sandbox workspace.
+   *
+   * Declared, and deliberately not implemented in this phase. Doing it safely
+   * needs a credential path that does not exist yet — see
+   * docs/agent-remote-runtime.md — and inventing one to complete the union
+   * would be exactly the insecure shortcut the brief rules out. Nothing
+   * creates a project with this source, and the remote store refuses one.
+   */
+  | "remote_git";
+
+export const AGENT_PROJECT_SOURCES: readonly AgentProjectSource[] = [
+  "local",
+  "remote_upload",
+  "remote_git",
+] as const;
+
+export function isAgentProjectSource(value: unknown): value is AgentProjectSource {
+  return (
+    typeof value === "string" && (AGENT_PROJECT_SOURCES as readonly string[]).includes(value)
+  );
+}
+
+/** Whether this source's files live somewhere other than the runtime's own machine. */
+export function isRemoteSource(source: AgentProjectSource): boolean {
+  return source === "remote_upload" || source === "remote_git";
+}
+
 export type AgentProject = {
   id: string;
   /** What the user calls it. Never derived from the path without them seeing it. */
   name: string;
+  /**
+   * Which plane this project's files live on.
+   *
+   * Never accepted from the browser. `authorize_projects` — the one command
+   * that carries project records across the boundary — refuses anything but
+   * `local`, because a remote project is not something a client can assert
+   * into existence: it exists because the server created a sandbox for it and
+   * wrote a row, and it is resolved from that row. See ./runtime's
+   * `resolveProject` seam and ../runtime/protocol.ts.
+   */
+  source: AgentProjectSource;
   /**
    * The authorized root, in its original spelling.
    *
@@ -231,7 +294,7 @@ export function validateProjectPath(candidate: string): ProjectPathResult {
 export const PROJECT_PATH_REJECTION_MESSAGES: Record<ProjectPathRejection, string> = {
   empty: "Choose a folder.",
   "not-absolute": "That needs to be a full path to a folder.",
-  "unsupported-form": "TabDump can't resolve that path with confidence.",
+  "unsupported-form": "Hubble can't resolve that path with confidence.",
   "filesystem-root": "A whole drive is too broad. Choose the project folder itself.",
   "sensitive-location":
     "That folder holds everything else you own. Choose the specific project inside it.",
@@ -247,6 +310,8 @@ export type CreateProjectInput = {
   id: string;
   name: string;
   path: string;
+  /** Defaults to `local`, so every pre-Phase-I call site means what it always did. */
+  source?: AgentProjectSource;
   providers?: readonly AgentProviderId[];
   /** Each validated exactly as `path` is. One bad entry rejects the whole project. */
   additionalDirectories?: readonly string[];
@@ -306,6 +371,9 @@ export function createProject(input: CreateProjectInput, now: number): CreatePro
     project: {
       id: input.id,
       name,
+      // Absent means local. A project that does not say where it lives is one
+      // from before the question was asked, and every one of those was local.
+      source: input.source ?? "local",
       path: validated.path,
       providers: input.providers ? [...input.providers] : [],
       additionalDirectories,

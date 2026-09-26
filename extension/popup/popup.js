@@ -32,7 +32,7 @@ const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error]
 const PREVIEW_LIMIT = 5;
 
 // How long a rendered success stays on screen before the popup focuses the
-// TabDump tab and closes itself. Focusing is what actually dismisses the
+// Hubble tab and closes itself. Focusing is what actually dismisses the
 // popup (Chrome closes an action popup as soon as the foreground tab
 // changes), so this is the window in which the user gets to read the result
 // — which is exactly what a background-initiated focus used to steal.
@@ -82,10 +82,10 @@ function renderPreview(tabs) {
 
 /**
  * Asks the background worker (which relays through an already-open
- * TabDump tab's content script into the page itself) which of these urls
+ * Hubble tab's content script into the page itself) which of these urls
  * are already in the currently selected workspace. Resolves to `undefined`
  * — rather than throwing or guessing — whenever that genuinely can't be
- * determined (no TabDump tab open, or it didn't answer in time), so callers
+ * determined (no Hubble tab open, or it didn't answer in time), so callers
  * can fall back to the plain "N tabs detected" wording instead of showing a
  * wrong new/existing split.
  */
@@ -105,7 +105,7 @@ function updateReadyUi(tabs, existingUrls) {
   if (!existingUrls) {
     els.importStatus.hidden = true;
     els.dumpButton.disabled = tabs.length === 0;
-    els.dumpButton.textContent = "Dump Tabs →";
+    els.dumpButton.textContent = "Dump tabs →";
     return;
   }
 
@@ -121,7 +121,7 @@ function updateReadyUi(tabs, existingUrls) {
     els.dumpButton.textContent = `${tabs.length} tab${tabs.length === 1 ? "" : "s"} already imported`;
   } else {
     els.dumpButton.disabled = tabs.length === 0;
-    els.dumpButton.textContent = existingCount > 0 ? `Dump ${newCount} new tab${newCount === 1 ? "" : "s"} →` : "Dump Tabs →";
+    els.dumpButton.textContent = existingCount > 0 ? `Dump ${newCount} new tab${newCount === 1 ? "" : "s"} →` : "Dump tabs →";
   }
 }
 
@@ -152,9 +152,9 @@ async function detectTabs() {
 // console.
 const DUMP_PHASE_LABEL = {
   [DUMP_PHASE.QUERYING_TABS]: "Reading your open tabs…",
-  [DUMP_PHASE.RESOLVING_TAB]: "Opening TabDump…",
-  [DUMP_PHASE.DELIVERING]: "Handing your tabs to TabDump…",
-  [DUMP_PHASE.RETRYING_IN_NEW_TAB]: "The open TabDump tab didn't respond — retrying in a new one…",
+  [DUMP_PHASE.RESOLVING_TAB]: "Opening Hubble…",
+  [DUMP_PHASE.DELIVERING]: "Handing your tabs to Hubble…",
+  [DUMP_PHASE.RETRYING_IN_NEW_TAB]: "The open Hubble tab didn't respond — retrying in a new one…",
 };
 
 function showDumping(phase) {
@@ -166,44 +166,44 @@ function showDumping(phase) {
 // on. Each reason corresponds to a distinct failure point in the pipeline
 // (see background.js's dumpTabs) so "it didn't work" reports can actually
 // be told apart: a same-origin page that can't mount the app looks nothing
-// like the TabDump origin being unreachable, which looks nothing like
-// TabDump's own tab-open call failing outright.
+// like the Hubble origin being unreachable, which looks nothing like
+// Hubble's own tab-open call failing outright.
 function describeDumpFailure(response) {
   switch (response?.reason) {
     case "no-importable-tabs":
       return { message: "No importable tabs in this window." };
     case "tab-query-failed":
-      return { message: "Chrome wouldn't let TabDump read this window's tabs.", detail: response.detail };
+      return { message: "Chrome wouldn't let Hubble read this window's tabs.", detail: response.detail };
     case "tab-open-failed":
-      return { message: "Couldn't open or find the TabDump tab.", detail: response.detail };
+      return { message: "Couldn't open or find the Hubble tab.", detail: response.detail };
     case "tab-load-timeout":
-      return { message: "TabDump didn't finish loading. Check your connection and try again.", detail: response.detail };
+      return { message: "Hubble didn't finish loading. Check your connection and try again.", detail: response.detail };
     // Distinct from every other delivery failure, and the only one with a
     // cause the user can see: Chrome injects a manifest-declared content
-    // script only as a page loads, so a TabDump tab that was already open
+    // script only as a page loads, so a Hubble tab that was already open
     // when the extension was installed or reloaded has no receiver in it.
     // background.js now injects one itself before reporting this, so reaching
     // this copy means even that was refused — which a reload does fix, and
-    // "TabDump didn't respond" gave no hint of.
+    // "Hubble didn't respond" gave no hint of.
     case "content-script-missing":
       return {
-        message: "TabDump's extension script isn't running in that tab. Reload the TabDump page and try again.",
+        message: "Hubble's extension script isn't running in that tab. Reload the Hubble page and try again.",
         detail: response.detail,
       };
     case "delivery-failed":
       return {
-        message: "TabDump didn't respond in that tab. Reload the TabDump page and try again.",
+        message: "Hubble didn't respond in that tab. Reload the Hubble page and try again.",
         detail: response.detail,
       };
     case "page-not-ready":
     case "no-ack":
       return {
-        message: "TabDump opened but never confirmed the import. Reload the TabDump page and try again.",
+        message: "Hubble opened but never confirmed the import. Reload the Hubble page and try again.",
         detail: response.detail,
       };
     case "nothing-imported":
       return {
-        message: "TabDump received the tabs but couldn't import any of them.",
+        message: "Hubble received the tabs but couldn't import any of them.",
         detail: response.detail,
       };
     case "interrupted":
@@ -213,7 +213,7 @@ function describeDumpFailure(response) {
     case "unexpected-error":
       return { message: "Something unexpected went wrong while dumping.", detail: response.detail };
     default:
-      return { message: "Couldn't reach TabDump. Is it running?", detail: response?.reason };
+      return { message: "Couldn't reach Hubble. Is it running?", detail: response?.reason };
   }
 }
 
@@ -235,7 +235,7 @@ async function getPersistedDumpState() {
 }
 
 /**
- * Activates the TabDump tab a dump landed in. Sent from here rather than
+ * Activates the Hubble tab a dump landed in. Sent from here rather than
  * done by background.js at the end of the dump, because focusing a tab is
  * what closes this popup — doing it from the background reliably destroyed
  * the popup before it could render anything, which is exactly what "Dumping
@@ -245,13 +245,13 @@ async function getPersistedDumpState() {
  * already succeeded either way, so a failure here never becomes an error
  * state.
  */
-async function focusTabDump() {
+async function focusHubble() {
   if (!focusTarget || !Number.isInteger(focusTarget.tabId)) return;
   try {
     await chrome.runtime.sendMessage({ type: MSG_FOCUS_TABDUMP, payload: focusTarget });
   } catch {
     // Background worker unreachable (extension reloading). Nothing to do:
-    // the user still has the TabDump tab open, just not in front.
+    // the user still has the Hubble tab open, just not in front.
   }
 }
 
@@ -294,7 +294,7 @@ function finishWithSuccess(state) {
   els.successDetail.hidden = !detail;
   showState(els.success);
   setTimeout(() => {
-    focusTabDump().finally(() => window.close());
+    focusHubble().finally(() => window.close());
   }, SUCCESS_DWELL_MS);
 }
 
@@ -357,7 +357,7 @@ function watchForDumpCompletion(referenceStartedAt) {
     // No storage.onChanged support to lean on — the dump is still running
     // in the background either way, but this popup instance has no way to
     // learn when it finishes. Reflect that rather than hanging silently.
-    showError({ message: "A dump is already in progress. Reopen TabDump in a moment to see the result." });
+    showError({ message: "A dump is already in progress. Reopen Hubble in a moment to see the result." });
     return;
   }
 
@@ -417,7 +417,7 @@ async function dumpTabs() {
   showDumping(DUMP_PHASE.QUERYING_TABS);
   // Phase updates for the dump this popup started arrive the same way they
   // do for one it merely inherited: through the persisted record. Attaching
-  // here means the "Opening TabDump…" / "Handing your tabs over…" progress
+  // here means the "Opening Hubble…" / "Handing your tabs over…" progress
   // is visible in the common case too, not only after a popup reopen.
   const detachPhaseWatch = watchDumpPhase();
   try {
@@ -450,7 +450,7 @@ async function dumpTabs() {
     // reload/update invalidates this popup's connection. The dump may still
     // be running, so point at the recovery path rather than implying it died.
     showError({
-      message: "Lost contact with the TabDump extension. Reopen this popup to see how the dump ended.",
+      message: "Lost contact with the Hubble extension. Reopen this popup to see how the dump ended.",
       detail: err instanceof Error ? err.message : String(err),
     });
   } finally {
@@ -469,7 +469,7 @@ function watchDumpPhase() {
 els.dumpButton.addEventListener("click", dumpTabs);
 els.retryButton.addEventListener("click", detectTabs);
 els.openButton.addEventListener("click", () => {
-  focusTabDump().finally(() => window.close());
+  focusHubble().finally(() => window.close());
 });
 
 // Runs once on every popup open, before the normal detectTabs() flow, to

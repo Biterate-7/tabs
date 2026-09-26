@@ -305,7 +305,7 @@ describe("url context linking", () => {
 
     const run = findRunByExternalId(polled.state, seeded.agentId, SESSION)!;
 
-    // The workspace already holds this page, normalized the TabDump way.
+    // The workspace already holds this page, normalized the Hubble way.
     const saved = normalizeUrl(new URL("https://example.com/docs"));
     const observedUrl = "https://example.com/docs?utm_source=x";
     expect(normalizeUrl(new URL(observedUrl))).toBe(saved);

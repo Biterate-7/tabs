@@ -10,7 +10,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * is. It answers "how is the *work* going", derived from observation, and it
  * is the thing History and the Session View render.
  *
- * This answers a different question: "what is TabDump's *connection to this
+ * This answers a different question: "what is Hubble's *connection to this
  * agent* doing right now". A session can be `ready` with no run in flight, or
  * `waiting_for_approval` while the underlying run is still `working`. Folding
  * the two together would force one of those two truths to be wrong, which is
@@ -157,7 +157,7 @@ export function canTransition(from: AgentSessionStatus, to: AgentSessionStatus):
 }
 
 /**
- * A control session: TabDump's handle on one conversation with one agent.
+ * A control session: Hubble's handle on one conversation with one agent.
  *
  * ## What it deliberately does not hold
  *
@@ -172,7 +172,7 @@ export function canTransition(from: AgentSessionStatus, to: AgentSessionStatus):
  * genuinely belongs.
  */
 export type AgentSession = {
-  /** TabDump's own id. Stable across a resume; the provider's id may not be. */
+  /** Hubble's own id. Stable across a resume; the provider's id may not be. */
   id: string;
   provider: AgentProviderId;
   /**
@@ -193,7 +193,7 @@ export type AgentSession = {
    * on the absence of one.
    */
   projectId?: string;
-  /** The TabDump workspace this session belongs to, when one was chosen. */
+  /** The Hubble workspace this session belongs to, when one was chosen. */
   workspaceId?: string;
   /** Short human-readable label. Never provider prose — see ./events.ts on why. */
   title?: string;

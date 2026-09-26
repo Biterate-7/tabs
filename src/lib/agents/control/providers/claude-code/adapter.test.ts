@@ -93,7 +93,7 @@ async function started(over: Parameters<typeof setup>[0] = {}) {
 
 describe("capabilities", () => {
   it("declares only what is implemented, and never MCP", () => {
-    // TabDump configures no MCP servers, so there is nothing to declare —
+    // Hubble configures no MCP servers, so there is nothing to declare —
     // advertising it because the provider has a flag is exactly what the
     // capability model forbids.
     expect([...CLAUDE_CODE_CONTROL_CAPABILITIES].sort()).toEqual([
@@ -107,6 +107,9 @@ describe("capabilities", () => {
       "run_commands",
       "stream_events",
       "working_directory",
+      // J.4: carries the session's own context server, whose calls it can
+      // prove structurally (strictMcpConfig + a per-session server name).
+      "workspace_context",
       "write_files",
     ]);
     expect(CLAUDE_CODE_CONTROL_CAPABILITIES.has("mcp")).toBe(false);
@@ -169,7 +172,7 @@ describe("creating a session", () => {
 
   it("gives the runtime no directory at all when there is no project", async () => {
     // Not the server's cwd. Inheriting it would silently authorize wherever
-    // TabDump happens to be running.
+    // Hubble happens to be running.
     const { adapter, runtime, grant } = setup();
     await adapter.createSession({ sessionId: SESSION, permissions: grant, attachments: [] });
 
@@ -202,9 +205,9 @@ describe("creating a session", () => {
     expect(runtime.latest().options.allowedTools).toEqual(["TodoWrite"]);
   });
 
-  it("never sends a mode that would answer an approval on TabDump's behalf", async () => {
+  it("never sends a mode that would answer an approval on Hubble's behalf", async () => {
     // `acceptEdits` auto-accepts file edits, which means `canUseTool` is
-    // never called for them — TabDump would show no prompt and Claude would
+    // never called for them — Hubble would show no prompt and Claude would
     // write the file. It is the most dangerous mode precisely because it
     // looks harmless.
     for (const scopes of [
@@ -539,7 +542,7 @@ describe("approvals", () => {
     );
   });
 
-  it("denies an MCP tool while TabDump configures no servers", async () => {
+  it("denies an MCP tool while Hubble configures no servers", async () => {
     const { runtime } = await started({
       grant: grantOf(["read_project", "write_project", "run_commands", "mcp_tools"]),
     });
@@ -701,5 +704,61 @@ describe("lifecycle", () => {
     runtime.latest().emit(assistantText(CLAUDE_SESSION, "two"));
 
     expect(seen).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Workspace context (Phase J.4)
+ * ------------------------------------------------------------------ */
+
+describe("workspace context (J.4)", () => {
+  const SERVER = "tabdump_abcdefghijklmnop";
+  const READS = ["workspace.read", "tabs.read", "collections.read", "relationships.read"] as const;
+
+  async function withContext(capabilities: readonly (typeof READS)[number][] | readonly string[]) {
+    const context = setup();
+    const created = await context.adapter.createSession({
+      sessionId: SESSION,
+      project: context.project,
+      permissions: context.grant,
+      attachments: [],
+      contextServer: {
+        name: SERVER,
+        url: "http://127.0.0.1:5123/mcp",
+        token: "tdctx_session-credential",
+        workspaceId: "ws-launch",
+        capabilities: capabilities as never,
+      },
+    });
+    if (!created.ok) throw new Error(created.error.code);
+    return context;
+  }
+
+  it("pre-allows exactly the context tools the session may use, under its own server name", async () => {
+    const readOnly = await withContext(READS);
+    const allowed = readOnly.runtime.latest().options.allowedTools.filter((tool) => tool.startsWith("mcp__"));
+    expect(allowed.length).toBeGreaterThan(0);
+    expect(allowed.every((tool) => tool.startsWith(`mcp__${SERVER}__`))).toBe(true);
+    expect(allowed).not.toContain(`mcp__${SERVER}__create_collection`);
+    expect(allowed).not.toContain(`mcp__${SERVER}__rename_collection`);
+
+    const readWrite = await withContext([...READS, "collections.write"]);
+    expect(readWrite.runtime.latest().options.allowedTools).toContain(`mcp__${SERVER}__add_tabs_to_collection`);
+  });
+
+  it("refuses a context tool the session may not use, without raising an approval", async () => {
+    const { runtime, events } = await withContext(READS);
+    const decision = await runtime.latest().requestPermission({ toolName: `mcp__${SERVER}__create_collection` });
+    expect(decision.behavior).toBe("deny");
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+  });
+
+  it("treats a lookalike server's tool as any other MCP tool — refused, never a context call", async () => {
+    const { runtime, events } = await withContext([...READS, "collections.write"]);
+    for (const toolName of ["mcp__tabdump__get_tabs", "mcp__tabdump_zzzzzzzzzzzzzzzz__create_collection"]) {
+      const decision = await runtime.latest().requestPermission({ toolName });
+      expect(decision.behavior, toolName).toBe("deny");
+    }
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
   });
 });

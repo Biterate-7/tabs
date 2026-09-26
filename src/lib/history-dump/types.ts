@@ -1,6 +1,6 @@
 /**
  * Domain types for History Dump (see AGENTS.md's History Dump spec). Mirrors
- * the shape of other TabDump domain modules (organize/types.ts, workspace/
+ * the shape of other Hubble domain modules (organize/types.ts, workspace/
  * types.ts): plain data types here, pure logic in sibling files, no React.
  */
 

@@ -3,9 +3,9 @@ import type { NextConfig } from "next";
 /**
  * One config, two targets.
  *
- * The default branch is empty — byte for byte the web configuration this
- * project has always had, so `npm run dev`, `npm run build` and the Vercel
- * deployment are completely untouched by the desktop work. Everything
+ * The default branch is the web configuration this project has always had
+ * (plus one legacy-download redirect), so `npm run dev`, `npm run build` and
+ * the Vercel deployment are completely untouched by the desktop work. Everything
  * desktop-specific is gated behind an env var that only the `desktop:*`
  * scripts set, which is also what keeps web development free of any
  * Rust/Tauri toolchain requirement.
@@ -17,7 +17,7 @@ const isDesktopBuild = process.env.TABDUMP_BUILD_TARGET === "desktop";
  * (`http://tauri.localhost` on Windows), which is possible here only because
  * the app genuinely is a client-side SPA: four static routes, no dynamic
  * segments, no `useRouter`/`useSearchParams`, no `next/image`, and no server
- * actions. TabDump is local-first — workspaces, collections, dependencies and
+ * actions. Hubble is local-first — workspaces, collections, dependencies and
  * graph layout live in localStorage (see src/lib/storage/namespace.ts) — so
  * the exported bundle is the whole product, not a shell around a server.
  *
@@ -38,6 +38,13 @@ const nextConfig: NextConfig = isDesktopBuild
       trailingSlash: true,
       pageExtensions: ["tsx"],
     }
-  : {};
+  : {
+      // The extension archive was renamed with the TabDump → Hubble rebrand.
+      // Links to the old filename (docs, bookmarks, earlier builds of the
+      // onboarding guide) keep working.
+      async redirects() {
+        return [{ source: "/tabdump-extension.zip", destination: "/hubble-extension.zip", permanent: true }];
+      },
+    };
 
 export default nextConfig;

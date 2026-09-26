@@ -1,6 +1,6 @@
 # Agent Control Architecture
 
-> **TabDump observes agents through the observation plane, and communicates
+> **Hubble observes agents through the observation plane, and communicates
 > with agents through a separately permissioned control plane.**
 
 That sentence is the architectural principle. Everything below is what it
@@ -12,7 +12,7 @@ means in practice, and what is enforced mechanically so it stays true.
 
 ```
                     ┌──────────────────────────────────┐
-                    │   TabDump domain + workspaces    │
+                    │   Hubble domain + workspaces    │
                     └───────────▲──────────────────────┘
                                 │ observations only
         ┌───────────────────────┴───────────────────────┐
@@ -38,7 +38,7 @@ today **every shipped provider is observation-only**.
 
 ### Why separate rather than one interface with more methods
 
-Collapsing them would mean that "TabDump can see this agent" and "TabDump can
+Collapsing them would mean that "Hubble can see this agent" and "Hubble can
 drive this agent" become one fact. They are not one fact, and the difference
 is the whole safety story. Claude Code is fully observable right now and
 entirely undrivable; the two planes let the product state both without either
@@ -74,7 +74,7 @@ external agent → connector → AgentAdapterObservation → agent domain
 | `permissions.ts` | scopes, grants, capability→scope mapping |
 | `projects.ts` | authorized directories + path validation |
 | `approvals.ts` | the approval broker |
-| `context.ts` | provider-neutral TabDump context attachments — the *contract*. What resolves a workspace id into one lives in `lib/agents/context/`, a sibling directory that reads TabDump's domain so this one never has to. See [agent-context-bridge.md](agent-context-bridge.md). |
+| `context.ts` | provider-neutral Hubble context attachments — the *contract*. What resolves a workspace id into one lives in `lib/agents/context/`, a sibling directory that reads Hubble's domain so this one never has to. See [agent-context-bridge.md](agent-context-bridge.md). |
 | `runtime.ts` | the local-execution boundary |
 | `types.ts` | `AgentControlAdapter`, errors, results |
 | `service.ts` | the gate; the only thing that may drive an adapter |
@@ -142,7 +142,7 @@ difference between authorizing a tool and authorizing an act.
 ## 6. Project scope
 
 A project is a **grant of scope over one directory**, never a discovered
-location. TabDump does not scan, walk, enumerate or suggest.
+location. Hubble does not scan, walk, enumerate or suggest.
 
 `validateProjectPath` refuses:
 
@@ -233,7 +233,7 @@ applying it.
 ### Why this is not `AgentRunStatus`
 
 The domain's run status answers *"how is the work going"* and is derived from
-observation. This answers *"what is TabDump's connection to this agent
+observation. This answers *"what is Hubble's connection to this agent
 doing"*. A session can be `waiting_for_approval` while its run is still
 `working`. There is exactly **one** representation of a run — the domain's —
 and a session references it by id.
@@ -368,7 +368,7 @@ callback, which maps onto the broker exactly. Until that is wired, the adapter
 must not declare `approvals` — an Approve button bound to a mode flag would be
 a control that controls nothing.
 
-Correlation: TabDump supplies the session UUID via `--session-id`, so the
+Correlation: Hubble supplies the session UUID via `--session-id`, so the
 control session and the observation plane's view of the same session share an
 id from the first byte. **One run, one domain record.**
 
@@ -421,7 +421,7 @@ capability; anything unanswered stays undeclared.
 Everything above describes what may be asked of an agent. **Where that asking
 actually happens** — the trusted local runtime, the browser transport, session
 ownership, run correlation, and how a controlled run is told apart from one
-TabDump merely observed — is `docs/agent-local-runtime.md`.
+Hubble merely observed — is `docs/agent-local-runtime.md`.
 
 Two things in this document were true when it was written and are no longer:
 

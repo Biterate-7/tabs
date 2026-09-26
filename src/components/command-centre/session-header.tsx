@@ -1,9 +1,11 @@
 "use client"
 
-import { PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react"
+import { Check, Minus, PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AgentStatusPill } from "@/components/agents/agent-status-pill"
 import { IconButton } from "@/components/ui/icon-button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { READ_CAPABILITIES, SESSION_CONTEXT_ACCESS_LABELS, WRITE_CAPABILITIES } from "@/lib/agents/session-context/capabilities"
 import {
   SESSION_ORIGIN_LABEL,
   SESSION_STATUS_LABEL,
@@ -12,6 +14,8 @@ import {
 } from "@/lib/agents/command-centre/presentation"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import type { RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
+import type { ContextFreshness } from "@/hooks/use-session-context"
 
 /**
  * Who is working, on what, and in what state.
@@ -27,7 +31,7 @@ import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
  * ## Why origin is stated
  *
  * "Controlled session" and "Observed externally" are genuinely different
- * facts about where the work came from, and TabDump is one of the few tools
+ * facts about where the work came from, and Hubble is one of the few tools
  * that can tell them apart. The label comes from the correlation record the
  * host supplied; when there is no correlation the header says so rather than
  * assuming control.
@@ -38,28 +42,39 @@ export function SessionHeader({
   contextPanelOpen,
   onToggleContextPanel,
   onDispose,
+  workspaceContext,
+  contextFreshness = "fresh",
+  contextUnavailable = false,
 }: {
   session: CommandCentreSession
   projectName?: string
   contextPanelOpen: boolean
   onToggleContextPanel: () => void
   onDispose: () => void
+  /** The Hubble workspace the agent works in, when the session has one (Phase J.3). */
+  workspaceContext?: RuntimeSessionContextView
+  /** Whether the runtime holds what this window would send (J.4). */
+  contextFreshness?: ContextFreshness
+  /** Started from a workspace, but this agent cannot be given it safely (J.4). */
+  contextUnavailable?: boolean
 }) {
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
   const identity = agentVisualIdentity(view.provider)
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-subtle px-4">
-      <AgentIcon connector={view.provider} state={state} size="sm" />
+    <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
+      <span className="text-muted-foreground">
+        <AgentIcon connector={view.provider} state={state} size="sm" />
+      </span>
 
       <div className="flex min-w-0 flex-col">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-body-sm font-medium text-foreground">
+          <h1 className="truncate text-h2 text-foreground">
             {view.title ?? identity.displayName}
           </h1>
           {projectName && (
-            <span className="shrink-0 truncate text-label text-tertiary">{projectName}</span>
+            <span className="shrink-0 truncate text-body-sm text-tertiary">{projectName}</span>
           )}
         </div>
         {/*
@@ -70,18 +85,24 @@ export function SessionHeader({
           Not yet correlated" is neither. Set in mono it read as a status code
           rather than as a sentence about where this session came from.
         */}
-        <span className="truncate text-label text-tertiary">
+        <span className="truncate text-meta text-tertiary">
           {identity.displayName} · {SESSION_ORIGIN_LABEL[session.origin]}
         </span>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <AgentStatusPill
-          tone={sessionStatusTone(view.status)}
-          label={SESSION_STATUS_LABEL[view.status]}
-        />
+        {/* On a phone the row keeps only the actions; the status is already
+            in the session list line and the context in the side panel. */}
+        <span className="flex items-center gap-1.5 max-sm:hidden">
+          {workspaceContext && <WorkspaceContextIndicator context={workspaceContext} freshness={contextFreshness} />}
+          {!workspaceContext && contextUnavailable && <ContextUnavailableIndicator />}
+          <AgentStatusPill
+            tone={sessionStatusTone(view.status)}
+            label={SESSION_STATUS_LABEL[view.status]}
+          />
+        </span>
 
-        <IconButton aria-label="End session" className="size-7" destructive onClick={onDispose}>
+        <IconButton aria-label="End session" destructive onClick={onDispose}>
           <Trash2 />
         </IconButton>
 
@@ -96,12 +117,106 @@ export function SessionHeader({
         */}
         <IconButton
           aria-label={contextPanelOpen ? "Hide context panel" : "Show context panel"}
-          className="hidden size-7 xl:inline-flex"
+          className="hidden xl:inline-flex"
           onClick={onToggleContextPanel}
         >
           {contextPanelOpen ? <PanelRightClose /> : <PanelRightOpen />}
         </IconButton>
       </div>
     </header>
+  )
+}
+
+/**
+ * "This agent can see your workspace" — said once, small, and without the
+ * machinery (Phase J.3, J.4). The pill says which workspace and whether the
+ * agent's copy is current; opening it says what the agent can read, that any
+ * change asks first, and the context version. Nothing here names MCP, a port,
+ * a server name or a token.
+ */
+function WorkspaceContextIndicator({
+  context,
+  freshness,
+}: {
+  context: RuntimeSessionContextView
+  freshness: ContextFreshness
+}) {
+  const canWrite = context.capabilities.some((capability) => WRITE_CAPABILITIES.includes(capability))
+  const reads = READ_CAPABILITIES.filter((capability) => context.capabilities.includes(capability))
+  const stale = freshness === "update_available"
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label={`Workspace context: ${context.workspaceName}${stale ? ", update available" : ""}`}
+        className="flex h-6 max-w-56 items-center gap-1 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-surface-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <span className="text-tertiary">Context</span>
+        <span className="truncate text-foreground">{context.workspaceName}</span>
+        {stale ? (
+          <span className="shrink-0 text-link">· Update available</span>
+        ) : (
+          <Check className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64">
+        <div className="flex flex-col gap-2.5">
+          <div>
+            <p className="text-eyebrow text-tertiary">Workspace</p>
+            <p className="truncate text-body-sm text-foreground">{context.workspaceName}</p>
+            <p className="text-label text-tertiary">
+              Version {context.version} · {stale ? "Update available" : "Current"}
+            </p>
+          </div>
+          <div>
+            <p className="text-eyebrow text-tertiary">Reads</p>
+            <p aria-label="What the agent can read" className="text-body-sm text-foreground">
+              {reads.map((capability) => SESSION_CONTEXT_ACCESS_LABELS[capability]).join(" · ")}
+            </p>
+          </div>
+          <div>
+            <p className="text-eyebrow text-tertiary">Writes</p>
+            <p className="flex items-center gap-1.5 text-body-sm text-muted-foreground">
+              {canWrite ? (
+                <>
+                  <Check className="size-3.5 shrink-0 text-success" aria-hidden />
+                  Collections — approval required
+                </>
+              ) : (
+                <>
+                  <Minus className="size-3.5 shrink-0" aria-hidden />
+                  Not allowed in this session
+                </>
+              )}
+            </p>
+          </div>
+          <p className="text-meta text-tertiary">Only this workspace. Switching workspaces does not move this session.</p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
+ * Said, not left to be inferred from a missing pill (J.4): this agent was
+ * started from a workspace but cannot be given it safely.
+ */
+function ContextUnavailableIndicator() {
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label="Workspace context unavailable for this agent"
+        className="flex h-6 items-center gap-1 rounded-full bg-surface-hover px-2 text-body-sm text-tertiary transition-colors duration-(--duration-fast) hover:bg-surface-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <span>Context</span>
+        <Minus className="size-3 shrink-0" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64">
+        <p className="text-body-sm text-foreground">No workspace context</p>
+        <p className="mt-1 text-body-sm text-muted-foreground">
+          Hubble can&apos;t tell this agent&apos;s own tools apart from its Hubble tools, so it doesn&apos;t give it your
+          workspace. The session works without it.
+        </p>
+      </PopoverContent>
+    </Popover>
   )
 }

@@ -365,12 +365,56 @@ describe("a runtime that cannot execute is not worked around", () => {
     }
   })
 
-  it("adds no API route beside the existing control transport", () => {
+  it("adds no API route that could execute an agent outside the control transport", () => {
     const apiDir = path.join(SRC_DIR, "app/api/agents")
     const routes = walk(apiDir).map((file) => path.relative(apiDir, file).replace(/\\/g, "/"))
 
-    // The existing two, and nothing resembling `/chat`, `/execute` or `/run`.
-    expect(routes.sort()).toEqual(["claude-code/route.ts", "control/route.ts"])
+    // The allowlist, with what each one is for.
+    //
+    // `remote-projects` joined it in Phase I because creating a remote project
+    // has to accept *file contents*, which the control protocol's closed union
+    // deliberately cannot carry.
+    //
+    // `provider-connections` joined it in Phase I.2 for the same shape of
+    // reason: connecting a credential has to accept a *secret* in a request
+    // body, and widening the control union to carry one would have put a
+    // credential-shaped field on the transport that drives agents. Keeping it
+    // on its own resource is what lets the control protocol's guard tests
+    // continue to assert exactly what they always did.
+    //
+    // Both create or hold *state*. Neither can start, message or drive an
+    // agent, which is what the assertions below pin down.
+    expect(routes.sort()).toEqual([
+      "claude-code/route.ts",
+      "control/route.ts",
+      "provider-connections/route.ts",
+      "remote-projects/route.ts",
+    ])
+
+    // The property that actually matters, and the reason this test exists:
+    // nothing resembling `/chat`, `/execute`, `/run` or `/exec`.
+    for (const route of routes) {
+      expect(route).not.toMatch(/\b(chat|execute|exec|run|shell|spawn|eval)\b/)
+    }
+
+    // And the routes that are not the control transport reach no runtime host,
+    // so there is no path through either of them to a provider.
+    for (const name of ["remote-projects/route.ts", "provider-connections/route.ts"]) {
+      const source = readFileSync(path.join(apiDir, name), "utf8")
+      expect(source, name).not.toContain("getRuntimeHost")
+      expect(source, name).not.toContain("createSession")
+      expect(source, name).not.toContain("sendMessage")
+      expect(source, name).not.toContain("startBridge")
+    }
+
+    // The credential route additionally never *reveals* one. `reveal` is the
+    // single function that produces plaintext, it lives on the secret store,
+    // and its one caller is the resolver the runtime uses — never a handler
+    // that answers a browser.
+    const connections = readFileSync(path.join(apiDir, "provider-connections/route.ts"), "utf8")
+    expect(connections).not.toContain(".reveal(")
+    expect(connections).not.toContain("resolveCredential")
+    expect(connections).not.toContain("prepareRuntimeCredential")
   })
 })
 
@@ -395,5 +439,80 @@ describe("the observation plane is untouched", () => {
     expect(sessions.code).toContain("sessionOrigin(")
     // Joined only by the id the host put in the record.
     expect(sessions.code).toContain("controlSessionId")
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * 7. The remote surface submits opaque ids only
+ * ------------------------------------------------------------------ */
+
+describe("the remote project UI cannot widen what the browser may say", () => {
+  const REMOTE_SURFACES = [
+    "src/hooks/use-remote-projects.ts",
+    "src/components/command-centre/remote-project-picker.tsx",
+    "src/components/command-centre/new-session-dialog.tsx",
+    "src/lib/agents/command-centre/remote.ts",
+  ]
+
+  const remoteSources = REMOTE_SURFACES.map((file) => ({
+    file,
+    code: codeOf(readFileSync(path.join(REPO_ROOT, file), "utf8")),
+  }))
+
+  it("names no sandbox, path, cwd or shell anywhere in the new surface", () => {
+    // The browser's whole vocabulary for a project is its opaque id. A field
+    // here that could carry anything else would bypass the server's
+    // projectId → authorized project resolution.
+    for (const { file, code } of remoteSources) {
+      expect(code, file).not.toMatch(/\bcwd\b/)
+      expect(code, file).not.toMatch(/sandboxName|sandboxId/)
+      expect(code, file).not.toMatch(/\bspawn\b|\bexecFile\b|\bshell\b/)
+      expect(code, file).not.toContain("/workspace")
+    }
+  })
+
+  it("reaches no adapter, runtime or store from the browser", () => {
+    for (const { file, code } of remoteSources) {
+      expect(code, file).not.toMatch(/createClaudeCodeControlAdapter|createRemoteClaudeRuntime/)
+      expect(code, file).not.toMatch(/createRuntimeHost|createControlService/)
+      expect(code, file).not.toMatch(/RemoteStore|createPostgresRemoteStore/)
+    }
+  })
+
+  it("starts sessions through the one existing command rather than a second path", () => {
+    // `create_session` is the only way in, and it is the same verb a local
+    // session uses. A UI-specific execution path would show up as a second
+    // endpoint or a direct adapter call.
+    const dialog = remoteSources.find((entry) => entry.file.endsWith("new-session-dialog.tsx"))!
+    expect(dialog.code).toContain("onCreate({")
+    expect(dialog.code).not.toContain("fetch(")
+
+    const picker = remoteSources.find((entry) => entry.file.endsWith("remote-project-picker.tsx"))!
+    expect(picker.code).not.toContain("fetch(")
+  })
+
+  it("posts only a name, scopes and files to the projects endpoint", () => {
+    const hook = remoteSources.find((entry) => entry.file.endsWith("use-remote-projects.ts"))!
+    const fields = [...hook.code.matchAll(/form\.(?:set|append)\("([^"]+)"/g)].map(
+      (match) => match[1]
+    )
+
+    expect(new Set(fields)).toEqual(new Set(["name", "scopes", "files"]))
+  })
+
+  it("renders no message a server chose", () => {
+    // Every sentence is fixed text from a table. A message interpolated from a
+    // response is how a platform error string reaches a screen.
+    //
+    // The split is deliberate and is what this asserts: the hook reads a
+    // *code* from the response and never its prose, and the component is the
+    // only thing that turns a code into words.
+    const hook = remoteSources.find((entry) => entry.file.endsWith("use-remote-projects.ts"))!
+    expect(hook.code).not.toMatch(/error\.message/)
+    expect(hook.code).not.toMatch(/REMOTE_CREATE_MESSAGE/)
+    expect(hook.code).toMatch(/error\?\.code/)
+
+    const picker = remoteSources.find((entry) => entry.file.endsWith("remote-project-picker.tsx"))!
+    expect(picker.code).toContain("REMOTE_CREATE_MESSAGE")
   })
 })

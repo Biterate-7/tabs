@@ -3,9 +3,9 @@ import { agentFailure } from "./types";
 import type { AgentFailure, AgentRunLink, AgentRunLinkRole, AgentState } from "./types";
 
 /**
- * Links between an agent run and an existing TabDump tab.
+ * Links between an agent run and an existing Hubble tab.
  *
- * This module carries the workspace boundary. TabDump's workspaces are how a
+ * This module carries the workspace boundary. Hubble's workspaces are how a
  * user keeps unrelated work apart, and an agent run is the first thing in the
  * app with any reason to reach across one — so every link is checked, and a
  * cross-workspace link is refused rather than quietly repaired.

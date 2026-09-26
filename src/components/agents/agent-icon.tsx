@@ -53,6 +53,14 @@ export type AgentIconProps = {
    */
   label?: string
   className?: string
+  /**
+   * Draw the mark in the provider's identity colour. Off by default: in the
+   * product a mark identifies who, in the surrounding ink, and state is
+   * carried by the status glyph and its words — a row of five brand colours
+   * is exactly the noise the interface is built to avoid. A failure still
+   * turns the mark destructive, because that is information.
+   */
+  colored?: boolean
 }
 
 function AgentIconImpl({
@@ -61,6 +69,7 @@ function AgentIconImpl({
   size = "sm",
   label,
   className,
+  colored = false,
 }: AgentIconProps) {
   const identity = agentVisualIdentity(connector)
   const presentation = AGENT_VISUAL_STATE_PRESENTATION[state]
@@ -79,7 +88,11 @@ function AgentIconImpl({
       data-agent-provider={connector}
       className={cn("agent-mark inline-flex shrink-0 items-center justify-center", className)}
       style={{
-        color: markColor(identity.accentColor, presentation.tone),
+        color: colored
+          ? markColor(identity.accentColor, presentation.tone)
+          : presentation.tone === "bad"
+            ? "var(--destructive)"
+            : "currentColor",
       }}
       {...(label ? {} : { "aria-hidden": true })}
     >

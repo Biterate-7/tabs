@@ -56,8 +56,8 @@ describe("organizeTabsIntoSections", () => {
     vi.spyOn(global, "fetch").mockResolvedValue(
       jsonResponse({
         data: [
-          { tabId: "1", path: ["Projects", "TabDump"], confidence: "high", reason: "Part of the TabDump codebase." },
-          { tabId: "2", path: ["Projects", "TabDump"], confidence: "high", reason: "Part of the TabDump codebase." },
+          { tabId: "1", path: ["Projects", "Hubble"], confidence: "high", reason: "Part of the Hubble codebase." },
+          { tabId: "2", path: ["Projects", "Hubble"], confidence: "high", reason: "Part of the Hubble codebase." },
         ],
       })
     );
@@ -67,9 +67,9 @@ describe("organizeTabsIntoSections", () => {
       []
     );
 
-    expect(result.sections.map((s) => s.name).sort()).toEqual(["Projects", "TabDump"]);
+    expect(result.sections.map((s) => s.name).sort()).toEqual(["Hubble", "Projects"]);
     expect(result.tabs.every((t) => t.organizationStatus === "classified")).toBe(true);
-    expect(result.tabs.every((t) => t.organizationReason === "Part of the TabDump codebase.")).toBe(true);
+    expect(result.tabs.every((t) => t.organizationReason === "Part of the Hubble codebase.")).toBe(true);
   });
 
   it("reuses an existing similarly-named section instead of creating a duplicate", async () => {
@@ -186,8 +186,8 @@ describe("organizeTabsIntoSections", () => {
     vi.spyOn(global, "fetch").mockResolvedValue(
       jsonResponse({
         data: [
-          { tabId: "1", path: ["Projects", "TabDump"], confidence: "medium", reason: "" },
-          { tabId: "2", path: ["Projects", "TabDump"], confidence: "medium", reason: "" },
+          { tabId: "1", path: ["Projects", "Hubble"], confidence: "medium", reason: "" },
+          { tabId: "2", path: ["Projects", "Hubble"], confidence: "medium", reason: "" },
         ],
       })
     );
@@ -197,7 +197,7 @@ describe("organizeTabsIntoSections", () => {
       []
     );
 
-    expect(result.sections.map((s) => s.name).sort()).toEqual(["Projects", "TabDump"]);
+    expect(result.sections.map((s) => s.name).sort()).toEqual(["Hubble", "Projects"]);
     expect(result.tabs.every((t) => t.organizationStatus === "classified")).toBe(true);
   });
 
@@ -334,24 +334,24 @@ describe("organizeTabsIntoSections — duplicate section prevention", () => {
 describe("organizeTabsIntoSections — project detection", () => {
   it("clusters several project-identifying tabs under one new Projects/<name> section", async () => {
     const tabs = [
-      makeTab({ id: "1", category: "projects", domain: "github.com", title: "Biterate-7/tabdump" }),
-      makeTab({ id: "2", category: "projects", domain: "github.com", title: "TabDump architecture notes" }),
-      makeTab({ id: "3", category: "other", domain: "vercel.com", title: "tabdump — Vercel deployment" }),
+      makeTab({ id: "1", category: "projects", domain: "github.com", title: "Biterate-7/hubble" }),
+      makeTab({ id: "2", category: "projects", domain: "github.com", title: "Hubble architecture notes" }),
+      makeTab({ id: "3", category: "other", domain: "vercel.com", title: "hubble — Vercel deployment" }),
       makeTab({ id: "4", category: "other", domain: "developer.chrome.com", title: "Chrome Extensions API reference" }),
       makeTab({ id: "5", category: "other", domain: "nextjs.org", title: "Next.js Docs" }),
     ];
     vi.spyOn(global, "fetch").mockResolvedValue(
       jsonResponse({
-        data: tabs.map((t) => ({ tabId: t.id, path: ["Projects", "TabDump"], confidence: "high", reason: "Part of the TabDump project." })),
+        data: tabs.map((t) => ({ tabId: t.id, path: ["Projects", "Hubble"], confidence: "high", reason: "Part of the Hubble project." })),
       })
     );
 
     const result = await organizeTabsIntoSections(tabs, []);
 
-    expect(result.sections.map((s) => s.name).sort()).toEqual(["Projects", "TabDump"]);
-    const tabDump = result.sections.find((s) => s.name === "TabDump")!;
-    expect(tabDump.parentId).toBe(result.sections.find((s) => s.name === "Projects")!.id);
-    expect(result.tabs.every((t) => t.sectionId === tabDump.id && t.organizationStatus === "classified")).toBe(true);
+    expect(result.sections.map((s) => s.name).sort()).toEqual(["Hubble", "Projects"]);
+    const hubble = result.sections.find((s) => s.name === "Hubble")!;
+    expect(hubble.parentId).toBe(result.sections.find((s) => s.name === "Projects")!.id);
+    expect(result.tabs.every((t) => t.sectionId === hubble.id && t.organizationStatus === "classified")).toBe(true);
   });
 
   it("clusters a research topic into an existing School/Physics subsection as a new project underneath it", async () => {
@@ -385,9 +385,9 @@ describe("organizeTabsIntoSections — unrelated tabs stay distributed", () => {
       makeTab({ id: "1", category: "research", domain: "wikipedia.org", title: "Physics textbook" }),
       makeTab({ id: "2", category: "shopping", domain: "amazon.com", title: "Running shoes" }),
       makeTab({ id: "3", category: "other", domain: "youtube.com", title: "Music video" }),
-      makeTab({ id: "4", category: "projects", domain: "github.com", title: "Biterate-7/tabdump" }),
+      makeTab({ id: "4", category: "projects", domain: "github.com", title: "Biterate-7/hubble" }),
       makeTab({ id: "5", category: "other", domain: "cnn.com", title: "Breaking news article" }),
-      makeTab({ id: "6", category: "projects", domain: "github.com", title: "Biterate-7/tabdump pull request #12" }),
+      makeTab({ id: "6", category: "projects", domain: "github.com", title: "Biterate-7/hubble pull request #12" }),
     ];
     // A poorly-behaved model proposing a shared umbrella for the two
     // one-off "other" tabs despite them having nothing to do with each
@@ -398,9 +398,9 @@ describe("organizeTabsIntoSections — unrelated tabs stay distributed", () => {
           { tabId: "1", path: ["Research", "Physics"], confidence: "high", reason: "" },
           { tabId: "2", path: ["Shopping"], confidence: "high", reason: "" },
           { tabId: "3", path: ["Research", "Random Internet"], confidence: "low", reason: "" },
-          { tabId: "4", path: ["Projects", "TabDump"], confidence: "high", reason: "" },
+          { tabId: "4", path: ["Projects", "Hubble"], confidence: "high", reason: "" },
           { tabId: "5", path: ["Research", "Random Internet"], confidence: "low", reason: "" },
-          { tabId: "6", path: ["Projects", "TabDump"], confidence: "high", reason: "" },
+          { tabId: "6", path: ["Projects", "Hubble"], confidence: "high", reason: "" },
         ],
       })
     );
@@ -414,7 +414,7 @@ describe("organizeTabsIntoSections — unrelated tabs stay distributed", () => {
     // supports the specific name) still succeed normally in the same batch.
     expect(result.sections.some((s) => s.name === "Physics")).toBe(true);
     expect(result.sections.some((s) => s.name === "Shopping")).toBe(true);
-    expect(result.sections.some((s) => s.name === "TabDump")).toBe(true);
+    expect(result.sections.some((s) => s.name === "Hubble")).toBe(true);
     // The two stray tabs land at most in the existing "Research" root
     // (a safe, pre-existing ancestor) — never in a newly-invented section,
     // and never grouped together under one the model made up.
@@ -443,11 +443,11 @@ describe("organizeTabsIntoSections — realistic mixed batch (20+ tabs)", () => 
       // School / History (2)
       makeTab({ id: "h1", category: "school", title: "History reading" }),
       makeTab({ id: "h2", category: "school", title: "History essay draft" }),
-      // Projects / TabDump (4) — a real cross-domain project cluster
-      makeTab({ id: "t1", category: "projects", domain: "github.com", title: "Biterate-7/tabdump" }),
-      makeTab({ id: "t2", category: "projects", domain: "github.com", title: "tabdump pull request #12" }),
-      makeTab({ id: "t3", category: "other", domain: "vercel.com", title: "tabdump — deployment" }),
-      makeTab({ id: "t4", category: "other", domain: "developer.chrome.com", title: "Chrome Extensions API (for tabdump)" }),
+      // Projects / Hubble (4) — a real cross-domain project cluster
+      makeTab({ id: "t1", category: "projects", domain: "github.com", title: "Biterate-7/hubble" }),
+      makeTab({ id: "t2", category: "projects", domain: "github.com", title: "hubble pull request #12" }),
+      makeTab({ id: "t3", category: "other", domain: "vercel.com", title: "hubble — deployment" }),
+      makeTab({ id: "t4", category: "other", domain: "developer.chrome.com", title: "Chrome Extensions API (for hubble)" }),
       // Research / University (2)
       makeTab({ id: "u1", category: "research", title: "University application checklist" }),
       makeTab({ id: "u2", category: "research", title: "University application essay" }),
@@ -467,7 +467,7 @@ describe("organizeTabsIntoSections — realistic mixed batch (20+ tabs)", () => 
       if (id.startsWith("p")) return ["School", "Physics"];
       if (id.startsWith("e")) return ["School", "Economics"];
       if (id.startsWith("h")) return ["School", "History"];
-      if (id.startsWith("t")) return ["Projects", "TabDump"];
+      if (id.startsWith("t")) return ["Projects", "Hubble"];
       if (id.startsWith("u")) return ["Research", "University"];
       if (id.startsWith("l")) return ["Research", "Law"];
       if (id.startsWith("s")) return ["Shopping"];
@@ -502,11 +502,11 @@ describe("organizeTabsIntoSections — realistic mixed batch (20+ tabs)", () => 
       expect(result.tabs.find((t) => t.id === id)!.sectionId).toBe(physics.id);
     }
 
-    // The cross-domain project cluster is grouped as one Projects/TabDump section.
-    const tabDump = result.sections.find((s) => s.name === "TabDump")!;
-    expect(tabDump).toBeDefined();
+    // The cross-domain project cluster is grouped as one Projects/Hubble section.
+    const hubble = result.sections.find((s) => s.name === "Hubble")!;
+    expect(hubble).toBeDefined();
     for (const id of ["t1", "t2", "t3", "t4"]) {
-      expect(result.tabs.find((t) => t.id === id)!.sectionId).toBe(tabDump.id);
+      expect(result.tabs.find((t) => t.id === id)!.sectionId).toBe(hubble.id);
     }
 
     // Other clearly-evidenced clusters also land correctly and distinctly.

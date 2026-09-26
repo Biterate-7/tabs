@@ -1,6 +1,6 @@
 "use client"
 
-import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, Radio, ScanSearch, ScrollText, Settings, Star, Waypoints } from "lucide-react"
+import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, Radio, ScanSearch, ScrollText, Search, Settings, Star, Waypoints } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
@@ -8,6 +8,8 @@ import { SidebarItem, SidebarSectionLabel } from "@/components/ui/sidebar-item"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { Kbd } from "@/components/ui/kbd"
+import { modKeyLabel } from "@/lib/keyboard"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -59,7 +61,7 @@ export type SidebarView =
  * They show the name. They previously showed an avatar and a count with the
  * name only in a tooltip, which made two workspaces whose names began with
  * the same letter indistinguishable — the seeded "Thesis Research" and
- * "TabDump Build" both rendered as a circled "T". The original reason was a
+ * "Hubble Build" both rendered as a circled "T". The original reason was a
  * test constraint (WorkspaceSwitcher also renders the current name, so a
  * plain `getByText(name)` could match twice), and that is a real constraint
  * but the wrong thing to spend legibility on. It is resolved here by giving
@@ -91,6 +93,8 @@ export function AppSidebar({
   onOpenSettings,
   onOpenWorkspace,
   currentView = "workspace",
+  onOpenSearch,
+  embedded = false,
 }: {
   workspaces: Workspace[]
   currentId: string
@@ -150,6 +154,15 @@ export function AppSidebar({
   onOpenWorkspace?: () => void
   /** The destination currently on screen, used to mark the active row. */
   currentView?: SidebarView
+  /** Opens the shell's command palette — the rail's search field is its front door. */
+  onOpenSearch?: () => void
+  /**
+   * Rendered inside another surface rather than as the window's own rail —
+   * the landing page's product demo. Positioned against its container instead
+   * of the viewport (the mobile drawer slides within that container), and
+   * without the account row: a demo must never offer a real sign-in.
+   */
+  embedded?: boolean
 }) {
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
   // The desktop icon-rail collapse has no business hiding labels inside the
@@ -177,15 +190,22 @@ export function AppSidebar({
         <div
           aria-hidden
           onClick={() => onMobileOpenChange(false)}
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          className={cn(embedded ? "absolute" : "fixed", "inset-0 z-30 bg-(--overlay) md:hidden")}
         />
       )}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-subtle bg-card transition-transform duration-(--duration-base) ease-(--ease-standard)",
+          /*
+            The rail, measured off the reference's navigation column: the card
+            tone, a 5% right hairline, 8px inner inset, 30px rows. It is the
+            quietest thing on screen on purpose — the view beside it is the
+            product.
+          */
+          "fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-subtle bg-sidebar transition-transform duration-(--duration-base) ease-(--ease-standard)",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
           "md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-[width]",
-          collapsed ? "md:w-14" : "md:w-60"
+          collapsed ? "md:w-14" : "md:w-60",
+          embedded && "absolute h-full md:relative md:top-auto"
         )}
         // Settings → Appearance → Layout → Sidebar density controls this var
         // (see resolve.ts). Only applied when the rail is actually showing
@@ -193,11 +213,12 @@ export function AppSidebar({
         // fixed w-14, which isn't a "density" the appearance system governs.
         style={!collapsed || mobileOpen ? { width: "var(--tabdump-sidebar-width)" } : undefined}
       >
-        <div className={cn("flex items-center gap-2 px-3 py-3", showLabels ? "justify-between" : "justify-center")}>
+        {/* Brand row: the mark in the logo's slot, at the logo's size. */}
+        <div className={cn("flex h-12 shrink-0 items-center gap-2 px-3", showLabels ? "justify-between" : "justify-center px-0")}>
           {showLabels && (
-            <span className="flex items-center gap-2 text-foreground">
-              <BrandMark />
-              <p className="text-body font-semibold tracking-tight">TabDump</p>
+            <span className="flex min-w-0 items-center gap-2 pl-1 text-foreground">
+              <BrandMark className="size-[18px]" />
+              <span className="font-display text-[15px] leading-none font-medium tracking-[-0.01em]">Hubble</span>
             </span>
           )}
           <IconButton
@@ -208,7 +229,24 @@ export function AppSidebar({
           </IconButton>
         </div>
 
-        <div className={cn("px-3 pb-1", railCollapsed && "w-full overflow-hidden px-2")}>
+        <div className={cn("flex shrink-0 flex-col gap-1.5 px-2 pb-2", railCollapsed && "items-center px-0")}>
+          {onOpenSearch &&
+            (railCollapsed ? (
+              <IconButton aria-label="Search" tooltip="Search" shortcut={`${modKeyLabel()} K`} onClick={onOpenSearch}>
+                <Search />
+              </IconButton>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenSearch}
+                aria-label="Search tabs, workspaces and commands"
+                className="flex h-[30px] w-full items-center gap-2 rounded-md border border-border bg-background px-2 text-left text-body text-tertiary transition-[border-color,color] duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                <Search className="size-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1 truncate">Search</span>
+                <Kbd keys={[modKeyLabel(), "K"]} />
+              </button>
+            ))}
           <WorkspaceSwitcher
             workspaces={workspaces}
             currentId={currentId}
@@ -224,11 +262,11 @@ export function AppSidebar({
 
         {/*
           Destinations, at the top where they are reachable, and scrollable
-          together with Spaces so a long workspace list never pushes the nav
-          off the bottom edge.
+          together with the workspace list so a long list never pushes the
+          nav off the bottom edge.
         */}
-        <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          <nav aria-label="Views" className="flex flex-col gap-0.5">
+        <div className={cn("min-h-0 flex-1 overflow-y-auto px-2 pb-2", railCollapsed && "px-1.5")}>
+          <nav aria-label="Views" className="flex flex-col gap-px">
             <SidebarItem
               label="Workspace"
               icon={<Boxes />}
@@ -278,7 +316,7 @@ export function AppSidebar({
           <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
             Agents
           </SidebarSectionLabel>
-          <nav aria-label="Agents" className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
+          <nav aria-label="Agents" className={cn("flex flex-col gap-px", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
             <SidebarItem
               label="Command Centre"
               icon={<Radio />}
@@ -298,9 +336,9 @@ export function AppSidebar({
           </nav>
 
           <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
-            Spaces
+            Workspaces
           </SidebarSectionLabel>
-          <div className={cn("flex flex-col gap-0.5", railCollapsed && "mt-4")}>
+          <div className={cn("flex flex-col gap-px", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
             {workspaces.map((w) => {
               const isActive = w.id === currentId
               const relationships = relationshipCounts[w.id] ?? 0
@@ -321,22 +359,19 @@ export function AppSidebar({
                         aria-label={`Switch to ${w.name}`}
                         aria-current={isActive ? "true" : undefined}
                         className={cn(
-                          "flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 text-left",
-                          "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-standard)",
-                          "outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-                          touch ? "h-11" : "h-9",
+                          "flex w-full items-center gap-2 rounded-xs border border-transparent px-2 text-left",
+                          "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-color)",
+                          "outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                          touch ? "h-11" : "h-[30px]",
                           railCollapsed && "justify-center px-0",
                           isActive
                             ? "bg-surface-selected text-foreground"
                             : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                         )}
                       >
-                        <WorkspaceAvatar workspace={w} size={20} />
-                        {showLabels && <span className="min-w-0 flex-1 truncate text-body-sm">{w.name}</span>}
+                        <WorkspaceAvatar workspace={w} size={16} />
+                        {showLabels && <span className="min-w-0 flex-1 truncate text-body">{w.name}</span>}
                         {showLabels && (
-                          /* Same measured reason as SidebarItem's trailing
-                             count: tertiary on the selected surface is
-                             4.36:1, under AA for 12px text. */
                           <span
                             className={cn(
                               "shrink-0 text-meta tabular-nums",
@@ -360,11 +395,10 @@ export function AppSidebar({
 
         {/*
           The foot holds only what belongs at a window's bottom edge: the
-          account, and Settings — which macOS itself keeps out of the main
-          navigation and under the app menu (`settings.md`). Everything a
-          person navigates to is above, out of the way of a dragged window.
+          account, and Settings. Everything a person navigates to is above,
+          out of the way of a dragged window.
         */}
-        <div className="flex flex-col gap-0.5 border-t border-subtle p-2">
+        <div className={cn("flex flex-col gap-px border-t border-subtle p-2", railCollapsed && "px-1.5")}>
           <SidebarItem
             label="Settings"
             icon={<Settings />}
@@ -376,7 +410,7 @@ export function AppSidebar({
           {/* Renders nothing at all when this deployment has no accounts
               configured, so the rail is unchanged from before accounts
               existed. See AccountSection. */}
-          <AccountSection showLabels={showLabels} />
+          {!embedded && <AccountSection showLabels={showLabels} />}
         </div>
       </aside>
     </>

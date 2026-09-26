@@ -3,7 +3,7 @@
 // chrome.* itself), so these tests prove the actual wiring — in particular
 // that the TABDUMP_BROWSER_COMMAND listener passes the *sender's* tab id
 // through to openUrl, which is what lets a normal left-click on a saved tab
-// navigate the TabDump tab itself instead of creating a new one.
+// navigate the Hubble tab itself instead of creating a new one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -18,8 +18,8 @@ function fakeTab(over) {
   return { id: 1, windowId: 1, url: "https://example.com", title: "Example", pinned: false, active: false, index: 0, ...over };
 }
 
-/** A tab already showing TabDump's app route — the only kind a dump can be handed to. */
-function tabDumpTab(over) {
+/** A tab already showing Hubble's app route — the only kind a dump can be handed to. */
+function hubbleTab(over) {
   return fakeTab({ url: `${TABDUMP_ORIGIN}/`, ...over });
 }
 
@@ -72,7 +72,7 @@ afterEach(() => {
 });
 
 // background.js registers four onMessage listeners, in source order:
-// dumpTabs, focusTabDump, checkImported, then the browser-command dispatcher.
+// dumpTabs, focusHubble, checkImported, then the browser-command dispatcher.
 async function getBrowserCommandListener() {
   await import("./background.js");
   return registeredListeners[registeredListeners.length - 1];
@@ -120,10 +120,10 @@ function dump(listener, payload = {}) {
 }
 
 describe("MSG_DUMP_TABS dispatch", () => {
-  it("delivers to an already-open TabDump tab and reports what the page actually accepted", async () => {
+  it("delivers to an already-open Hubble tab and reports what the page actually accepted", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, windowId: 10, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -146,7 +146,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
     );
   });
 
-  // Regression: activating or focusing the TabDump tab from the background
+  // Regression: activating or focusing the Hubble tab from the background
   // is what made a *working* dump look broken. Chrome dismisses an open
   // action popup the instant the foreground tab changes, so the popup was
   // routinely destroyed before it could render the result it had just been
@@ -156,7 +156,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("never activates or focuses anything as part of the dump itself", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -169,10 +169,10 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(chrome.windows.update).not.toHaveBeenCalled();
   });
 
-  it("creates a new TabDump tab inactive, so opening it can never close the popup", async () => {
+  it("creates a new Hubble tab inactive, so opening it can never close the popup", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return []; // no existing TabDump tab
+      if (query.url) return []; // no existing Hubble tab
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -191,15 +191,15 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(await responsePromise).toMatchObject({ ok: true, status: "done", count: 1, accepted: 1, focusTabId: 99 });
   });
 
-  it("prefers the currently active TabDump tab over a stale background one when several are open", async () => {
+  it("prefers the currently active Hubble tab over a stale background one when several are open", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
       if (query.url) {
         return [
           // Listed first (lower windowId/tab-index) but not the tab the
           // user is actually looking at right now.
-          tabDumpTab({ id: 7, windowId: 10, active: false }),
-          tabDumpTab({ id: 42, windowId: 20, active: true }),
+          hubbleTab({ id: 7, windowId: 10, active: false }),
+          hubbleTab({ id: 42, windowId: 20, active: true }),
         ];
       }
       return [];
@@ -249,7 +249,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("treats a delivery the page never acked as a failure, not a success", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -268,7 +268,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("treats a pre-handshake content script's bare (undefined) answer as unproven rather than delivered", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -286,7 +286,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("retries in a freshly opened tab when the tab it reused turns out to be unusable", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -307,7 +307,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("reports nothing-imported — never a zero-count success — when the page acks but takes no tabs", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport(0);
@@ -320,7 +320,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("reports a partial import distinctly from a clean one", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" }), fakeTab({ id: 2, url: "https://b.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport(1);
@@ -339,7 +339,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.windowId === 3) return [fakeTab({ id: 1, windowId: 3, url: "https://right-window.example" })];
       if (query.currentWindow) return [fakeTab({ id: 2, windowId: 9, url: "https://wrong-window.example" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -353,7 +353,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("falls back to the inferred current window only when no window is named", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 2, windowId: 9, url: "https://fallback.example" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -374,7 +374,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
           fakeTab({ id: 4, url: "https://b.com" }),
         ];
       }
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -389,7 +389,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("reports content-script-missing, not a generic delivery failure, when no content script ever answers", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -410,7 +410,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
     expect(chrome.scripting.executeScript).toHaveBeenCalled();
   });
 
-  it("reports tab-open-failed, distinct from delivery-failed, when opening the TabDump tab itself throws", async () => {
+  it("reports tab-open-failed, distinct from delivery-failed, when opening the Hubble tab itself throws", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
       if (query.url) return [];
@@ -459,7 +459,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("rejects a second dump started while the first is still running, instead of letting them race", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     // Delivery never resolves on its own here — held open deliberately so
@@ -533,7 +533,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("persists a running record with a phase, then a terminal one, so a reopened popup can follow along", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -560,7 +560,7 @@ describe("MSG_DUMP_TABS dispatch", () => {
   it("never throws or double-responds when the popup's message port is already closed", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
     ackEveryImport();
@@ -660,20 +660,20 @@ describe("MSG_FOCUS_TABDUMP dispatch", () => {
 });
 
 // Reproduces the exact reported symptom end-to-end: Chrome starts with no
-// TabDump tab open, the user dumps a normal set of tabs, and the popup is
+// Hubble tab open, the user dumps a normal set of tabs, and the popup is
 // allowed to disappear partway through (simulated here by making
 // sendResponse throw, the same signature a closed message port produces)
 // without that stopping the dump from actually finishing and delivering
-// the payload to the TabDump page.
+// the payload to the Hubble page.
 describe("the dump does not depend on the popup surviving", () => {
   function makeTabs(count) {
     return Array.from({ length: count }, (_, i) => fakeTab({ id: i + 1, url: `https://site${i}.example.com`, title: `Site ${i}` }));
   }
 
-  it("creates the TabDump tab, delivers the payload, and reaches 'done' in storage even though the popup is already gone by the time sendResponse would fire", async () => {
+  it("creates the Hubble tab, delivers the payload, and reaches 'done' in storage even though the popup is already gone by the time sendResponse would fire", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return makeTabs(12);
-      if (query.url) return []; // no existing TabDump tab — must create one
+      if (query.url) return []; // no existing Hubble tab — must create one
       return [];
     });
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 500, windowId: 10, url: TABDUMP_ORIGIN }));
@@ -690,7 +690,7 @@ describe("the dump does not depend on the popup surviving", () => {
     await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
     chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](500, { status: "complete" });
 
-    // The dump must run to completion regardless — the TabDump page must
+    // The dump must run to completion regardless — the Hubble page must
     // actually receive the tabs...
     await vi.waitFor(() => {
       expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
@@ -721,7 +721,7 @@ describe("the dump does not depend on the popup surviving", () => {
       registeredListeners = [];
       chrome.tabs.query.mockImplementation(async (query) => {
         if (query.currentWindow) return makeTabs(count);
-        if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+        if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
         return [];
       });
       ackEveryImport();
@@ -733,7 +733,7 @@ describe("the dump does not depend on the popup surviving", () => {
     }
   });
 
-  it("reports content-script-missing (not a hang) when a newly created tab's content script never attaches — e.g. the TabDump server is unreachable", async () => {
+  it("reports content-script-missing (not a hang) when a newly created tab's content script never attaches — e.g. the Hubble server is unreachable", async () => {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, url: "https://a.com" })];
       if (query.url) return [];
@@ -761,7 +761,7 @@ describe("the dump does not depend on the popup surviving", () => {
     });
   });
 
-  it("still completes successfully when the TabDump page takes several seconds to load, well under the timeout", async () => {
+  it("still completes successfully when the Hubble page takes several seconds to load, well under the timeout", async () => {
     vi.useFakeTimers();
     try {
       chrome.tabs.query.mockImplementation(async (query) => {
@@ -867,15 +867,15 @@ describe("TABDUMP_BROWSER_COMMAND dispatch", () => {
 
 // The exact production failure this suite exists to keep fixed:
 //
-//   "TabDump didn't respond in that tab.
+//   "Hubble didn't respond in that tab.
 //    Could not establish connection. Receiving end does not exist."
 //
 // Reported from a second computer, on a fresh install, against the real
 // tabsdump.vercel.app package. That package was current and its manifest did
 // match the production origin; what was missing was the receiver itself.
 // Chrome injects a manifest-declared content script only as a page loads, so
-// the TabDump tab a new user already has open when they follow onboarding's
-// last step ("Return to TabDump and click the TabDump extension") has none in
+// the Hubble tab a new user already has open when they follow onboarding's
+// last step ("Return to Hubble and click the Hubble extension") has none in
 // it — and no number of retries can put one there.
 //
 // Every test here drives chrome.tabs.sendMessage to reject with Chrome's
@@ -907,17 +907,17 @@ describe("recovering a tab whose content script was never injected", () => {
     return injected;
   }
 
-  /** The window the popup was opened over, plus one already-open TabDump tab. */
-  function oneOpenTabDumpTab(dumpedUrl = "https://a.com") {
+  /** The window the popup was opened over, plus one already-open Hubble tab. */
+  function oneOpenHubbleTab(dumpedUrl = "https://a.com") {
     chrome.tabs.query.mockImplementation(async (query) => {
       if (query.currentWindow) return [fakeTab({ id: 1, windowId: 10, url: dumpedUrl })];
-      if (query.url) return [tabDumpTab({ id: 42, windowId: 20 })];
+      if (query.url) return [hubbleTab({ id: 42, windowId: 20 })];
       return [];
     });
   }
 
   it("injects the content script into the already-open tab and delivers there, instead of failing the dump", async () => {
-    oneOpenTabDumpTab();
+    oneOpenHubbleTab();
     tabWithNoReceiverUntilInjected();
 
     const response = await dump(await getDumpTabsListener());
@@ -929,7 +929,7 @@ describe("recovering a tab whose content script was never injected", () => {
       target: { tabId: 42 },
       files: [CONTENT_SCRIPT_FILE],
     });
-    // ...and without a second TabDump tab appearing out of nowhere.
+    // ...and without a second Hubble tab appearing out of nowhere.
     expect(chrome.tabs.create).not.toHaveBeenCalled();
   });
 
@@ -943,7 +943,7 @@ describe("recovering a tab whose content script was never injected", () => {
   });
 
   it("falls back to a fresh tab when the existing tab cannot be injected into, and delivers there", async () => {
-    oneOpenTabDumpTab();
+    oneOpenHubbleTab();
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
 
     // The pre-existing tab refuses injection; the freshly created one has a
@@ -963,7 +963,7 @@ describe("recovering a tab whose content script was never injected", () => {
   });
 
   it("never reports success when neither the injected tab nor a fresh one can receive the import", async () => {
-    oneOpenTabDumpTab();
+    oneOpenHubbleTab();
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
     tabWithNoReceiverUntilInjected({ injectable: false });
 
@@ -989,7 +989,7 @@ describe("recovering a tab whose content script was never injected", () => {
   });
 
   it("keeps 'no receiver' distinct from 'a receiver that answered and said no'", async () => {
-    oneOpenTabDumpTab();
+    oneOpenHubbleTab();
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
     // A content script IS present here; the page behind it never became
     // ready. Injecting another copy would fix nothing, so the repair must not
@@ -1005,7 +1005,7 @@ describe("recovering a tab whose content script was never injected", () => {
   });
 
   it("does not mistake a closed message port for a missing receiver", async () => {
-    oneOpenTabDumpTab();
+    oneOpenHubbleTab();
     chrome.tabs.create.mockResolvedValue(fakeTab({ id: 99, windowId: 10, url: TABDUMP_ORIGIN }));
     // A receiver existed and then went away. Re-injecting would not bring the
     // page back, so this stays a plain delivery failure.
@@ -1024,12 +1024,12 @@ describe("recovering a tab whose content script was never injected", () => {
   it("logs the delivery target as an origin and a tab id, never the page's url", async () => {
     const logged = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      oneOpenTabDumpTab("https://private.example/secret-doc");
+      oneOpenHubbleTab("https://private.example/secret-doc");
       tabWithNoReceiverUntilInjected();
 
       await dump(await getDumpTabsListener());
 
-      const sendLines = logged.mock.calls.filter(([stage]) => stage === "[TabDump] send-message");
+      const sendLines = logged.mock.calls.filter(([stage]) => stage === "[Hubble] send-message");
       expect(sendLines.length).toBeGreaterThan(0);
       expect(sendLines[0][1]).toMatchObject({ tabId: 42, windowId: 20, origin: TABDUMP_ORIGIN, attempt: 1 });
 

@@ -2,8 +2,10 @@ import { SYSTEM_UI_FONT_ID } from "./fonts";
 import { DEFAULT_THEME_ID } from "./themes";
 import type { AppearanceSettings, BackgroundSettings, LayoutSettings, MotionSettings, ShapeSettings, TypographySettings } from "./types";
 
+// The product face is the platform UI font, as in the reference product;
+// Geist is the display (brand) face and stays one pick away.
 export const DEFAULT_TYPOGRAPHY: TypographySettings = {
-  uiFont: "geist",
+  uiFont: "system-ui",
   contentFont: "geist",
   monoFont: "geist-mono",
   fontSize: 15,

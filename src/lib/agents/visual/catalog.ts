@@ -15,7 +15,7 @@ import {
 import type { AgentVisualIdentity } from "./types";
 
 /**
- * Which providers TabDump ships a visual identity for.
+ * Which providers Hubble ships a visual identity for.
  *
  * **The only provider-aware module in the visual layer**, and the mirror of
  * `connectors/catalog.ts` in every respect: the registry, the

@@ -13,11 +13,11 @@ import { toPublicUser } from "@/lib/auth/types";
 export const runtime = "nodejs";
 
 /**
- * Step two of a sign-in: exchange a Google credential for a TabDump
+ * Step two of a sign-in: exchange a Google credential for a Hubble
  * session.
  *
- *   credential -> verify against Google's keys -> find/create TabDump user
- *              -> mint TabDump session -> HttpOnly cookie
+ *   credential -> verify against Google's keys -> find/create Hubble user
+ *              -> mint Hubble session -> HttpOnly cookie
  *
  * Nothing about the request body is trusted. The only identity that reaches
  * the account layer is the one lifted off a token whose signature, issuer,

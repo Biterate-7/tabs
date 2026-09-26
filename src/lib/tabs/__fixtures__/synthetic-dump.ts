@@ -68,7 +68,7 @@ const TOPICS: Topic[] = [
       "Diagnosing a hydration mismatch in React",
       "TypeScript generics for reusable components",
       "Vercel deployment build failing on install",
-      "TabDump repository - main branch",
+      "Hubble repository - main branch",
       "useEffect cleanup function patterns",
       "Choosing CSS grid over flexbox",
       "React Server Components data fetching",

@@ -25,7 +25,7 @@ import type {
  * A work item is an *observational* object. It records that some unit of work
  * exists and what state it is in; it is never a thing this app can run. There
  * is no `execute`, `start`, `retry` or `assign` here, and none may be added:
- * the moment a work item can be acted on, TabDump stops observing agents and
+ * the moment a work item can be acted on, Hubble stops observing agents and
  * starts driving them, which is a categorically different product.
  */
 
@@ -96,7 +96,7 @@ export function createWorkItem(
   // An item discovered already active started now, as far as anything here
   // can honestly say. An item discovered already FINISHED gets no startedAt:
   // it plainly started at some point, but nothing observed when, and stamping
-  // `now` would assert a beginning that is simply the moment TabDump happened
+  // `now` would assert a beginning that is simply the moment Hubble happened
   // to look. Between two wrong answers, the one that claims less wins — the
   // same reasoning that makes Claude Code's `Write` map to `edited`.
   if (status === "active") workItem.startedAt = now;

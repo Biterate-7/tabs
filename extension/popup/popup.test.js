@@ -140,7 +140,7 @@ describe("popup dump-failure reporting", () => {
       expect(document.getElementById("state-error").hidden).toBe(false);
     });
 
-    expect(document.getElementById("error-message").textContent).toBe("Couldn't open or find the TabDump tab.");
+    expect(document.getElementById("error-message").textContent).toBe("Couldn't open or find the Hubble tab.");
     expect(document.getElementById("error-detail").hidden).toBe(false);
     expect(document.getElementById("error-detail").textContent).toBe(
       "This browser API function requires a user gesture to run."
@@ -162,7 +162,7 @@ describe("popup dump-failure reporting", () => {
     });
 
     expect(document.getElementById("error-message").textContent).toBe(
-      "TabDump didn't respond in that tab. Reload the TabDump page and try again."
+      "Hubble didn't respond in that tab. Reload the Hubble page and try again."
     );
     expect(document.getElementById("error-detail").textContent).toBe(
       "Could not establish connection. Receiving end does not exist."
@@ -179,7 +179,7 @@ describe("popup dump-failure reporting", () => {
     });
 
     expect(document.getElementById("error-message").textContent).toBe(
-      "Lost contact with the TabDump extension. Reopen this popup to see how the dump ended."
+      "Lost contact with the Hubble extension. Reopen this popup to see how the dump ended."
     );
     expect(document.getElementById("error-detail").textContent).toBe("Extension context invalidated.");
   });
@@ -193,7 +193,7 @@ describe("popup dump-failure reporting", () => {
       status: "error",
       reason: "page-not-ready",
       count: 3,
-      detail: 'TabDump page reported "page-not-ready".',
+      detail: 'Hubble page reported "page-not-ready".',
     });
     await loadPopup();
 
@@ -203,11 +203,11 @@ describe("popup dump-failure reporting", () => {
     });
 
     expect(document.getElementById("error-message").textContent).toBe(
-      "TabDump opened but never confirmed the import. Reload the TabDump page and try again."
+      "Hubble opened but never confirmed the import. Reload the Hubble page and try again."
     );
   });
 
-  it("reports an unreachable TabDump origin distinctly from an unresponsive page", async () => {
+  it("reports an unreachable Hubble origin distinctly from an unresponsive page", async () => {
     chrome.runtime.sendMessage.mockResolvedValue({
       ok: false,
       status: "error",
@@ -223,7 +223,7 @@ describe("popup dump-failure reporting", () => {
     });
 
     expect(document.getElementById("error-message").textContent).toBe(
-      "TabDump didn't finish loading. Check your connection and try again."
+      "Hubble didn't finish loading. Check your connection and try again."
     );
   });
 
@@ -244,7 +244,7 @@ describe("popup dump-failure reporting", () => {
 
     expect(document.getElementById("state-success").hidden).toBe(true);
     expect(document.getElementById("error-message").textContent).toBe(
-      "TabDump received the tabs but couldn't import any of them."
+      "Hubble received the tabs but couldn't import any of them."
     );
   });
 
@@ -267,7 +267,7 @@ describe("popup dump-failure reporting", () => {
   });
 });
 
-// Regression: the dump used to end with background.js activating the TabDump
+// Regression: the dump used to end with background.js activating the Hubble
 // tab and focusing its window. Chrome closes an open action popup the moment
 // the foreground tab changes, so that focus routinely destroyed the popup
 // before it could paint the result it had just been handed — the user saw
@@ -292,7 +292,7 @@ describe("window targeting", () => {
 });
 
 describe("focus handoff", () => {
-  it("renders the result first, and only then asks the background to focus the TabDump tab", async () => {
+  it("renders the result first, and only then asks the background to focus the Hubble tab", async () => {
     vi.useFakeTimers();
     try {
       chrome.runtime.sendMessage.mockResolvedValue({
@@ -456,7 +456,7 @@ describe("in-flight progress", () => {
 
     fireStorageChange({ status: "running", phase: "delivering", startedAt: Date.now() });
     await vi.waitFor(() => {
-      expect(document.getElementById("dumping-message").textContent).toBe("Handing your tabs to TabDump…");
+      expect(document.getElementById("dumping-message").textContent).toBe("Handing your tabs to Hubble…");
     });
 
     fireStorageChange({ status: "running", phase: "retrying-in-new-tab", startedAt: Date.now() });
@@ -518,7 +518,7 @@ describe("recovering dump state on a fresh popup open", () => {
       expect(document.getElementById("state-error").hidden).toBe(false);
     });
     expect(document.getElementById("error-message").textContent).toBe(
-      "TabDump didn't respond in that tab. Reload the TabDump page and try again."
+      "Hubble didn't respond in that tab. Reload the Hubble page and try again."
     );
   });
 

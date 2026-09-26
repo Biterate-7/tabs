@@ -6,10 +6,10 @@ import type { AgentVisualIdentity } from "./types";
  *
  * The mechanism, not the contents. This file names no provider: it holds a
  * map, a fallback and a lookup, and `./catalog.ts` is the one module that
- * says which providers TabDump ships identities for — exactly mirroring the
+ * says which providers Hubble ships identities for — exactly mirroring the
  * split between `connectors/registry.ts` and `connectors/catalog.ts`, and for
  * exactly the same reason. A surface that wants to draw an agent asks here
- * and gets an identity; whether TabDump has ever heard of that provider is
+ * and gets an identity; whether Hubble has ever heard of that provider is
  * not the caller's problem.
  *
  * ## The lookup never fails
@@ -34,7 +34,7 @@ import type { AgentVisualIdentity } from "./types";
  * rendering suggests something has gone wrong.
  */
 export const FALLBACK_VISUAL_IDENTITY: AgentVisualIdentity = {
-  // `custom` is the catalogue's own name for "an agent TabDump did not ship",
+  // `custom` is the catalogue's own name for "an agent Hubble did not ship",
   // which is what an unrecognised provider is.
   id: "custom",
   displayName: "Agent",

@@ -44,7 +44,7 @@ export function BringLocalDataDialog({
         <DialogHeader>
           <DialogTitle>Bring your {countLabel} in?</DialogTitle>
           <DialogDescription>
-            This browser already has {countLabel} saved from before you signed in. TabDump can copy
+            This browser already has {countLabel} saved from before you signed in. Hubble can copy
             them into your account — nothing is moved or deleted, so they stay available when you
             sign out.
           </DialogDescription>

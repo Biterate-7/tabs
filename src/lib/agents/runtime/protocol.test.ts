@@ -56,6 +56,25 @@ describe("what the parser accepts", () => {
         observationAgentId: "agent",
         observationRunId: "run",
       },
+      detect_providers: { name: "detect_providers" },
+      connect_provider: { name: "connect_provider", provider: "gemini" },
+      sync_session_context: {
+        name: "sync_session_context",
+        sessionId: "s1",
+        snapshot: { workspace: { id: "w1", name: "Launch Plan", tabs: [], createdAt: 1, updatedAt: 2 }, collections: [], dependencies: [] },
+      },
+      complete_context_action: {
+        name: "complete_context_action",
+        sessionId: "s1",
+        actionId: "a1",
+        outcome: { ok: true, collectionId: "c1" },
+      },
+      authenticate_provider: {
+        name: "authenticate_provider",
+        provider: "gemini",
+        methodId: "oauth-personal",
+      },
+      disconnect_provider: { name: "disconnect_provider", provider: "gemini" },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {
@@ -122,7 +141,7 @@ describe("what the parser refuses", () => {
     expect(parseRuntimeCommand({ name: "send_message", sessionId: "s1", text: "   " })).toBeNull();
   });
 
-  it("refuses a provider that is not one TabDump knows", () => {
+  it("refuses a provider that is not one Hubble knows", () => {
     expect(parseRuntimeCommand({ name: "create_session", provider: "anything" })).toBeNull();
     expect(parseRuntimeCommand({ name: "create_session" })).toBeNull();
   });
@@ -237,6 +256,33 @@ describe("errors", () => {
       ]) {
         expect(message).not.toContain(forbidden);
       }
+    }
+  });
+});
+
+describe("completing an approved plan (Phase J.5)", () => {
+  const base = { name: "complete_context_action", sessionId: "s1", actionId: "a1" };
+
+  it("carries the plan's hash and the ids it created — and nothing else", () => {
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: true, planHash: "h-1", created: ["c9", "c10"], operations: ["x"] } })).toEqual({
+      ...base,
+      outcome: { ok: true, planHash: "h-1", created: ["c9", "c10"] },
+    });
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: true, planHash: "h-1", created: [] } })).toMatchObject({ outcome: { created: [] } });
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: false, failedAt: 2 } })).toEqual({ ...base, outcome: { ok: false, failedAt: 2 } });
+    // A failure index outside any plan is dropped, not trusted.
+    expect(parseRuntimeCommand({ ...base, outcome: { ok: false, failedAt: 99 } })).toEqual({ ...base, outcome: { ok: false } });
+  });
+
+  it("refuses a malformed plan completion", () => {
+    for (const outcome of [
+      { ok: true, planHash: "", created: [] },
+      { ok: true, planHash: "h", created: "c9" },
+      { ok: true, planHash: "h", created: [7] },
+      { ok: true, planHash: "h", created: Array.from({ length: 21 }, (_, index) => `c${index}`) },
+      { ok: "yes", planHash: "h", created: [] },
+    ]) {
+      expect(parseRuntimeCommand({ ...base, outcome }), JSON.stringify(outcome)).toBeNull();
     }
   });
 });

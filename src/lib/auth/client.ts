@@ -3,7 +3,7 @@ import { apiUrl } from "@/lib/platform/api-base";
 import type { PublicUser } from "./types";
 
 /**
- * Browser-side calls to TabDump's own auth endpoints.
+ * Browser-side calls to Hubble's own auth endpoints.
  *
  * Every one of these is a same-origin fetch that relies entirely on the
  * HttpOnly session cookie the server sets — there is no token to read,
@@ -109,7 +109,7 @@ export async function requestLoginNonce(): Promise<{ ok: true; nonce: string } |
   }
 }
 
-/** Hands the Google credential to our backend, which verifies it and (only then) issues a TabDump session. */
+/** Hands the Google credential to our backend, which verifies it and (only then) issues a Hubble session. */
 export async function exchangeGoogleCredential(
   credential: string
 ): Promise<{ ok: true; user: PublicUser; created: boolean } | { ok: false; error: AuthRequestError }> {

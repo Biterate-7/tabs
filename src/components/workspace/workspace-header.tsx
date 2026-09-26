@@ -63,26 +63,29 @@ export function WorkspaceHeader({
   const tabCount = tabs.length
 
   async function handleExportTxt() {
-    const ok = await downloadTextFile("tabdump-export.txt", buildExportText(tabs))
+    const ok = await downloadTextFile("hubble-export.txt", buildExportText(tabs))
     if (ok) toast.success("Workspace exported")
     else toast.error("Couldn't export workspace")
   }
 
   return (
-    <header className="border-b border-subtle">
-      <div className="mx-auto max-w-6xl px-6 py-4">
-        <div className="flex flex-wrap items-center gap-3">
+    // The view bar: 48px, full width, a hairline under it. Identity on the
+    // left, quiet 28px tools and the search field on the right — the same
+    // bar every Hubble destination opens with.
+    <header className="sticky top-0 z-20 border-b border-border bg-background">
+      <div className="px-4 py-2 sm:py-0">
+        <div className="flex min-h-12 flex-wrap items-center gap-2">
           {onOpenSidebar && (
             <IconButton aria-label="Open sidebar" tooltip="Spaces" onClick={onOpenSidebar} className="md:hidden">
               <PanelLeftOpen />
             </IconButton>
           )}
 
-          <div className="mr-auto">
-            {/* Workspace identity now lives in the persistent sidebar (see
-               AppSidebar) — this header only needs the tab count, not a
-               second copy of the current workspace's name. */}
-            <p className="text-meta text-tertiary">
+          <div className="mr-auto flex min-w-0 items-baseline gap-2">
+            {currentWorkspace && (
+              <span className="truncate text-h2 text-foreground">{currentWorkspace.name}</span>
+            )}
+            <p className="shrink-0 text-meta text-tertiary">
               {tabCount} tab{tabCount === 1 ? "" : "s"}
             </p>
           </div>
@@ -129,7 +132,7 @@ export function WorkspaceHeader({
                cluster above — Clear is irreversible in a way Organize/Graph/
                Cleanup/Export aren't, and shouldn't sit flush against them at
                equal visual weight. */}
-            <div aria-hidden className="mx-1 h-5 w-px bg-border" />
+            <div aria-hidden className="mx-1 h-4 w-px bg-border" />
             <IconButton
               aria-label="Clear"
               tooltip="Remove all tabs in this workspace"
@@ -184,7 +187,7 @@ export function WorkspaceHeader({
             onArrowDown={onSearchArrowDown}
             onArrowUp={onSearchArrowUp}
             onEnter={onSearchEnter}
-            className="order-last w-full basis-full sm:order-none sm:w-64 sm:basis-auto"
+            className="order-last w-full basis-full sm:order-none sm:ml-1 sm:w-56 sm:basis-auto"
           />
         </div>
       </div>

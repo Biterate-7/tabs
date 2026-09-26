@@ -1,29 +1,29 @@
-# TabDump browser extension
+# Hubble browser extension
 
 A thin Manifest V3 Chrome/Chromium extension: collects the current window's
-tabs and hands them to the TabDump web app via its existing ingestion
+tabs and hands them to the Hubble web app via its existing ingestion
 pipeline. No build step — plain JavaScript, loaded unpacked.
 
 ## Load it locally
 
-1. Make sure the TabDump web app is running (`npm run dev`, default `http://localhost:3000`).
+1. Make sure the Hubble web app is running (`npm run dev`, default `http://localhost:3000`).
 2. Open `chrome://extensions`.
 3. Enable "Developer mode" (top right).
 4. Click "Load unpacked" and select this `extension/` directory.
-5. Click the TabDump icon in the toolbar, then "Dump Tabs →".
+5. Click the Hubble icon in the toolbar, then "Dump tabs →".
 
 ## How it works
 
 ```
 popup click → background.js collects + filters the named window's tabs
-            → finds an app-route TabDump tab, or opens one
+            → finds an app-route Hubble tab, or opens one
             → content-script.js posts the payload into the page AND HOLDS
               THE MESSAGE CHANNEL OPEN
             → src/hooks/use-extension-import.ts feeds the existing
               parse/categorize/dedupe pipeline, then ACKS with the number
               of tabs it actually accepted
             → only that ack completes the delivery; the popup reports it
-popup renders the result → THEN asks background.js to focus the TabDump tab
+popup renders the result → THEN asks background.js to focus the Hubble tab
 ```
 
 Three properties of that flow are load-bearing, each fixing a way the dump
@@ -36,7 +36,7 @@ event — measured at 1–105ms after `loadEventEnd` against a production build
 over localhost — while background.js delivers at exactly `load` (that's what
 `status: "complete"` means). So on every freshly opened tab the payload was
 posted into a document with nothing listening, was lost, and the dump
-reported success anyway. A machine that already had a warm TabDump tab open
+reported success anyway. A machine that already had a warm Hubble tab open
 reused it and never hit this; a fresh install always did. The content script
 now holds the batch until the page announces `TABDUMP_PAGE_READY` and acks
 it, so ordering stops mattering, and a page that never becomes ready
@@ -50,7 +50,7 @@ prefers an app-route tab and opens one when there isn't any; the ack is the
 backstop if that preference is ever wrong.
 
 **Focus belongs to the popup.** Chrome dismisses an open action popup the
-instant the foreground tab changes, so background.js activating the TabDump
+instant the foreground tab changes, so background.js activating the Hubble
 tab at the end of a dump destroyed the popup before it could paint the
 result — the user saw "Dumping tabs…", then nothing, even when the dump had
 worked. The popup now renders first and requests focus (`TABDUMP_FOCUS`)
@@ -68,13 +68,13 @@ Opening the popup also runs a second, read-only round trip so it can show
 sends the new ones:
 
 ```
-popup opens → background.js asks an *already-open* TabDump tab
+popup opens → background.js asks an *already-open* Hubble tab
               (never opens one just to check)
             → content-script.js relays the candidate urls into the page
             → src/hooks/use-extension-workspace-query.ts compares them
               against the currently selected workspace (same normalizeUrl
               the workspace's own duplicate detection uses) and replies
-            → popup falls back to the plain wording if no TabDump tab is
+            → popup falls back to the plain wording if no Hubble tab is
               open, or it doesn't answer in time
 ```
 
@@ -129,7 +129,7 @@ No new host permissions, `scripting`, or broader content-script matches were
 added; opening/closing/pinning tabs and creating windows doesn't need to
 read a page's content, only to manage the tab/window objects themselves.
 
-## Changing the TabDump origin
+## Changing the Hubble origin
 
 **Production:** edit `CANONICAL_PRODUCTION_ORIGIN` in
 `../scripts/build-extension-zip.mjs` — that's the single source of truth for
@@ -144,7 +144,7 @@ can't read from `config.js`).
 
 ## Regenerating icons
 
-The toolbar/store icons in `icons/` (16/32/48/128px) are rasterized from the
-TabDump logo at `src/app/icon.svg` — the same mark used for the web app's
-favicon. Run `node extension/scripts/generate-icons.mjs` after changing that
-SVG to regenerate all four PNGs.
+The toolbar/store icons in `icons/` (16/32/48/128px) are generated from the
+Hubble logo at `brand/hubble-logo-source.webp` — the same source as the web
+app's favicon and the desktop app icon. Run `npm run brand:assets` from the
+repository root to regenerate them (see `brand/README.md`).

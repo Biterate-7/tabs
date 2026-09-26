@@ -7,22 +7,22 @@ import { isSafeOpenUrl } from "./protocol"
 import type { BrowserTabInfo } from "./protocol"
 
 /**
- * Opens a URL the user clicked on in TabDump (a saved tab card, an Ask Tabs
+ * Opens a URL the user clicked on in Hubble (a saved tab card, an Ask Tabs
  * source/search result, search-enter, "open selected", etc).
  *
  * On the desktop app this always hands the URL to the user's default
  * browser and stops there. That is a deliberate product boundary, not a
- * limitation: the web behaviour below reuses the tab TabDump is running in,
+ * limitation: the web behaviour below reuses the tab Hubble is running in,
  * and doing the equivalent on desktop would navigate the application window
- * to somebody else's website — turning TabDump into a bad browser and
+ * to somebody else's website — turning Hubble into a bad browser and
  * leaving no way back to the workspace. A saved tab belongs in the browser
  * the user actually chose. (src-tauri/src/lib.rs additionally refuses any
  * navigation away from the app origin, so a link that never reaches this
  * function still cannot strand the window.)
  *
- * On the web, by default this reuses the browser tab TabDump itself is
+ * On the web, by default this reuses the browser tab Hubble itself is
  * running in — navigating it to `url` — instead of opening a new one, so
- * clicking a saved tab replaces TabDump with that page rather than piling up
+ * clicking a saved tab replaces Hubble with that page rather than piling up
  * another tab. If a tab already showing `url` exists elsewhere
  * (extension-connected only), that existing tab is activated instead, so we
  * never leave a duplicate open. Pass `{ newTab: true }` for flows that can't
@@ -43,7 +43,7 @@ export async function openTab(url: string, options?: { newTab?: boolean }): Prom
   // The web fallback navigates the page itself, and
   // `javascript://example.com/%0aalert(1)` is a valid URL with a dotted
   // hostname — `//…` comments out the rest of the line, `%0a` is a newline —
-  // so handing it to location.assign() would execute script in TabDump's own
+  // so handing it to location.assign() would execute script in Hubble's own
   // origin. Checking here rather than in front of each sink means this also
   // covers tabs already saved in a user's local storage from before the
   // parser started rejecting these (see parseSingleUrl), which is the case

@@ -2,53 +2,45 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>TabDump</title>
+    <title>Hubble</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <div class="popup">
       <header class="popup__header">
-        <svg
-          class="popup__brand-mark"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-        </svg>
-        <span class="popup__title">TabDump</span>
+        <img class="popup__brand-mark" src="../icons/icon48.png" alt="" aria-hidden="true" />
+        <span class="popup__title">Hubble</span>
+        <span class="popup__subtitle">This window</span>
       </header>
 
-      <div id="state-loading" class="popup__state">
-        <p class="popup__muted">Detecting tabs…</p>
-      </div>
+      <div class="popup__body">
+        <div id="state-loading" class="popup__state">
+          <p class="popup__muted">Detecting tabs…</p>
+        </div>
 
-      <div id="state-ready" class="popup__state" hidden>
-        <p class="popup__count"><span id="tab-count">0</span> tabs detected</p>
-        <p id="import-status" class="popup__muted" hidden></p>
-        <ul id="tab-preview" class="popup__preview"></ul>
-        <button id="dump-button" class="popup__button">Dump Tabs →</button>
-      </div>
+        <div id="state-ready" class="popup__state" hidden>
+          <p class="popup__count"><span id="tab-count">0</span> tabs detected</p>
+          <p id="import-status" class="popup__muted" hidden></p>
+          <ul id="tab-preview" class="popup__preview"></ul>
+          <button id="dump-button" class="popup__button">Dump tabs →</button>
+        </div>
 
-      <div id="state-dumping" class="popup__state" hidden>
-        <p class="popup__muted" id="dumping-message">Dumping tabs…</p>
-        <p class="popup__muted popup__detail">You can close this popup — the dump keeps running.</p>
-      </div>
+        <div id="state-dumping" class="popup__state" hidden>
+          <p class="popup__progress"><span class="popup__spinner" aria-hidden="true"></span><span id="dumping-message">Dumping tabs…</span></p>
+          <p class="popup__muted popup__detail">You can close this popup — the dump keeps running.</p>
+        </div>
 
-      <div id="state-success" class="popup__state" hidden>
-        <p class="popup__success">✓ Dumped <span id="success-count">0</span> tabs</p>
-        <p class="popup__muted popup__detail" id="success-detail" hidden></p>
-        <button id="open-button" class="popup__button">Open TabDump</button>
-      </div>
+        <div id="state-success" class="popup__state" hidden>
+          <p class="popup__success">Dumped <span id="success-count">0</span> tabs</p>
+          <p class="popup__muted popup__detail" id="success-detail" hidden></p>
+          <button id="open-button" class="popup__button">Open Hubble</button>
+        </div>
 
-      <div id="state-error" class="popup__state" hidden>
-        <p class="popup__error" id="error-message">Something went wrong.</p>
-        <p class="popup__muted popup__detail" id="error-detail" hidden></p>
-        <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
+        <div id="state-error" class="popup__state" hidden>
+          <p class="popup__error" id="error-message">Something went wrong.</p>
+          <p class="popup__muted popup__detail" id="error-detail" hidden></p>
+          <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
+        </div>
       </div>
     </div>
     <script type="module" src="popup.js"></script>

@@ -44,14 +44,14 @@ describe("the handshake", () => {
       status: scriptedStatus({
         executable: false,
         environment: "hosted",
-        detail: "Agents cannot run on a hosted TabDump deployment.",
+        detail: "Agents cannot run on a hosted Hubble deployment.",
       }),
     })
     const { result } = mount(runtime)
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.executable).toBe(false)
-    expect(result.current.status?.detail).toBe("Agents cannot run on a hosted TabDump deployment.")
+    expect(result.current.status?.detail).toBe("Agents cannot run on a hosted Hubble deployment.")
   })
 })
 

@@ -2,9 +2,9 @@ import type { Metadata } from "next"
 import { WelcomeRoute } from "@/components/marketing/welcome-route"
 import { siteUrl } from "@/lib/site-url"
 
-const TITLE = "TabDump — see your AI agents at work, in the workspace they work on"
+const TITLE = "Hubble — your browser, workspaces and AI agents, in one command centre"
 const DESCRIPTION =
-  "TabDump turns a browser full of tabs into a workspace, then shows the AI agent runs happening inside it: what each one is tracking, which files it touched, and which of your tabs it used as context. Reads Claude Code sessions locally."
+  "Hubble turns a browser full of tabs into workspaces and gives your AI agents — Claude Code, Gemini CLI, Grok Build — the context they need, with every change waiting for your approval."
 
 /**
  * The server-rendered landing page.
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: siteUrl("/welcome"),
-    siteName: "TabDump",
+    siteName: "Hubble",
     title: TITLE,
     description: DESCRIPTION,
   },
