@@ -5,9 +5,9 @@
 // `hubble-extension/manifest.json` layout — not a doubly-nested
 // `hubble-extension/extension/manifest.json` the user would have to hunt
 // for. See build-extension-zip.mjs's header comment for the full rationale.
-import { describe, expect, it, beforeAll } from "vitest";
+import { afterAll, afterEach, describe, expect, it, beforeAll, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CANONICAL_PRODUCTION_ORIGIN, DEV_ORIGIN } from "./build-extension-zip.mjs";
@@ -16,14 +16,46 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const ZIP_PATH = path.join(REPO_ROOT, "public", "hubble-extension.zip");
 
-// The actual bug this whole file guards against: a missing "s" turns the
-// real Hubble production domain into a different site entirely. Repo
-// history shows this exact typo has round-tripped in and out of
-// CANONICAL_PRODUCTION_ORIGIN more than once — so this is checked as its own
-// literal, not derived from CANONICAL_PRODUCTION_ORIGIN, and asserted with
-// the full "https://" + host string rather than a vague "vercel.app"
-// substring (which would pass even with the typo present).
-const WRONG_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
+// Origins no generated artifact may ever contain. Written out as literals
+// rather than imported from RETIRED_ORIGINS, so emptying that list can't make
+// these tests pass vacuously:
+//   - tabsdump.vercel.app: the old production alias, removed from the Vercel
+//     project; it now answers 404 DEPLOYMENT_NOT_FOUND, and every packaged
+//     extension that baked it in opened that error page on "Dump Tabs".
+//   - tabdump.vercel.app: a one-letter lookalike belonging to another site,
+//     which has round-tripped in and out of the constant more than once.
+const DEAD_ORIGINS = ["https://tabsdump.vercel.app", "https://tabdump.vercel.app"];
+
+// Every env var resolveProductionOrigin() reads, so each build below states
+// its whole environment instead of inheriting the test runner's.
+const ORIGIN_ENV_KEYS = ["TABDUMP_PRODUCTION_ORIGIN", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"];
+
+function envWith(patch) {
+  const env = { ...process.env };
+  for (const key of ORIGIN_ENV_KEYS) delete env[key];
+  return { ...env, ...patch };
+}
+
+function buildWith(patch) {
+  execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT, env: envWith(patch), stdio: "pipe" });
+  expect(existsSync(ZIP_PATH)).toBe(true);
+  return readZipEntries(readFileSync(ZIP_PATH));
+}
+
+function entryTextIn(entries, name) {
+  const entry = entries.find((e) => e.name === name);
+  expect(entry, `expected a "${name}" entry in the built ZIP`).toBeTruthy();
+  return entry.data.toString("utf8");
+}
+
+/** The single origin a built ZIP targets, asserting all three places agree. */
+function bakedOrigin(entries) {
+  const manifest = JSON.parse(entryTextIn(entries, "manifest.json"));
+  const configOrigin = entryTextIn(entries, "src/config.js").match(/TABDUMP_ORIGIN = "([^"]+)"/)?.[1];
+  expect(manifest.host_permissions).toEqual([`${configOrigin}/*`]);
+  expect(manifest.content_scripts[0].matches).toEqual([`${configOrigin}/*`]);
+  return configOrigin;
+}
 
 /** Minimal reader for the STORED-only ZIP subset build-extension-zip.mjs writes. */
 function readZipEntries(buffer) {
@@ -67,9 +99,7 @@ describe("build-extension-zip.mjs", () => {
   let entries;
 
   beforeAll(() => {
-    execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT });
-    expect(existsSync(ZIP_PATH)).toBe(true);
-    entries = readZipEntries(readFileSync(ZIP_PATH));
+    entries = buildWith({});
   });
 
   it("places manifest.json at the ZIP root, not nested under an extension/ folder", () => {
@@ -207,78 +237,94 @@ describe("build-extension-zip.mjs", () => {
   });
 });
 
-// Regression coverage for the incident where CANONICAL_PRODUCTION_ORIGIN
-// (and therefore every production extension artifact derived from it) held
-// "https://tabdump.vercel.app" — a real but different site — instead of the
-// actual Hubble deployment. These tests fail if that typo ever comes back,
-// whether it re-lands in the constant itself or only in a generated
-// artifact because the substitution logic changed underneath it.
+// Regression coverage for the "Dump Tabs opens 404 DEPLOYMENT_NOT_FOUND"
+// incident. The extension only ever queries, injects into and opens the one
+// origin baked into it (background.js's chrome.tabs.query/tabs.create on
+// TABDUMP_ORIGIN), so the origin baked in here IS where "Dump Tabs" goes.
 describe("build-extension-zip.mjs — canonical production origin", () => {
-  it("is exactly the real Hubble production domain, not the typo'd lookalike", () => {
-    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabsdump.vercel.app");
-    expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(WRONG_PRODUCTION_ORIGIN);
+  it("is the Vercel project's live production alias, not a dead or foreign one", () => {
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabs-ayaan-viswanathans-projects.vercel.app");
+    for (const dead of DEAD_ORIGINS) expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(dead);
   });
 });
 
-describe("build-extension-zip.mjs — production build output", () => {
+describe("build-extension-zip.mjs — Vercel production build", () => {
+  const PRODUCTION_DOMAIN = "hubble.example.com";
+  const DEPLOYMENT_URL = "tabs-gtxma8nys-ayaan-viswanathans-projects.vercel.app";
   let entries;
 
   beforeAll(() => {
-    // Build as a real production deployment would (VERCEL_ENV=production,
-    // no manual override), so TARGET_ORIGIN resolves through
-    // CANONICAL_PRODUCTION_ORIGIN exactly like the actual Vercel build does.
-    const prodEnv = { ...process.env, VERCEL_ENV: "production" };
-    delete prodEnv.TABDUMP_PRODUCTION_ORIGIN;
-    delete prodEnv.VERCEL_URL;
-
-    execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT, env: prodEnv });
-    expect(existsSync(ZIP_PATH)).toBe(true);
-    entries = readZipEntries(readFileSync(ZIP_PATH));
+    // Exactly what Vercel sets on a production build: the per-deployment
+    // VERCEL_URL alongside the project's production domain.
+    entries = buildWith({
+      VERCEL_ENV: "production",
+      VERCEL_URL: DEPLOYMENT_URL,
+      VERCEL_PROJECT_PRODUCTION_URL: PRODUCTION_DOMAIN,
+    });
   });
 
-  function entryText(name) {
-    const entry = entries.find((e) => e.name === name);
-    expect(entry, `expected a "${name}" entry in the built ZIP`).toBeTruthy();
-    return entry.data.toString("utf8");
-  }
-
-  it("bakes the canonical production origin into manifest.json's host_permissions and content_scripts.matches", () => {
-    const manifest = JSON.parse(entryText("manifest.json"));
-    expect(manifest.host_permissions).toContain(`${CANONICAL_PRODUCTION_ORIGIN}/*`);
-    expect(manifest.content_scripts[0].matches).toContain(`${CANONICAL_PRODUCTION_ORIGIN}/*`);
+  it("targets the project's production domain as Vercel reports it", () => {
+    expect(bakedOrigin(entries)).toBe(`https://${PRODUCTION_DOMAIN}`);
   });
 
-  it("bakes the canonical production origin into src/config.js's TABDUMP_ORIGIN (the runtime tab-detection/fallback target)", () => {
-    expect(entryText("src/config.js")).toContain(`TABDUMP_ORIGIN = "${CANONICAL_PRODUCTION_ORIGIN}"`);
-  });
-
-  it("does not leave the dev origin behind in either origin-substituted file", () => {
-    expect(entryText("manifest.json")).not.toContain(DEV_ORIGIN);
-    expect(entryText("src/config.js")).not.toContain(DEV_ORIGIN);
-  });
-
-  it("never contains the wrong Hubble domain (the missing-s typo) in any generated artifact", () => {
+  it("never bakes in the deployment-specific URL, which dies with its deployment", () => {
     for (const { name, data } of entries) {
-      expect(data.toString("utf8"), `${name} should not contain ${WRONG_PRODUCTION_ORIGIN}`).not.toContain(
-        WRONG_PRODUCTION_ORIGIN
-      );
+      expect(data.toString("utf8"), `${name} should not contain ${DEPLOYMENT_URL}`).not.toContain(DEPLOYMENT_URL);
     }
   });
 
-  it("keeps the canonical origin, manifest origin, and runtime config origin all consistent with each other", () => {
-    const manifest = JSON.parse(entryText("manifest.json"));
-    const configOrigin = entryText("src/config.js").match(/TABDUMP_ORIGIN = "([^"]+)"/)?.[1];
+  it("does not leave the dev origin behind in either origin-substituted file", () => {
+    expect(entryTextIn(entries, "manifest.json")).not.toContain(DEV_ORIGIN);
+    expect(entryTextIn(entries, "src/config.js")).not.toContain(DEV_ORIGIN);
+  });
 
-    expect(configOrigin).toBe(CANONICAL_PRODUCTION_ORIGIN);
-    expect(manifest.host_permissions).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
-    expect(manifest.content_scripts[0].matches).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
+  it("never contains a dead or foreign Hubble origin in any generated artifact", () => {
+    for (const { name, data } of entries) {
+      for (const dead of DEAD_ORIGINS) {
+        expect(data.toString("utf8"), `${name} should not contain ${dead}`).not.toContain(dead);
+      }
+    }
+  });
+});
+
+describe("build-extension-zip.mjs — Vercel production build without a production domain", () => {
+  it("falls back to the canonical origin, still ignoring the per-deployment VERCEL_URL", () => {
+    const entries = buildWith({ VERCEL_ENV: "production", VERCEL_URL: "tabs-abc123xyz-team.vercel.app" });
+    expect(bakedOrigin(entries)).toBe(CANONICAL_PRODUCTION_ORIGIN);
+  });
+});
+
+describe("build-extension-zip.mjs — Vercel preview build", () => {
+  it("targets the preview's own URL, so a preview's extension talks to that preview", () => {
+    const entries = buildWith({
+      VERCEL_ENV: "preview",
+      VERCEL_URL: "tabs-abc123xyz-team.vercel.app",
+      VERCEL_PROJECT_PRODUCTION_URL: "hubble.example.com",
+    });
+    expect(bakedOrigin(entries)).toBe("https://tabs-abc123xyz-team.vercel.app");
+  });
+});
+
+// A dead origin left behind in configuration (e.g. a TABDUMP_PRODUCTION_ORIGIN
+// set in the Vercel dashboard back when the alias was live) would override
+// everything above. That has to stop the deploy, not ship an extension that
+// opens an error page.
+describe("build-extension-zip.mjs — refuses dead origins", () => {
+  it.each(DEAD_ORIGINS)("fails the build when configured with %s", (dead) => {
+    expect(() =>
+      execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], {
+        cwd: REPO_ROOT,
+        env: envWith({ TABDUMP_PRODUCTION_ORIGIN: dead }),
+        stdio: "pipe",
+      })
+    ).toThrow(/resolved to https:\/\/tabs?dump\.vercel\.app/);
   });
 });
 
 // Regression coverage for the actual "works on my computer, not on another's"
 // incident: a plain `npm run build` run anywhere other than Vercel's own
 // pipeline (a developer's machine, a non-Vercel host, `next build && next
-// start` for local testing) has none of VERCEL_ENV/VERCEL_URL set. The
+// start` for local testing) has none of Vercel's env vars set. The
 // downloadable ZIP built in that situation must still target the real
 // production origin — the same artifact real users get from onboarding's
 // "Download Extension" button — instead of silently baking in the builder's
@@ -287,31 +333,148 @@ describe("build-extension-zip.mjs — default build output (no environment confi
   let entries;
 
   beforeAll(() => {
-    const bareEnv = { ...process.env };
-    delete bareEnv.TABDUMP_PRODUCTION_ORIGIN;
-    delete bareEnv.VERCEL_ENV;
-    delete bareEnv.VERCEL_URL;
-
-    execFileSync(process.execPath, ["scripts/build-extension-zip.mjs"], { cwd: REPO_ROOT, env: bareEnv });
-    expect(existsSync(ZIP_PATH)).toBe(true);
-    entries = readZipEntries(readFileSync(ZIP_PATH));
+    entries = buildWith({});
   });
 
-  function entryText(name) {
-    const entry = entries.find((e) => e.name === name);
-    expect(entry, `expected a "${name}" entry in the built ZIP`).toBeTruthy();
-    return entry.data.toString("utf8");
-  }
-
   it("defaults to the canonical production origin, not localhost, with no environment configured", () => {
-    const manifest = JSON.parse(entryText("manifest.json"));
-    expect(manifest.host_permissions).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
-    expect(manifest.content_scripts[0].matches).toEqual([`${CANONICAL_PRODUCTION_ORIGIN}/*`]);
-    expect(entryText("src/config.js")).toContain(`TABDUMP_ORIGIN = "${CANONICAL_PRODUCTION_ORIGIN}"`);
+    expect(bakedOrigin(entries)).toBe(CANONICAL_PRODUCTION_ORIGIN);
   });
 
   it("never leaves the dev origin in a ZIP built with no environment configured", () => {
-    expect(entryText("manifest.json")).not.toContain(DEV_ORIGIN);
-    expect(entryText("src/config.js")).not.toContain(DEV_ORIGIN);
+    expect(entryTextIn(entries, "manifest.json")).not.toContain(DEV_ORIGIN);
+    expect(entryTextIn(entries, "src/config.js")).not.toContain(DEV_ORIGIN);
+  });
+});
+
+// The packaged extension itself, end to end: build the ZIP exactly as a Vercel
+// production deploy does, extract it, load *its* background.js (with *its*
+// baked config.js) and run a real "Dump Tabs". Only chrome.* is faked. This is
+// the path that produced the 404: with a dead origin baked in, the url-filtered
+// query never found the user's Hubble tab and the fallback chrome.tabs.create
+// opened DEPLOYMENT_NOT_FOUND instead.
+describe("packaged extension — Dump Tabs against the production origin", () => {
+  const PRODUCTION_DOMAIN = "tabs-ayaan-viswanathans-projects.vercel.app";
+  const ORIGIN = `https://${PRODUCTION_DOMAIN}`;
+  let extractDir;
+  let listeners;
+
+  function fakeTab(over) {
+    return { id: 1, windowId: 10, url: "https://example.com", title: "Example", pinned: false, active: false, index: 0, ...over };
+  }
+
+  beforeAll(() => {
+    const entries = buildWith({
+      VERCEL_ENV: "production",
+      VERCEL_URL: "tabs-gtxma8nys-ayaan-viswanathans-projects.vercel.app",
+      VERCEL_PROJECT_PRODUCTION_URL: PRODUCTION_DOMAIN,
+    });
+    // Inside the project (gitignored node_modules/.cache), because Vite will
+    // not load modules from outside its root (e.g. the OS temp directory).
+    const cacheDir = path.join(REPO_ROOT, "node_modules", ".cache");
+    mkdirSync(cacheDir, { recursive: true });
+    extractDir = mkdtempSync(path.join(cacheDir, "hubble-packaged-extension-"));
+    for (const { name, data } of entries) {
+      const target = path.join(extractDir, ...name.split("/"));
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, data);
+    }
+  });
+
+  afterAll(() => {
+    if (extractDir) rmSync(extractDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    delete globalThis.chrome;
+    vi.resetModules();
+  });
+
+  async function loadPackagedBackground({ openTabs }) {
+    listeners = [];
+    globalThis.chrome = {
+      runtime: { onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
+      tabs: {
+        query: vi.fn(async (query) => {
+          if (query.windowId !== undefined) return openTabs.filter((tab) => tab.windowId === query.windowId);
+          if (query.url) {
+            // Chrome's own match-pattern semantics for "<origin>/*".
+            const prefix = query.url.slice(0, -1);
+            return openTabs.filter((tab) => tab.url.startsWith(prefix));
+          }
+          return [];
+        }),
+        create: vi.fn(async ({ url }) => fakeTab({ id: 99, url })),
+        update: vi.fn(),
+        // The packaged content script answering for the page: it acks the batch.
+        sendMessage: vi.fn(async (_tabId, message) =>
+          message?.type === "TABDUMP_IMPORT" ? { ok: true, accepted: message.payload.tabs.length } : undefined
+        ),
+        get: vi.fn(async (id) => fakeTab({ id, status: "loading" })),
+        onUpdated: { addListener: vi.fn(), removeListener: vi.fn() },
+        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+      scripting: { executeScript: vi.fn().mockResolvedValue([{ result: null }]) },
+      windows: { update: vi.fn() },
+      storage: { session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) } },
+    };
+    // Forward slashes: Vite resolves "C:/…" but not "C:\…".
+    await import(/* @vite-ignore */ path.join(extractDir, "background", "background.js").split(path.sep).join("/"));
+    return listeners[0];
+  }
+
+  function dump(listener, payload) {
+    return new Promise((resolve) => listener({ type: "DUMP_TABS", payload }, {}, resolve));
+  }
+
+  it("sends the tabs to the Hubble tab the user already has open, without opening a new one", async () => {
+    const openTabs = [
+      fakeTab({ id: 1, url: "https://a.example/one", title: "One" }),
+      fakeTab({ id: 2, url: "https://b.example/two", title: "Two" }),
+      // Hubble open in another window: found by origin, not by window.
+      fakeTab({ id: 42, windowId: 20, url: `${ORIGIN}/`, title: "Hubble", active: true }),
+    ];
+    const listener = await loadPackagedBackground({ openTabs });
+
+    const response = await dump(listener, { windowId: 10, excludeUrls: [] });
+
+    expect(chrome.tabs.query).toHaveBeenCalledWith({ url: `${ORIGIN}/*` });
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    const delivered = chrome.tabs.sendMessage.mock.calls.find(([, m]) => m?.type === "TABDUMP_IMPORT");
+    expect(delivered[0]).toBe(42);
+    expect(delivered[1].payload.tabs.map((t) => t.url)).toEqual(["https://a.example/one", "https://b.example/two"]);
+    expect(response).toMatchObject({ ok: true, status: "done", accepted: 2, focusTabId: 42 });
+  });
+
+  it("opens Hubble's app route on the production origin — never a dead or deployment URL — when no Hubble tab is open", async () => {
+    const listener = await loadPackagedBackground({ openTabs: [fakeTab({ id: 1, url: "https://a.example/one" })] });
+
+    const responsePromise = dump(listener, { windowId: 10, excludeUrls: [] });
+    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
+    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
+    const response = await responsePromise;
+
+    expect(chrome.tabs.create).toHaveBeenCalledTimes(1);
+    const [{ url, active }] = chrome.tabs.create.mock.calls[0];
+    expect(url).toBe(ORIGIN);
+    expect(new URL(url).pathname).toBe("/"); // TABDUMP_APP_PATH, the route that mounts AppShell
+    expect(active).toBe(false);
+    for (const dead of DEAD_ORIGINS) expect(url.startsWith(dead)).toBe(false);
+    expect(url).not.toContain("gtxma8nys");
+    expect(response).toMatchObject({ ok: true, status: "done", accepted: 1, focusTabId: 99 });
+  });
+
+  it("skips tabs already in the workspace, exactly as the unpacked extension does", async () => {
+    const openTabs = [
+      fakeTab({ id: 1, url: "https://a.example/one" }),
+      fakeTab({ id: 2, url: "https://b.example/two" }),
+      fakeTab({ id: 42, windowId: 20, url: `${ORIGIN}/`, active: true }),
+    ];
+    const listener = await loadPackagedBackground({ openTabs });
+
+    const response = await dump(listener, { windowId: 10, excludeUrls: ["https://a.example/one"] });
+
+    const delivered = chrome.tabs.sendMessage.mock.calls.find(([, m]) => m?.type === "TABDUMP_IMPORT");
+    expect(delivered[1].payload.tabs.map((t) => t.url)).toEqual(["https://b.example/two"]);
+    expect(response).toMatchObject({ ok: true, skippedAlreadyImported: 1, accepted: 1 });
   });
 });

@@ -42,7 +42,7 @@ server verifies it against Google's published signing keys.
 
 Consequences worth knowing:
 
-- **No redirect URI.** The user never leaves tabsdump.vercel.app. Google
+- **No redirect URI.** The user never leaves the Hubble site. Google
   Cloud Console needs *Authorized JavaScript origins* only.
 - **No client secret.** Verification uses Google's public keys. Nothing in
   this codebase reads `GOOGLE_CLIENT_SECRET`; there is no secret to leak
@@ -231,7 +231,7 @@ accounts, and nothing about it changed here.
 When the extension does need to call the API directly, the piece to add is a
 **pairing flow**, not an extension login:
 
-1. The extension opens `https://tabsdump.vercel.app/…` in a normal tab. The
+1. The extension opens Hubble's production origin in a normal tab. The
    user is already signed in there, or signs in with the same UI.
 2. That page asks the backend for a short-lived, single-use pairing code
    under `requireUser`, so the code is bound to the session's user and to

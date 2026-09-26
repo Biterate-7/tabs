@@ -24,6 +24,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "n
 import { crc32 } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEV_ORIGIN, CANONICAL_PRODUCTION_ORIGIN, RETIRED_ORIGINS, resolveProductionOrigin } from "../src/lib/production-origin.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -42,23 +43,26 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // files only — the actual files on disk are never touched, so `npm run
 // dev` + loading extension/ unpacked keeps working exactly as before.
 //
-// TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. if the canonical
-// domain below ever changes, or a developer deliberately wants a
-// localhost-targeting ZIP for local end-to-end testing — see below).
-// Otherwise this defaults to Hubble's actual canonical production domain —
-// deliberately NOT derived from Vercel's VERCEL_PROJECT_PRODUCTION_URL, which
-// reflects whatever domain the Vercel project happens to be assigned (e.g.
-// an auto-suffixed tabdump-eight.vercel.app if the exact project name was
-// taken) rather than the domain Hubble is actually meant to be reached at.
-// Preview builds are the one case that legitimately need a different,
-// per-deployment origin — those still pick up Vercel's own VERCEL_URL, a
-// fresh throwaway URL every build. Baking a Preview's VERCEL_URL into a
-// Production build would instead mean every new deployment silently
-// invalidates every previously downloaded extension ZIP: the extension's
-// host_permissions/content_scripts match only that one build's URL, so
-// chrome.tabs.query()/tabs.create() in background.js's findOrOpenHubbleTab()
-// end up targeting a stale, deployment-specific origin instead of the domain
-// the user is actually looking at — landing imported tabs in a different
+// Which origin gets baked in is decided by resolveProductionOrigin() in
+// src/lib/production-origin.mjs — shared with the site's own canonical URL so
+// the two can never disagree. In short: an explicit TABDUMP_PRODUCTION_ORIGIN,
+// else a Vercel preview's own VERCEL_URL, else a Vercel production build's
+// VERCEL_PROJECT_PRODUCTION_URL, else CANONICAL_PRODUCTION_ORIGIN.
+//
+// Why a production build asks Vercel rather than trusting a hardcoded domain:
+// this ZIP used to bake in a hand-typed vercel.app alias (now listed in
+// RETIRED_ORIGINS). When that alias was removed from the Vercel project it
+// began answering every request with 404 DEPLOYMENT_NOT_FOUND — and because
+// the extension only ever queries, injects into and opens its one baked-in
+// origin, every "Dump Tabs" from then on skipped the user's real Hubble tab
+// and opened that error page in a new tab instead, while the site itself
+// kept working at its real domain.
+// VERCEL_PROJECT_PRODUCTION_URL is the domain Vercel is actually routing
+// production to at build time, so it cannot go stale the same way.
+//
+// A production build never uses VERCEL_URL: that is the per-deployment hash
+// URL, and baking it in would mean every new deployment silently invalidates
+// every previously downloaded extension ZIP — tabs landing in a different
 // origin's localStorage than the one being viewed, with no visible error.
 //
 // Defaults to the canonical production origin — NOT localhost:3000 — for
@@ -80,18 +84,11 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // full download → unpack → load-unpacked → dump flow against a local dev
 // server) can still get one explicitly via
 // `TABDUMP_PRODUCTION_ORIGIN=http://localhost:3000 npm run build`. This
-// default only governs the ZIP; the on-disk extension/manifest.json and
+// only governs the ZIP; the on-disk extension/manifest.json and
 // extension/src/config.js (used for `npm run dev` + "Load unpacked" straight
 // from the extension/ folder) are never touched by this script and keep
-// hardcoding localhost:3000 exactly as before.
-export const DEV_ORIGIN = "http://localhost:3000";
-export const CANONICAL_PRODUCTION_ORIGIN = "https://tabsdump.vercel.app";
-const TARGET_ORIGIN =
-  process.env.TABDUMP_PRODUCTION_ORIGIN ||
-  (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : null) ||
-  CANONICAL_PRODUCTION_ORIGIN;
+// hardcoding localhost:3000.
+export { DEV_ORIGIN, CANONICAL_PRODUCTION_ORIGIN };
 
 const ORIGIN_SUBSTITUTED_FILES = new Set([
   path.join("manifest.json"),
@@ -138,19 +135,22 @@ function dosDateTime(date) {
   return { dosTime, dosDate };
 }
 
-function buildZip(files) {
+// The bytes a file ships with: its source, with the dev origin swapped for
+// the target origin in the files that carry it.
+function packagedContents(relativePath, targetOrigin) {
+  const data = readFileSync(path.join(EXTENSION_DIR, relativePath));
+  if (!ORIGIN_SUBSTITUTED_FILES.has(relativePath) || targetOrigin === DEV_ORIGIN) return data;
+  return Buffer.from(data.toString("utf8").split(DEV_ORIGIN).join(targetOrigin), "utf8");
+}
+
+function buildZip(files, targetOrigin) {
   const { dosTime, dosDate } = dosDateTime(new Date());
   const localChunks = [];
   const centralChunks = [];
   let offset = 0;
 
   for (const relativePath of files) {
-    const absolutePath = path.join(EXTENSION_DIR, relativePath);
-    let data = readFileSync(absolutePath);
-
-    if (ORIGIN_SUBSTITUTED_FILES.has(relativePath) && TARGET_ORIGIN !== DEV_ORIGIN) {
-      data = Buffer.from(data.toString("utf8").split(DEV_ORIGIN).join(TARGET_ORIGIN), "utf8");
-    }
+    const data = packagedContents(relativePath, targetOrigin);
     // Force forward slashes regardless of platform, per the ZIP spec (paths
     // are always "/"-separated). No folder prefix: entries sit at the ZIP
     // root, see the header comment above for why.
@@ -215,7 +215,7 @@ function buildZip(files) {
 }
 
 // Guarded so this module can be `import`ed (e.g. by tests, to read
-// CANONICAL_PRODUCTION_ORIGIN) without the side effect of rebuilding and
+// DEV_ORIGIN) without the side effect of rebuilding and
 // overwriting the ZIP on disk — the actual build only runs when this file
 // is executed directly, as `npm run prebuild` and build-extension-zip.test.mjs
 // both do.
@@ -226,38 +226,27 @@ if (isMainModule) {
     throw new Error(`No files found under ${EXTENSION_DIR} — refusing to write an empty ZIP.`);
   }
 
-  // Fail loudly instead of silently packaging a broken extension: every
-  // origin-substituted file must end up with ONLY the intended target
-  // origin baked in, never a stray reference to the wrong Hubble domain
-  // (see the regression this guards against in build-extension-zip.test.mjs).
-  const WRONG_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
-  if (TARGET_ORIGIN === WRONG_PRODUCTION_ORIGIN) {
-    throw new Error(
-      `Refusing to build: TARGET_ORIGIN resolved to the invalid Hubble origin ${WRONG_PRODUCTION_ORIGIN}\n` +
-        `Expected: ${CANONICAL_PRODUCTION_ORIGIN}`
-    );
-  }
+  // Throws — failing the build — if the configuration resolves to a retired
+  // origin, e.g. a TABDUMP_PRODUCTION_ORIGIN left pointing at the old alias.
+  const targetOrigin = resolveProductionOrigin(process.env);
 
-  const zip = buildZip(files);
-
-  if (TARGET_ORIGIN !== DEV_ORIGIN) {
-    for (const relativePath of ORIGIN_SUBSTITUTED_FILES) {
-      const absolutePath = path.join(EXTENSION_DIR, relativePath);
-      const substituted = readFileSync(absolutePath, "utf8").split(DEV_ORIGIN).join(TARGET_ORIGIN);
-      if (substituted.includes(WRONG_PRODUCTION_ORIGIN)) {
-        throw new Error(
-          `Production extension contains an invalid Hubble origin in ${relativePath}:\n` +
-            `${WRONG_PRODUCTION_ORIGIN}\n\n` +
-            `Expected:\n${CANONICAL_PRODUCTION_ORIGIN}`
-        );
+  // Fail loudly instead of silently packaging a broken extension: no shipped
+  // file may carry a retired origin, however it got there.
+  for (const relativePath of files) {
+    const text = packagedContents(relativePath, targetOrigin).toString("utf8");
+    for (const [retired, why] of Object.entries(RETIRED_ORIGINS)) {
+      if (text.includes(retired)) {
+        throw new Error(`Refusing to build: ${relativePath} would ship the retired origin ${retired} (${why}).`);
       }
     }
   }
 
+  const zip = buildZip(files, targetOrigin);
+
   mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
   writeFileSync(OUTPUT_PATH, zip);
 
-  console.log(`Extension origin baked into this ZIP: ${TARGET_ORIGIN}`);
+  console.log(`Extension origin baked into this ZIP: ${targetOrigin}`);
   console.log(`Wrote ${OUTPUT_PATH} (${zip.length} bytes, ${files.length} files):`);
   for (const f of files) console.log(`  ${f.split(path.sep).join("/")}`);
 }
