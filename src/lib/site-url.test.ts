@@ -30,7 +30,7 @@ function clearEnv() {
 describe("siteOrigin", () => {
   it("agrees with the origin the extension is built against", () => {
     expect(CANONICAL_PRODUCTION_ORIGIN).toBe(EXTENSION_ORIGIN);
-    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabs-ayaan-viswanathans-projects.vercel.app");
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubble-hq.vercel.app");
   });
 
   it("falls back to the canonical origin when nothing is configured", () => {

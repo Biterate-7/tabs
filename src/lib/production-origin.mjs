@@ -18,13 +18,16 @@ export const DEV_ORIGIN = "http://localhost:3000";
 // A Vercel production build uses VERCEL_PROJECT_PRODUCTION_URL instead, which
 // Vercel derives from the project's own domain settings at build time, so a
 // domain added or removed in the Vercel dashboard is picked up by the next
-// deploy without anyone editing this line.
+// deploy without anyone editing this line. Keep this equal to what that
+// variable resolves to, so a local build and a Vercel build agree.
 //
-// This is the project's auto-assigned production alias
-// (<project>-<team>.vercel.app for the Vercel project "tabs"), which Vercel
-// repoints at every production deployment. It is NOT a per-deployment URL
+// This is the production domain configured on the Vercel project "tabs",
+// which Vercel repoints at every production deployment. The project's team
+// alias (tabs-<team>.vercel.app) serves the same deployment but is not
+// canonical: the extension, sign-in and localStorage are all per-origin, so
+// Hubble must be reached at exactly one of them. Never a per-deployment URL
 // (tabs-<hash>-<team>.vercel.app), which dies with its deployment.
-export const CANONICAL_PRODUCTION_ORIGIN = "https://tabs-ayaan-viswanathans-projects.vercel.app";
+export const CANONICAL_PRODUCTION_ORIGIN = "https://hubble-hq.vercel.app";
 
 // Origins that were once baked into shipped artifacts and must never be again.
 // Resolving to one of these is a build failure, not a warning: an extension
