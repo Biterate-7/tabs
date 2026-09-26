@@ -242,8 +242,8 @@ describe("build-extension-zip.mjs", () => {
 // origin baked into it (background.js's chrome.tabs.query/tabs.create on
 // TABDUMP_ORIGIN), so the origin baked in here IS where "Dump Tabs" goes.
 describe("build-extension-zip.mjs — canonical production origin", () => {
-  it("is the Vercel project's live production alias, not a dead or foreign one", () => {
-    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabs-ayaan-viswanathans-projects.vercel.app");
+  it("is the Vercel project's production domain, not a dead or foreign one", () => {
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubble-hq.vercel.app");
     for (const dead of DEAD_ORIGINS) expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(dead);
   });
 });
@@ -353,7 +353,8 @@ describe("build-extension-zip.mjs — default build output (no environment confi
 // query never found the user's Hubble tab and the fallback chrome.tabs.create
 // opened DEPLOYMENT_NOT_FOUND instead.
 describe("packaged extension — Dump Tabs against the production origin", () => {
-  const PRODUCTION_DOMAIN = "tabs-ayaan-viswanathans-projects.vercel.app";
+  // What Vercel actually sets VERCEL_PROJECT_PRODUCTION_URL to for this project.
+  const PRODUCTION_DOMAIN = "hubble-hq.vercel.app";
   const ORIGIN = `https://${PRODUCTION_DOMAIN}`;
   let extractDir;
   let listeners;

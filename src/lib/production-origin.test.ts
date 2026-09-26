@@ -18,13 +18,23 @@ import {
  * skipped the user's real Hubble tab and opened that error page instead.
  */
 
-const PROD_ALIAS = "tabs-ayaan-viswanathans-projects.vercel.app";
+// What Vercel reports as VERCEL_PROJECT_PRODUCTION_URL for the project.
+const PROD_ALIAS = "hubble-hq.vercel.app";
+// The project's team alias: live, same deployment, but not canonical.
+const TEAM_ALIAS = "tabs-ayaan-viswanathans-projects.vercel.app";
 // A per-deployment URL, shaped exactly like the ones Vercel generates.
 const DEPLOYMENT_URL = "tabs-gtxma8nys-ayaan-viswanathans-projects.vercel.app";
 
 describe("CANONICAL_PRODUCTION_ORIGIN", () => {
-  it("is the Vercel project's stable production alias", () => {
+  it("is the Vercel project's production domain", () => {
     expect(CANONICAL_PRODUCTION_ORIGIN).toBe(`https://${PROD_ALIAS}`);
+  });
+
+  it("is not the team alias, so local and Vercel builds target the same origin", () => {
+    // The extension, sign-in and localStorage are all per-origin: a fallback
+    // that differs from VERCEL_PROJECT_PRODUCTION_URL gives a locally built
+    // ZIP a different Hubble than the one production serves.
+    expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(`https://${TEAM_ALIAS}`);
   });
 
   it("is not a retired origin", () => {
