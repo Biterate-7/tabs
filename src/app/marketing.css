@@ -342,6 +342,45 @@
   background: var(--surface-hover);
 }
 
+/* ---- Scroll reveal ------------------------------------------------------
+   A section below the fold rises into place the first time the visitor
+   reaches it (see reveal.tsx): its items fade in and travel up 24px, one
+   80ms step apart. Only a section the script has marked `pending` is ever
+   hidden, so without script, observer or motion, the page is simply there.
+
+   The revealed state sets no transform at all rather than translateY(0):
+   any transform makes an element the containing block for fixed-position
+   descendants, and the live windows position their tooltips `fixed` at
+   viewport coordinates. */
+.tabdump-marketing {
+  --m-reveal-duration: 700ms;
+  --m-reveal-stagger: 80ms;
+  --m-reveal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tabdump-marketing .m-reveal[data-reveal="pending"] .m-reveal-item {
+  opacity: 0;
+  transform: translateY(24px);
+}
+.tabdump-marketing .m-reveal[data-reveal="revealed"] .m-reveal-item {
+  transition:
+    opacity var(--m-reveal-duration) var(--m-reveal-ease),
+    transform var(--m-reveal-duration) var(--m-reveal-ease);
+  transition-delay: calc(var(--m-reveal-step, 0) * var(--m-reveal-stagger));
+}
+/* Keyboard focus never lands on something invisible: tabbing into a section
+   shows it at once, whether or not it has scrolled far enough to reveal. */
+.tabdump-marketing .m-reveal[data-reveal="pending"]:focus-within .m-reveal-item {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce), print {
+  .tabdump-marketing .m-reveal .m-reveal-item {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
 /* On a phone a window needs every pixel of the width: the hero's stage and
    the feature cards run to the screen edges instead of sitting inside the
    page gutter, so the product inside is laid out at phone width. Last in the

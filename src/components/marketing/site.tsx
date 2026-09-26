@@ -6,6 +6,7 @@ import { ArrowRight, Menu, Monitor, Moon, Sun, X } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { RevealSection, revealStep } from "./reveal"
 
 /*
  * The landing page's frame: header, footer, containers, sections.
@@ -224,6 +225,7 @@ export function WhenNear({ className, children }: { className?: string; children
  * Hubble window. `split` sets the text in a 383px column beside the window
  * from `xl`, where the window still has app-sized room; below that, and for
  * `wide` sections at every width, the text sits above a full-width window.
+ * Title, body, link and window reveal in that order on first view.
  */
 export function FeatureSection({
   id,
@@ -244,7 +246,7 @@ export function FeatureSection({
 }) {
   const split = layout === "split"
   return (
-    <section id={id} className="m-page scroll-mt-(--hb-header-h) py-[calc(var(--hb-v)*2)]">
+    <RevealSection id={id} className="m-page scroll-mt-(--hb-header-h) py-[calc(var(--hb-v)*2)]">
       <Container>
         <div
           className={cn(
@@ -254,14 +256,16 @@ export function FeatureSection({
           )}
         >
           <div className={cn("flex flex-col justify-center px-[2.5px] pt-3", split ? "xl:py-0" : "max-w-[720px] sm:pt-4", split && reverse && "xl:order-2")}>
-            <h2 className="m-title text-foreground">{title}</h2>
-            <p className="m-title text-muted-foreground">{body}</p>
-            {link && <div className="mt-5">{link}</div>}
+            <h2 className="m-title m-reveal-item text-foreground" style={revealStep(0)}>{title}</h2>
+            <p className="m-title m-reveal-item text-muted-foreground" style={revealStep(1)}>{body}</p>
+            {link && <div className="m-reveal-item mt-5" style={revealStep(2)}>{link}</div>}
           </div>
-          <div className={cn("min-w-0", split && reverse && "xl:order-1")}>{stage}</div>
+          <div className={cn("m-reveal-item min-w-0", split && reverse && "xl:order-1")} style={revealStep(link ? 3 : 2)}>
+            {stage}
+          </div>
         </div>
       </Container>
-    </section>
+    </RevealSection>
   )
 }
 

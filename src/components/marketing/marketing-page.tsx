@@ -11,6 +11,7 @@ import { DemoFrame } from "./demo/demo-frame"
 import { HubbleDemoProvider } from "./demo/demo-provider"
 import type { DemoInit } from "./demo/demo-state"
 import { DemoThemeStyle } from "./demo/demo-theme"
+import { RevealSection, revealStep } from "./reveal"
 import {
   Container,
   FeatureSection,
@@ -97,10 +98,12 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         </section>
 
         {/* ---- Works with --------------------------------------------------- */}
-        <section className="m-page pb-[calc(var(--hb-v)*1.5)]">
+        <RevealSection className="m-page pb-[calc(var(--hb-v)*1.5)]">
           <Container>
-            <h2 className="m-small text-center text-foreground">Works with the agents and tools you already use</h2>
-            <ul className="mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-8">
+            <h2 className="m-small m-reveal-item text-center text-foreground" style={revealStep(0)}>
+              Works with the agents and tools you already use
+            </h2>
+            <ul className="m-reveal-item mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-8" style={revealStep(1)}>
               {INTEGRATIONS.map((item) => (
                 <li key={item.name} className="m-card flex h-[100px] flex-col items-center justify-center gap-2 px-2 text-center">
                   <span className="flex items-center gap-2 text-foreground">
@@ -112,7 +115,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
               ))}
             </ul>
           </Container>
-        </section>
+        </RevealSection>
 
         {/* ---- Features ------------------------------------------------------ */}
         <div className="py-[calc(var(--hb-v)*1)]">
@@ -182,10 +185,15 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         </div>
 
         {/* ---- Principles ---------------------------------------------------- */}
-        <section className="m-section m-page">
+        <RevealSection className="m-section m-page">
           <Container>
-            <h2 className="m-h2 max-w-[810px] text-foreground">A calmer way to work with agents.</h2>
-            <div className="mt-[calc(var(--hb-v)*2)] grid gap-x-10 gap-y-8 border-t border-border pt-8 lg:grid-cols-3">
+            <h2 className="m-h2 m-reveal-item max-w-[810px] text-foreground" style={revealStep(0)}>
+              A calmer way to work with agents.
+            </h2>
+            <div
+              className="m-reveal-item mt-[calc(var(--hb-v)*2)] grid gap-x-10 gap-y-8 border-t border-border pt-8 lg:grid-cols-3"
+              style={revealStep(1)}
+            >
               {PRINCIPLES.map((principle) => (
                 <article key={principle.title} className="flex flex-col">
                   <principle.icon className="size-4 text-muted-foreground" aria-hidden />
@@ -195,13 +203,15 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
               ))}
             </div>
           </Container>
-        </section>
+        </RevealSection>
 
         {/* ---- Changelog ----------------------------------------------------- */}
-        <section id="changelog" className="m-section m-page scroll-mt-(--hb-header-h)">
+        <RevealSection id="changelog" className="m-section m-page scroll-mt-(--hb-header-h)">
           <Container>
-            <h2 className="m-title text-foreground">Changelog</h2>
-            <ul className="mt-6 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+            <h2 className="m-title m-reveal-item text-foreground" style={revealStep(0)}>
+              Changelog
+            </h2>
+            <ul className="m-reveal-item mt-6 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4" style={revealStep(1)}>
               {CHANGELOG.map((entry) => (
                 <li key={entry.title} className="m-card px-[17.5px] pt-[15.9px] pb-5">
                   <p className="m-body text-muted-foreground">{entry.date}</p>
@@ -210,17 +220,19 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
               ))}
             </ul>
           </Container>
-        </section>
+        </RevealSection>
 
         {/* ---- Closing -------------------------------------------------------- */}
-        <section className="m-page pt-[var(--hb-section-y)] pb-[calc(var(--hb-section-y)*2)]">
+        <RevealSection className="m-page pt-[var(--hb-section-y)] pb-[calc(var(--hb-section-y)*2)]">
           <Container className="flex flex-col items-center text-center">
-            <h2 className="m-cta text-foreground">Try Hubble now.</h2>
-            <div className="mt-6">
+            <h2 className="m-cta m-reveal-item text-foreground" style={revealStep(0)}>
+              Try Hubble now.
+            </h2>
+            <div className="m-reveal-item mt-6" style={revealStep(1)}>
               <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" />
             </div>
           </Container>
-        </section>
+        </RevealSection>
       </main>
 
       <SiteFooter scheme={scheme} onScheme={setScheme} />
