@@ -4,7 +4,7 @@
  *
  *   npm run migrate:remote
  *
- * Required before a hosted TabDump can run agents remotely. Without these
+ * Required before a hosted Hubble can run agents remotely. Without these
  * tables the runtime gate reports `no-durable-store` and refuses — which is
  * deliberate: a sandbox created with nowhere to record its identity is a
  * microVM that is running, billing, and unreachable.

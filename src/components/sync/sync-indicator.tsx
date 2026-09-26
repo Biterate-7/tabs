@@ -88,7 +88,7 @@ export function SyncIndicator({ state, disabled, onSyncNow, onMigrate, onResolve
         <div
           role="dialog"
           aria-label="Synchronization"
-          className="absolute right-0 z-50 mt-1 w-80 rounded-lg border border-subtle bg-surface p-3 shadow-lg"
+          className="absolute right-0 z-50 mt-1 w-80 rounded-md border border-border bg-surface p-3 shadow-lg"
         >
           {state.status === "never-synced" ? (
             <div className="space-y-2">

@@ -1,8 +1,8 @@
--- TabDump workspace synchronization schema.
+-- Hubble workspace synchronization schema.
 --
 -- This is the SERVER's ownership and change-tracking model for workspace
 -- data. Nothing in the running application reads or writes these tables yet:
--- TabDump remains local-first, localStorage is still the source of truth,
+-- Hubble remains local-first, localStorage is still the source of truth,
 -- and no mutation path touches the network. This establishes the
 -- representation and the contract so a later phase can implement sync
 -- against something already designed rather than inventing it under

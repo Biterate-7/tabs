@@ -1,9 +1,9 @@
-# TabDump Desktop (Tauri) — architecture
+# Hubble Desktop (Tauri) — architecture
 
-TabDump ships from one codebase to three surfaces:
+Hubble ships from one codebase to three surfaces:
 
 ```
-                         TABDUMP PRODUCT
+                         HUBBLE PRODUCT
                                 │
           ┌─────────────────────┼─────────────────────┐
           ▼                     ▼                     ▼
@@ -32,7 +32,7 @@ on Windows).
 That works because of a property of this specific app, verified in the
 codebase rather than assumed:
 
-| Requirement for static export | TabDump |
+| Requirement for static export | Hubble |
 | --- | --- |
 | No dynamic routes | 4 static routes: `/`, `/privacy`, `/terms`, `/cookies` |
 | No router hooks | No `useRouter` / `usePathname` / `useSearchParams` anywhere |
@@ -40,7 +40,7 @@ codebase rather than assumed:
 | No `next/image` default loader | `next/image` is unused |
 | Product data not server-held | **Local-first** — workspaces, collections, dependencies and graph layout live in `localStorage` (`src/lib/storage/namespace.ts`); the AI index lives in IndexedDB |
 
-That last row is the important one. Accounts in TabDump *partition* local
+That last row is the important one. Accounts in Hubble *partition* local
 storage; they do not sync it. There is no server-side workspace store, so
 the exported bundle is the whole product rather than a shell around a
 backend.
@@ -72,14 +72,14 @@ components.
 | `web.ts` | Browser implementation (the pre-existing behaviour, moved not rewritten) |
 | `desktop.ts` | Tauri implementation. **Only file allowed to name `@tauri-apps`, and only via `await import()`** |
 | `index.ts` | Dispatch: `openExternal`, `saveTextFile` |
-| `api-base.ts` | `apiUrl()` — where TabDump's own API lives per shell |
+| `api-base.ts` | `apiUrl()` — where Hubble's own API lives per shell |
 
 Only two capabilities qualify, because only two would be *wrong* on desktop
 rather than merely different:
 
 1. **`openExternal`** — on the web, clicking a saved tab reuses the current
    browser tab. On desktop that would navigate the app window to someone
-   else's website, turning TabDump into a bad browser with no way back.
+   else's website, turning Hubble into a bad browser with no way back.
 2. **`saveTextFile`** — the web export clicks a hidden `<a download>` with a
    blob URL. A Tauri webview has no download UI for that to land in, so the
    export would silently go nowhere.
@@ -172,7 +172,7 @@ class of client, in "What the browser extension should do later". The
 desktop app is the same kind of client — a non-browser origin that cannot
 use cookies — so it takes the same route:
 
-1. Desktop opens the deployed TabDump site in the **system browser**, where
+1. Desktop opens the deployed Hubble site in the **system browser**, where
    sign-in works normally with the origins Google already authorizes.
 2. That page requests a short-lived, single-use pairing code under
    `requireUser`, so the code is bound to the session's user.
@@ -191,7 +191,7 @@ app asserting a `userId` or `email` and the server believing it.
 `src/lib/platform/api-base.ts` centralises this. On the web `apiUrl()` is
 the identity function, so every call stays relative and same-origin exactly
 as before. `NEXT_PUBLIC_TABDUMP_API_ORIGIN` can point those calls at a
-deployed TabDump instead.
+deployed Hubble instead.
 
 It is **unset for the v1 desktop build**, deliberately:
 
@@ -212,7 +212,7 @@ degrade on their own:
 
 ## Browser extension relationship
 
-The extension's content script is injected **only into the TabDump web
+The extension's content script is injected **only into the Hubble web
 origin**. A Chrome extension cannot inject into a WebView2 application, so
 the extension bridge is inherently web-only and is permanently
 "not connected" on desktop.
@@ -225,7 +225,7 @@ The actual dump flow today is:
 ```
 Browser tabs
   → extension popup (chrome.tabs)
-  → content script on the TabDump WEB origin
+  → content script on the Hubble WEB origin
   → window.postMessage TABDUMP_IMPORT → TABDUMP_IMPORT_ACK
   → the page writes to that account's localStorage namespace
 ```
@@ -267,7 +267,7 @@ npm test
 npm run desktop:dev     # Tauri window against the Next dev server (hot reload)
 npm run desktop:export  # static frontend only -> out/
 npm run desktop:build   # packaged app -> src-tauri/target/release/bundle/
-npm run desktop:icons   # regenerate icons from src/app/icon.svg
+npm run desktop:icons   # regenerate icons from brand/hubble-logo-source.webp
 ```
 
 A developer working only on the website never needs Rust: the desktop
@@ -293,8 +293,8 @@ not just configured:
 | | |
 | --- | --- |
 | Toolchain | Rust 1.98.1 (stable-x86_64-pc-windows-msvc), VS Build Tools 2022 (MSVC 14.44, Windows SDK 10.0.26100), WebView2 152 |
-| Artifacts | `tabdump.exe` (x64), `TabDump_0.1.0_x64_en-US.msi`, `TabDump_0.1.0_x64-setup.exe` |
-| Installed via | The MSI, per-user to `%LOCALAPPDATA%\Programs\TabDump` (no admin needed) |
+| Artifacts | `Hubble.exe` (x64), `Hubble_0.1.0_x64_en-US.msi`, `Hubble_0.1.0_x64-setup.exe` |
+| Installed via | The MSI, per-user to `%LOCALAPPDATA%\Programs\Hubble` (no admin needed) |
 | Exercised | 60-tab workspace, spatial graph pan/zoom/drag, export through the native Save dialog, import through the native Open dialog, saved tabs opening in the default browser, clipboard, window resize, all four routes |
 
 Two Windows-specific notes for whoever ships this:

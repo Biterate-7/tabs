@@ -95,7 +95,7 @@ function HistoryCandidateRow({
 
       <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex">
         <Badge variant={candidate.alreadyInWorkspace ? "secondary" : "accent"}>
-          {candidate.alreadyInWorkspace ? "Already in TabDump" : label}
+          {candidate.alreadyInWorkspace ? "Already in Hubble" : label}
         </Badge>
         <p className="text-meta text-tertiary">{secondaryLine}</p>
       </div>
@@ -124,7 +124,7 @@ function ScanSetup({
     <div className="flex flex-1 items-center justify-center px-6">
       <div className="w-full max-w-sm text-center">
         <ScanSearch className="mx-auto size-6 text-tertiary" aria-hidden />
-        <h2 className="mt-3 text-h1 font-semibold text-foreground">Scan browser history</h2>
+        <h2 className="mt-3 text-h1 font-medium text-foreground">Scan browser history</h2>
         <p className="mt-2 text-body-sm text-muted-foreground">
           Find pages you&apos;ve recently researched, revisited, or may want to keep.
         </p>
@@ -166,12 +166,12 @@ function ScanError({ reason, onRetry, onChangeRange }: { reason: "not-connected"
   const copy =
     reason === "not-connected"
       ? {
-          title: "TabDump extension not detected.",
+          title: "Hubble extension not detected.",
           description: "Install or reconnect the extension to scan browser history.",
         }
       : {
           title: "History access isn't available.",
-          description: "Update or reload the TabDump extension and try again.",
+          description: "Update or reload the Hubble extension and try again.",
         }
 
   return (
@@ -290,15 +290,15 @@ export function HistoryDumpView({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
-      <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <ScanSearch className="size-4 shrink-0 text-tertiary" />
-        <p className="text-h1 text-foreground">History Dump</p>
+        <p className="text-h2 text-foreground">History Dump</p>
       </div>
 
       {stage === "idle" && (
@@ -342,7 +342,7 @@ export function HistoryDumpView({
               <EmptyState
                 icon={ScanSearch}
                 title="You're already covered"
-                description="All of the useful pages we found are already in TabDump."
+                description="All of the useful pages we found are already in Hubble."
                 action={{ label: "Scan a different range", onClick: reset }}
               />
             </div>
@@ -353,12 +353,12 @@ export function HistoryDumpView({
                   We found {reviewableCount} page{reviewableCount === 1 ? "" : "s"} that may be worth keeping.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <div className="inline-flex items-center gap-0.5 rounded-lg border border-subtle bg-card p-0.5">
+                  <div className="inline-flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
                     {(
                       [
                         { id: "all", label: "All" },
                         { id: "suggested", label: "Suggested" },
-                        { id: "already", label: `Already in TabDump${already.length > 0 ? ` (${already.length})` : ""}` },
+                        { id: "already", label: `Already in Hubble${already.length > 0 ? ` (${already.length})` : ""}` },
                       ] as { id: ReviewFilter; label: string }[]
                     ).map((tab) => (
                       <button
@@ -394,7 +394,7 @@ export function HistoryDumpView({
                   {filteredSuggested.length > 0 && (
                     <section>
                       <p className="mb-2 px-1 text-eyebrow text-tertiary">HIGH CONFIDENCE</p>
-                      <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
+                      <div className="rounded-md border border-border bg-card px-2 pb-1">
                         {filteredSuggested.map((c) => (
                           <HistoryCandidateRow
                             key={c.id}
@@ -411,7 +411,7 @@ export function HistoryDumpView({
                   {filteredOther.length > 0 && (
                     <section>
                       <p className="mb-2 px-1 text-eyebrow text-tertiary">OTHER POTENTIAL TABS</p>
-                      <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
+                      <div className="rounded-md border border-border bg-card px-2 pb-1">
                         {filteredOther.map((c) => (
                           <HistoryCandidateRow
                             key={c.id}
@@ -434,8 +434,8 @@ export function HistoryDumpView({
 
                   {filteredAlready.length > 0 && (
                     <section>
-                      <p className="mb-2 px-1 text-eyebrow text-tertiary">ALREADY IN TABDUMP</p>
-                      <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
+                      <p className="mb-2 px-1 text-eyebrow text-tertiary">ALREADY IN HUBBLE</p>
+                      <div className="rounded-md border border-border bg-card px-2 pb-1">
                         {filteredAlready.map((c) => (
                           <HistoryCandidateRow key={c.id} candidate={c} selected={false} onToggle={() => {}} />
                         ))}

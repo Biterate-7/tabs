@@ -10,7 +10,7 @@ import type { AgentControlAdapter, ControlResult } from "./types";
  * identically whether or not any particular provider exists, and "sign in"
  * means different things to different agents: one opens a browser for a
  * Google account, one reads a login a CLI already holds, one has no such
- * concept and runs on a key the user stored in TabDump. A method on the base
+ * concept and runs on a key the user stored in Hubble. A method on the base
  * interface would force every adapter to pretend to one of those.
  *
  * So an adapter that genuinely has a native sign-in exposes these two
@@ -21,7 +21,7 @@ import type { AgentControlAdapter, ControlResult } from "./types";
  *
  * A credential. `authenticate` takes a *method id* the agent itself
  * advertised, and the agent does the rest on the user's machine — typically
- * by opening a browser to the provider's own sign-in page. TabDump never sees
+ * by opening a browser to the provider's own sign-in page. Hubble never sees
  * a password, a token or a key on this path, never stores one, and has no
  * parameter it could put one in.
  */
@@ -30,7 +30,7 @@ import type { AgentControlAdapter, ControlResult } from "./types";
 export type AdapterAuthMethod = { id: string; name: string; description?: string };
 
 /**
- * What TabDump knows about the agent's sign-in.
+ * What Hubble knows about the agent's sign-in.
  *
  * `unknown` is the common, honest answer: most agents only reveal that they
  * are signed out when asked to start a session.

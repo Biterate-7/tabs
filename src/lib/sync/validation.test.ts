@@ -12,7 +12,7 @@ import {
 } from "./validation";
 
 /**
- * The sync boundary is the first place TabDump will accept workspace data
+ * The sync boundary is the first place Hubble will accept workspace data
  * from outside the device that created it, so these treat every payload as
  * hostile. TypeScript proves nothing at runtime; this is what actually
  * stands between a request body and the database.

@@ -11,7 +11,7 @@ export function TabFavicon({ domain, size = 28 }: { domain: string; size?: numbe
     >
       <AvatarImage src={faviconUrl(domain)} alt="" className="rounded-md" />
       <AvatarFallback
-        className="rounded-md text-[0.65rem] font-semibold text-white"
+        className="rounded-md text-[0.65rem] font-medium text-white"
         style={{ backgroundColor: `var(${colorVar})` }}
       >
         {letter}

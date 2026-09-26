@@ -29,7 +29,7 @@ import type {
  *
  *   1. Can agents run here at all?        → `runtime_unavailable`
  *   2. Is it installed?                   → `not_installed`
- *   3. Can TabDump start it?              → `needs_adapter`
+ *   3. Can Hubble start it?              → `needs_adapter`
  *   4. Is it signed in?                   → `sign_in_required`
  *   5. Has the user approved it?          → `awaiting_approval`
  *   6. Otherwise                          → `connected`
@@ -44,7 +44,7 @@ export type ConnectionPhase =
   | "needs_adapter"
   | "detected"
   | "connecting"
-  /** The agent's own sign-in is open and TabDump is waiting on the person (Phase J.2). */
+  /** The agent's own sign-in is open and Hubble is waiting on the person (Phase J.2). */
   | "authenticating"
   | "sign_in_required"
   /** The agent was reached, but could not say whether it is signed in (Phase J.2). */
@@ -77,9 +77,9 @@ export const CONNECTION_PHASE_LABEL: Record<ConnectionPhase, string> = {
 
 export type ConnectionFacts = {
   provider: PlatformProvider;
-  /** Where TabDump is running. Absent means the web. */
+  /** Where Hubble is running. Absent means the web. */
   surface?: PlatformSurface;
-  /** TabDump is reaching this agent right now. */
+  /** Hubble is reaching this agent right now. */
   connecting?: boolean;
   /** The agent's own sign-in is open, waiting on the person. */
   authenticating?: boolean;
@@ -92,7 +92,7 @@ export type ConnectionFacts = {
   status?: RuntimeProviderStatus | ProviderConnectionView;
   /** Whether the user's provider key is connected (for `provider-key` sign-in). */
   providerKeyConnected?: boolean;
-  /** Whether a TabDump MCP token has been issued (for `mcp-token` sign-in). */
+  /** Whether a Hubble MCP token has been issued (for `mcp-token` sign-in). */
   mcpTokenIssued?: boolean;
   /** Present when the user approved this agent. */
   approvedScopes?: readonly AgentPermissionScope[];
@@ -101,11 +101,11 @@ export type ConnectionFacts = {
 export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
   const { provider } = facts;
 
-  // A connector that cannot work where TabDump is running (a custom MCP
+  // A connector that cannot work where Hubble is running (a custom MCP
   // agent in the desktop app, which runs no MCP server) says so first.
   if (!provider.surfaces.includes(facts.surface ?? "web")) return "runtime_unavailable";
 
-  // An MCP client is the one kind TabDump never starts, so neither the
+  // An MCP client is the one kind Hubble never starts, so neither the
   // runtime nor the machine is a question for it.
   if (provider.transport === "mcp") {
     // `false` is a known absence. `undefined` is a surface that did not look,
@@ -138,7 +138,7 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
 
   // A stored key matters only where the runtime has no native sign-in for
   // this agent. In the desktop app Claude uses its own login (Phase J.1), and
-  // whether a key is stored in a server TabDump does not have is irrelevant.
+  // whether a key is stored in a server Hubble does not have is irrelevant.
   if (
     signInKind(provider, facts.status) === "provider-key" &&
     facts.providerKeyConnected === false
@@ -188,13 +188,13 @@ export function phaseSentence(
         return provider.unavailableOn?.[surface] ?? `${name} is unavailable here.`;
       }
       return provider.transport === "acp"
-        ? `${name} is unavailable on this runtime. It runs on your own machine, from the desktop app or a local TabDump.`
-        : "Agents cannot run in this TabDump.";
+        ? `${name} is unavailable on this runtime. It runs on your own machine, from the desktop app or a local Hubble.`
+        : "Agents cannot run in this Hubble.";
     }
     case "not_installed":
       return `${name} is not installed.`;
     case "needs_adapter":
-      return `${name} is installed, but the program TabDump drives it through is not.`;
+      return `${name} is installed, but the program Hubble drives it through is not.`;
     case "detected":
       return `${name} is installed.`;
     case "connecting":
@@ -214,12 +214,12 @@ export function phaseSentence(
     case "error":
       return `${name} could not be reached.`;
     case "unknown":
-      return "TabDump has not checked this machine yet.";
+      return "Hubble has not checked this machine yet.";
   }
 }
 
 /**
- * Whether TabDump will start a session with this agent, and if not, why.
+ * Whether Hubble will start a session with this agent, and if not, why.
  *
  * The registry's word, and then the runtime's: an adapter that declares no
  * `create_session` cannot be given one whatever the registry says.
@@ -296,8 +296,8 @@ export function stepFor(phase: ConnectionPhase): ConnectStep {
 /**
  * The scopes an agent may be approved for, and which are on by default.
  *
- * Reading TabDump content is on, because it is the point of connecting an
- * agent to TabDump. Reading project files is on because an agent that cannot
+ * Reading Hubble content is on, because it is the point of connecting an
+ * agent to Hubble. Reading project files is on because an agent that cannot
  * read the code it was asked about is not useful. Changing files and running
  * commands are **off** — the user turns them on — and even when on, every
  * single use still needs its own approval (see control/permissions.ts:
@@ -313,7 +313,7 @@ export const APPROVABLE_SCOPES: readonly { scope: AgentPermissionScope; defaultO
 ];
 
 export function defaultApprovedScopes(provider: PlatformProvider): AgentPermissionScope[] {
-  // An MCP client reads TabDump and nothing else — there is no project.
+  // An MCP client reads Hubble and nothing else — there is no project.
   if (provider.transport === "mcp") return ["read_workspace"];
   return APPROVABLE_SCOPES.filter((entry) => entry.defaultOn).map((entry) => entry.scope);
 }

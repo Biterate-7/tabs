@@ -62,8 +62,8 @@ export function agentProjectFolderPicker():
 /**
  * Which surface the agent connectors are offered on (Phase J.2).
  *
- * Some connectors only work on one: a custom MCP agent connects to TabDump's
- * MCP server, which only a TabDump server with an account store runs. The
+ * Some connectors only work on one: a custom MCP agent connects to Hubble's
+ * MCP server, which only a Hubble server with an account store runs. The
  * connector registry says which; this says where we are.
  */
 export function agentConnectorSurface(): "web" | "desktop" {

@@ -8,7 +8,7 @@ import { TabCard } from "@/components/workspace/tab-card"
 import type { CategoryId } from "@/lib/categories"
 import type { Tab } from "@/lib/tabs/types"
 
-/** Most recently interacted-with favorite first; a favorite that's never been opened from TabDump sorts after ones that have, in their existing relative order — see AGENTS.md's "Favorite Sorting" section. */
+/** Most recently interacted-with favorite first; a favorite that's never been opened from Hubble sorts after ones that have, in their existing relative order — see AGENTS.md's "Favorite Sorting" section. */
 function sortFavorites(tabs: Tab[]): Tab[] {
   return [...tabs].sort((a, b) => (b.lastAccessedAt ?? 0) - (a.lastAccessedAt ?? 0))
 }
@@ -16,7 +16,7 @@ function sortFavorites(tabs: Tab[]): Tab[] {
 /**
  * Dedicated Favorites destination — same full-page overlay shape as
  * CategoryPage (fixed inset, view-pop-in), scoped to the current workspace
- * like every other TabDump view. Reuses TabCard for every row rather than a
+ * like every other Hubble view. Reuses TabCard for every row rather than a
  * bespoke favorite-row component, so unfavoriting here behaves identically
  * (and stays in sync) with unfavoriting anywhere else.
  */
@@ -43,15 +43,15 @@ export function FavoritesView({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
-      <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <Star className="size-4 shrink-0 text-favorite-accent" fill="currentColor" fillOpacity={0.2} />
-        <p className="text-h1 text-foreground">
+        <p className="text-h2 text-foreground">
           Favorites{" "}
           <span className="text-tertiary">
             · {favorites.length} tab{favorites.length === 1 ? "" : "s"}
@@ -66,7 +66,7 @@ export function FavoritesView({
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8">
-            <div className="rounded-lg border border-subtle bg-card px-2 pb-6">
+            <div className="rounded-md border border-border bg-card px-2 pb-6">
               {favorites.map((tab) => (
                 <TabCard
                   key={tab.id}

@@ -1,4 +1,4 @@
-//! The complete native surface TabDump's frontend can reach.
+//! The complete native surface Hubble's frontend can reach.
 //!
 //! There are exactly two commands, and both are deliberately shaped so the
 //! frontend cannot express a dangerous request in the first place:
@@ -58,7 +58,7 @@ use tauri_plugin_opener::OpenerExt;
 
 /// Opens `url` in the user's default browser.
 ///
-/// This is what keeps the TabDump window from becoming a general-purpose
+/// This is what keeps the Hubble window from becoming a general-purpose
 /// browser: a saved tab is somebody else's webpage, and it belongs in the
 /// browser the user actually chose, not inside this app's webview. See
 /// `src/lib/platform/desktop.ts` for the caller, and `lib.rs`'s navigation

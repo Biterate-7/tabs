@@ -56,7 +56,7 @@ async function openSwitcher(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(() => {
   window.localStorage.clear();
   // Every test in this file is about the app, not about how a first-time
-  // visitor is greeted. A cleared localStorage now means "never used TabDump",
+  // visitor is greeted. A cleared localStorage now means "never used Hubble",
   // which AppShell answers with the public landing page rather than the app
   // shell (see the FirstRunLanding branch) — so mark onboarding as already
   // handled here, and let the tests that care about the landing page opt back
@@ -75,26 +75,30 @@ afterEach(() => {
 
 
 describe("AppShell first run", () => {
-  it("greets a visitor who has never used TabDump with the public landing page", async () => {
+  it("greets a visitor who has never used Hubble with the public landing page", async () => {
     // Undoes the shared beforeEach: this is the one case that wants the
     // genuinely untouched state a brand-new visitor arrives in.
     window.localStorage.clear();
     render(<AppShell />);
 
-    const heading = await screen.findByRole("heading", { level: 1 });
-    expect(heading.textContent).toMatch(/Watch your AI agents work/);
+    const heading = await screen.findByRole("heading", { level: 1, name: /structured context for your AI agents/ });
+    expect(heading).toBeTruthy();
     // The app shell itself must not be mounted underneath it — no sidebar, no
-    // paste box, nothing for a stray click to reach.
+    // paste box, nothing for a stray click to reach. The landing page's live
+    // demo has a workspace switcher of its own; every one found must be that
+    // demo's, inside its window, never the shell's.
     expect(screen.queryByPlaceholderText(/Paste your tabs/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Switch workspace" })).toBeNull();
+    const switchers = screen.queryAllByRole("button", { name: "Switch workspace" });
+    expect(switchers.length).toBeGreaterThan(0);
+    expect(switchers.every((button) => button.closest("[data-hubble-demo]"))).toBe(true);
   });
 
-  it("hands over to the app once the visitor chooses to open TabDump", async () => {
+  it("hands over to the app once the visitor chooses to open Hubble", async () => {
     window.localStorage.clear();
     const user = userEvent.setup();
     render(<AppShell />);
 
-    await user.click((await screen.findAllByRole("button", { name: /Open TabDump/ }))[0]);
+    await user.click((await screen.findAllByRole("button", { name: /Open Hubble/ }))[0]);
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
   });
@@ -104,7 +108,7 @@ describe("AppShell first run", () => {
     // persisted: an empty workspace belongs to the app, not to marketing.
     render(<AppShell />);
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /Watch your AI agents work/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /structured context for your AI agents/ })).toBeNull();
   });
 
   it("keeps a visitor who has dumped tabs out of the landing page", async () => {
@@ -116,7 +120,7 @@ describe("AppShell first run", () => {
     render(<AppShell />);
 
     expect(await screen.findByRole("button", { name: "Switch workspace" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /Watch your AI agents work/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /structured context for your AI agents/ })).toBeNull();
   });
 });
 describe("AppShell persistence", () => {
@@ -557,7 +561,7 @@ describe("AppShell History Dump", () => {
 
     await user.click(screen.getByRole("button", { name: "History Dump" }));
     await user.click(await screen.findByRole("button", { name: "Scan History" }));
-    expect(await screen.findByText("TabDump extension not detected.")).toBeTruthy();
+    expect(await screen.findByText("Hubble extension not detected.")).toBeTruthy();
   });
 });
 

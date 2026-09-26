@@ -1,5 +1,5 @@
 /**
- * Tiny procedural sound engine for TabDumpIntro — precision-software UI
+ * Tiny procedural sound engine for HubbleIntro — precision-software UI
  * tones (short sine blips, filtered-noise whooshes/clicks), synthesized with
  * Web Audio rather than shipped as audio assets. Every public method is a
  * fire-and-forget trigger: it either plays immediately or silently does

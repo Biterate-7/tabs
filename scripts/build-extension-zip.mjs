@@ -1,4 +1,4 @@
-// Packages extension/ into public/tabdump-extension.zip so it's served as
+// Packages extension/ into public/hubble-extension.zip so it's served as
 // a plain static file by Next.js — in dev via `next dev` and in production
 // via Vercel's static asset serving, with no backend/API route/database
 // involved. Runs before every build (wired into package.json's "build"
@@ -11,12 +11,12 @@
 // DEFLATE-in-ZIP edge cases to get wrong) and costs nothing meaningful for
 // an archive this small. Entries are stored FLAT at the ZIP root (no
 // `extension/` prefix) so that extracting the downloaded
-// `tabdump-extension.zip` — with Windows' "Extract All", macOS Archive
+// `hubble-extension.zip` — with Windows' "Extract All", macOS Archive
 // Utility, or `unzip` on the command line — produces manifest.json sitting
-// directly inside the extracted `tabdump-extension` folder. Those tools
+// directly inside the extracted `hubble-extension` folder. Those tools
 // name the extracted folder after the archive precisely because the
 // archive has no single top-level folder of its own; nesting one in here
-// would instead produce `tabdump-extension/extension/manifest.json`,
+// would instead produce `hubble-extension/extension/manifest.json`,
 // forcing users to hunt for the folder Chrome's "Load unpacked" actually
 // wants. See the onboarding guide (extension-install-guide.tsx) for the
 // matching install instructions.
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const EXTENSION_DIR = path.join(REPO_ROOT, "extension");
-const OUTPUT_PATH = path.join(REPO_ROOT, "public", "tabdump-extension.zip");
+const OUTPUT_PATH = path.join(REPO_ROOT, "public", "hubble-extension.zip");
 
 const EXCLUDED_DIRS = new Set(["scripts"]);
 const EXCLUDED_FILES = new Set(["README.md"]);
@@ -45,18 +45,18 @@ const EXCLUDED_FILES = new Set(["README.md"]);
 // TABDUMP_PRODUCTION_ORIGIN: set this to override (e.g. if the canonical
 // domain below ever changes, or a developer deliberately wants a
 // localhost-targeting ZIP for local end-to-end testing — see below).
-// Otherwise this defaults to TabDump's actual canonical production domain —
+// Otherwise this defaults to Hubble's actual canonical production domain —
 // deliberately NOT derived from Vercel's VERCEL_PROJECT_PRODUCTION_URL, which
 // reflects whatever domain the Vercel project happens to be assigned (e.g.
 // an auto-suffixed tabdump-eight.vercel.app if the exact project name was
-// taken) rather than the domain TabDump is actually meant to be reached at.
+// taken) rather than the domain Hubble is actually meant to be reached at.
 // Preview builds are the one case that legitimately need a different,
 // per-deployment origin — those still pick up Vercel's own VERCEL_URL, a
 // fresh throwaway URL every build. Baking a Preview's VERCEL_URL into a
 // Production build would instead mean every new deployment silently
 // invalidates every previously downloaded extension ZIP: the extension's
 // host_permissions/content_scripts match only that one build's URL, so
-// chrome.tabs.query()/tabs.create() in background.js's findOrOpenTabDumpTab()
+// chrome.tabs.query()/tabs.create() in background.js's findOrOpenHubbleTab()
 // end up targeting a stale, deployment-specific origin instead of the domain
 // the user is actually looking at — landing imported tabs in a different
 // origin's localStorage than the one being viewed, with no visible error.
@@ -228,12 +228,12 @@ if (isMainModule) {
 
   // Fail loudly instead of silently packaging a broken extension: every
   // origin-substituted file must end up with ONLY the intended target
-  // origin baked in, never a stray reference to the wrong TabDump domain
+  // origin baked in, never a stray reference to the wrong Hubble domain
   // (see the regression this guards against in build-extension-zip.test.mjs).
   const WRONG_PRODUCTION_ORIGIN = "https://tabdump.vercel.app";
   if (TARGET_ORIGIN === WRONG_PRODUCTION_ORIGIN) {
     throw new Error(
-      `Refusing to build: TARGET_ORIGIN resolved to the invalid TabDump origin ${WRONG_PRODUCTION_ORIGIN}\n` +
+      `Refusing to build: TARGET_ORIGIN resolved to the invalid Hubble origin ${WRONG_PRODUCTION_ORIGIN}\n` +
         `Expected: ${CANONICAL_PRODUCTION_ORIGIN}`
     );
   }
@@ -246,7 +246,7 @@ if (isMainModule) {
       const substituted = readFileSync(absolutePath, "utf8").split(DEV_ORIGIN).join(TARGET_ORIGIN);
       if (substituted.includes(WRONG_PRODUCTION_ORIGIN)) {
         throw new Error(
-          `Production extension contains an invalid TabDump origin in ${relativePath}:\n` +
+          `Production extension contains an invalid Hubble origin in ${relativePath}:\n` +
             `${WRONG_PRODUCTION_ORIGIN}\n\n` +
             `Expected:\n${CANONICAL_PRODUCTION_ORIGIN}`
         );

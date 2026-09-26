@@ -13,7 +13,7 @@ export type DuplicateConfidence = "high" | "medium";
 
 /**
  * One group of items sharing a URL, generic over whatever id type the
- * caller's items use (TabDump tab ids are strings; browser tab ids are
+ * caller's items use (Hubble tab ids are strings; browser tab ids are
  * numbers — see find_duplicates in src/lib/actions/duplicates.ts, the only
  * consumer that needs both). `duplicateGroupId` is stable only within one
  * call's output, not persisted anywhere.

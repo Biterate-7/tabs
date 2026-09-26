@@ -1,5 +1,5 @@
 /**
- * Which shell the shared TabDump frontend is running inside.
+ * Which shell the shared Hubble frontend is running inside.
  *
  * This is the ONLY place that answers that question. The rule the rest of
  * the codebase follows: product logic never asks. A handful of narrow

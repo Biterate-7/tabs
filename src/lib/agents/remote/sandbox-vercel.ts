@@ -23,7 +23,7 @@ import type { RemoteSandboxStatus } from "./types";
 /**
  * The real remote plane, on `@vercel/sandbox`.
  *
- * **The only module in TabDump that imports the sandbox SDK.** Everything
+ * **The only module in Hubble that imports the sandbox SDK.** Everything
  * else works against the narrow interface in ./sandbox.ts, so the platform's
  * types never leak and replacing it is one file — the same discipline
  * `providers/claude-code/sdk-runtime.ts` applies to the Claude SDK.
@@ -354,7 +354,7 @@ export function createVercelSandboxService(
 
         // Installed into the control directory rather than globally, so module
         // resolution is the boring default and the agent's own workspace is
-        // untouched by TabDump's dependencies. Idempotent across resumes: a
+        // untouched by Hubble's dependencies. Idempotent across resumes: a
         // sandbox that already has it re-runs this in a second or two.
         const install = await sandbox.runCommand({
           cmd: "npm",

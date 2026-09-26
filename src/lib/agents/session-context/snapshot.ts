@@ -9,12 +9,12 @@ import type { Workspace } from "@/lib/workspace/types";
  *
  * ## Why the webview sends it at all
  *
- * TabDump is local-first: a workspace lives in the app's own storage, not in
+ * Hubble is local-first: a workspace lives in the app's own storage, not in
  * any server the runtime could ask — and in the desktop app there is no server
  * at all. So when a session starts, the Command Centre hands the runtime a
  * bounded copy of exactly the workspace the session was started from, and
  * keeps it current. The agent never sees this object; it *queries* it through
- * TabDump's MCP server, one bounded answer at a time. Nothing here is a prompt.
+ * Hubble's MCP server, one bounded answer at a time. Nothing here is a prompt.
  *
  * ## Built on one side, read strictly on the other
  *

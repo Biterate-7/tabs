@@ -47,7 +47,7 @@ export const EXECUTION_MODE_LABEL: Record<ExecutionMode, string> = {
 
 export const EXECUTION_MODE_DETAIL: Record<ExecutionMode, string> = {
   local: "Runs on this machine, in a folder you authorize.",
-  remote: "Runs in an isolated environment TabDump creates. It cannot reach this computer.",
+  remote: "Runs in an isolated environment Hubble creates. It cannot reach this computer.",
 };
 
 /**
@@ -63,7 +63,7 @@ export const EXECUTION_MODE_DETAIL: Record<ExecutionMode, string> = {
  * The consequence the brief asks for falls straight out: a hosted deployment
  * reports `remote` and therefore never offers `local`, because it genuinely
  * cannot execute locally and offering it would produce a failure the user
- * could not have predicted. A local TabDump reports `local` and offers that.
+ * could not have predicted. A local Hubble reports `local` and offers that.
  *
  * Returns empty when nothing can execute, which is what makes the dialog say
  * so rather than presenting a mode picker with no working options.
@@ -100,10 +100,10 @@ export type StartBlocker =
   | "project-failed";
 
 export const START_BLOCKER_MESSAGE: Record<StartBlocker, string> = {
-  "runtime-unavailable": "TabDump cannot run agents here.",
+  "runtime-unavailable": "Hubble cannot run agents here.",
   "provider-unavailable": "That agent is not available on this runtime.",
   // Accurate about what is actually missing. It used to say "needs to be
-  // signed in", which described an authorization TabDump never asks for; what
+  // signed in", which described an authorization Hubble never asks for; what
   // the user has to do is connect their own provider credentials. The Command
   // Centre pairs this sentence with a Connect action — see
   // `new-session-dialog.tsx`.
@@ -185,10 +185,10 @@ export type RemoteCreateFailure =
 
 export const REMOTE_CREATE_MESSAGE: Record<RemoteCreateFailure, string> = {
   "invalid-name": "Give the project a name.",
-  "invalid-scopes": "TabDump did not recognise those permissions.",
+  "invalid-scopes": "Hubble did not recognise those permissions.",
   "too-many-sandboxes": "You already have the maximum number of remote projects.",
   "upload-rejected": "Some of those files could not be uploaded safely.",
-  "sandbox-failed": "TabDump could not create the remote environment. Try again.",
+  "sandbox-failed": "Hubble could not create the remote environment. Try again.",
   "remote-unavailable": "Remote agents are not configured on this deployment.",
   "upload-too-large": `That folder is larger than ${Math.round(
     REMOTE_LIMITS.maxUploadBytes / (1024 * 1024)
@@ -196,7 +196,7 @@ export const REMOTE_CREATE_MESSAGE: Record<RemoteCreateFailure, string> = {
   "too-many-files": `That folder has more than ${REMOTE_LIMITS.maxUploadFiles} files.`,
   "no-files": "Choose a folder with files in it.",
   "unsafe-path": "One of those file names can't be used. Choose a different folder.",
-  network: "TabDump could not reach the server. Try again.",
+  network: "Hubble could not reach the server. Try again.",
 };
 
 export type UploadCandidate = { path: string; size: number };
@@ -282,9 +282,9 @@ function isLikelyExcluded(path: string): boolean {
  * ------------------------------------------------------------------ */
 
 /**
- * Whether TabDump can *drive* this provider, and where.
+ * Whether Hubble can *drive* this provider, and where.
  *
- * ## Why this is not "does TabDump know this provider's name"
+ * ## Why this is not "does Hubble know this provider's name"
  *
  * The brief is explicit that a connector must not read "Available" merely
  * because the UI has a label for it, and this is the function that would
@@ -313,7 +313,7 @@ export function controlAvailability(
   if (!status || !status.executable) {
     return {
       kind: "unavailable",
-      reason: status?.detail ?? "TabDump cannot run agents here.",
+      reason: status?.detail ?? "Hubble cannot run agents here.",
     };
   }
 

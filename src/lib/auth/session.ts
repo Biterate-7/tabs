@@ -7,8 +7,8 @@ import { toPublicUser } from "./types";
 import type { AuthSession, AuthStore, PublicUser } from "./types";
 
 /**
- * TabDump's own session layer. Google never sees a TabDump session and
- * TabDump never asks Google whether one is still valid: after sign-in, the
+ * Hubble's own session layer. Google never sees a Hubble session and
+ * Hubble never asks Google whether one is still valid: after sign-in, the
  * only thing that keeps a browser authenticated is a row in our own store.
  *
  * The shape is the standard opaque-token one:

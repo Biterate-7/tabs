@@ -7,9 +7,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * TabDump's MCP server (Streamable HTTP, stateless).
+ * Hubble's MCP server (Streamable HTTP, stateless).
  *
- * Read-only access to the token owner's account-synced TabDump context. See
+ * Read-only access to the token owner's account-synced Hubble context. See
  * src/lib/mcp/http.ts for the request rules and src/lib/mcp/server.ts for
  * the tool list, and docs/claude-desktop-mcp.md for connecting Claude Desktop.
  *

@@ -46,13 +46,25 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Geometry. One dial (--radius, Settings → Shape) and fixed ratios off it,
+     measured on the reference at the default 8px:
+       xs   4px  rows, list items, cards, tiles, menu items
+       sm   6px  small chips, kbd
+       md   8px  inputs, message boxes, file chips, search fields
+       lg  10px  windows, dialogs, palettes, popovers
+       xl  12px  sheets and large stages
+     Buttons are pills and do not use this scale. */
+  --radius-xs: calc(var(--radius) * 0.5);
+  --radius-sm: calc(var(--radius) * 0.75);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.25);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-3xl: calc(var(--radius) * 2.5);
+  --radius-4xl: calc(var(--radius) * 3);
+  --color-link: var(--link);
+  --color-surface-elevated: var(--surface-elevated);
+  --font-display: var(--hb-font-display);
 
   /* Appearance system (src/lib/appearance) — every value below is written
      at runtime by AppearanceProvider (see use-appearance.ts); the :root
@@ -114,49 +126,40 @@
  * Every color below is the pre-hydration / no-JS fallback and is normally
  * overwritten at runtime by AppearanceProvider (src/components/
  * appearance-provider.tsx) from the active theme — see src/lib/appearance.
- * They deliberately reproduce TabDump's original dark palette ("Midnight",
+ * They deliberately reproduce Hubble's original dark palette ("Midnight",
  * the default theme) so nothing changes for a user before JS applies their
  * saved preference.
  */
 :root {
-  /* bg-base */
-  --background: #0a0a0b;
-  /* text-primary */
-  --foreground: #f4f4f5;
-  /* bg-surface */
-  --card: #131316;
-  --card-foreground: #f4f4f5;
-  /* bg-elevated */
-  --popover: #19191d;
-  --popover-foreground: #f4f4f5;
-  /* accent (indigo) */
-  --primary: #4361ff;
-  --primary-foreground: #ffffff;
-  /* secondary surface, slightly lighter than card */
-  --secondary: #18181c;
-  --secondary-foreground: #f4f4f5;
-  --muted: #141416;
-  /* text-secondary */
-  --muted-foreground: #a1a1aa;
-  /* neutral hover bg for ghost/outline states */
-  --accent: #1c1c21;
-  --accent-foreground: #f4f4f5;
-  --destructive: #e5484d;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.12);
-  /* focus ring = accent */
-  --ring: #4361ff;
-  /* text-tertiary (metadata level) — lightened from #71717a, which measured
-     4.09:1 on the base background and failed WCAG AA's 4.5:1 for body text */
-  --text-tertiary: #87878f;
-  /* The accent as *text* on dark surfaces. --primary (#4361ff) is tuned as a
-     solid fill (white on it = 4.78:1) and only reaches ~3.9:1 as text, so
-     text/icon usages take this lighter step instead (~7:1). */
-  --accent-text: #8a9dff;
-  --success: #1f8a4c;
-  --success-foreground: #ffffff;
-  --warning: #a66a1f;
-  --warning-foreground: #ffffff;
+  /* Pre-hydration fallback = the default theme (Hubble Dark). Overwritten at
+     runtime by AppearanceProvider from the active theme. */
+  --background: #14120b;
+  --foreground: #edecec;
+  --card: #1b1913;
+  --card-foreground: #edecec;
+  --popover: #201e18;
+  --popover-foreground: #edecec;
+  /* The primary fill is the foreground itself: ink on paper, never a
+     coloured slab. Colour lives in --link. */
+  --primary: #edecec;
+  --primary-foreground: #14120b;
+  --secondary: #2b2923;
+  --secondary-foreground: #edecec;
+  --muted: #1b1913;
+  --muted-foreground: #9a9895;
+  --accent: #201e18;
+  --accent-foreground: #edecec;
+  --destructive: #e5667f;
+  --border: #2a2822;
+  --input: #3f3d37;
+  --ring: #8f8d8a;
+  --text-tertiary: #7a7874;
+  --accent-text: #edecec;
+  --link: #eb5600;
+  --success: #3fae83;
+  --success-foreground: #14120b;
+  --warning: #d9a441;
+  --warning-foreground: #14120b;
   /* destructive/remove actions outside confirm dialogs (bulk remove, etc.) */
   --danger: var(--destructive);
   --danger-foreground: #ffffff;
@@ -182,22 +185,25 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: #131316;
-  --sidebar-foreground: #f4f4f5;
-  --sidebar-primary: #4361ff;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1c1c21;
-  --sidebar-accent-foreground: #f4f4f5;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #4361ff;
+  --sidebar: #1b1913;
+  --sidebar-foreground: #edecec;
+  --sidebar-primary: #edecec;
+  --sidebar-primary-foreground: #14120b;
+  --sidebar-accent: #201e18;
+  --sidebar-accent-foreground: #edecec;
+  --sidebar-border: #211f19;
+  --sidebar-ring: #8f8d8a;
 
-  --radius: 0.625rem;
-  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --radius: 0.5rem;
+  /* Motion, measured: 140ms on a spring-shaped ease-out with no overshoot
+     for anything that moves; the plain material ease for colour changes. */
+  --ease-standard: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-color: cubic-bezier(0.4, 0, 0.2, 1);
   --tabdump-transition-scale: 1;
   --motion-scale: 1;
-  --duration-fast: calc(120ms * var(--tabdump-transition-scale) * var(--motion-scale));
-  --duration-base: calc(160ms * var(--tabdump-transition-scale) * var(--motion-scale));
-  --duration-slow: calc(220ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-fast: calc(140ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-base: calc(150ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-slow: calc(250ms * var(--tabdump-transition-scale) * var(--motion-scale));
   /* The folder-open sequence (category-folder.tsx) plays once per click, so
      it can afford to be a touch longer than the base duration scale — but it
      hands off to CategoryPage's own view-pop-in entrance immediately after
@@ -217,14 +223,17 @@
   --surface: var(--card);
   --surface-hover: var(--accent);
   --surface-active: var(--secondary);
-  --surface-selected: color-mix(in oklch, var(--card), var(--primary) 18%);
+  --surface-selected: #282620;
+  --surface-elevated: var(--popover);
+  --surface-highlight: transparent;
+  --overlay: rgb(0 0 0 / 0.5);
   --text-secondary: var(--muted-foreground);
   --text-disabled: color-mix(in oklch, var(--muted-foreground), transparent 40%);
   --accent-hover: color-mix(in oklch, var(--primary), white 12%);
   --accent-active: color-mix(in oklch, var(--primary), black 16%);
   --accent-subtle: color-mix(in oklch, var(--primary), var(--background) 84%);
   --border-subtle: var(--border);
-  --border-strong: rgba(255, 255, 255, 0.22);
+  --border-strong: #3f3d37;
   --success-subtle: color-mix(in oklch, var(--success), var(--background) 85%);
   --warning-subtle: color-mix(in oklch, var(--warning), var(--background) 85%);
   --error: var(--destructive);
@@ -247,7 +256,7 @@
   --editor-text: var(--foreground);
   --editor-placeholder: color-mix(in oklch, var(--muted-foreground), transparent 40%);
 
-  --tabdump-font-ui: var(--font-geist-sans);
+  --tabdump-font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --tabdump-font-content: var(--font-geist-sans);
   --tabdump-font-mono: var(--font-geist-mono);
   --tabdump-font-scale: 1;
@@ -269,6 +278,71 @@
   --tabdump-density-scale: 1;
   --tabdump-sidebar-width: 15rem;
   --tabdump-card-density-scale: 1;
+
+  /* ===================================================================
+     Hubble design system — the fixed half.
+
+     Colour, radius, shadow and motion speed are theme/Shape/Motion-driven
+     and live above. What follows is the part of the system no setting
+     changes: the type ramp, the spacing grid, page geometry, layering and
+     breakpoints. Values are the reference's own, measured at 1440px.
+     =================================================================== */
+
+  /* Faces. The display face is the brand voice (marketing, statements,
+     page-opening headlines); the product face is whatever the user picked
+     in Typography, defaulting to the platform UI font; mono is for code,
+     paths and commands only. */
+  --hb-font-display: var(--font-geist-sans);
+  --hb-font-product: var(--tabdump-font-ui);
+  --hb-font-mono: var(--tabdump-font-mono);
+
+  /* Type ramp (size / tracking). Weight is 400 throughout the display
+     ramp; 500 is the only other weight the product uses. */
+  --hb-text-11: 0.6875rem;  /* product-sm: meta, timestamps, section labels */
+  --hb-text-12: 0.75rem;    /* product-base: rows, tool lines, chips */
+  --hb-text-13: 0.8125rem;  /* product-lg: messages, body */
+  --hb-text-14: 0.875rem;   /* nav, footer links, small UI */
+  --hb-text-16: 1rem;       /* marketing body, card titles */
+  --hb-text-22: 1.375rem;   /* section title */
+  --hb-text-26: 1.625rem;   /* hero */
+  --hb-text-36: 2.25rem;    /* statement */
+  --hb-text-72: 4.5rem;     /* closing call to action */
+  --hb-tracking-11: 0.0044em;
+  --hb-tracking-14: 0.01em;
+  --hb-tracking-16: 0.005em;
+  --hb-tracking-22: -0.005em;
+  --hb-tracking-26: -0.0125em;
+  --hb-tracking-36: -0.02em;
+  --hb-tracking-72: -0.03em;
+
+  /* Spacing. A 10px grid for horizontal/intra-component space (g) and a
+     22.4px vertical rhythm (v) for the space between sections. */
+  --hb-g: 0.625rem;
+  --hb-v: 1.4rem;
+  --hb-section-y: calc(var(--hb-v) * 3);   /* 67.2px */
+  --hb-hero-top: calc(var(--hb-v) * 5);    /* 112px */
+
+  /* Page geometry. */
+  --hb-container: 81.25rem;  /* 1300px */
+  --hb-gutter: 1.25rem;      /* 20px */
+  --hb-header-h: 3.25rem;    /* 52px, marketing header */
+  --hb-bar-h: 3rem;          /* 48px, app view header */
+  --hb-titlebar-h: 1.75rem;  /* 28px, product window chrome */
+  --hb-sidebar-w: 15rem;
+  --hb-row-h: 1.875rem;      /* 30px, one-line nav/list row */
+  --hb-control-h: 2rem;      /* 32px, input/select */
+
+  /* Layering. */
+  --hb-z-sticky: 20;
+  --hb-z-sidebar: 40;
+  --hb-z-overlay: 50;
+  --hb-z-popover: 60;
+  --hb-z-toast: 70;
+
+  /* Opacity tiers the reference expresses colour through. */
+  --hb-alpha-secondary: 0.6;
+  --hb-alpha-tertiary: 0.4;
+  --hb-alpha-disabled: 0.5;
 }
 
 @layer base {
@@ -308,12 +382,15 @@
   }
 }
 
-/* Unlayered on purpose: guarantees a visible focus indicator on every
-   interactive element even where a component's own focus-visible ring
-   utility fails to resolve (observed on the generated Button primitive). */
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+/* The floor for keyboard focus: every focusable element gets a visible
+   indicator. In the base layer, so a component that draws its own focus
+   treatment (a ring, or a field's darkened edge) can replace it with an
+   ordinary utility — every primitive in components/ui does. */
+@layer base {
+  :focus-visible {
+    outline: 1.5px solid var(--focus);
+    outline-offset: 2px;
+  }
 }
 
 /* Background customization (Settings → Appearance → Background). A fixed
@@ -344,188 +421,151 @@
   opacity: var(--tabdump-overlay-active);
 }
 
+/* The type ramp and the content face, as utilities rather than component
+   classes so they compose with variants (sm:, hover:, [&_x]:) like any
+   other Tailwind class. See the ramp notes in @layer components below. */
+
+/* The type ramp and the content face, as utilities rather than component
+   classes, so they compose with variants (sm:, hover:, [&_x]:) like any
+   other Tailwind class — a component class silently ignores them. */
+@utility text-display {
+  font-family: var(--hb-font-display);
+  font-size: calc(var(--hb-text-36) * var(--tabdump-font-scale));
+  line-height: 1.2;
+  letter-spacing: var(--hb-tracking-36);
+  font-weight: 400;
+  text-wrap: balance;
+}
+
+@utility text-statement {
+  font-family: var(--hb-font-display);
+  font-size: calc(var(--hb-text-26) * var(--tabdump-font-scale));
+  line-height: 1.25;
+  letter-spacing: var(--hb-tracking-26);
+  font-weight: 400;
+  text-wrap: balance;
+}
+
+@utility text-h1 {
+  font-size: calc(1.125rem * var(--tabdump-font-scale));
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+}
+
+@utility text-h2 {
+  font-size: calc(var(--hb-text-13) * var(--tabdump-font-scale));
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+@utility text-body {
+  font-family: var(--tabdump-font-ui);
+  font-size: calc(var(--hb-text-13) * var(--tabdump-font-scale));
+  line-height: var(--tabdump-line-height);
+  letter-spacing: var(--tabdump-letter-spacing);
+  font-weight: var(--tabdump-font-weight);
+}
+
+@utility text-body-sm {
+  font-size: calc(var(--hb-text-12) * var(--tabdump-font-scale));
+  line-height: 1.34;
+  font-weight: 400;
+}
+
+@utility text-label {
+  font-size: calc(var(--hb-text-12) * var(--tabdump-font-scale));
+  line-height: 1.34;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+@utility text-meta {
+  font-size: calc(var(--hb-text-11) * var(--tabdump-font-scale));
+  line-height: 1.28;
+  letter-spacing: var(--hb-tracking-11);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+@utility text-eyebrow {
+  font-size: calc(var(--hb-text-11) * var(--tabdump-font-scale));
+  line-height: 1.28;
+  letter-spacing: var(--hb-tracking-11);
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+@utility text-code {
+  font-family: var(--hb-font-mono);
+  font-size: calc(var(--hb-text-12) * var(--tabdump-font-scale));
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility text-content {
+  font-family: var(--tabdump-font-content);
+}
+
 @layer components {
-  /* Retuned to the landing page's display setting rather than left at
-     weight 600 / leading 1.05.
+  /* ---- Type ------------------------------------------------------------
+     The Hubble ramp. Two voices, as in the reference:
 
-     marketing.css is explicit about why, and the reasoning applies
-     wherever large type appears: "1.14 and weight 420, not 1.1/440. Side
-     by side at this size the tighter, heavier setting read as a poster
-     headline where the benchmark's reads as a sentence — the extra
-     leading and the lighter stem are most of what makes a large line feel
-     composed rather than shouted."
+       display  the brand face at weight 400 with negative tracking that
+                tightens as size grows — statements that open a page.
+       product  the UI face at 11–13px, weight 400/500, tracked open at the
+                smallest size so it stays legible in dense rows.
 
-     Both existing call sites want exactly that: the legal pages' <h1>, and
-     the intro title, which re-adds `font-semibold` itself and so is
-     unaffected by the weight change. */
-  .text-display {
-    font-size: clamp(2rem, 1.35rem + 2.1vw, 3.125rem);
-    line-height: 1.14;
-    letter-spacing: -0.025em;
-    font-weight: 420;
-    text-wrap: balance;
-  }
+     No heading in the system is bolder than 500. Hierarchy comes from size,
+     the three text tiers and space — which is what keeps a dense screen
+     quiet. Every size tracks --tabdump-font-scale so Typography → Size still
+     scales the product. Mono is for code, paths and commands only. */
 
-  /* The step below it: a statement that opens a view or an empty state —
-     big enough to carry the page's voice, small enough to live inside
-     product chrome. The landing's `.m-headline`. */
-  .text-statement {
-    font-size: clamp(1.375rem, 1.15rem + 0.7vw, 1.75rem);
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-    font-weight: 440;
-    text-wrap: balance;
-  }
-  .text-h1 {
-    font-size: calc(1.5rem * var(--tabdump-font-scale));
-    line-height: 1.3;
-    letter-spacing: -0.01em;
-    font-weight: 600;
-  }
-  .text-h2 {
-    font-size: calc(1.125rem * var(--tabdump-font-scale));
-    line-height: 1.4;
-    font-weight: 600;
-  }
-  .text-body {
-    font-family: var(--tabdump-font-ui);
-    font-size: calc(0.9375rem * var(--tabdump-font-scale));
-    line-height: var(--tabdump-line-height);
-    letter-spacing: var(--tabdump-letter-spacing);
-    font-weight: var(--tabdump-font-weight);
-  }
-  .text-body-sm {
-    font-size: calc(0.8125rem * var(--tabdump-font-scale));
-    line-height: 1.4;
-    font-weight: 400;
-  }
-  /* An interface label: the name of a control or a field, set in the UI
-     face at a size below body.
+  /* Page-opening statement (36px). */
 
-     Distinct in ROLE from `.text-eyebrow` below, not merely in looks, and
-     the two were drifting into each other before this was written down.
-     Use `.text-label` for something a person reads *as part of operating a
-     control*: a form field's <label>, a badge, a segmented-control option,
-     a tooltip, a breadcrumb. Use `.text-eyebrow` for something that *names
-     a region of the page*: a section heading over a list, a group heading
-     in a menu.
+  /* Hero-sized line (26px) — a view's one sentence, an empty state. */
 
-     The test is whether it belongs to a control or to a region. "Filter"
-     over a list of filters is a region heading; "Filter" written on a
-     button is a control label. */
-  .text-label {
-    font-size: calc(0.75rem * var(--tabdump-font-scale));
-    line-height: 1.3;
-    letter-spacing: 0.01em;
-    font-weight: 500;
-  }
-  .text-meta {
-    font-family: var(--tabdump-font-mono);
-    font-size: calc(0.75rem * var(--tabdump-font-scale));
-    line-height: 1.2;
-    font-variant-numeric: tabular-nums;
-    font-weight: 400;
-  }
+  /* View title (18px) — "Settings", "Command Centre". */
 
-  /* Small uppercase mono label — section headings in the rail, group titles
-     above a list, the one or two places a region genuinely needs a category
-     over it.
+  /* Panel / section title (13px medium). */
 
-     This is the landing page's `.m-label` brought into the product, and it
-     is deliberately the *only* mono text in the app that isn't a number.
-     The marketing page allows mono in exactly two roles — this label and
-     tabular figures — and reserving it the same way here is most of what
-     makes a product screen and a marketing section read as one system.
-     Where the app previously set whole sentences in mono (the Agent World
-     and Agent History subtitles, settings descriptions), it was borrowing a
-     voice the design system uses for structure, not prose.
+  /* Product body (13px): messages, descriptions, form copy. */
 
-     Unlike `.m-label` it tracks --tabdump-font-scale, because unlike the
-     landing page this text lives inside product chrome the user can
-     resize.
+  /* Rows, tool lines, chips (12px). */
 
-     Names a REGION, where `.text-label` above names a control — see the
-     note there for the distinction and the test for which to reach for.
+  /* The name of a control or a field (12px medium). Belongs to a control;
+     `.text-eyebrow` belongs to a region. */
 
-     Write the text in sentence case and let `text-transform` do the rest.
-     The CSS uppercases it either way, and sentence case in the DOM is
-     what a screen reader reads as words rather than as an acronym. */
-  .text-eyebrow {
-    font-family: var(--tabdump-font-mono);
-    font-size: calc(0.6875rem * var(--tabdump-font-scale));
-    line-height: 1;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 400;
-  }
+  /* Metadata: counts, timestamps, durations (11px). Sans with tabular
+     figures, not mono — a figure beside a label should read as part of the
+     row, not as a code fragment. */
 
-  /* ---- Panel depth ---------------------------------------------------
-     The landing page's two-plane device, brought into the product.
+  /* Region label: "In progress", "Ready for review" (11px medium caps,
+     almost untracked). Write it in sentence case; CSS does the rest. */
 
-     `.m-stage` + `.m-window` is the single biggest thing separating that
-     page's product shots from a screenshot in a card: a window resting on
-     a lit backdrop reads as an object, one plane reads as a div. A CSS
-     census of the running app found the product using *zero* shadows on
-     any surface, so it had no depth language at all — panels, the world
-     stage and dialogs all sat flat on the page.
+  /* Code, paths, commands. */
 
-     These are the same two devices expressed in tokens instead of the
-     literals marketing.css can afford (it is brand-pinned; the product has
-     43 themes). Nothing here invents a colour: the ground is `--card`, the
-     rule is `--border`, the lit edge is `--surface-highlight`, and the
-     wash is the theme's own accent at very low chroma. */
-  /* Frame only — border, radius, lit top edge, cast shadow — and
-     deliberately no background, so it can be put on a surface that paints
-     its own ground (the Agent World stage draws a sky) without the two
-     fighting. Callers that want the ordinary card ground add `bg-card`. */
+  /* ---- Surfaces ----------------------------------------------------------
+     The product window: a card-toned plane with a hairline and the long,
+     soft window shadow. Frame only — callers choose the ground. */
   .surface-window {
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow:
-      0 1px 0 0 var(--surface-highlight) inset,
-      var(--shadow-md);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
   }
 
+  /* The flat tonal stage a product window rests on in a feature section. */
   .surface-stage {
     position: relative;
-    border: 1px solid var(--border-subtle);
-    /* One step rounder than the window resting on it, so the two radii
-       read as nested rather than as the same box drawn twice. */
-    border-radius: calc(var(--radius) * 1.6);
-    padding: clamp(0.5rem, 2vw, 1.5rem);
-    background:
-      radial-gradient(
-        130% 120% at 50% -15%,
-        color-mix(in oklch, var(--primary), transparent 86%) 0%,
-        transparent 64%
-      ),
-      var(--background-secondary);
-  }
-
-  /* Texture at close range, so the backdrop is a surface rather than a
-     flat tint. Masked out towards the bottom so it never competes with
-     the content resting on it. */
-  .surface-stage::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    opacity: 0.5;
-    background-image:
-      linear-gradient(to right, var(--surface-highlight) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--surface-highlight) 1px, transparent 1px);
-    background-size: 48px 48px;
-    mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 80%);
+    border-radius: var(--radius-xs);
+    background: var(--background-tertiary);
+    padding: clamp(0.75rem, 3vw, 3rem);
   }
 
   /* Notes / document-editing surfaces (Graph node notes page, per-tab notes
      popover) — deliberately separate from --tabdump-font-ui so a theme or
      the Typography section can give long-form writing its own font/rhythm
      without changing the rest of the app's chrome. */
-  .text-content {
-    font-family: var(--tabdump-font-content);
-  }
 
   @keyframes category-card-in {
     from {
@@ -673,7 +713,7 @@
     }
   }
 
-  /* --- TabDumpIntro (src/components/intro) ------------------------------ */
+  /* --- HubbleIntro (src/components/intro) ------------------------------ */
 
   @keyframes intro-title-in {
     from {

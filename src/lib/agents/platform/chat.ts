@@ -141,7 +141,7 @@ export function buildTranscript(events: readonly SequencedControlEvent[]): Trans
  *
  * Joins the three things a surface needs and that live in three places: the
  * runtime's view of the session, the connected agent it belongs to, and the
- * conversation. `workspaceId` is the TabDump workspace the session is
+ * conversation. `workspaceId` is the Hubble workspace the session is
  * associated with — the one its context was drawn from — and `agent` is
  * absent for a session started before its agent was in the roster.
  */

@@ -141,7 +141,7 @@ describe("what the parser refuses", () => {
     expect(parseRuntimeCommand({ name: "send_message", sessionId: "s1", text: "   " })).toBeNull();
   });
 
-  it("refuses a provider that is not one TabDump knows", () => {
+  it("refuses a provider that is not one Hubble knows", () => {
     expect(parseRuntimeCommand({ name: "create_session", provider: "anything" })).toBeNull();
     expect(parseRuntimeCommand({ name: "create_session" })).toBeNull();
   });

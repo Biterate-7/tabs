@@ -24,10 +24,10 @@ import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
  *     under, from the roster.
  *   - **Whether it can work** — the connection phase, derived from the runtime
  *     and the machine, never stored. A connected agent that was uninstalled
- *     since says "Not installed" here the next time TabDump checks.
+ *     since says "Not installed" here the next time Hubble checks.
  *   - **What it is doing** — its newest session's status, and for the session
  *     on screen, its newest event. An agent with no session says so.
- *   - **Where** — the TabDump workspace its current session is associated with.
+ *   - **Where** — the Hubble workspace its current session is associated with.
  *
  * Nothing here is invented: there is no placeholder agent, no sample
  * activity, and an empty roster says how to connect one.
@@ -53,9 +53,11 @@ export function AgentRoster({
   const agents = platform.roster.agents
 
   return (
-    <section aria-label="Connected agents" className="border-b border-subtle px-1.5 py-2">
-      <div className="flex items-center justify-between gap-2 px-1.5 pb-1">
-        <h3 className="text-eyebrow text-tertiary">Agents {agents.length > 0 ? agents.length : ""}</h3>
+    <section aria-label="Connected agents" className="border-b border-subtle pb-2">
+      <div className="flex items-center justify-between gap-2 pr-2 pl-3">
+        <h3 className="py-1 text-eyebrow text-muted-foreground">
+          Agents {agents.length > 0 && <span className="text-tertiary">{agents.length}</span>}
+        </h3>
         <Button type="button" size="xs" variant="ghost" onClick={() => onConnect()} aria-label="Connect agent">
           <Plus />
           Connect
@@ -63,11 +65,11 @@ export function AgentRoster({
       </div>
 
       {agents.length === 0 ? (
-        <p className="px-1.5 pb-1 text-body-sm text-tertiary">
+        <p className="px-3.5 pt-1 pb-1 text-body-sm text-tertiary">
           No agents connected. Connect Claude Code, Codex, Gemini CLI, Grok Build or any MCP agent.
         </p>
       ) : (
-        <ul className="flex flex-col gap-0.5">
+        <ul className="flex flex-col">
           {agents.map((agent) => {
             const latest = latestSessionFor(sessions, agent.provider)
             return (
@@ -114,7 +116,7 @@ const AgentRow = memo(function AgentRow({
 }: {
   agent: AgentIdentity
   phase: ReturnType<UseAgentPlatform["phaseOf"]>
-  /** False for an agent TabDump will not start sessions with; the row says so. */
+  /** False for an agent Hubble will not start sessions with; the row says so. */
   sessionsAvailable: boolean
   latest: CommandCentreSession | undefined
   events: readonly SequencedControlEvent[]
@@ -123,13 +125,13 @@ const AgentRow = memo(function AgentRow({
   onOpen: () => void
 }) {
   const ready = isChatReady(phase)
-  // An MCP client is never started by TabDump, so it never has a session to
-  // report on; what is true of it is how it reaches TabDump.
+  // An MCP client is never started by Hubble, so it never has a session to
+  // report on; what is true of it is how it reaches Hubble.
   const mcpOnly = platformProvider(agent.provider)?.chat === false
   const activity = !ready
     ? CONNECTION_PHASE_LABEL[phase]
     : mcpOnly
-      ? "Reads TabDump over MCP"
+      ? "Reads Hubble over MCP"
       : !sessionsAvailable
         ? "Connected · sessions unavailable"
         : liveActivity(latest?.view, events)
@@ -143,15 +145,17 @@ const AgentRow = memo(function AgentRow({
         aria-label={`${agent.name} — ${activity}`}
         aria-current={selected ? "true" : undefined}
         className={cn(
-          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-          "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-          selected ? "bg-surface-selected" : "hover:bg-surface-hover"
+          "flex w-full items-start gap-2.5 py-2 pr-3 pl-3.5 text-left transition-colors duration-(--duration-fast) ease-(--ease-color)",
+          "outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60",
+          selected ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
         )}
       >
-        <AgentIcon connector={agent.provider} state={state} size="xs" />
-        <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex h-4 items-center">
+          <AgentIcon connector={agent.provider} state={state} size="xs" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-body-sm text-foreground">{agent.name}</span>
-          <span className={cn("truncate text-meta", ready ? "text-tertiary" : "text-warning")}>
+          <span className={cn("truncate text-meta", ready ? "text-tertiary" : "text-link")}>
             {activity}
             {workspaceName ? ` · ${workspaceName}` : ""}
           </span>

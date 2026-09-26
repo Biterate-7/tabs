@@ -329,7 +329,7 @@ describe("the connector", () => {
     expect(sent).toEqual([]);
   });
 
-  it("never sends a runtime command for an MCP client — TabDump does not start it", async () => {
+  it("never sends a runtime command for an MCP client — Hubble does not start it", async () => {
     const { client, sent } = fakeClient();
     const connector = createPlatformConnector("custom", client);
     const agent = approveAgent(EMPTY_ROSTER, { provider: "custom", name: "C", scopes: ["read_workspace"], now: T0 }).agents[0];

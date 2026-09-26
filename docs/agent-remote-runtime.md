@@ -18,7 +18,7 @@ and the opt-in still cannot override that veto.
 
 ```
                           ┌────────────────────────┐
-                          │       TABDUMP UI       │
+                          │       HUBBLE UI       │
                           └───────────┬────────────┘
                                       │ one of 14 typed commands
                                       │ no paths, no shell, no sandbox ids
@@ -249,7 +249,7 @@ argument any request can carry that reaches another's sandbox.
 The single most important refusal in this design.
 
 Those records describe directories on the machine running the *browser*. A
-hosted TabDump cannot see that machine — but a path from one would still
+hosted Hubble cannot see that machine — but a path from one would still
 *validate*, because `validateProjectPath` checks the shape of a path, not the
 existence of a filesystem. Accepting one would create an authorized project
 whose path resolved, if at all, to a directory **on the server**. That is the
@@ -273,7 +273,7 @@ Required environment:
 - Sandbox credentials — `VERCEL_OIDC_TOKEN` (automatic on Vercel) or the
   `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` / `VERCEL_TOKEN` trio.
 - `TABDUMP_CREDENTIAL_KEY` — 32 bytes, base64, for the provider-credential
-  store. Without it TabDump refuses to hold credentials at all, so no user can
+  store. Without it Hubble refuses to hold credentials at all, so no user can
   connect and no session can start. Generate one with
   `node scripts/migrate-credentials.mjs --key`, and run
   `npm run migrate:credentials` for its tables. See

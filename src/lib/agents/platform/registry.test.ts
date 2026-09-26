@@ -37,7 +37,7 @@ function reached(authentication: ProviderConnectionView["authentication"]): Prov
 }
 
 describe("the registry and the launch allowlist agree", () => {
-  it("has a launch entry for every agent TabDump runs, and none for the one it never starts", () => {
+  it("has a launch entry for every agent Hubble runs, and none for the one it never starts", () => {
     for (const entry of PLATFORM_PROVIDERS) {
       const launch = PROVIDER_LAUNCH_TABLE.find((candidate) => candidate.provider === entry.provider);
       if (entry.transport === "mcp") expect(launch).toBeUndefined();
@@ -68,7 +68,7 @@ describe("the registry and the launch allowlist agree", () => {
 });
 
 describe("the custom agent explains exactly what it connects", () => {
-  it("is an MCP client TabDump never starts, offered only where there is an MCP server", () => {
+  it("is an MCP client Hubble never starts, offered only where there is an MCP server", () => {
     expect(custom.transport).toBe("mcp");
     expect(custom.chat).toBe(false);
     expect(custom.surfaces).toEqual(["web"]);
@@ -114,7 +114,7 @@ describe("the custom agent explains exactly what it connects", () => {
     expect(sessionSource.match(/scope\.requestChange\(/g)).toHaveLength(1);
 
     expect(custom.explainer).toEqual([
-      expect.stringMatching(/TabDump never starts it/),
+      expect.stringMatching(/Hubble never starts it/),
       expect.stringMatching(/revoke/),
       expect.stringMatching(/workspaces, tabs, collections and tab graph/),
       expect.stringMatching(/cannot change anything/),
@@ -206,7 +206,7 @@ describe("surfaces", () => {
     );
   });
 
-  it("offers every agent TabDump runs on both surfaces", () => {
+  it("offers every agent Hubble runs on both surfaces", () => {
     for (const provider of [claude, codex, gemini, grok]) expect(provider.surfaces).toEqual(["web", "desktop"]);
   });
 });

@@ -36,7 +36,7 @@ import type { ConnectionStore } from "./store";
  * `security.test.ts` proves that the credential *service* keeps two users
  * apart. That is necessary and it is not the claim a user cares about. The
  * claim they care about is that when Alice and Bob each start a Claude session
- * on the same TabDump, Alice's agent runs on Alice's key — and the only way to
+ * on the same Hubble, Alice's agent runs on Alice's key — and the only way to
  * assert that is to watch what actually reaches the provider process.
  *
  * So this suite wires the real thing: a real credential store, a real Claude
@@ -244,7 +244,7 @@ describe("two users starting sessions on one deployment", () => {
 
     // Bob names Alice's project. The remote store's owner scoping refuses it
     // before any credential is used — a credential proves authentication and
-    // grants no additional TabDump permission (§16).
+    // grants no additional Hubble permission (§16).
     const crossed = await startSession(BOB, "rp-alice");
     expect(crossed.ok).toBe(false);
     expect(bridgeCredentials()).toEqual([]);
@@ -285,7 +285,7 @@ describe("disconnecting", () => {
 
     // Defined behaviour, stated rather than accidental: the agent is a process
     // inside a microVM that is already authenticated and already working.
-    // Disconnecting revokes TabDump's ability to *start* sessions; it does not
+    // Disconnecting revokes Hubble's ability to *start* sessions; it does not
     // reach inside a running one, and claiming it did would be a promise this
     // architecture cannot keep. Stopping the run is a separate, explicit act.
     const session = await remoteStore.findSession(ALICE.id, sessionIdOf(created));

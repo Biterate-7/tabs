@@ -64,7 +64,7 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 describe("the handshake and discovery", () => {
-  it("completes initialize and identifies itself as TabDump", async () => {
+  it("completes initialize and identifies itself as Hubble", async () => {
     const client = await connect(aliceToken);
     expect(client.getServerVersion()?.name).toBe(TABDUMP_MCP_SERVER_NAME);
     expect(client.getServerCapabilities()?.tools).toBeDefined();

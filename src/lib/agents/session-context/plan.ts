@@ -97,7 +97,7 @@ export const PLAN_PROBLEM_MESSAGES: Record<PlanProblemCode, string> = {
   too_large: "The plan is too large. Split it.",
   too_many_tabs: `One operation can place at most ${PLAN_LIMITS.tabsPerOperation} tabs.`,
   too_many_affected_tabs: `One plan can place at most ${PLAN_LIMITS.affectedTabs} tabs. Split it.`,
-  wrong_workspace: "This session can only change the TabDump workspace it was started from.",
+  wrong_workspace: "This session can only change the Hubble workspace it was started from.",
   stale: "The workspace changed since the version this plan was made against. Refresh (get_context_changes or get_workspace_summary) and propose again.",
   empty_name: "The collection name is empty.",
   duplicate_name: "A collection with that name already exists in this workspace (or earlier in this plan). Add tabs to it or choose another name.",
@@ -124,7 +124,7 @@ export type WorkspacePlanStep = {
   /** Collections tabs would move out of (a tab belongs to at most one), and how many move. */
   movesFrom: readonly string[];
   movedCount?: number;
-  /** The agent's own words and confidence — shown as the agent's, never as TabDump's. */
+  /** The agent's own words and confidence — shown as the agent's, never as Hubble's. */
   reason?: string;
   confidence?: OperationConfidence;
 };

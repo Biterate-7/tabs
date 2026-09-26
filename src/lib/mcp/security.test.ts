@@ -2,11 +2,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { createTabDumpMcpServer, TABDUMP_MCP_TOOLS } from "./server";
+import { createHubbleMcpServer, TABDUMP_MCP_TOOLS } from "./server";
 import { createFixtureData, ALICE } from "./__fixtures__/accounts";
 
 /**
- * The MCP layer cannot escape TabDump's existing boundaries.
+ * The MCP layer cannot escape Hubble's existing boundaries.
  *
  * Structural assertions, in the style of the control plane's and the remote
  * plane's guard suites: what the code *can* reach, not only what today's
@@ -97,7 +97,7 @@ describe("the tool vocabulary", () => {
   });
 
   it("accepts no argument that could name a path, a command, a URL or an owner", async () => {
-    const server = createTabDumpMcpServer({ data: await createFixtureData(), userId: ALICE });
+    const server = createHubbleMcpServer({ data: await createFixtureData(), userId: ALICE });
     // The registered tools, as the SDK holds them.
     const registered = (server as unknown as { _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } }> })
       ._registeredTools;

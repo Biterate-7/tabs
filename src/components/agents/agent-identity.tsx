@@ -144,7 +144,7 @@ function AgentAvatarImpl({ connector, state = "idle", size = "sm", label, classN
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-lg border border-subtle",
+        "inline-flex shrink-0 items-center justify-center rounded-md border border-border",
         AVATAR_BOX[size],
         className
       )}

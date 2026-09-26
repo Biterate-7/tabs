@@ -30,10 +30,10 @@ export function isPrivilegedUrl(url) {
 }
 
 /**
- * Converts raw `chrome.tabs.Tab` objects into the wire payload TabDump's
+ * Converts raw `chrome.tabs.Tab` objects into the wire payload Hubble's
  * content-script bridge expects. `tabId`/`windowId`/`active` are carried
  * for the extension's own potential future use (e.g. closing tabs after a
- * successful dump) — TabDump's web app only consumes url/title/pinned.
+ * successful dump) — Hubble's web app only consumes url/title/pinned.
  *
  * `excludeUrls`, when given, drops tabs whose exact raw URL is already
  * known to be in the currently selected workspace (see
@@ -69,7 +69,7 @@ export function buildImportPayload(chromeTabs, excludeUrls) {
     // A tab still mid-navigation (status "loading") hasn't rendered its real
     // <title> yet — chrome.tabs.Tab.title at that moment is a placeholder,
     // not the page's actual title. Omitting it (rather than forwarding the
-    // placeholder) lets TabDump's own title-resolution fallback fetch the
+    // placeholder) lets Hubble's own title-resolution fallback fetch the
     // real title server-side instead of getting stuck with a bad value.
     // `status` is undefined only in tests that don't set it — treated as
     // trustworthy there, matching prior behavior for existing callers.

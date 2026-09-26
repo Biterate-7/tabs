@@ -40,7 +40,7 @@ beforeAll(() => {
   writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@google/gemini-cli", bin: { gemini: "dist/index.mjs" } }));
 
   if (process.platform === "win32") {
-    // Its contents are never executed: TabDump follows it to the package.
+    // Its contents are never executed: Hubble follows it to the package.
     writeFileSync(path.join(bin, "gemini.cmd"), "@echo off\r\nexit 1\r\n");
   } else {
     const launcher = path.join(bin, "gemini");
@@ -171,7 +171,7 @@ describe("launching a real ACP agent", () => {
     await until(() => events.some((event) => event.kind === "error"));
 
     expect(events.find((event) => event.kind === "error")?.summary).toBe(
-      "The agent switched to a mode where it approves its own actions, so TabDump stopped it."
+      "The agent switched to a mode where it approves its own actions, so Hubble stopped it."
     );
     expect(await adapter.sendMessage({ sessionId: "s4", text: "again", context: { attachments: [] } })).toMatchObject({
       ok: false,

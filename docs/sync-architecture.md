@@ -1,6 +1,6 @@
 # Workspace synchronization
 
-How TabDump's local-first application talks to the server, and — mostly —
+How Hubble's local-first application talks to the server, and — mostly —
 what it deliberately refuses to do.
 
 The governing rule, from which nearly everything else follows:

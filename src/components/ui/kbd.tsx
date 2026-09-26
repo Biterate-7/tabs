@@ -1,5 +1,9 @@
 import { cn } from "@/lib/utils"
 
+/**
+ * A key cap: 11px on the card tone, 4px corner, no border — the ⌘K chip
+ * that sits inside the reference's search field.
+ */
 export function Kbd({
   keys,
   children,
@@ -13,7 +17,7 @@ export function Kbd({
   return (
     <kbd
       className={cn(
-        "inline-flex items-center gap-0.5 rounded-md border border-subtle bg-card px-1.5 py-0.5 text-meta text-tertiary",
+        "inline-flex h-[18px] min-w-[18px] items-center justify-center gap-0.5 rounded-xs bg-surface-active px-1 font-sans text-meta text-muted-foreground",
         className
       )}
     >

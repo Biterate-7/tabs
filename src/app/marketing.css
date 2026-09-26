@@ -1,492 +1,354 @@
 /*
- * TabDump marketing surface (src/components/marketing/*).
+ * Hubble marketing surface (src/components/marketing/*).
  *
- * Everything here is scoped to `.tabdump-marketing`, and the scope works by
- * REDEFINING the app's own semantic tokens rather than inventing a parallel
- * `--marketing-*` set. That choice is deliberate:
+ * Scoped to `.tabdump-marketing` (the class name is a kept compatibility
+ * identifier, see brand/README.md). The scope works by REDEFINING the app's
+ * own semantic tokens rather than inventing a parallel set, for two reasons:
  *
- *  1. Real app components (TabFavicon, Badge, the category palette) can be
- *     dropped straight into a demo and pick up the marketing palette with no
- *     per-component overrides — the landing page shows the actual product UI,
- *     not a redrawn lookalike.
- *  2. The page is brand-controlled. AppearanceProvider writes the user's
- *     chosen theme onto :root as inline styles; a descendant rule redefining
- *     the same custom properties wins for its own subtree, so a visitor whose
- *     app is set to a light/custom theme still sees the intended landing page
- *     — and nothing here can leak back out into the app.
+ *  1. The product demos on this page are the product's real components
+ *     (session list, event stream, approval card, composer, favicons). Inside
+ *     this scope their tokens resolve to the page's palette, so the page shows
+ *     the actual interface rather than a redrawn lookalike.
+ *  2. The page is brand-controlled. AppearanceProvider writes the user's app
+ *     theme onto :root; a descendant redefining the same properties wins for
+ *     its own subtree, so a visitor's app theme never restyles the page, and
+ *     nothing here leaks back into the app.
  *
- * The typography/density/motion scales are pinned to their neutral values for
- * the same reason: a user's "font scale 1.3 / density compact" app preference
- * must not reflow a marketing layout that was composed at 1.0.
+ * The live product windows on the page (`.m-app`) are the exception: they
+ * carry the app's own palette, not this one — see demo/demo-theme.tsx.
+ *
+ * The palette follows the visitor's system colour scheme, like the reference
+ * site, with an explicit override on [data-scheme] set by the footer toggle.
+ * Values are the reference's own, measured from the rendered page: a warm
+ * paper ground (#f7f7f4) and warm ink (#26251e), a card one step off the
+ * ground, and every other tier the foreground at a fixed alpha.
  */
 
 .tabdump-marketing {
-  /* ---- Ground ---------------------------------------------------------
-     A cool near-black with a faint indigo cast (TabDump's accent hue at very
-     low chroma), against a slightly warm off-white. The warm/cool tension is
-     what keeps the page feeling editorial rather than clinical. */
-  --background: #07070a;
-  --background-secondary: #0a0a0e;
-  --background-tertiary: #101016;
+  color-scheme: light;
 
-  --foreground: #f2f1ee;
-  --card: #101015;
-  --card-foreground: #f2f1ee;
-  --popover: #16161d;
-  --popover-foreground: #f2f1ee;
+  /* ---- Ground and ink ------------------------------------------------ */
+  --background: #f7f7f4;
+  --background-secondary: #f2f1ed;
+  --background-tertiary: #ebeae5;
+  --foreground: #26251e;
+  --card: #f2f1ed;
+  --card-foreground: #26251e;
+  --popover: #fbfbf9;
+  --popover-foreground: #26251e;
+  --surface: #f2f1ed;
+  --surface-hover: #ebeae5;
+  --surface-active: #e6e5e0;
+  --surface-selected: #ebeae5;
+  --surface-elevated: #fbfbf9;
+  --sidebar: #f2f1ed;
+  --secondary: #e6e5e0;
+  --secondary-foreground: #26251e;
+  --muted: #f2f1ed;
+  --accent: #ebeae5;
+  --accent-foreground: #26251e;
 
-  --surface: #101015;
-  --surface-hover: #17171f;
-  --surface-active: #1c1c25;
-  --surface-selected: color-mix(in oklch, #101015, var(--primary) 20%);
+  /* ---- Text tiers (foreground at 60 / 40 / 30%) ----------------------- */
+  --muted-foreground: rgb(38 37 30 / 0.6);
+  --text-secondary: rgb(38 37 30 / 0.6);
+  --text-tertiary: rgb(38 37 30 / 0.4);
+  --text-disabled: rgb(38 37 30 / 0.3);
 
-  --secondary: #14141a;
-  --secondary-foreground: #f2f1ee;
-  --muted: #101015;
-  --muted-foreground: #a3a2ac;
-  --text-secondary: #a3a2ac;
-  /* Measured, not picked: this is the metadata tier (counts, timestamps,
-     section labels, demo captions) and it carries real text, so it has to clear
-     WCAG AA's 4.5:1 against the ground above. The first value tried here,
-     #74737e, measured 4.31:1 and failed; this one measures ~5.4:1. Same
-     reasoning as --text-tertiary in globals.css, recomputed for this
-     darker background. */
-  --text-tertiary: #85848f;
-  --text-disabled: #56555f;
+  /* ---- Hairlines (foreground at 10 / 5 / 20%) ------------------------- */
+  --border: rgb(38 37 30 / 0.1);
+  --border-subtle: rgb(38 37 30 / 0.05);
+  --border-strong: rgb(38 37 30 / 0.2);
+  --input: rgb(38 37 30 / 0.2);
 
-  --accent: #17171f;
-  --accent-foreground: #f2f1ee;
+  /* ---- Fills ---------------------------------------------------------- */
+  --primary: #26251e;
+  --primary-foreground: #f7f7f4;
+  --accent-hover: #3b3a33;
+  --accent-text: #26251e;
+  --ring: rgb(38 37 30 / 0.4);
+  --focus: rgb(38 37 30 / 0.4);
+  /* The one chromatic colour: links and the thing that needs a person.
+     One step deeper than the reference's #f54e00 so it clears AA as text. */
+  --link: #bf3d00;
+  --success: #17775a;
+  --warning: #8a5a0e;
+  --destructive: #bf2a50;
+  --danger: #bf2a50;
+  --error: #bf2a50;
 
-  --border: rgba(255, 255, 255, 0.07);
-  --border-subtle: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --input: rgba(255, 255, 255, 0.1);
+  /* ---- Page-only ------------------------------------------------------ */
+  --m-stage: #e1e0db;
+  --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.14), 0 14px 32px rgb(0 0 0 / 0.1), 0 0 0 1px rgb(38 37 30 / 0.1);
 
-  --primary: #4361ff;
-  --primary-foreground: #ffffff;
-  --accent-text: #93a4ff;
-  --accent-hover: #5a74ff;
-  --accent-subtle: color-mix(in oklch, #4361ff, #07070a 86%);
-  --ring: #4361ff;
-  --focus: #4361ff;
-
-  /* ---- Type -----------------------------------------------------------
-     Pinned to the shipped Geist pair. The marketing page is not a surface the
-     Typography settings panel is allowed to restyle. */
-  --tabdump-font-ui: var(--font-geist-sans);
+  /* ---- Type ----------------------------------------------------------- */
+  /* The display face carries the page; demos inside windows use the
+     platform UI face at product sizes, as the reference's demos do. */
+  --tabdump-font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --tabdump-font-content: var(--font-geist-sans);
   --tabdump-font-mono: var(--font-geist-mono);
   --tabdump-font-scale: 1;
   --tabdump-font-weight: 400;
-  --tabdump-line-height: 1.6;
+  --tabdump-line-height: 1.45;
   --tabdump-letter-spacing: 0px;
   --tabdump-density-scale: 1;
   --tabdump-card-density-scale: 1;
-
-  /* ---- Agent layer ----------------------------------------------------
-     Status tones for the agent command center. Four colours, and each one is
-     only ever used to mean one thing:
-
-       live   work is happening now        (working run, active work item)
-       idle   live but not moving          (waiting run)
-       good   finished well                (completed)
-       bad    stopped, or stuck            (failed / blocked)
-
-     They are a deliberate step away from the category palette a tab carries.
-     An agent is not a category of tab, and giving it one of those hues would
-     make the two layers read as the same kind of object.
-
-     Measured against the ground (#07070a), not picked: each is used as *text*
-     in a status pill, not only as a dot, so each has to clear WCAG AA's 4.5:1.
-     live 8.34, idle 8.29, good 8.77, bad 6.55 — and 7.9/7.8/8.3/6.2 against the
-     panel surface (#101015) they more often sit on. */
-  --m-agent-live: #6ea8ff;
-  --m-agent-idle: #c6a15b;
-  --m-agent-good: #4fbf8b;
-  --m-agent-bad: #e0736b;
-
-  --radius: 0.75rem;
-
-  /* ---- Marketing-only rhythm -----------------------------------------
-     Prefixed because these have no app-side counterpart to shadow. */
-  --m-gutter: clamp(1.25rem, 4vw, 4rem);
-  /* Measured: the benchmark's hero media runs 1300px at a 1440 viewport; this
-     page was giving its demos 1133px. The demos are the argument, so they get
-     the same presence — 88rem less the gutters lands at ~1280px. Reading
-     measure is unaffected: every text block is capped separately (.m-lead at
-     36rem, the hero sub in ch), so widening the shell widens only the product. */
-  --m-max: 88rem;
-  /* Measured against the benchmark rather than guessed: the reference site
-     runs ~67px of section padding at this width, not the ~144px this page
-     started with. Double that rhythm reads as a page padded out to feel
-     substantial; this one lets consecutive sections belong to one document. */
-  --m-section-y: clamp(3.25rem, 4.6vw, 4.5rem);
-  /* Springy but without cartoon overshoot — used for demo objects that move
-     through space (tabs flying into a workspace, cards settling). */
-  --m-spring: cubic-bezier(0.22, 1.12, 0.36, 1);
-  /* The restrained default: everything that is not "an object travelling". */
-  --m-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --radius: 0.5rem;
+  --shadow-sm: 0 0 1rem rgb(0 0 0 / 0.03), 0 0 0.5rem rgb(0 0 0 / 0.02);
+  --shadow-md: 0 12px 32px -8px rgb(0 0 0 / 0.16), 0 2px 6px -2px rgb(0 0 0 / 0.08);
+  --shadow-lg: var(--m-window-shadow);
 
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--tabdump-font-ui);
-  /* Demo panels animate children beyond their own bounds during transitions;
-     containing that here means no section can ever produce a horizontal
-     scrollbar on the document. */
+  font-family: var(--hb-font-display);
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0.005em;
+  /* A backstop: nothing on the page is meant to be wider than the viewport,
+     and if something ever is, the document still never scrolls sideways. */
   overflow-x: clip;
 }
 
-/* ---- Type scale ------------------------------------------------------
-   Four sizes, not six, and all of them far smaller than a marketing page
-   instinctively reaches for.
-
-   That restraint is the point. The benchmark runs a 26px hero headline at
-   this width and lets an enormous, dense product shot carry the page; a 76px
-   headline is what a site reaches for when the product imagery underneath it
-   is not carrying its weight. Every size below came down, and the space it
-   freed went to the demos.
-
-   The app's own .text-display is a different instrument — it lives inside
-   product chrome and tracks the user's font scale — so these are separate
-   classes rather than an override of it. */
-.tabdump-marketing .m-display {
-  font-size: clamp(2rem, 1.35rem + 2.1vw, 3.125rem);
-  /* 1.14 and weight 420, not 1.1/440. Side by side at this size the tighter,
-     heavier setting read as a poster headline where the benchmark's reads as a
-     sentence — the extra leading and the lighter stem are most of what makes a
-     large line feel composed rather than shouted. */
-  line-height: 1.14;
-  letter-spacing: -0.025em;
-  font-weight: 420;
-  text-wrap: balance;
+/* Ink polarity. Mirrors the product's Hubble Dark. */
+@media (prefers-color-scheme: dark) {
+  .tabdump-marketing:not([data-scheme="light"]) {
+    color-scheme: dark;
+    --background: #14120b;
+    --background-secondary: #1b1913;
+    --background-tertiary: #201e18;
+    --foreground: #edecec;
+    --card: #1b1913;
+    --card-foreground: #edecec;
+    --popover: #201e18;
+    --popover-foreground: #edecec;
+    --surface: #1b1913;
+    --surface-hover: #201e18;
+    --surface-active: #26241e;
+    --surface-selected: #26241e;
+    --surface-elevated: #201e18;
+    --sidebar: #1b1913;
+    --secondary: #26241e;
+    --secondary-foreground: #edecec;
+    --muted: #1b1913;
+    --accent: #201e18;
+    --accent-foreground: #edecec;
+    --muted-foreground: rgb(237 236 236 / 0.6);
+    --text-secondary: rgb(237 236 236 / 0.6);
+    --text-tertiary: rgb(237 236 236 / 0.4);
+    --text-disabled: rgb(237 236 236 / 0.3);
+    --border: rgb(237 236 236 / 0.1);
+    --border-subtle: rgb(237 236 236 / 0.05);
+    --border-strong: rgb(237 236 236 / 0.2);
+    --input: rgb(237 236 236 / 0.2);
+    --primary: #edecec;
+    --primary-foreground: #14120b;
+    --accent-hover: #d7d6d5;
+    --accent-text: #edecec;
+    --ring: rgb(237 236 236 / 0.4);
+    --focus: rgb(237 236 236 / 0.4);
+    --link: #eb5600;
+    --success: #3fae83;
+    --warning: #d9a441;
+    --destructive: #e5667f;
+    --danger: #e5667f;
+    --error: #e5667f;
+    --m-stage: #2b2923;
+    --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.4), 0 14px 32px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(237 236 236 / 0.1);
+  }
+}
+.tabdump-marketing[data-scheme="dark"] {
+  color-scheme: dark;
+  --background: #14120b;
+  --background-secondary: #1b1913;
+  --background-tertiary: #201e18;
+  --foreground: #edecec;
+  --card: #1b1913;
+  --card-foreground: #edecec;
+  --popover: #201e18;
+  --popover-foreground: #edecec;
+  --surface: #1b1913;
+  --surface-hover: #201e18;
+  --surface-active: #26241e;
+  --surface-selected: #26241e;
+  --surface-elevated: #201e18;
+  --sidebar: #1b1913;
+  --secondary: #26241e;
+  --secondary-foreground: #edecec;
+  --muted: #1b1913;
+  --accent: #201e18;
+  --accent-foreground: #edecec;
+  --muted-foreground: rgb(237 236 236 / 0.6);
+  --text-secondary: rgb(237 236 236 / 0.6);
+  --text-tertiary: rgb(237 236 236 / 0.4);
+  --text-disabled: rgb(237 236 236 / 0.3);
+  --border: rgb(237 236 236 / 0.1);
+  --border-subtle: rgb(237 236 236 / 0.05);
+  --border-strong: rgb(237 236 236 / 0.2);
+  --input: rgb(237 236 236 / 0.2);
+  --primary: #edecec;
+  --primary-foreground: #14120b;
+  --accent-hover: #d7d6d5;
+  --accent-text: #edecec;
+  --ring: rgb(237 236 236 / 0.4);
+  --focus: rgb(237 236 236 / 0.4);
+  --link: #eb5600;
+  --success: #3fae83;
+  --warning: #d9a441;
+  --destructive: #e5667f;
+  --danger: #e5667f;
+  --error: #e5667f;
+  --m-stage: #2b2923;
+  --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.4), 0 14px 32px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(237 236 236 / 0.1);
 }
 
-.tabdump-marketing .m-headline {
-  font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.125rem);
-  line-height: 1.16;
-  letter-spacing: -0.02em;
-  font-weight: 440;
-  text-wrap: balance;
+/* ---- Page geometry ----------------------------------------------------
+   A 1300px container, 20px gutters, 52px header, 67.2px section rhythm. */
+.tabdump-marketing .m-container {
+  width: 100%;
+  max-width: var(--hb-container);
+  margin-inline: auto;
+}
+.tabdump-marketing .m-page {
+  padding-inline: var(--hb-gutter);
+}
+.tabdump-marketing .m-section {
+  padding-block: var(--hb-section-y);
 }
 
-/* Section heading. Deliberately the same size as .m-lead below it: the two
-   are set as one block, the heading in full-strength text and the sentence
-   after it dimmed, so a section opens like a paragraph rather than like a
-   slide title with a subtitle. */
+/* ---- Type ------------------------------------------------------------- */
+.tabdump-marketing .m-hero {
+  font-size: var(--hb-text-26);
+  line-height: 1.25;
+  letter-spacing: var(--hb-tracking-26);
+  font-weight: 400;
+  text-wrap: balance;
+}
+.tabdump-marketing .m-h2 {
+  font-size: var(--hb-text-36);
+  line-height: 1.2;
+  letter-spacing: var(--hb-tracking-36);
+  font-weight: 400;
+  text-wrap: balance;
+}
 .tabdump-marketing .m-title {
-  font-size: clamp(1.1875rem, 1.05rem + 0.42vw, 1.4375rem);
+  font-size: var(--hb-text-22);
   line-height: 1.3;
-  letter-spacing: -0.011em;
-  font-weight: 500;
-  text-wrap: balance;
-}
-
-.tabdump-marketing .m-lead {
-  font-size: clamp(1.1875rem, 1.05rem + 0.42vw, 1.4375rem);
-  line-height: 1.3;
-  letter-spacing: -0.011em;
-  color: var(--text-secondary);
+  letter-spacing: var(--hb-tracking-22);
+  font-weight: 400;
   text-wrap: pretty;
 }
-
-/* Standalone lead — under a display headline, where there is no heading to
-   match and the line needs to sit back rather than compete. */
-.tabdump-marketing .m-sub {
-  font-size: clamp(0.9375rem, 0.9rem + 0.2vw, 1.0625rem);
-  line-height: 1.55;
-  letter-spacing: -0.005em;
-  color: var(--text-secondary);
-  text-wrap: pretty;
+.tabdump-marketing .m-body {
+  font-size: var(--hb-text-16);
+  line-height: 1.5;
+  letter-spacing: var(--hb-tracking-16);
+}
+.tabdump-marketing .m-small {
+  font-size: var(--hb-text-14);
+  line-height: 1.5;
+  letter-spacing: var(--hb-tracking-14);
+}
+.tabdump-marketing .m-cta {
+  font-size: var(--hb-text-72);
+  line-height: 1.1;
+  letter-spacing: var(--hb-tracking-72);
+  font-weight: 400;
+}
+@media (max-width: 659px) {
+  .tabdump-marketing .m-hero {
+    font-size: 1.375rem;
+  }
+  .tabdump-marketing .m-h2 {
+    font-size: 1.75rem;
+  }
+  .tabdump-marketing .m-title {
+    font-size: 1.1875rem;
+  }
+  .tabdump-marketing .m-cta {
+    font-size: 2.75rem;
+  }
 }
 
-/* Tabular mono for every count/metric the demos animate, so a number
-   changing from 142 to 7 never shifts the glyphs around it. */
-.tabdump-marketing .m-num {
-  font-family: var(--tabdump-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+/* ---- Links -------------------------------------------------------------
+   The page's only chromatic text: "Learn about … →". */
+.tabdump-marketing .m-link {
+  color: var(--link);
+  transition: opacity 140ms var(--ease-standard);
+}
+.tabdump-marketing .m-link:hover {
+  opacity: 0.8;
 }
 
-/* ---- Scroll reveal ---------------------------------------------------
-   One shared primitive (see hooks.ts's useInView). Transform + opacity only.
-
-   The resting state is hidden and only JS ever flips data-shown, so on
-   /welcome — where this page is server-rendered — this rule alone would hide
-   a complete document from anyone without scripting. MarketingPage ships a
-   <noscript> override that neutralises it; keep the two together if either
-   changes. (At `/` the point is moot: AppShell renders nothing until it has
-   hydrated, so that route is blank without JS either way.) */
-/* 420ms, not the 620 this started at, and a shorter travel. A reveal is
-   punctuation, not an event: at 620ms a reader scrolling at a normal pace
-   outruns it and spends the page waiting for text to finish arriving. */
-.tabdump-marketing .m-reveal {
-  opacity: 0;
-  transform: translateY(10px);
-  transition:
-    opacity 420ms var(--m-ease) var(--m-reveal-delay, 0ms),
-    transform 420ms var(--m-ease) var(--m-reveal-delay, 0ms);
+/* ---- The product, live -------------------------------------------------
+   `.m-app` is a live Hubble on the page: the demo window and the sibling its
+   overlays portal into (see demo/demo-frame.tsx). Its design tokens are the
+   app's own Hubble Light / Hubble Dark, emitted by demo/demo-theme.tsx from
+   the app's resolver; this block only restores the app's base type, which
+   the page's display-face defaults would otherwise leak into it. */
+.tabdump-marketing .m-app {
+  font-family: var(--tabdump-font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-align: left;
+  color: var(--foreground);
 }
 
-.tabdump-marketing .m-reveal[data-shown="true"] {
-  opacity: 1;
-  transform: none;
+/* A window: a 10px corner, the long two-stage shadow with a hairline ring,
+   and its own stacking layer so the app's sticky bars and drawers never
+   paint over the page header scrolling past it. */
+.tabdump-marketing .m-demo-window {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--background);
+  box-shadow: var(--m-window-shadow);
 }
 
-/* ---- Hairline grid ---------------------------------------------------
-   The faint technical grid behind the hero and the closing section. Kept as
-   a background-image on a single element (not a mesh of divs) so it costs
-   one paint and zero DOM. */
-.tabdump-marketing .m-grid {
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
-  background-size: 64px 64px;
+/* In the app a destination fills the viewport (h-screen). In a window, the
+   window is the viewport, so viewport-high views fill the window instead of
+   running past its bottom edge and taking their scroll areas with them. */
+.tabdump-marketing .m-demo-window .h-screen {
+  height: 100%;
+}
+.tabdump-marketing .m-demo-window .max-h-screen {
+  max-height: 100%;
+}
+.tabdump-marketing .m-demo-window .min-h-screen {
+  min-height: 100%;
 }
 
-/* ---- Demo chrome -----------------------------------------------------
-   The recurring "a piece of software, rendered inside the page" frame. */
-.tabdump-marketing .m-window {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: linear-gradient(180deg, #101017 0%, #0b0b10 100%);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.045) inset,
-    0 2px 6px -1px rgba(0, 0, 0, 0.7),
-    0 24px 60px -24px rgba(0, 0, 0, 0.95);
-}
-
-/* ---- Demo stage ------------------------------------------------------
-   A backdrop the product window floats on, rather than the window sitting
-   flat on the page ground.
-
-   This is the single biggest thing separating a real product site's demo
-   framing from a screenshot in a card: two planes and a cast shadow read as
-   a photograph of software, one plane reads as a div. The wash is TabDump's
-   accent at very low chroma, so the depth still belongs to this brand
-   rather than being a generic grey tray. */
+/* The flat tonal plane a window rests on. The reference hangs its windows
+   on a painting; Hubble keeps the plane quiet and lets the product be the
+   picture. It does not clip: a window's menus may reach past its edge. */
 .tabdump-marketing .m-stage {
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 20px;
-  /* A generous inset is what sells the second plane. Too tight and the
-     backdrop reads as a stray 2px outline around the window rather than as
-     a surface the window is resting on. */
-  padding: clamp(0.75rem, 2.6vw, 2.5rem);
-  /* The backdrop has to be clearly a *different surface* from the window
-     resting on it. The benchmark gets that separation for free by using a
-     photograph; without one, the tint has to work harder — at half these
-     values the two planes read as one slightly-outlined card. */
-  background:
-    radial-gradient(130% 120% at 50% -15%, color-mix(in oklch, var(--primary), transparent 80%) 0%, transparent 64%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.105) 0%, rgba(255, 255, 255, 0.032) 55%, rgba(255, 255, 255, 0.014) 100%);
+  border-radius: 4px;
+  background: var(--m-stage);
 }
 
-/* The hairline grid, clipped to the stage, so the backdrop has texture at
-   close range instead of being a flat tint. */
-.tabdump-marketing .m-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 80%);
+/* A feature card: the card tone, a 4px corner, 17.5px inner inset. */
+.tabdump-marketing .m-card {
+  border-radius: 4px;
+  background: var(--card);
 }
 
-/* A quiet inner panel — one step up from the window's own ground. */
-.tabdump-marketing .m-panel {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background-color: rgba(255, 255, 255, 0.022);
+/* Hover for linked cards (changelog, integrations) is a one-step tonal
+   change — no lift, no shadow. */
+.tabdump-marketing .m-card-link {
+  transition: background-color 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tabdump-marketing .m-card-link:hover {
+  background: var(--surface-hover);
 }
 
-/* ---- Marquee ---------------------------------------------------------
-   Duplicated track, translated by exactly -50% so the seam is invisible.
-   Paused on hover and for reduced motion (the global rule in globals.css
-   already neutralises the duration; this keeps it from jumping). */
-.tabdump-marketing .m-marquee-track {
-  animation: m-marquee var(--m-marquee-duration, 44s) linear infinite;
-  will-change: transform;
-}
-
-.tabdump-marketing .m-marquee:hover .m-marquee-track {
-  animation-play-state: paused;
-}
-
-@keyframes m-marquee {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-50%, 0, 0);
-  }
-}
-
-/* A tab chip arriving in a workspace after the dump. Per-instance delay and
-   travel are set inline from a deterministic hash, so a batch of 20 reads as
-   20 objects rather than one animation played 20 times. */
-@keyframes m-settle-in {
-  from {
-    opacity: 0;
-    transform: translate3d(var(--m-from-x, 0px), var(--m-from-y, 18px), 0) scale(0.94);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-/* The processing sweep. Transform-only; deliberately no glow or blur. */
-@keyframes m-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(300%);
-  }
-}
-
-@keyframes m-pulse-ring {
-  0% {
-    opacity: 0.5;
-    transform: scale(0.9);
-  }
-  70% {
-    opacity: 0;
-    transform: scale(1.45);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.45);
-  }
-}
-
-/* Caret for the search demo's simulated typing. */
-@keyframes m-caret {
-  0%,
-  48% {
-    opacity: 1;
-  }
-  49%,
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Small uppercase mono label — footer column headings and the one or two
-   places a section genuinely needs a category above it. Deliberately rare:
-   an eyebrow over every section is a third typographic voice competing with
-   the heading and the sentence under it. */
-.tabdump-marketing .m-label {
-  font-family: var(--tabdump-font-mono);
-  font-size: 0.6875rem;
-  line-height: 1;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-/* ---- Agent motion ----------------------------------------------------
-   Four keyframes for the whole agent layer, all transform/opacity only.
-
-   What is deliberately absent: anything that runs forever. The one looping
-   animation here is the status ring, and it only ever attaches to a `working`
-   run — the single state where continuous motion is telling the truth. An
-   idle page should be still. */
-
-/* The live-status ring. Expands out of the dot and fades; the dot itself
-   never moves, so a row of statuses does not reflow while one is live. */
-.tabdump-marketing .m-status-ring {
-  animation: m-status-ring 2.4s var(--m-ease) infinite;
-  transform-origin: center;
-}
-
-@keyframes m-status-ring {
-  0% {
-    opacity: 0.55;
-    transform: scale(1);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: scale(2.6);
-  }
-}
-
-/* An object arriving in the command center — a work item appearing under a
-   run, a file joining the list, a timeline entry landing. Per-instance delay
-   is set inline so a batch reads as several objects rather than one animation
-   played several times. */
-.tabdump-marketing .m-enter {
-  animation: m-enter 420ms var(--m-spring) both;
-  animation-delay: var(--m-enter-delay, 0ms);
-}
-
-@keyframes m-enter {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 6px, 0);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* A relationship being drawn between two objects in the spatial view: the
-   line grows from the agent outward rather than fading in already finished.
-
-   Every path that uses this carries `pathLength="1"`, which redefines the
-   dash units as fractions of that path. Without it each line would need its
-   own measured length in JS — and the canvas is drawn in a stretched
-   coordinate space (preserveAspectRatio="none"), where the rendered length of
-   a path is not the length its geometry implies. Declaring it sidesteps the
-   measurement entirely and makes every line take the same time to draw,
-   regardless of how far it reaches. */
-.tabdump-marketing .m-draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: m-draw 620ms var(--m-ease) both;
-  animation-delay: var(--m-draw-delay, 0ms);
-}
-
-@keyframes m-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-/*
- * Reduced motion.
- *
- * globals.css already collapses animation and transition *durations* across
- * the app, which is enough for anything that animates from a resting state to
- * a finished one — those simply snap to finished. The two rules below cover
- * what that cannot reach:
- *
- *   - `m-draw` rests at dashoffset = full length, i.e. an invisible line. A
- *     zero duration would leave it invisible forever, so the path is reset to
- *     drawn rather than animated to it.
- *   - `m-status-ring` loops. At a zero duration it would restart continuously
- *     rather than stop, so it is removed outright.
- *
- * The self-advancing demos handle the third case in JS — see useReducedMotion
- * in hooks.ts, which makes each of them jump to its finished state instead of
- * flashing through six of them in a frame.
- */
-@media (prefers-reduced-motion: reduce) {
-  .tabdump-marketing .m-draw {
-    stroke-dasharray: none;
-    stroke-dashoffset: 0;
-    animation: none;
-  }
-
-  .tabdump-marketing .m-status-ring {
-    animation: none;
-    display: none;
+/* On a phone a window needs every pixel of the width: the hero's stage and
+   the feature cards run to the screen edges instead of sitting inside the
+   page gutter, so the product inside is laid out at phone width. Last in the
+   file so it wins over the card and stage corners above. */
+@media (max-width: 639px) {
+  .tabdump-marketing .m-bleed {
+    margin-inline: calc(var(--hb-gutter) * -1);
+    border-radius: 0;
   }
 }

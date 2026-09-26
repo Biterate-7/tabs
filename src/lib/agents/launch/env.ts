@@ -3,7 +3,7 @@
  *
  * ## Why an allowlist rather than stripping known secrets
  *
- * The server's environment holds TabDump's own secrets — the database URL,
+ * The server's environment holds Hubble's own secrets — the database URL,
  * the credential encryption key, whatever an operator added — and any
  * provider key a developer exported in their shell. A denylist has to know
  * every one of those names; an allowlist has to know only what an agent needs
@@ -13,7 +13,7 @@
  * In particular no `*_API_KEY` passes. The agent signs in with its own native
  * login — the thing the user set up in that agent — or it does not sign in.
  * That is the same "no fallback to a key in the environment" rule the
- * provider-connection layer enforces, applied to processes TabDump starts.
+ * provider-connection layer enforces, applied to processes Hubble starts.
  */
 export const AGENT_ENV_ALLOWLIST: readonly string[] = [
   "PATH",

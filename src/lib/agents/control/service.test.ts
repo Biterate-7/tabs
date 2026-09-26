@@ -104,8 +104,8 @@ describe("starting a session", () => {
     expect(adapter.calls).toEqual(["createSession"]);
   });
 
-  it("keeps TabDump's own session id rather than the adapter's", async () => {
-    // The adapter returns `sessionId: "ignored"`. TabDump's id is the handle
+  it("keeps Hubble's own session id rather than the adapter's", async () => {
+    // The adapter returns `sessionId: "ignored"`. Hubble's id is the handle
     // every other layer uses, and an adapter must not be able to rename it.
     const service = serviceWith(spyAdapter(capabilitySet("create_session")));
     const result = await service.startSession({ provider: "claude-code" });

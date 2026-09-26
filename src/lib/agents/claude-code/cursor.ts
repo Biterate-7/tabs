@@ -150,7 +150,7 @@ export function decodeCursor(value: unknown): CursorState {
  * A session with no stored cursor starts near the END of its transcript
  * rather than at byte zero. Replaying a 17 MB backlog to announce work the
  * user watched happen hours ago would be slow and useless; observation
- * sensibly begins when TabDump starts observing. `initialTailBytes` gives
+ * sensibly begins when Hubble starts observing. `initialTailBytes` gives
  * just enough recent history for a freshly attached session to show something.
  */
 export function resolveReadStart(

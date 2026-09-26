@@ -6,11 +6,11 @@ import type { AgentPermissionGrant, AgentPermissionScope } from "../../permissio
 import type { ClaudePermissionMode } from "./runtime";
 
 /**
- * TabDump's permission model, expressed in Claude Code's.
+ * Hubble's permission model, expressed in Claude Code's.
  *
  * ## These are not the same system, and the mapping says so
  *
- * TabDump's model is **scope over a directory**: six coarse scopes, granted
+ * Hubble's model is **scope over a directory**: six coarse scopes, granted
  * per project, evaluated before anything reaches a provider. Claude Code's is
  * **a mode plus tool rules**: how to behave when a tool wants to run, and
  * which tools may run at all.
@@ -19,31 +19,31 @@ import type { ClaudePermissionMode } from "./runtime";
  * translation of the other. It answers one narrow question — *given this
  * grant, what is the most restrictive Claude configuration that still lets
  * the granted things happen?* — and everything ungranted is denied twice:
- * once by TabDump refusing to dispatch, and once by the tool list Claude is
+ * once by Hubble refusing to dispatch, and once by the tool list Claude is
  * started with.
  *
  * ## Both boundaries must agree
  *
- *     TabDump project scope   →  outer boundary: is this even dispatchable?
+ *     Hubble project scope   →  outer boundary: is this even dispatchable?
  *     Claude tools + mode     →  provider boundary: may this tool run?
  *
  * An action happens only if both allow it. That redundancy is deliberate: a
- * bug in TabDump's gate is caught by Claude's tool list, and a
- * misunderstanding of Claude's mode is caught by TabDump refusing to
+ * bug in Hubble's gate is caught by Claude's tool list, and a
+ * misunderstanding of Claude's mode is caught by Hubble refusing to
  * dispatch the capability in the first place.
  *
  * ## Why `bypassPermissions` can never be produced
  *
  * It is absent from `ClaudePermissionMode` entirely, so there is no value
  * this function could return that skips Claude's own checks. The most
- * permissive thing TabDump can ask for is `acceptEdits`, and only when the
+ * permissive thing Hubble can ask for is `acceptEdits`, and only when the
  * user has granted `write_project` — and even then every write still passes
- * through `canUseTool`, because TabDump wants the approval regardless of what
+ * through `canUseTool`, because Hubble wants the approval regardless of what
  * the mode would allow on its own.
  */
 
 /**
- * Claude tools, grouped by the TabDump scope that authorizes them.
+ * Claude tools, grouped by the Hubble scope that authorizes them.
  *
  * An explicit allowlist rather than a denylist. A tool Claude adds in a
  * future version is therefore **not** granted until someone classifies it
@@ -62,15 +62,15 @@ export const TOOLS_BY_SCOPE: Readonly<Record<AgentPermissionScope, readonly stri
   run_commands: ["Bash", "BashOutput", "KillShell"],
   // Reaching the network from inside a run.
   network_access: ["WebFetch", "WebSearch"],
-  // MCP-connected tools. See the note on MCP below — TabDump configures no
+  // MCP-connected tools. See the note on MCP below — Hubble configures no
   // servers in this phase, so this list authorizes nothing that exists.
   mcp_tools: [],
-  // TabDump's own content never travels as a Claude tool. Workspace context
-  // is resolved by TabDump and sent as message text, so there is no Claude
+  // Hubble's own content never travels as a Claude tool. Workspace context
+  // is resolved by Hubble and sent as message text, so there is no Claude
   // tool that reads a workspace and nothing here to allow.
   read_workspace: [],
   // Workspace changes are never a Claude tool either: they arrive through
-  // TabDump's own session MCP server, which asks for each one itself (Phase
+  // Hubble's own session MCP server, which asks for each one itself (Phase
   // J.3, lib/agents/session-context).
   write_workspace: [],
 };
@@ -85,9 +85,9 @@ export const TOOLS_BY_SCOPE: Readonly<Record<AgentPermissionScope, readonly stri
 export const ALWAYS_ALLOWED_TOOLS: readonly string[] = ["TodoWrite"];
 
 /**
- * Tools TabDump never allows, in any configuration.
+ * Tools Hubble never allows, in any configuration.
  *
- * `Task` spawns a subagent whose own tool use TabDump cannot see or gate at
+ * `Task` spawns a subagent whose own tool use Hubble cannot see or gate at
  * the point of use — the parent's grant would silently become the child's.
  * Until the control plane can attribute subagent activity and route its
  * approvals, allowing it would mean an agent could do through a subagent what
@@ -118,13 +118,13 @@ export type ClaudePermissionPlan = {
    * `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` warning saying exactly this. Listing
    * every granted tool here, which is the obvious reading of the option,
    * would therefore silently suppress the approval prompt for all of them:
-   * TabDump would show nothing and Claude would edit the file. It is the same
+   * Hubble would show nothing and Claude would edit the file. It is the same
    * trap as `acceptEdits`, one layer down.
    *
    * So only `ALWAYS_ALLOWED_TOOLS` goes here — tools with no effect on the
    * machine, which nobody should be asked about. Everything the grant
    * authorizes is left out of **both** lists on purpose, so it falls through
-   * to `canUseTool`, where TabDump checks the scope and the user decides.
+   * to `canUseTool`, where Hubble checks the scope and the user decides.
    */
   allowedTools: readonly string[];
   /**
@@ -159,7 +159,7 @@ function allKnownTools(): string[] {
  *
  *   - A grant that permits something gets `default`, which prompts for
  *     dangerous operations — and a prompt is what invokes the host's
- *     `canUseTool`. That is how TabDump gets to decide.
+ *     `canUseTool`. That is how Hubble gets to decide.
  *   - A grant that permits nothing gets `dontAsk`, which denies anything not
  *     pre-approved without prompting. There is nothing to ask about.
  *
@@ -167,7 +167,7 @@ function allKnownTools(): string[] {
  * deliberate: a mode that narrowed access by auto-answering (`acceptEdits`)
  * would take the decision away from the user, and a mode that narrowed it by
  * refusing to execute (`plan`) would change what the product is. The tool
- * list restricts *what exists*; the mode keeps *who decides* with TabDump.
+ * list restricts *what exists*; the mode keeps *who decides* with Hubble.
  */
 export function modeForGrant(grant: AgentPermissionGrant, projectId?: string): ClaudePermissionMode {
   const permitsSomething = MAPPED_SCOPES.some((scope) => isGranted(grant, scope, projectId));
@@ -209,14 +209,14 @@ export function planForGrant(
 }
 
 /**
- * The one exception to "only TodoWrite is pre-allowed" (Phase J.3): TabDump's
+ * The one exception to "only TodoWrite is pre-allowed" (Phase J.3): Hubble's
  * own session MCP server, when the session has workspace context.
  *
  * Its tools are Claude's names for the session server's tools
  * (`mcp__<server>__<tool>`). They are allowed without an agent-level prompt
  * because the boundary is the server, not the agent: it reads only the one
  * workspace the session is bound to, and its one write, `create_collection`,
- * raises a TabDump approval itself and changes nothing until the user says
+ * raises a Hubble approval itself and changes nothing until the user says
  * yes. Asking here as well would put the same question to the user twice.
  * No other MCP server can exist in the session (`strictMcpConfig`), and the
  * server's name is minted per session (J.4), so no other `mcp__` name can
@@ -245,7 +245,7 @@ export function grantedTools(
 }
 
 /**
- * Which TabDump scope a Claude tool falls under, or `null` for one this
+ * Which Hubble scope a Claude tool falls under, or `null` for one this
  * mapping does not know.
  *
  * `null` is the important case: it is what an unclassified tool returns, and
@@ -263,13 +263,13 @@ export function scopeForTool(toolName: string): AgentPermissionScope | null {
  * Whether a tool may run under a grant.
  *
  * The check applied to a live permission request, *after* Claude has already
- * decided to ask. Both boundaries must agree, and this is TabDump's side of
+ * decided to ask. Both boundaries must agree, and this is Hubble's side of
  * that agreement: a tool whose scope was never granted is denied even if
  * Claude's own configuration would have allowed it.
  *
  * An unknown tool is denied. An MCP tool — which arrives with an `mcp__`
  * prefix and is not in any list — is therefore denied, which is correct while
- * TabDump configures no MCP servers.
+ * Hubble configures no MCP servers.
  */
 export function isToolPermitted(
   toolName: string,

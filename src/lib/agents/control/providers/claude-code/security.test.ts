@@ -21,7 +21,7 @@ import type { AgentPermissionScope } from "../../permissions";
 import type { AgentProject } from "../../projects";
 
 /**
- * The guards on the one path in TabDump that executes anything.
+ * The guards on the one path in Hubble that executes anything.
  *
  * Phase C turns the control plane from a design into a thing that spawns a
  * process with filesystem access. Every rule that keeps that safe is checked
@@ -82,7 +82,7 @@ describe("no arbitrary execution reaches the provider", () => {
   });
 
   it("spawns nothing itself", () => {
-    // The SDK owns the process. TabDump never assembles an argv, so there is
+    // The SDK owns the process. Hubble never assembles an argv, so there is
     // no command line for a caller to influence.
     const offenders: string[] = [];
     for (const { file, source } of sources) {
@@ -327,7 +327,7 @@ describe("the provider receives only authorized directories", () => {
  * ------------------------------------------------------------------ */
 
 describe("the permission mapping is total and fails closed", () => {
-  it("classifies every TabDump scope", () => {
+  it("classifies every Hubble scope", () => {
     for (const scope of AGENT_PERMISSION_SCOPES) {
       expect(MAPPED_SCOPES, scope).toContain(scope);
       expect(TOOLS_BY_SCOPE[scope]).toBeDefined();
@@ -496,11 +496,11 @@ describe("MCP is closed rather than merely unused", () => {
     expect(CLAUDE_CODE_CONTROL_CAPABILITIES.has("mcp")).toBe(false);
   });
 
-  it("starts the runtime with strict config and no MCP server but TabDump's own session server", () => {
+  it("starts the runtime with strict config and no MCP server but Hubble's own session server", () => {
     // Without `strictMcpConfig`, a session would silently inherit whatever
     // MCP servers the user's own Claude configuration defines — tools
-    // TabDump never authorized and cannot map to a scope. Since Phase J.3 the
-    // one server a session may have is TabDump's own, built from the
+    // Hubble never authorized and cannot map to a scope. Since Phase J.3 the
+    // one server a session may have is Hubble's own, built from the
     // session's context binding; sdk-runtime.test.ts proves the behaviour.
     const runtime = codeOf(sources.find((entry) => entry.name === "sdk-runtime.ts")!.source);
 
@@ -559,7 +559,7 @@ describe("no credential is handled or stored", () => {
    * This guard used to permit exactly one module — `remote-runtime.ts` — to
    * *read* `ANTHROPIC_API_KEY` from the deployment's environment. That was
    * the operator-key model: one key on the deployment, used for every user's
-   * session, with the whole cost falling on whoever ran TabDump.
+   * session, with the whole cost falling on whoever ran Hubble.
    *
    * Per-user credentials removed that read entirely. Both runtimes now
    * receive a `ClaudeCredentialSource` bound to one actor and resolve it per

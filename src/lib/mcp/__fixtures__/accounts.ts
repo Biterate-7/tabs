@@ -2,11 +2,11 @@ import { SYNC_CURSOR_START } from "@/lib/sync/types";
 import { createMemoryRemoteStore } from "@/lib/agents/remote/store";
 import { createSyncMcpData } from "../data";
 import type { SyncChange, SyncChangesPage, WorkspaceSyncPayload } from "@/lib/sync/types";
-import type { SyncReader, TabDumpMcpData } from "../data";
+import type { SyncReader, HubbleMcpData } from "../data";
 import type { RemoteStore } from "@/lib/agents/remote/store";
 
 /**
- * Two accounts' synced TabDump data, as sync change pages.
+ * Two accounts' synced Hubble data, as sync change pages.
  *
  * Built as the server stores it — `SyncChange` upserts — so the MCP loader is
  * exercised through the real `applyChanges` hydration, not handed domain
@@ -175,6 +175,6 @@ export async function createFixtureRemoteStore(): Promise<RemoteStore> {
   return store;
 }
 
-export async function createFixtureData(): Promise<TabDumpMcpData> {
+export async function createFixtureData(): Promise<HubbleMcpData> {
   return createSyncMcpData({ sync: createFixtureSyncReader(), remote: await createFixtureRemoteStore() });
 }

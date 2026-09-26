@@ -2,7 +2,7 @@ import { AGENT_PROVIDER_IDS, isAgentProviderId } from "@/lib/agents/connectors/t
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 
 /**
- * Provider connections — "this user authorized TabDump to use this provider".
+ * Provider connections — "this user authorized Hubble to use this provider".
  *
  * ## The three things this phase keeps apart
  *
@@ -78,9 +78,9 @@ export function isProviderAuthMethod(value: unknown): value is ProviderAuthMetho
 
 /** What each method is called on screen. Accurate, not aspirational — see the naming note below. */
 export const AUTH_METHOD_LABEL: Record<ProviderAuthMethod, string> = {
-  // NOT "Claude account". TabDump holds an API credential the user issued
+  // NOT "Claude account". Hubble holds an API credential the user issued
   // themselves; calling that "connect your Claude account" would describe an
-  // OAuth grant that does not exist and imply TabDump can act as them.
+  // OAuth grant that does not exist and imply Hubble can act as them.
   api_key: "Anthropic API",
   workload_identity: "Workload identity",
   official_oauth: "Provider sign-in",
@@ -160,9 +160,9 @@ export const VALIDATION_MESSAGE: Record<CredentialValidationCode, string> = {
   connection_valid: "Connected.",
   invalid_credentials: "The provider did not accept those credentials.",
   malformed_credential: "That does not look like a valid credential for this provider.",
-  provider_unavailable: "TabDump could not reach the provider. Try again shortly.",
+  provider_unavailable: "Hubble could not reach the provider. Try again shortly.",
   rate_limited: "The provider is rate-limiting requests right now. Try again shortly.",
-  validation_failed: "TabDump could not verify those credentials.",
+  validation_failed: "Hubble could not verify those credentials.",
 };
 
 export type CredentialValidation = {
@@ -201,7 +201,7 @@ export function blamesCredential(code: CredentialValidationCode): boolean {
  * Every field is safe to render, log and serialize. There is no credential, no
  * credential reference, no prefix, no masked form and no length. A masked
  * prefix is a habit borrowed from dashboards that can revoke a key from the
- * same screen; TabDump cannot, so showing four characters of somebody's secret
+ * same screen; Hubble cannot, so showing four characters of somebody's secret
  * buys recognition at the cost of leaking part of it into every screenshot.
  */
 export type AgentProviderConnection = {
@@ -340,7 +340,7 @@ export type CredentialResolution =
 export const RESOLUTION_MESSAGE: Record<CredentialResolutionFailure, string> = {
   not_connected: "Connect your own provider credentials before starting a session.",
   not_usable: "This provider connection needs attention before it can run a session.",
-  unavailable: "TabDump cannot reach its credential store on this deployment.",
+  unavailable: "Hubble cannot reach its credential store on this deployment.",
 };
 
 /* ------------------------------------------------------------------ *

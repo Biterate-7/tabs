@@ -224,13 +224,13 @@ function relativePathOf(file: File): string {
 
 const FAILURE_MESSAGES: Record<string, string> = {
   "invalid-name": "Give the project a name.",
-  "invalid-scopes": "TabDump did not recognise those permissions.",
+  "invalid-scopes": "Hubble did not recognise those permissions.",
   "too-many-sandboxes": "You already have the maximum number of remote projects running.",
-  "sandbox-failed": "TabDump could not create the remote environment.",
+  "sandbox-failed": "Hubble could not create the remote environment.",
   "remote-unavailable": "Remote agents are not available on this deployment.",
   "upload-too-large": "That upload is too big.",
   "too-many-files": "That's more files than a project upload can carry.",
-  "invalid-request": "TabDump could not read that request.",
+  "invalid-request": "Hubble could not read that request.",
   "not-found": "That project no longer exists.",
   "sign-in-required": "Sign in to use remote projects.",
 };
@@ -238,7 +238,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
 /** One fixed sentence per code. Nothing is interpolated from a request or a platform. */
 function refuse(code: string, status: number): Response {
   return Response.json(
-    { ok: false, error: { code, message: FAILURE_MESSAGES[code] ?? "TabDump could not do that." } },
+    { ok: false, error: { code, message: FAILURE_MESSAGES[code] ?? "Hubble could not do that." } },
     { status }
   );
 }

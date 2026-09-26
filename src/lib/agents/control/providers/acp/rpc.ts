@@ -19,7 +19,7 @@
  * surfaces the peer's own text: a failure is a code.
  */
 
-/** One agent message is a line. Anything larger is not a message TabDump reads. */
+/** One agent message is a line. Anything larger is not a message Hubble reads. */
 export const MAX_ACP_LINE_LENGTH = 1_000_000;
 
 /** How long a request may wait by default. A prompt turn overrides this — see the adapter. */
@@ -62,7 +62,7 @@ export type JsonRpcPeerOptions = {
   transport: AcpTransport;
   /**
    * An agent-initiated request. Anything not answered by this handler is
-   * refused as method-not-found — which is how TabDump declines `fs/*` and
+   * refused as method-not-found — which is how Hubble declines `fs/*` and
    * `terminal/*` requests it never advertised support for.
    */
   onRequest: (method: string, params: unknown) => Promise<RpcReply> | RpcReply;

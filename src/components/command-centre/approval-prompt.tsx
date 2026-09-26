@@ -148,16 +148,23 @@ export function ApprovalPrompt({
   onRespond,
   pending,
   now,
+  autoFocus = true,
 }: {
   approval: RuntimeApprovalView
   /** The project's name. Falls back to nothing rather than printing an id at the user. */
   projectName?: string
-  /** The workspace's name, for a change to a TabDump workspace (Phase J.3). */
+  /** The workspace's name, for a change to a Hubble workspace (Phase J.3). */
   workspaceName?: string
   onRespond: (approvalId: string, decision: "granted" | "denied") => void
   pending: boolean
   /** Supplied by the caller so the countdown ticks without an impure render. */
   now: number
+  /**
+   * Whether Deny takes focus when the card appears. Always true in the app;
+   * the landing page's demo passes false for the approval already on screen
+   * when the page loads, so arriving at the page does not scroll to it.
+   */
+  autoFocus?: boolean
 }) {
   const denyRef = useRef<HTMLButtonElement | null>(null)
   const [reviewing, setReviewing] = useState(false)
@@ -173,7 +180,10 @@ export function ApprovalPrompt({
     Both remain reachable by keyboard; only the default differs.
   */
   useEffect(() => {
-    denyRef.current?.focus()
+    if (autoFocus) denyRef.current?.focus()
+    // Keyed on the approval, not the flag: focus moves when a new decision
+    // arrives, never because a prop changed under the same one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approval.approvalId])
 
   return (
@@ -186,23 +196,21 @@ export function ApprovalPrompt({
       aria-label="Approval required"
       className={cn(
         /*
-          Deliberately the heaviest block in the stream.
-
-          Everything else here is flat on the page; this is the one event that
-          stops the run and waits for a person, and in review it read as just
-          another bordered box — the same weight as the user's own message two
-          rows above it. So it gets the full-strength warning border, a tinted
-          surface and an accent edge, which is the only place in the command
-          centre that combination is used.
+          The one card in the stream. Everything else is flat on the page;
+          this is the event that stops the run and waits for a person, so it
+          is the only thing drawn as an object — the card tone, a hairline and
+          the reference's question-card corner — and the only place the
+          stream spends the link colour, on the words that say why.
         */
-        "my-4 rounded-md border border-l-2 px-3.5 py-3",
-        expiry.expired
-          ? "border-subtle border-l-subtle bg-surface opacity-70"
-          : "border-warning/60 border-l-warning bg-warning/[0.06]"
+        "my-4 rounded-md border px-4 py-3",
+        expiry.expired ? "border-subtle bg-card opacity-70" : "border-strong bg-card"
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-eyebrow text-warning">Approval required</span>
+        <span className="flex items-center gap-1.5 text-eyebrow text-link">
+          <span aria-hidden className="size-1.5 rounded-full bg-current" />
+          Approval required
+        </span>
         <span className="shrink-0 text-meta text-tertiary">{expiry.text}</span>
       </div>
 
@@ -285,8 +293,8 @@ export function ApprovalPrompt({
           ref={denyRef}
           type="button"
           size="sm"
-          variant="outline"
-          className="min-w-20"
+          variant="secondary"
+          className="min-w-16"
           disabled={pending || expiry.expired}
           onClick={() => onRespond(approval.approvalId, "denied")}
         >
@@ -296,11 +304,11 @@ export function ApprovalPrompt({
           type="button"
           size="sm"
           variant="default"
-          className="min-w-20"
+          className="min-w-16"
           disabled={pending || expiry.expired}
           onClick={() => onRespond(approval.approvalId, "granted")}
           {...(approval.plan
-            ? { "aria-label": `Approve these ${approval.plan.operationCount} changes, once` }
+            ? { "aria-label": approval.plan.operationCount === 1 ? "Approve this change, once" : `Approve these ${approval.plan.operationCount} changes, once` }
             : {})}
         >
           {approval.plan ? `Approve ${changeCount(approval.plan.operationCount)}` : "Allow"}

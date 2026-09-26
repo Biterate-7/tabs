@@ -18,7 +18,7 @@ import type { SessionContextServer } from "@/lib/agents/session-context/http";
  *
  * The real host, control service, approval broker, session registry, loopback
  * MCP server and ACP adapter; the agent is a scripted ACP process on an
- * in-memory pipe that captures what TabDump hands it in `session/new` — which
+ * in-memory pipe that captures what Hubble hands it in `session/new` — which
  * is how the test gets the credential an agent would get, and nothing else.
  */
 
@@ -101,7 +101,7 @@ function build(scopes: string[] = ["read_workspace", "read_project", "write_work
     } as never);
   }
 
-  /** What TabDump handed the agent in session/new — the credential an agent really gets. */
+  /** What Hubble handed the agent in session/new — the credential an agent really gets. */
   function credential(): { url: string; token: string } | undefined {
     const created = agent.received.filter((message) => message.method === "session/new").at(-1);
     const entry = (created?.params as { mcpServers?: { url: string; headers: { value: string }[] }[] } | undefined)?.mcpServers?.[0];
@@ -213,7 +213,7 @@ describe("a session started from a workspace", () => {
   });
 });
 
-describe("a workspace change goes through TabDump's approval", () => {
+describe("a workspace change goes through Hubble's approval", () => {
   it("appears as an ordinary approval, and happens only once approved and applied by the Command Centre", async () => {
     const h = build();
     const created = await h.start();

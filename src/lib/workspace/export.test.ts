@@ -33,7 +33,7 @@ describe("buildExportText", () => {
       makeTab({ id: "3", url: "https://classroom.google.com/c/1", category: "school" }),
     ];
     expect(buildExportText(tabs)).toBe(
-      "TABDUMP EXPORT\n\nRESEARCH\n\nhttps://arxiv.org/abs/1\n\nhttps://scholar.google.com/x\n\nSCHOOL\n\nhttps://classroom.google.com/c/1\n"
+      "HUBBLE EXPORT\n\nRESEARCH\n\nhttps://arxiv.org/abs/1\n\nhttps://scholar.google.com/x\n\nSCHOOL\n\nhttps://classroom.google.com/c/1\n"
     );
   });
 
@@ -46,7 +46,7 @@ describe("buildExportText", () => {
   });
 
   it("handles an empty workspace", () => {
-    expect(buildExportText([])).toBe("TABDUMP EXPORT\n");
+    expect(buildExportText([])).toBe("HUBBLE EXPORT\n");
   });
 });
 

@@ -153,7 +153,7 @@ export function RemoteProjectPicker({
       <div className="mt-1.5 flex flex-col gap-1">
         {unavailable ? (
           <p className="text-body-sm text-tertiary">
-            TabDump could not load your remote projects.
+            Hubble could not load your remote projects.
           </p>
         ) : loading && projects.length === 0 ? (
           <p className="text-body-sm text-tertiary">Loading projects…</p>

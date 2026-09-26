@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  *
  * ## Who may call this
  *
- * A signed-in TabDump account, from TabDump's own origin, and nobody else.
+ * A signed-in Hubble account, from Hubble's own origin, and nobody else.
  * There is no anonymous actor on this route at all: a token reads
  * account-synced data, so without an account there is nothing for one to
  * read. The session cookie authenticates *this* route; the tokens it mints
@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
  */
 
 const FAILURE_MESSAGES = {
-  "invalid-request": "TabDump could not read that request.",
+  "invalid-request": "Hubble could not read that request.",
   "sign-in-required": "Sign in to connect Claude Desktop.",
   "mcp-unavailable": "Claude Desktop connections are not available on this deployment.",
   "invalid-name": "Give the connection a name of up to 60 characters.",

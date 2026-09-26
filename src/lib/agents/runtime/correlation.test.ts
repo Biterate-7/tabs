@@ -11,8 +11,8 @@ const T0 = 1_700_000_000_000;
 /**
  * Correlation.
  *
- * The distinction under test throughout: **control** is what TabDump asked
- * for, **observation** is what TabDump saw, and a correlation is evidence
+ * The distinction under test throughout: **control** is what Hubble asked
+ * for, **observation** is what Hubble saw, and a correlation is evidence
  * that the two describe the same provider session. The failure this suite
  * exists to prevent is a registry that quietly labels observed activity as
  * controlled because it is convenient.
@@ -67,12 +67,12 @@ describe("joining the two planes", () => {
     expect(observed.observationRunId).toBe("run-7");
     expect(observed.controlRunId).toBe("cr1");
     // Origin is fixed at registration. This record was born of control, and
-    // saying so is how a reader knows TabDump started it.
+    // saying so is how a reader knows Hubble started it.
     expect(observed.origin).toBe("control");
   });
 
   it("gives an externally started session no fabricated control run", () => {
-    // Somebody opened a terminal and ran Claude Code. TabDump can see it and
+    // Somebody opened a terminal and ran Claude Code. Hubble can see it and
     // did not start it, and the record has to say exactly that.
     const registry = createCorrelationRegistry();
 
@@ -175,7 +175,7 @@ describe("lookups", () => {
 
   it("resolves a control run from views alone, for a caller with no registry", () => {
     // The browser's half. The future command centre renders observed runs and
-    // needs to know which of them TabDump drove, holding only what came over
+    // needs to know which of them Hubble drove, holding only what came over
     // the wire.
     const views = [
       toCorrelationView({

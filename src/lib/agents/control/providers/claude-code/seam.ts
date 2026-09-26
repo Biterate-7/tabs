@@ -29,7 +29,7 @@ import type { AgentControlAdapter } from "../../types";
  * see ./index.ts for how.
  */
 export const CLAUDE_CODE_CONTROL_DETAIL =
-  "Claude Code runs on your machine. TabDump can drive it from a local server, not from this page.";
+  "Claude Code runs on your machine. Hubble can drive it from a local server, not from this page.";
 
 export function createClaudeCodeControlSeam(): AgentControlAdapter {
   return createUnimplementedControlAdapter({

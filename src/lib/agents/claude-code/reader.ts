@@ -25,8 +25,8 @@ import type {
  *
  * Each live session's registry entry carries a named pipe
  * (`\\.\pipe\LOCAL\cc-msg-…`) that a peer can use to *talk to* the running
- * session. Reading it would turn TabDump from an observer into a controller:
- * anything that could reach TabDump's state could then drive a coding agent
+ * session. Reading it would turn Hubble from an observer into a controller:
+ * anything that could reach Hubble's state could then drive a coding agent
  * with filesystem access on the user's machine. The field is dropped in
  * `toRegistryEntry` below and appears in no type in this directory, so no
  * later code can reach it by accident.
@@ -43,7 +43,7 @@ import type {
  * Where Claude Code keeps its state.
  *
  * `CLAUDE_CONFIG_DIR` is Claude Code's own override, honoured here so a
- * self-hosted TabDump running as a different user, or on a machine with a
+ * self-hosted Hubble running as a different user, or on a machine with a
  * relocated config, can still observe the right directory. Read per call
  * rather than captured at module load, so it is never baked in.
  */

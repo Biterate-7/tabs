@@ -9,7 +9,7 @@ import path from "node:path";
  * distance between "represents" and "performs" is the entire safety story of
  * this feature, and it is not self-enforcing: a single `child_process` import
  * added later — to "just check git branch", or to "just stop a stuck run" —
- * would silently turn TabDump into a remote-execution surface driven by
+ * would silently turn Hubble into a remote-execution surface driven by
  * whatever can write to its state.
  *
  * So the rule is enforced mechanically rather than by review: nothing under

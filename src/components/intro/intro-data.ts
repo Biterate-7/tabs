@@ -42,12 +42,12 @@ const RAW_TABS: { domain: string; label: string; category: CategoryId }[] = [
   { domain: "ncbi.nlm.nih.gov", label: "PubMed search", category: "research" },
   { domain: "coursera.org", label: "Intro to ML", category: "school" },
   { domain: "khanacademy.org", label: "Physics IA", category: "school" },
-  { domain: "github.com", label: "tabdump/tabdump", category: "projects" },
+  { domain: "github.com", label: "hubble/hubble", category: "projects" },
   { domain: "figma.com", label: "Landing page draft", category: "projects" },
   { domain: "vercel.com", label: "Deployments", category: "projects" },
   { domain: "docs.google.com", label: "Project brief", category: "projects" },
   { domain: "notion.so", label: "Roadmap", category: "projects" },
-  { domain: "linear.app", label: "TABDUMP-142", category: "projects" },
+  { domain: "linear.app", label: "HUBBLE-142", category: "projects" },
   { domain: "dribbble.com", label: "Shot: Dashboard UI", category: "creative" },
   { domain: "canva.com", label: "Poster draft", category: "creative" },
   { domain: "amazon.com", label: "Cart (3)", category: "shopping" },
@@ -87,7 +87,7 @@ export function buildIntroTabs(mobile: boolean): IntroTab[] {
   return mobile ? MOBILE_TABS : DESKTOP_TABS
 }
 
-/** Per-bucket stagger for the "organized" scene's collection cards — shared with tabdump-intro.tsx so the sort-snap sound lands on the same beat as each card's entrance. */
+/** Per-bucket stagger for the "organized" scene's collection cards — shared with hubble-intro.tsx so the sort-snap sound lands on the same beat as each card's entrance. */
 export const CARD_STAGGER_MS = [0, 90, 180]
 
 /** Deterministic string hash (same shape as tab-card.tsx's arrivalStyle) — seeds every per-tab pseudo-random value below so layout is stable across renders/reloads, not re-rolled on every mount. */
@@ -123,7 +123,7 @@ const CONVERGE_TIER_MS: Record<IntroTab["bucket"], number> = { research: 0, proj
  * One scattered position per tab, computed once from a seed rather than
  * Math.random() — the whole point is that this layout doesn't reshuffle on
  * every render (which would look like jitter, not chaos) and doesn't risk a
- * server/client mismatch (irrelevant here since TabDumpIntro only ever
+ * server/client mismatch (irrelevant here since HubbleIntro only ever
  * mounts client-side, but keeping the convention matches the rest of the
  * codebase's deterministic-jitter pattern).
  *

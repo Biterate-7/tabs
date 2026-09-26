@@ -149,7 +149,7 @@ function build(scopes: string[]) {
   return { host, registry, send, start, turn };
 }
 
-describe("an ACP agent using its session's TabDump context through a real process", () => {
+describe("an ACP agent using its session's Hubble context through a real process", () => {
   it("reads the workspace: the context call is recognised structurally and allowed once — no prompt, no enforcement", async () => {
     const h = build(["read_workspace", "read_project"]);
     const sessionId = await h.start();
@@ -162,11 +162,11 @@ describe("an ACP agent using its session's TabDump context through a real proces
 
     // Another workspace, asked for by id: refused by the server.
     const denied = await h.turn(sessionId, 'context get_workspace {"workspaceId":"w-private"}');
-    expect(denied).toContain("This session can only read the TabDump workspace it was started from.");
+    expect(denied).toContain("This session can only read the Hubble workspace it was started from.");
     await h.host.dispose();
   }, 60_000);
 
-  it("proposes a change: TabDump asks the user, and only an approved, applied change comes back as done", async () => {
+  it("proposes a change: Hubble asks the user, and only an approved, applied change comes back as done", async () => {
     const h = build(["read_workspace", "read_project", "write_workspace"]);
     const sessionId = await h.start();
     const reply = await h.turn(sessionId, 'context create_collection {"name":"Launch reading","tabIds":["t1","t2"]}', async () => {

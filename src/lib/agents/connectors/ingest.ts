@@ -133,7 +133,7 @@ export function ingestObservationBatch(input: IngestBatchInput): void {
  * Links an observed URL to an existing tab, when one matches exactly.
  *
  * Exact normalized match only, within the run's own workspace, using
- * TabDump's existing `normalizeUrl` so an agent visiting a saved page links to
+ * Hubble's existing `normalizeUrl` so an agent visiting a saved page links to
  * the same tab the user would have. No tab is ever created, and no fuzzy
  * matching is attempted: a near-miss link is worse than no link, because it
  * asserts a relationship that did not happen.

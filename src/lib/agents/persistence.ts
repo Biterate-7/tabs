@@ -437,7 +437,7 @@ export function defaultAgentState(): AgentState {
  * `unsupported` is the interesting case: state written by a *newer* build
  * than this one. The state cannot be trusted to have the shape this build
  * expects, so an empty domain is handed back — but the caller is told, so it
- * can decline to save over data it does not understand. A newer TabDump in
+ * can decline to save over data it does not understand. A newer Hubble in
  * another tab, or a downgrade, must not cost the user their agent history
  * simply because an older build opened the key once.
  */

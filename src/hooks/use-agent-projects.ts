@@ -14,7 +14,7 @@ import type { AuthorizedProjectInput } from "@/lib/agents/runtime/protocol"
  *
  * ## Why the durable record lives here and not in the host
  *
- * TabDump is local-first: a project is a thing the *user* authorized, and it
+ * Hubble is local-first: a project is a thing the *user* authorized, and it
  * has to survive a server restart, so it is kept in browser storage exactly as
  * workspaces and collections are (`control/persistence.ts`). The host is told
  * about the set on each connection, because an id means nothing to it until it
@@ -31,7 +31,7 @@ import type { AuthorizedProjectInput } from "@/lib/agents/runtime/protocol"
  *
  * The honest limit, which Phase F states and this hook does not paper over: on
  * a browser-served runtime there is no trusted path source to compare against,
- * so TabDump knows the path is *shaped* like a project and not that it is the
+ * so Hubble knows the path is *shaped* like a project and not that it is the
  * folder the user meant. A native folder picker is the fix and belongs to a
  * later phase; until then the user types the path themselves and sees exactly
  * what they authorized.

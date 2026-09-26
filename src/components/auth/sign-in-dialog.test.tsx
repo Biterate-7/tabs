@@ -60,17 +60,17 @@ describe("SignInDialog", () => {
     expect(initialize).not.toHaveBeenCalled();
   });
 
-  it("is TabDump-branded, with no third-party auth provider named", async () => {
+  it("is Hubble-branded, with no third-party auth provider named", async () => {
     render(
       <AuthProvider>
         <SignInDialog open onOpenChange={() => {}} />
       </AuthProvider>
     );
 
-    expect(await screen.findByText("Sign in to TabDump")).toBeTruthy();
+    expect(await screen.findByText("Sign in to Hubble")).toBeTruthy();
 
     // Google appears only as the identity provider's own button (rendered
-    // by GIS itself, so it contributes no text here). Nothing in TabDump's
+    // by GIS itself, so it contributes no text here). Nothing in Hubble's
     // own copy names an authentication platform.
     const text = document.body.textContent ?? "";
     for (const vendor of ["Clerk", "Auth0", "Supabase", "Firebase", "Powered by"]) {

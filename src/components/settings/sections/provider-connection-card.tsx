@@ -22,9 +22,9 @@ import type { ConnectInput } from "@/hooks/use-provider-connections"
  * The third block on a provider card, beside Observation and Control. Three
  * blocks because they are three genuinely independent facts:
  *
- *   - **Observation** — can TabDump see what this agent does?
- *   - **Control** — can TabDump drive it?
- *   - **Connection** — has *this user* authorized TabDump to use it, with
+ *   - **Observation** — can Hubble see what this agent does?
+ *   - **Control** — can Hubble drive it?
+ *   - **Connection** — has *this user* authorized Hubble to use it, with
  *     their own credentials?
  *
  * A provider can be in any combination. Claude Code is observable on a machine
@@ -34,7 +34,7 @@ import type { ConnectInput } from "@/hooks/use-provider-connections"
  * ## The naming, which is a correctness question
  *
  * The button says **Connect Anthropic API**, never "Connect Claude account".
- * TabDump holds an API credential the user issued to themselves. It does not
+ * Hubble holds an API credential the user issued to themselves. It does not
  * hold a delegated grant, cannot act as them, and cannot see their Claude.ai
  * subscription — and the second phrasing would claim all three. The
  * explanatory sentence comes from the credential adapter rather than from this
@@ -46,7 +46,7 @@ import type { ConnectInput } from "@/hooks/use-provider-connections"
  * Keep a secret. The field is uncontrolled below and its value is read once,
  * at submit, straight out of the form. It is not lifted into React state, not
  * echoed back after submission, and not re-displayed when the dialog reopens.
- * There is no "show key" toggle and no masked prefix: TabDump cannot revoke a
+ * There is no "show key" toggle and no masked prefix: Hubble cannot revoke a
  * key from this screen, so displaying part of one buys recognition at the cost
  * of leaking it into every screenshot.
  */
@@ -64,7 +64,7 @@ export type ProviderConnectionCardProps = {
   providerName: string
   /** Absent when this user has not connected this provider. */
   connection: ProviderConnectionView | undefined
-  /** Absent when TabDump has no credential adapter for this provider at all. */
+  /** Absent when Hubble has no credential adapter for this provider at all. */
   input: ConnectionInputShape | undefined
   /** The deployment cannot hold credentials — no encryption key configured. */
   unavailable: boolean
@@ -134,9 +134,9 @@ export function ProviderConnectionCard({
   )
 
   return (
-    <div className="mt-3 rounded-lg border border-subtle p-3">
+    <div className="rounded-md border border-border bg-card px-4 py-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-meta font-medium text-foreground">Connection</p>
+        <p className="text-body text-foreground">Connection</p>
         <span
           className={cn(
             "text-meta",
@@ -152,7 +152,7 @@ export function ProviderConnectionCard({
           capabilities that do not exist". */}
       {!input ? (
         <p className="mt-1 text-meta text-muted-foreground">
-          TabDump cannot hold credentials for {providerName} yet.
+          Hubble cannot hold credentials for {providerName} yet.
         </p>
       ) : unavailable ? (
         <p className="mt-1 text-meta text-muted-foreground">

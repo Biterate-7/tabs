@@ -45,7 +45,7 @@ function holdersOf(collections: readonly Collection[], tabIds: readonly string[]
  * saved as it changes — the same "load-once-per-mount, source of truth is
  * localStorage" pattern use-dependency-store.ts already established. Safe to
  * use from more than one call site (WorkspaceView and GraphView) because
- * TabDump only ever mounts one of them at a time — see app-shell.tsx's
+ * Hubble only ever mounts one of them at a time — see app-shell.tsx's
  * `view` switch.
  *
  * `workspaces` is the full cross-workspace list (not just the current one):

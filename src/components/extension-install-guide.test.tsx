@@ -7,7 +7,7 @@ describe("ExtensionInstallGuide", () => {
     render(<ExtensionInstallGuide onBack={vi.fn()} onContinueWithoutExtension={vi.fn()} />)
 
     expect(screen.getByText(/Extract the downloaded/)).toBeTruthy()
-    expect(screen.getByText("tabdump-extension.zip")).toBeTruthy()
+    expect(screen.getByText("hubble-extension.zip")).toBeTruthy()
     expect(screen.getByText(/do not select the \.zip itself in Chrome/)).toBeTruthy()
   })
 
@@ -16,7 +16,7 @@ describe("ExtensionInstallGuide", () => {
 
     const folderStep = screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Select the extracted"))
     expect(folderStep).toBeTruthy()
-    expect(folderStep!.textContent).toContain("tabdump-extension")
+    expect(folderStep!.textContent).toContain("hubble-extension")
     expect(folderStep!.textContent).toContain("manifest.json")
     expect(screen.queryByText(/Select the downloaded/)).toBeNull()
   })

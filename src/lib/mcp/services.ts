@@ -10,7 +10,7 @@ import type { McpHttpDeps } from "./http";
  * cannot serve it.
  *
  * Needs a database for two reasons that are really one: tokens live there,
- * and so does the only TabDump data a server has — the account-synced copy.
+ * and so does the only Hubble data a server has — the account-synced copy.
  * No database means no MCP, reported as a 503, never an in-memory stand-in
  * that would accept tokens it forgets on the next cold start.
  *

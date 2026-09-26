@@ -1,11 +1,11 @@
 # Phase 12 — Real Claude Code Read-Only Adapter
 
-TabDump observes a real, local Claude Code session and represents its work as
+Hubble observes a real, local Claude Code session and represents its work as
 a Phase 11 `AgentRun`, without ever being able to control it.
 
 The invariant this whole phase exists to hold:
 
-> **TabDump observes Claude Code. TabDump never controls Claude Code.**
+> **Hubble observes Claude Code. Hubble never controls Claude Code.**
 
 ## Source discovery
 
@@ -150,8 +150,8 @@ imports nothing from `claude-code/` and names no provider in its code.
 ### Why `messagingSocketPath` is ignored
 
 It is a live named pipe into a running session — a peer can *talk to* Claude
-Code through it. Using it would turn TabDump from an observer into a
-controller, so that anything able to reach TabDump's state could drive a
+Code through it. Using it would turn Hubble from an observer into a
+controller, so that anything able to reach Hubble's state could drive a
 coding agent with filesystem access on the user's machine.
 
 It is dropped in the reader's `toRegistryEntry`, appears in **no type** in this
@@ -272,10 +272,10 @@ appends nothing. Both are Phase 11 behaviours; this phase supplies the ids.
 ## Workspace mapping
 
 ```
-Claude project path  →  TabDump workspaceId
+Claude project path  →  Hubble workspaceId
 ```
 
-Explicit and nothing else. TabDump never infers a workspace from the selected
+Explicit and nothing else. Hubble never infers a workspace from the selected
 one, a similar name, a git branch, or resembling tabs.
 
 Path comparison normalises separators, trailing separators and case (Windows
@@ -299,12 +299,12 @@ is applied on the next poll and the same session attaches, keeping its
 identity, cursor position, title and branch.
 
 Mappings live in `tabdump:claude-code-mapping:v1`, registered in
-`SCOPED_STORAGE_KEYS`, so they are account-scoped like every other TabDump
+`SCOPED_STORAGE_KEYS`, so they are account-scoped like every other Hubble
 domain.
 
 ## Status and lifecycle
 
-| Claude Code | TabDump |
+| Claude Code | Hubble |
 | --- | --- |
 | `busy` | `working` |
 | `idle` | `waiting` |
@@ -327,7 +327,7 @@ a claim that the work failed or succeeded.
 
 Implemented. When an observation carries a URL:
 
-1. normalise it with TabDump's existing `normalizeUrl`;
+1. normalise it with Hubble's existing `normalizeUrl`;
 2. look for an exactly matching saved tab **in the run's own workspace**;
 3. on an exact match, create `AgentRunLink(role = "context")` through the
    Phase 11 `addRunLink`, which enforces the workspace boundary.
@@ -392,7 +392,7 @@ worktree's own session — not fixtures.
 | J | Hosted unavailable | verified by removing the installation: `available: false`, no sessions, no observations, no crash. **Not** verified against a real Vercel deployment — see limitations |
 
 The most telling detail is in F and I together: the two verification commands
-were `echo "PHASE12-VERIFY-MARKER-ALPHA"` and `…-BETA`. What TabDump observed
+were `echo "PHASE12-VERIFY-MARKER-ALPHA"` and `…-BETA`. What Hubble observed
 was `Phase 12 incremental marker alpha` and `…beta` — the descriptions. The
 marker strings inside the actual commands never appeared anywhere.
 
@@ -408,7 +408,7 @@ marker strings inside the actual commands never appeared anywhere.
 - **URL linking is exact-match only**, within one workspace, against tabs that
   already exist.
 - **First sight starts 64 KB from the end** of a transcript, so work done
-  before TabDump began observing is not replayed.
+  before Hubble began observing is not replayed.
 - **The project path is the one absolute path that reaches the browser**,
   because explicit mapping cannot be offered without showing the user their own
   project. It never appears in an activity summary.

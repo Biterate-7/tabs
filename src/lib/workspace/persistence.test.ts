@@ -101,7 +101,7 @@ describe("clearWorkspaceStorage", () => {
 });
 
 /**
- * localStorage is untrusted persisted input, not something TabDump can
+ * localStorage is untrusted persisted input, not something Hubble can
  * assume it wrote itself in the current schema: a user can edit it, an
  * import written before the type checks existed can have left a wrong-typed
  * field in it, and an export from a newer build can carry a changed shape.

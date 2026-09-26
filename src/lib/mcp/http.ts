@@ -1,8 +1,8 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isSameOrigin } from "@/lib/auth/origin";
-import { createTabDumpMcpServer } from "./server";
+import { createHubbleMcpServer } from "./server";
 import { authenticateMcpToken, readBearerToken } from "./tokens";
-import type { TabDumpMcpData } from "./data";
+import type { HubbleMcpData } from "./data";
 import type { McpTokenStore } from "./tokens";
 
 /**
@@ -17,7 +17,7 @@ import type { McpTokenStore } from "./tokens";
  * ## Authentication: the token, and only the token
  *
  * The session cookie is never read here. A browser that happens to hold a
- * TabDump session gains nothing by calling this endpoint; only an
+ * Hubble session gains nothing by calling this endpoint; only an
  * `Authorization: Bearer tdmcp_…` header authenticates. That also removes the
  * cross-site request class entirely — a page cannot attach a header it does
  * not know, and nothing here answers a CORS preflight.
@@ -32,7 +32,7 @@ export const MAX_MCP_REQUEST_BYTES = 64 * 1024;
 
 export type McpHttpDeps = {
   tokens: McpTokenStore;
-  data: TabDumpMcpData;
+  data: HubbleMcpData;
   now?: () => number;
 };
 
@@ -63,11 +63,11 @@ export async function handleMcpHttpRequest(request: Request, deps: McpHttpDeps):
   if (!auth.ok) {
     // One answer for every failure. Which of missing, malformed, unknown,
     // revoked or expired it was is not something to tell a stranger.
-    return jsonRpcError(401, -32001, "A valid TabDump MCP token is required.", {
+    return jsonRpcError(401, -32001, "A valid Hubble MCP token is required.", {
       "www-authenticate":
         auth.reason === "missing"
-          ? 'Bearer realm="TabDump MCP"'
-          : 'Bearer realm="TabDump MCP", error="invalid_token"',
+          ? 'Bearer realm="Hubble MCP"'
+          : 'Bearer realm="Hubble MCP", error="invalid_token"',
     });
   }
 
@@ -82,7 +82,7 @@ export async function handleMcpHttpRequest(request: Request, deps: McpHttpDeps):
     return jsonRpcError(400, -32700, "Parse error.");
   }
 
-  const server = createTabDumpMcpServer({ data: deps.data, userId: auth.userId, now: deps.now });
+  const server = createHubbleMcpServer({ data: deps.data, userId: auth.userId, now: deps.now });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

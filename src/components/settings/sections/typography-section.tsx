@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider"
 import { useAppearanceContext } from "@/components/appearance-provider"
 import { DEFAULT_TYPOGRAPHY } from "@/lib/appearance/defaults"
 import { fontsByKind } from "@/lib/appearance/fonts"
-import { SectionHeading, SliderRow } from "./section-ui"
+import { SectionHeading, SliderRow, FieldRow, GroupLabel, SectionStack } from "./section-ui"
 
 const UI_FONT_OPTIONS = fontsByKind("sans").concat(fontsByKind("serif")).map((f) => ({ value: f.id, label: f.label }))
 const MONO_FONT_OPTIONS = fontsByKind("mono").map((f) => ({ value: f.id, label: f.label }))
@@ -20,24 +20,23 @@ export function TypographySection() {
 
   return (
     <div>
-      <SectionHeading title="Typography" description="Control the fonts and text rhythm used across TabDump." />
+      <SectionHeading title="Typography" description="Control the fonts and text rhythm used across Hubble." />
 
-      <div className="flex flex-col gap-2.5">
-        <div className="grid gap-2.5 sm:grid-cols-3">
-          <div>
-            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">UI FONT</p>
-            <Select value={t.uiFont} onValueChange={(v) => setTypography({ uiFont: v })} options={UI_FONT_OPTIONS} />
-          </div>
-          <div>
-            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">CONTENT / NOTES FONT</p>
-            <Select value={t.contentFont} onValueChange={(v) => setTypography({ contentFont: v })} options={CONTENT_FONT_OPTIONS} />
-          </div>
-          <div>
-            <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">MONOSPACE FONT</p>
-            <Select value={t.monoFont} onValueChange={(v) => setTypography({ monoFont: v })} options={MONO_FONT_OPTIONS} />
-          </div>
-        </div>
+      <GroupLabel>Faces</GroupLabel>
+      <SectionStack className="mb-6">
+        <FieldRow label="Interface" description="Menus, lists, messages — the product face.">
+          <Select className="w-48" value={t.uiFont} onValueChange={(v) => setTypography({ uiFont: v })} options={UI_FONT_OPTIONS} />
+        </FieldRow>
+        <FieldRow label="Content and notes" description="Long-form writing in notes.">
+          <Select className="w-48" value={t.contentFont} onValueChange={(v) => setTypography({ contentFont: v })} options={CONTENT_FONT_OPTIONS} />
+        </FieldRow>
+        <FieldRow label="Monospace" description="Code, paths and commands.">
+          <Select className="w-48" value={t.monoFont} onValueChange={(v) => setTypography({ monoFont: v })} options={MONO_FONT_OPTIONS} />
+        </FieldRow>
+      </SectionStack>
 
+      <GroupLabel>Rhythm</GroupLabel>
+      <SectionStack className="mb-3">
         <SliderRow label="Font size" valueLabel={`${t.fontSize} px`}>
           <Slider min={12} max={22} step={1} value={t.fontSize} onValueChange={(v) => setTypography({ fontSize: v })} />
         </SliderRow>
@@ -50,22 +49,19 @@ export function TypographySection() {
         <SliderRow label="Letter spacing" valueLabel={`${t.letterSpacing.toFixed(1)} px`}>
           <Slider min={-1} max={4} step={0.1} value={t.letterSpacing} onValueChange={(v) => setTypography({ letterSpacing: v })} />
         </SliderRow>
+      </SectionStack>
+      <div className="mb-6 flex justify-end">
+        <Button type="button" variant="ghost" size="sm" onClick={() => setTypography(DEFAULT_TYPOGRAPHY)}>
+          <RotateCcw /> Reset typography
+        </Button>
+      </div>
 
-        <div className="mt-1 flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={() => setTypography(DEFAULT_TYPOGRAPHY)}>
-            <RotateCcw /> Reset typography
-          </Button>
-        </div>
-
-        <div>
-          <p className="mb-1.5 px-0.5 text-eyebrow text-tertiary">PREVIEW</p>
-          <div className="rounded-lg border border-subtle bg-card p-4">
-            <p className="text-h1 text-foreground">TabDump</p>
-            <p className="mt-1 text-body text-foreground">Organize your tabs.</p>
-            <p className="mt-1 text-meta text-tertiary">https://example.com</p>
-            <p className="mt-3 text-h2 text-foreground"># Project Notes</p>
-          </div>
-        </div>
+      <GroupLabel>Preview</GroupLabel>
+      <div className="rounded-md border border-border bg-card p-4">
+        <p className="text-h1 text-foreground">Hubble</p>
+        <p className="mt-1 text-body text-foreground">Organize your tabs.</p>
+        <p className="mt-1 text-meta text-tertiary">https://example.com</p>
+        <p className="mt-3 text-code text-muted-foreground">~/code/hubble/src/app</p>
       </div>
     </div>
   )

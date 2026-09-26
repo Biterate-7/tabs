@@ -55,7 +55,7 @@ describe("CollectionGroup drag-and-drop", () => {
     expect(onDropTab).toHaveBeenCalledWith("c1", "tab-1");
   });
 
-  it("ignores a drop event that isn't carrying a TabDump tab id", () => {
+  it("ignores a drop event that isn't carrying a Hubble tab id", () => {
     const onDropTab = vi.fn();
     const { container } = render(<CollectionGroup {...baseProps({ onDropTab })} />);
     const dropZone = container.firstElementChild as HTMLElement;

@@ -70,7 +70,7 @@ export type ConnectableProvider = {
 
 export type UseProviderConnections = {
   connections: readonly ProviderConnectionView[]
-  /** Which providers TabDump can hold credentials for, from the server's registry. */
+  /** Which providers Hubble can hold credentials for, from the server's registry. */
   connectable: readonly ConnectableProvider[]
   loading: boolean
   /** The deployment cannot store credentials at all. Distinct from "you have none". */
@@ -86,7 +86,7 @@ export type UseProviderConnections = {
   disconnect: (connectionId: string) => Promise<boolean>
   /** This user's connection for a provider, if any. The session-start question. */
   forProvider: (provider: AgentProviderId) => ProviderConnectionView | undefined
-  /** How to ask this user for that provider's credential, if TabDump can at all. */
+  /** How to ask this user for that provider's credential, if Hubble can at all. */
   connectableFor: (provider: AgentProviderId) => ConnectableProvider | undefined
 }
 
@@ -100,7 +100,7 @@ export type UseProviderConnections = {
  */
 const TRANSPORT_FAILURE: CredentialValidation = {
   code: "validation_failed",
-  message: "TabDump could not verify those credentials.",
+  message: "Hubble could not verify those credentials.",
 }
 
 export function useProviderConnections(): UseProviderConnections {

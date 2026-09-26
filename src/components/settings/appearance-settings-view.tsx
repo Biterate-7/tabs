@@ -1,21 +1,30 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronLeft, RotateCcw, Settings2, Palette, Type, Image, LayoutGrid, Squircle, Sparkles, Paintbrush, Bot } from "lucide-react"
-import { IconButton } from "@/components/ui/icon-button"
-import { Button } from "@/components/ui/button"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { useAppearanceContext } from "@/components/appearance-provider"
+  AppWindow,
+  Bot,
+  ChevronLeft,
+  Puzzle,
+  Globe,
+  Image,
+  KeyRound,
+  Keyboard,
+  LayoutGrid,
+  Monitor,
+  Paintbrush,
+  Palette,
+  PlugZap,
+  Settings2,
+  Shield,
+  SlidersHorizontal,
+  Sparkles,
+  Squircle,
+  Type,
+  UserRound,
+  Boxes,
+} from "lucide-react"
+import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
 import { GeneralSection } from "./sections/general-section"
 import { ThemeSection } from "./sections/theme-section"
@@ -26,10 +35,22 @@ import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
 import { ConnectorsSection } from "./sections/connectors-section"
+import {
+  AccountSettingsSection,
+  AdvancedSection,
+  BrowserSection,
+  DesktopSection,
+  ExtensionSection,
+  McpSection,
+  PrivacySection,
+  ProvidersSection,
+  ShortcutsSection,
+  WorkspacesSection,
+  type WorkspaceSettingsProps,
+} from "./sections/system-sections"
 
 export type SettingsSection =
   | "general"
-  | "connectors"
   | "theme"
   | "typography"
   | "background"
@@ -37,28 +58,22 @@ export type SettingsSection =
   | "shape"
   | "motion"
   | "accent"
+  | "account"
+  /** "Agents" in the nav. The id predates the name and deep links use it. */
+  | "connectors"
+  | "providers"
+  | "mcp"
+  | "browser"
+  | "workspaces"
+  | "shortcuts"
+  | "desktop"
+  | "extension"
+  | "privacy"
+  | "advanced"
 
-/**
- * The sections the appearance reset applies to.
- *
- * Everything except connectors, which are not appearance — and whose "reset"
- * would mean disconnecting the user's agents, a destructive action with no
- * business hiding behind a button labelled about themes.
- */
-const APPEARANCE_SECTIONS: readonly SettingsSection[] = [
-  "general",
-  "theme",
-  "typography",
-  "background",
-  "layout",
-  "shape",
-  "motion",
-  "accent",
-]
+type NavItem = { id: SettingsSection; label: string; icon: typeof Settings2 }
 
-const NAV: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
-  { id: "general", label: "General", icon: Settings2 },
-  { id: "connectors", label: "AI connectors", icon: Bot },
+const APPEARANCE: NavItem[] = [
   { id: "theme", label: "Theme", icon: Palette },
   { id: "typography", label: "Typography", icon: Type },
   { id: "background", label: "Background", icon: Image },
@@ -67,101 +82,120 @@ const NAV: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
   { id: "motion", label: "Motion", icon: Sparkles },
   { id: "accent", label: "Accent", icon: Paintbrush },
 ]
+const APPEARANCE_IDS = new Set(APPEARANCE.map((item) => item.id))
+
+const BEFORE: NavItem[] = [{ id: "general", label: "General", icon: Settings2 }]
+const AFTER: NavItem[] = [
+  { id: "account", label: "Account", icon: UserRound },
+  { id: "connectors", label: "Agents", icon: Bot },
+  { id: "providers", label: "Providers", icon: KeyRound },
+  { id: "mcp", label: "MCP", icon: PlugZap },
+  { id: "browser", label: "Browser", icon: Globe },
+  { id: "workspaces", label: "Workspaces", icon: Boxes },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+  { id: "desktop", label: "Desktop", icon: Monitor },
+  { id: "extension", label: "Extension", icon: Puzzle },
+  { id: "privacy", label: "Privacy", icon: Shield },
+  { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
+]
 
 /**
- * TabDump's Settings surface, mounted the same way Graph and the Notes page
- * are — a fixed full-page overlay toggled from AppShell, not a modal dialog
- * (see app-shell.tsx). Appearance settings are large enough (theme library,
- * custom editor, typography, background, layout, shape, motion, accent)
- * that the small Dialog this replaced couldn't reasonably hold them.
+ * Settings.
+ *
+ * The reference's settings grammar: a narrow list of sections on the left,
+ * one pane on the right at a reading width, and in the pane hairlined groups
+ * of rows rather than a board of cards. Appearance is one entry with its
+ * seven parts nested under it, so the list stays scannable.
+ *
+ * Mounted as a destination inside the shell (see app-shell.tsx), not a
+ * modal: appearance alone is larger than a dialog can hold.
  */
 export function AppearanceSettingsView({
   onClose,
   initialSection,
+  workspaceSettings,
 }: {
   onClose: () => void
   /**
-   * Which section to open on.
-   *
-   * Exists so another surface can send someone straight to the settings
-   * they came for, rather than landing them on Theme and leaving them to
-   * find the right row. It is an initial value, not a controlled prop: once
+   * Which section to open on. An initial value, not a controlled prop: once
    * here, the nav is the user's.
    */
   initialSection?: SettingsSection
+  /** The workspace list and its actions, for Settings → Workspaces. Omitted where there is no store (tests). */
+  workspaceSettings?: WorkspaceSettingsProps
 }) {
-  const { resetAllAppearance } = useAppearanceContext()
   const [active, setActive] = useState<SettingsSection>(initialSection ?? "theme")
+  const inAppearance = APPEARANCE_IDS.has(active)
+
+  const row = (item: NavItem, nested = false) => {
+    const Icon = item.icon
+    const current = active === item.id
+    return (
+      <button
+        key={item.id}
+        type="button"
+        onClick={() => setActive(item.id)}
+        aria-current={current}
+        aria-label={item.label}
+        className={cn(
+          "flex h-[30px] w-full items-center gap-2 rounded-xs pr-2 text-left text-body transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          nested ? "pl-8" : "pl-2",
+          current
+            ? "bg-surface-selected text-foreground"
+            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+        )}
+      >
+        {!nested && <Icon className="size-4 shrink-0" aria-hidden />}
+        <span className="truncate">{item.label}</span>
+      </button>
+    )
+  }
 
   return (
-    <div className="relative flex h-screen min-w-0 flex-1 flex-col bg-background" style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}>
-      <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
+    <div
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
+      style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
+    >
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <p className="text-h2 text-foreground">Settings</p>
-        <div className="ml-auto">
-          {/* Appearance-only, and hidden where it would not apply: a reset
-              button sitting above the AI connector list reads as though it
-              might disconnect them. */}
-          {APPEARANCE_SECTIONS.includes(active) && (
-          <AlertDialog>
-            <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
-              <RotateCcw /> Reset appearance
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Reset all appearance settings?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This puts theme, typography, background, layout, shape, motion, and accent back to their defaults. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={() => resetAllAppearance()}>
-                  Reset
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          )}
-        </div>
-      </div>
+      </header>
 
-      <div className="flex min-h-0 flex-1">
-        <nav className="hidden w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle p-2 sm:flex">
-          {NAV.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActive(item.id)}
-                aria-current={active === item.id}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-body-sm transition-colors duration-(--duration-fast) ease-(--ease-standard) outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                  active === item.id
-                    ? "bg-surface-selected text-foreground"
-                    : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                {item.label}
-              </button>
-            )
-          })}
+      <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        <nav
+          aria-label="Settings sections"
+          className="hidden w-56 shrink-0 flex-col gap-px overflow-y-auto border-r border-border p-2 sm:flex"
+        >
+          {BEFORE.map((item) => row(item))}
+          <button
+            type="button"
+            onClick={() => !inAppearance && setActive("theme")}
+            aria-expanded={inAppearance}
+            className={cn(
+              "flex h-[30px] w-full items-center gap-2 rounded-xs px-2 text-left text-body transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              inAppearance ? "text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+            )}
+          >
+            <AppWindow className="size-4 shrink-0" aria-hidden />
+            Appearance
+          </button>
+          {APPEARANCE.map((item) => row(item, true))}
+          {AFTER.map((item) => row(item))}
         </nav>
 
-        <div className="flex gap-1.5 overflow-x-auto border-b border-subtle p-2 sm:hidden">
-          {NAV.map((item) => (
+        {/* Below `sm` the section list becomes one horizontal strip. */}
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 sm:hidden">
+          {[...BEFORE, ...APPEARANCE, ...AFTER].map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => setActive(item.id)}
               aria-current={active === item.id}
               className={cn(
-                "shrink-0 rounded-full px-3 py-1 text-label",
-                active === item.id ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"
+                "h-6 shrink-0 rounded-full px-2.5 text-body-sm",
+                active === item.id ? "bg-surface-active text-foreground" : "text-muted-foreground"
               )}
             >
               {item.label}
@@ -169,10 +203,9 @@ export function AppearanceSettingsView({
           ))}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-8">
-          <div className="mx-auto w-full max-w-3xl">
+        <div className="min-w-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[680px] px-5 py-8 sm:px-8 sm:py-10">
             {active === "general" && <GeneralSection />}
-            {active === "connectors" && <ConnectorsSection />}
             {active === "theme" && <ThemeSection />}
             {active === "typography" && <TypographySection />}
             {active === "background" && <BackgroundSection />}
@@ -180,6 +213,22 @@ export function AppearanceSettingsView({
             {active === "shape" && <ShapeSection />}
             {active === "motion" && <MotionSection />}
             {active === "accent" && <AccentSection />}
+            {active === "account" && <AccountSettingsSection />}
+            {active === "connectors" && <ConnectorsSection />}
+            {active === "providers" && <ProvidersSection />}
+            {active === "mcp" && <McpSection />}
+            {active === "browser" && <BrowserSection />}
+            {active === "workspaces" &&
+              (workspaceSettings ? (
+                <WorkspacesSection {...workspaceSettings} />
+              ) : (
+                <p className="text-body text-muted-foreground">No workspaces to show here.</p>
+              ))}
+            {active === "shortcuts" && <ShortcutsSection />}
+            {active === "desktop" && <DesktopSection />}
+            {active === "extension" && <ExtensionSection />}
+            {active === "privacy" && <PrivacySection />}
+            {active === "advanced" && <AdvancedSection />}
           </div>
         </div>
       </div>

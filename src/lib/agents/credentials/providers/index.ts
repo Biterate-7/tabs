@@ -2,7 +2,7 @@ import { registerCredentialAdapter, resetCredentialAdapters } from "../registry"
 import { createClaudeCredentialAdapter } from "./claude";
 
 /**
- * Which providers TabDump can hold credentials for, and how to build each one.
+ * Which providers Hubble can hold credentials for, and how to build each one.
  *
  * **The only provider-aware module in the credential layer.** The registry,
  * the store, the service, the resolver, the route and the settings UI all work
@@ -14,7 +14,7 @@ import { createClaudeCredentialAdapter } from "./claude";
  * Codex, Gemini, Grok and Custom have no registration, and that is the honest
  * state rather than an oversight. §20 asks that the registry be *capable* of
  * carrying them — it is, and `credentialSupportFor` answers `unsupported` for
- * each without a stub having to claim anything — and that TabDump not
+ * each without a stub having to claim anything — and that Hubble not
  * implement fake credentials for providers that are not actually supported.
  *
  * Writing an adapter for one means knowing its real authentication mechanism

@@ -148,7 +148,7 @@ describe("openUrl", () => {
     expect(result.alreadyOpen).toBe(false);
   });
 
-  describe("reuseCurrentTab (TabDump's own 'click a saved tab' flow)", () => {
+  describe("reuseCurrentTab (Hubble's own 'click a saved tab' flow)", () => {
     it("navigates the caller's own tab in place instead of creating a new one", async () => {
       chrome.tabs.query.mockResolvedValue([]);
       chrome.tabs.update.mockResolvedValue(fakeTab({ id: 7, url: "https://a.com" }));

@@ -33,7 +33,7 @@ describe("connecting a declared provider", () => {
   it("lands on unavailable and says why", async () => {
     const connector = createDeclaredConnector({
       descriptor: descriptorFor("gemini"),
-      unavailableDetail: "TabDump cannot observe Gemini from this environment yet.",
+      unavailableDetail: "Hubble cannot observe Gemini from this environment yet.",
     });
 
     const status = await connector.connect();

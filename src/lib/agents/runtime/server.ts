@@ -41,7 +41,7 @@ import type { RuntimeActor, RuntimeHost } from "./host";
  * ## The gate is read exactly once, here
  *
  * `process.env` is consulted on the first call and never again. That is the
- * single place in TabDump where the real environment meets the execution
+ * single place in Hubble where the real environment meets the execution
  * decision, and `security.test.ts` asserts that no other module reads it for
  * this purpose. A decision taken once cannot be influenced by a request.
  *

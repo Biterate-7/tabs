@@ -1,17 +1,17 @@
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 
 /**
- * TabDump content, reduced to something an agent runtime can be given.
+ * Hubble content, reduced to something an agent runtime can be given.
  *
  * ## The boundary this draws
  *
- * A provider adapter must never learn what a TabDump workspace *is*. It does
+ * A provider adapter must never learn what a Hubble workspace *is*. It does
  * not know about tabs, collections, dependencies, sections, categories,
  * duplicate detection or the relationship graph, and it must not gain a
  * reason to: the moment an adapter imports `lib/workspace`, adding a provider
  * stops being an adapter problem.
  *
- * So resolution happens on TabDump's side. `@workspace`, `@tab`,
+ * So resolution happens on Hubble's side. `@workspace`, `@tab`,
  * `@collection` and `@project` are resolved by the application into these
  * flat, provider-neutral records, and the adapter receives only these.
  *
@@ -26,7 +26,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * sibling of this directory, not a part of it. The dependency runs one way:
  * the bridge imports this contract and projects its snapshots into these
  * attachments, and nothing here imports the bridge. So this file still reads
- * TabDump's domain nowhere, and the rule it was written to enforce — a
+ * Hubble's domain nowhere, and the rule it was written to enforce — a
  * provider adapter must never learn what a workspace *is* — is unchanged.
  *
  * The only Phase E edit here is two new `AgentContextKind` members, for the
@@ -41,7 +41,7 @@ export type AgentContextKind =
   /** A bounded neighbourhood of the relationship graph around one tab. */
   | "graph"
   | "project"
-  /** What TabDump has observed an agent doing. Observation, never a way to act. */
+  /** What Hubble has observed an agent doing. Observation, never a way to act. */
   | "agent_activity"
   | "file";
 
@@ -77,7 +77,7 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 200;
  */
 export type AgentContextAttachment = {
   kind: AgentContextKind;
-  /** TabDump's own id for the thing. Opaque to the adapter. */
+  /** Hubble's own id for the thing. Opaque to the adapter. */
   id: string;
   label: string;
   detail?: string;
@@ -130,7 +130,7 @@ export function createAttachment(input: {
  * So what crosses is this: the attachments themselves, plus enough
  * provenance to answer the question the whole snapshot model exists to make
  * answerable — *which* context did this invocation use, and when was it
- * captured. The full record stays on TabDump's side, keyed by `snapshotId`.
+ * captured. The full record stays on Hubble's side, keyed by `snapshotId`.
  *
  * Nothing here is provider-shaped and nothing here is domain-shaped, which
  * is why it can live in this file at all.
@@ -161,7 +161,7 @@ export type AgentMessageContext = {
   attachments: readonly AgentContextAttachment[];
   /** The project this message is scoped to, when one applies. */
   projectId?: string;
-  /** The TabDump workspace the message came from. */
+  /** The Hubble workspace the message came from. */
   workspaceId?: string;
   /**
    * The context snapshot these attachments were projected from.

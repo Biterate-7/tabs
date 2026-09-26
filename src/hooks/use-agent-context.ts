@@ -16,7 +16,7 @@ import type { ContextResolutionFailure } from "@/lib/agents/context/resolve"
 import type { AgentAttachedContext } from "@/lib/agents/control/context"
 
 /**
- * The TabDump side of a session: what is selected, what was resolved, and
+ * The Hubble side of a session: what is selected, what was resolved, and
  * what the agent was actually told.
  *
  * ## Attached is not the same as available, and this hook keeps them apart

@@ -12,7 +12,7 @@ import type { SessionContextCapability } from "@/lib/agents/session-context/capa
  *
  * ## The principle
  *
- * > TabDump observes agents through the observation plane, and communicates
+ * > Hubble observes agents through the observation plane, and communicates
  * > with agents through a separately permissioned control plane.
  *
  * `AgentConnector` (../connectors/types.ts) is the observation plane and is
@@ -76,7 +76,7 @@ export type ControlErrorCode =
   | "configuration"
   /**
    * The agent would not work in a mode where it asks before acting, so
-   * TabDump could not be the one approving what it does (Phase J.2).
+   * Hubble could not be the one approving what it does (Phase J.2).
    */
   | "approval-unenforceable"
   | "unknown";
@@ -94,12 +94,12 @@ const CONTROL_ERROR_MESSAGES: Record<ControlErrorCode, string> = {
   "approval-required": "That needs your approval first.",
   "project-denied": "This agent is not authorized for that project.",
   "invalid-session": "That session cannot accept this right now.",
-  "invalid-request": "TabDump could not read that request.",
+  "invalid-request": "Hubble could not read that request.",
   unreachable: "Could not reach the agent.",
   timeout: "The agent did not respond in time.",
-  "malformed-response": "The agent returned something TabDump could not read.",
+  "malformed-response": "The agent returned something Hubble could not read.",
   configuration: "This agent needs to be set up first.",
-  "approval-unenforceable": "This agent would not agree to ask before acting, so TabDump did not start it.",
+  "approval-unenforceable": "This agent would not agree to ask before acting, so Hubble did not start it.",
   unknown: "The agent stopped unexpectedly.",
 };
 
@@ -137,9 +137,9 @@ export type ControlStatus = {
   detail?: string;
 };
 
-/** What the adapter is asked to start. Every field is TabDump's vocabulary, not a provider's. */
+/** What the adapter is asked to start. Every field is Hubble's vocabulary, not a provider's. */
 /**
- * TabDump's own MCP server for one session (Phase J.3), as an adapter hands it
+ * Hubble's own MCP server for one session (Phase J.3), as an adapter hands it
  * to its agent. Prepared by the runtime; the control plane only carries it.
  *
  * `token` is that session's credential: minted for this session alone, bound
@@ -163,7 +163,7 @@ export type SessionContextServerEntry = {
 };
 
 export type CreateSessionRequest = {
-  /** TabDump's session id. The adapter maps it to whatever the provider calls one. */
+  /** Hubble's session id. The adapter maps it to whatever the provider calls one. */
   sessionId: string;
   /**
    * The authorized project, already validated and already checked against
@@ -176,7 +176,7 @@ export type CreateSessionRequest = {
   /** Context to seed the session with. */
   attachments: readonly AgentContextAttachment[];
   title?: string;
-  /** The session's TabDump MCP server, when it has workspace context (Phase J.3). */
+  /** The session's Hubble MCP server, when it has workspace context (Phase J.3). */
   contextServer?: SessionContextServerEntry;
 };
 

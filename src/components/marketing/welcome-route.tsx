@@ -6,7 +6,7 @@ import { ExtensionInstallGuide } from "@/components/extension-install-guide"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { dismissOnboarding } from "@/lib/onboarding"
 import { MarketingPage } from "./marketing-page"
-import { BrandGlyph } from "./primitives"
+import { Wordmark } from "./site"
 
 /**
  * The landing page as a standalone route (`/welcome`).
@@ -28,7 +28,7 @@ export function WelcomeRoute() {
 
   function enterApp() {
     // Persisted first, navigated second — the flag is what stops `/` from
-    // deciding this visitor has never used TabDump and serving the landing
+    // deciding this visitor has never used Hubble and serving the landing
     // page again.
     dismissOnboarding()
     router.push("/")
@@ -37,11 +37,10 @@ export function WelcomeRoute() {
   if (guideOpen) {
     return (
       <div className="tabdump-marketing flex min-h-screen flex-col">
-        <div className="flex items-center gap-2 px-6 py-5 text-foreground">
-          <BrandGlyph className="size-[1.125rem]" />
-          <span className="text-[0.9375rem] font-medium tracking-[-0.01em]">TabDump</span>
+        <div className="m-page flex h-(--hb-header-h) items-center">
+          <Wordmark />
         </div>
-        <div className="flex flex-1 items-start justify-center px-6 pt-6 pb-20">
+        <div className="flex flex-1 items-start justify-center px-6 pt-12 pb-20">
           <ExtensionInstallGuide onBack={() => setGuideOpen(false)} onContinueWithoutExtension={enterApp} />
         </div>
       </div>

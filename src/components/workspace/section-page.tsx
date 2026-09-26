@@ -92,7 +92,7 @@ export function SectionPage({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -160,7 +160,7 @@ export function SectionPage({
           ) : (
             <div
               className={`rounded-lg border px-2 pb-6 transition-colors duration-(--duration-fast) ease-(--ease-standard) ${
-                dragOver ? "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/30" : "border-subtle bg-card"
+                dragOver ? "bg-link/[0.06] ring-1 ring-link/40" : "border-subtle bg-card"
               }`}
             >
               {node.tabs.map((tab: Tab) => (

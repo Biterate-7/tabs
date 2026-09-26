@@ -143,7 +143,7 @@ describe("detecting installed agents", () => {
 });
 
 describe("the agent's environment", () => {
-  it("is an allowlist: no provider key, no TabDump secret, no NODE_ENV", () => {
+  it("is an allowlist: no provider key, no Hubble secret, no NODE_ENV", () => {
     const env = agentEnvironment({
       PATH: "C:\\Tools",
       USERPROFILE: "C:\\Users\\alice",

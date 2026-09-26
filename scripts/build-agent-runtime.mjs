@@ -9,7 +9,7 @@
 //
 //   src-tauri/binaries/tabdump-agent-node-<target-triple>[.exe]
 //     The Node binary that runs it. Tauri's `externalBin` convention needs the
-//     target triple in the name; the bundle installs it beside TabDump.exe
+//     target triple in the name; the bundle installs it beside Hubble.exe
 //     without the suffix. Copied from the Node running this script, so the
 //     runtime is built and shipped against the same Node version.
 //

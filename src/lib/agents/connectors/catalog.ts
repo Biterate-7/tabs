@@ -8,7 +8,7 @@ import type { ConnectorRegistration } from "./registry";
 import type { ProviderDescriptor } from "./types";
 
 /**
- * Which providers TabDump ships, and how to build each one.
+ * Which providers Hubble ships, and how to build each one.
  *
  * **The only provider-aware module in the connector layer.** The registry,
  * the manager, the persistence, the hooks, the settings UI and the workspace
@@ -21,11 +21,11 @@ import type { ProviderDescriptor } from "./types";
  *
  * Codex, Gemini and Grok are registered, described, capability-declared and
  * honest. They are not faked. Each would be observed by reading local state
- * the respective CLI writes, and TabDump has not verified any of those
+ * the respective CLI writes, and Hubble has not verified any of those
  * formats against a real installation — so building a reader for one would
  * mean guessing at a schema and shipping a connector that reports confident
  * nonsense whenever the guess was wrong. Their capability sets are therefore
- * empty rather than aspirational: `NO_CAPABILITIES` is what TabDump can
+ * empty rather than aspirational: `NO_CAPABILITIES` is what Hubble can
  * actually observe today, and a capability list that promised runs and events
  * would be a promise the connector cannot keep.
  *
@@ -56,7 +56,7 @@ const CODEX_DESCRIPTOR: ProviderDescriptor = {
   summary: "Would observe Codex sessions and the files they change.",
   capabilities: NO_CAPABILITIES,
   requirement:
-    "TabDump cannot observe Codex from this environment yet. The connector boundary is in place; what is missing is a verified way to read Codex activity locally.",
+    "Hubble cannot observe Codex from this environment yet. The connector boundary is in place; what is missing is a verified way to read Codex activity locally.",
 };
 
 const GEMINI_DESCRIPTOR: ProviderDescriptor = {
@@ -65,7 +65,7 @@ const GEMINI_DESCRIPTOR: ProviderDescriptor = {
   summary: "Would observe Gemini agent sessions and their activity.",
   capabilities: NO_CAPABILITIES,
   requirement:
-    "TabDump cannot observe Gemini from this environment yet. The connector boundary is in place; what is missing is a verified way to read Gemini activity locally.",
+    "Hubble cannot observe Gemini from this environment yet. The connector boundary is in place; what is missing is a verified way to read Gemini activity locally.",
 };
 
 const GROK_DESCRIPTOR: ProviderDescriptor = {
@@ -74,7 +74,7 @@ const GROK_DESCRIPTOR: ProviderDescriptor = {
   summary: "Would observe Grok agent sessions and their activity.",
   capabilities: NO_CAPABILITIES,
   requirement:
-    "TabDump cannot observe Grok from this environment yet. The connector boundary is in place; what is missing is a verified way to read Grok activity locally.",
+    "Hubble cannot observe Grok from this environment yet. The connector boundary is in place; what is missing is a verified way to read Grok activity locally.",
 };
 
 /**
@@ -102,7 +102,7 @@ export type CatalogOptions = {
 };
 
 /**
- * Every provider TabDump ships, in display order.
+ * Every provider Hubble ships, in display order.
  *
  * Claude Code first because it is the one that works; the rest follow in a
  * stable order so the settings list does not reshuffle between renders.

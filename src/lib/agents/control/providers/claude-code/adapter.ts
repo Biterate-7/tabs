@@ -77,7 +77,7 @@ import type {
  * Each one is exercised by a test against the deterministic runtime, and the
  * whole set again by the opt-in integration test against real Claude Code.
  *
- * `mcp` is **absent and stays absent**: TabDump configures no MCP servers, so
+ * `mcp` is **absent and stays absent**: Hubble configures no MCP servers, so
  * there is nothing to declare. See the MCP note in
  * docs/claude-code-control.md — advertising it because the provider has a
  * flag is exactly the thing the capability model forbids.
@@ -95,7 +95,7 @@ export const CLAUDE_CODE_CONTROL_CAPABILITIES: AgentCapabilitySet = capabilitySe
   "working_directory",
   "additional_directories",
   // J.4: the session's context server is the only MCP server Claude Code can
-  // load (`strictMcpConfig`), under a per-session name TabDump chose, and the
+  // load (`strictMcpConfig`), under a per-session name Hubble chose, and the
   // SDK names every call `mcp__<that name>__<tool>` — so the identity of a
   // context call is structural. Not `mcp`: no other server is granted.
   "workspace_context"
@@ -314,7 +314,7 @@ export function createClaudeCodeControlAdapter(
    *
    * Three things happen, in order, and the order is the design:
    *
-   *   1. **TabDump's own check first.** A tool whose scope was never granted
+   *   1. **Hubble's own check first.** A tool whose scope was never granted
    *      is denied here without ever reaching the user. Asking about
    *      something that is not permitted anyway would train someone to click
    *      through prompts.
@@ -337,13 +337,13 @@ export function createClaudeCodeControlAdapter(
     // server. There is no allow on this path: nothing here approves.
     const context = session.context;
     if (context && request.toolName.startsWith(`mcp__${context.serverName}__`)) {
-      return { behavior: "deny", message: "This session is not allowed to do that in the TabDump workspace." };
+      return { behavior: "deny", message: "This session is not allowed to do that in the Hubble workspace." };
     }
 
     if (!isToolPermitted(request.toolName, session.grant, session.project?.id)) {
       return {
         behavior: "deny",
-        message: "TabDump has not been given permission for that in this project.",
+        message: "Hubble has not been given permission for that in this project.",
       };
     }
 
@@ -515,7 +515,7 @@ export function createClaudeCodeControlAdapter(
       // and revalidated on load — see ../../projects.ts.
       additionalDirectories: project ? project.additionalDirectories : [],
       permissionMode: plan.mode,
-      // TabDump's own session tools join the pre-allowed list only when the
+      // Hubble's own session tools join the pre-allowed list only when the
       // session has a context server, and only those its capabilities permit
       // — see `contextToolNames`.
       allowedTools: contextServer
@@ -767,7 +767,7 @@ export function createClaudeCodeControlAdapter(
       for (const session of sessions.values()) {
         void session.handle?.dispose();
         for (const resolve of session.pending.values()) {
-          resolve({ behavior: "deny", message: "TabDump shut down." });
+          resolve({ behavior: "deny", message: "Hubble shut down." });
         }
       }
       sessions.clear();

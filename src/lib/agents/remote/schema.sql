@@ -1,11 +1,11 @@
--- TabDump remote agent runtime — the smallest schema remote execution needs.
+-- Hubble remote agent runtime — the smallest schema remote execution needs.
 --
 -- Additive and idempotent, exactly like src/lib/auth/store/schema.sql: every
 -- statement is IF NOT EXISTS, so running this against an existing database
 -- creates what is missing and touches nothing else. Apply it with
 -- `npm run migrate:remote` (scripts/migrate-remote.mjs).
 --
--- Two tables, and the restraint is the point. TabDump is local-first and
+-- Two tables, and the restraint is the point. Hubble is local-first and
 -- stays that way: tabs, collections, workspaces, graph layout and local
 -- projects are not here and never will be. What is here is the only state a
 -- serverless control plane genuinely cannot hold — which sandbox backs which
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS tabdump_remote_projects (
   -- sees for a remote project.
   id            TEXT PRIMARY KEY,
   -- The runtime host's actor id, e.g. 'account:<uuid>'. TEXT rather than a
-  -- FK to tabdump_users because a purely local TabDump has no accounts at
+  -- FK to tabdump_users because a purely local Hubble has no accounts at
   -- all and still needs this table to typecheck against the same code.
   owner_id      TEXT NOT NULL,
   name          TEXT NOT NULL,

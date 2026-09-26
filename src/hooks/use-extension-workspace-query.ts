@@ -25,7 +25,7 @@ function tryNormalize(url: string): string | null {
  *
  * Reuses the exact same `normalizeUrl` the workspace's own duplicate
  * detection uses (see lib/tabs/duplicates.ts) — there is no second,
- * extension-side notion of "duplicate." If no TabDump tab is open at all,
+ * extension-side notion of "duplicate." If no Hubble tab is open at all,
  * this listener simply never gets attached to answer anything, and the
  * extension falls back to its plain "N tabs detected" wording.
  *

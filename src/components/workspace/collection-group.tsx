@@ -96,8 +96,8 @@ export function CollectionGroup({
   return (
     <div
       className={cn(
-        "rounded-lg border border-subtle bg-card px-2 transition-colors duration-(--duration-fast) ease-(--ease-standard)",
-        dragOver && "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/30"
+        "rounded-md border border-border bg-card px-2 transition-colors duration-(--duration-fast) ease-(--ease-standard)",
+        dragOver && "bg-link/[0.06] ring-1 ring-link/40"
       )}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -126,7 +126,7 @@ export function CollectionGroup({
             <div className="px-1 pt-1 pb-4">
               <p className="text-body-sm text-tertiary">
                 No tabs yet. Drag tabs here, or{" "}
-                <button type="button" onClick={onAddTabs} className="text-accent-text hover:underline">
+                <button type="button" onClick={onAddTabs} className="text-link hover:underline">
                   add tabs
                 </button>
                 .

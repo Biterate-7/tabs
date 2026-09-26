@@ -7,7 +7,7 @@ import type { RemoteProject, RemoteSession } from "./types";
 /**
  * Multi-user isolation, driven method by method.
  *
- * TabDump is now a hosted product, and the failure this file exists to make
+ * Hubble is now a hosted product, and the failure this file exists to make
  * impossible is one account reaching another's sandbox. The rule the store
  * encodes is that ownership is part of every *query* rather than a check
  * performed on a row that has already been fetched — so each test below asks

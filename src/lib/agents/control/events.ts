@@ -142,7 +142,7 @@ export type ControlToolInfo = {
  */
 export type ControlFileInfo = {
   relativePath: string;
-  /** The project this path is relative to, by TabDump's project id — never a path. */
+  /** The project this path is relative to, by Hubble's project id — never a path. */
   projectId: string;
 };
 

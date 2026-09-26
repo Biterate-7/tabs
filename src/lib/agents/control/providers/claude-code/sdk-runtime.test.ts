@@ -241,7 +241,7 @@ describe("starting a run", () => {
   });
 });
 
-describe("the session's TabDump context server (Phase J.3)", () => {
+describe("the session's Hubble context server (Phase J.3)", () => {
   const TOKEN = "tdctx_SESSION-CREDENTIAL-MUST-NOT-REACH-ARGV";
 
   it("configures no MCP server at all for a session without workspace context", async () => {
@@ -253,7 +253,7 @@ describe("the session's TabDump context server (Phase J.3)", () => {
     expect((options.env as Record<string, string>).TABDUMP_CONTEXT_TOKEN).toBeUndefined();
   });
 
-  it("gives the agent exactly TabDump's server, with the credential in its environment and only a placeholder in its config", async () => {
+  it("gives the agent exactly Hubble's server, with the credential in its environment and only a placeholder in its config", async () => {
     const runtime = createSdkClaudeRuntime({ moduleSpecifier: FAKE_SDK, credentials: staticCredentialSource() });
     await runtime.start(
       startOptions({ contextServer: { name: "tabdump", url: "http://127.0.0.1:5123/mcp", token: TOKEN } })

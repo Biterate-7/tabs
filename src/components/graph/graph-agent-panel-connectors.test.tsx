@@ -80,7 +80,7 @@ describe("the empty states stay apart", () => {
     render(panel({ connectors: [] }))
 
     expect(screen.getByText("No agents connected")).toBeTruthy()
-    expect(screen.getByText(/Settings → AI connectors/)).toBeTruthy()
+    expect(screen.getByText(/Settings → Agents/)).toBeTruthy()
   })
 
   it("says a connected agent cannot be observed, rather than that none exists", () => {

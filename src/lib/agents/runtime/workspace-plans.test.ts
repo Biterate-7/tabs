@@ -18,7 +18,7 @@ import type { SessionContextServer } from "@/lib/agents/session-context/http";
  * A workspace plan through the whole runtime (Phase J.5): the real host,
  * control service, approval broker, registry and loopback MCP server, with a
  * scripted ACP agent. The test plays the agent (over MCP, with the credential
- * TabDump handed it) and the Command Centre (over the runtime protocol) — the
+ * Hubble handed it) and the Command Centre (over the runtime protocol) — the
  * two sides of the boundary — and nothing else.
  */
 
@@ -274,7 +274,7 @@ describe("a plan through the runtime", () => {
     await until(() => h.session(sessionId), (view) => view.approvals.length === 1);
     await h.send({ name: "dispose_session", sessionId } as never);
     const ended = (await call) as { content: { text: string }[] };
-    expect(ended.content[0].text).toBe("This TabDump session has ended.");
+    expect(ended.content[0].text).toBe("This Hubble session has ended.");
     await expect(mcp(given.url, given.token)).rejects.toThrow();
     expect(h.registry.activeCount()).toBe(0);
     await client.close().catch(() => {});

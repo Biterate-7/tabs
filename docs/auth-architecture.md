@@ -1,6 +1,6 @@
-# TabDump accounts
+# Hubble accounts
 
-TabDump owns its account system. Google is the identity provider and
+Hubble owns its account system. Google is the identity provider and
 nothing more: it proves who someone is, once, and every user record,
 session, and authorization decision after that belongs to this codebase.
 There is no third-party authentication platform anywhere in the stack, and
@@ -21,12 +21,12 @@ POST /api/auth/google        src/app/api/auth/google/route.ts
   │
   ├─ verify signature / iss / aud / exp   src/lib/auth/google.ts
   ├─ verify the login nonce               src/lib/auth/nonce.ts
-  ├─ find or create the TabDump user      src/lib/auth/account.ts
-  ├─ mint a TabDump session               src/lib/auth/session.ts
+  ├─ find or create the Hubble user      src/lib/auth/account.ts
+  ├─ mint a Hubble session               src/lib/auth/session.ts
   └─ Set-Cookie: tabdump_session=…; HttpOnly; Secure; SameSite=Lax
        │
        ▼
-Authenticated TabDump
+Authenticated Hubble
 ```
 
 Nothing downstream of the verification step trusts anything the browser
@@ -36,7 +36,7 @@ claims.
 
 ## Why an ID token and not the authorization-code flow
 
-TabDump uses Google Identity Services' ID-token flow: Google returns a
+Hubble uses Google Identity Services' ID-token flow: Google returns a
 signed JWT to the page, the page posts it to `/api/auth/google`, and the
 server verifies it against Google's published signing keys.
 
@@ -108,7 +108,7 @@ A serverless deployment gives every invocation its own memory, so a
 memory-backed session would exist for one request and not the next. Rather
 than ship that as an intermittent "randomly signed out", `getAuthStore()`
 reports the deployment unconfigured, `/api/auth/me` answers
-`configured: false`, and the UI hides sign-in entirely. TabDump's local-first
+`configured: false`, and the UI hides sign-in entirely. Hubble's local-first
 features all keep working.
 
 Schema: `src/lib/auth/store/schema.sql`, applied with `npm run migrate:auth`.
@@ -134,7 +134,7 @@ a recycled address the previous owner's data.
 
 ## Authorization, and where it applies
 
-TabDump is local-first. Workspaces, tabs, collections, dependencies and
+Hubble is local-first. Workspaces, tabs, collections, dependencies and
 graph layout live in the browser's `localStorage` — there is no server-side
 workspace to protect, and this change did not add one. So "user A cannot
 reach user B's data" has to hold at the persistence layer, and it does:
@@ -201,7 +201,7 @@ store to hold it, and closes no attack the three layers above leave open.
 
 ## Local development
 
-With no `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, TabDump runs exactly as it always
+With no `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, Hubble runs exactly as it always
 did — no sign-in UI, and no auth request is made at all.
 
 To exercise accounts locally:
@@ -220,8 +220,8 @@ runtime flag.
 
 ## What the browser extension should do later
 
-The extension in `extension/` does **not** talk to the TabDump API today. It
-delivers a dump by `postMessage` into an open TabDump tab
+The extension in `extension/` does **not** talk to the Hubble API today. It
+delivers a dump by `postMessage` into an open Hubble tab
 (`TABDUMP_IMPORT` → `TABDUMP_IMPORT_ACK`, see `extension/src/config.js` and
 `src/lib/browser/protocol.ts`), and the page — already running as whoever is
 signed into it — writes the tabs to that account's namespace. So the
@@ -288,7 +288,7 @@ phone.
   cost of a cookie name that has to be threaded through the flow.
 - Google's sign-in button is loaded from accounts.google.com, so a content
   blocker that blocks it leaves the panel showing a "couldn't reach Google
-  Sign-In" message with a retry. Nothing else in TabDump is affected.
+  Sign-In" message with a retry. Nothing else in Hubble is affected.
 - The AI index in IndexedDB (`tabdump-ai`) is keyed by workspace id rather
   than by account. Workspace ids are unique, so no account can read
   another's chunks, but a signed-out session's chunks are not evicted when

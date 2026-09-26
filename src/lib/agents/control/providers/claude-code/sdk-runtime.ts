@@ -11,13 +11,13 @@ import type {
   ClaudeRuntimeStartResult,
 } from "./runtime";
 
-/** The environment variable a session's TabDump context credential travels in (Phase J.3). */
+/** The environment variable a session's Hubble context credential travels in (Phase J.3). */
 export const CONTEXT_TOKEN_ENV = "TABDUMP_CONTEXT_TOKEN";
 
 /**
  * The real Claude runtime, on `@anthropic-ai/claude-agent-sdk`.
  *
- * **The only module in TabDump that imports the SDK.** Everything else —
+ * **The only module in Hubble that imports the SDK.** Everything else —
  * the adapter, the normalizer, the permission mapping, the control service —
  * works against the narrow interface in ./runtime.ts, so the provider's types
  * never leak and replacing it is one file.
@@ -53,7 +53,7 @@ const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
  * wants for streaming input.
  *
  * The SDK takes `prompt: AsyncIterable<SDKUserMessage>` and consumes it for
- * the life of the conversation. TabDump receives messages one at a time from
+ * the life of the conversation. Hubble receives messages one at a time from
  * a user, so this bridges the two: `push` hands a turn to whatever the
  * generator is currently awaiting, and `close` ends the conversation.
  *
@@ -211,7 +211,7 @@ export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): Claude
    * would if this set a global and cleared it afterwards.
    */
   /**
-   * The session's MCP configuration: TabDump's session server, or nothing.
+   * The session's MCP configuration: Hubble's session server, or nothing.
    *
    * The header names the credential by environment variable. Claude Code
    * expands `${VAR}` in MCP headers (verified against 2.1.x), so the
@@ -335,7 +335,7 @@ export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): Claude
             // the agent process as one entry in its environment and appears
             // nowhere else in this call: not in `allowedTools`, not in a
             // prompt, not in a path, not in anything the queue carries.
-            // The session's TabDump context credential (J.3) travels here too,
+            // The session's Hubble context credential (J.3) travels here too,
             // as one variable of this agent's own environment — never on its
             // command line, where `--mcp-config` would otherwise put it.
             env: environmentFor({
@@ -351,11 +351,11 @@ export function createSdkClaudeRuntime(options: SdkClaudeRuntimeOptions): Claude
             allowedTools: [...start.allowedTools],
             disallowedTools: [...start.disallowedTools],
             ...(start.resume ? { resume: start.resume } : {}),
-            // No MCP server but TabDump's own session server (J.3), and none
+            // No MCP server but Hubble's own session server (J.3), and none
             // at all without workspace context. `strictMcpConfig` makes the
             // CLI ignore every server it would otherwise inherit from the
             // user's own configuration, so a session cannot silently gain
-            // tools TabDump never authorized. See docs/claude-code-control.md.
+            // tools Hubble never authorized. See docs/claude-code-control.md.
             mcpServers: contextMcpServers(start.contextServer),
             strictMcpConfig: true,
             // The permission callback. This is the whole reason the SDK was

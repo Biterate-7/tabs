@@ -93,7 +93,7 @@ async function started(over: Parameters<typeof setup>[0] = {}) {
 
 describe("capabilities", () => {
   it("declares only what is implemented, and never MCP", () => {
-    // TabDump configures no MCP servers, so there is nothing to declare —
+    // Hubble configures no MCP servers, so there is nothing to declare —
     // advertising it because the provider has a flag is exactly what the
     // capability model forbids.
     expect([...CLAUDE_CODE_CONTROL_CAPABILITIES].sort()).toEqual([
@@ -172,7 +172,7 @@ describe("creating a session", () => {
 
   it("gives the runtime no directory at all when there is no project", async () => {
     // Not the server's cwd. Inheriting it would silently authorize wherever
-    // TabDump happens to be running.
+    // Hubble happens to be running.
     const { adapter, runtime, grant } = setup();
     await adapter.createSession({ sessionId: SESSION, permissions: grant, attachments: [] });
 
@@ -205,9 +205,9 @@ describe("creating a session", () => {
     expect(runtime.latest().options.allowedTools).toEqual(["TodoWrite"]);
   });
 
-  it("never sends a mode that would answer an approval on TabDump's behalf", async () => {
+  it("never sends a mode that would answer an approval on Hubble's behalf", async () => {
     // `acceptEdits` auto-accepts file edits, which means `canUseTool` is
-    // never called for them — TabDump would show no prompt and Claude would
+    // never called for them — Hubble would show no prompt and Claude would
     // write the file. It is the most dangerous mode precisely because it
     // looks harmless.
     for (const scopes of [
@@ -542,7 +542,7 @@ describe("approvals", () => {
     );
   });
 
-  it("denies an MCP tool while TabDump configures no servers", async () => {
+  it("denies an MCP tool while Hubble configures no servers", async () => {
     const { runtime } = await started({
       grant: grantOf(["read_project", "write_project", "run_commands", "mcp_tools"]),
     });

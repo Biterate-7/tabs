@@ -50,7 +50,7 @@ function CollectionCard({ bucket, tabs, delayMs }: { bucket: IntroTab["bucket"];
   const preview = tabs.slice(0, 3)
   return (
     <div
-      className="w-[152px] rounded-lg border border-subtle bg-card p-2.5 sm:w-[176px]"
+      className="w-[152px] rounded-md border border-border bg-card p-2.5 sm:w-[176px]"
       style={{ animation: `intro-card-in 420ms var(--ease-standard) ${delayMs}ms both` }}
     >
       <div className="flex items-baseline justify-between gap-2 px-0.5 pb-1.5">

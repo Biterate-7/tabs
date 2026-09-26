@@ -7,7 +7,7 @@ export type RecentGroupKey = "today" | "yesterday" | "earlier";
 
 export type RecentGroup = { key: RecentGroupKey; label: string; tabs: Tab[] };
 
-/** Tabs with a recorded `lastAccessedAt`, most-recent first, capped at `limit`. Tabs never opened from TabDump (no timestamp) are excluded entirely — Recents represents activity, not everything in the workspace. */
+/** Tabs with a recorded `lastAccessedAt`, most-recent first, capped at `limit`. Tabs never opened from Hubble (no timestamp) are excluded entirely — Recents represents activity, not everything in the workspace. */
 export function recentTabs(tabs: Tab[], limit: number = RECENTS_LIMIT): Tab[] {
   return tabs
     .filter((t): t is Tab & { lastAccessedAt: number } => typeof t.lastAccessedAt === "number")

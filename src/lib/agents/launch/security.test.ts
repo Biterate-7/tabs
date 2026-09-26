@@ -7,7 +7,7 @@ import { PROVIDER_LAUNCH_TABLE } from "./allowlist";
 /**
  * The launch layer's guard suite (Phase J).
  *
- * `lib/agents/launch/` is the only place outside a provider SDK where TabDump
+ * `lib/agents/launch/` is the only place outside a provider SDK where Hubble
  * starts a process. These tests pin what that means, by reading the source:
  * exactly which programs, with exactly which arguments, through no shell, with
  * an allowlisted environment, reachable only from the server wiring.
@@ -40,7 +40,7 @@ const sources = walk(LAUNCH_DIR).map((file) => ({
   code: codeOf(readFileSync(file, "utf8")),
 }));
 
-describe("what TabDump can start", () => {
+describe("what Hubble can start", () => {
   it("is exactly this table", () => {
     expect(
       PROVIDER_LAUNCH_TABLE.map((entry) => ({
@@ -80,7 +80,7 @@ describe("what TabDump can start", () => {
     }
   });
 
-  it("pins the flags that keep a session inside TabDump's approvals and process tree", () => {
+  it("pins the flags that keep a session inside Hubble's approvals and process tree", () => {
     const gemini = PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "gemini")!.acp!.args;
     // Overrides a user setting of yolo or auto_edit.
     const at = gemini.indexOf("--approval-mode");
@@ -102,7 +102,7 @@ describe("what TabDump can start", () => {
     ]);
   });
 
-  it("pins the only CLI operations TabDump runs itself: Claude Code's own sign-in (Phase J.1)", () => {
+  it("pins the only CLI operations Hubble runs itself: Claude Code's own sign-in (Phase J.1)", () => {
     const natives = PROVIDER_LAUNCH_TABLE.filter((entry) => entry.native).map((entry) => ({
       provider: entry.provider,
       executables: entry.native!.executables,
@@ -192,7 +192,7 @@ describe("how it starts it", () => {
     expect(processCode).toContain("validateProjectPath(request.projectPath)");
   });
 
-  it("gives the agent an allowlisted environment with no key and no TabDump secret", () => {
+  it("gives the agent an allowlisted environment with no key and no Hubble secret", () => {
     for (const name of AGENT_ENV_ALLOWLIST) {
       expect(name).not.toMatch(/KEY|TOKEN|SECRET|PASSWORD|POSTGRES|DATABASE|TABDUMP|ANTHROPIC|OPENAI|GEMINI|XAI|CODEX/i);
     }

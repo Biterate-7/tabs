@@ -7,7 +7,7 @@ import type { ProviderDetection } from "@/lib/agents/runtime/protocol";
  * What is installed on this machine, answered without running anything and
  * without returning a single path.
  *
- * The result says, per provider: is it installed, and can TabDump drive it.
+ * The result says, per provider: is it installed, and can Hubble drive it.
  * It does not say *where* — the UI has no use for a path and a hosted
  * deployment must never be able to render one.
  *

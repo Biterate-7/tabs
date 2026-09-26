@@ -11,12 +11,12 @@ import type {
  *
  * ## Why authentication is its own adapter
  *
- * TabDump already has two provider-shaped planes — observation
+ * Hubble already has two provider-shaped planes — observation
  * (`connectors/providers/`) and control (`control/providers/`) — and they are
  * separate because a provider can be fully observable and entirely undrivable.
  * Authentication is a third fact of the same kind: a provider can be drivable
- * and have no credential mechanism TabDump can honestly implement, and a user
- * can hold a credential for a provider TabDump cannot drive at all.
+ * and have no credential mechanism Hubble can honestly implement, and a user
+ * can hold a credential for a provider Hubble cannot drive at all.
  *
  * Collapsing any two of the three would make one of those states
  * unrepresentable, and each of them is a state some provider is actually in
@@ -28,7 +28,7 @@ import type {
  * Three methods. Not a general provider-feature interface: no model list, no
  * quota, no billing, no usage. Those are things some providers expose and
  * others do not, and an interface that named them would force every adapter to
- * answer a question its provider cannot. See §5 of the brief — TabDump does
+ * answer a question its provider cannot. See §5 of the brief — Hubble does
  * not invent billing information.
  */
 
@@ -54,9 +54,9 @@ export type CredentialInputShape = {
 };
 
 /**
- * What TabDump can do about one provider's credentials.
+ * What Hubble can do about one provider's credentials.
  *
- * Absent from the registry entirely means "TabDump has no credential story for
+ * Absent from the registry entirely means "Hubble has no credential story for
  * this provider", which reads correctly everywhere without a stub having to
  * claim otherwise.
  */
@@ -109,7 +109,7 @@ export type ProviderCredentialAdapter = {
 export type ProviderCredentialSupport =
   /** An adapter is registered and a user can connect today. */
   | { kind: "supported"; authMethods: readonly ProviderAuthMethod[] }
-  /** TabDump knows the provider and has no credential mechanism for it yet. */
+  /** Hubble knows the provider and has no credential mechanism for it yet. */
   | { kind: "unsupported" };
 
 const adapters = new Map<AgentProviderId, ProviderCredentialAdapter>();
@@ -145,7 +145,7 @@ export function credentialSupportFor(provider: AgentProviderId): ProviderCredent
   return { kind: "supported", authMethods: adapter.authMethods };
 }
 
-/** Every provider TabDump names, with its connection story. For the settings page. */
+/** Every provider Hubble names, with its connection story. For the settings page. */
 export function credentialSupportTable(): ReadonlyMap<
   AgentProviderId,
   ProviderCredentialSupport

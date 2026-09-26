@@ -55,7 +55,7 @@ function fadeButKeepLegible(
 }
 
 /**
- * Compact input to `buildThemeColors` — every original TabDump preset below
+ * Compact input to `buildThemeColors` — every original Hubble preset below
  * is authored from ~6-9 core colors; every other semantic slot (hover/
  * active/subtle steps, borders, editor tokens, graph tokens, …) is derived
  * from them so a coherent 30-field ThemeColors doesn't have to be hand-typed
@@ -171,21 +171,111 @@ function theme(
   return { id, name, description, category, isDark: spec.isDark, colors: buildThemeColors(spec) };
 }
 
+/**
+ * The Hubble system palette, in its two polarities.
+ *
+ * Measured off the rendered reference rather than chosen: a warm near-neutral
+ * ground, a card one step off it, and every other tier expressed as the
+ * foreground laid over that ground at a fixed alpha — hover 3.5%, selected
+ * 6%, active 8%; hairline 10%, quiet hairline 5%, strong 20%; secondary text
+ * 60%, metadata 40% (walked back to AA by `fadeButKeepLegible`, which moves
+ * it by the least amount that clears 4.5:1).
+ *
+ * Two relationships matter more than any single value, and both are unlike
+ * the rest of this registry:
+ *
+ *  - The primary *fill* is the foreground itself. A primary button is ink on
+ *    paper (or paper on ink), never a coloured slab; colour is reserved for
+ *    the one thing that has to be found — a link, the current doc, a live
+ *    run. So `accent` is the foreground and the orange lives in `link`.
+ *  - Elevation is carried by tone and a 10% hairline, not by shadow. A
+ *    floating panel is a step lighter than the page in the light polarity
+ *    and a step lighter than the card in the dark one.
+ */
+function systemTheme(
+  id: string,
+  name: string,
+  description: string,
+  p: {
+    isDark: boolean
+    bg: string
+    card: string
+    elevated: string
+    fg: string
+    link: string
+    success: string
+    warning: string
+    error: string
+    info: string
+  }
+): ThemeDefinition {
+  const over = (ground: string, alpha: number) => mix(ground, p.fg, alpha)
+  const colors = buildThemeColors({
+    isDark: p.isDark,
+    bg: p.bg,
+    surface: p.card,
+    text: p.fg,
+    accent: p.fg,
+    success: p.success,
+    warning: p.warning,
+    error: p.error,
+    info: p.info,
+    overrides: {
+      backgroundSecondary: p.card,
+      backgroundTertiary: over(p.card, 0.035),
+      surfaceHover: over(p.card, 0.035),
+      surfaceSelected: over(p.card, 0.06),
+      surfaceActive: over(p.card, 0.08),
+      surfaceElevated: p.elevated,
+      accentHover: mix(p.fg, p.bg, 0.14),
+      accentActive: mix(p.fg, p.bg, 0.22),
+      accentSubtle: over(p.bg, 0.06),
+      border: over(p.bg, 0.1),
+      borderSubtle: over(p.bg, 0.055),
+      borderStrong: over(p.bg, 0.2),
+      selection: mix(p.link, p.bg, 0.78),
+      focus: mix(p.fg, p.bg, 0.4),
+      graphNode: mix(p.fg, p.bg, 0.45),
+      graphNodeSelected: p.link,
+      graphEdge: mix(p.fg, p.bg, 0.55),
+      editorBackground: p.bg,
+      editorText: p.fg,
+      editorPlaceholder: mix(p.fg, p.bg, 0.55),
+    },
+  })
+  // Secondary text is the foreground at 60%; the builder's default fade is
+  // tuned for other palettes, so it is restated here and still held to AA.
+  const grounds = [colors.background, colors.surface, colors.surfaceElevated] as const
+  colors.textSecondary = fadeButKeepLegible(p.fg, p.bg, 0.4, grounds)
+  colors.textMuted = fadeButKeepLegible(p.fg, p.bg, 0.6, grounds)
+  colors.textDisabled = mix(p.fg, p.bg, 0.7)
+  return {
+    id,
+    name,
+    description,
+    category: p.isDark ? "dark" : "light",
+    isDark: p.isDark,
+    colors,
+    link: p.link,
+  }
+}
+
 export const THEME_REGISTRY: ThemeDefinition[] = [
   // ---- Dark ---------------------------------------------------------
-  // The default, and the one theme that has to agree with the landing page:
-  // a first-run user crosses from marketing into the product without the
-  // ground shifting under them. These are marketing.css's own values
-  // (--background / --surface / --foreground / --primary), not an
-  // approximation of them — a cool near-black with a faint indigo cast.
-  // Every other theme below keeps its own palette and inherits only the
-  // shared geometry, type and motion.
-  theme("midnight", "Midnight", "dark", "TabDump's signature near-black.", {
+  // The default. The id stays "midnight" on purpose: it is what every
+  // existing install has persisted, so keeping it is what carries those users
+  // onto the Hubble system palette instead of stranding them on the old one.
+  systemTheme("midnight", "Hubble Dark", "The Hubble system palette — warm ink.", {
     isDark: true,
-    bg: "#07070a",
-    surface: "#101015",
-    text: "#f2f1ee",
-    accent: "#4361ff",
+    bg: "#14120b",
+    card: "#1b1913",
+    elevated: "#201e18",
+    fg: "#edecec",
+    link: "#eb5600",
+    success: "#3fae83",
+    warning: "#d9a441",
+    error: "#e5667f",
+    info: "#7ea6d6",
   }),
   theme("graphite", "Graphite", "dark", "Neutral gray-on-gray, almost no color.", {
     isDark: true,
@@ -253,6 +343,19 @@ export const THEME_REGISTRY: ThemeDefinition[] = [
   }),
 
   // ---- Light ----------------------------------------------------------
+  // The same system in its paper polarity — the reference's own default.
+  systemTheme("hubble-light", "Hubble Light", "The Hubble system palette — warm paper.", {
+    isDark: false,
+    bg: "#f7f7f4",
+    card: "#f2f1ed",
+    elevated: "#fbfbf9",
+    fg: "#26251e",
+    link: "#b83c00",
+    success: "#17775a",
+    warning: "#8a5a0e",
+    error: "#bf2a50",
+    info: "#3a6a9f",
+  }),
   theme("paper", "Paper", "light", "Bright white with crisp ink-black text.", {
     isDark: false,
     bg: "#ffffff",

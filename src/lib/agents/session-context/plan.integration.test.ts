@@ -13,7 +13,7 @@ import type { SessionContextServer } from "./http";
  * loopback server, the session MCP server and the official MCP client — the
  * client code agents use. An agent reads the workspace's shape, checks a plan,
  * proposes it, and gets back what was applied and verified; the approval and
- * the application are TabDump's.
+ * the application are Hubble's.
  */
 
 function tab(id: string, title: string, url: string, extra: Record<string, unknown> = {}) {
@@ -212,7 +212,7 @@ describe("plans over MCP", () => {
     });
     expect(oversized.result.isError).toBe(true);
     const elsewhere = await call(client, "propose_workspace_plan", { ...PLAN, workspaceId: "ws-private" });
-    expect(elsewhere.text).toBe("This session can only read the TabDump workspace it was started from.");
+    expect(elsewhere.text).toBe("This session can only read the Hubble workspace it was started from.");
     const foreign = await call(client, "propose_workspace_plan", { basedOnVersion: 1, operations: [{ kind: "rename_collection", collectionId: "c-bank", name: "Mine" }] });
     expect(foreign.result.isError).toBe(true);
     expect(foreign.text).toMatch(/^The plan was not proposed and nothing was changed\./);

@@ -75,3 +75,18 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Actions")).toBeTruthy()
   })
 })
+
+describe("paletteFilter", () => {
+  it("does not match scattered letters, so a tab search is not buried under commands", async () => {
+    const { paletteFilter } = await import("./command-palette")
+    // The regression: fuzzy matching let "arxiv" hit this command's keywords.
+    expect(paletteFilter("Connect an agent Agents agents-connect", "arxiv", ["provider", "mcp", "codex", "gemini", "grok"])).toBe(0)
+    expect(paletteFilter("https://arxiv.org/abs/2310.06770 Tabs tab-1", "arxiv", ["arxiv.org"])).toBeGreaterThan(0)
+  })
+
+  it("ranks a label prefix above a keyword hit", async () => {
+    const { paletteFilter } = await import("./command-palette")
+    expect(paletteFilter("New workspace Workspaces", "new work", [])).toBe(1)
+    expect(paletteFilter("Open settings Settings", "preferences", ["preferences"])).toBeLessThan(1)
+  })
+})

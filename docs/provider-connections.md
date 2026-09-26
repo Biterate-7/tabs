@@ -1,8 +1,8 @@
 # Provider connections — bring your own credentials
 
-TabDump is the command centre. The AI provider is the model. This document
+Hubble is the command centre. The AI provider is the model. This document
 describes the layer that keeps those two things separate: **each user connects
-their own provider credentials, and TabDump never runs anybody's agent on a
+their own provider credentials, and Hubble never runs anybody's agent on a
 credential that is not theirs.**
 
 The invariant, in one picture:
@@ -12,9 +12,9 @@ USER
   ↓
 THEIR PROVIDER CONNECTION
   ↓
-TABDUMP COMMAND CENTRE
+HUBBLE COMMAND CENTRE
   ↓
-AUTHORIZED PROJECT + TABDUMP CONTEXT
+AUTHORIZED PROJECT + HUBBLE CONTEXT
   ↓
 THEIR AI AGENT
   ↓
@@ -24,7 +24,7 @@ AUTHORIZED WORK
 And the shape that must never exist:
 
 ```
-ALL USERS  →  TABDUMP'S SHARED AI CREDENTIAL  →  AGENTS
+ALL USERS  →  HUBBLE'S SHARED AI CREDENTIAL  →  AGENTS
 ```
 
 That second shape is what the codebase had before this phase, honestly labelled
@@ -56,7 +56,7 @@ works.
 implemented, and the naming in the product matches it exactly: the button says
 **Connect Anthropic API**, never "Connect Claude account".
 
-The distinction is a correctness question, not a style one. TabDump holds an
+The distinction is a correctness question, not a style one. Hubble holds an
 API credential the user issued to themselves. It does not hold a delegated
 grant, cannot act as them, and cannot see their Claude.ai subscription — and
 "Connect your Claude account" would claim all three.
@@ -186,7 +186,7 @@ users cannot see each other's key.
 ### Remote runtime
 
 ```
-Browser → TabDump server → resolve this actor's connection → reveal server-side
+Browser → Hubble server → resolve this actor's connection → reveal server-side
         → start sandbox → inject into the bridge process's environment only
 ```
 
@@ -204,7 +204,7 @@ what it is told.
 
 ### A credential is not a permission
 
-It proves authentication and grants no additional TabDump capability. A Claude
+It proves authentication and grants no additional Hubble capability. A Claude
 credential plus project A does not reach project B: project scope is resolved
 against what the actor authorized, owner-scoped in the store, and checked
 before any credential is used.
@@ -266,9 +266,9 @@ Each provider card carries three independent facts:
 
 | Block | Question |
 | --- | --- |
-| Observation | Can TabDump see what this agent does? |
-| Control | Can TabDump drive it? |
-| **Connection** | Has *this user* authorized TabDump to use it? |
+| Observation | Can Hubble see what this agent does? |
+| Control | Can Hubble drive it? |
+| **Connection** | Has *this user* authorized Hubble to use it? |
 
 A provider can be in any combination, and none implies another. All three are
 derived from actual registration — the observation connector, the runtime's own
@@ -276,7 +276,7 @@ derived from actual registration — the observation connector, the runtime's ow
 
 Connected shows the auth method, the name, and when it was last validated, with
 **Rotate** and **Disconnect**. There is no "show key", no masked prefix and no
-length: TabDump cannot revoke a key from that screen, so displaying part of one
+length: Hubble cannot revoke a key from that screen, so displaying part of one
 would buy recognition at the cost of leaking it into every screenshot.
 
 **Rotation** validates the new credential first and replaces the old one only

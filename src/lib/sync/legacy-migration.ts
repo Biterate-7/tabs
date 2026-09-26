@@ -37,7 +37,7 @@
  *
  * ## Identity is the id, never the URL
  *
- * Two tabs with the same URL are two tabs. TabDump has first-class duplicate
+ * Two tabs with the same URL are two tabs. Hubble has first-class duplicate
  * semantics (`isDuplicate`, markDuplicates) and a user may legitimately keep
  * the same page in several sections. Nothing here groups, dedupes or merges
  * by URL, and a test pins that.

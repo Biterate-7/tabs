@@ -128,7 +128,7 @@ export type StartSessionInput = {
    * Context to seed the session with, already resolved by the bridge.
    *
    * Optional, and absent is the default: a session starts knowing nothing
-   * about TabDump unless a caller explicitly attached something. There is
+   * about Hubble unless a caller explicitly attached something. There is
    * deliberately no branch here that resolves context on the caller's
    * behalf — the service cannot reach the bridge, and a service that
    * resolved "the current workspace" by default would be the automatic
@@ -180,8 +180,8 @@ export type ControlService = {
    * ## Why this is not `resumeSession`
    *
    * `resumeSession` starts something: it asks a provider to reattach to a
-   * conversation by the provider's own id, and it mints a *new* TabDump
-   * session to hold it. This does neither. The TabDump session already
+   * conversation by the provider's own id, and it mints a *new* Hubble
+   * session to hold it. This does neither. The Hubble session already
    * exists, its id is already known, and the agent never stopped — what has
    * been lost is only this process's memory of it, which is the normal state
    * of affairs on a control plane where every request is a fresh process.
@@ -211,7 +211,7 @@ export type ControlService = {
    * Puts a change to the session's own workspace to the user (Phase J.3).
    *
    * The same broker, the same approval card, the same Approve/Deny — the
-   * request simply comes from TabDump's session MCP server rather than from
+   * request simply comes from Hubble's session MCP server rather than from
    * an adapter, so its answer goes back there. Resolves when the user
    * answers, the request expires, or the session ends.
    */
@@ -792,7 +792,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const settled = broker.resolve(approvalId, decision, now());
       if (!settled.ok) return controlFailure("invalid-request");
 
-      // A workspace change was asked for by TabDump's session MCP server, not
+      // A workspace change was asked for by Hubble's session MCP server, not
       // by the adapter. The broker's watcher has already told it; there is no
       // adapter to answer.
       if (approval.workspaceId) return { ok: true, value: undefined };
@@ -835,7 +835,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const outcome = new Promise<WorkspaceApprovalOutcome>((resolve) => {
         workspaceApprovals.set(id, resolve);
       });
-      emitOwn(session, "approval_requested", "Wants to change your TabDump workspace", id);
+      emitOwn(session, "approval_requested", "Wants to change your Hubble workspace", id);
       return outcome;
     },
 

@@ -15,7 +15,7 @@ import {
 } from "@/lib/agents/control/runtime";
 
 /**
- * The guards on the second path in TabDump that executes anything.
+ * The guards on the second path in Hubble that executes anything.
  *
  * Phase I makes a hosted deployment able to run a real agent. Every rule that
  * keeps that safe is checked here, because every one of them fails silently if

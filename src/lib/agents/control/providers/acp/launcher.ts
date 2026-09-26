@@ -42,7 +42,7 @@ export type AcpLaunchResult =
 export type AcpLauncher = (request: AcpLaunchRequest) => Promise<AcpLaunchResult>;
 
 /**
- * A TabDump MCP server entry for `session/new` (ACP's HTTP MCP server shape).
+ * A Hubble MCP server entry for `session/new` (ACP's HTTP MCP server shape).
  * Built by the adapter from the session's context server (Phase J.3); lives
  * as long as the session's credential does.
  */
@@ -55,7 +55,7 @@ export type AcpMcpServerEntry = {
 
 
 /**
- * How TabDump stays the one that approves what an ACP agent does (Phase J.2).
+ * How Hubble stays the one that approves what an ACP agent does (Phase J.2).
  *
  * ACP agents have session *modes*, and in most of them the agent approves its
  * own actions. So each agent's launch entry says — from the agent's source,
@@ -70,10 +70,10 @@ export type AcpApprovalPolicy =
   | { kind: "unavailable"; reason: string };
 
 /**
- * How TabDump tells an ACP agent's calls to the session's context server apart
+ * How Hubble tells an ACP agent's calls to the session's context server apart
  * from every other tool (Phase J.4) — verified from each agent's source.
  *
- * ACP's `session/request_permission` names no MCP server, and TabDump never
+ * ACP's `session/request_permission` names no MCP server, and Hubble never
  * matches a tool name or title. So an agent can be handed the context server
  * only when two *structural* facts hold together:
  *
@@ -86,7 +86,7 @@ export type AcpApprovalPolicy =
  *      (`mcpConfirmationOptionIds`, all required). They are built by the
  *      agent's code — not by the model, not by a server.
  *
- * Together: the request is an MCP call, and the only MCP server is TabDump's.
+ * Together: the request is an MCP call, and the only MCP server is Hubble's.
  * A request missing the marker is an ordinary tool and is refused as one.
  * An agent with neither is `unavailable`: its sessions start without context.
  */

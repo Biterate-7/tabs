@@ -1,7 +1,7 @@
 # The Command Centre Reset
 
-TabDump is becoming an **AI agent command centre**: connect your agents, give
-them TabDump workspace context and an explicitly authorized local project, ask
+Hubble is becoming an **AI agent command centre**: connect your agents, give
+them Hubble workspace context and an explicitly authorized local project, ask
 them to work, watch what they do, approve what needs approving, and come back
 to the session later.
 
@@ -17,7 +17,7 @@ old rule in a comment and assumes it still holds.
 Phases 11–18 were built on a single rule, stated at the top of
 `src/lib/agents/adapter.ts`:
 
-> TabDump observes agents, it does not drive them.
+> Hubble observes agents, it does not drive them.
 
 It was not a convention. It is enforced by structural tests that read the
 source and fail the build:
@@ -104,7 +104,7 @@ keyframes and isometric CSS in `globals.css`.
 - the Claude Code pipeline — reader → parser → normalizer → cursor → mapping;
 - `intelligence/`, `session/`, `history/`;
 - `spatial/` and the graph's agent layer. This is the workspace↔agent link
-  that makes TabDump different from a chat window, and it lives on the
+  that makes Hubble different from a chat window, and it lives on the
   relationship graph, which is core product. The world was built *on top of*
   spatial, not the other way round;
 - `visual/` minus the sprite layer — `states.ts`, `types.ts`,
@@ -147,7 +147,7 @@ keyframes and isometric CSS in `globals.css`.
 | I | Conversation / activity / approval UI | |
 | J | Right-side context panel | |
 | K | Command palette + keyboard system | |
-| L | Full TabDump visual redesign | |
+| L | Full Hubble visual redesign | |
 | M | Cross-provider polish | |
 | N | Test / QA pass | |
 

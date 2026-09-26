@@ -7,7 +7,7 @@ import { migrateToWorkspaceStore } from "./migration";
 import type { WorkspaceStore } from "./types";
 
 /**
- * The end of the ownership story for a local-first app: TabDump has no
+ * The end of the ownership story for a local-first app: Hubble has no
  * server-side workspace to protect, so "user A cannot reach user B's tabs"
  * has to hold at the persistence layer instead. These exercise the real
  * load/save functions, not the key helper underneath them.

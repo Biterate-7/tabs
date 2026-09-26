@@ -32,7 +32,7 @@ function isValidEntry(entry: unknown): entry is BrowserImportEntry {
 }
 
 /**
- * Receives tab batches from the TabDump browser extension's content-script
+ * Receives tab batches from the Hubble browser extension's content-script
  * bridge (see extension/content/content-script.js), which relays them via
  * `window.postMessage` after the extension's background worker opens or
  * reuses this page. Validates origin and message shape before trusting

@@ -9,7 +9,7 @@
 //      every platform without adding a cross-env dependency.
 //   2. It delegates to `npm run build` rather than calling `next build`
 //      directly, so the existing `prebuild` step (which packages
-//      extension/ into public/tabdump-extension.zip) still runs. Skipping
+//      extension/ into public/hubble-extension.zip) still runs. Skipping
 //      it would ship a desktop bundle whose extension-download link 404s.
 //
 // next.config.ts reads TABDUMP_BUILD_TARGET and switches to

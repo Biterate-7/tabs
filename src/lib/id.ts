@@ -1,5 +1,5 @@
 /**
- * The one generator for every persistent entity id in TabDump — workspaces,
+ * The one generator for every persistent entity id in Hubble — workspaces,
  * tabs, sections, groups, collections.
  *
  * Ids used to be `<prefix>-<epoch_ms>-<counter>` from a module-scoped
@@ -25,7 +25,7 @@
  * `http://tauri.localhost` all qualify, so it is the path taken essentially
  * everywhere.
  *
- * The exception this guards is a self-hosted TabDump served over plain http
+ * The exception this guards is a self-hosted Hubble served over plain http
  * on a non-localhost host — a deployment shape src/lib/auth/origin.ts
  * already explicitly supports. There `randomUUID` is simply absent, and
  * falling back to a timestamp and a counter would quietly reintroduce the
@@ -46,7 +46,7 @@ function randomUuidV4(): string {
 
   if (typeof webCrypto?.getRandomValues !== "function") {
     throw new Error(
-      "TabDump needs Web Crypto to generate ids. Serve the app over https (or localhost)."
+      "Hubble needs Web Crypto to generate ids. Serve the app over https (or localhost)."
     );
   }
 

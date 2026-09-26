@@ -7,7 +7,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  *
  * ## Where a context request can come from
  *
- * A TabDump context operation is decided in up to two places, and both ask
+ * A Hubble context operation is decided in up to two places, and both ask
  * this module:
  *
  *   1. **The context server itself** (`origin: "context-server"`), on every
@@ -20,7 +20,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  *      once its adapter has *proved*, from the agent's own structure, that
  *      the call targets this session's context server (`serverName`). An
  *      adapter that cannot prove it does not ask this module at all: the call
- *      stays an ordinary third-party tool, which TabDump refuses.
+ *      stays an ordinary third-party tool, which Hubble refuses.
  *
  * Every provider's request is normalized into the same `SessionContextRequest`
  * (named so because `AgentContextRequest` is the Phase E resolver's request),
@@ -41,7 +41,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  *
  * Reads need none: the grant already answered them, exactly as a read inside
  * an authorized project needs none. Writes are `every-time`: the context
- * server raises a TabDump approval, through the control service's broker, for
+ * server raises a Hubble approval, through the control service's broker, for
  * each one, with the change spelled out. An agent-level answer for a call
  * whose tool the agent does not name structurally is `at-server` — the
  * server makes the per-tool decision when the call arrives.
@@ -60,7 +60,7 @@ export type SessionContextRequest = {
    * agent's structure. Absent: not proven, refused.
    */
   serverName?: string;
-  /** The TabDump tool, when the request names it structurally. */
+  /** The Hubble tool, when the request names it structurally. */
   tool?: string;
   /** A workspace the request names, if it names one. */
   workspaceId?: string;

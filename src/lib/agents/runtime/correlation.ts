@@ -6,14 +6,14 @@ import type { RuntimeCorrelationView } from "./protocol";
  *
  * ## The distinction this module exists to preserve
  *
- * TabDump learns about agent activity two ways, and they are not the same
+ * Hubble learns about agent activity two ways, and they are not the same
  * thing:
  *
- *   **CONTROL** - TabDump asked an agent to do something. It knows the
+ *   **CONTROL** - Hubble asked an agent to do something. It knows the
  *   control session id, the control run id, and eventually the provider's own
  *   session id, because the provider told it on the wire it is holding open.
  *
- *   **OBSERVATION** - TabDump watched an agent do something. It knows the
+ *   **OBSERVATION** - Hubble watched an agent do something. It knows the
  *   provider's session id (read off the transcript on disk), the observing
  *   agent's id, and the domain run that ingestion minted. It has no idea who
  *   started it.
@@ -25,7 +25,7 @@ import type { RuntimeCorrelationView } from "./protocol";
  * The temptation this module is written against is to label observed activity
  * as controlled because it is convenient. A session somebody started in a
  * terminal five minutes ago genuinely has no control run, and a registry that
- * invented one would make the command centre claim TabDump did something it
+ * invented one would make the command centre claim Hubble did something it
  * did not do. Every field below is therefore optional, and a record with only
  * the observation half is a *complete, valid* record rather than a partial
  * one waiting to be filled in.
@@ -103,7 +103,7 @@ export type CorrelationRegistry = {
    * "Matches" means, in order: the same control session, or the same
    * provider session for the same provider. An input with neither cannot
    * match anything and mints a new record - which is right, because an
-   * observation TabDump has no provider session id for is a thing it cannot
+   * observation Hubble has no provider session id for is a thing it cannot
    * yet join to anything.
    */
   register(input: RegisterCorrelationInput, now: number): CorrelationRecord;
@@ -114,7 +114,7 @@ export type CorrelationRegistry = {
   byId(id: string): CorrelationRecord | undefined;
 
   /**
-   * The control run for an observed provider session, if TabDump started it.
+   * The control run for an observed provider session, if Hubble started it.
    *
    * The whole point of the registry, and the function the future command
    * centre calls when it renders an observed run. Returns `undefined` for a
@@ -206,7 +206,7 @@ export function createCorrelationRegistry(options: { createId?: () => string } =
 
   return {
     register(input, now) {
-      // Order matters. A control session id is TabDump's own and is exact; a
+      // Order matters. A control session id is Hubble's own and is exact; a
       // provider session id is the joining evidence and is checked second so
       // that a control record already in hand is extended rather than
       // duplicated when the provider finally reveals its id.
@@ -326,7 +326,7 @@ export function toCorrelationView(record: CorrelationRecord): RuntimeCorrelation
 }
 
 /**
- * Whether a correlation says TabDump actually drove this activity.
+ * Whether a correlation says Hubble actually drove this activity.
  *
  * A single function so that no consumer has to decide for itself what counts,
  * and so the answer cannot drift into "it has a control session id, close

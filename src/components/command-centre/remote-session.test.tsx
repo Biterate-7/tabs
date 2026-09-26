@@ -162,7 +162,7 @@ describe("execution mode", () => {
     await openDialog(user)
 
     // Stated, so the user knows where their files are going.
-    expect(await screen.findByText(/isolated environment TabDump creates/i)).toBeTruthy()
+    expect(await screen.findByText(/isolated environment Hubble creates/i)).toBeTruthy()
     // And the local plane is not offered, because it genuinely cannot execute.
     expect(screen.queryByText(/Runs on this machine/i)).toBeNull()
     expect(screen.queryByRole("button", { name: /authorize a folder/i })).toBeNull()
@@ -316,7 +316,7 @@ describe("the start button", () => {
 
     // Accurate about what is missing: the user has connected no provider
     // credentials of their own. It used to say "needs to be signed in", which
-    // described an account authorization TabDump never asks for.
+    // described an account authorization Hubble never asks for.
     expect(screen.getByText(/isn't connected yet/i)).toBeTruthy()
     expect(screen.getByRole("button", { name: /start session/i }).hasAttribute("disabled")).toBe(
       true
@@ -484,7 +484,7 @@ describe("creating a remote project", () => {
  * Context stays separate
  * ------------------------------------------------------------------ */
 
-describe("project scope and TabDump context stay separate", () => {
+describe("project scope and Hubble context stay separate", () => {
   it("does not attach any context merely because a remote project was chosen", async () => {
     // Phase E's rule: the project is execution scope, context is
     // informational, and the user chooses the second explicitly.

@@ -10,7 +10,7 @@
  * and exactly one module implements it against `@anthropic-ai/claude-agent-sdk`.
  *
  * This is deliberately **not** a mock of the SDK. It is the smallest surface
- * the adapter actually needs, defined in TabDump's own vocabulary, so that:
+ * the adapter actually needs, defined in Hubble's own vocabulary, so that:
  *
  *   - the SDK's types do not leak through the codebase — only
  *     `sdk-runtime.ts` imports them;
@@ -29,7 +29,7 @@
  */
 
 /**
- * The Claude permission modes TabDump is willing to send.
+ * The Claude permission modes Hubble is willing to send.
  *
  * Claude Code has five. This union has two, and the three omissions are the
  * design:
@@ -38,7 +38,7 @@
  *   - **`acceptEdits`** auto-accepts file edit operations — which means the
  *     host's `canUseTool` is *never called* for them. Sending it would
  *     silently suppress the approvals this whole integration exists to
- *     produce: TabDump would show no prompt and Claude would write the file.
+ *     produce: Hubble would show no prompt and Claude would write the file.
  *     It is the most dangerous of the three precisely because it looks
  *     harmless.
  *   - **`plan`** stops tool execution and makes Claude produce a plan instead.
@@ -48,7 +48,7 @@
  * What remains keeps the approval surface live:
  *
  *   - `default` — prompts for dangerous operations, so `canUseTool` fires and
- *     TabDump decides.
+ *     Hubble decides.
  *   - `dontAsk` — denies anything not pre-approved, without prompting. Right
  *     for a grant that permits nothing.
  *
@@ -99,7 +99,7 @@ export type ClaudePermissionRequest = {
   /**
    * The provider's own rendered prompt sentence, when it gives one.
    *
-   * Preferred over anything TabDump could reconstruct from the tool name and
+   * Preferred over anything Hubble could reconstruct from the tool name and
    * input, because the provider knows what its own tool is about to do.
    */
   title?: string;
@@ -145,7 +145,7 @@ export type ClaudePermissionHandler = (
 export type ClaudeRuntimeMessage = Readonly<Record<string, unknown>>;
 
 export type ClaudeRuntimeStartOptions = {
-  /** TabDump's session id. Used for correlation only; never sent to the provider as its own id. */
+  /** Hubble's session id. Used for correlation only; never sent to the provider as its own id. */
   sessionId: string;
   /**
    * The authorized project's id, when the session has one.
@@ -163,12 +163,12 @@ export type ClaudeRuntimeStartOptions = {
    *
    * Absent means no project scope, in which case the runtime is started with
    * no directory access at all rather than inheriting the server's cwd —
-   * which would silently authorize wherever TabDump happens to be running.
+   * which would silently authorize wherever Hubble happens to be running.
    */
   cwd?: string;
   /** Further authorized directories, each already validated the same way. */
   additionalDirectories: readonly string[];
-  /** Claude's permission mode, derived from the TabDump grant. See ./permissions.ts. */
+  /** Claude's permission mode, derived from the Hubble grant. See ./permissions.ts. */
   permissionMode: ClaudePermissionMode;
   /** Tools the grant allows. An empty list means none. */
   allowedTools: readonly string[];
@@ -177,7 +177,7 @@ export type ClaudeRuntimeStartOptions = {
   /** The provider's session id to reattach to, when resuming. */
   resume?: string;
   /**
-   * TabDump's own MCP server for this session (Phase J.3), when it has
+   * Hubble's own MCP server for this session (Phase J.3), when it has
    * workspace context. The only MCP server a session can have.
    */
   contextServer?: { name: string; url: string; token: string };
@@ -224,7 +224,7 @@ export type ClaudeRuntimeHandle = {
   /**
    * Interrupts the in-flight turn.
    *
-   * Reaches the provider. A local flag that merely stopped TabDump listening
+   * Reaches the provider. A local flag that merely stopped Hubble listening
    * would leave the agent running and still editing files, which is the
    * failure this method exists to prevent.
    */

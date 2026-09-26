@@ -1,18 +1,18 @@
 import { createHash, randomBytes } from "node:crypto";
 
 /**
- * TabDump MCP access tokens.
+ * Hubble MCP access tokens.
  *
  * ## What one is
  *
- * A credential a signed-in TabDump user mints for an MCP client — Claude
- * Desktop, today — so that client can read *their* TabDump context and
- * nothing else. It is TabDump's own token for TabDump's own API:
+ * A credential a signed-in Hubble user mints for an MCP client — Claude
+ * Desktop, today — so that client can read *their* Hubble context and
+ * nothing else. It is Hubble's own token for Hubble's own API:
  *
  *   - not the browser session cookie (HttpOnly, and a cookie that an MCP
  *     client held would also authenticate every write route);
  *   - not an Anthropic API key, and not a Claude.ai or Claude Desktop login —
- *     TabDump never sees, stores or relays those;
+ *     Hubble never sees, stores or relays those;
  *   - not a deployment-wide operator key. There is no such thing on this path.
  *
  * ## How it is held

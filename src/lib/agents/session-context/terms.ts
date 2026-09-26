@@ -9,7 +9,7 @@ import type { SessionContextSnapshot } from "./snapshot";
  *
  * Every J.6 reasoning primitive — topics, related tabs, relevant collections —
  * works from the same per-tab terms, computed once per snapshot. The words
- * come from TabDump's own Auto-Organize tokenizer (`lib/organize/keywords.ts`:
+ * come from Hubble's own Auto-Organize tokenizer (`lib/organize/keywords.ts`:
  * lowercase `[a-z0-9]` tokens of three or more characters, its stopwords) and
  * a site from its site identity (`lib/organize/domain-identity.ts`), so the
  * agent and Auto-Organize agree on what a "word" and a "site" are.

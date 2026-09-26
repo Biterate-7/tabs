@@ -44,7 +44,7 @@ export function hasUsableMcpToken(state: McpTokensState, now: number): boolean |
   return state.tokens.some((token) => !token.revoked && token.expiresAt > now)
 }
 
-/** `enabled: false` asks nothing — for a shell with no TabDump server to ask (the desktop app). */
+/** `enabled: false` asks nothing — for a shell with no Hubble server to ask (the desktop app). */
 export function useMcpTokens(options: { enabled?: boolean } = {}): UseMcpTokens {
   const enabled = options.enabled ?? true
   const [state, setState] = useState<McpTokensState>({ kind: "loading" })
@@ -97,13 +97,13 @@ export function useMcpTokens(options: { enabled?: boolean } = {}): UseMcpTokens 
         })
         const body = (await response.json()) as Envelope<{ token: string; connection: McpTokenView }>
         if (!body.ok) {
-          setError(body.error?.message ?? "TabDump could not create that connection.")
+          setError(body.error?.message ?? "Hubble could not create that connection.")
           return
         }
         setCreated({ token: body.value.token, name: body.value.connection.name })
         await refresh()
       } catch {
-        setError("TabDump could not create that connection.")
+        setError("Hubble could not create that connection.")
       } finally {
         setBusy(false)
       }
@@ -121,10 +121,10 @@ export function useMcpTokens(options: { enabled?: boolean } = {}): UseMcpTokens 
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ tokenId }),
         })
-        if (!response.ok) setError("TabDump could not revoke that connection.")
+        if (!response.ok) setError("Hubble could not revoke that connection.")
         await refresh()
       } catch {
-        setError("TabDump could not revoke that connection.")
+        setError("Hubble could not revoke that connection.")
       } finally {
         setBusy(false)
       }

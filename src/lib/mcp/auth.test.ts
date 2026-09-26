@@ -70,7 +70,7 @@ describe("the endpoint authenticates with a bearer token and nothing else", () =
     expect(response.headers.get("www-authenticate")).toContain("Bearer");
   });
 
-  it("ignores a TabDump session cookie entirely", async () => {
+  it("ignores a Hubble session cookie entirely", async () => {
     // A browser holding a session gains nothing here.
     const response = await handleMcpHttpRequest(post({ cookie: "tabdump_session=anything-at-all" }), deps);
     expect(response.status).toBe(401);
@@ -89,7 +89,7 @@ describe("the endpoint authenticates with a bearer token and nothing else", () =
   it("refuses a Basic credential as carrying no bearer token at all", async () => {
     const response = await handleMcpHttpRequest(post({ authorization: "Basic YWxpY2U6aHVudGVyMg==" }), deps);
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe('Bearer realm="TabDump MCP"');
+    expect(response.headers.get("www-authenticate")).toBe('Bearer realm="Hubble MCP"');
   });
 
   it("refuses a revoked token", async () => {

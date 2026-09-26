@@ -204,7 +204,7 @@ describe("analyzeTopics", () => {
     );
     expect(analysis.groups.length).toBeGreaterThan(0);
     for (const group of analysis.groups) {
-      // Labels and terms are words and nothing else; reasons are TabDump's sentences around those words.
+      // Labels and terms are words and nothing else; reasons are Hubble's sentences around those words.
       expect(group.label).toMatch(/^[A-Za-z0-9 ]+$/);
       for (const signal of group.signals) if (signal.kind === "shared_term") expect(signal.term).toMatch(/^[A-Za-z0-9]+$/);
       const prose = JSON.stringify([group.reason, group.members.map((member) => member.why)]);

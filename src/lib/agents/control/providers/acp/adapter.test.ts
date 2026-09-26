@@ -206,7 +206,7 @@ describe("sessions", () => {
     expect(adapter.providerSessionIdFor("s1")).toBe("acp-1");
   });
 
-  it("gives the agent the session's own TabDump MCP server, limited to it at launch, with its credential in the request (J.3–J.4)", async () => {
+  it("gives the agent the session's own Hubble MCP server, limited to it at launch, with its credential in the request (J.3–J.4)", async () => {
     const { agent, adapter } = setup({}, { contextIdentity: GEMINI_IDENTITY });
     expect(adapter.getCapabilities().has("workspace_context")).toBe(true);
     const p = project();
@@ -388,7 +388,7 @@ describe("streaming a reply", () => {
     await adapter.sendMessage({ sessionId: "s1", text: "second", context: { attachments: [] } });
     await flush();
 
-    expect(prompts[0]).toContain("<tabdump-context>");
+    expect(prompts[0]).toContain("<hubble-context>");
     expect(prompts[0]).toContain("Design doc");
     expect(prompts[0].endsWith("first")).toBe(true);
     expect(prompts[1]).toBe("second");
@@ -475,7 +475,7 @@ describe("approvals", () => {
     });
     expect(events.map((event) => event.kind)).toContain("file_modified");
     expect(events.at(-1)?.kind).toBe("run_completed");
-    // The agent's title — a command line — is nowhere in what TabDump emitted.
+    // The agent's title — a command line — is nowhere in what Hubble emitted.
     expect(JSON.stringify(events)).not.toContain("rm -rf");
     expect(JSON.stringify(events)).not.toContain("system.ini");
   });
@@ -789,7 +789,7 @@ describe("modes that ask (Phase J.2)", () => {
 
     expect(events.at(-1)).toMatchObject({
       kind: "error",
-      summary: "The agent switched to a mode where it approves its own actions, so TabDump stopped it.",
+      summary: "The agent switched to a mode where it approves its own actions, so Hubble stopped it.",
     });
     expect(agent.received.some((message) => message.method === "session/cancel")).toBe(true);
     expect(agent.released).toBe(1);
@@ -832,7 +832,7 @@ describe("modes that ask (Phase J.2)", () => {
   });
 });
 
-describe("an agent TabDump cannot hold to its approvals (Phase J.2)", () => {
+describe("an agent Hubble cannot hold to its approvals (Phase J.2)", () => {
   const UNAVAILABLE: AcpApprovalPolicy = { kind: "unavailable", reason: "It has no mode that asks." };
 
   it("declares no capability, so the service refuses its sessions without a provider check", () => {
@@ -918,7 +918,7 @@ describe("telling the session's context server apart from every other tool (J.4)
     expect(answers).toEqual([{ outcome: "selected", optionId: "proceed_once" }]);
     expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
     expect(events.some((event) => event.kind === "error")).toBe(false);
-    expect(events.filter((event) => event.kind === "tool_started").map((event) => event.tool?.name)).toEqual(["TabDump"]);
+    expect(events.filter((event) => event.kind === "tool_started").map((event) => event.tool?.name)).toEqual(["Hubble"]);
     expect(events.at(-1)?.kind).toBe("run_completed");
   });
 

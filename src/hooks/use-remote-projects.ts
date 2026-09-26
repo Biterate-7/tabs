@@ -96,7 +96,7 @@ export function useRemoteProjects(options: {
   /**
    * Whether to talk to the endpoint at all.
    *
-   * False on a runtime with no remote plane, so a local TabDump does not spend
+   * False on a runtime with no remote plane, so a local Hubble does not spend
    * a request per mount being told 503.
    */
   enabled: boolean

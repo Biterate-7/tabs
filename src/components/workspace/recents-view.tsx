@@ -11,7 +11,7 @@ import type { Tab } from "@/lib/tabs/types"
 
 /**
  * Dedicated Recents destination — tabs the user has actually opened from
- * TabDump, grouped into Today / Yesterday / Earlier rather than stamping a
+ * Hubble, grouped into Today / Yesterday / Earlier rather than stamping a
  * relative timestamp on every row (see lib/workspace/recents.ts). Same
  * full-page overlay shape and workspace scoping as FavoritesView/CategoryPage.
  */
@@ -39,15 +39,15 @@ export function RecentsView({
 
   return (
     <div
-      className="relative flex h-screen min-w-0 flex-1 flex-col bg-background"
+      className="relative flex h-screen max-h-screen min-w-0 flex-1 flex-col bg-background"
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
-      <div className="flex items-center gap-3 border-b border-subtle px-4 py-3 sm:px-6">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <IconButton aria-label="Back" tooltip="Back" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <History className="size-4 shrink-0 text-tertiary" />
-        <p className="text-h1 text-foreground">
+        <p className="text-h2 text-foreground">
           Recent <span className="text-tertiary">· {recent.length} tab{recent.length === 1 ? "" : "s"}</span>
         </p>
       </div>
@@ -57,7 +57,7 @@ export function RecentsView({
           <EmptyState
             icon={History}
             title="Nothing recent yet."
-            description="Tabs you open from TabDump will show up here."
+            description="Tabs you open from Hubble will show up here."
           />
         </div>
       ) : (
@@ -66,7 +66,7 @@ export function RecentsView({
             {groups.map((group) => (
               <section key={group.key}>
                 <p className="mb-2 px-1 text-label text-tertiary">{group.label.toUpperCase()}</p>
-                <div className="rounded-lg border border-subtle bg-card px-2 pb-1">
+                <div className="rounded-md border border-border bg-card px-2 pb-1">
                   {group.tabs.map((tab) => (
                     <TabCard
                       key={tab.id}

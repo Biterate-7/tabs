@@ -59,8 +59,8 @@ export function TabInput({ onDump }: { onDump?: (tabs: Tab[]) => void }) {
         onChange={(e) => setRaw(e.target.value)}
         disabled={organizing}
         className={
-          "w-full resize-none text-left text-sm sm:text-base" +
-          (validCount > 0 ? " border-primary/60" : "")
+          "w-full resize-none bg-card px-3 py-2.5 text-left font-mono text-body-sm leading-6" +
+          (validCount > 0 ? " border-strong" : "")
         }
       />
 
@@ -78,7 +78,7 @@ export function TabInput({ onDump }: { onDump?: (tabs: Tab[]) => void }) {
 
       <Button
         size="lg"
-        className="mt-6 w-full sm:w-auto"
+        className="mt-4 w-full sm:w-auto"
         disabled={validCount === 0 || organizing}
         onClick={handleSubmit}
       >

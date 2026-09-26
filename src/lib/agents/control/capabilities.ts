@@ -59,7 +59,7 @@ export type AgentCapability =
   /** A session can be given further authorized directories beyond the working one. */
   | "additional_directories"
   /**
-   * A session can be handed its TabDump workspace context server (Phase J.4),
+   * A session can be handed its Hubble workspace context server (Phase J.4),
    * and the adapter can prove — from the agent's own structure, never from a
    * name or a title — which of the agent's tool calls are that server's.
    * An adapter that cannot prove it does not declare this, and its sessions
@@ -125,7 +125,7 @@ export function listCapabilities(set: AgentCapabilitySet): AgentCapability[] {
 /**
  * Human labels, provider-neutral by construction.
  *
- * Phrased as what the *agent* can do rather than what TabDump supports, because
+ * Phrased as what the *agent* can do rather than what Hubble supports, because
  * that is the question a user is asking when they read this list before
  * authorizing a project.
  */
@@ -143,7 +143,7 @@ export const CAPABILITY_LABELS: Record<AgentCapability, string> = {
   approvals: "Ask for approval",
   working_directory: "Working directory",
   additional_directories: "Additional directories",
-  workspace_context: "TabDump workspace context",
+  workspace_context: "Hubble workspace context",
 };
 
 /**

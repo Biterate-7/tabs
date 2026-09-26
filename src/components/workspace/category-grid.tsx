@@ -47,7 +47,7 @@ export function CategoryGrid({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {/* A state-based mount flag would trigger a re-render that strips the
            animation mid-flight, cutting the stagger short for items whose
            delay hasn't elapsed yet. This ref read is a one-time snapshot for
@@ -82,7 +82,7 @@ export function CategoryGrid({
       </div>
 
       {chipEntries.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-2.5 flex flex-wrap gap-2">
           {/* Same one-time mount snapshot as the card grid above. */}
           {/* eslint-disable-next-line react-hooks/refs */}
           {chipEntries.map((entry, index) => (

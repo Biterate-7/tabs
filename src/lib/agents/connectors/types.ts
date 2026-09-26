@@ -18,7 +18,7 @@ import type { AgentAdapterObservation } from "@/lib/agents/adapter";
  */
 
 /**
- * A provider TabDump knows how to talk about.
+ * A provider Hubble knows how to talk about.
  *
  * A closed union rather than an open string, so that adding a provider is a
  * deliberate edit with a type error at every place that has to care — rather
@@ -200,8 +200,8 @@ export type ConnectorError = {
 
 const ERROR_MESSAGES: Record<ConnectorErrorCode, string> = {
   unreachable: "Could not reach the provider.",
-  "permission-denied": "TabDump does not have permission to observe this provider.",
-  "malformed-response": "The provider returned data TabDump could not read.",
+  "permission-denied": "Hubble does not have permission to observe this provider.",
+  "malformed-response": "The provider returned data Hubble could not read.",
   timeout: "The provider did not respond in time.",
   unsupported: "This environment does not support observing this provider.",
   configuration: "This connector needs to be configured before it can observe anything.",
@@ -276,7 +276,7 @@ export type ProviderDescriptor = {
   provider: AgentProviderId;
   /** Shown to the user. The Agent identity minted for this provider takes this name. */
   displayName: string;
-  /** One line: what TabDump would observe if this were connected. */
+  /** One line: what Hubble would observe if this were connected. */
   summary: string;
   capabilities: ConnectorCapabilities;
   /**
@@ -298,9 +298,9 @@ export type ConnectorObserver = (observations: ConnectorObservation[]) => void;
 /**
  * The provider-neutral connector contract.
  *
- * Read-only, exactly as `AgentAdapter` is, and for the same reason: TabDump
+ * Read-only, exactly as `AgentAdapter` is, and for the same reason: Hubble
  * observes agents and does not drive them. `connect` and `disconnect` are
- * about *TabDump's own observation* — they start and stop this app watching,
+ * about *Hubble's own observation* — they start and stop this app watching,
  * and they do not reach the external agent at all. Nothing here can launch a
  * session, send it a prompt, or stop one that is running, and no member may
  * be added that could.

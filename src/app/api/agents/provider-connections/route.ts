@@ -60,9 +60,9 @@ export const runtime = "nodejs";
  * deployment.
  */
 const FAILURE_MESSAGES = {
-  "invalid-request": "TabDump could not read that request.",
-  "unknown-provider": "TabDump does not recognise that agent.",
-  "unsupported-provider": "TabDump cannot hold credentials for that agent yet.",
+  "invalid-request": "Hubble could not read that request.",
+  "unknown-provider": "Hubble does not recognise that agent.",
+  "unsupported-provider": "Hubble cannot hold credentials for that agent yet.",
   "not-found": "That connection no longer exists.",
   "credentials-unavailable": "This deployment cannot store provider credentials.",
   "sign-in-required": "Sign in to connect an agent.",

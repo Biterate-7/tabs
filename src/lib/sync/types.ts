@@ -1,9 +1,9 @@
 /**
  * The workspace synchronization contract.
  *
- * These types describe how local TabDump state will eventually be
+ * These types describe how local Hubble state will eventually be
  * represented on the server and how a client will ask what changed. Nothing
- * in the running application uses them yet — TabDump is still local-first,
+ * in the running application uses them yet — Hubble is still local-first,
  * localStorage is still the source of truth, and no mutation path touches
  * the network. This is the contract a later phase implements against.
  *

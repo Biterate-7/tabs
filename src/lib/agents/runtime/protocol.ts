@@ -71,7 +71,7 @@ export type RuntimeErrorCode =
   | "runtime_unavailable"
   /** The host this client was talking to is gone - a restart, or a different process. */
   | "runtime_disconnected"
-  /** The request did not come from this TabDump instance. */
+  /** The request did not come from this Hubble instance. */
   | "ownership_denied"
   /** No adapter for this provider, or it is not registered here. */
   | "provider_unavailable"
@@ -99,7 +99,7 @@ export type RuntimeErrorCode =
   | "invalid_request"
   /** The adapter does not implement this. */
   | "unsupported"
-  /** The agent would not work in a mode where it asks TabDump before acting. */
+  /** The agent would not work in a mode where it asks Hubble before acting. */
   | "approval_unenforceable";
 
 export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
@@ -136,8 +136,8 @@ export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
  * shape of the opt-in on any screen a hosted deployment could render.
  */
 const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
-  runtime_unavailable: "TabDump cannot run agents in this environment.",
-  runtime_disconnected: "TabDump lost its connection to the local runtime.",
+  runtime_unavailable: "Hubble cannot run agents in this environment.",
+  runtime_disconnected: "Hubble lost its connection to the local runtime.",
   ownership_denied: "That session belongs to someone else.",
   provider_unavailable: "That agent is not available here.",
   authentication_required: "That agent needs to be signed in first.",
@@ -146,11 +146,11 @@ const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   permission_denied: "This agent has not been given permission for that.",
   approval_required: "That needs your approval first.",
   project_scope_violation: "This agent is not authorized for that project.",
-  context_invalid: "TabDump could not read that context.",
+  context_invalid: "Hubble could not read that context.",
   provider_error: "The agent stopped unexpectedly.",
   cancellation: "The run was cancelled.",
   timeout: "The agent did not respond in time.",
-  invalid_request: "TabDump could not read that request.",
+  invalid_request: "Hubble could not read that request.",
   unsupported: "This agent cannot do that yet.",
   approval_unenforceable: "That agent would not agree to ask before acting.",
 };
@@ -219,7 +219,7 @@ export type RuntimeProviderStatus = {
   /**
    * The agent signs in with its **own** login, which this runtime can start
    * (`authenticate_provider`) — rather than with a key the user stores in
-   * TabDump. True for the ACP agents everywhere, and for Claude Code in the
+   * Hubble. True for the ACP agents everywhere, and for Claude Code in the
    * desktop app (Phase J.1). Absent means false.
    */
   nativeSignIn?: boolean;
@@ -272,9 +272,9 @@ export type RuntimeStatus = {
 export type ProviderDetection = {
   provider: AgentProviderId;
   installed: boolean;
-  /** How TabDump drives it: the provider SDK, or the Agent Client Protocol. */
+  /** How Hubble drives it: the provider SDK, or the Agent Client Protocol. */
   transport: "sdk" | "acp";
-  /** Whether the executable TabDump would start was found. */
+  /** Whether the executable Hubble would start was found. */
   launchable: boolean;
 };
 
@@ -328,11 +328,11 @@ export type RuntimeSessionView = {
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
-  /** The session's TabDump workspace context, when it has one (Phase J.3). */
+  /** The session's Hubble workspace context, when it has one (Phase J.3). */
   context?: RuntimeSessionContextView;
   /**
    * Set when the session was started from a workspace but has no context
-   * (J.4): its agent cannot prove which of its tool calls are TabDump's, so
+   * (J.4): its agent cannot prove which of its tool calls are Hubble's, so
    * it was not given the context server. Never set alongside `context`.
    */
   contextUnavailable?: "provider";
@@ -411,7 +411,7 @@ export type SequencedControlEvent = AgentControlEvent & { sequence: number };
  *
  * Deliberately every field optional but `provider` and `origin`: the whole
  * point of the correlation layer is that *both* halves exist independently. A
- * session TabDump started has a `controlRunId` before it has a
+ * session Hubble started has a `controlRunId` before it has a
  * `providerSessionId`; a session somebody started in a terminal has a
  * `providerSessionId` and an `observationRunId` and never gets a
  * `controlRunId`. See ./correlation.ts.
@@ -567,7 +567,7 @@ export type RuntimeCommand =
    *
    * A project is the only thing in this protocol that ultimately resolves to
    * a directory, and every other command names one by **id**. But the
-   * durable project record lives in the browser - TabDump is local-first,
+   * durable project record lives in the browser - Hubble is local-first,
    * and `lib/agents/control/persistence.ts` is where projects are kept - so
    * the host has to be told about one before an id can mean anything.
    *

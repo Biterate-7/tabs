@@ -15,7 +15,7 @@ import type { SessionContextSnapshot } from "./snapshot";
  *
  * ## One binding per session, fixed at birth
  *
- * A binding ties exactly one agent session to exactly one TabDump workspace,
+ * A binding ties exactly one agent session to exactly one Hubble workspace,
  * with a capability set chosen when the session starts and a context server
  * *name* minted for it (./identity.ts). None of these can change afterwards:
  * `update` accepts a fresher snapshot of the *same* workspace and refuses any
@@ -61,7 +61,7 @@ import type { SessionContextSnapshot } from "./snapshot";
  * ## Changes
  *
  * A proposed change never touches data here. It becomes an action that waits
- * for a TabDump approval (`approve`, supplied by the host, backed by the
+ * for a Hubble approval (`approve`, supplied by the host, backed by the
  * control service's broker). An approved action waits again, for the Command
  * Centre — which owns the workspace — to apply it and report back. Only then
  * does the agent's tool call return. A denied, expired or abandoned action

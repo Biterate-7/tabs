@@ -64,53 +64,32 @@ export const SidebarItem = React.forwardRef<HTMLButtonElement, SidebarItemProps>
         disabled={disabled}
         className={cn(
           /*
-            A rounded rect, not a pill — deliberately, and against the first
-            instinct when matching the landing page.
-
-            That page's controls are pills, and the shared primitives here
-            (Button, IconButton, Badge, SegmentedControl) follow it. But
-            every pill on /welcome is width-fitted to its own label: its nav
-            links are `rounded-full h-8 px-3` around a word. It has no
-            full-width row anywhere, so there is nothing to copy for one —
-            and a 36px-tall row spanning the whole rail, fully rounded,
-            reads as a lozenge rather than as the same object. macOS agrees:
-            sidebar selection is a rounded rect.
-
-            So the rule the census actually supports is "width-fitted
-            controls are pills, full-width rows and containers are rounded
-            rects", which is what both sources do.
+            HubbleSidebarItem. Measured off the reference's navigation rail:
+            a 30px row, 8px inset, a 4px corner, 13px label, 16px glyph at
+            the secondary tier. The current row is marked by tone — the 6%
+            selected fill with full ink — exactly as the reference marks it;
+            there is no side bar and no colour. aria-current carries the
+            same fact for assistive technology, so the state is never
+            conveyed by colour alone.
           */
-          "group relative flex w-full items-center gap-2.5 rounded-lg border border-transparent",
+          "group relative flex w-full items-center gap-2 rounded-xs border border-transparent",
           "text-left outline-none select-none",
-          // Colour and background only — no transform. These rows are hit
-          // constantly, and `motion.md` asks to "generally avoid adding
-          // motion to UI interactions that occur frequently".
-          "transition-[background-color,color,border-color] duration-(--duration-fast) ease-(--ease-standard)",
-          "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+          // Colour and background only — rows are hit constantly, so nothing moves.
+          "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-color)",
+          "focus-visible:ring-2 focus-visible:ring-ring/60",
           "disabled:pointer-events-none disabled:opacity-45",
           "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-          touch ? "h-11 px-2.5" : "h-9 px-2",
+          touch ? "h-11 px-2.5" : "h-[30px] px-2",
           collapsed && "justify-center px-0",
           current
-            ? "bg-surface-selected text-foreground"
-            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+            ? "bg-surface-selected text-foreground [&_svg]:text-foreground"
+            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground [&_svg]:text-muted-foreground hover:[&_svg]:text-foreground",
           className
         )}
         {...props}
       >
-        {/* The second, non-colour carrier of "you are here". Inset so it
-            reads as a marker on the rail rather than a border on the row. */}
-        {current && (
-          <span
-            aria-hidden
-            className={cn(
-              "absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary",
-              collapsed && "inset-y-2"
-            )}
-          />
-        )}
         {icon}
-        {!collapsed && <span className="min-w-0 flex-1 truncate text-body-sm">{label}</span>}
+        {!collapsed && <span className="min-w-0 flex-1 truncate text-body">{label}</span>}
         {!collapsed && trailing != null && (
           // Measured, not picked: the tertiary tier sits on the base ground
           // at a comfortable ratio but only reaches 4.36:1 on the tinted
@@ -146,12 +125,10 @@ export const SidebarItem = React.forwardRef<HTMLButtonElement, SidebarItemProps>
 SidebarItem.displayName = "SidebarItem"
 
 /**
- * A group heading in the rail.
- *
- * Uppercase mono micro-label, which is the landing page's `.m-label` — the
- * one place that page allows mono, and the one place it belongs here too.
- * Renders nothing when the rail is collapsed rather than shrinking to an
- * unreadable stub.
+ * A group heading in the rail: "This week", "Agents", "Workspaces" — 11px
+ * in sentence case at the tertiary tier, as the reference's rail labels
+ * are. Renders nothing when the rail is collapsed rather than shrinking to
+ * an unreadable stub.
  */
 export function SidebarSectionLabel({
   children,
@@ -164,6 +141,6 @@ export function SidebarSectionLabel({
 }) {
   if (collapsed) return null
   return (
-    <p className={cn("px-2 pb-1.5 pt-0.5 text-eyebrow text-tertiary", className)}>{children}</p>
+    <p className={cn("px-2 pb-1 pt-0.5 text-meta text-tertiary", className)}>{children}</p>
   )
 }

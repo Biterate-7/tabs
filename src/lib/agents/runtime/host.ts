@@ -59,7 +59,7 @@ import type {
  * One process's worth of live agent control. It holds the `ControlService`,
  * the correlation registry and the event journal; it answers the fourteen
  * commands in ./protocol.ts and nothing else. Everything a provider can be
- * asked to do goes through it, and it is the only thing in TabDump that may
+ * asked to do goes through it, and it is the only thing in Hubble that may
  * ask.
  *
  * ## Where the trust boundary is
@@ -92,7 +92,7 @@ import type {
  * than by being told it is still running.
  *
  * It does not mint domain runs either. See ./correlation.ts: the agent domain
- * owns `AgentRun`, and what this mints is a *control run id* — TabDump's own
+ * owns `AgentRun`, and what this mints is a *control run id* — Hubble's own
  * identifier for one stretch of driving — which the correlation registry then
  * joins to whatever observation independently discovers.
  */
@@ -107,7 +107,7 @@ import type {
  * Resolved by the transport from the request itself — never read out of a
  * command body, which is why `RuntimeCommand` has no actor field for a caller
  * to set. On a deployment with accounts this is the signed-in account; on a
- * purely local TabDump, which has no accounts at all, it is the anonymous
+ * purely local Hubble, which has no accounts at all, it is the anonymous
  * local actor. Both are stable strings, and both are compared exactly.
  *
  * A session id alone is never sufficient to reach a session: every command
@@ -116,7 +116,7 @@ import type {
  */
 export type RuntimeActor = { id: string };
 
-/** The actor a TabDump with no accounts configured runs as. */
+/** The actor a Hubble with no accounts configured runs as. */
 export const LOCAL_ACTOR: RuntimeActor = { id: "local" };
 
 /* ------------------------------------------------------------------ *
@@ -365,7 +365,7 @@ type HostSession = {
   undeliveredContextSnapshotId?: string;
   /**
    * The session was started from a workspace, but its agent cannot prove
-   * which of its calls are TabDump's (J.4), so it was not given the context
+   * which of its calls are Hubble's (J.4), so it was not given the context
    * server. Said on the view rather than left to be guessed from an absence.
    */
   contextUnavailable?: true;
@@ -643,7 +643,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
     const adapter = options.resolveAdapter(host.provider, host.ownerId);
     // An adapter that cannot be bound produces events with no run id. That is
-    // recorded rather than pretended around: the run still exists as TabDump's
+    // recorded rather than pretended around: the run still exists as Hubble's
     // own unit of driving, and correlation simply has one less piece of
     // evidence for it.
     if (adapter) bindRunTo(adapter, sessionId, runId);
@@ -830,7 +830,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // Available means an adapter exists and has not declared itself
         // unusable. It is emphatically not "authenticated" — see below.
         available: status.kind !== "unavailable",
-        // Three separate facts, and this is the one TabDump usually cannot
+        // Three separate facts, and this is the one Hubble usually cannot
         // know. Claude Code authenticates lazily: the first proof either way
         // arrives when a run starts, so anything before that is a guess.
         // `configuration_required` is the one state the provider has actually
@@ -920,7 +920,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // important refusal in the remote design.
         //
         // These records describe directories on the machine running the
-        // browser. A hosted TabDump cannot see that machine, so a path from
+        // browser. A hosted Hubble cannot see that machine, so a path from
         // one means nothing here — but it would still *validate*, because
         // `validateProjectPath` is checking the shape of a path and not the
         // existence of a filesystem. Accepting one would create an authorized

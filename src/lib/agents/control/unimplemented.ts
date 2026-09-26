@@ -55,7 +55,7 @@ export type UnimplementedAdapterOptions = {
   /**
    * Whether the gap is something the user could close.
    *
-   * `unavailable` means they cannot — TabDump has not built it. That is the
+   * `unavailable` means they cannot — Hubble has not built it. That is the
    * truthful answer for every provider in Phase B, and it is the default.
    * `configuration_required` would mean the user must supply something, and
    * no adapter here is in that state yet.

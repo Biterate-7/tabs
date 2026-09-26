@@ -103,9 +103,9 @@ describe("ClaudeDesktopMcpCard", () => {
 describe("claudeDesktopConfigSnippet", () => {
   it("is a valid Claude Desktop config naming the bridge and the endpoint", () => {
     const config = JSON.parse(claudeDesktopConfigSnippet(TOKEN, "https://tabsdump.vercel.app"))
-    expect(config.mcpServers.tabdump).toEqual({
+    expect(config.mcpServers.hubble).toEqual({
       command: "node",
-      args: ["<path to TabDump>/scripts/tabdump-mcp-bridge.mjs"],
+      args: ["<path to Hubble>/scripts/tabdump-mcp-bridge.mjs"],
       env: { TABDUMP_MCP_TOKEN: TOKEN, TABDUMP_MCP_URL: "https://tabsdump.vercel.app/api/mcp" },
     })
   })

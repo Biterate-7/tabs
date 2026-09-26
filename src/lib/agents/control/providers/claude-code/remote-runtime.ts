@@ -238,14 +238,14 @@ export function createRemoteClaudeRuntime(
      *
      * So a user who disconnects their credential stops being able to **start**
      * sessions, and the one already running keeps running until it finishes or
-     * is explicitly stopped. That is stated rather than accidental: TabDump
+     * is explicitly stopped. That is stated rather than accidental: Hubble
      * cannot reach inside a live sandbox to revoke a credential the provider
      * already accepted, and a disconnect that claimed to do so would be a
      * promise this architecture cannot keep. `session-isolation.test.ts` pins
      * both halves.
      *
      * Adding a credential check here would not make it true — it would only
-     * make TabDump refuse to *show* the user a run that is still happening.
+     * make Hubble refuse to *show* the user a run that is still happening.
      */
     async reattach(start: ClaudeRuntimeStartOptions): Promise<ClaudeRuntimeHandle | null> {
       return reattachRemoteSession({
@@ -347,7 +347,7 @@ function createHandle(input: HandleInput): ClaudeRuntimeHandle {
     async interrupt(): Promise<void> {
       if (!active) return;
       // Reaches the provider: the bridge polls for this and calls the SDK's
-      // own interrupt. A local flag that merely stopped TabDump listening
+      // own interrupt. A local flag that merely stopped Hubble listening
       // would leave the agent running and still editing files, which is the
       // failure this method exists to prevent — and it would do so inside a
       // machine the user cannot see.

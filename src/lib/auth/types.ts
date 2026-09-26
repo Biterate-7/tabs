@@ -1,5 +1,5 @@
 /**
- * The account model TabDump owns. Google is only ever the identity
+ * The account model Hubble owns. Google is only ever the identity
  * *provider* here — every user record, session, and authorization decision
  * below belongs to this app, so swapping or adding a second provider later
  * would touch `googleSub` and nothing else.
@@ -9,9 +9,9 @@
  * with the route handlers that produce it.
  */
 
-/** A TabDump account. `googleSub` is the join key to the identity provider — never the email (see the note on `email`). */
+/** A Hubble account. `googleSub` is the join key to the identity provider — never the email (see the note on `email`). */
 export type AuthUser = {
-  /** TabDump's own id (a UUID). This — never `googleSub` — is what the rest of the app scopes data by. */
+  /** Hubble's own id (a UUID). This — never `googleSub` — is what the rest of the app scopes data by. */
   id: string;
   /**
    * Google's `sub` claim: stable for the life of the Google account and
@@ -23,7 +23,7 @@ export type AuthUser = {
   /**
    * Last-seen verified email. Stored for display/support only — it is
    * deliberately NOT unique and never used to look an account up, so a user
-   * who changes their Google email keeps the same TabDump account, and
+   * who changes their Google email keeps the same Hubble account, and
    * someone who later acquires a recycled address can never inherit one.
    */
   email: string;
@@ -72,7 +72,7 @@ export type GoogleIdentity = {
  * The only persistence surface the auth system talks to. Two
  * implementations ship (see ./store/): a Postgres one for real deployments,
  * and an in-memory one for local development. Keeping this an interface is
- * what lets TabDump own its account system without also committing the
+ * what lets Hubble own its account system without also committing the
  * whole app to one database — nothing outside src/lib/auth/store/ knows
  * which is in play.
  *

@@ -255,10 +255,10 @@ async function main() {
       permissionMode: config.permissionMode,
       allowedTools: config.allowedTools,
       disallowedTools: config.disallowedTools,
-      // TabDump configures no MCP servers, and says so explicitly rather than
+      // Hubble configures no MCP servers, and says so explicitly rather than
       // by omission: strictMcpConfig makes the runner ignore every server it
       // would otherwise inherit, so a session cannot silently gain tools
-      // TabDump never authorized.
+      // Hubble never authorized.
       mcpServers: {},
       strictMcpConfig: true,
       ...(config.resume ? { resume: config.resume } : {}),

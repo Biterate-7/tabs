@@ -2,7 +2,7 @@
 
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useAppearanceContext } from "@/components/appearance-provider"
-import { FieldRow, SectionHeading } from "./section-ui"
+import { FieldRow, SectionHeading, SectionStack } from "./section-ui"
 
 const RADIUS_PREVIEW: Record<string, string> = {
   sharp: "0px",
@@ -21,7 +21,7 @@ export function ShapeSection() {
     <div>
       <SectionHeading title="Shape" description="Corner rounding, border, and shadow strength — applied consistently to every card, button, input, and panel." />
 
-      <div className="flex flex-col gap-2.5">
+      <SectionStack>
         <FieldRow label="Corner radius" stacked>
           <div className="flex flex-wrap gap-2">
             {(["sharp", "small", "medium", "rounded", "very-rounded"] as const).map((option) => (
@@ -30,7 +30,7 @@ export function ShapeSection() {
                 type="button"
                 onClick={() => setShape({ radius: option })}
                 aria-pressed={s.radius === option}
-                className="flex flex-col items-center gap-1.5 rounded-lg border border-subtle p-2 text-meta text-muted-foreground outline-none transition-colors data-[selected=true]:border-primary data-[selected=true]:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="flex flex-col items-center gap-1.5 rounded-md border border-border p-2 text-meta text-muted-foreground outline-none transition-colors data-[selected=true]:border-primary data-[selected=true]:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
                 data-selected={s.radius === option}
               >
                 <span
@@ -69,7 +69,7 @@ export function ShapeSection() {
             ]}
           />
         </FieldRow>
-      </div>
+      </SectionStack>
     </div>
   )
 }

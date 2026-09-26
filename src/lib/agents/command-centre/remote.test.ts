@@ -284,10 +284,10 @@ describe("control availability on the connector page", () => {
   });
 
   it("is unavailable when the runtime cannot execute, and says the gate's own reason", () => {
-    const refused = status({ executable: false, detail: "Agents cannot run on a hosted TabDump." });
+    const refused = status({ executable: false, detail: "Agents cannot run on a hosted Hubble." });
     expect(controlAvailability(refused, "claude-code")).toEqual({
       kind: "unavailable",
-      reason: "Agents cannot run on a hosted TabDump.",
+      reason: "Agents cannot run on a hosted Hubble.",
     });
   });
 

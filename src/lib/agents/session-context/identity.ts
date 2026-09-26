@@ -1,5 +1,5 @@
 /**
- * The name a session's TabDump context server goes by (Phase J.4).
+ * The name a session's Hubble context server goes by (Phase J.4).
  *
  * ## Why every session gets its own
  *
@@ -11,7 +11,7 @@
  * required configuration — and some agents merge or override same-named
  * servers rather than refuse them. A name minted per session from 80 random
  * bits cannot have been configured anywhere before the session existed, so
- * nothing but TabDump's own server can answer to it.
+ * nothing but Hubble's own server can answer to it.
  *
  * The name is an identity, not a credential: it is not secret and appears on
  * an agent's command line where a launch needs it. What proves a request may

@@ -36,7 +36,7 @@ import type { AgentVisualTone } from "@/lib/agents/visual/types"
  *
  * It also does not fake streaming. An event appears when the runtime has
  * reported it; there is no per-character animation pretending to be a token
- * stream, which would be motion asserting a fact TabDump does not have.
+ * stream, which would be motion asserting a fact Hubble does not have.
  *
  * Since Phase J the messages carry their whole text, and a provider that
  * streams sends real pieces (`message_delta`) that are shown joined as they
@@ -67,17 +67,25 @@ const QuietRow = memo(function QuietRow({
   const restatesLabel =
     event.summary.replace(/[.\s]+$/, "").toLowerCase() === presentation.label.toLowerCase()
 
+  /*
+    A tool event whose summary is only the tool name says it in words once.
+    The raw name of a Hubble context tool is a protocol identifier
+    ("mcp__tabdump_<id>__list_tabs"), never something to show a person, and
+    repeating any tool name as the trailing detail says the same thing twice.
+  */
+  const namesOnlyTheTool = event.tool !== undefined && event.summary.trim() === event.tool.name
+  const summary = namesOnlyTheTool && event.tool ? toolDisplayName(event.tool.name) : event.summary
+
   return (
-    <li className="flex items-baseline gap-2 py-0.5">
-      <span
-        aria-hidden
-        className={cn("select-none text-meta leading-5", AGENT_TONE_TEXT_CLASS[presentation.tone])}
-      >
-        ●
-      </span>
-      <span className="shrink-0 text-label text-muted-foreground">{presentation.label}</span>
+    <li className="flex items-baseline gap-1.5 py-1">
+      {presentation.tone === "bad" && (
+        <span aria-hidden className="select-none text-meta text-destructive">
+          ●
+        </span>
+      )}
+      <span className="shrink-0 text-body-sm text-muted-foreground">{presentation.label}</span>
       <span className="min-w-0 flex-1 truncate text-body-sm text-tertiary">
-        {restatesLabel ? "" : event.summary}
+        {restatesLabel ? "" : summary}
         {outcome && (
           <span className={cn("ml-1.5", AGENT_TONE_TEXT_CLASS[outcome.tone])}>
             · {outcome.text}
@@ -93,17 +101,17 @@ const QuietRow = memo(function QuietRow({
       */}
       {event.file ? (
         <span
-          className="shrink-0 truncate font-mono text-meta text-tertiary"
+          className="min-w-0 max-w-[45%] shrink truncate text-body-sm text-tertiary"
           title={event.file.relativePath}
         >
           {event.file.relativePath}
         </span>
       ) : event.tool ? (
-        <span className="flex shrink-0 items-baseline gap-1.5">
+        <span className="flex min-w-0 max-w-[50%] shrink items-baseline gap-1.5 max-sm:hidden">
           <ToolStage name={event.tool.name} />
-          <span className="text-label text-tertiary" title={event.tool.name}>
-            {toolDisplayName(event.tool.name)}
-          </span>
+          {!namesOnlyTheTool && (
+            <span className="truncate text-body-sm text-tertiary">{toolDisplayName(event.tool.name)}</span>
+          )}
         </span>
       ) : null}
     </li>
@@ -111,9 +119,9 @@ const QuietRow = memo(function QuietRow({
 })
 
 /**
- * Where the agent is in the loop, for a TabDump context call (J.6): Reading,
+ * Where the agent is in the loop, for a Hubble context call (J.6): Reading,
  * Analyzing, Checking a plan, or Proposing — the one stage an approval card
- * follows. Other tools get nothing: a stage is only claimed for calls TabDump
+ * follows. Other tools get nothing: a stage is only claimed for calls Hubble
  * itself serves.
  */
 function ToolStage({ name }: { name: string }) {
@@ -123,8 +131,8 @@ function ToolStage({ name }: { name: string }) {
     <span
       data-stage={stage}
       className={cn(
-        "rounded-sm border px-1 text-meta",
-        stage === "proposing" ? "border-strong text-foreground" : "border-subtle text-muted-foreground"
+        "rounded-xs px-1 text-meta",
+        stage === "proposing" ? "bg-link/12 text-link" : "bg-surface-hover text-muted-foreground"
       )}
     >
       {CONTEXT_TOOL_STAGE_LABEL[stage]}
@@ -136,7 +144,7 @@ function ToolStage({ name }: { name: string }) {
 const UserMessage = memo(function UserMessage({ text }: { text: string }) {
   return (
     <li className="py-2">
-      <p className="rounded-md border border-subtle bg-surface px-3 py-2 text-body-sm whitespace-pre-wrap text-foreground">
+      <p className="rounded-md border border-border bg-card px-2.5 py-1.5 text-body whitespace-pre-wrap text-foreground">
         {text}
       </p>
     </li>
@@ -154,7 +162,7 @@ const UserMessage = memo(function UserMessage({ text }: { text: string }) {
 const AgentMessage = memo(function AgentMessage({ text, streaming }: { text: string; streaming: boolean }) {
   return (
     <li className="py-2" aria-busy={streaming || undefined}>
-      <p className="text-body-sm whitespace-pre-wrap text-foreground">
+      <p className="text-body whitespace-pre-wrap text-foreground">
         {text}
         {streaming && (
           <span aria-hidden className="ml-0.5 text-tertiary">
@@ -200,7 +208,11 @@ export function EventStream({
   useEffect(() => {
     if (events.length === countRef.current) return
     countRef.current = events.length
-    endRef.current?.scrollIntoView({ block: "end" })
+    // "nearest", not "end": inside the stream's own scroller the two are the
+    // same (the end is below the fold, so it aligns to the bottom), but "end"
+    // also scrolled every ancestor — a page hosting the stream (the landing
+    // page's demo) jumped on every new event.
+    endRef.current?.scrollIntoView({ block: "nearest" })
   }, [events.length])
 
   return (
@@ -210,7 +222,7 @@ export function EventStream({
         and a screen-reader user landing on an unnamed one has to read into it
         to find out which.
       */}
-      <ol aria-label="Session events" className="mx-auto flex w-full max-w-3xl flex-col px-6 py-4">
+      <ol aria-label="Session events" className="mx-auto flex w-full max-w-[720px] flex-col px-6 py-5">
         {transcript.map((item) => {
           if (item.type === "message") {
             return item.role === "user" ? (

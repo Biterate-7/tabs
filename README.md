@@ -1,3 +1,7 @@
+# Hubble
+
+Hubble turns a browser full of tabs into an organized workspace — and shows the AI agent runs happening inside it. It ships as a web app, a Chrome extension and a desktop app from this one codebase.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
@@ -22,21 +26,21 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Automatic organization setup
 
-TabDump automatically organizes tabs into workspaces (and groups) right after you import them, using deterministic domain/keyword clustering. Setting a Gemini key is optional and only sharpens that clustering with semantic similarity hints — nothing else in TabDump needs it, and there's no AI chat or assistant to interact with.
+Hubble automatically organizes tabs into workspaces (and groups) right after you import them, using deterministic domain/keyword clustering. Setting a Gemini key is optional and only sharpens that clustering with semantic similarity hints — nothing else in Hubble needs it, and there's no AI chat or assistant to interact with.
 
 1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`.
 3. Restart `next dev` if it was already running.
 
-The key is only ever read server-side (in Route Handlers under `src/app/api/ai/`) — it's never sent to the browser. The index itself (embeddings for your saved tabs) lives in your browser's IndexedDB, the same place the rest of TabDump keeps its data; nothing is uploaded to a database.
+The key is only ever read server-side (in Route Handlers under `src/app/api/ai/`) — it's never sent to the browser. The index itself (embeddings for your saved tabs) lives in your browser's IndexedDB, the same place the rest of Hubble keeps its data; nothing is uploaded to a database.
 
 For a Vercel deployment, set `GEMINI_API_KEY` (and the optional `GEMINI_EMBEDDING_MODEL` override from `.env.example`) under Project Settings → Environment Variables.
 
 ## Accounts (Sign in with Google)
 
-Optional, and off until you configure it: with no Google client ID set, TabDump makes no auth requests and shows no sign-in UI — exactly as it behaved before accounts existed.
+Optional, and off until you configure it: with no Google client ID set, Hubble makes no auth requests and shows no sign-in UI — exactly as it behaved before accounts existed.
 
-TabDump owns the whole account system. Google only proves who someone is; the user records, sessions and authorization all live here, and there's no third-party auth platform involved. See [docs/auth-architecture.md](docs/auth-architecture.md) for the full design, including how the browser extension should authenticate later.
+Hubble owns the whole account system. Google only proves who someone is; the user records, sessions and authorization all live here, and there's no third-party auth platform involved. See [docs/auth-architecture.md](docs/auth-architecture.md) for the full design, including how the browser extension should authenticate later.
 
 To turn it on:
 
@@ -50,7 +54,7 @@ npm run migrate:auth
 
 Sessions are server-side rows, so production needs that database — a serverless deployment has nowhere else to keep them. Local development without one falls back to an in-memory store, so you can sign in and out immediately; those sessions just don't survive a dev-server restart.
 
-Signing in doesn't upload anything. TabDump stays local-first — an account partitions this browser's storage so two people sharing a browser don't see each other's workspaces, and your signed-out workspaces stay exactly where they are.
+Signing in doesn't upload anything. Hubble stays local-first — an account partitions this browser's storage so two people sharing a browser don't see each other's workspaces, and your signed-out workspaces stay exactly where they are.
 
 ## Tests
 
@@ -70,7 +74,7 @@ TABDUMP_SKIP_PG_TESTS=1 npm test
 
 ## Desktop app (Tauri)
 
-TabDump also builds as a downloadable desktop app. It is the **same**
+Hubble also builds as a downloadable desktop app. It is the **same**
 frontend as the website — one `src/` tree, packaged as a static export
 inside a Tauri 2 shell — not a separate product.
 
@@ -82,7 +86,7 @@ behind an environment variable only the `desktop:*` scripts set, so
 npm run desktop:dev     # Tauri window against the Next dev server (hot reload)
 npm run desktop:build   # packaged app -> src-tauri/target/release/bundle/
 npm run desktop:export  # just the static frontend -> out/
-npm run desktop:icons   # regenerate app icons from src/app/icon.svg
+npm run desktop:icons   # regenerate app icons (same as `npm run brand:assets`)
 ```
 
 Building the desktop app (not the website) additionally needs [Rust](https://rustup.rs/)
@@ -91,7 +95,7 @@ MSVC and the Windows SDK. Run `npx tauri info` to check. Windows packaging
 (MSI/NSIS) is configured; macOS targets can be added without changing any
 application code.
 
-Because TabDump is local-first, the desktop app works offline and keeps
+Because Hubble is local-first, the desktop app works offline and keeps
 workspaces on that device. Two things are web-only by nature, and the UI
 already handles both: **Sign in with Google** (Google will not authorize a
 `tauri://localhost` origin, so desktop v1 runs signed-out) and anything

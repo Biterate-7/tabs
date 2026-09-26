@@ -105,7 +105,7 @@ export function environmentKindOf(decision: RuntimeDecision): RuntimeEnvironment
 /**
  * The gate, for a context that has a real server environment.
  *
- * Every provider execution path in TabDump crosses this function. It takes
+ * Every provider execution path in Hubble crosses this function. It takes
  * the environment rather than reading one, which is what makes it a pure
  * function the security suite can drive through every branch.
  *
@@ -155,7 +155,7 @@ export function assertExecutionAllowed(
   // Neither plane. Which refusal to show is a judgement about what the
   // operator most likely meant, and the tiebreak is deliberate: a machine
   // showing hosted markers was never going to execute locally, so telling its
-  // operator to "run TabDump on your own machine" would be advice they cannot
+  // operator to "run Hubble on your own machine" would be advice they cannot
   // take. They are told what the remote plane is missing instead.
   return local.kind === "hosted" ? describeRemote(remote) : describe(local);
 }
@@ -184,7 +184,7 @@ function describeRemote(decision: RemoteRuntimeDecision): ExecutionGateResult {
     kind: environmentKindOf(refused),
     decision: refused,
     detail:
-      describeRemoteDenial(decision) ?? "TabDump cannot run agents here.",
+      describeRemoteDenial(decision) ?? "Hubble cannot run agents here.",
   };
 }
 
@@ -239,7 +239,7 @@ function describe(decision: RuntimeDecision): ExecutionGateResult {
 }
 
 /** The sentence for a refusal nothing else explained. Fixed text, like every other. */
-const FALLBACK_DETAIL = "TabDump cannot run agents here.";
+const FALLBACK_DETAIL = "Hubble cannot run agents here.";
 
 /**
  * The failure a refused gate produces.

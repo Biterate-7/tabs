@@ -41,7 +41,7 @@ import type {
  * Name a binary, a path, an argument or a credential. Every method maps to one
  * command in `runtime/protocol.ts`, whose parser drops anything the closed
  * union does not name. A connector for the custom MCP provider has nothing to
- * connect to in the runtime at all — TabDump never starts that agent — and
+ * connect to in the runtime at all — Hubble never starts that agent — and
  * every runtime method on it answers `unsupported`.
  */
 export interface AgentPlatformConnector {
@@ -90,7 +90,7 @@ export function createPlatformConnector(
   const spec = platformProvider(provider);
   if (!spec) throw new Error("unknown provider");
 
-  /** TabDump never starts an MCP client, so nothing in the runtime is its to call. */
+  /** Hubble never starts an MCP client, so nothing in the runtime is its to call. */
   const runtimeReachable = spec.transport !== "mcp";
 
   async function status(): Promise<RuntimeProviderStatus | undefined> {

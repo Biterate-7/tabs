@@ -1,20 +1,20 @@
 /**
- * The slice of the Agent Client Protocol TabDump speaks, read defensively.
+ * The slice of the Agent Client Protocol Hubble speaks, read defensively.
  *
  * ACP (agentclientprotocol.com) is JSON-RPC 2.0 over stdio, protocol version
  * 1. It is spoken natively by Gemini CLI (`gemini --acp`) and Grok Build
  * (`grok agent stdio`), and by Codex through the `codex-acp` adapter — which
- * is why TabDump implements it once, here, rather than three provider
+ * is why Hubble implements it once, here, rather than three provider
  * integrations. The launch vocabulary for each lives server-side in
  * `lib/agents/launch/allowlist.ts`; this file never names a binary.
  *
- * ## What TabDump advertises, and why so little
+ * ## What Hubble advertises, and why so little
  *
  * `clientCapabilities` declares **no** filesystem and **no** terminal. ACP
  * lets a client offer to read and write files and to run commands *for* the
- * agent; TabDump offering either would make it the thing that executes, which
+ * agent; Hubble offering either would make it the thing that executes, which
  * the whole architecture refuses. The agent uses its own tools inside the
- * directory TabDump launched it in, and asks — through
+ * directory Hubble launched it in, and asks — through
  * `session/request_permission` — before anything privileged. An `fs/*` or
  * `terminal/*` request that arrives anyway is answered method-not-found.
  *
@@ -22,7 +22,7 @@
  *
  * Agents add fields and variants with every release. Each reader below takes
  * `unknown`, returns `undefined` for a shape it does not recognise, and keeps
- * only the fields TabDump uses. A new update kind is ignored rather than
+ * only the fields Hubble uses. A new update kind is ignored rather than
  * breaking the stream.
  */
 
@@ -31,7 +31,7 @@ export const ACP_PROTOCOL_VERSION = 1;
 /** The error code ACP agents use for "authenticate first". */
 export const ACP_AUTH_REQUIRED = -32000;
 
-export const ACP_CLIENT_INFO = { name: "tabdump", title: "TabDump", version: "1.0.0" } as const;
+export const ACP_CLIENT_INFO = { name: "tabdump", title: "Hubble", version: "1.0.0" } as const;
 
 export function initializeParams() {
   return {
@@ -90,7 +90,7 @@ export const MAX_AUTH_METHODS = 8;
  * Verified against the real agents: Gemini CLI advertises `oauth-personal`,
  * `gemini-api-key`, `vertex-ai` and `gateway`; codex-acp advertises
  * `chat-gpt` and `api-key`. The key and gateway methods read a key from the
- * agent's environment — and TabDump starts agents with an allowlisted
+ * agent's environment — and Hubble starts agents with an allowlisted
  * environment that carries no key (lib/agents/launch/env.ts), on purpose. So
  * those methods cannot succeed from here, and offering them as buttons would
  * be offering a failure. What is left is the agent's own interactive login.
@@ -209,7 +209,7 @@ function toolStatus(value: unknown): AcpToolStatus | undefined {
 }
 
 /**
- * One tool call, as much of it as TabDump keeps.
+ * One tool call, as much of it as Hubble keeps.
  *
  * `title`, `rawInput`, `rawOutput` and `content` are read by nothing. A title
  * for an `execute` tool is routinely the command line itself, and content
@@ -255,7 +255,7 @@ export type AcpSessionUpdate =
   /** The agent says its session is now in another mode. Enforced, see adapter.ts. */
   | { type: "mode_changed"; modeId: string };
 
-/** Reads a `session/update` notification's params. `undefined` for anything TabDump ignores. */
+/** Reads a `session/update` notification's params. `undefined` for anything Hubble ignores. */
 export function readSessionUpdate(
   params: unknown
 ): { sessionId: string; update: AcpSessionUpdate } | undefined {
@@ -338,8 +338,8 @@ export function readPermissionRequest(params: unknown): AcpPermissionRequest | u
  * The answer to a permission request.
  *
  * **Never `allow_always`.** An "always" answer would be the agent remembering a
- * blanket grant TabDump cannot see or revoke, so a later identical action would
- * not come back for approval. A grant is TabDump's to hold. If an agent offers
+ * blanket grant Hubble cannot see or revoke, so a later identical action would
+ * not come back for approval. A grant is Hubble's to hold. If an agent offers
  * no one-time option, the request is answered `cancelled`, which every ACP
  * agent treats as a refusal — failing closed rather than widening.
  */

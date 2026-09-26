@@ -3,7 +3,7 @@ import { TRACKING_PARAMS } from "@/lib/tabs/normalize";
 
 /**
  * "Which underlying resource is this?" for a history URL — one step coarser
- * than `normalizeUrl` (src/lib/tabs/normalize.ts), which stays TabDump's
+ * than `normalizeUrl` (src/lib/tabs/normalize.ts), which stays Hubble's
  * strict notion of "identical" and is what duplicate-flagging on save and
  * Auto-Organize rely on. This is History Dump's answer to a different
  * question: browsing history routinely records the *same page* under URLs

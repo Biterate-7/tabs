@@ -13,7 +13,7 @@ import type { Workspace } from "@/lib/workspace/types";
  *
  * ## Account-synced data, and only that
  *
- * TabDump is local-first: a signed-out user's workspaces live in one
+ * Hubble is local-first: a signed-out user's workspaces live in one
  * browser's storage and no server has them. What a server *does* hold is the
  * account copy the sync engine maintains (src/lib/sync), keyed by account.
  * That is the whole of what an MCP client can see, and it is the right
@@ -79,7 +79,7 @@ export type McpAgentSession = {
   updatedAt: number;
 };
 
-export type TabDumpMcpData = {
+export type HubbleMcpData = {
   listWorkspaces(userId: string): Promise<McpWorkspaceSummary[]>;
   loadWorkspace(userId: string, workspaceId: string): Promise<McpLoadedWorkspace | undefined>;
   /** `undefined` when this deployment has no remote agent plane. */
@@ -107,7 +107,7 @@ export function createSyncMcpData(deps: {
   sync: SyncReader;
   /** Absent on a deployment with no remote agent plane. */
   remote?: RemoteStore;
-}): TabDumpMcpData {
+}): HubbleMcpData {
   return {
     async listWorkspaces(userId) {
       const rows = await deps.sync.listWorkspaces(userId);

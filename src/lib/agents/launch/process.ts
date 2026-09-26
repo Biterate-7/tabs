@@ -16,7 +16,7 @@ import type { ProviderDetection } from "@/lib/agents/runtime/protocol";
 import type { ResolverFs } from "./resolve";
 
 /**
- * The one module in TabDump that starts an agent process over ACP.
+ * The one module in Hubble that starts an agent process over ACP.
  *
  * ## The whole contract, in the order it is enforced
  *
@@ -36,7 +36,7 @@ import type { ResolverFs } from "./resolve";
  *   6. **The environment is an allowlist.** See ./env.ts.
  *
  * stderr is drained and discarded — it is the agent's diagnostic channel,
- * it may echo anything, and nothing in TabDump displays it.
+ * it may echo anything, and nothing in Hubble displays it.
  */
 
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -87,7 +87,7 @@ function lineSplitter(onLine: (line: string) => void) {
  * ------------------------------------------------------------------ */
 
 /**
- * The installed executable of an agent TabDump drives through its SDK.
+ * The installed executable of an agent Hubble drives through its SDK.
  *
  * Resolved by name from the allowlist, like everything else here. A shim is
  * not followed for these: an SDK needs a real binary to hand to its own
@@ -237,7 +237,7 @@ export function createAcpProcessLauncher(options: ProcessLauncherOptions): AcpLa
     // The one argument a launch can add (Phase J.4): the session's context
     // server name, after the agent's own MCP allowlist flag — and only in the
     // shape the runtime mints. Anything else refuses the launch rather than
-    // starting an agent that could load other MCP servers beside TabDump's.
+    // starting an agent that could load other MCP servers beside Hubble's.
     const contextArgs: string[] = [];
     if (request.contextServerName !== undefined) {
       if (entry.contextIdentity.kind !== "exclusive-mcp" || !isContextServerName(request.contextServerName)) {

@@ -176,7 +176,7 @@ describe("origin is a function of the correlation, not of the provider", () => {
 
   it("does not claim control when nothing correlates", () => {
     // The specific failure this guards: a session that exists because a
-    // provider exists is not evidence that TabDump started it.
+    // provider exists is not evidence that Hubble started it.
     expect(sessionOrigin({})).toBe("unknown")
   })
 })

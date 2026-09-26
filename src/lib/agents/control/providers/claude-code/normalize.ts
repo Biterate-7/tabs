@@ -38,7 +38,7 @@ import type { ClaudeRuntimeMessage } from "./runtime";
 
 export type NormalizeContext = {
   sessionId: string;
-  /** TabDump's project id, for `ControlFileInfo`. Absent when the session has no project. */
+  /** Hubble's project id, for `ControlFileInfo`. Absent when the session has no project. */
   projectId?: string;
   /** The project root, for reducing absolute paths. Absent when the session has no project. */
   projectPath?: string;
@@ -133,7 +133,7 @@ function event(
  * The file event a tool call implies, if any.
  *
  * `Write` is reported as `file_modified` rather than `file_created`, because
- * the provider does not say whether the file already existed and TabDump will
+ * the provider does not say whether the file already existed and Hubble will
  * not guess. The observation plane made the same call for the same reason —
  * see the note on `AgentRunArtifactRole` in the domain types.
  */
@@ -240,7 +240,7 @@ function fromAssistant(
  *
  * In this stream a `user` message is usually the *tool result* being fed
  * back, not something a person typed. Only the result case is normalized:
- * TabDump already knows what it sent, and re-emitting its own message as
+ * Hubble already knows what it sent, and re-emitting its own message as
  * `message_sent` from the provider's echo would double-count it.
  */
 function fromUser(

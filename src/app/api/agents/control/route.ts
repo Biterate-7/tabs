@@ -13,7 +13,7 @@ export const runtime = "nodejs";
  *
  * ## Why this is the transport
  *
- * TabDump's desktop shell is a **static export** loaded from
+ * Hubble's desktop shell is a **static export** loaded from
  * `tauri://localhost` (see next.config.ts): `pageExtensions: ["tsx"]` drops
  * every `route.ts` from the desktop route tree, so this file does not exist
  * in the packaged app at all. The transport that *does* exist in every
@@ -105,7 +105,7 @@ export async function POST(request: Request): Promise<Response> {
  *
  * On a deployment with accounts, the signed-in user — so one account's
  * sessions are invisible to another signed into the same browser, exactly as
- * their workspaces already are. On a TabDump with no accounts configured, the
+ * their workspaces already are. On a Hubble with no accounts configured, the
  * anonymous local actor, which is the honest answer: there is one user of a
  * local runtime and it is whoever is at the machine.
  *

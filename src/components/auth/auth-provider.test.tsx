@@ -109,7 +109,7 @@ describe("AuthProvider", () => {
       </AuthProvider>
     );
 
-    // TabDump behaves exactly as it did before accounts existed.
+    // Hubble behaves exactly as it did before accounts existed.
     expect(screen.getByTestId("status").textContent).toBe("unauthenticated");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -180,7 +180,7 @@ describe("AccountSection", () => {
       </AuthProvider>
     );
 
-    expect(await screen.findByRole("button", { name: "Sign in to TabDump" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Sign in to Hubble" })).toBeTruthy();
   });
 
   it("shows the signed-in account, with the Google-provided name and email", async () => {

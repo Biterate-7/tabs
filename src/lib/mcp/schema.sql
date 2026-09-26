@@ -1,7 +1,7 @@
--- TabDump MCP access tokens.
+-- Hubble MCP access tokens.
 --
 -- Credentials a signed-in user mints so an MCP client (Claude Desktop) can
--- read their TabDump context. See src/lib/mcp/tokens.ts.
+-- read their Hubble context. See src/lib/mcp/tokens.ts.
 --
 -- Additive and idempotent, like every schema in this project: IF NOT EXISTS
 -- throughout, so applying it twice is a no-op and applying it to a populated

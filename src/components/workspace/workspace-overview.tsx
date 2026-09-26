@@ -7,9 +7,9 @@ import type { Tab } from "@/lib/tabs/types"
 function Stat({ label, value }: { label: string; value: number }) {
   const animated = useCountUp(value)
   return (
-    <div className="flex items-baseline gap-2 py-3">
-      <p className="text-h2 text-meta text-foreground">{animated}</p>
-      <p className="text-label text-tertiary">{label}</p>
+    <div className="flex items-baseline gap-1">
+      <p className="text-body text-foreground tabular-nums">{animated}</p>
+      <p className="text-body text-muted-foreground">{label}</p>
     </div>
   )
 }
@@ -24,9 +24,15 @@ export function WorkspaceOverview({ tabs }: { tabs: Tab[] }) {
   ]
 
   return (
-    <div className="flex flex-wrap divide-x divide-subtle border-b border-subtle">
-      {stats.map((stat) => (
-        <div key={stat.label} className="pr-6 pl-6 first:pl-0">
+    // One quiet line of facts rather than a row of counters.
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      {stats.map((stat, i) => (
+        <div key={stat.label} className="flex items-baseline gap-2">
+          {i > 0 && (
+            <span aria-hidden className="text-tertiary">
+              ·
+            </span>
+          )}
           <Stat label={stat.label} value={stat.value} />
         </div>
       ))}

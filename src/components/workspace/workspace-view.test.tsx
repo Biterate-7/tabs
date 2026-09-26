@@ -641,7 +641,7 @@ describe("WorkspaceView sections", () => {
     const user = userEvent.setup();
     const { onCreateSection } = renderWithSections([], [makeTab({ id: "1" })]);
 
-    await user.click(screen.getByRole("button", { name: "New Section" }));
+    await user.click(screen.getByRole("button", { name: "New section" }));
     await user.type(await screen.findByPlaceholderText("Section name"), "Research");
     await user.click(screen.getByRole("button", { name: "Create section" }));
 

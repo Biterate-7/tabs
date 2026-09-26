@@ -53,7 +53,7 @@ const MAX_BOUNDARY_VIEWPORT_SHARE = 0.25;
 const CATEGORIES: [string, string[]][] = [
   ["Claude", ["Prompts", "Agents", "Docs", "Skills"]],
   ["9Mod", ["Builds", "Textures", "Forums"]],
-  ["Projects", ["TabDump", "Portfolio", "Scratch", "Archive"]],
+  ["Projects", ["Hubble", "Portfolio", "Scratch", "Archive"]],
   ["YouTube", ["Music", "Tutorials", "Gaming"]],
   ["AI Tools", ["LLMs", "Image Gen", "Research"]],
   ["Dev", ["Frontend", "Backend", "DevOps"]],

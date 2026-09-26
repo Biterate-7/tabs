@@ -5,7 +5,7 @@ import type { AgentPermissionScope } from "../../permissions";
 import type { AcpToolKind } from "./protocol";
 
 /**
- * What each ACP tool kind means in TabDump's permission model.
+ * What each ACP tool kind means in Hubble's permission model.
  *
  * ## One table, read by three decisions
  *
@@ -16,7 +16,7 @@ import type { AcpToolKind } from "./protocol";
  *      with no action is settled by the grant alone (a read inside the
  *      authorized project), which is the broker's `scope-needs-no-approval`.
  *   3. **What to enforce afterwards.** A `privileged` kind that starts
- *      running without an approval TabDump granted is an agent acting on its
+ *      running without an approval Hubble granted is an agent acting on its
  *      own authority — typically because the user configured it to
  *      auto-accept. The adapter stops that run. See `enforce` in ./adapter.ts.
  *
@@ -25,7 +25,7 @@ import type { AcpToolKind } from "./protocol";
  * `other`, and any kind a newer agent invents, is treated as a connected tool
  * (`mcp_tools`, approval required). `switch_mode` is never allowed: a mode
  * switch is how an agent moves itself into "accept everything", and that is a
- * decision TabDump keeps.
+ * decision Hubble keeps.
  */
 export type ToolPolicy = {
   scope: AgentPermissionScope;

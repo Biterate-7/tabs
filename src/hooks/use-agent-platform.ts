@@ -54,13 +54,13 @@ export type UseAgentPlatform = {
   /** Which action that is — so reaching an agent and waiting on its sign-in read differently. */
   pendingAction: PendingAction | null
   errors: Partial<Record<AgentProviderId, RuntimeErrorCode>>
-  /** Where TabDump is running, for connectors that only work on one surface. */
+  /** Where Hubble is running, for connectors that only work on one surface. */
   surface: PlatformSurface
   connectorFor: (provider: AgentProviderId) => AgentPlatformConnector
   phaseOf: (provider: AgentProviderId) => ConnectionPhase
   /** The one sentence a person reads about where this agent stands. */
   sentenceOf: (provider: AgentProviderId) => string
-  /** Whether TabDump will start a session with it, and if not, why. */
+  /** Whether Hubble will start a session with it, and if not, why. */
   sessionsFor: (provider: AgentProviderId) => { available: true } | { available: false; reason: string }
   /** The runtime's latest word on a provider: a connect/sign-in reply, else its status. */
   statusOf: (provider: AgentProviderId) => RuntimeProviderStatus | ProviderConnectionView | undefined
@@ -80,9 +80,9 @@ export function useAgentPlatform(options: {
   status: RuntimeStatus | null
   /** Whether the user's own provider key is usable, for providers that sign in that way. */
   providerKeyConnected?: (provider: AgentProviderId) => boolean | undefined
-  /** Whether a TabDump MCP token exists, for the MCP client. */
+  /** Whether a Hubble MCP token exists, for the MCP client. */
   mcpTokenIssued?: boolean
-  /** Where TabDump is running. Absent means the web. */
+  /** Where Hubble is running. Absent means the web. */
   surface?: PlatformSurface
   now?: () => number
 }): UseAgentPlatform {
@@ -193,8 +193,8 @@ export function useAgentPlatform(options: {
     Agents the user already approved are asked, once per runtime, whether
     they are still signed in — so "Connected" after a restart is the agent's
     answer today rather than an approval remembered from last week (Phase
-    J.2). Only installed agents that TabDump can start, one at a time, and
-    never an MCP client, which TabDump does not start.
+    J.2). Only installed agents that Hubble can start, one at a time, and
+    never an MCP client, which Hubble does not start.
   */
   const refreshedFor = useRef<string | null>(null)
   useEffect(() => {

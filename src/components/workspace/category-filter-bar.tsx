@@ -19,10 +19,12 @@ export function Pill({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-md border px-2 py-1 text-xs font-medium transition-colors duration-(--duration-fast) ease-(--ease-standard)",
+        // The reference's tab pills: no border, a tonal fill only on the
+        // chosen one, the rest at the secondary tier.
+        "h-6 rounded-full px-2.5 text-body-sm transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         active
-          ? "border-primary/30 bg-primary/15 text-accent-text"
-          : "border-subtle bg-card text-muted-foreground hover:border-border hover:text-foreground"
+          ? "bg-surface-active text-foreground"
+          : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
       )}
     >
       {children}
@@ -51,7 +53,7 @@ export function CategoryFilterBar({
   const visibleCategories = CATEGORY_ORDER.filter((id) => counts[id] > 0 || value === id)
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-1">
       <Pill active={value === "all"} onClick={() => onChange("all")}>
         All ({tabs.length})
       </Pill>

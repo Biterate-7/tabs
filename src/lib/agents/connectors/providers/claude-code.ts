@@ -50,7 +50,7 @@ export const CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
    * below it is observation, and observation genuinely cannot act. What made
    * it misleading after Phase I is not that it was wrong but that it was the
    * *only* thing the page said, so a reader concluded observation was all
-   * TabDump could do with Claude Code.
+   * Hubble could do with Claude Code.
    *
    * So the summary names the control plane without claiming this object
    * implements it. Whether control is actually available here is a runtime
@@ -59,7 +59,7 @@ export const CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
    * not pretend to know.
    */
   summary:
-    "Watches Claude Code sessions on this machine, and runs Claude Code in TabDump project environments.",
+    "Watches Claude Code sessions on this machine, and runs Claude Code in Hubble project environments.",
   capabilities: {
     ...NO_CAPABILITIES,
     runs: true,
@@ -80,7 +80,7 @@ export const CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
  * there is the same as on a machine that has never run Claude Code.
  */
 const UNAVAILABLE_DETAIL =
-  "No local Claude Code installation is visible from here. TabDump watches Claude Code by reading the session files it writes on your own machine — and can still run Claude Code for you in a TabDump project environment, which needs nothing installed.";
+  "No local Claude Code installation is visible from here. Hubble watches Claude Code by reading the session files it writes on your own machine — and can still run Claude Code for you in a Hubble project environment, which needs nothing installed.";
 
 export type ClaudeCodeConnector = AgentConnector & {
   /** Sessions seen on the most recent poll, for the project-mapping UI. */

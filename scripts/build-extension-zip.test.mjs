@@ -1,9 +1,9 @@
 // Verifies the packaged extension ZIP is actually loadable via Chrome's
 // "Load unpacked" flow once a user extracts it: manifest.json (and every
 // other required file) must sit at the ZIP root with no `extension/`
-// wrapper folder, so extracting `tabdump-extension.zip` produces a
-// `tabdump-extension/manifest.json` layout — not a doubly-nested
-// `tabdump-extension/extension/manifest.json` the user would have to hunt
+// wrapper folder, so extracting `hubble-extension.zip` produces a
+// `hubble-extension/manifest.json` layout — not a doubly-nested
+// `hubble-extension/extension/manifest.json` the user would have to hunt
 // for. See build-extension-zip.mjs's header comment for the full rationale.
 import { describe, expect, it, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -14,10 +14,10 @@ import { CANONICAL_PRODUCTION_ORIGIN, DEV_ORIGIN } from "./build-extension-zip.m
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
-const ZIP_PATH = path.join(REPO_ROOT, "public", "tabdump-extension.zip");
+const ZIP_PATH = path.join(REPO_ROOT, "public", "hubble-extension.zip");
 
 // The actual bug this whole file guards against: a missing "s" turns the
-// real TabDump production domain into a different site entirely. Repo
+// real Hubble production domain into a different site entirely. Repo
 // history shows this exact typo has round-tripped in and out of
 // CANONICAL_PRODUCTION_ORIGIN more than once — so this is checked as its own
 // literal, not derived from CANONICAL_PRODUCTION_ORIGIN, and asserted with
@@ -138,10 +138,10 @@ describe("build-extension-zip.mjs", () => {
     }
   });
 
-  it("packages manifest.json as valid, parseable JSON naming the TabDump extension", () => {
+  it("packages manifest.json as valid, parseable JSON naming the Hubble extension", () => {
     const manifest = entries.find((e) => e.name === "manifest.json");
     const parsed = JSON.parse(manifest.data.toString("utf8"));
-    expect(parsed.name).toBe("TabDump");
+    expect(parsed.name).toBe("Hubble");
     expect(parsed.manifest_version).toBe(3);
   });
 
@@ -210,11 +210,11 @@ describe("build-extension-zip.mjs", () => {
 // Regression coverage for the incident where CANONICAL_PRODUCTION_ORIGIN
 // (and therefore every production extension artifact derived from it) held
 // "https://tabdump.vercel.app" — a real but different site — instead of the
-// actual TabDump deployment. These tests fail if that typo ever comes back,
+// actual Hubble deployment. These tests fail if that typo ever comes back,
 // whether it re-lands in the constant itself or only in a generated
 // artifact because the substitution logic changed underneath it.
 describe("build-extension-zip.mjs — canonical production origin", () => {
-  it("is exactly the real TabDump production domain, not the typo'd lookalike", () => {
+  it("is exactly the real Hubble production domain, not the typo'd lookalike", () => {
     expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://tabsdump.vercel.app");
     expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(WRONG_PRODUCTION_ORIGIN);
   });
@@ -257,7 +257,7 @@ describe("build-extension-zip.mjs — production build output", () => {
     expect(entryText("src/config.js")).not.toContain(DEV_ORIGIN);
   });
 
-  it("never contains the wrong TabDump domain (the missing-s typo) in any generated artifact", () => {
+  it("never contains the wrong Hubble domain (the missing-s typo) in any generated artifact", () => {
     for (const { name, data } of entries) {
       expect(data.toString("utf8"), `${name} should not contain ${WRONG_PRODUCTION_ORIGIN}`).not.toContain(
         WRONG_PRODUCTION_ORIGIN

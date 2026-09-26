@@ -22,7 +22,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
  *
  *   READ → ANALYZE → EXPLAIN → PROPOSE → APPROVE → EXECUTE → VERIFY
  *
- * TabDump does not interpret language — the agent does — so these tests do not
+ * Hubble does not interpret language — the agent does — so these tests do not
  * pretend to. They play the paths a competent agent may take for each kind of
  * request and hold the invariant that matters whatever the wording or the
  * order of calls: reads change nothing and ask no one; every change request
@@ -356,9 +356,9 @@ describe("J.6 never weakens J.5 validation", () => {
       const refused = await call(client, "propose_workspace_plan", plan);
       expect(refused.isError).toBe(true);
       if (preview.isError) {
-        // Refused before TabDump's validator saw it — by the MCP schema, or by the one authorization
+        // Refused before Hubble's validator saw it — by the MCP schema, or by the one authorization
         // decision (another workspace): stricter, never weaker.
-        expect(preview.text).toMatch(/invalid|expected|too_(big|small)|Too (big|small)|>=|<=|the TabDump workspace it was started from/i);
+        expect(preview.text).toMatch(/invalid|expected|too_(big|small)|Too (big|small)|>=|<=|the Hubble workspace it was started from/i);
       } else {
         expect(preview.json().valid).toBe(false);
         expect(preview.json().problems.map((problem: { code: string }) => problem.code)).toContain(code);

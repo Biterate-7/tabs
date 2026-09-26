@@ -13,7 +13,7 @@ import type { RuntimeCommand } from "./protocol";
  *
  * ## What this file is for
  *
- * Phase F gives TabDump something it did not have: a path by which a browser
+ * Phase F gives Hubble something it did not have: a path by which a browser
  * can cause a process to run on the user's machine. Every one of the
  * properties that makes that safe fails *silently* if it regresses — a gate
  * that stops being crossed, a command union that grows a passthrough, a
@@ -276,7 +276,7 @@ describe("a runtime that has not proved itself local executes nothing", () => {
     ["an empty environment", assertLocalExecutionAllowed({})],
     ["a production build", assertLocalExecutionAllowed({ NODE_ENV: "production" })],
     ["a Vercel deployment", assertLocalExecutionAllowed({ VERCEL: "1", VERCEL_ENV: "production" })],
-    ["a Lambda", assertLocalExecutionAllowed({ AWS_LAMBDA_FUNCTION_NAME: "tabdump" })],
+    ["a Lambda", assertLocalExecutionAllowed({ AWS_LAMBDA_FUNCTION_NAME: "hubble" })],
     ["a generic hosted Node", assertLocalExecutionAllowed({ RENDER: "true" })],
     [
       "a hosted platform with the opt-in pasted in",

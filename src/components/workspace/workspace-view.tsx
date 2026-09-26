@@ -51,6 +51,7 @@ import { CategoryFilterBar } from "@/components/workspace/category-filter-bar"
 import { SortControl } from "@/components/workspace/sort-control"
 import { FilteredTabList } from "@/components/workspace/filtered-tab-list"
 import { CommandPalette } from "@/components/command-palette/command-palette"
+import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
 import { AutoOrganizePanel } from "@/components/workspace/auto-organize-panel"
 import { filterTabs, sortTabs, categoryCounts } from "@/lib/workspace/search"
@@ -184,6 +185,10 @@ export function WorkspaceView({
   const [cleanupOpen, setCleanupOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  // Inside AppShell the palette is the shell's; this view contributes its
+  // commands to it. Rendered alone (tests), it keeps its own palette.
+  const paletteHost = useCommandPaletteHost()
+  const openPalette = () => (paletteHost ? paletteHost.open() : setCommandPaletteOpen(true))
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -591,7 +596,7 @@ export function WorkspaceView({
     onTabsChange(tabs.map((t) => (t.id === id ? { ...t, isFavorite: !t.isFavorite } : t)))
   }
 
-  // The one place a tab actually being opened from TabDump is recorded —
+  // The one place a tab actually being opened from Hubble is recorded —
   // every "Open" control (card, peek, actions menu, search-enter, dependency
   // indicator) funnels through this, never a hover or render. Bulk opens
   // (openSelectedTabs, openAllInCollection below) mark every affected id in
@@ -1004,8 +1009,13 @@ export function WorkspaceView({
     ...helpCommands,
   ]
 
+  useEffect(() => {
+    paletteHost?.contribute("workspace", allCommands)
+  })
+  useEffect(() => () => paletteHost?.contribute("workspace", null), [paletteHost])
+
   useWorkspaceShortcuts({
-    onOpenPalette: () => setCommandPaletteOpen(true),
+    onOpenPalette: openPalette,
     onFocusSearch: () => document.getElementById("workspace-search-input")?.focus(),
     onEscape: () => {
       if (commandPaletteOpen) return setCommandPaletteOpen(false)
@@ -1044,7 +1054,7 @@ export function WorkspaceView({
         }}
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}
-        onOpenPalette={() => setCommandPaletteOpen(true)}
+        onOpenPalette={openPalette}
         onOrganize={onRequestOrganize}
         onOpenGraph={onOpenGraph}
         graphLocked={graphLocked}
@@ -1056,7 +1066,7 @@ export function WorkspaceView({
         collections={allCollections}
       />
       <main
-        className="mx-auto max-w-6xl"
+        className="mx-auto w-full max-w-(--tabdump-content-max-width)"
         // Settings → Appearance → Layout → Spacing (see --tabdump-density-scale in resolve.ts).
         style={{
           paddingInline: "calc(1.5rem * var(--tabdump-density-scale, 1))",
@@ -1078,11 +1088,11 @@ export function WorkspaceView({
           onCleanup={() => setCleanupOpen(true)}
           onViewOther={() => handleCategoryFilter("other")}
         />
-        <div className={attention ? "mt-6" : undefined}>
+        <div className={attention ? "mt-5" : undefined}>
           <WorkspaceOverview tabs={tabs} />
         </div>
 
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
           <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={handleCategoryFilter} />
           <div className="flex items-center gap-2">
             {!isBrowsing &&
@@ -1251,11 +1261,13 @@ export function WorkspaceView({
         </AlertDialogContent>
       </AlertDialog>
 
-      <CommandPalette
-        open={commandPaletteOpen}
-        onOpenChange={setCommandPaletteOpen}
-        commands={allCommands}
-      />
+      {!paletteHost && (
+        <CommandPalette
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+          commands={allCommands}
+        />
+      )}
 
       <GatherDialog
         open={gatherDialogTabIds !== null}

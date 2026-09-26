@@ -61,7 +61,7 @@ import type { RuntimeProviderStatus, RuntimeStatus } from "@/lib/agents/runtime/
  * A provider that cannot start a session — no adapter, or no declared
  * `create_session` capability, which is Codex's situation today — appears as a
  * disabled row that says why. Hiding it would leave the user wondering whether
- * TabDump supports it at all; offering it would produce a failure the user
+ * Hubble supports it at all; offering it would produce a failure the user
  * could not have predicted.
  */
 export function NewSessionDialog({
@@ -119,7 +119,7 @@ export function NewSessionDialog({
     title?: string
   }) => void
   /**
-   * The TabDump workspaces a session can be associated with (Phase J).
+   * The Hubble workspaces a session can be associated with (Phase J).
    *
    * The association is recorded on the session and on the agent's roster
    * entry, and it is the workspace context is drawn from. Absent: no choice
@@ -178,7 +178,7 @@ export function NewSessionDialog({
 
     Derived from the host's own status, so a hosted deployment offers Remote
     and never Local — it genuinely cannot execute locally, and offering it
-    would produce a failure the user could not have predicted. A local TabDump
+    would produce a failure the user could not have predicted. A local Hubble
     offers Local, exactly as before.
   */
   const modes = useMemo(() => availableModes(status), [status])
@@ -252,7 +252,7 @@ export function NewSessionDialog({
         <DialogHeader>
           <DialogTitle>New agent session</DialogTitle>
           <DialogDescription>
-            Choose an agent and the project it may work in. You can attach TabDump context once the
+            Choose an agent and the project it may work in. You can attach Hubble context once the
             session is open.
           </DialogDescription>
         </DialogHeader>
@@ -332,7 +332,7 @@ export function NewSessionDialog({
                       {AUTH_METHOD_LABEL[connection.authMethod]}
                     </span>
                     {" · "}
-                    {/* Accurate about whose credentials these are. TabDump
+                    {/* Accurate about whose credentials these are. Hubble
                         provides the command centre; the user provides the
                         provider. */}
                     Your own credentials
@@ -445,7 +445,7 @@ export function NewSessionDialog({
                     id="project-name"
                     value={projectName}
                     onChange={(event) => setProjectName(event.target.value)}
-                    placeholder="TabDump"
+                    placeholder="Hubble"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
@@ -481,7 +481,7 @@ export function NewSessionDialog({
                       id="project-path"
                       value={projectPath}
                       onChange={(event) => setProjectPath(event.target.value)}
-                      placeholder="/Users/you/code/tabdump"
+                      placeholder="/Users/you/code/hubble"
                       className="font-mono"
                     />
                   )}
@@ -489,14 +489,14 @@ export function NewSessionDialog({
                     The honest limitation, stated where the decision is made.
 
                     A browser-served runtime has no trusted path source, so
-                    TabDump validates the shape of what is typed and cannot
+                    Hubble validates the shape of what is typed and cannot
                     confirm it is the folder the user meant. Phase F names a
                     native folder picker as the fix.
                   */}
                   <p className="text-body-sm text-tertiary">
                     {pickFolder
-                      ? "Choose the folder in the system dialog. TabDump checks it is a real project folder, not a drive or your home directory."
-                      : "Type the full path. TabDump checks it is a real project folder, not a drive or your home directory."}
+                      ? "Choose the folder in the system dialog. Hubble checks it is a real project folder, not a drive or your home directory."
+                      : "Type the full path. Hubble checks it is a real project folder, not a drive or your home directory."}
                   </p>
                 </div>
                 {projectError && <p className="text-body-sm text-destructive">{projectError}</p>}

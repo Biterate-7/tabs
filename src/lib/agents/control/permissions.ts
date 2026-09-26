@@ -24,7 +24,7 @@ import type { AgentCapability } from "./capabilities";
  * the whole grant in their head when they authorize it.
  */
 export type AgentPermissionScope =
-  /** Read TabDump workspace content — tabs, collections, relationships, notes. */
+  /** Read Hubble workspace content — tabs, collections, relationships, notes. */
   | "read_workspace"
   /** Read files inside one authorized project. */
   | "read_project"
@@ -37,7 +37,7 @@ export type AgentPermissionScope =
   /** Use MCP-connected tools. */
   | "mcp_tools"
   /**
-   * Change TabDump workspace content — create a collection, for now (Phase
+   * Change Hubble workspace content — create a collection, for now (Phase
    * J.3). Scoped to the one workspace a session was started from, and every
    * single use asks. Reading never implies it.
    */

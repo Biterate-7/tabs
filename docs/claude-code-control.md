@@ -1,6 +1,6 @@
 # Claude Code Control (Phase C)
 
-TabDump can now drive Claude Code: create a session, send messages, stream
+Hubble can now drive Claude Code: create a session, send messages, stream
 activity back, resume, cancel, and hold an agent at a real permission prompt
 until the user answers.
 
@@ -52,7 +52,7 @@ Everything else the CLI offers, the SDK offers too, so nothing was traded away:
 | approvals | `options.canUseTool` ← **only here** |
 | no inherited MCP | `options.mcpServers: {}` + `strictMcpConfig: true` |
 
-The SDK also owns the process, so TabDump never assembles an argv — there is
+The SDK also owns the process, so Hubble never assembles an argv — there is
 no command line for a caller to influence.
 
 ---
@@ -69,7 +69,7 @@ write_files             run_commands            approvals
 working_directory       additional_directories
 ```
 
-**`mcp` is absent and stays absent.** TabDump configures no MCP servers, so
+**`mcp` is absent and stays absent.** Hubble configures no MCP servers, so
 there is nothing to declare. Declaring it because the provider has a flag is
 precisely what the capability model forbids.
 
@@ -82,18 +82,18 @@ observation plane, which has its own adapter for the same provider.
 
 ```
 src/lib/agents/control/providers/claude-code/
-├── runtime.ts        the seam — TabDump's vocabulary, no SDK types
+├── runtime.ts        the seam — Hubble's vocabulary, no SDK types
 ├── sdk-runtime.ts    the ONLY module that imports the SDK · server-only
 ├── adapter.ts        AgentControlAdapter implementation
 ├── normalize.ts      SDKMessage → AgentControlEvent
-├── permissions.ts    TabDump scopes ↔ Claude mode + tools
+├── permissions.ts    Hubble scopes ↔ Claude mode + tools
 ├── index.ts          exports, and the browser seam
 └── __fixtures__/scripted-runtime.ts
 ```
 
 ### The runtime seam
 
-`ClaudeRuntime` is the smallest surface the adapter needs, in TabDump's own
+`ClaudeRuntime` is the smallest surface the adapter needs, in Hubble's own
 vocabulary. Two implementations satisfy it:
 
 - `createSdkClaudeRuntime()` — the real one, `server-only`, dynamic-imports
@@ -107,7 +107,7 @@ session lifecycle behaves correctly.
 
 ### Multi-turn without a process per message
 
-The SDK wants `prompt` as an `AsyncIterable`. TabDump receives messages one at
+The SDK wants `prompt` as an `AsyncIterable`. Hubble receives messages one at
 a time from a user. `createMessageQueue()` bridges the two — `push` hands a
 turn to whatever the generator is awaiting. One process for the whole
 conversation; context is never lost between turns.
@@ -151,17 +151,17 @@ first frame arrives.
 Two systems, deliberately not conflated:
 
 ```
-TabDump project scope   →  outer boundary: is this dispatchable at all?
+Hubble project scope   →  outer boundary: is this dispatchable at all?
 Claude mode + tools     →  provider boundary: may this tool run?
 ```
 
 An action happens only if **both** allow it. The redundancy is the point: a
-bug in TabDump's gate is caught by the tool list, and a misunderstanding of
-Claude's mode is caught by TabDump refusing to dispatch.
+bug in Hubble's gate is caught by the tool list, and a misunderstanding of
+Claude's mode is caught by Hubble refusing to dispatch.
 
 ### Scope → tools
 
-| TabDump scope | Claude tools |
+| Hubble scope | Claude tools |
 | --- | --- |
 | `read_project` | `Read`, `Glob`, `Grep`, `NotebookRead` |
 | `write_project` | `Edit`, `Write`, `NotebookEdit` |
@@ -198,7 +198,7 @@ Only `TodoWrite` is auto-approved: the agent's own task list, no effect on the
 machine, and without it Claude cannot plan. `security.test.ts` asserts that
 `allowedTools` never contains a tool from any scope, under any grant.
 
-**Never allowed: `Task`.** It spawns a subagent whose tool use TabDump cannot
+**Never allowed: `Task`.** It spawns a subagent whose tool use Hubble cannot
 attribute or gate at the point of use, so the parent's grant would silently
 become the child's.
 
@@ -214,7 +214,7 @@ until someone classifies it — `scopeForTool` returns `null` and
 | permits nothing | `dontAsk` | denies anything not pre-approved; there is nothing to ask about |
 
 **Scoping is the tool list's job. The mode's only job is keeping the decision
-with TabDump.**
+with Hubble.**
 
 Claude Code has five modes. `ClaudePermissionMode` contains two, and the three
 omissions are the design:
@@ -222,7 +222,7 @@ omissions are the design:
 - **`bypassPermissions`** skips Claude's checks entirely.
 - **`acceptEdits`** auto-accepts file edit operations — which means the host's
   `canUseTool` is **never called** for them. Sending it would silently
-  suppress the approvals this integration exists to produce: TabDump would
+  suppress the approvals this integration exists to produce: Hubble would
   show no prompt and Claude would write the file. It is the most dangerous of
   the three precisely because it reads as a reasonable choice for a grant that
   includes writing, which is exactly the mistake this codebase made and caught.
@@ -244,7 +244,7 @@ Claude decides a tool needs permission
 sdk-runtime → ClaudePermissionRequest
         ↓
 adapter.handlePermission
-        ├─ 1. TabDump's own check first — isToolPermitted()
+        ├─ 1. Hubble's own check first — isToolPermitted()
         │      an ungranted tool is denied WITHOUT asking the user
         ├─ 2. emit approval_requested  → the broker, via the service
         └─ 3. hold the promise open   → no timeout, no default
@@ -282,12 +282,12 @@ Guarantees, each covered by a test:
 | --- | --- |
 | Hosted deployments cannot execute | `decideServerRuntime` — fails closed, hosted marker vetoes even with the opt-in |
 | Browser cannot execute | catalogue registers `createClaudeCodeControlSeam()`; `sdk-runtime.ts` is `server-only` |
-| No arbitrary shell | TabDump assembles no argv; the SDK owns the process |
+| No arbitrary shell | Hubble assembles no argv; the SDK owns the process |
 | No arbitrary paths | `cwd` and `additionalDirectories` come from a validated `AgentProject` only |
 | No inherited MCP | `mcpServers: {}` + `strictMcpConfig: true` |
 | No provider bypass | `bypassPermissions` absent from the mode union |
 | No subagent escalation | `Task` in `NEVER_ALLOWED_TOOLS` |
-| Credentials are the user's own | **Changed in Phase I.2.** This used to read "Claude Code authenticates itself; TabDump reads no key and stores none", which described inheriting whatever login the server process happened to have — a developer's own on their machine, and the *operator's* on any deployment with `ANTHROPIC_API_KEY` set. The runtime now takes a `ClaudeCredentialSource` bound to one actor, resolves it per run, strips inherited provider variables out of the agent's environment, and refuses to start without one. See docs/provider-connections.md |
+| Credentials are the user's own | **Changed in Phase I.2.** This used to read "Claude Code authenticates itself; Hubble reads no key and stores none", which described inheriting whatever login the server process happened to have — a developer's own on their machine, and the *operator's* on any deployment with `ANTHROPIC_API_KEY` set. The runtime now takes a `ClaudeCredentialSource` bound to one actor, resolves it per run, strips inherited provider variables out of the agent's environment, and refuses to start without one. See docs/provider-connections.md |
 | No old control channel | `messagingSocketPath` / `procStart` / `pidDomain` appear nowhere |
 | No transcript leakage | thinking, tool inputs and tool results are all dropped at the normalizer |
 
@@ -299,14 +299,14 @@ no file, never as an absolute path.
 
 ## 8. MCP — deferred, and closed
 
-TabDump configures **no** MCP servers, declares **no** `mcp` capability, and
+Hubble configures **no** MCP servers, declares **no** `mcp` capability, and
 maps **no** tool to the `mcp_tools` scope. An `mcp__*` tool arriving at
 `canUseTool` is unclassified and therefore denied.
 
 `strictMcpConfig: true` is the load-bearing part. Without it, a session would
 inherit whatever MCP servers the user's own Claude configuration defines —
-tools TabDump never authorized and cannot map to a scope. That is the trust
-boundary: MCP configuration must come from TabDump or from nowhere, and today
+tools Hubble never authorized and cannot map to a scope. That is the trust
+boundary: MCP configuration must come from Hubble or from nowhere, and today
 it comes from nowhere.
 
 ---

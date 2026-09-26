@@ -53,10 +53,10 @@ import type { Tab } from "@/lib/tabs/types";
  *   3. An entity that is not inside the scope's workspaces (or projects) is
  *      omitted with a reason, however it was reached.
  *
- * ## Why this module reads TabDump's domain and the control plane does not
+ * ## Why this module reads Hubble's domain and the control plane does not
  *
  * Someone has to know what a workspace is. The design decision Phase B took
- * — and this phase keeps — is that the thing which knows is on TabDump's
+ * — and this phase keeps — is that the thing which knows is on Hubble's
  * side of the boundary, and what crosses to a provider is flat records. So
  * the imports at the top of this file are the point: `lib/workspace`,
  * `lib/graph` and friends are reachable from here and from nowhere under
@@ -410,7 +410,7 @@ export function resolveContext(
         if (redacted.domain) item.domain = redacted.domain;
         if (redacted.redacted) item.urlRedacted = true;
       } else {
-        // `tab.domain` is TabDump's own derived field and is safe even when
+        // `tab.domain` is Hubble's own derived field and is safe even when
         // the stored URL will not parse.
         const domain = sanitizeText(tab.domain);
         if (domain) item.domain = domain;
@@ -491,7 +491,7 @@ export function resolveContext(
     const depth = Math.max(0, Math.min(Math.floor(request.graph.depth), limits.maxGraphDepth));
 
     // Built from the reachable population only, so traversal is bounded by
-    // the scope before depth even applies. `buildGraphEdges` is TabDump's
+    // the scope before depth even applies. `buildGraphEdges` is Hubble's
     // own edge builder — the graph the agent is told about is the graph the
     // user sees, not a second implementation that could disagree with it.
     const workspaceLookup = buildWorkspaceLookup(
@@ -560,7 +560,7 @@ export function resolveContext(
       };
 
       // The hosted fail-closed rule, applied to data rather than execution.
-      // A deployed TabDump knows about projects only because a record was
+      // A deployed Hubble knows about projects only because a record was
       // synced or restored; publishing the directory layout of whatever
       // machine that came from, to whoever is browsing, is a leak that
       // needs no agent to be involved at all.
@@ -651,7 +651,7 @@ export function resolveContext(
 /**
  * One centre's neighbourhood, bounded three ways.
  *
- * `computeLocalDistances` is TabDump's own BFS and carries a visited set, so
+ * `computeLocalDistances` is Hubble's own BFS and carries a visited set, so
  * a cyclic graph terminates for free — which is why this does not
  * reimplement traversal. What it adds is the two count caps the view layer
  * never needed: depth alone is not a bound when one hop from a popular

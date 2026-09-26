@@ -18,7 +18,7 @@ import type { CredentialValidation, ResolvedProviderCredential } from "../types"
  * So the supported route for a user-facing product is the API key, and that is
  * what this implements. The UI says **Connect Anthropic API**, never "Connect
  * your Claude account", because the second sentence would describe an
- * authorization the user never gave and a capability TabDump does not have.
+ * authorization the user never gave and a capability Hubble does not have.
  *
  * When Anthropic publishes a delegated flow for third-party applications, it
  * becomes a second entry in `authMethods` and a second branch in `input` and
@@ -29,7 +29,7 @@ import type { CredentialValidation, ResolvedProviderCredential } from "../types"
  *
  * `@anthropic-ai/sdk` is not a direct dependency of this project (it arrives
  * transitively under the agent SDK, which is not a thing to build on). More to
- * the point, this is the one request in TabDump whose *inputs and outputs both
+ * the point, this is the one request in Hubble whose *inputs and outputs both
  * need to be tightly controlled*: exactly one header carries the secret,
  * nothing about the response is retained beyond its status, and no client
  * object holding the key outlives the call. Forty lines of `fetch` make all
@@ -63,7 +63,7 @@ const VALIDATION_TIMEOUT_MS = 10_000;
  * The same name the deployment-wide operator key used to be read from — but
  * the *direction* has reversed, and that is the whole phase. Nothing reads
  * this from `process.env` to start a user's session any more. It is now only
- * ever a name TabDump *writes*, into the environment of one provider process,
+ * ever a name Hubble *writes*, into the environment of one provider process,
  * carrying one user's own credential.
  */
 export const ANTHROPIC_KEY_ENV_VAR = "ANTHROPIC_API_KEY";
@@ -91,7 +91,7 @@ const INPUT: CredentialInputShape = {
   placeholder: "sk-ant-...",
   issueUrl: "https://console.anthropic.com/settings/keys",
   explanation:
-    "Use your own Anthropic API credentials. TabDump does not provide a shared Claude account, and your key is only ever used for your own sessions.",
+    "Use your own Anthropic API credentials. Hubble does not provide a shared Claude account, and your key is only ever used for your own sessions.",
 };
 
 export function createClaudeCredentialAdapter(options?: {

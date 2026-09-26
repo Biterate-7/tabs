@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
-import { TabDumpIntro } from "./tabdump-intro"
+import { HubbleIntro } from "./hubble-intro"
 import { shouldPlayIntro, prefersReducedMotion, isMobileViewport } from "@/lib/intro"
 
 vi.mock("@/lib/intro", () => ({
@@ -29,13 +29,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe("TabDumpIntro", () => {
+describe("HubbleIntro", () => {
   it("skips straight to the real page when the setting is off", () => {
     setDecision({ play: false })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     expect(overlay()).toBeNull()
@@ -46,9 +46,9 @@ describe("TabDumpIntro", () => {
   it("plays the full cinematic sequence through every phase to done, then reveals the page", () => {
     setDecision({ play: true })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     expect(overlay()?.getAttribute("data-intro-phase")).toBe("title")
@@ -79,9 +79,9 @@ describe("TabDumpIntro", () => {
   it("skip stops the timeline immediately, cancels every pending timer, and still reveals the page", () => {
     setDecision({ play: true })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     act(() => vi.advanceTimersByTime(600)) // now mid-"chaos"
@@ -104,9 +104,9 @@ describe("TabDumpIntro", () => {
   it("uses the short reduced-motion sequence and never throws with audio unavailable", () => {
     setDecision({ play: true, reduced: true })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     expect(overlay()?.getAttribute("data-intro-phase")).toBe("title")
@@ -119,9 +119,9 @@ describe("TabDumpIntro", () => {
     setDecision({ play: true })
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     const { unmount } = render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     act(() => vi.advanceTimersByTime(600)) // mid-"chaos", several timers pending
@@ -145,9 +145,9 @@ describe("TabDumpIntro", () => {
 
     setDecision({ play: true })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     expect(() => act(() => vi.advanceTimersByTime(8600))).not.toThrow()
@@ -167,9 +167,9 @@ describe("TabDumpIntro", () => {
 
     setDecision({ play: false })
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
 
     expect(audioCtorSpy).not.toHaveBeenCalled()
@@ -179,21 +179,21 @@ describe("TabDumpIntro", () => {
   it("replays in full on every mount — nothing persists a completed play across instances", () => {
     setDecision({ play: true })
     const { unmount } = render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
     act(() => vi.advanceTimersByTime(8600))
     expect(overlay()).toBeNull()
     unmount()
 
-    // shouldPlayIntro is the only thing TabDumpIntro consults, and this test
+    // shouldPlayIntro is the only thing HubbleIntro consults, and this test
     // never changes what it returns — a fresh mount (a reload, a new tab)
     // must play the full sequence again, exactly like the first mount did.
     render(
-      <TabDumpIntro>
+      <HubbleIntro>
         <div>Real landing page</div>
-      </TabDumpIntro>
+      </HubbleIntro>
     )
     expect(overlay()?.getAttribute("data-intro-phase")).toBe("title")
   })

@@ -7,7 +7,7 @@ import path from "node:path";
  * toolchain, so a change that quietly widens the app's privileges fails in
  * the ordinary `npm test` run rather than at a release review.
  *
- * The invariant these cases defend: TabDump's desktop build can open an
+ * The invariant these cases defend: Hubble's desktop build can open an
  * http(s) URL and save a file the user picked, and nothing else. Every
  * assertion below is one a real regression would trip.
  */

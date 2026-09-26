@@ -33,7 +33,7 @@ describe("getExtensionInstallInfo", () => {
 
 describe("EXTENSION_DOWNLOAD_URL", () => {
   it("is a site-root-relative path (no hardcoded domain, works on any origin)", () => {
-    expect(EXTENSION_DOWNLOAD_URL).toBe("/tabdump-extension.zip");
+    expect(EXTENSION_DOWNLOAD_URL).toBe("/hubble-extension.zip");
     expect(EXTENSION_DOWNLOAD_URL.startsWith("http")).toBe(false);
   });
 });

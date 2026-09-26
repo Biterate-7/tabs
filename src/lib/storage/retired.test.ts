@@ -33,7 +33,7 @@ describe("isRetiredKey", () => {
     expect(isRetiredKey("tabdump:agent-worlds:v1", [RETIRED])).toBe(false);
   });
 
-  it("does not match any key TabDump still writes", () => {
+  it("does not match any key Hubble still writes", () => {
     for (const key of SCOPED_STORAGE_KEYS) {
       expect(isRetiredKey(key, RETIRED_STORAGE_KEYS)).toBe(false);
       expect(isRetiredKey(`tabdump:u:user-1:${key.slice("tabdump:".length)}`, RETIRED_STORAGE_KEYS)).toBe(

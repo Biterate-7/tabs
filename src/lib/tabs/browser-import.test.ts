@@ -120,7 +120,7 @@ describe("buildTabsFromBrowserImport", () => {
 /**
  * The extension relays its payload through `window.postMessage` into this
  * page, so the receiver cannot cryptographically prove the sender: any script
- * already running on TabDump's own origin could post the same shape.
+ * already running on Hubble's own origin could post the same shape.
  * useExtensionImport checks origin, event.source, message source/type and
  * entry shape, and caps the batch — and this is the layer below it, where the
  * URL itself is finally decided on. It defers to parseSingleUrl, so the

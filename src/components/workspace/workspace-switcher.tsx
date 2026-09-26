@@ -61,19 +61,19 @@ export function WorkspaceSwitcher({
             collapsed ? (
               <button
                 type="button"
-                className="mx-auto flex shrink-0 items-center justify-center transition-transform duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]"
+                className="mx-auto flex size-7 shrink-0 items-center justify-center rounded-xs transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover"
                 aria-label="Switch workspace"
               >
-                <WorkspaceAvatar workspace={current ?? { name: "" }} size={32} />
+                <WorkspaceAvatar workspace={current ?? { name: "" }} size={20} />
               </button>
             ) : (
               <button
                 type="button"
-                className="flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) hover:border-subtle"
+                className="flex h-[30px] w-full min-w-0 items-center gap-2 rounded-xs px-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover aria-expanded:bg-surface-hover"
                 aria-label="Switch workspace"
               >
-                <WorkspaceAvatar workspace={current ?? { name: "" }} size={24} />
-                <span className="truncate text-body font-semibold tracking-tight text-foreground">
+                <WorkspaceAvatar workspace={current ?? { name: "" }} size={16} />
+                <span className="min-w-0 flex-1 truncate text-body font-medium text-foreground">
                   {current?.name ?? "Workspace"}
                 </span>
                 <ChevronsUpDown className="size-3.5 shrink-0 text-tertiary" />
@@ -86,10 +86,10 @@ export function WorkspaceSwitcher({
             <DropdownMenuItem key={w.id} onClick={() => onSwitch(w.id)} className="justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1.5">
                 <Check className={cn("size-3.5 shrink-0", w.id !== currentId && "invisible")} />
-                <WorkspaceAvatar workspace={w} size={20} />
+                <WorkspaceAvatar workspace={w} size={16} />
                 <span className="truncate">{w.name}</span>
               </span>
-              <span className="shrink-0 text-xs text-muted-foreground">{w.tabs.length}</span>
+              <span className="shrink-0 text-meta text-tertiary">{w.tabs.length}</span>
             </DropdownMenuItem>
           ))}
 

@@ -36,7 +36,7 @@ type IntroDecision = { play: boolean; reduced: boolean; mobile: boolean }
 /**
  * Reads everything needed to decide whether/how to play, once, at mount.
  * Safe to touch window/localStorage/matchMedia directly here (no lazy-init
- * SSR risk): TabDumpIntro is only ever rendered from LandingView, which
+ * SSR risk): HubbleIntro is only ever rendered from LandingView, which
  * AppShell holds back behind its own post-mount `hydrated` gate — by the
  * time this component's function body first runs, there has already been a
  * real client-side render, never a server one (same precedent as
@@ -55,7 +55,7 @@ function decideIntro(): IntroDecision {
  * when the setting is on; once reduced-motion/skip/completion has run its
  * course this is a no-op passthrough.
  */
-export function TabDumpIntro({ children }: { children: ReactNode }) {
+export function HubbleIntro({ children }: { children: ReactNode }) {
   const [decision] = useState(decideIntro)
   const [phase, setPhase] = useState<IntroPhase>(decision.play ? "title" : "done")
   const [skipped, setSkipped] = useState(false)

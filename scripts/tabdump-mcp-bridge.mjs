@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Connects Claude Desktop to TabDump's MCP server.
+ * Connects Claude Desktop to Hubble's MCP server.
  *
  * Claude Desktop's `claude_desktop_config.json` launches **local stdio** MCP
- * servers. TabDump's MCP server is **remote** (Streamable HTTP at
- * `/api/mcp`), because that is where a signed-in user's synced TabDump data
+ * servers. Hubble's MCP server is **remote** (Streamable HTTP at
+ * `/api/mcp`), because that is where a signed-in user's synced Hubble data
  * lives. This script is the join: it speaks stdio to Claude Desktop and
- * Streamable HTTP to TabDump, and relays JSON-RPC messages between them
+ * Streamable HTTP to Hubble, and relays JSON-RPC messages between them
  * unchanged.
  *
  * It is a relay and nothing else. It holds no tools, reads no files, runs no
@@ -16,7 +16,7 @@
  *
  * ## Configuration (environment only)
  *
- *   TABDUMP_MCP_TOKEN  required. A token from TabDump → Settings → AI Agent
+ *   TABDUMP_MCP_TOKEN  required. A token from Hubble → Settings → AI Agent
  *                      Connectors → Claude Desktop. Sent only as an
  *                      `Authorization: Bearer` header to TABDUMP_MCP_URL.
  *   TABDUMP_MCP_URL    optional. Defaults to https://tabsdump.vercel.app/api/mcp.
@@ -55,7 +55,7 @@ function endpoint() {
 async function main() {
   const token = process.env.TABDUMP_MCP_TOKEN?.trim();
   if (!token || !TOKEN_PATTERN.test(token)) {
-    log("TABDUMP_MCP_TOKEN is missing or is not a TabDump MCP token. Create one in TabDump → Settings → AI Agent Connectors.");
+    log("TABDUMP_MCP_TOKEN is missing or is not a Hubble MCP token. Create one in Hubble → Settings → AI Agent Connectors.");
     process.exitCode = 1;
     return;
   }
@@ -81,7 +81,7 @@ async function main() {
 
   local.onmessage = (message) => {
     remote.send(message).catch(() => {
-      log(`TabDump did not accept a request (${message.method ?? "response"}). Check the token and the URL.`);
+      log(`Hubble did not accept a request (${message.method ?? "response"}). Check the token and the URL.`);
       // A request must get an answer, or Claude Desktop waits forever.
       if (message.id !== undefined && message.method !== undefined) {
         local
@@ -90,7 +90,7 @@ async function main() {
             id: message.id,
             error: {
               code: -32000,
-              message: "TabDump refused the request or could not be reached. Check your TabDump MCP token.",
+              message: "Hubble refused the request or could not be reached. Check your Hubble MCP token.",
             },
           })
           .catch(() => {});
@@ -102,7 +102,7 @@ async function main() {
     local.send(message).catch(() => {});
   };
 
-  remote.onerror = () => log("The connection to TabDump reported an error.");
+  remote.onerror = () => log("The connection to Hubble reported an error.");
   local.onclose = () => void shutdown();
   remote.onclose = () => void shutdown();
 

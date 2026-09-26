@@ -10,7 +10,7 @@ import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
  *
  * ## What an identity is
  *
- * A connected agent is a *someone* in TabDump: it has a name, a provider (and
+ * A connected agent is a *someone* in Hubble: it has a name, a provider (and
  * so a mark and an accent — see lib/agents/visual/), the moment it was
  * connected, what the user approved it for, the workspace it was last working
  * in and its most recent session. The command centre's roster renders these,
@@ -56,7 +56,7 @@ export type AgentIdentity = {
   /** What the user approved, at the moment they approved it. */
   approvedScopes: readonly AgentPermissionScope[];
   approvedAt: number;
-  /** The TabDump workspace this agent last worked in, by id. */
+  /** The Hubble workspace this agent last worked in, by id. */
   workspaceId?: string;
   /** The runtime session it last had, by id. May no longer exist. */
   lastSessionId?: string;

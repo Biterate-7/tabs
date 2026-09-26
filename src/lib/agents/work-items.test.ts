@@ -130,7 +130,7 @@ describe("creating work items", () => {
 
     expect(created.workItem.completedAt).toBe(T0);
     // It plainly started at some point, but nothing observed when — so the
-    // record says nothing rather than asserting the moment TabDump looked.
+    // record says nothing rather than asserting the moment Hubble looked.
     expect(created.workItem.startedAt).toBeUndefined();
   });
 

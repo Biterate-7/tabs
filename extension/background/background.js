@@ -24,14 +24,14 @@ function sleep(ms) {
 // (dump started, tab count detected, tabs skipped, messages sent/received,
 // completion/error) — so a report of "dumping tabs failed" on some other
 // machine can actually be diagnosed from the service worker's console
-// (chrome://extensions → TabDump → "service worker" → Inspect) instead of
+// (chrome://extensions → Hubble → "service worker" → Inspect) instead of
 // guessed at.
 //
 // Deliberately never logs a tab's url or title: the diagnostic value is in
 // the counts, ids and stage names, and a service-worker console that logs a
 // user's whole open-tab list is a privacy problem in exchange for nothing.
 function log(stage, data) {
-  console.log(`[TabDump] ${stage}`, data ?? "");
+  console.log(`[Hubble] ${stage}`, data ?? "");
 }
 
 // chrome.storage.session may be unavailable (very old Chrome, or a
@@ -109,7 +109,7 @@ function newImportId() {
 }
 
 /**
- * Whether this tab is on the route that actually mounts TabDump's app shell.
+ * Whether this tab is on the route that actually mounts Hubble's app shell.
  * Same-origin routes that don't (the /privacy, /terms and /cookies legal
  * pages) match chrome.tabs.query's url filter identically but can never
  * ingest a dump — handing one the payload used to look exactly like success.
@@ -143,11 +143,11 @@ function isMissingReceiverError(err) {
 /**
  * Puts the content script into a tab that does not have one.
  *
- * This is the repair for the failure that made TabDump look broken on every
+ * This is the repair for the failure that made Hubble look broken on every
  * machine but the developer's. Chrome injects manifest-declared content
  * scripts only as a page loads, so a tab that was already open when the
  * extension was installed or reloaded never receives one — and onboarding's
- * own final step ("Return to TabDump and click the TabDump extension")
+ * own final step ("Return to Hubble and click the Hubble extension")
  * guarantees that the very first tab a new user dumps into is exactly such a
  * tab. Without this, that dump could only ever fail with Chrome's
  * "Receiving end does not exist", no matter how many times it was retried:
@@ -188,7 +188,7 @@ async function ensureContentScriptInjected(tabId) {
  *
  * Three failure modes are kept apart, because they call for three different
  * responses — and because collapsing them is what made every cross-machine
- * report arrive as the same undiagnosable "TabDump didn't respond":
+ * report arrive as the same undiagnosable "Hubble didn't respond":
  *
  *  - sendMessage rejecting with "Receiving end does not exist" means no
  *    content script is attached to that tab. Transient during a page load, so
@@ -223,12 +223,12 @@ async function deliverImportToTab(tabId, importId, payload, context = {}) {
       // `undefined`. Treat that as unproven rather than as success — the
       // whole point of the handshake is that "the message was accepted by
       // *something*" is not evidence the app ingested it.
-      if (!response) return { delivered: false, reason: "no-ack", detail: "The TabDump page did not confirm the import." };
+      if (!response) return { delivered: false, reason: "no-ack", detail: "The Hubble page did not confirm the import." };
       if (response.ok) return { delivered: true, accepted: Number(response.accepted) || 0 };
       return {
         delivered: false,
         reason: response.reason === "page-not-ready" ? "page-not-ready" : "no-ack",
-        detail: `TabDump page reported "${response.reason}".`,
+        detail: `Hubble page reported "${response.reason}".`,
       };
     } catch (err) {
       lastError = err;
@@ -340,7 +340,7 @@ function waitForTabComplete(tabId) {
 }
 
 /**
- * Opens a brand-new TabDump tab and waits for it to finish loading.
+ * Opens a brand-new Hubble tab and waits for it to finish loading.
  * Resolves to `{ tabId, windowId }`.
  *
  * Deliberately never activates the tab or focuses its window.
@@ -350,15 +350,15 @@ function waitForTabComplete(tabId) {
  * dumpTabs() has finished its remaining async work. Activation is the
  * popup's own call, once it has rendered a result (see MSG_FOCUS_TABDUMP).
  */
-async function openTabDumpTab() {
+async function openHubbleTab() {
   const created = await chrome.tabs.create({ url: TABDUMP_ORIGIN, active: false });
   const outcome = await waitForTabComplete(created.id);
-  if (outcome === "removed") throw new Error("The TabDump tab was closed before it finished loading.");
+  if (outcome === "removed") throw new Error("The Hubble tab was closed before it finished loading.");
   return { tabId: created.id, windowId: created.windowId, loadOutcome: outcome };
 }
 
 /**
- * Picks the already-open TabDump tab most likely to be able to ingest a
+ * Picks the already-open Hubble tab most likely to be able to ingest a
  * dump, or `undefined` when there isn't one.
  *
  * Ordering, most to least preferred:
@@ -429,7 +429,7 @@ async function dumpTabs(excludeUrls, windowId) {
 
   const wire = { tabs: payload.tabs };
 
-  // Attempt 1: an already-open, app-route TabDump tab, when there is one.
+  // Attempt 1: an already-open, app-route Hubble tab, when there is one.
   await persist({ status: "running", phase: DUMP_PHASE.RESOLVING_TAB, ...counts });
 
   let existing;
@@ -438,7 +438,7 @@ async function dumpTabs(excludeUrls, windowId) {
   } catch (err) {
     // Not fatal on its own: we can still open a fresh tab below. Recorded so
     // a profile where the url-filtered query is unexpectedly failing is
-    // diagnosable rather than merely looking like "no TabDump tab open".
+    // diagnosable rather than merely looking like "no Hubble tab open".
     log("tabdump-tab-lookup-failed", errorMessage(err));
   }
 
@@ -457,7 +457,7 @@ async function dumpTabs(excludeUrls, windowId) {
     log("reused-tab-unusable", { tabId: existing.id, reason: attempt.reason });
   }
 
-  // Attempt 2: a fresh tab. Reached either because no usable TabDump tab was
+  // Attempt 2: a fresh tab. Reached either because no usable Hubble tab was
   // open, or because the one that was open turned out not to be able to
   // ingest (stale service-worker-less page, a crashed renderer, a build
   // mid-deploy). Retrying in a known-good tab is the difference between a
@@ -470,11 +470,11 @@ async function dumpTabs(excludeUrls, windowId) {
 
   let opened;
   try {
-    opened = await openTabDumpTab();
+    opened = await openHubbleTab();
     log("tabdump-tab-opened", { tabId: opened.tabId, windowId: opened.windowId, loadOutcome: opened.loadOutcome });
   } catch (err) {
     // chrome.tabs.create itself failed — distinct from a *found* tab simply
-    // not answering, so this never gets misreported as "TabDump didn't
+    // not answering, so this never gets misreported as "Hubble didn't
     // respond".
     const result = {
       ok: false,
@@ -501,7 +501,7 @@ async function dumpTabs(excludeUrls, windowId) {
 
   // A tab that never reached `status: "complete"` is a materially different
   // diagnosis from one that loaded and then didn't answer: it means the
-  // TabDump origin itself couldn't be reached (offline, DNS, a captive
+  // Hubble origin itself couldn't be reached (offline, DNS, a captive
   // portal, a deployment that's down), which no amount of retrying in-page
   // will fix. Reporting the load timeout instead of the downstream "no
   // content script answered" is the difference between an actionable error
@@ -571,7 +571,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   const run = dumpTabs(message.payload?.excludeUrls, message.payload?.windowId)
     .then(({ result }) => {
-      // Nothing else happens after this. Activating or focusing the TabDump
+      // Nothing else happens after this. Activating or focusing the Hubble
       // tab from here would close the popup the instant Chrome noticed the
       // foreground tab change — routinely before the popup had rendered this
       // very result, which is what made a working dump look like "Dumping
@@ -581,7 +581,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       safeSendResponse(sendResponse, result);
     })
     .catch((err) => {
-      console.error("TabDump: dumpTabs failed", err);
+      console.error("Hubble: dumpTabs failed", err);
       const result = { ok: false, status: "error", reason: "unexpected-error", count: 0, detail: errorMessage(err) };
       safeSendResponse(sendResponse, result);
       setDumpState({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
@@ -595,7 +595,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 /**
- * Popup-driven activation of the TabDump tab, sent once the popup has
+ * Popup-driven activation of the Hubble tab, sent once the popup has
  * rendered a dump's outcome and is about to close itself. Validated rather
  * than trusted: the ids come back through the popup, so they're re-checked
  * for shape here before reaching chrome.tabs/chrome.windows.
@@ -627,7 +627,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 // Answers "which of these urls are already in the currently selected
-// workspace?" by relaying to an *already open* TabDump tab's content
+// workspace?" by relaying to an *already open* Hubble tab's content
 // script — deliberately never opens or focuses one just to check, since
 // that would be a surprising side effect of simply opening the popup.
 // Genuinely unknowable without an open tab (or if the page doesn't answer

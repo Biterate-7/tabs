@@ -117,7 +117,7 @@ async function main() {
   if (!process.env.TABDUMP_CREDENTIAL_KEY?.trim()) {
     console.warn(
       "Warning: TABDUMP_CREDENTIAL_KEY is not set. The tables will be created, but " +
-        "TabDump will refuse to store or read provider credentials until it is. " +
+        "Hubble will refuse to store or read provider credentials until it is. " +
         "Generate one with: node scripts/migrate-credentials.mjs --key"
     );
   }

@@ -9,7 +9,7 @@
  * - `openExternal` — on the web, clicking a saved tab reuses the current
  *   browser tab (see src/lib/browser/open-tab.ts). Doing that on desktop
  *   would navigate the app window to someone else's website and turn
- *   TabDump into a second-rate browser.
+ *   Hubble into a second-rate browser.
  * - `saveTextFile` — the web export builds a blob URL and clicks a hidden
  *   `<a download>`. A Tauri webview has no download UI for that to land
  *   in, so an export would silently go nowhere.

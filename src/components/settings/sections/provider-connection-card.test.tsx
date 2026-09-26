@@ -15,7 +15,7 @@ import type { ProviderConnectionView } from "@/lib/agents/credentials/types"
  *      not "Connect Claude account";
  *   2. the credential goes into the request and is never displayed back, in
  *      whole or in part;
- *   3. a provider TabDump cannot hold credentials for does not get a button
+ *   3. a provider Hubble cannot hold credentials for does not get a button
  *      that would fail.
  */
 
@@ -27,7 +27,7 @@ const CLAUDE_INPUT: ConnectionInputShape = {
   placeholder: "sk-ant-...",
   issueUrl: "https://console.anthropic.com/settings/keys",
   explanation:
-    "Use your own Anthropic API credentials. TabDump does not provide a shared Claude account, and your key is only ever used for your own sessions.",
+    "Use your own Anthropic API credentials. Hubble does not provide a shared Claude account, and your key is only ever used for your own sessions.",
 }
 
 const KEY = "sk-ant-api03-DO-NOT-DISPLAY-aaaaaaaa"
@@ -73,7 +73,7 @@ describe("the unconnected state", () => {
     renderCard()
 
     expect(
-      screen.getByText(/TabDump does not provide a shared Claude account/i)
+      screen.getByText(/Hubble does not provide a shared Claude account/i)
     ).toBeTruthy()
     expect(screen.getByText("Not connected")).toBeTruthy()
   })
@@ -81,7 +81,7 @@ describe("the unconnected state", () => {
   it("names the API rather than claiming a Claude account connection", () => {
     renderCard()
 
-    // The distinction is a correctness question: TabDump holds an API
+    // The distinction is a correctness question: Hubble holds an API
     // credential the user issued themselves, not a delegated grant.
     expect(screen.getByRole("button", { name: /connect anthropic api/i })).toBeTruthy()
     expect(screen.queryByRole("button", { name: /connect claude account/i })).toBeNull()
@@ -154,7 +154,7 @@ describe("the connected state", () => {
     expect(screen.getByRole("button", { name: /rotate/i })).toBeTruthy()
     expect(screen.getByRole("button", { name: /disconnect/i })).toBeTruthy()
 
-    // TabDump cannot revoke a key from this screen, so showing any of one
+    // Hubble cannot revoke a key from this screen, so showing any of one
     // would buy recognition at the cost of leaking it into every screenshot.
     expect(screen.queryByRole("button", { name: /show|reveal|copy/i })).toBeNull()
   })
@@ -196,7 +196,7 @@ describe("the connected state", () => {
   })
 })
 
-describe("providers TabDump cannot hold credentials for", () => {
+describe("providers Hubble cannot hold credentials for", () => {
   it("says so instead of offering a button that would fail", () => {
     renderCard({ provider: "gemini", providerName: "Gemini", input: undefined })
 

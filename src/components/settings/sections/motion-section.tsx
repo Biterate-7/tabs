@@ -2,7 +2,7 @@
 
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useAppearanceContext } from "@/components/appearance-provider"
-import { FieldRow, SectionHeading } from "./section-ui"
+import { FieldRow, SectionHeading, SectionStack } from "./section-ui"
 
 export function MotionSection() {
   const { settings, setMotion, prefersReducedMotion } = useAppearanceContext()
@@ -11,15 +11,15 @@ export function MotionSection() {
 
   return (
     <div>
-      <SectionHeading title="Motion" description="How much animation TabDump uses for transitions, imports, and view changes." />
+      <SectionHeading title="Motion" description="How much animation Hubble uses for transitions, imports, and view changes." />
 
       {prefersReducedMotion && (
-        <p className="mb-3 rounded-lg border border-subtle bg-warning-subtle px-3 py-2 text-body-sm text-warning">
-          Your system has reduced motion enabled — TabDump keeps animation minimal regardless of the setting below.
+        <p className="mb-3 rounded-md border border-border bg-warning-subtle px-3 py-2 text-body-sm text-warning">
+          Your system has reduced motion enabled — Hubble keeps animation minimal regardless of the setting below.
         </p>
       )}
 
-      <div className="flex flex-col gap-2.5">
+      <SectionStack>
         <FieldRow label="Animations" stacked>
           <SegmentedControl
             value={m.level}
@@ -43,7 +43,7 @@ export function MotionSection() {
             ]}
           />
         </FieldRow>
-      </div>
+      </SectionStack>
     </div>
   )
 }

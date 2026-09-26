@@ -4,7 +4,7 @@ import { isAgentProviderId } from "./types";
 import type { AgentProviderId } from "./types";
 
 /**
- * Which connectors the user has asked TabDump to observe.
+ * Which connectors the user has asked Hubble to observe.
  *
  * Its own storage key, separate from `tabdump:agents:v1`, and the separation
  * is the point rather than tidiness. Agent state is a *record of work* — runs,
@@ -133,7 +133,7 @@ export function removeConnectorConfig(
  * user's machine.
  *
  * Unknown provider ids are dropped rather than kept for a future build. A
- * string that is not a provider TabDump ships cannot be rendered, connected,
+ * string that is not a provider Hubble ships cannot be rendered, connected,
  * or disconnected through any path, so keeping it would only mean carrying an
  * entry no UI can act on.
  */

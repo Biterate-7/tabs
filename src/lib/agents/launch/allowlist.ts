@@ -2,11 +2,11 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AcpApprovalPolicy, AcpContextIdentity } from "@/lib/agents/control/providers/acp/launcher";
 
 /**
- * Every program TabDump will ever start, and exactly how.
+ * Every program Hubble will ever start, and exactly how.
  *
- * ## This file is the whole answer to "what can TabDump execute"
+ * ## This file is the whole answer to "what can Hubble execute"
  *
- * A provider's entry names the executables TabDump looks for and the
+ * A provider's entry names the executables Hubble looks for and the
  * **constant** argument list it passes. Nothing else can reach `spawn`: the
  * launcher takes a provider id, looks it up here, and a provider with no
  * `acp` entry cannot be launched at all. No argument is ever assembled from
@@ -40,7 +40,7 @@ export type AcpLaunchEntry = {
   /**
    * The npm package whose `bin` an npm shim on Windows points at.
    *
-   * Node refuses to spawn a `.cmd` without a shell, and TabDump never uses a
+   * Node refuses to spawn a `.cmd` without a shell, and Hubble never uses a
    * shell. So when the executable found is npm's `.cmd` shim, the launcher
    * runs the package's own JavaScript entry with this Node process's binary
    * instead — found under the shim's own `node_modules`, and only for the
@@ -49,7 +49,7 @@ export type AcpLaunchEntry = {
   npmPackages?: readonly string[];
   approval: AcpApprovalPolicy;
   /**
-   * Whether a session can be handed its TabDump context server, and how its
+   * Whether a session can be handed its Hubble context server, and how its
    * calls are told apart (Phase J.4). See `AcpContextIdentity`. The one
    * argument this can add is `[allowlistFlag, <per-session server name>]`,
    * and the launcher accepts the name only in the minted shape.
@@ -58,18 +58,18 @@ export type AcpLaunchEntry = {
 };
 
 /**
- * An agent TabDump drives through its own SDK but whose *login* it can start
+ * An agent Hubble drives through its own SDK but whose *login* it can start
  * (Phase J.1, the desktop app).
  *
  * Every argument list here is a literal. The login ones open the provider's
  * own sign-in page in the user's browser; the credential they produce is
- * written by the agent into its own store and never passes through TabDump.
+ * written by the agent into its own store and never passes through Hubble.
  */
 export type NativeCliEntry = {
   executables: readonly string[];
-  /** Answers "is this agent signed in", as JSON. Reads nothing TabDump keeps. */
+  /** Answers "is this agent signed in", as JSON. Reads nothing Hubble keeps. */
   statusArgs: readonly string[];
-  /** One literal argument list per sign-in method TabDump offers. */
+  /** One literal argument list per sign-in method Hubble offers. */
   loginArgs: Readonly<Record<string, readonly string[]>>;
   /** What each sign-in method is called on the button. */
   loginLabels: Readonly<Record<string, string>>;
@@ -79,7 +79,7 @@ export type ProviderLaunchEntry = {
   provider: AgentProviderId;
   /** Executables whose presence means the agent is installed. */
   detect: readonly string[];
-  /** How TabDump drives it, when it can. Absent: detect only. */
+  /** How Hubble drives it, when it can. Absent: detect only. */
   acp?: AcpLaunchEntry;
   /** The agent's own CLI, for an SDK-driven agent's executable and native sign-in. */
   native?: NativeCliEntry;
@@ -146,7 +146,7 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     // none. Its `read-only` mode ("Ask for approval") is on-request approval
     // *inside a writable workspace* — Codex edits project files and runs
     // sandboxed commands without asking. The mode is sent on every turn, so
-    // no launch option or user config narrows it. TabDump cannot be the one
+    // no launch option or user config narrows it. Hubble cannot be the one
     // that approves, so it does not start Codex sessions at all.
     provider: "openai-codex",
     detect: ["codex-acp", "codex"],
@@ -157,11 +157,11 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
       approval: {
         kind: "unavailable",
         reason:
-          "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so TabDump cannot approve its actions.",
+          "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so Hubble cannot approve its actions.",
       },
       contextIdentity: {
         kind: "unavailable",
-        reason: "TabDump does not start Codex sessions, so there is no session to give workspace context to.",
+        reason: "Hubble does not start Codex sessions, so there is no session to give workspace context to.",
       },
     },
   },
@@ -169,8 +169,8 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     // Grok Build's own ACP server, verified against @xai-official/grok 1.0.41
     // (published by xai-security@x.ai). `--no-leader` is pinned: in leader
     // mode — which the user's config.toml can turn on — the session runs in a
-    // shared background process outside TabDump's process tree, so it would
-    // escape the job object and the working directory TabDump chose.
+    // shared background process outside Hubble's process tree, so it would
+    // escape the job object and the working directory Hubble chose.
     //
     // Grok's permission modes are Default ("currently equivalent to Ask"),
     // Ask, Auto (a classifier approves "safe" tools unasked) and Always
@@ -187,12 +187,12 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
       // managed settings files — there is no launch flag that limits a session
       // to one server — and the shape of its permission request for an MCP
       // call could not be observed without a signed-in xAI account. Without
-      // both, TabDump cannot prove a call is its own, so Grok sessions start
+      // both, Hubble cannot prove a call is its own, so Grok sessions start
       // without workspace context instead of with context they cannot use.
       contextIdentity: {
         kind: "unavailable",
         reason:
-          "Grok Build cannot be limited to TabDump's context server, and its approval requests do not say which server a tool belongs to, so TabDump cannot tell its own tools apart from others.",
+          "Grok Build cannot be limited to Hubble's context server, and its approval requests do not say which server a tool belongs to, so Hubble cannot tell its own tools apart from others.",
       },
     },
   },
@@ -202,7 +202,7 @@ export function launchEntryFor(provider: AgentProviderId): ProviderLaunchEntry |
   return PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === provider);
 }
 
-/** Providers TabDump can drive over ACP on this machine's runtime. */
+/** Providers Hubble can drive over ACP on this machine's runtime. */
 export const ACP_PROVIDERS: readonly AgentProviderId[] = PROVIDER_LAUNCH_TABLE.filter(
   (entry) => entry.acp !== undefined
 ).map((entry) => entry.provider);

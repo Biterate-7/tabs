@@ -4,7 +4,7 @@ import { readSessionContextSnapshot } from "./snapshot";
 
 /**
  * The workspace as a whole, bounded (Phase J.5): a summary that helps an
- * agent decide what to read next, TabDump's own duplicate detection, and a
+ * agent decide what to read next, Hubble's own duplicate detection, and a
  * search that matches only what an agent may see.
  */
 
@@ -67,7 +67,7 @@ describe("summarizeWorkspace", () => {
 });
 
 describe("duplicateTabGroups", () => {
-  it("exposes TabDump's own detection: exact copies first, then likely ones — redacted, with where each tab is", () => {
+  it("exposes Hubble's own detection: exact copies first, then likely ones — redacted, with where each tab is", () => {
     const found = duplicateTabGroups(data());
     expect(found.totalGroups).toBe(2);
     expect(found.groups[0]).toMatchObject({ confidence: "high", tabs: [{ tabId: "t1", collection: { name: "Colleges" } }, { tabId: "t2" }] });

@@ -6,7 +6,7 @@
  * "May this process start an agent, and *whose* filesystem would it touch?"
  *
  * It is the most consequential question in the control plane, because the
- * same TabDump frontend is served from a user's own machine *and* from a
+ * same Hubble frontend is served from a user's own machine *and* from a
  * hosted deployment. On the user's machine, running an agent against their
  * project is the product. On a hosted deployment, running an agent against
  * *the server's* filesystem — on behalf of any visitor who loads the page —
@@ -23,7 +23,7 @@
  * What is new is `decideRemoteRuntime`, which answers a *different* question
  * — "can this process reach an isolated sandbox that is nobody's computer?"
  * — and whose yes authorizes something categorically different: execution
- * against a workspace that TabDump created, inside a microVM, with no route
+ * against a workspace that Hubble created, inside a microVM, with no route
  * to the host application's filesystem and none at all to the user's.
  *
  * The two never substitute for one another. `gate.ts` asks for local first
@@ -79,7 +79,7 @@ export type AgentRuntimeKind =
    * Emphatically not a *local* kind. Nothing about this authorizes touching
    * the filesystem of the process that decided it, and nothing about it
    * authorizes touching the user's machine. It authorizes driving an agent
-   * inside a microVM whose entire filesystem TabDump created.
+   * inside a microVM whose entire filesystem Hubble created.
    */
   | "remote-sandbox"
   /** A managed hosting platform. Never permitted to execute locally. */
@@ -398,10 +398,10 @@ export function denyRemoteRuntime(reason: RemoteDenialReason): RuntimeDecision {
 
 export const REMOTE_DENIAL_MESSAGES: Record<RemoteDenialReason, string> = {
   "no-sandbox-credentials":
-    "This TabDump deployment is not configured to run agents in a remote sandbox.",
+    "This Hubble deployment is not configured to run agents in a remote sandbox.",
   "no-durable-store":
-    "Remote agents need a database. This TabDump deployment does not have one configured.",
-  "no-server-context": "This build of TabDump cannot run agents.",
+    "Remote agents need a database. This Hubble deployment does not have one configured.",
+  "no-server-context": "This build of Hubble cannot run agents.",
 };
 
 export function describeRemoteDenial(decision: RemoteRuntimeDecision): string | null {
@@ -423,11 +423,11 @@ export function allowDesktopRuntime(): RuntimeDecision {
 
 export const RUNTIME_DENIAL_MESSAGES: Record<RuntimeDenialReason, string> = {
   "not-opted-in":
-    "This TabDump server is not configured to run agents on this machine.",
+    "This Hubble server is not configured to run agents on this machine.",
   "hosted-platform":
-    "Agents cannot run on a hosted TabDump deployment. Run TabDump on your own machine.",
+    "Agents cannot run on a hosted Hubble deployment. Run Hubble on your own machine.",
   "no-server-context":
-    "This build of TabDump cannot run agents.",
+    "This build of Hubble cannot run agents.",
 };
 
 /** The sentence a UI shows for a refusal. Never interpolates anything from a request. */

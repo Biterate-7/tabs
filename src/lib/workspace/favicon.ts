@@ -9,7 +9,11 @@ const PALETTE = [
   "--category-other",
 ];
 
+/** RFC 2606 names: they never resolve, so a favicon lookup for one can only 404. */
+const RESERVED_TLD = /\.(example|invalid|localhost|test)$/i;
+
 export function faviconUrl(domain: string): string {
+  if (RESERVED_TLD.test(domain)) return "";
   return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 }
 

@@ -14,14 +14,14 @@ import type { Agent, AgentRun } from "@/lib/agents/types";
  *
  * Three separate reasons, and each on its own would be enough:
  *
- * 1. **A provider must never be able to query TabDump.** If the resolver
+ * 1. **A provider must never be able to query Hubble.** If the resolver
  *    reached into `localStorage` itself, then anything holding a resolver —
  *    including, eventually, an adapter — would transitively hold a way to
  *    read the whole store. Taking the data as an argument means the caller
  *    decides what exists, and `security.test.ts` asserts that nothing under
  *    `context/` imports a persistence module.
  *
- * 2. **Account partitioning happens at load, not at read.** TabDump scopes
+ * 2. **Account partitioning happens at load, not at read.** Hubble scopes
  *    local data by storage key prefix (`lib/storage/namespace.ts`), so by
  *    the time a `Workspace` is in memory, nothing about it says whose it is.
  *    `ownerId` here is the caller stating which account this data came from,

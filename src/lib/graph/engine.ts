@@ -358,7 +358,7 @@ const BULK_SETTLE_TICKS = 240;
  * a flat strength is unstable on any graph with hubs: a node with 20 links
  * accumulates 20 springs each pulling at full strength, so its acceleration
  * scales with its degree and the layout tears it between its neighbours.
- * TabDump's graphs are exactly that shape — chained domain/workspace/category
+ * Hubble's graphs are exactly that shape — chained domain/workspace/category
  * groups all meeting at popular tabs. Normalising by degree makes a hub's
  * total link pull comparable to a leaf's, which is what stops high-degree
  * nodes from being the ones that fly.

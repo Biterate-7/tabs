@@ -571,8 +571,8 @@ function AgentPanelBody({
         title="No agents connected"
         description={
           hasAnyAgentData
-            ? "This workspace still shows previously observed agent activity. Connect an agent in Settings → AI connectors to resume."
-            : "Connect an agent in Settings → AI connectors to watch it work here."
+            ? "This workspace still shows previously observed agent activity. Connect an agent in Settings → Agents to resume."
+            : "Connect an agent in Settings → Agents to watch it work here."
         }
       />
     )
@@ -587,7 +587,7 @@ function AgentPanelBody({
         description={
           hasAnyAgentData
             ? "This workspace still shows previously observed agent activity."
-            : "A connected agent cannot be observed on this machine right now. Settings → AI connectors explains why."
+            : "A connected agent cannot be observed on this machine right now. Settings → Agents explains why."
         }
       />
     )

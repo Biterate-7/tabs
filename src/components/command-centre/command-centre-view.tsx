@@ -1,10 +1,9 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { Plus, RotateCw, X } from "lucide-react"
+import { ArrowUp, ChevronLeft, Plus, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
-import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
 import { ConnectAgentDialog } from "./connect-agent-dialog"
@@ -42,7 +41,7 @@ import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
 
 /**
- * TabDump's command centre.
+ * Hubble's command centre.
  *
  * ## What this component is responsible for
  *
@@ -66,7 +65,7 @@ import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
  * activity count it did not receive, and no file it has not been told about.
  * When the runtime cannot execute — a hosted deployment, or the packaged
  * desktop build, which ships no route handler at all — it says so in one
- * sentence and keeps the rest of TabDump usable, rather than presenting a
+ * sentence and keeps the rest of Hubble usable, rather than presenting a
  * command centre whose every button would fail.
  */
 export function CommandCentreView({
@@ -186,7 +185,7 @@ export function CommandCentreView({
    * The brief's requirement, and the reason it is a requirement: on a hosted
    * deployment the old sentence ("Agent runtime unavailable") was true when it
    * was written and is now false, because agents genuinely run — in a sandbox
-   * TabDump creates, which is nobody's computer. Naming the plane is also the
+   * Hubble creates, which is nobody's computer. Naming the plane is also the
    * honest half: a user is owed the difference between an agent editing files
    * on their laptop and one editing files in a container.
    */
@@ -196,7 +195,7 @@ export function CommandCentreView({
   /*
     Whether to talk to the remote-projects endpoint at all.
 
-    The host's own answer, relayed: a local TabDump has no remote plane and
+    The host's own answer, relayed: a local Hubble has no remote plane and
     should not spend a request per mount being told 503. Never inferred from a
     hostname or a build flag.
   */
@@ -233,8 +232,8 @@ export function CommandCentreView({
   )
 
   /*
-    Where TabDump is running, asked once through the platform seam, and —
-    on the web only — whether the user has issued a TabDump MCP token, which
+    Where Hubble is running, asked once through the platform seam, and —
+    on the web only — whether the user has issued a Hubble MCP token, which
     is what a custom MCP agent connects with. The desktop app has no MCP
     server, so it asks nothing and the registry says why (Phase J.2).
   */
@@ -364,7 +363,7 @@ export function CommandCentreView({
   const errorPresentation = session.error ? RUNTIME_ERROR_PRESENTATION[session.error] : null
 
   return (
-    <div className="flex h-screen min-h-0 flex-1 flex-col">
+    <div className="flex h-screen max-h-screen min-h-0 min-w-0 flex-1 flex-col">
       {/*
         Where you are, and whether agents can run here.
 
@@ -380,18 +379,21 @@ export function CommandCentreView({
         is fine, and only the unavailable case spends the horizontal space on
         the gate's full sentence.
       */}
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-subtle px-4">
-        <span className="text-eyebrow text-tertiary">TabDump</span>
-        <span aria-hidden className="text-tertiary">
-          /
-        </span>
-        <span className="text-label text-foreground">Command Centre</span>
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+        {/* Below md the Command Centre is master–detail: this is the way
+            back from an open session to the list. */}
+        {selected && (
+          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => setRequestedSessionId(null)}>
+            <ChevronLeft />
+          </IconButton>
+        )}
+        <span className="text-h2 text-foreground">Command Centre</span>
         {selected && projectNameOf(selected.view.projectId) && (
           <>
             <span aria-hidden className="text-tertiary">
               /
             </span>
-            <span className="min-w-0 truncate text-label text-muted-foreground">
+            <span className="min-w-0 truncate text-body text-muted-foreground">
               {projectNameOf(selected.view.projectId)}
             </span>
           </>
@@ -399,10 +401,14 @@ export function CommandCentreView({
 
         {!runtime.loading && (
           <div role="status" className="ml-auto flex min-w-0 items-center gap-2">
-            <span aria-hidden className={cn("text-meta", AGENT_TONE_TEXT_CLASS[banner.tone])}>
-              ●
-            </span>
-            <span className="shrink-0 text-label text-muted-foreground">{badge}</span>
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                banner.tone === "good" ? "bg-success" : banner.tone === "bad" ? "bg-destructive" : banner.tone === "live" ? "bg-foreground" : "bg-tertiary"
+              )}
+            />
+            <span className="shrink-0 text-body-sm text-muted-foreground">{badge}</span>
             {/* After the title, so the row reads "● Agent runtime unavailable ·
                 <why>" rather than trailing off into the headline. Truncates
                 first, because the title is the part that must survive. */}
@@ -436,7 +442,7 @@ export function CommandCentreView({
         */}
         <IconButton
           aria-label="Close command centre"
-          className={cn("size-7 shrink-0", runtime.loading && "ml-auto")}
+          className={cn("shrink-0", runtime.loading && "ml-auto")}
           onClick={onClose}
         >
           <X />
@@ -445,6 +451,7 @@ export function CommandCentreView({
 
       <div className="flex min-h-0 flex-1">
         <SessionList
+          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={sessions.sessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
@@ -472,7 +479,7 @@ export function CommandCentreView({
           />
         </SessionList>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && "max-md:hidden")}>
           {selected ? (
             <>
               <SessionHeader
@@ -697,20 +704,37 @@ function CommandCentreEmptyState({
       conversation would start.
     */
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-24">
-      <div className="w-full max-w-md text-center">
-        <h1 className="text-h2 text-foreground">Command Centre</h1>
-        <p className="mt-2 text-body-sm text-muted-foreground">
-          Work with your AI agents using scoped projects and the TabDump context you choose to
+      <div className="w-full max-w-[600px]">
+        <h1 className="text-statement text-foreground">Command Centre</h1>
+        <p className="mt-1.5 text-body text-muted-foreground">
+          Work with your AI agents using scoped projects and the Hubble context you choose to
           attach.
         </p>
 
         {loading ? (
           <p className="mt-6 text-body-sm text-tertiary">Checking the agent runtime…</p>
         ) : executable ? (
-          <Button type="button" className="mt-6" onClick={onNewSession}>
-            <Plus />
-            New agent session
-          </Button>
+          /*
+            The reference opens a new agent on an empty composer. A Hubble
+            session needs an agent and a scope before it can take a prompt, so
+            this composer is the door to that choice rather than a live field.
+          */
+          <button
+            type="button"
+            onClick={onNewSession}
+            className="group mt-6 flex w-full flex-col rounded-md border border-border bg-card text-left transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <span className="px-3 pt-2.5 pb-7 text-body text-tertiary">Plan, research or build anything…</span>
+            <span className="flex items-center gap-1.5 px-2 pb-2">
+              <span className="flex h-6 items-center gap-1.5 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
+                <Plus className="size-3.5" aria-hidden />
+                New agent session
+              </span>
+              <span className="ml-auto flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <ArrowUp className="size-3.5" aria-hidden />
+              </span>
+            </span>
+          </button>
         ) : (
           <p className="mt-6 text-body-sm text-tertiary">
             Agents cannot run in this build. You can still browse workspaces, tabs, collections and

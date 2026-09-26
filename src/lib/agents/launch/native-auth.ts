@@ -20,7 +20,7 @@ import type { NativeOperation, NativeRunResult } from "./process";
  * must not store a raw credential at all. What it does have is the user's own
  * installed Claude Code, with its own login. So on the desktop, Claude signs
  * in exactly as it does in a terminal — `claude auth login` opens Anthropic's
- * sign-in page in the browser — and TabDump never sees, holds or forwards the
+ * sign-in page in the browser — and Hubble never sees, holds or forwards the
  * token that produces. It only asks `claude auth status` whether one exists.
  *
  * This is the "native authentication flow" the architecture prefers, and it

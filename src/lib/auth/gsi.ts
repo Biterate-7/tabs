@@ -9,7 +9,7 @@
  *
  * Only `initialize` and `renderButton` are used. `prompt()` (One Tap) is
  * deliberately not: it shows an account chooser unprompted on page load,
- * which is exactly the kind of intrusive third-party overlay TabDump's
+ * which is exactly the kind of intrusive third-party overlay Hubble's
  * sign-in is meant to avoid.
  */
 

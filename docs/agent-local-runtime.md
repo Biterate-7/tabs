@@ -9,8 +9,8 @@ established *how* one provider is driven. The context bridge
 (`docs/agent-context-bridge.md`) established *what an agent is told*.
 
 This document is the missing piece between them: the trusted surface on which
-all three actually run, and the correlation layer that joins what TabDump
-*did* to what TabDump *saw*.
+all three actually run, and the correlation layer that joins what Hubble
+*did* to what Hubble *saw*.
 
 ---
 
@@ -18,7 +18,7 @@ all three actually run, and the correlation layer that joins what TabDump
 
 ```
                           ┌────────────────────────┐
-                          │       TABDUMP UI       │
+                          │       HUBBLE UI        │
                           │   (browser / desktop)  │
                           └───────────┬────────────┘
                                       │
@@ -162,7 +162,7 @@ turning execution on.
 
 ### Why this rather than Tauri
 
-TabDump's desktop shell is a **static export** loaded from `tauri://localhost`.
+Hubble's desktop shell is a **static export** loaded from `tauri://localhost`.
 `next.config.ts` sets `pageExtensions: ["tsx"]` for the desktop target, which
 drops every `route.ts` from the route tree. The transport that exists in every
 context where agents can legitimately run — `npm run dev`, a self-hosted
@@ -213,7 +213,7 @@ left open across a server restart is told `runtime_disconnected` and
 re-handshakes, instead of silently addressing sessions that no longer exist —
 which, from the UI, looks like every session vanishing at once.
 
-**What TabDump does not do here, and why.** A browser-served local runtime has
+**What Hubble does not do here, and why.** A browser-served local runtime has
 no way to distinguish the user's own page from another process on the same
 machine beyond the origin check and the session cookie. Inventing a
 "local secret" delivered over the same channel any local caller can reach
@@ -243,21 +243,21 @@ control side.
 
 Label observed activity as controlled because it is convenient. A session
 somebody started in a terminal five minutes ago genuinely has no control run,
-and a registry that invented one would make the command centre claim TabDump
+and a registry that invented one would make the command centre claim Hubble
 did something it did not do.
 
 So every field is optional, and a record with only the observation half is a
 **complete, valid record** rather than a partial one waiting to be filled in:
 
 ```
-TabDump-started run:   controlSessionId + controlRunId + providerSessionId
+Hubble-started run:   controlSessionId + controlRunId + providerSessionId
                        (+ observationAgentId + observationRunId, once linked)
 
 Externally started:    providerSessionId + observationAgentId + observationRunId
                        and no controlRunId, ever
 ```
 
-`isControlled()` is the single function that answers "did TabDump drive this",
+`isControlled()` is the single function that answers "did Hubble drive this",
 and it requires a **run**, not merely a session: a session created and then
 failed before a run started drove nothing.
 
@@ -280,7 +280,7 @@ Every command names a project by **id**. The host resolves it. There is no
 field on any command into which a directory could travel — except the project
 record itself, on `authorize_projects`.
 
-The durable project record lives in the browser (TabDump is local-first), so
+The durable project record lives in the browser (Hubble is local-first), so
 the host has to be told about one before an id can mean anything. It does not
 trust what arrives: every path goes back through `validateProjectPath` and
 `createProject`, which reject filesystem roots, home directories, unresolved
@@ -343,7 +343,7 @@ turns interleaved on one event stream could not be untangled afterwards.
 Explicit serialization over unsafe concurrency.
 
 The control run id is **not** a second run system. The agent domain owns
-`AgentRun`; what the host mints is TabDump's own identifier for one stretch of
+`AgentRun`; what the host mints is Hubble's own identifier for one stretch of
 driving, which the correlation registry then joins to whatever observation
 independently discovers.
 
@@ -529,7 +529,7 @@ All of it through typed commands, none of it requiring a new surface:
 | What happened, in order, since I last looked? | `get_events` with a cursor |
 | Is approval required, and for what? | `get_session` → `approvals` |
 | Can this be cancelled? Can it be resumed? | `cancellable` / `resumable` on the view |
-| Did TabDump drive this observed run? | `resolveControlRun(correlations, provider, providerSessionId)` |
+| Did Hubble drive this observed run? | `resolveControlRun(correlations, provider, providerSessionId)` |
 
 ---
 

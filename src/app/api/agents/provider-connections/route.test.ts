@@ -256,7 +256,7 @@ describe("listing", () => {
     // product cannot describe an authorization differently from the code that
     // performs it.
     expect(body.value.connectable[0]?.input.explanation).toContain(
-      "TabDump does not provide a shared Claude account"
+      "Hubble does not provide a shared Claude account"
     );
   });
 

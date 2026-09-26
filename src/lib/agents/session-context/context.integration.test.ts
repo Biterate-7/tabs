@@ -106,7 +106,7 @@ describe("workspace context over MCP", () => {
     const labels = JSON.stringify(current.items);
     expect(labels).toContain("Launch Plan");
     expect(labels).toContain("Pricing page competitors");
-    // The same redaction as every TabDump answer: the secret query value is gone.
+    // The same redaction as every Hubble answer: the secret query value is gone.
     expect(labels).not.toContain("abc123");
 
     const found = JSON.parse(text(await client.callTool({ name: "search_tabs", arguments: { query: "press" } })));
@@ -132,7 +132,7 @@ describe("workspace context over MCP", () => {
     ] as const) {
       const denied = await client.callTool({ name, arguments: args });
       expect(denied.isError, name).toBe(true);
-      expect(text(denied), name).toBe("This session can only read the TabDump workspace it was started from.");
+      expect(text(denied), name).toBe("This session can only read the Hubble workspace it was started from.");
     }
     // And another workspace's tab id, asked about without naming its workspace, is simply not there.
     const guessed = JSON.parse(text(await client.callTool({ name: "get_tabs", arguments: { tabIds: ["t-bank"] } })));
@@ -334,7 +334,7 @@ describe("capabilities and approval", () => {
     await until(() => h.approvals.length === 1);
     h.registry.release("s1");
     const ended = await call;
-    expect(text(ended)).toBe("This TabDump session has ended.");
+    expect(text(ended)).toBe("This Hubble session has ended.");
     await client.close().catch(() => {});
   });
 });
@@ -452,7 +452,7 @@ describe("the J.4 writes", () => {
     });
     expect(forged.isError).toBe(true);
     const elsewhere = await client.callTool({ name: "get_workspace", arguments: { workspaceId: "ws-private" } });
-    expect(text(elsewhere)).toBe("This session can only read the TabDump workspace it was started from.");
+    expect(text(elsewhere)).toBe("This session can only read the Hubble workspace it was started from.");
     expect(h.approvals).toEqual([]);
     await client.close();
   });

@@ -26,10 +26,10 @@ const ALLOWED: ExecutionGateResult = {
  *
  * ## The three things being kept apart
  *
- *     CONTROL      TabDump asked an agent to do something, and holds the
+ *     CONTROL      Hubble asked an agent to do something, and holds the
  *                  session and run ids it minted to do so.
  *
- *     OBSERVATION  TabDump watched an agent do something, and holds the
+ *     OBSERVATION  Hubble watched an agent do something, and holds the
  *                  domain run that ingestion minted from a transcript.
  *
  *     CORRELATION  Evidence that those describe the same provider session.
@@ -72,7 +72,7 @@ function seeded(): { state: AgentState; agentId: string } {
   return { state: agent.state, agentId: agent.agent.id };
 }
 
-describe("a session TabDump started", () => {
+describe("a session Hubble started", () => {
   it("is recognisable in the observation plane through the provider's own id", async () => {
     const runtime = host();
 

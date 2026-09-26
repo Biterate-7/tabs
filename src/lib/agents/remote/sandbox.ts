@@ -5,7 +5,7 @@ import type { RemoteSandboxStatus } from "./types";
  *
  * ## What this interface is, and what it refuses to be
  *
- * It is the smallest surface the remote runtime needs, in TabDump's own
+ * It is the smallest surface the remote runtime needs, in Hubble's own
  * vocabulary — exactly the discipline `providers/claude-code/runtime.ts`
  * already applies to the Claude SDK, and for the same three reasons: the
  * platform's types do not leak through the codebase, a deterministic test

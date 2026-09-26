@@ -1,16 +1,16 @@
-# Claude Desktop ↔ TabDump (MCP)
+# Claude Desktop ↔ Hubble (MCP)
 
-TabDump is an MCP server. Claude Desktop can connect to it and **read** your
-TabDump context — synced workspaces, tabs, collections, tab relationships, and
-the status of your TabDump remote agent projects. It cannot change anything in
-TabDump, and it cannot run anything.
+Hubble is an MCP server. Claude Desktop can connect to it and **read** your
+Hubble context — synced workspaces, tabs, collections, tab relationships, and
+the status of your Hubble remote agent projects. It cannot change anything in
+Hubble, and it cannot run anything.
 
 ---
 
 ## 1. Architecture
 
 ```
-Claude Desktop ──stdio──▶ scripts/tabdump-mcp-bridge.mjs ──HTTPS──▶ TabDump /api/mcp
+Claude Desktop ──stdio──▶ scripts/tabdump-mcp-bridge.mjs ──HTTPS──▶ Hubble /api/mcp
   (MCP client)             (relay, official SDK only)              (MCP server, stateless
                                                                     Streamable HTTP)
                                                                          │
@@ -20,16 +20,16 @@ Claude Desktop ──stdio──▶ scripts/tabdump-mcp-bridge.mjs ──HTTPS�
                                               (owner-scoped)    (client's own)  (Phase E bridge)
 ```
 
-**The server is remote**, on the TabDump deployment, because that is where the
-data is. TabDump is local-first: a signed-out user's workspaces live in one
+**The server is remote**, on the Hubble deployment, because that is where the
+data is. Hubble is local-first: a signed-out user's workspaces live in one
 browser and no server has them. A signed-in user's workspaces are synced to the
 deployment's Postgres, keyed by account. That account copy is exactly — and
 only — what the MCP server reads.
 
-**The bridge exists because of Claude Desktop, not TabDump.**
+**The bridge exists because of Claude Desktop, not Hubble.**
 `claude_desktop_config.json` launches local stdio servers. Claude Desktop's
 native remote connectors (Settings → Connectors → Add custom connector)
-authenticate with OAuth, which TabDump does not yet implement (§7). The bridge
+authenticate with OAuth, which Hubble does not yet implement (§7). The bridge
 relays JSON-RPC between the two transports unchanged; it has no tools and no
 logic that could widen what the server allows.
 
@@ -47,7 +47,7 @@ approves or stops an agent. `src/lib/mcp/security.test.ts` asserts all of it.
 | `get_tabs` | Specific tabs by id (≤ 50). Notes only with `includeNotes: true`. |
 | `get_collection` | One collection and its member tabs. |
 | `get_tab_graph` | A tab's dependencies and graph neighbours, depth ≤ 2. |
-| `list_agent_projects` | Your TabDump remote agent projects: name, status, granted permissions. |
+| `list_agent_projects` | Your Hubble remote agent projects: name, status, granted permissions. |
 | `list_agent_sessions` | Your remote agent sessions' status. Cannot start, stop or message one. |
 
 Resource template: `tabdump://workspace/{workspaceId}` — the `get_workspace`
@@ -71,9 +71,9 @@ owner ids, tokens, credentials.
 
 ## 3. Authentication
 
-TabDump issues its own **MCP access tokens** (`tdmcp_…`):
+Hubble issues its own **MCP access tokens** (`tdmcp_…`):
 
-- minted by a **signed-in** TabDump user in Settings, bound to that account;
+- minted by a **signed-in** Hubble user in Settings, bound to that account;
 - **read-only** — the scope list has one member, and the database refuses any
   other (`CHECK (scopes <@ ARRAY['read'])`);
 - stored only as a **SHA-256 hash** — the database refuses a value that is not
@@ -83,13 +83,13 @@ TabDump issues its own **MCP access tokens** (`tdmcp_…`):
 - deleted with the account (`ON DELETE CASCADE`).
 
 What authenticates `/api/mcp` is the `Authorization: Bearer` header and nothing
-else. **The TabDump session cookie is never read there**, so a browser holding
+else. **The Hubble session cookie is never read there**, so a browser holding
 a session gains nothing, and a cross-site page cannot attach a header it does
 not know. A request with a foreign browser `Origin` is refused.
 
 Not used, anywhere on this path: an `ANTHROPIC_API_KEY`, a user's Anthropic
-key, a Claude.ai or Claude Desktop login. TabDump never sees Claude Desktop's
-credentials and Claude Desktop never sees TabDump's session.
+key, a Claude.ai or Claude Desktop login. Hubble never sees Claude Desktop's
+credentials and Claude Desktop never sees Hubble's session.
 
 ## 4. Deploying (operator, once)
 
@@ -106,8 +106,8 @@ absent from the static export.
 
 ## 5. Connecting Claude Desktop (each user)
 
-1. **Sign in** to TabDump, and make sure the workspaces you want are synced.
-2. **Settings → AI connectors → Use TabDump from Claude → Connect Claude
+1. **Sign in** to Hubble, and make sure the workspaces you want are synced.
+2. **Settings → Agents → Use Hubble from Claude → Connect Claude
    Desktop.** Copy the config it shows — the token is displayed once.
 3. **Get the bridge.** It is `scripts/tabdump-mcp-bridge.mjs` in this
    repository, and it needs the repository's `node_modules`
@@ -122,7 +122,7 @@ absent from the static export.
    ```json
    {
      "mcpServers": {
-       "tabdump": {
+       "hubble": {
          "command": "node",
          "args": ["/absolute/path/to/tabs/scripts/tabdump-mcp-bridge.mjs"],
          "env": {
@@ -137,13 +137,13 @@ absent from the static export.
    On Windows, use forward slashes or doubled backslashes in the path, e.g.
    `"C:/Users/you/tabs/scripts/tabdump-mcp-bridge.mjs"`.
 
-6. **Quit and reopen Claude Desktop.** TabDump appears under the tools menu
+6. **Quit and reopen Claude Desktop.** Hubble appears under the tools menu
    in a new chat. Its log is `mcp-server-tabdump.log` in Claude Desktop's
    logs folder (Windows: `%APPDATA%\Claude\logs\`; macOS:
    `~/Library/Logs/Claude/`). The bridge writes one line on start
    (`Relaying to …`) and never writes the token.
 
-To disconnect: revoke the connection in TabDump Settings (takes effect on the
+To disconnect: revoke the connection in Hubble Settings (takes effect on the
 next request) and remove the entry from the config.
 
 ## 6. Verifying without Claude Desktop

@@ -38,7 +38,7 @@ wrong model for a multi-tenant product. This is the exact shape the phase
 forbids:
 
 ```
-ALL USERS → TABDUMP'S SHARED AI CREDENTIAL → AGENTS
+ALL USERS → HUBBLE'S SHARED AI CREDENTIAL → AGENTS
 ```
 
 The local plane (`sdk-runtime.ts`) has no credential read at all: it inherits
@@ -68,7 +68,7 @@ it is no longer read from `process.env` by anything that starts a session.
 ### D2. `src/lib/agents/connectors/session-credentials.ts`
 
 A browser-side, module-scoped, per-tab secret map for **observation**
-connectors. Honest about what it is (its own header says TabDump "does not
+connectors. Honest about what it is (its own header says Hubble "does not
 persist secrets" and labels a connector *configured for this session*), but it
 is a browser store and therefore can never hold a control-plane credential.
 

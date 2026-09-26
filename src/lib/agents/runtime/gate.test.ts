@@ -13,7 +13,7 @@ import {
 /**
  * The execution gate.
  *
- * Every case here is a machine TabDump could plausibly be running on, and the
+ * Every case here is a machine Hubble could plausibly be running on, and the
  * property under test is the same for all of them: **nothing is executable
  * unless it has proven it is the user's own computer.**
  */
@@ -58,7 +58,7 @@ describe("the four environments", () => {
   });
 
   it("local development is not broken by the gate", () => {
-    // A developer running TabDump on their own machine with the opt-in set
+    // A developer running Hubble on their own machine with the opt-in set
     // gets a working runtime, even in production mode and even with an
     // unrelated environment full of variables.
     const result = assertLocalExecutionAllowed({

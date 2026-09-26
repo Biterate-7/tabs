@@ -3,7 +3,6 @@
 import { useCallback, useRef, useState } from "react"
 import { ArrowUp, Paperclip, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { IconButton } from "@/components/ui/icon-button"
 import { Kbd } from "@/components/ui/kbd"
 import {
   SESSION_STATUS_DETAIL,
@@ -86,12 +85,12 @@ export function Composer({
   )
 
   return (
-    <div className="border-t border-subtle px-6 py-3">
-      <div className="mx-auto w-full max-w-3xl">
+    <div className="px-6 pt-2 pb-4">
+      <div className="mx-auto w-full max-w-[720px]">
         <div
           className={cn(
-            "rounded-lg border border-subtle bg-surface transition-colors",
-            "focus-within:border-border"
+            "rounded-md border border-border bg-card transition-colors duration-(--duration-fast) ease-(--ease-color)",
+            "focus-within:border-strong"
           )}
         >
           <label className="sr-only" htmlFor="command-centre-composer">
@@ -100,7 +99,7 @@ export function Composer({
           <textarea
             id="command-centre-composer"
             ref={textareaRef}
-            rows={3}
+            rows={2}
             value={text}
             disabled={!sendable || pending}
             onChange={(event) => setText(event.target.value)}
@@ -112,24 +111,24 @@ export function Composer({
                   : "Ask the agent to work on this project…"
                 : SESSION_STATUS_DETAIL[status]
             }
-            className="w-full resize-none bg-transparent px-3 py-2.5 text-body-sm text-foreground outline-none placeholder:text-tertiary disabled:cursor-not-allowed disabled:opacity-60"
+            className="block w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground outline-none placeholder:text-tertiary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
 
-          <div className="flex items-center gap-2 border-t border-subtle px-2 py-1.5">
-            <IconButton
-              aria-label="Attach TabDump context"
-              className="size-7"
+          <div className="flex items-center gap-1.5 px-2 pb-2">
+            <button
+              type="button"
+              aria-label="Attach Hubble context"
               onClick={onOpenContext}
+              className="flex h-6 min-w-0 max-w-[60%] items-center gap-1.5 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:bg-surface-active hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
             >
-              <Paperclip />
-            </IconButton>
+              <Paperclip className="size-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{contextSummary ?? "Add context"}</span>
+            </button>
 
-            <span className="min-w-0 flex-1 truncate text-meta text-tertiary">
-              {contextSummary ?? "No context attached"}
-            </span>
+            <span className="min-w-0 flex-1" />
 
             {cancellable ? (
-              <Button type="button" size="xs" variant="outline" onClick={onCancel} disabled={pending}>
+              <Button type="button" size="xs" shape="pill" variant="secondary" onClick={onCancel} disabled={pending}>
                 <Square />
                 Stop
               </Button>
@@ -138,10 +137,12 @@ export function Composer({
                 <Kbd className="max-sm:hidden">↵</Kbd>
                 <Button
                   type="button"
-                  size="icon-xs"
+                  size="icon-sm"
+                  shape="pill"
                   aria-label="Send message"
                   disabled={!canSubmit}
                   onClick={submit}
+                  className="disabled:bg-surface-active disabled:text-muted-foreground disabled:opacity-100"
                 >
                   <ArrowUp />
                 </Button>

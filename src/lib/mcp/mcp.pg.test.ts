@@ -26,7 +26,7 @@ import { describePostgres, freshDatabase, seedUser } from "../../../test/pg/data
 const T = 1_700_000_000_000;
 const MCP_SCHEMA = readFileSync(path.join(__dirname, "schema.sql"), "utf8");
 
-describePostgres("TabDump MCP against real PostgreSQL", () => {
+describePostgres("Hubble MCP against real PostgreSQL", () => {
   let pool: Pool;
   let alice: string;
   let bob: string;

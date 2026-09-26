@@ -26,12 +26,12 @@ import type { AgentProject } from "./projects";
  *
  * ## What changed, and why these replace rather than relax the old rules
  *
- * TabDump's agent layer was read-only, enforced by guard suites that fail the
+ * Hubble's agent layer was read-only, enforced by guard suites that fail the
  * build if anything under `lib/agents/` gains a way to act. The command
  * centre needs to act, so the invariant has been **split** rather than
  * softened:
  *
- * > TabDump observes agents through the observation plane, and communicates
+ * > Hubble observes agents through the observation plane, and communicates
  * > with agents through a separately permissioned control plane.
  *
  * The observation guards are **untouched**. `connectors/security.test.ts`,
@@ -901,7 +901,7 @@ describe("what the browser catalogue registers claims nothing", () => {
 describe("the control plane persists no secret", () => {
   /*
     The one exception, and exactly where it lives (Phase J.3): the two
-    adapters that hand an agent its session's TabDump context credential put
+    adapters that hand an agent its session's Hubble context credential put
     it in an Authorization header. The credential is issued by the runtime per
     session, held only in memory, revoked when the session ends — and never a
     field of anything the control plane declares or stores. Each entry must

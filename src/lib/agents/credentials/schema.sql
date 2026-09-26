@@ -1,4 +1,4 @@
--- TabDump provider connections — user-owned provider credentials (BYOC).
+-- Hubble provider connections — user-owned provider credentials (BYOC).
 --
 -- Additive and idempotent, exactly like src/lib/auth/store/schema.sql and
 -- src/lib/agents/remote/schema.sql: every statement is IF NOT EXISTS, so
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS tabdump_provider_connections (
   id                 TEXT PRIMARY KEY,
   -- The runtime actor id, e.g. 'account:<uuid>'. TEXT rather than a FK to
   -- tabdump_users for the same reason the remote tables use TEXT: a purely
-  -- local TabDump has no accounts and still needs this to typecheck against
+  -- local Hubble has no accounts and still needs this to typecheck against
   -- the same code.
   owner_id           TEXT NOT NULL,
   -- 'claude-code' | 'openai-codex' | 'gemini' | 'grok' | 'custom'. Stored as

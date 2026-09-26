@@ -28,7 +28,7 @@ function hostnameOf(url: string): string | null {
  * fetch sees — for any non-public document that's Google's sign-in wall (see
  * server/resolvers/google-docs.ts), which is correctly reported as
  * unresolved rather than mislabeled with the login page's title. But if the
- * TabDump browser extension is connected and the user already has that exact
+ * Hubble browser extension is connected and the user already has that exact
  * document open as a real tab, `chrome.tabs` already knows its real title —
  * no auth, no fetch, no scraping needed. This checks that, for Google Docs
  * URLs only, before falling through to the normal server-side path.

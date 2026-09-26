@@ -2,10 +2,10 @@
 //!
 //! # Shape
 //!
-//! TabDump's agent runtime — the Phase J `RuntimeHost`, its control service,
+//! Hubble's agent runtime — the Phase J `RuntimeHost`, its control service,
 //! approval broker, adapters and launch allowlist — is TypeScript. On the web
 //! it runs inside the Next server. The packaged app has no server, so it runs
-//! the same code as a **sidecar**: the Node binary TabDump ships, running the
+//! the same code as a **sidecar**: the Node binary Hubble ships, running the
 //! one bundled file `agent-runtime/runtime.mjs`. This module is the whole
 //! bridge between the webview and that process:
 //!
@@ -29,11 +29,11 @@
 //!   installed app, with no argument taken from anywhere. The webview names
 //!   *operations*; the closed runtime protocol has no field for a command line.
 //! * **The environment is an allowlist**, the same list as
-//!   `src/lib/agents/launch/env.ts`. No key, token or TabDump secret reaches
+//!   `src/lib/agents/launch/env.ts`. No key, token or Hubble secret reaches
 //!   the sidecar or, through it, an agent.
 //! * **Nothing outlives the app.** The sidecar is placed in a Windows job
 //!   object that kills its whole process tree — every agent it started — when
-//!   TabDump's handle closes, including on a crash. On a normal exit the
+//!   Hubble's handle closes, including on a crash. On a normal exit the
 //!   sidecar is asked to shut down first, which ends sessions cleanly.
 
 use std::collections::HashMap;
@@ -266,7 +266,7 @@ pub fn ordinary_path(path: PathBuf) -> PathBuf {
 }
 
 /// Where the installed app keeps the sidecar: the Node binary beside
-/// TabDump's own executable (Tauri's `externalBin`), the script in resources.
+/// Hubble's own executable (Tauri's `externalBin`), the script in resources.
 fn sidecar_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let exe = std::env::current_exe().map_err(|_| "no executable path".to_string())?;
     let dir = ordinary_path(exe.parent().ok_or("no executable directory")?.to_path_buf());
@@ -279,7 +279,7 @@ fn sidecar_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
     .join("agent-runtime")
     .join("runtime.mjs");
     if !node.is_file() || !script.is_file() {
-        return Err("The agent runtime is not installed with this build of TabDump.".into());
+        return Err("The agent runtime is not installed with this build of Hubble.".into());
     }
     Ok((node, script))
 }
@@ -310,7 +310,7 @@ fn spawn_sidecar(node: &Path, script: &Path) -> Result<Sidecar, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: Node is a console program, and TabDump is not.
+        // CREATE_NO_WINDOW: Node is a console program, and Hubble is not.
         command.creation_flags(0x0800_0000);
     }
 
@@ -385,14 +385,14 @@ fn relay(app: &tauri::AppHandle, request: &str) -> String {
     let command = {
         let folders = match state.folders.lock() {
             Ok(folders) => folders,
-            Err(_) => return failure("runtime_unavailable", "TabDump cannot run agents in this environment."),
+            Err(_) => return failure("runtime_unavailable", "Hubble cannot run agents in this environment."),
         };
         match screen_request(request, &folders) {
             Ok(command) => command,
             Err(Refusal::UnpickedFolder) => {
                 return failure("project_scope_violation", "This agent is not authorized for that project.")
             }
-            Err(_) => return failure("invalid_request", "TabDump could not read that request."),
+            Err(_) => return failure("invalid_request", "Hubble could not read that request."),
         }
     };
 
@@ -402,7 +402,7 @@ fn relay(app: &tauri::AppHandle, request: &str) -> String {
     {
         let mut slot = match state.sidecar.lock() {
             Ok(slot) => slot,
-            Err(_) => return failure("runtime_unavailable", "TabDump cannot run agents in this environment."),
+            Err(_) => return failure("runtime_unavailable", "Hubble cannot run agents in this environment."),
         };
 
         let dead = slot
@@ -413,12 +413,12 @@ fn relay(app: &tauri::AppHandle, request: &str) -> String {
             *slot = None;
             match sidecar_paths(app).and_then(|(node, script)| spawn_sidecar(&node, &script)) {
                 Ok(sidecar) => *slot = Some(sidecar),
-                Err(_) => return failure("runtime_unavailable", "TabDump cannot run agents in this environment."),
+                Err(_) => return failure("runtime_unavailable", "Hubble cannot run agents in this environment."),
             }
         }
 
         let Some(sidecar) = slot.as_mut() else {
-            return failure("runtime_unavailable", "TabDump cannot run agents in this environment.");
+            return failure("runtime_unavailable", "Hubble cannot run agents in this environment.");
         };
         if let Ok(mut map) = sidecar.pending.lock() {
             map.insert(id, sender);
@@ -426,7 +426,7 @@ fn relay(app: &tauri::AppHandle, request: &str) -> String {
         let line = json!({ "id": id, "request": serde_json::from_str::<Value>(request).unwrap_or(Value::Null) });
         if writeln!(sidecar.stdin, "{line}").and_then(|_| sidecar.stdin.flush()).is_err() {
             *slot = None;
-            return failure("runtime_disconnected", "TabDump lost its connection to the local runtime.");
+            return failure("runtime_disconnected", "Hubble lost its connection to the local runtime.");
         }
     }
 
@@ -438,7 +438,7 @@ fn relay(app: &tauri::AppHandle, request: &str) -> String {
         // The sidecar exited while this request was outstanding. Said as what
         // it is, so the client re-handshakes rather than waiting on a timeout.
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            failure("runtime_disconnected", "TabDump lost its connection to the local runtime.")
+            failure("runtime_disconnected", "Hubble lost its connection to the local runtime.")
         }
     }
 }
@@ -490,8 +490,8 @@ mod job {
 
     /// A job whose every process is terminated when its last handle closes.
     ///
-    /// The only handle is this struct's, held by TabDump. So the sidecar and
-    /// every agent it started die with TabDump — on quit, on crash, on being
+    /// The only handle is this struct's, held by Hubble. So the sidecar and
+    /// every agent it started die with Hubble — on quit, on crash, on being
     /// killed from Task Manager — and nothing can be left running.
     pub struct KillOnCloseJob(HANDLE);
 
@@ -641,12 +641,12 @@ mod tests {
     fn hands_node_an_ordinary_path_not_a_verbatim_one() {
         // What Tauri's resource_dir() returns on Windows, and what Node needs.
         assert_eq!(
-            ordinary_path(PathBuf::from(r"\\?\C:\Users\alice\AppData\Local\Programs\TabDump")),
-            PathBuf::from(r"C:\Users\alice\AppData\Local\Programs\TabDump")
+            ordinary_path(PathBuf::from(r"\\?\C:\Users\alice\AppData\Local\Programs\Hubble")),
+            PathBuf::from(r"C:\Users\alice\AppData\Local\Programs\Hubble")
         );
         assert_eq!(ordinary_path(PathBuf::from(r"C:\already\plain")), PathBuf::from(r"C:\already\plain"));
         // A verbatim UNC path names another machine; its prefix is not ours to drop.
-        let unc = PathBuf::from(r"\\?\UNC\server\share\TabDump");
+        let unc = PathBuf::from(r"\\?\UNC\server\share\Hubble");
         assert_eq!(ordinary_path(unc.clone()), unc);
     }
 
@@ -698,7 +698,7 @@ mod installed_probe {
     #[test]
     #[ignore]
     fn installed_sidecar_answers() {
-        let dir = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("Programs").join("TabDump");
+        let dir = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("Programs").join("Hubble");
         let mut sidecar = spawn_sidecar(&dir.join("tabdump-agent-node.exe"), &dir.join("agent-runtime").join("runtime.mjs")).expect("spawn");
         let (sender, receiver) = channel::<String>();
         sidecar.pending.lock().unwrap().insert(1, sender);

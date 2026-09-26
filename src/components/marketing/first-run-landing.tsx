@@ -4,11 +4,11 @@ import { useState } from "react"
 import { ExtensionInstallGuide } from "@/components/extension-install-guide"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { dismissOnboarding } from "@/lib/onboarding"
-import { BrandGlyph } from "./primitives"
+import { Wordmark } from "./site"
 import { MarketingPage } from "./marketing-page"
 
 /**
- * What `/` is for someone who has never used TabDump: the landing page, plus
+ * What `/` is for someone who has never used Hubble: the landing page, plus
  * the one sub-screen it can lead to.
  *
  * This is the only place the marketing components touch app state, and it
@@ -34,11 +34,10 @@ export function FirstRunLanding({ onEnterApp }: { onEnterApp: () => void }) {
   if (guideOpen) {
     return (
       <div className="tabdump-marketing flex min-h-screen flex-col">
-        <div className="flex items-center gap-2 px-6 py-5 text-foreground">
-          <BrandGlyph className="size-[1.125rem]" />
-          <span className="text-[0.9375rem] font-medium tracking-[-0.01em]">TabDump</span>
+        <div className="m-page flex h-(--hb-header-h) items-center">
+          <Wordmark />
         </div>
-        <div className="flex flex-1 items-start justify-center px-6 pt-6 pb-20">
+        <div className="flex flex-1 items-start justify-center px-6 pt-12 pb-20">
           {/* The app's own guide, unmodified. Inside the marketing scope its
               tokens resolve to the landing palette, so it reads as the same
               surface rather than a jump back into app chrome. */}

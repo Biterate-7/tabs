@@ -118,12 +118,12 @@ describe("runtime status is reported truthfully", () => {
       status: scriptedStatus({
         executable: false,
         environment: "hosted",
-        detail: "Agents cannot run on a hosted TabDump deployment.",
+        detail: "Agents cannot run on a hosted Hubble deployment.",
       }),
     })
     renderCentre(runtime)
 
-    expect(await screen.findByText(/Agents cannot run on a hosted TabDump deployment/i)).toBeTruthy()
+    expect(await screen.findByText(/Agents cannot run on a hosted Hubble deployment/i)).toBeTruthy()
     // The rail's row stays visible and inert rather than vanishing: a
     // disappearing feature reads as a bug, while a disabled one beside the
     // banner reads as the explanation it is.
@@ -131,7 +131,7 @@ describe("runtime status is reported truthfully", () => {
     expect((create as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("keeps the rest of TabDump reachable when the runtime cannot execute", async () => {
+  it("keeps the rest of Hubble reachable when the runtime cannot execute", async () => {
     const runtime = createScriptedRuntime({ status: scriptedStatus({ executable: false }) })
     renderCentre(runtime)
 
@@ -302,7 +302,7 @@ describe("creating a session", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
 
-    // Accurate about what is missing. Not "signed in": TabDump never asks for
+    // Accurate about what is missing. Not "signed in": Hubble never asks for
     // an account, it asks for the user's own credentials.
     expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
 
@@ -366,8 +366,8 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
 
-    await user.type(screen.getByLabelText(/^name$/i), "TabDump")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/tabdump")
+    await user.type(screen.getByLabelText(/^name$/i), "Hubble")
+    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {
@@ -399,8 +399,8 @@ describe("projects", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
-    await user.type(screen.getByLabelText(/^name$/i), "TabDump")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/tabdump")
+    await user.type(screen.getByLabelText(/^name$/i), "Hubble")
+    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {
@@ -697,7 +697,7 @@ describe("context", () => {
     // Two controls open the picker — the composer's paperclip and the
     // inspector's button. Scoped to the composer so the query is unambiguous.
     const main = screen.getByRole("main")
-    await user.click(within(main).getByRole("button", { name: /attach tabdump context/i }))
+    await user.click(within(main).getByRole("button", { name: /attach hubble context/i }))
     return user
   }
 
@@ -1146,7 +1146,7 @@ describe("session workspace context", () => {
     await user.click(await screen.findByRole("button", { name: /waiting for approval/i }))
 
     const prompt = await screen.findByRole("group", { name: /approval required/i })
-    expect(within(prompt).getByText("Change your TabDump workspace")).toBeTruthy()
+    expect(within(prompt).getByText("Change your Hubble workspace")).toBeTruthy()
     expect(within(prompt).getByText("Gemini CLI wants to create a collection:")).toBeTruthy()
     expect(within(prompt).getByText("Launch reading")).toBeTruthy()
     expect(within(prompt).getByText("Research")).toBeTruthy()
@@ -1437,7 +1437,7 @@ describe("session workspace context", () => {
     expect(JSON.stringify(loadCollectionState())).not.toContain("Would be created")
   })
 
-  it("says what became of an approved plan on the row where it was approved, and names TabDump's tools plainly", async () => {
+  it("says what became of an approved plan on the row where it was approved, and names Hubble's tools plainly", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({
       sessions: [
@@ -1459,11 +1459,11 @@ describe("session workspace context", () => {
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
     expect(await screen.findByText(/3 changes applied · Context updated to v4/)).toBeTruthy()
-    expect(screen.getByText("TabDump · Summarized the workspace")).toBeTruthy()
+    expect(screen.getByText("Hubble · Summarized the workspace")).toBeTruthy()
     expect(document.body.textContent).not.toContain("mcp__tabdump_")
   })
 
-  it("shows where the agent is — reading, analyzing, checking, proposing — for TabDump's own tools only (J.6)", async () => {
+  it("shows where the agent is — reading, analyzing, checking, proposing — for Hubble's own tools only (J.6)", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({ sessions: [contextSession({ context: contextView({}) })] })
     const server = "mcp__tabdump_abcdefghijklmnop__"
@@ -1475,15 +1475,15 @@ describe("session workspace context", () => {
       scriptedEvent({ id: "s3b", kind: "tool_finished", summary: "Done", tool: { name: `${server}find_relevant_collections` } }),
       scriptedEvent({ id: "s4", kind: "tool_finished", summary: "Done", tool: { name: `${server}preview_workspace_plan` } }),
       scriptedEvent({ id: "s5", kind: "tool_started", summary: "Asking", tool: { name: `${server}propose_workspace_plan` } }),
-      // Not TabDump's: another tool, and a lookalike server name. No stage is claimed for either.
+      // Not Hubble's: another tool, and a lookalike server name. No stage is claimed for either.
       scriptedEvent({ id: "s6", kind: "tool_finished", summary: "Done", tool: { name: "Read" } }),
       scriptedEvent({ id: "s7", kind: "tool_finished", summary: "Done", tool: { name: "mcp__tabdump__analyze_topics" } }),
     ])
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    expect(await screen.findByText("TabDump · Grouped tabs by topic")).toBeTruthy()
-    expect(screen.getByText("TabDump · Found related tabs")).toBeTruthy()
+    expect(await screen.findByText("Hubble · Grouped tabs by topic")).toBeTruthy()
+    expect(screen.getByText("Hubble · Found related tabs")).toBeTruthy()
     const stages = [...document.querySelectorAll("[data-stage]")].map((element) => [element.getAttribute("data-stage"), element.textContent])
     expect(stages).toEqual([
       ["reading", "Reading"],
@@ -1494,6 +1494,24 @@ describe("session workspace context", () => {
       ["proposing", "Proposing"],
     ])
     expect(screen.getByText("mcp__tabdump__analyze_topics")).toBeTruthy()
+  })
+
+  it("names a tool once, in words, when the adapter's summary is only the raw tool name", async () => {
+    // Claude's adapter sends the tool name as the summary; the raw name of a
+    // Hubble context tool is a protocol identifier and must never be shown.
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({ sessions: [contextSession({ context: contextView({}) })] })
+    const name = "mcp__tabdump_abcdefghijklmnop__list_tabs"
+    runtime.pushEvents([
+      scriptedEvent({ id: "t1", kind: "tool_started", summary: name, tool: { name } }),
+      scriptedEvent({ id: "t2", kind: "tool_started", summary: "Read", tool: { name: "Read" } }),
+    ])
+    renderCentre(runtime)
+    await user.click(await screen.findByRole("button", { name: /ready/i }))
+
+    expect(await screen.findAllByText("Hubble · Listed tabs")).toHaveLength(1)
+    expect(screen.getAllByText("Read")).toHaveLength(1)
+    expect(document.body.textContent).not.toContain("mcp__tabdump_")
   })
 
   it("refuses to apply a change naming tabs that are not in the session's workspace", async () => {

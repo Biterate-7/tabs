@@ -10,7 +10,7 @@
  * anything here.
  *
  * The client **secret** is deliberately absent from this file and from the
- * codebase entirely — the ID-token flow TabDump uses has no step that needs
+ * codebase entirely — the ID-token flow Hubble uses has no step that needs
  * one, so there is no secret to leak into a bundle.
  *
  * Written as a direct `process.env.NEXT_PUBLIC_…` member access because

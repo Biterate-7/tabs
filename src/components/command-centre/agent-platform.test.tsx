@@ -137,12 +137,12 @@ describe("Connect Agent", () => {
 
     // Once the agent says it is signed in, the flow moves on by itself.
     // Reading is on by default; changing files, running commands and
-    // changing TabDump content (Phase J.3) are not.
+    // changing Hubble content (Phase J.3) are not.
     const approve = await within(dialog).findByRole("group")
     const boxes = within(approve).getAllByRole("checkbox")
     expect(boxes.map((box) => box.getAttribute("aria-checked"))).toEqual(["true", "true", "false", "false", "false"])
-    expect(within(approve).getByText("Change TabDump content")).toBeTruthy()
-    expect(within(dialog).getByText(/Run a shell command through TabDump/)).toBeTruthy()
+    expect(within(approve).getByText("Change Hubble content")).toBeTruthy()
+    expect(within(dialog).getByText(/Run a shell command through Hubble/)).toBeTruthy()
 
     await user.click(within(dialog).getByRole("button", { name: /approve and connect/i }))
     expect(await within(dialog).findByText(/Gemini CLI is connected/)).toBeTruthy()
@@ -222,7 +222,7 @@ describe("Connect Agent", () => {
     expect(await within(dialog).findByText("Codex is installed but not authenticated.")).toBeTruthy()
     expect(runtime.commands).toContainEqual({ name: "connect_provider", provider: "openai-codex" })
     // …with the reason, and nothing to sign in to, continue past or approve.
-    expect(within(dialog).getByText(/TabDump will not start sessions with Codex/)).toBeTruthy()
+    expect(within(dialog).getByText(/Hubble will not start sessions with Codex/)).toBeTruthy()
     expect(within(dialog).queryByRole("button", { name: /Sign in with ChatGPT/i })).toBeNull()
     expect(within(dialog).queryByRole("button", { name: /continue/i })).toBeNull()
     expect(within(dialog).queryByRole("button", { name: /approve and connect/i })).toBeNull()
@@ -262,7 +262,7 @@ describe("Connect Agent", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
 
-    expect(await within(dialog).findByText(/program TabDump drives it through is not/i)).toBeTruthy()
+    expect(await within(dialog).findByText(/program Hubble drives it through is not/i)).toBeTruthy()
     expect(within(dialog).getByText("npm install -g @agentclientprotocol/codex-acp")).toBeTruthy()
   })
 
@@ -277,7 +277,7 @@ describe("Connect Agent", () => {
     await user.click(within(dialog).getByRole("button", { name: /Custom MCP agent/ }))
     // Exactly what is being connected, before anything is approved.
     const explained = await within(dialog).findByRole("list", { name: /What connecting Custom MCP agent means/ })
-    expect(within(explained).getByText(/TabDump never starts it/)).toBeTruthy()
+    expect(within(explained).getByText(/Hubble never starts it/)).toBeTruthy()
     expect(within(explained).getByText(/cannot change anything/)).toBeTruthy()
     await user.click(await within(dialog).findByRole("button", { name: /approve and connect/i }))
 

@@ -1,6 +1,6 @@
-//! TabDump desktop shell.
+//! Hubble desktop shell.
 //!
-//! This crate deliberately contains no product logic. TabDump's workspaces,
+//! This crate deliberately contains no product logic. Hubble's workspaces,
 //! spatial graph, search, History Dump and import/export all live in the
 //! shared frontend (`src/`), exactly as they do on the web — the desktop
 //! build ships that same code as a static export. What lives here is only
@@ -62,7 +62,7 @@ pub fn run() {
             // guard is the thing standing between "a desktop app" and "a
             // second-rate browser".
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("TabDump")
+                .title("Hubble")
                 .inner_size(1280.0, 840.0)
                 // Below roughly this, the spatial graph's controls and the
                 // sidebar start overlapping rather than reflowing.
@@ -77,8 +77,8 @@ pub fn run() {
                     // Something asked to leave the app — a saved tab opened
                     // through a path that bypassed the platform layer, or an
                     // ordinary <a href> in the UI. Hand it to the real
-                    // browser and refuse the navigation, so the TabDump
-                    // window always still shows TabDump.
+                    // browser and refuse the navigation, so the Hubble
+                    // window always still shows Hubble.
                     if matches!(url.scheme(), "http" | "https") {
                         let _ = commands::open_external(handle.clone(), url.to_string());
                     }
@@ -94,7 +94,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building TabDump")
+        .expect("error while building Hubble")
         .run(|app, event| {
             // Agent processes end with the app. Asked first, so sessions end
             // cleanly; the job object in agent_runtime.rs is what guarantees it

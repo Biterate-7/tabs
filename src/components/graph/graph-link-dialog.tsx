@@ -117,7 +117,7 @@ export function GraphLinkDialog({
                 <button
                   type="button"
                   onClick={() => setPickedId(null)}
-                  className="text-label text-accent-text hover:underline"
+                  className="text-label text-link hover:underline"
                 >
                   Change
                 </button>

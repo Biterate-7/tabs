@@ -170,9 +170,9 @@ const YOUTUBE_TITLES = [
 const YOUTUBE_HOSTS = ["www.youtube.com", "youtube.com", "m.youtube.com"];
 
 const GITHUB_TITLES = [
-  "GitHub", "biterate-7/tabdump", "Issues · biterate-7/tabdump", "Pull requests · biterate-7/tabdump",
-  "Commits · main · biterate-7/tabdump", "Actions · biterate-7/tabdump", "GitHub - vercel/next.js",
-  "Settings · biterate-7/tabdump", "README.md at main", "GitHub Copilot",
+  "GitHub", "biterate-7/hubble", "Issues · biterate-7/hubble", "Pull requests · biterate-7/hubble",
+  "Commits · main · biterate-7/hubble", "Actions · biterate-7/hubble", "GitHub - vercel/next.js",
+  "Settings · biterate-7/hubble", "README.md at main", "GitHub Copilot",
 ];
 
 /** Never a real, persisted "Other" root — src/lib/sections/relations.ts's isReservedRootOtherName — plus the synthetic Other bucket every workspace has for tabs with no sectionId. Both should be empty. */
@@ -340,7 +340,7 @@ describe("organizeTabsCollectively — real-world domain clustering", () => {
       ...domainTabs("sp", "open.spotify.com", ["Spotify – Web Player", "Discover Weekly - Spotify", "Liked Songs - Spotify"]),
       ...domainTabs("li", "www.linkedin.com", ["LinkedIn", "Jobs - LinkedIn", "My Network - LinkedIn"]),
       ...domainTabs("cv", "www.canva.com", ["Canva", "Untitled design - Canva"]),
-      ...domainTabs("nt", "www.notion.so", ["Notion", "TabDump roadmap - Notion"]),
+      ...domainTabs("nt", "www.notion.so", ["Notion", "Hubble roadmap - Notion"]),
       ...domainTabs("gpt", "chatgpt.com", ["ChatGPT", "New chat - ChatGPT", "ChatGPT - ideas for essay"], ["chatgpt.com", "chat.openai.com"]),
       ...domainTabs("nf", "www.netflix.com", ["Netflix", "Continue Watching - Netflix"]),
       ...domainTabs("tw", "www.twitch.tv", ["Twitch", "Live channel - Twitch"]),

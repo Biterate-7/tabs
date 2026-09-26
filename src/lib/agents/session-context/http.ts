@@ -6,12 +6,12 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { SessionContextRegistry } from "./registry";
 
 /**
- * Where an agent session reaches its TabDump context (Phase J.3): TabDump's
+ * Where an agent session reaches its Hubble context (Phase J.3): Hubble's
  * MCP server, on this machine's loopback interface only.
  *
  * ## Why a port, and why that is still inside the boundary
  *
- * An agent is a separate process, and the one way every agent TabDump drives
+ * An agent is a separate process, and the one way every agent Hubble drives
  * accepts extra tools is an MCP server it can reach over HTTP (Claude Code's
  * `--mcp-config`, ACP's `session/new` `mcpServers`). So the runtime listens —
  * but only on 127.0.0.1, on a port the OS picks, and it answers nothing
@@ -83,7 +83,7 @@ export function createSessionContextServer(options: {
     }
 
     const binding = await options.registry.authenticate(bearer(req));
-    if (!binding) return refuse(res, 401, -32001, "A valid TabDump session credential is required.");
+    if (!binding) return refuse(res, 401, -32001, "A valid Hubble session credential is required.");
     const sessionId = binding.sessionId;
 
     const text = await readBody(req);
@@ -113,7 +113,7 @@ export function createSessionContextServer(options: {
       await mcp.connect(transport);
       await transport.handleRequest(req, res, body);
     } catch {
-      refuse(res, 500, -32603, "TabDump could not answer that request.");
+      refuse(res, 500, -32603, "Hubble could not answer that request.");
     } finally {
       await mcp.close().catch(() => {});
     }
@@ -124,7 +124,7 @@ export function createSessionContextServer(options: {
       listening ??= new Promise<string>((resolve, reject) => {
         const created = createServer((req, res) => {
           const port = (created.address() as { port: number }).port;
-          void handle(req, res, `127.0.0.1:${port}`).catch(() => refuse(res, 500, -32603, "TabDump could not answer that request."));
+          void handle(req, res, `127.0.0.1:${port}`).catch(() => refuse(res, 500, -32603, "Hubble could not answer that request."));
         });
         created.on("error", reject);
         created.listen(0, "127.0.0.1", () => {

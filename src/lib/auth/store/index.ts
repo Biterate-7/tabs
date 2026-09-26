@@ -8,7 +8,7 @@ import { POSTGRES_ENV_VAR_NAMES, createPostgresAuthStore, postgresConnectionStri
  * Picks the AuthStore this process should use, and — just as importantly —
  * refuses to pick one that would quietly break.
  *
- * There is exactly ONE session model in TabDump (opaque random token in an
+ * There is exactly ONE session model in Hubble (opaque random token in an
  * HttpOnly cookie, SHA-256 of it stored server-side, revocable by deleting
  * the row). What varies is only where those rows live. A "stateless signed
  * cookie" fallback would make production work with no database at all, but

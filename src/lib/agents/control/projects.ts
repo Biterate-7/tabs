@@ -9,7 +9,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * ## What a project is, and what it is not
  *
  * A project is a **grant of scope over one directory**, not a discovered
- * location. TabDump never scans, never walks, never enumerates and never
+ * location. Hubble never scans, never walks, never enumerates and never
  * suggests: a project exists because a person chose a directory, and the only
  * directory an agent can ever reach is one that exists here.
  *
@@ -50,7 +50,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
 export type AgentProjectSource =
   /** A directory on the machine running the runtime. The original, and the default. */
   | "local"
-  /** Files the user uploaded, unpacked into a sandbox workspace TabDump created. */
+  /** Files the user uploaded, unpacked into a sandbox workspace Hubble created. */
   | "remote_upload"
   /**
    * A repository cloned into a sandbox workspace.
@@ -294,7 +294,7 @@ export function validateProjectPath(candidate: string): ProjectPathResult {
 export const PROJECT_PATH_REJECTION_MESSAGES: Record<ProjectPathRejection, string> = {
   empty: "Choose a folder.",
   "not-absolute": "That needs to be a full path to a folder.",
-  "unsupported-form": "TabDump can't resolve that path with confidence.",
+  "unsupported-form": "Hubble can't resolve that path with confidence.",
   "filesystem-root": "A whole drive is too broad. Choose the project folder itself.",
   "sensitive-location":
     "That folder holds everything else you own. Choose the specific project inside it.",

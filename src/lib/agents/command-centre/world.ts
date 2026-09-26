@@ -14,7 +14,7 @@ import type { Workspace } from "@/lib/workspace/types"
  *
  * `AgentContextWorld` is a *view* of data the app already holds — workspaces,
  * collections, relationships, projects, agents, runs. It is not a store, it is
- * never persisted, and it must never be the place a piece of TabDump data
+ * never persisted, and it must never be the place a piece of Hubble data
  * lives. Building it in one pure call, from values the shell is already
  * rendering, keeps it that way: there is no second copy to fall out of date
  * and nothing to invalidate.

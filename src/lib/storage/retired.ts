@@ -3,7 +3,7 @@ import { NAMESPACE_PREFIX, RETIRED_STORAGE_KEYS } from "./namespace";
 /**
  * Removes storage a feature left behind when it was deleted.
  *
- * TabDump is local-first, which means deleting a feature is not finished
+ * Hubble is local-first, which means deleting a feature is not finished
  * when its code is gone: whatever it wrote is still sitting in every
  * existing user's localStorage, and nothing in the shipped app can read or
  * clear it any more. `RETIRED_STORAGE_KEYS` names those keys and this sweeps
@@ -34,7 +34,7 @@ export function isRetiredKey(storageKey: string, retired: readonly string[]): bo
   if (!storageKey.startsWith(NAMESPACE_PREFIX)) return false;
 
   // `tabdump:u:<id>:workspaces:v1` -> `workspaces:v1`. The account id cannot
-  // contain a colon (it is a TabDump user id), so the first colon after the
+  // contain a colon (it is a Hubble user id), so the first colon after the
   // prefix ends it.
   const afterPrefix = storageKey.slice(NAMESPACE_PREFIX.length);
   const separator = afterPrefix.indexOf(":");

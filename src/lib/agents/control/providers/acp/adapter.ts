@@ -64,9 +64,9 @@ import type { ContextAuthority } from "@/lib/agents/session-context/authorizatio
  * ACP agent.
  *
  * Not `resume_session` — ACP's `session/load` exists but replays a whole
- * history, and reattaching a TabDump session to it is not built. Not
+ * history, and reattaching a Hubble session to it is not built. Not
  * `additional_directories` — ACP has one working directory per session. Not
- * `mcp` — TabDump does not *grant* an ACP agent MCP tools. Any tool the agent
+ * `mcp` — Hubble does not *grant* an ACP agent MCP tools. Any tool the agent
  * brings from its own configuration still has to ask (see `policy.ts`, kind
  * `other`) and is refused unless granted.
  *
@@ -74,28 +74,28 @@ import type { ContextAuthority } from "@/lib/agents/session-context/authorizatio
  *
  * `workspace_context` is declared only for an agent whose launch entry has an
  * `exclusive-mcp` context identity. ACP's permission request names no MCP
- * server, so a TabDump context call is recognised structurally, never by name:
+ * server, so a Hubble context call is recognised structurally, never by name:
  * the agent was launched so that the session's context server is the only
  * MCP server it can load, and the request carries the option ids only that
  * agent's MCP confirmations carry. Such a request is answered by the one
  * shared decision (`authorizeContextRequest`) — allowed once, never always —
- * and the server then authorizes the actual tool, and raises a TabDump
+ * and the server then authorizes the actual tool, and raises a Hubble
  * approval for every write. A request without the marker is an ordinary tool.
  * An agent without such an identity is never handed the server at all.
  *
  * ## The approval model, end to end
  *
  *   1. The agent calls `session/request_permission` before a privileged tool.
- *   2. TabDump refuses at once if the grant does not include the tool's scope.
+ *   2. Hubble refuses at once if the grant does not include the tool's scope.
  *   3. Otherwise the adapter records the details and emits
  *      `approval_requested`; the service mints the broker record — the
  *      adapter cannot — and the user answers in the command centre.
  *   4. The answer goes back as the agent's own *one-time* option. Never
- *      "always": a standing grant inside the agent is one TabDump cannot see.
+ *      "always": a standing grant inside the agent is one Hubble cannot see.
  *   5. **Enforcement.** A privileged tool the agent starts *without* an
- *      approval TabDump gave — an agent the user configured to auto-accept —
+ *      approval Hubble gave — an agent the user configured to auto-accept —
  *      makes the adapter cancel the turn and fail the session. An agent that
- *      does not ask is not an agent TabDump will drive.
+ *      does not ask is not an agent Hubble will drive.
  *
  * ## Modes (Phase J.2)
  *
@@ -145,7 +145,7 @@ export const ACP_CONTEXT_CAPABILITIES: AgentCapabilitySet = capabilitySet(
 );
 
 /**
- * What an agent TabDump cannot hold to its approvals declares: nothing.
+ * What an agent Hubble cannot hold to its approvals declares: nothing.
  * It can still be reached and signed in to; it cannot be given a session.
  */
 export const ACP_REACH_ONLY_CAPABILITIES: AgentCapabilitySet = capabilitySet();
@@ -174,7 +174,7 @@ export type AcpControlAdapterOptions = {
 
 type TrackedTool = {
   call: AcpToolCall;
-  /** TabDump granted an approval for this call. */
+  /** Hubble granted an approval for this call. */
   approved: boolean;
   started: boolean;
   finished: boolean;
@@ -186,8 +186,8 @@ type TrackedTool = {
 const CONTEXT_TOOL_POLICY: ToolPolicy = {
   scope: "read_workspace",
   privileged: false,
-  label: "TabDump",
-  description: "Using your TabDump workspace",
+  label: "Hubble",
+  description: "Using your Hubble workspace",
   started: "tool_started",
   finished: "tool_finished",
 };
@@ -476,7 +476,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     const running = merged.status === "in_progress" || merged.status === "completed";
 
     if (running && policy.privileged && !tracked.approved) {
-      enforce(session, "The agent acted without asking for approval, so TabDump stopped it.");
+      enforce(session, "The agent acted without asking for approval, so Hubble stopped it.");
       return;
     }
 
@@ -504,11 +504,11 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
   }
 
   /**
-   * An agent ran a privileged tool TabDump never approved, or moved itself
+   * An agent ran a privileged tool Hubble never approved, or moved itself
    * into a mode where it would.
    *
    * The turn is cancelled and the session failed, with one fixed sentence
-   * saying why. The user can start a new session, which TabDump puts back in
+   * saying why. The user can start a new session, which Hubble puts back in
    * a mode where the agent asks.
    */
   function enforce(session: LiveSession, reason: string): void {
@@ -549,7 +549,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
         // move out of the asking modes — by the agent, by a hook, by a user in
         // another client of the same agent — ends the session.
         if (session.askingModes && !session.askingModes.includes(read.update.modeId)) {
-          enforce(session, "The agent switched to a mode where it approves its own actions, so TabDump stopped it.");
+          enforce(session, "The agent switched to a mode where it approves its own actions, so Hubble stopped it.");
         }
         return;
     }
@@ -596,7 +596,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     const policy = policyFor(kind);
     const locations = request.call.locations.length > 0 ? request.call.locations : (known?.locations ?? []);
 
-    // TabDump's own answer first. Asking about something the grant does not
+    // Hubble's own answer first. Asking about something the grant does not
     // allow anyway would teach people to click through prompts.
     if (policy.forbidden || !isGranted(session.grant, policy.scope, session.project?.id)) {
       return { result: permissionOutcome(request, "denied") };
@@ -792,7 +792,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     });
     if (!opened.ok) return controlFailure(opened.code);
 
-    // The session's own TabDump MCP server (J.3), for an agent that speaks
+    // The session's own Hubble MCP server (J.3), for an agent that speaks
     // MCP over HTTP. Its credential travels in this request, over the agent's
     // stdin — never on a command line. Revoked by the runtime when the
     // session ends; this adapter holds nothing to release.
@@ -852,7 +852,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
 
     // Put the agent in a mode where it asks. Already in one: nothing to do.
     // Offers one: switch to it. Offers none, or refuses the switch: the
-    // session is not driven — TabDump does not start an agent that would be
+    // session is not driven — Hubble does not start an agent that would be
     // approving its own actions, and does not guess at a mode it cannot see.
     const settled = await settleAskingMode(opened.peer, result, approval.modeIds);
     if (!settled) {
@@ -863,7 +863,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     session.askingModes = approval.modeIds;
 
     setStatus({ kind: "connected" });
-    emit(session, "session_started", mcp ? "Session started with TabDump tools." : "Session started.");
+    emit(session, "session_started", mcp ? "Session started with Hubble tools." : "Session started.");
     return { ok: true, value: { sessionId: request.sessionId, providerSessionId: result.sessionId, status: "ready" } };
   }
 
@@ -1038,7 +1038,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
     /**
      * Runs the agent's own sign-in for a method it advertised.
      *
-     * TabDump passes the method id and nothing else. For a browser method
+     * Hubble passes the method id and nothing else. For a browser method
      * the agent opens the provider's sign-in page on this machine; the
      * credential it obtains stays in the agent's own store.
      */
@@ -1064,7 +1064,7 @@ export function createAcpControlAdapter(options: AcpControlAdapterOptions): AcpC
         return controlFailure(codeFor(result) === "configuration" ? "configuration" : codeFor(result));
       }
       // The agent said the sign-in finished. It is asked once more, the same
-      // way `connect` asks, so what TabDump shows is the agent's answer to
+      // way `connect` asks, so what Hubble shows is the agent's answer to
       // "can a session start now" rather than the sign-in flow's own report.
       // An agent that cannot answer is reported as exactly that — `unknown`,
       // which the UI shows as "could not be verified" — not as signed in.

@@ -1,5 +1,5 @@
 /**
- * Where TabDump's own API lives, as seen from whichever shell is running.
+ * Where Hubble's own API lives, as seen from whichever shell is running.
  *
  * On the web this is the empty string, so every call site keeps issuing the
  * *same relative, same-origin request it always has* — `/api/titles` stays
@@ -10,7 +10,7 @@
  * A packaged desktop build is served from `tauri://localhost`, where a
  * relative `/api/...` resolves to the bundle itself and 404s. Setting
  * `NEXT_PUBLIC_TABDUMP_API_ORIGIN` at build time points those calls at a
- * deployed TabDump instead.
+ * deployed Hubble instead.
  *
  * It is deliberately UNSET for the v1 desktop build, and that is a
  * correctness decision rather than an omission:

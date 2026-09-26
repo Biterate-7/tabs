@@ -70,7 +70,7 @@ function bridge(env: Record<string, string>): StdioClientTransport {
   });
 }
 
-describe("Claude Desktop → stdio bridge → TabDump MCP", () => {
+describe("Claude Desktop → stdio bridge → Hubble MCP", () => {
   it("completes the handshake, discovers the tools, and calls one", async () => {
     const transport = bridge({ TABDUMP_MCP_TOKEN: token, TABDUMP_MCP_URL: url });
     const client = new Client({ name: "claude-desktop-stand-in", version: "1.0.0" });
@@ -90,7 +90,7 @@ describe("Claude Desktop → stdio bridge → TabDump MCP", () => {
   it("answers a refused token with an error rather than hanging", async () => {
     const transport = bridge({ TABDUMP_MCP_TOKEN: mintMcpToken().token, TABDUMP_MCP_URL: url });
     const client = new Client({ name: "claude-desktop-stand-in", version: "1.0.0" });
-    await expect(client.connect(transport)).rejects.toThrow(/TabDump refused/);
+    await expect(client.connect(transport)).rejects.toThrow(/Hubble refused/);
     await client.close().catch(() => {});
   }, 30_000);
 

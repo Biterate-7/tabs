@@ -75,7 +75,7 @@ export type ApprovalAction =
   | "run_command"
   | "network_request"
   | "use_mcp_tool"
-  /** Change the TabDump workspace the session was started from (Phase J.3). */
+  /** Change the Hubble workspace the session was started from (Phase J.3). */
   | "change_workspace";
 
 export const APPROVAL_ACTIONS: readonly ApprovalAction[] = [
@@ -100,7 +100,7 @@ export const APPROVAL_ACTION_LABELS: Record<ApprovalAction, string> = {
   run_command: "run a command",
   network_request: "access the network",
   use_mcp_tool: "use an MCP tool",
-  change_workspace: "change your TabDump workspace",
+  change_workspace: "change your Hubble workspace",
 };
 
 /** Cap on the provider-supplied reason. Bounded for the same reasons an event summary is. */
@@ -126,7 +126,7 @@ export type AgentApproval = {
   scope: AgentPermissionScope;
   /**
    * Where the action would happen: exactly one of a project (files, commands)
-   * or — for `write_workspace` only — the TabDump workspace the session was
+   * or — for `write_workspace` only — the Hubble workspace the session was
    * started from (Phase J.3). An approval naming neither, or both, is refused.
    */
   projectId?: string;

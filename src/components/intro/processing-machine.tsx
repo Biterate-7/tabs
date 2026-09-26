@@ -4,7 +4,7 @@ import type { IntroPhase } from "./phase"
 const BUCKET_ORDER: IntroTab["bucket"][] = ["research", "projects", "other"]
 
 /**
- * Scene 4 — the "TabDump engine". Deliberately abstract (a thin frame, a
+ * Scene 4 — the "Hubble engine". Deliberately abstract (a thin frame, a
  * scanning line, a few divider ticks) rather than a literal factory, per
  * AGENTS.md. Tabs don't visually travel through this component — ChaosField
  * funnels into the same screen-center point this frame occupies, and this
@@ -28,9 +28,9 @@ export function ProcessingMachine({ phase, tabs }: { phase: IntroPhase; tabs: In
       }}
       aria-hidden
     >
-      <div className="relative h-[104px] w-[300px] overflow-hidden rounded-xl border border-border sm:w-[360px]">
+      <div className="relative h-[104px] w-[300px] overflow-hidden rounded-lg border border-border sm:w-[360px]">
         <div className="absolute inset-x-6 top-3 flex justify-center">
-          <span className="text-eyebrow text-tertiary">TabDump Engine</span>
+          <span className="text-eyebrow text-tertiary">Hubble Engine</span>
         </div>
         {[25, 50, 75].map((pct, i) => (
           <div

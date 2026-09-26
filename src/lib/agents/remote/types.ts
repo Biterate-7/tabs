@@ -112,7 +112,7 @@ export function isDeadStatus(status: RemoteSandboxStatus): boolean {
  * ------------------------------------------------------------------ */
 
 /**
- * A project whose files live in a sandbox TabDump created.
+ * A project whose files live in a sandbox Hubble created.
  *
  * Every field is one the remote plane genuinely needs. In particular there is
  * **no credential of any kind** — not an Anthropic key, not a Vercel token,
@@ -213,7 +213,7 @@ export type RemoteSession = {
  * wrong for this architecture, and the reason is worth writing down because
  * it is the kind of thing that gets re-added.
  *
- * TabDump's event ordering lives in the runtime host's journal, which is
+ * Hubble's event ordering lives in the runtime host's journal, which is
  * **in memory**. On a serverless control plane that journal is empty at the
  * start of every request. A stored cursor would therefore hand back "events
  * since byte N" to a journal that has no events before byte N — so the
@@ -246,7 +246,7 @@ export type RemoteSession = {
  * The agent is started with this as its working directory and is given no
  * additional directories, so the scope it sees is the project and not the
  * machine — the same `cwd` discipline the local adapter already applies,
- * reaching a directory TabDump created rather than one a user nominated.
+ * reaching a directory Hubble created rather than one a user nominated.
  */
 export const REMOTE_WORKSPACE_ROOT = "/workspace/project";
 

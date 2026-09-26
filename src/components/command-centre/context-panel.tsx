@@ -30,7 +30,7 @@ import type { RuntimeSessionView, RuntimeStatus } from "@/lib/agents/runtime/pro
  * "Not included", with the resolver's own reason.
  *
  * When nothing is attached it says so plainly. It never implies the agent can
- * see the rest of TabDump.
+ * see the rest of Hubble.
  *
  * ## Why refresh is a button
  *
@@ -54,12 +54,12 @@ function Section({
     /* `last:` drops the rule under the final section: with the panel shorter
        than the column, a trailing border drew a line across open space and
        read as a cut-off edge rather than as a divider. */
-    <section className="border-b border-subtle px-3 py-2.5 last:border-b-0">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-eyebrow text-tertiary">{title}</h3>
+    <section className="border-b border-subtle px-4 py-3 last:border-b-0">
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        <h3 className="text-eyebrow text-muted-foreground">{title}</h3>
         {action}
       </div>
-      <div className="mt-1.5">{children}</div>
+      <div className="mt-1">{children}</div>
     </section>
   )
 }
@@ -68,8 +68,8 @@ function Section({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-0.5">
-      <span className="shrink-0 text-label text-tertiary">{label}</span>
-      <span className="min-w-0 truncate text-meta text-muted-foreground">{value}</span>
+      <span className="shrink-0 text-body-sm text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-body-sm text-foreground">{value}</span>
     </div>
   )
 }
@@ -115,10 +115,10 @@ export function ContextPanel({
         wrapping. Collapsing it outright keeps the centre usable, and the
         header's toggle brings it back at any width where it fits.
       */
-      className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-subtle xl:flex"
+      className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-subtle bg-sidebar xl:flex"
     >
-      <div className="flex h-12 shrink-0 items-center border-b border-subtle px-3">
-        <h2 className="text-eyebrow text-tertiary">Context</h2>
+      <div className="flex h-12 shrink-0 items-center border-b border-border px-4">
+        <h2 className="text-h2 text-foreground">Context</h2>
       </div>
 
       <Section title="Project">
@@ -137,7 +137,7 @@ export function ContextPanel({
           Only once there is something to edit.
 
           With nothing attached the section already ends in a full-width
-          "Attach TabDump context" button, and a header "Edit" beside it was a
+          "Attach Hubble context" button, and a header "Edit" beside it was a
           second route to the same dialog three lines apart.
         */
         action={
@@ -174,13 +174,13 @@ export function ContextPanel({
             */}
             <Button
               type="button"
-              size="xs"
-              variant="outline"
-              className="mt-2 w-full"
+              size="sm"
+              variant="secondary"
+              className="mt-2.5 w-full"
               onClick={onEditContext}
             >
               <Sparkles />
-              Attach TabDump context
+              Attach Hubble context
             </Button>
           </>
         ) : (
@@ -196,7 +196,7 @@ export function ContextPanel({
               Captured {new Date(snapshot.capturedAt).toLocaleTimeString()}
             </p>
             {deltaText && (
-              <p className="mt-1 text-meta text-accent-text">Context updated · {deltaText}</p>
+              <p className="mt-1 text-meta text-link">Context updated · {deltaText}</p>
             )}
           </>
         )}

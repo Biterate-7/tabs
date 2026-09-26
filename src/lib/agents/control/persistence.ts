@@ -11,7 +11,7 @@ import type { AgentSession } from "./session";
 /**
  * Local-first persistence for the control plane.
  *
- * Two keys, account-scoped through the same mechanism every other TabDump
+ * Two keys, account-scoped through the same mechanism every other Hubble
  * domain uses, so one account's projects and sessions are invisible to
  * another signed into the same browser.
  *

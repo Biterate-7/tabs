@@ -14,7 +14,7 @@ import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapsh
 /**
  * The Command Centre's half of session workspace context (Phase J.3, J.4).
  *
- * TabDump's workspace lives here, in the app, so the webview is what hands the
+ * Hubble's workspace lives here, in the app, so the webview is what hands the
  * runtime a session's workspace — and what applies a change the user approved:
  *
  *   - **At start**, `snapshotFor(workspaceId)` is sent with `create_session`.

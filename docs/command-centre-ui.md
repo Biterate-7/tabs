@@ -97,7 +97,7 @@ arrival.
   phase is the proper fix.
 - **A hosted deployment cannot execute agents**, and says so with the gate's own
   sentence.
-- **A browser-served runtime has no trusted path source.** TabDump validates that
+- **A browser-served runtime has no trusted path source.** Hubble validates that
   an authorized folder is shaped like a project — not a drive, not a home
   directory, no traversal — but cannot confirm it is the folder the user meant.
   A native folder picker is the fix, and is named in `agent-local-runtime.md`.

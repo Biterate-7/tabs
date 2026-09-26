@@ -4,7 +4,7 @@ import type { RemoteProject, RemoteSandboxStatus, RemoteSession } from "./types"
 /**
  * Durable state for the remote execution plane.
  *
- * ## Why a store exists at all, when the rest of TabDump is local-first
+ * ## Why a store exists at all, when the rest of Hubble is local-first
  *
  * Because remote execution is the one part of this product that genuinely
  * cannot be. A local runtime is a process that outlives the requests made to
@@ -99,7 +99,7 @@ export type ExpiredSandbox = {
  * ------------------------------------------------------------------ */
 
 /**
- * The store a test drives, and the store a single-process TabDump uses.
+ * The store a test drives, and the store a single-process Hubble uses.
  *
  * Genuinely usable, and genuinely **not** usable on serverless — which is why
  * `server.ts` refuses to build a remote runtime on one. A memory store behind

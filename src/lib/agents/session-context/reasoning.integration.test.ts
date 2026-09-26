@@ -261,7 +261,7 @@ describe("multi-turn reasoning against a changing workspace", () => {
       ["p5", "Title mentions “Relativity”"],
     ]);
 
-    // The user adds an unrelated tab in TabDump: version 2, the group untouched.
+    // The user adds an unrelated tab in Hubble: version 2, the group untouched.
     const held = h.registry.binding("s1")!.snapshot;
     h.registry.update("s1", { ...held, workspace: { ...held.workspace, tabs: [...held.workspace.tabs, tab("n1", "Tax return checklist", "https://tax.example.gov")] } });
     const still = (await call(client, "get_topic_group", { groupId: second.groupId, basedOnVersion: 1 })).json();

@@ -86,7 +86,7 @@ describe("AppSidebar", () => {
   it("hides the brand label and metadata line while collapsed but keeps the switcher reachable", () => {
     renderSidebar({ collapsed: true });
 
-    expect(screen.queryByText("TabDump")).toBeNull();
+    expect(screen.queryByText("Hubble")).toBeNull();
     expect(screen.getByRole("button", { name: "Switch workspace" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
   });
@@ -138,7 +138,7 @@ describe("AppSidebar", () => {
   it("shows full labels inside the mobile drawer even when the desktop rail is collapsed", () => {
     renderSidebar({ collapsed: true, mobileOpen: true });
 
-    expect(screen.getByText("TabDump")).toBeTruthy();
+    expect(screen.getByText("Hubble")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close sidebar" })).toBeTruthy();
   });
 
@@ -151,5 +151,27 @@ describe("AppSidebar", () => {
 
     expect(onMobileOpenChange).toHaveBeenCalledWith(false);
     expect(onToggleCollapsed).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppSidebar positioning", () => {
+  it("is the window's fixed rail in the app", () => {
+    renderSidebar();
+    const aside = screen.getByRole("complementary");
+    expect(aside.className).toMatch(/\bfixed\b/);
+    expect(aside.className).toMatch(/\bh-screen\b/);
+    expect(aside.className).toMatch(/md:sticky/);
+  });
+
+  it("embedded, positions against its container instead of the viewport", () => {
+    renderSidebar({ embedded: true, mobileOpen: true });
+    const aside = screen.getByRole("complementary");
+    expect(aside.className).toMatch(/\babsolute\b/);
+    expect(aside.className).toMatch(/\bh-full\b/);
+    expect(aside.className).toMatch(/md:relative/);
+    expect(aside.className).not.toMatch(/\bfixed\b|\bh-screen\b|md:sticky/);
+    // The drawer's scrim stays inside the container too.
+    const scrim = [...document.querySelectorAll("div[aria-hidden]")].find((el) => el.className.includes("bg-(--overlay)"));
+    expect(scrim?.className).toMatch(/\babsolute\b/);
   });
 });

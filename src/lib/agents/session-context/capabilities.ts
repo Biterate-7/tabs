@@ -1,5 +1,5 @@
 /**
- * What an agent session may do with the TabDump workspace it was started from
+ * What an agent session may do with the Hubble workspace it was started from
  * (Phase J.3, formalized in J.4).
  *
  * ## Two grant scopes, five capabilities

@@ -13,7 +13,7 @@ import type { SessionContextSnapshot } from "./snapshot";
  * collections already exist, which sites dominate, whether anything is saved
  * twice. These are that shape — counts and short lists, never the workspace.
  * Every text field goes through the same sanitizer and URL redaction as every
- * other TabDump answer (lib/agents/context/sanitize.ts); matching is done on
+ * other Hubble answer (lib/agents/context/sanitize.ts); matching is done on
  * the redacted URL, so a search cannot be used to probe a secret query value.
  */
 
@@ -135,7 +135,7 @@ export function summarizeWorkspace(snapshot: SessionContextSnapshot): WorkspaceS
 }
 
 /* ------------------------------------------------------------------ *
- * Duplicates — TabDump's own detection (lib/tabs/duplicates.ts), exposed
+ * Duplicates — Hubble's own detection (lib/tabs/duplicates.ts), exposed
  * ------------------------------------------------------------------ */
 
 export type DuplicateTabGroup = {

@@ -85,7 +85,7 @@ export async function fetchHtmlCapped(url: string, signal: AbortSignal): Promise
       signal: combined,
       redirect: "follow",
       headers: {
-        "user-agent": "Mozilla/5.0 (compatible; TabDumpBot/1.0; +https://tabdump.example/bot)",
+        "user-agent": "Mozilla/5.0 (compatible; HubbleBot/1.0; +https://hubble.example/bot)",
         accept: "text/html,application/xhtml+xml",
       },
     });

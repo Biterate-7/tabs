@@ -58,9 +58,9 @@ describe("appearanceToCssVars", () => {
   });
 
   it("turns radius/border/shadow/motion settings into real CSS values", () => {
-    // `medium` is pinned to marketing.css's --radius so the product and the
-    // landing page cut their corners the same way — see RADIUS_LEVELS.
-    expect(vars["--radius"]).toBe("0.75rem");
+    // `medium` is the 8px control radius the geometry scale derives from —
+    // see RADIUS_LEVELS.
+    expect(vars["--radius"]).toBe("0.5rem");
     expect(vars["--motion-scale"]).toBe("1");
   });
 

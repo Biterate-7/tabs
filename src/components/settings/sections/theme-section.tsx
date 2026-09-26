@@ -9,7 +9,7 @@ import { useAppearanceContext } from "@/components/appearance-provider"
 import { resolveThemeColors } from "@/lib/appearance/resolve"
 import { THEME_CATEGORY_LABELS, THEME_REGISTRY, deriveSubtleFields } from "@/lib/appearance/themes"
 import type { ThemeCategory } from "@/lib/appearance/types"
-import { FieldRow, SectionHeading } from "./section-ui"
+import { FieldRow, SectionHeading , SectionStack } from "./section-ui"
 import { ThemeCard } from "./theme-card"
 import { CustomThemeEditor } from "./custom-theme-editor"
 
@@ -77,16 +77,18 @@ export function ThemeSection() {
 
       {mode === "preset" ? (
         <div className="flex flex-col gap-6">
-          <FieldRow label="Random theme" description="Pick a new theme automatically each time TabDump loads.">
-            <Switch
-              checked={settings.randomThemeEnabled}
-              onCheckedChange={appearance.setRandomThemeEnabled}
-              aria-label="Random theme"
-            />
-          </FieldRow>
+          <SectionStack>
+            <FieldRow label="Random theme" description="Pick a new theme automatically each time Hubble loads.">
+              <Switch
+                checked={settings.randomThemeEnabled}
+                onCheckedChange={appearance.setRandomThemeEnabled}
+                aria-label="Random theme"
+              />
+            </FieldRow>
+          </SectionStack>
 
           {favoritesOnly && visibleThemes.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-subtle p-6 text-center text-body-sm text-muted-foreground">
+            <p className="rounded-md border border-dashed border-border p-6 text-center text-body-sm text-muted-foreground">
               No favorites yet — star a theme below to add it here.
             </p>
           ) : (
@@ -95,8 +97,8 @@ export function ThemeSection() {
               if (themes.length === 0) return null
               return (
                 <div key={category}>
-                  <p className="mb-2 px-0.5 text-eyebrow text-tertiary">{THEME_CATEGORY_LABELS[category]}</p>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <p className="mb-2 text-label text-muted-foreground">{THEME_CATEGORY_LABELS[category]}</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {themes.map((theme) => (
                       <ThemeCard
                         key={theme.id}

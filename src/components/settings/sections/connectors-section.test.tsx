@@ -96,7 +96,7 @@ describe("opening a connector", () => {
     await user.click(screen.getByRole("button", { name: /Gemini/ }))
 
     expect(
-      screen.getByText(/TabDump lists a capability only once it can actually observe it/i)
+      screen.getByText(/Hubble lists a capability only once it can actually observe it/i)
     ).toBeTruthy()
   })
 
@@ -113,19 +113,19 @@ describe("opening a connector", () => {
 })
 
 describe("the connect flow", () => {
-  it("shows what TabDump will and will not do before connecting", async () => {
+  it("shows what Hubble will and will not do before connecting", async () => {
     const user = userEvent.setup()
     render(<ConnectorsSection />)
 
     await user.click(screen.getByRole("button", { name: /Claude Code/ }))
 
-    expect(screen.getByText("TabDump will not")).toBeTruthy()
+    expect(screen.getByText("Hubble will not")).toBeTruthy()
     expect(screen.getByText("Run commands")).toBeTruthy()
     expect(screen.getByText("Send prompts")).toBeTruthy()
     expect(screen.getByText("Modify your files")).toBeTruthy()
     expect(screen.getByText("Control the agent")).toBeTruthy()
 
-    expect(screen.getByText("TabDump can")).toBeTruthy()
+    expect(screen.getByText("Hubble can")).toBeTruthy()
     expect(screen.getByText("Observe runs")).toBeTruthy()
   })
 
@@ -219,7 +219,7 @@ describe("the control half of a connector", () => {
   it("distinguishes observation from control rather than describing only one", async () => {
     // The old page said "Observes Claude Code sessions running on this
     // machine" and nothing else, so a reader concluded observation was all
-    // TabDump could do with it.
+    // Hubble could do with it.
     const user = userEvent.setup()
     render(<ConnectorsSection />)
 

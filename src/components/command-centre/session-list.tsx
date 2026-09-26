@@ -2,9 +2,9 @@
 
 import { useMemo } from "react"
 import { Plus } from "lucide-react"
-import { AgentIcon } from "@/components/agents/agent-icon"
-import { Button } from "@/components/ui/button"
+import { AgentStatusGlyph } from "@/components/agents/agent-status-glyph"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
+import { platformProvider } from "@/lib/agents/platform/catalog"
 import {
   SESSION_STATUS_LABEL,
   SESSION_VISUAL_STATE,
@@ -58,42 +58,48 @@ function SessionRow({
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
 
+  const agentName = platformProvider(view.provider)?.displayName ?? view.provider
+  const title = view.title ?? SESSION_STATUS_LABEL[view.status]
+
+  /*
+    The reference's task row: a status glyph in a 16px gutter, the task on
+    the first line at 12px, and a second 11px line saying where it stands —
+    status first (so the row is readable without the glyph), then the agent
+    and project. Full-bleed, no corner: the list is a column of rows, and
+    the current one is marked by a tonal fill, not a card.
+  */
   return (
     <li>
       <button
         type="button"
         onClick={onSelect}
-        // `aria-current` rather than a class alone: the selected row is a
-        // navigational fact, and the rail elsewhere in this app marks its
-        // active destination the same way.
         aria-current={selected ? "true" : undefined}
         className={cn(
-          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-          "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+          "flex w-full items-start gap-2.5 py-2.5 pr-3 pl-3.5 text-left transition-colors duration-(--duration-fast) ease-(--ease-color)",
+          "outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60",
           selected ? "bg-surface-selected" : "hover:bg-surface-hover"
         )}
       >
-        <AgentIcon connector={view.provider} state={state} size="xs" />
+        <span className="flex h-4 items-center">
+          <AgentStatusGlyph state={state} label={SESSION_STATUS_LABEL[view.status]} />
+        </span>
 
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-body-sm text-foreground">
-            {view.title ?? SESSION_STATUS_LABEL[view.status]}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className={cn("truncate text-body-sm", selected ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}>
+            {title}
           </span>
-          <span className="flex items-center gap-1.5">
-            <span
-              className={cn("truncate text-label", AGENT_TONE_TEXT_CLASS[sessionStatusTone(view.status)])}
-            >
+          <span className="flex min-w-0 items-center gap-1 text-meta text-tertiary">
+            <span className={cn("shrink-0", AGENT_TONE_TEXT_CLASS[sessionStatusTone(view.status)] === "text-destructive" && "text-destructive")}>
               {SESSION_STATUS_LABEL[view.status]}
             </span>
-            {projectName && (
-              <span className="truncate text-label text-tertiary">· {projectName}</span>
-            )}
+            <span className="truncate">
+              · {agentName}
+              {projectName ? ` · ${projectName}` : ""}
+            </span>
           </span>
         </span>
 
-        <span className="shrink-0 text-meta text-tertiary">
-          {relativeTime(view.updatedAt, now)}
-        </span>
+        <span className="shrink-0 pt-px text-meta text-tertiary">{relativeTime(view.updatedAt, now)}</span>
       </button>
     </li>
   )
@@ -108,9 +114,12 @@ export function SessionList({
   canCreate,
   now,
   children,
+  className,
 }: {
   /** Rendered above the sessions — the connected-agents roster (Phase J). */
   children?: React.ReactNode
+  /** Layout classes from the view — used to make the list full-width master on narrow screens. */
+  className?: string
   sessions: readonly CommandCentreSession[]
   selectedSessionId: string | null
   /** Resolves a project id to its name. Ids are internal and never shown. */
@@ -132,35 +141,33 @@ export function SessionList({
   return (
     // Narrower where the centre needs the width; full size once the context
     // panel is affordable too. See context-panel.tsx for the column budget.
-    <div className="flex h-full min-h-0 w-56 shrink-0 flex-col border-r border-subtle xl:w-64">
-      <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-subtle px-3">
-        <h2 className="text-eyebrow text-tertiary">Sessions</h2>
-        <Button
+    <div className={cn("flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-subtle bg-sidebar xl:w-64", className)}>
+      <div className="shrink-0 p-2">
+        <button
           type="button"
-          size="xs"
-          variant="ghost"
           onClick={onNewSession}
           disabled={!canCreate}
           aria-label="New agent session"
+          className="flex h-[30px] w-full items-center gap-2 rounded-xs px-2 text-left text-body text-foreground transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-45"
         >
-          <Plus />
-          New
-        </Button>
+          <Plus className="size-4 text-muted-foreground" aria-hidden />
+          New session
+        </button>
       </div>
 
       {children}
 
-      <nav aria-label="Agent sessions" className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+      <nav aria-label="Agent sessions" className="min-h-0 flex-1 overflow-y-auto pb-2">
         {sessions.length === 0 ? (
-          <p className="px-2 py-1 text-body-sm text-tertiary">No sessions yet.</p>
+          <p className="px-3.5 py-2 text-body-sm text-tertiary">No sessions yet.</p>
         ) : (
           <>
             {active.length > 0 && (
               <>
-                <h3 className="px-2 pt-1 pb-1 text-eyebrow text-tertiary">
-                  Active {active.length}
+                <h3 className="px-3 pt-2 pb-1 text-eyebrow text-muted-foreground">
+                  In progress <span className="text-tertiary">{active.length}</span>
                 </h3>
-                <ul className="flex flex-col gap-0.5">
+                <ul className="flex flex-col">
                   {active.map((session) => (
                     <SessionRow
                       key={session.view.sessionId}
@@ -177,8 +184,10 @@ export function SessionList({
 
             {ended.length > 0 && (
               <>
-                <h3 className="px-2 pt-3 pb-1 text-eyebrow text-tertiary">Ended {ended.length}</h3>
-                <ul className="flex flex-col gap-0.5">
+                <h3 className="px-3 pt-4 pb-1 text-eyebrow text-muted-foreground">
+                  Ended <span className="text-tertiary">{ended.length}</span>
+                </h3>
+                <ul className="flex flex-col">
                   {ended.map((session) => (
                     <SessionRow
                       key={session.view.sessionId}

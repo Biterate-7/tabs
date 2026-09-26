@@ -166,7 +166,7 @@ export function createMemoryConnectionStore(): ConnectionStore {
  *
  * Shared by the Postgres store. A row whose provider, auth method or status is
  * not one this build knows about is dropped rather than coerced: a connection
- * TabDump cannot describe is one it must not offer to start a session with,
+ * Hubble cannot describe is one it must not offer to start a session with,
  * and a default would silently make it usable.
  */
 export function readConnectionRow(row: {

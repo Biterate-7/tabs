@@ -92,12 +92,12 @@ export function FolderTile({
         onDrop={handleDrop}
         aria-label={isEmpty ? `${name}: no tabs` : `Open ${name}, ${totalCount} tab${totalCount === 1 ? "" : "s"}`}
         className={cn(
-          "flex min-h-11 items-center gap-2 rounded-lg border border-subtle px-3 py-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-standard) sm:min-h-0",
-          isEmpty ? "cursor-default opacity-45" : "bg-card hover:border-border",
-          dragOver && "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/30"
+          "flex min-h-11 items-center gap-2 rounded-xs bg-card px-3 py-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-color) sm:min-h-8",
+          isEmpty ? "cursor-default opacity-45" : "hover:bg-surface-hover",
+          dragOver && "bg-link/[0.06] ring-1 ring-link/40"
         )}
       >
-        <Icon className="size-3.5 shrink-0" style={{ color: `var(${accentVar})` }} />
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" data-accent={accentVar} />
         <span className="text-body-sm text-foreground">{name}</span>
         <span className="ml-auto text-meta text-tertiary">{totalCount}</span>
       </button>
@@ -137,7 +137,9 @@ export function FolderTile({
       disabled={isOpening}
       aria-label={`Open ${name}, ${totalCount} tab${totalCount === 1 ? "" : "s"}`}
       className={cn(
-        "group relative block w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        // flex, not block: a button centres its content vertically, which
+        // would float a shorter card in the middle of a taller grid row.
+        "group relative flex h-full w-full cursor-pointer flex-col rounded-xs text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         presence === "large" && "sm:col-span-2 lg:col-span-1"
       )}
       style={{
@@ -179,51 +181,46 @@ export function FolderTile({
       */}
       <div
         className={cn(
-          "relative flex flex-col gap-px overflow-hidden rounded-xl border border-subtle bg-card p-1.5",
-          "transition-[transform,border-color,background-color] duration-(--duration-fast) ease-(--ease-standard)",
-          "group-hover:-translate-y-0.5 group-hover:border-border",
-          dragOver && "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/30"
+          /*
+            The reference's card: the card tone on the page, a 4px corner, no
+            border and no lift — hover is a one-step tonal change. Title and
+            count sit inside at the top, the contents below, so the card reads
+            as one object rather than a picture with a caption.
+          */
+          "relative flex flex-1 flex-col overflow-hidden rounded-xs bg-card px-4 pt-3.5 pb-3",
+          "transition-[background-color,box-shadow] duration-(--duration-fast) ease-(--ease-color)",
+          "group-hover:bg-surface-hover",
+          dragOver && "bg-link/[0.06] ring-1 ring-link/40"
         )}
-        style={{ minHeight: presence === "large" ? 168 : 152 }}
+        style={{ minHeight: presence === "large" ? 184 : 168 }}
       >
+        <div className="flex items-baseline gap-2">
+          <Icon className="size-3.5 shrink-0 translate-y-0.5 text-muted-foreground" data-accent={accentVar} />
+          <span className="truncate text-body font-medium text-foreground">{name}</span>
+          <span className="ml-auto shrink-0 text-meta text-tertiary">
+            {totalCount} tab{totalCount === 1 ? "" : "s"}
+          </span>
+        </div>
+        {subtitle && <p className="mt-0.5 pl-5.5 text-meta text-tertiary">{subtitle}</p>}
+
         {previewTabs.length > 0 ? (
-          <>
+          <div className="mt-3 flex flex-col gap-2">
             {previewTabs.map((tab) => (
-              <span
-                key={tab.id}
-                className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-(--duration-fast) group-hover:bg-surface-hover/60"
-              >
+              <span key={tab.id} className="flex min-w-0 items-center gap-2">
                 <TabFavicon domain={tab.domain} size={14} />
                 <span className="min-w-0 flex-1 truncate text-body-sm text-muted-foreground">
                   {tab.title?.trim() || tab.domain}
                 </span>
               </span>
             ))}
-            {extraCount > 0 && (
-              <span className="mt-auto px-2 pt-1 text-meta text-tertiary">
-                +{extraCount} more
-              </span>
-            )}
-          </>
+            {extraCount > 0 && <span className="text-meta text-tertiary">+{extraCount} more</span>}
+          </div>
         ) : (
-          /* An empty folder says so plainly. `writing.md`: an empty screen
-             invites the next action, and here the action is a drag. */
+          /* An empty folder says so plainly: the next action is a drag. */
           <span className="flex flex-1 items-center justify-center px-3 text-center text-body-sm text-tertiary">
             {dragOver ? "Drop to file here" : "Nothing filed here yet"}
           </span>
         )}
-      </div>
-      {/* Label — stays outside the animated folder body so it never moves
-          on hover and reads clearly through every phase of the open sequence. */}
-      <div className="mt-3 px-0.5">
-        <div className="flex items-center gap-2">
-          <Icon className="size-4 shrink-0" style={{ color: `var(${accentVar})` }} />
-          <span className="truncate text-body font-medium text-foreground">{name}</span>
-          <span className="ml-auto shrink-0 text-meta text-tertiary">
-            {totalCount} tab{totalCount === 1 ? "" : "s"}
-          </span>
-        </div>
-        {subtitle && <p className="mt-0.5 pl-6 text-meta text-tertiary">{subtitle}</p>}
       </div>
     </button>
   )

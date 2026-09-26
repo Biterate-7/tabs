@@ -72,6 +72,12 @@ import type { SettingsSection } from "@/components/settings/appearance-settings-
 import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
+import { CommandPalette } from "@/components/command-palette/command-palette"
+import { CommandPaletteHostContext, type CommandPaletteHost } from "@/components/command-palette/palette-host"
+import { buildGlobalCommands, mergeCommands } from "@/components/command-palette/global-commands"
+import type { Command } from "@/components/command-palette/types"
+import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
+import { useOptionalAppearanceContext } from "@/components/appearance-provider"
 
 /**
  * Where a committed store came from.
@@ -120,14 +126,14 @@ type OrganizeOutcome = { ok: true; report: OrganizeReport | undefined } | { ok: 
 
 const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   "invalid-json": "That file isn't valid JSON.",
-  "invalid-schema": "That file doesn't look like a TabDump export.",
-  "unsupported-version": "That export was made with a newer version of TabDump.",
+  "invalid-schema": "That file doesn't look like a Hubble export.",
+  "unsupported-version": "That export was made with a newer version of Hubble.",
 }
 
 export function AppShell() {
   const [store, setStore] = useState<WorkspaceStore | null>(null)
   const [hydrated, setHydrated] = useState(false)
-  // Has this visitor engaged with TabDump at all — connected the extension, or
+  // Has this visitor engaged with Hubble at all — connected the extension, or
   // explicitly chosen to skip onboarding? Decides whether `/` shows the public
   // landing page or the app (see the branch before this shell's return).
   // Defaults to true, the conservative answer: the app, not a marketing page,
@@ -151,7 +157,7 @@ export function AppShell() {
    * Which session the Session View resolves, and which task is open inside
    * it.
    *
-   * This is the whole navigation mechanism for the phase. TabDump has no
+   * This is the whole navigation mechanism for the phase. Hubble has no
    * router - every view above is a `useState` union - so a session is
    * addressed the same way: two opaque ids held beside the view. It is
    * deliberately the smallest thing that works, and it is serialisable (see
@@ -193,6 +199,43 @@ export function AppShell() {
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail
   // toggle), which has no meaningful effect on mobile.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  /*
+    The command palette belongs to the shell so ⌘K works on every
+    destination. Views contribute their own commands through the host while
+    mounted (see command-palette/palette-host.tsx); the shell adds the
+    global set — navigation, agents, workspaces, every saved tab, settings.
+  */
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  // What the mounted views had contributed at the moment the palette opened.
+  // Read from the ref in the opening event, never during render.
+  const [contributedCommands, setContributedCommands] = useState<Command[][]>([])
+  const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
+  const contributedCommandsRef = useRef(new Map<string, Command[]>())
+  const paletteHost = useMemo<CommandPaletteHost>(
+    () => ({
+      open: () => {
+        setContributedCommands([...contributedCommandsRef.current.values()])
+        setPaletteOpen(true)
+      },
+      contribute: (source, commands) => {
+        if (commands) contributedCommandsRef.current.set(source, commands)
+        else contributedCommandsRef.current.delete(source)
+      },
+    }),
+    []
+  )
+  const appearance = useOptionalAppearanceContext()
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        paletteHost.open()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [paletteHost])
   // Ids from the most recently completed import batch, for the "recently
   // added" tab-card treatment — ephemeral UI-only state (never persisted,
   // no Tab field backs it), cleared automatically after a short window so
@@ -847,7 +890,7 @@ export function AppShell() {
   )
 
   /**
-   * Per-workspace tab index for exact-match URL linking, keyed by TabDump's
+   * Per-workspace tab index for exact-match URL linking, keyed by Hubble's
    * own normalized URL so an agent visiting a saved page links to the same tab
    * the user would have opened.
    */
@@ -950,7 +993,7 @@ export function AppShell() {
   function notifyHistoryDumped(count: number, skipped: number) {
     const snapshot = undoSnapshotRef.current
     toast(`${count} tab${count === 1 ? "" : "s"} dumped`, {
-      description: skipped > 0 ? `${skipped} ${skipped === 1 ? "was" : "were"} already in TabDump` : undefined,
+      description: skipped > 0 ? `${skipped} ${skipped === 1 ? "was" : "were"} already in Hubble` : undefined,
       action: {
         label: "Undo",
         onClick: () => {
@@ -966,7 +1009,7 @@ export function AppShell() {
   // handleBrowserImport, this filters out anything that already exists in
   // the current workspace *before* merging, rather than letting markDuplicates
   // flag it after the fact — History Dump's review screen already lets the
-  // user see "already in TabDump" candidates, so nothing selected from there
+  // user see "already in Hubble" candidates, so nothing selected from there
   // should ever land as a second copy. Entries still funnel through the exact
   // same buildTabsFromBrowserImport ingestion the popup-driven dump uses.
   function handleHistoryDump(entries: BrowserImportEntry[]) {
@@ -980,7 +1023,7 @@ export function AppShell() {
     const skipped = incoming.length - fresh.length
 
     if (fresh.length === 0) {
-      toast.info("Nothing new to add", { description: "All selected pages are already in TabDump." })
+      toast.info("Nothing new to add", { description: "All selected pages are already in Hubble." })
       setView("workspace")
       return
     }
@@ -1194,7 +1237,7 @@ export function AppShell() {
 
   if (!hydrated || !store || !currentWorkspace) return null
 
-  // A first-time visitor gets TabDump's public landing page, full-bleed: no
+  // A first-time visitor gets Hubble's public landing page, full-bleed: no
   // sidebar, no content-width clamp, none of the workspace chrome that means
   // nothing to someone who has not dumped anything yet.
   //
@@ -1266,6 +1309,14 @@ export function AppShell() {
         key={settingsSection ?? "default"}
         initialSection={settingsSection}
         onClose={() => setView("workspace")}
+        workspaceSettings={{
+          workspaces: store.workspaces,
+          currentId: store.currentId,
+          onSwitch: handleSwitchWorkspace,
+          onRename: handleRenameWorkspace,
+          onDelete: handleDeleteWorkspace,
+          onUpdateLogo: handleUpdateWorkspaceLogo,
+        }}
       />
     )
   }
@@ -1366,9 +1417,46 @@ export function AppShell() {
     return null
   })()
 
+  const globalCommands = paletteOpen
+    ? buildGlobalCommands(
+        {
+          goWorkspace: () => setView("workspace"),
+          openGraph: handleOpenGraph,
+          openFavorites: () => setView("favorites"),
+          openRecents: () => setView("recents"),
+          openHistoryDump: () => setView("history-dump"),
+          openCommandCentre: () => setView("command-centre"),
+          openAgentHistory: () => setView("agent-history"),
+          openSettings: (section) => openSettings(section),
+          switchWorkspace: handleSwitchWorkspace,
+          newWorkspace: () => setNewWorkspaceOpen(true),
+          openUrl: (url) => void openTab(url),
+          ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
+        },
+        { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
+      )
+    : []
+
   return (
+    <CommandPaletteHostContext.Provider value={paletteHost}>
     <div className="flex min-h-screen">
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={paletteOpen ? mergeCommands(globalCommands, contributedCommands) : []}
+        placeholder="Search tabs, workspaces, agents and commands…"
+      />
+      <NewWorkspaceDialog
+        open={newWorkspaceOpen}
+        onOpenChange={setNewWorkspaceOpen}
+        onCreate={(name) => {
+          handleCreateWorkspace(name)
+          setNewWorkspaceOpen(false)
+          setView("workspace")
+        }}
+      />
       <AppSidebar
+        onOpenSearch={paletteHost.open}
         workspaces={store.workspaces}
         currentId={store.currentId}
         relationshipCounts={relationshipCounts}
@@ -1403,11 +1491,9 @@ export function AppShell() {
         // or the Agent World is a canvas, not a column of reading material,
         // and capping it at the reading width would letterbox it inside a
         // shell that is already narrower than the window.
-        style={
-          destination
-            ? undefined
-            : { maxWidth: "var(--tabdump-content-max-width)", marginInline: "auto" }
-        }
+        // Content width (Settings → Layout) is applied inside each view to its
+        // reading column, so view headers can span the window as the
+        // reference's do.
       >
         {destination ?? (currentWorkspace.tabs.length === 0 ? (
           <LandingView onDump={handleDump} onOpenSidebar={() => setMobileSidebarOpen(true)} />
@@ -1464,5 +1550,6 @@ export function AppShell() {
         ))}
       </div>
     </div>
+    </CommandPaletteHostContext.Provider>
   )
 }

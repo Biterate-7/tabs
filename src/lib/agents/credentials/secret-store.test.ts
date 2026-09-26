@@ -144,7 +144,7 @@ describe("sealing and opening", () => {
     await store.store("pc-1", ALICE, LEAK_CANARY, 1);
     const sealed = (await rows.get("pc-1", ALICE))!;
 
-    // A record from a future TabDump must not be handed to a cipher that
+    // A record from a future Hubble must not be handed to a cipher that
     // would misread it.
     await rows.put("pc-1", ALICE, { ...sealed, version: 2 as 1 }, 4);
     expect(await store.reveal("pc-1", ALICE)).toBeUndefined();

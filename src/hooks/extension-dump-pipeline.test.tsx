@@ -14,7 +14,7 @@
  *
  * The scenario reproduced below is the reported one exactly:
  *
- *   fresh profile → no TabDump tab open → click Dump → a tab is created →
+ *   fresh profile → no Hubble tab open → click Dump → a tab is created →
  *   Chrome reports it `complete` → the extension delivers → and only THEN
  *   does React finish hydrating and attach its listener.
  *
@@ -22,7 +22,7 @@
  * against a production build served over localhost on a fast machine, the
  * app's import listener attaches between 1ms and 105ms after the load event,
  * i.e. always after the moment the extension fires. A developer's own
- * machine escaped it only by having a warm, already-hydrated TabDump tab for
+ * machine escaped it only by having a warm, already-hydrated Hubble tab for
  * the extension to reuse.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
@@ -40,7 +40,7 @@ let contentScriptListeners: Listener[]
 let sessionStore: Record<string, unknown>
 let onUpdatedListeners: ((tabId: number, changeInfo: { status?: string }) => void)[]
 let onRemovedListeners: ((tabId: number) => void)[]
-let openTabDumpTabs: { id: number; windowId: number; url: string; active?: boolean }[]
+let openHubbleTabs: { id: number; windowId: number; url: string; active?: boolean }[]
 let createdTabId: number | undefined
 
 function browserTabs(urls: string[]) {
@@ -82,7 +82,7 @@ beforeEach(() => {
   sessionStore = {}
   onUpdatedListeners = []
   onRemovedListeners = []
-  openTabDumpTabs = []
+  openHubbleTabs = []
   createdTabId = undefined
   ;(globalThis as { chrome?: unknown }).chrome = {
     runtime: {
@@ -92,12 +92,12 @@ beforeEach(() => {
     tabs: {
       query: vi.fn(async (query: { currentWindow?: boolean; url?: string }) => {
         if (query.currentWindow) return browserTabs(["https://a.example/one", "https://b.example/two", "chrome://settings"])
-        if (query.url) return openTabDumpTabs
+        if (query.url) return openHubbleTabs
         return []
       }),
       create: vi.fn(async ({ url }: { url: string }) => {
         createdTabId = 500
-        openTabDumpTabs = [{ id: 500, windowId: 9, url, active: false }]
+        openHubbleTabs = [{ id: 500, windowId: 9, url, active: false }]
         return { id: 500, windowId: 9, url, active: false }
       }),
       update: vi.fn(async () => ({})),
@@ -174,7 +174,7 @@ describe("fresh-profile dump, end to end", () => {
   it("lands the tabs in the workspace even though the page finishes hydrating after the payload was already delivered", async () => {
     const { dumpListener } = await bootExtension()
 
-    // The popup clicks Dump. No TabDump tab is open, so one gets created.
+    // The popup clicks Dump. No Hubble tab is open, so one gets created.
     const responsePromise = startDump(dumpListener)
     await fireTabComplete()
 

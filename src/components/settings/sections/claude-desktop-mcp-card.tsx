@@ -7,10 +7,10 @@ import { Input } from "@/components/ui/input"
 import { useMcpTokens } from "@/hooks/use-mcp-tokens"
 
 /**
- * Claude Desktop (MCP) — lets Claude Desktop read the user's synced TabDump.
+ * Claude Desktop (MCP) — lets Claude Desktop read the user's synced Hubble.
  *
  * Read-only by construction on the server (see src/lib/mcp). This card only
- * mints and revokes the TabDump token that authorises it. The token appears
+ * mints and revokes the Hubble token that authorises it. The token appears
  * once, beside the exact config snippet that uses it, and is never stored in
  * the browser.
  */
@@ -19,9 +19,9 @@ export function claudeDesktopConfigSnippet(token: string, origin: string): strin
   return JSON.stringify(
     {
       mcpServers: {
-        tabdump: {
+        hubble: {
           command: "node",
-          args: ["<path to TabDump>/scripts/tabdump-mcp-bridge.mjs"],
+          args: ["<path to Hubble>/scripts/tabdump-mcp-bridge.mjs"],
           env: { TABDUMP_MCP_TOKEN: token, TABDUMP_MCP_URL: `${origin}/api/mcp` },
         },
       },
@@ -44,14 +44,14 @@ export function ClaudeDesktopMcpCard() {
   const live = mcp.state.kind === "ready" ? mcp.state.tokens.filter((token) => !token.revoked) : []
 
   return (
-    <div className="rounded-lg border border-subtle p-4" data-testid="claude-desktop-mcp">
+    <div className="rounded-md border border-border p-4" data-testid="claude-desktop-mcp">
       <div className="flex items-center gap-2">
         <MonitorSmartphone className="size-4 text-tertiary" aria-hidden />
         <p className="text-body-sm font-medium text-foreground">Claude Desktop (MCP)</p>
       </div>
       <p className="mt-1 text-meta text-tertiary">
         Let Claude Desktop read your synced workspaces, tabs and collections. Read-only: it cannot change anything in
-        TabDump or run anything.
+        Hubble or run anything.
       </p>
 
       {mcp.state.kind === "loading" && <p className="mt-3 text-meta text-tertiary">Loading…</p>}
@@ -62,7 +62,7 @@ export function ClaudeDesktopMcpCard() {
         <p className="mt-3 text-meta text-tertiary">Claude Desktop connections are not available on this deployment.</p>
       )}
       {mcp.state.kind === "error" && (
-        <p className="mt-3 text-meta text-tertiary">TabDump could not load your Claude Desktop connections.</p>
+        <p className="mt-3 text-meta text-tertiary">Hubble could not load your Claude Desktop connections.</p>
       )}
 
       {mcp.created && (

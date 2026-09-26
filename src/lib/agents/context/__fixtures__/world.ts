@@ -149,7 +149,7 @@ export const DEP_WITHIN_A: TabDependency = {
 /**
  * a1 depends on b1 — across the workspace boundary.
  *
- * TabDump genuinely permits this (see `countRelationshipsByWorkspace`,
+ * Hubble genuinely permits this (see `countRelationshipsByWorkspace`,
  * which counts such a dependency toward both workspaces), which is exactly
  * why the bridge has to decide what to do with one. It drops it.
  */

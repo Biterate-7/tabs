@@ -18,7 +18,7 @@ function pathFor(platform: NodeJS.Platform) {
  * ## The Windows npm shim
  *
  * `npm install -g` on Windows produces `gemini.cmd`, a batch file. Node will
- * not spawn a batch file without `shell: true` (CVE-2024-27980), and TabDump
+ * not spawn a batch file without `shell: true` (CVE-2024-27980), and Hubble
  * never spawns through a shell. So a `.cmd`/`.bat` hit is followed to the
  * package it wraps — `<shim dir>/node_modules/<package>/package.json`, for a
  * package named in the allowlist and no other — and resolved to that
@@ -113,7 +113,7 @@ export function resolveExecutable(
       if (ext === ".cmd" || ext === ".bat") {
         const script = scriptBehindShim(directory, name, options);
         if (script) return { kind: "node-script", script };
-        // A shim for something TabDump did not allowlist. Keep looking.
+        // A shim for something Hubble did not allowlist. Keep looking.
         continue;
       }
       return { kind: "native", file: candidate };

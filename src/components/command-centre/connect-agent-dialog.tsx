@@ -42,7 +42,7 @@ import type { ConnectStep } from "@/lib/agents/platform/lifecycle"
  *
  *   - **Detect** — the runtime's `detect_providers`: a PATH walk on the user's
  *     machine that runs nothing and returns no path. The install command is
- *     shown for the user to run. TabDump never runs it.
+ *     shown for the user to run. Hubble never runs it.
  *   - **Sign in** — the agent's *own* sign-in. The agent is asked whether it
  *     is signed in as soon as this step shows, and what it answers is what the
  *     step says (Phase J.2): signed in, sign-in required, or could not be
@@ -70,7 +70,7 @@ export function ConnectAgentDialog({
   onOpenChange: (open: boolean) => void
   platform: UseAgentPlatform
   initialProvider?: AgentProviderId | null
-  /** Settings → AI connectors, where provider keys and MCP tokens live. */
+  /** Settings → Agents, where provider keys and MCP tokens live. */
   onOpenSettings?: () => void
   onStartSession?: (provider: AgentProviderId) => void
 }) {
@@ -87,7 +87,7 @@ export function ConnectAgentDialog({
   // the agent's own login in this shell (Claude, in the desktop app).
   const signIn = spec ? signInKind(spec, chosen ? platform.statusOf(chosen) : undefined) : undefined
   /*
-    An agent TabDump will not start sessions with (Codex today) is never taken
+    An agent Hubble will not start sessions with (Codex today) is never taken
     past Sign in: there is nothing for the user to sign in to or approve, and
     asking them to would be asking for a login that buys nothing. The step
     shows what is true of it instead — installed, signed in or not — and why.
@@ -141,7 +141,7 @@ export function ConnectAgentDialog({
           <DialogDescription>
             {spec
               ? spec.pitch
-              : "Bring an AI agent into TabDump. It works in projects you authorize, with the workspace context you choose, and asks before it changes anything."}
+              : "Bring an AI agent into Hubble. It works in projects you authorize, with the workspace context you choose, and asks before it changes anything."}
           </DialogDescription>
         </DialogHeader>
 
@@ -206,7 +206,7 @@ export function ConnectAgentDialog({
             )}
             {spec.installCommand && (phase === "not_installed" || phase === "needs_adapter") && (
               <div className="flex items-center gap-2 rounded-md border border-subtle bg-surface px-2.5 py-1.5">
-                {/* Shown to copy. TabDump does not install software. */}
+                {/* Shown to copy. Hubble does not install software. */}
                 <code className="min-w-0 flex-1 truncate font-mono text-meta text-foreground">
                   {spec.installCommand}
                 </code>
@@ -237,7 +237,7 @@ export function ConnectAgentDialog({
             {/* Said before sign-in, so nobody signs in to an agent expecting a chat it will not get. */}
             {spec.chat && sessions && !sessions.available && (
               <p role="note" className="text-body-sm text-warning">
-                TabDump will not start sessions with {spec.displayName}. {sessions.reason}
+                Hubble will not start sessions with {spec.displayName}. {sessions.reason}
               </p>
             )}
             <p className="text-body-sm text-muted-foreground">
@@ -267,7 +267,7 @@ export function ConnectAgentDialog({
                       ? "Signed in."
                       : connection
                         ? sentence
-                        : `TabDump has not asked ${spec.displayName} yet.`}
+                        : `Hubble has not asked ${spec.displayName} yet.`}
                 </p>
                 {!sessionsBlocked && connection && connection.authMethods.length > 0 && connection.authentication !== "authenticated" && (
                   <div className="flex flex-wrap gap-1.5">
@@ -301,7 +301,7 @@ export function ConnectAgentDialog({
                 )}
                 {!sessionsBlocked && (
                   <p className="text-meta text-tertiary">
-                    Sign-in happens in {spec.displayName}&apos;s own window or browser page. TabDump never sees
+                    Sign-in happens in {spec.displayName}&apos;s own window or browser page. Hubble never sees
                     your password or token, and keeps none.
                   </p>
                 )}
@@ -320,7 +320,7 @@ export function ConnectAgentDialog({
           <section aria-label="Approve" className="flex flex-col gap-3">
             {spec.chat && sessions && !sessions.available ? (
               <p role="note" className="text-body-sm text-warning">
-                {spec.displayName} can be connected and signed in, but TabDump will not start sessions with it.{" "}
+                {spec.displayName} can be connected and signed in, but Hubble will not start sessions with it.{" "}
                 {sessions.reason}
               </p>
             ) : spec.explainer ? (
@@ -384,7 +384,7 @@ export function ConnectAgentDialog({
               <p className="text-eyebrow text-tertiary">Never</p>
               <ul className="mt-1 flex flex-col gap-0.5">
                 {[
-                  "Run a shell command through TabDump",
+                  "Run a shell command through Hubble",
                   "Work outside a project you authorized",
                   "Change a file or run a command without asking you",
                   "See your provider password, key or token",
@@ -407,7 +407,7 @@ export function ConnectAgentDialog({
                 {spec.displayName} is connected.{" "}
                 <span className="text-muted-foreground">
                   {!spec.chat
-                    ? "Point it at TabDump's MCP server with the token from Settings."
+                    ? "Point it at Hubble's MCP server with the token from Settings."
                     : sessions?.available
                       ? "Start a session to work with it."
                       : ""}

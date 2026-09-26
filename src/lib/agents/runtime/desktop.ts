@@ -48,7 +48,7 @@ import type { ProviderDetection } from "./protocol";
  *     the user's installed Claude Code runs with its own login, which
  *     `claude auth login` establishes. See `launch/native-auth.ts`.
  *   - **Workspace context (Phase J.3).** An agent session started from a
- *     workspace queries it through TabDump's session MCP server, which this
+ *     workspace queries it through Hubble's session MCP server, which this
  *     process serves on the loopback interface from the bounded snapshot the
  *     Command Centre sends — no account store needed. Closed with the runtime.
  *

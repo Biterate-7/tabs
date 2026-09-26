@@ -122,12 +122,14 @@ export function TabCard({
       draggable={isDraggable}
       onDragStart={isDraggable ? handleDragStart : undefined}
       className={cn(
-        "group flex items-center gap-3 border-b border-subtle px-1 transition-colors duration-(--duration-fast) ease-(--ease-standard) last:border-b-0",
-        "focus-within:rounded-md focus-within:ring-2 focus-within:ring-ring/50",
-        selected && "rounded-md bg-primary/5",
-        isRecentlyAdded && "rounded-md bg-accent-text/[0.06]",
+        // A list row in the reference's grammar: hairline-separated, a tonal
+        // hover, no card. Favorite, duplicate and selection are carried by the
+        // star, the opacity and the tone — never by a coloured edge.
+        "group flex items-center gap-2.5 border-b border-subtle px-2 transition-colors duration-(--duration-fast) ease-(--ease-color) last:border-b-0 hover:bg-surface-hover",
+        "focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring/60",
+        selected && "bg-surface-selected hover:bg-surface-selected",
+        isRecentlyAdded && "bg-surface-hover",
         tab.isDuplicate && "opacity-70",
-        tab.isFavorite && "border-l-2 border-l-favorite-accent/60",
         isDraggable && "cursor-grab active:cursor-grabbing"
       )}
       // Settings → Appearance → Layout → Card density scales this card's
@@ -163,8 +165,8 @@ export function TabCard({
           onOpenTab={onOpenTab}
           className="-m-1 block w-full min-w-0 rounded-md p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <p className="truncate text-body font-medium text-foreground">{primaryLine}</p>
-          <p className="truncate text-body-sm text-tertiary">{tab.domain}</p>
+          <p className="truncate text-body text-foreground">{primaryLine}</p>
+          <p className="truncate text-meta text-tertiary">{tab.domain}</p>
         </TabPeekTrigger>
         {collectionName && (
           <p className="truncate text-meta text-tertiary">Collection: {collectionName}</p>
@@ -183,7 +185,7 @@ export function TabCard({
           nativeButton={false}
           render={
             <Badge
-              variant="outline"
+              variant="secondary"
               aria-label={`Category: ${CATEGORIES[category].name}. Change category for ${tab.domain}`}
               className="hidden shrink-0 cursor-pointer sm:inline-flex"
             >
@@ -216,7 +218,7 @@ export function TabCard({
         <IconButton
           aria-label={`Open ${tab.domain}`}
           onClick={() => (onOpenTab ? onOpenTab(tab.id) : openTab(tab.url))}
-          className="size-11 sm:size-8"
+          className="size-11 sm:size-7"
         >
           <ExternalLink />
         </IconButton>
@@ -244,7 +246,7 @@ export function TabCard({
           trigger={
             <IconButton
               aria-label={`More actions for ${tab.domain}`}
-              className="size-11 sm:size-8"
+              className="size-11 sm:size-7"
             >
               <MoreHorizontal />
             </IconButton>
