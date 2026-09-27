@@ -37,7 +37,7 @@ import type { CategoryId } from "@/lib/categories"
 import type { ClusterAnchorAssignment, ClusterNode, ClusterTree } from "@/lib/graph/clusters"
 import { resolveLabelOverlaps, type LabelBox } from "@/lib/graph/label-layout"
 import { assertBoundaryWithinBudget, assertNodeRadius } from "@/lib/graph/dimension-guard"
-import { faviconUrl } from "@/lib/workspace/favicon"
+import { peekFaviconImage, requestFavicon, subscribeFavicons } from "@/lib/favicon/client"
 import { drawNode, nodeLabelBox, nodeLabelFont } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
 import {
@@ -306,7 +306,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   const didAutoFitRef = useRef(false)
   insetRightRef.current = viewportInsetRight
   const paletteRef = useRef<GraphPalette | null>(null)
-  const faviconCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const nodesRef = useRef<GraphNode[]>(nodes)
   const edgesRef = useRef<GraphEdge[]>(edges)
   const dependencyEdgesRef = useRef<GraphDependencyEdge[]>(dependencyEdges)
@@ -679,25 +678,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     rafRef.current = requestAnimationFrame(loop)
   }
 
+  /**
+   * The node's favicon once src/lib/favicon/client.ts has a verified image
+   * for it, else null (the node draws its colour fill). Loading is shared
+   * with every TabFavicon on the page; a finished load redraws through the
+   * subscription in the mount effect below, so nothing here polls.
+   */
   function getFavicon(domain: string): HTMLImageElement | null {
-    const cache = faviconCacheRef.current
-    let img = cache.get(domain)
-    if (!img) {
-      img = new Image()
-      // Event-driven rather than polled: a redraw is requested exactly once,
-      // when the image actually finishes (or fails). Polling `.complete`
-      // every frame would keep the render loop alive indefinitely wherever
-      // an image never resolves (e.g. jsdom in tests never loads images at
-      // all), instead of letting it settle once the physics has stabilized.
-      img.onload = () => requestDraw()
-      img.onerror = () => {}
-      // No source for a domain that can have no favicon: the image stays
-      // incomplete and the node draws its fallback, with no request made.
-      const src = faviconUrl(domain)
-      if (src) img.src = src
-      cache.set(domain, img)
-    }
-    return img
+    requestFavicon(domain)
+    return peekFaviconImage(domain)
   }
 
   function loop() {
@@ -1702,20 +1691,28 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     // dev-only mount→cleanup→mount simulation ends this effect back in the
     // "mounted" state — only a real, final unmount leaves it set.
     unmountedRef.current = false
+    // Event-driven rather than polled: a redraw is requested exactly when a
+    // favicon finishes resolving. Polling every frame would keep the render
+    // loop alive wherever an image never resolves (jsdom never loads images
+    // at all), instead of letting it settle once the physics has stabilized.
+    const unsubscribeFavicons = subscribeFavicons(() => requestDraw())
     return () => {
+      unsubscribeFavicons()
       // Resetting runningRef alongside the cancel matters for the same
       // StrictMode simulation: without it, this cleanup cancels the
       // in-flight frame but leaves runningRef stuck at true, so the second
       // mount's startLoopIfNeeded() believes a loop is already active and
       // never schedules a replacement — the canvas would render nothing,
-      // forever, in dev. unmountedRef itself guards against a favicon
-      // Image's onload firing after a genuine unmount and resurrecting the
-      // loop via requestDraw().
+      // forever, in dev. unmountedRef itself guards against a late
+      // callback resurrecting the loop via requestDraw() after a genuine
+      // unmount.
       unmountedRef.current = true
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       rafRef.current = null
       runningRef.current = false
     }
+    // requestDraw only touches refs, so the mount-time closure stays correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** Fits the camera to every tab currently belonging to cluster `id` (its own direct members plus every descendant's, via ClusterNode.totalTabIds) — same computeFitCamera/animateCameraTo mechanism as focusCollection above, just sourced from the cluster tree instead of a Collection. */

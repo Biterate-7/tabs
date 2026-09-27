@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs";
 
 /**
  * Validates the desktop shell's configuration without needing a Rust
@@ -82,20 +83,26 @@ describe("tauri.conf.json", () => {
       }
     });
 
-    it("allows only the favicon hosts as remote image sources", () => {
-      // src/lib/workspace/favicon.ts resolves favicons through Google's s2
-      // service; nothing else remote is loaded.
-      expect(csp["img-src"]).toContain("https://www.google.com");
-      expect(csp["img-src"]).toContain("'self'");
+    it("allows no remote image source at all", () => {
+      // src/lib/favicon/client.ts fetches every desktop favicon from the
+      // deployed /api/favicon (the static export has no API routes) and
+      // renders the verified bytes from a blob: URL, so no <img> ever points
+      // at a remote host.
+      const sources = String(csp["img-src"]).split(/\s+/).filter(Boolean);
+      expect(sources).toEqual(["'self'", "data:", "blob:"]);
     });
 
-    it("allows the gstatic host that s2/favicons redirects to", () => {
-      // Verified against the running desktop app: a request to
-      // www.google.com/s2/favicons 302s to t[0-3].gstatic.com/faviconV2, and
-      // CSP is enforced against the REDIRECT TARGET. Without this entry every
-      // favicon in the app is blocked — which is exactly what happened on the
-      // first Windows build.
-      expect(csp["img-src"]).toContain("https://*.gstatic.com");
+    it("lets the app reach Hubble's favicon resolver", () => {
+      // That fetch is a connect-src request to the production origin.
+      expect(String(csp["connect-src"]).split(/\s+/)).toContain(CANONICAL_PRODUCTION_ORIGIN);
+    });
+
+    it("no longer allows Google's favicon service", () => {
+      // It answered 404 + a globe placeholder for any site it hadn't indexed
+      // (console.cloud.google.com, Hubble itself), which rendered as a
+      // successfully loaded icon.
+      expect(csp["img-src"]).not.toContain("google.com");
+      expect(csp["img-src"]).not.toContain("gstatic.com");
     });
 
     it("never allows images from an unrestricted wildcard source", () => {

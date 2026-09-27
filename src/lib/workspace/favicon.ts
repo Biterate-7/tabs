@@ -9,13 +9,8 @@ const PALETTE = [
   "--category-other",
 ];
 
-/** RFC 2606 names: they never resolve, so a favicon lookup for one can only 404. */
-const RESERVED_TLD = /\.(example|invalid|localhost|test)$/i;
-
-export function faviconUrl(domain: string): string {
-  if (RESERVED_TLD.test(domain)) return "";
-  return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
-}
+// Favicon images themselves are resolved by src/lib/favicon/client.ts; this
+// module only owns the letter badge shown whenever there is no icon.
 
 export function avatarFallback(domain: string): { letter: string; colorVar: string } {
   if (!domain) return { letter: "?", colorVar: PALETTE[PALETTE.length - 1] };
