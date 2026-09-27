@@ -129,14 +129,20 @@ Two allowances are deliberate and worth knowing about:
   in `src/app/layout.tsx` is inline by design (it exists to avoid a flash of
   the wrong theme, and must run before any bundle loads). This is the one
   meaningful relaxation.
-- **`img-src` includes `https://*.gstatic.com`** alongside
-  `https://www.google.com`. `src/lib/workspace/favicon.ts` requests
-  `www.google.com/s2/favicons`, which **302-redirects to
-  `t[0-3].gstatic.com/faviconV2`** — and CSP is enforced against the redirect
-  target, not the URL the app asked for. Without this entry every favicon in
-  the app is blocked, which is exactly what the first Windows build did.
-  `desktop-config.test.ts` pins both hosts, and also asserts that no bare `*`
-  or `https:` wildcard creeps into `img-src`.
+- **`img-src` allows no remote host** (`'self' data: blob:`). Favicons come
+  from Hubble's own resolver, `/api/favicon?host=…`
+  (`src/app/api/favicon/route.ts`), which the static export cannot contain,
+  so `src/lib/favicon/client.ts` *fetches* the deployed one — a
+  `connect-src` request to the production origin, which the route permits
+  with `Access-Control-Allow-Origin: *` (it is public and cookie-free) — and
+  renders the verified bytes from a `blob:` URL. (The app previously loaded
+  Google's `s2/favicons` as images and allowed `www.google.com` +
+  `*.gstatic.com`; that service returns a placeholder globe for sites it
+  hasn't indexed, and it is gone.) The web build additionally tries a site's
+  own `/favicon.ico` directly when the resolver can't reach the site; desktop
+  does not, because that would need an `https:` wildcard.
+  `desktop-config.test.ts` pins the exact source list, and also asserts that
+  no bare `*` or `https:` wildcard creeps into `img-src`.
 
 ## Authentication: signed-out by design in v1
 

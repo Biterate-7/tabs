@@ -243,7 +243,7 @@ CREATE INDEX IF NOT EXISTS tabdump_groups_changes_idx
 --                   rather than content.
 --   favicon         Written by browser-import.ts and never read: every
 --                   display path resolves an icon from `domain` through
---                   TabFavicon/faviconUrl. A write-only cache is not state
+--                   src/lib/favicon/client.ts. A write-only cache is not state
 --                   worth synchronizing.
 --
 -- `confidence` IS synced despite looking like an AI artifact, because

@@ -20,6 +20,15 @@ import type { DemoInit } from "./demo-state"
 let fetchSpy: ReturnType<typeof vi.fn>
 let openSpy: ReturnType<typeof vi.spyOn>
 
+/*
+ * The one request the demo may make: the real TabFavicon resolving a site's
+ * icon (src/lib/favicon/client.ts). Favicons always came from the network —
+ * as <img> loads from Google's service, which this spy never saw — and are
+ * presentational: no user data goes out, nothing is written. Every other
+ * fetch still fails the test.
+ */
+const isFaviconLookup = (input: unknown) => String(input).includes("/api/favicon?")
+
 beforeEach(() => {
   window.localStorage.clear()
   fetchSpy = vi.fn(() => Promise.reject(new Error("the demo must not fetch")))
@@ -34,7 +43,7 @@ beforeEach(() => {
 afterEach(() => {
   // The isolation promise, checked after every test's interactions.
   expect(window.localStorage.length).toBe(0)
-  expect(fetchSpy).not.toHaveBeenCalled()
+  expect(fetchSpy.mock.calls.filter(([input]) => !isFaviconLookup(input))).toEqual([])
   openSpy.mockRestore()
   vi.unstubAllGlobals()
 })
