@@ -73,6 +73,10 @@ import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/clau
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { CommandPalette } from "@/components/command-palette/command-palette"
+import { AgentActionsProvider, type AgentActions } from "@/components/agents/agent-actions"
+import { addToContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
+import { createId } from "@/lib/id"
+import type { AgentHandoff } from "@/lib/agents/command-centre/working-context"
 import { CommandPaletteHostContext, type CommandPaletteHost } from "@/components/command-palette/palette-host"
 import { buildGlobalCommands, mergeCommands } from "@/components/command-palette/global-commands"
 import type { Command } from "@/components/command-palette/types"
@@ -181,6 +185,17 @@ export function AppShell() {
    * landing where it always has.
    */
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined)
+
+  /**
+   * A request from the workspace to an agent, waiting for the Command Centre
+   * ("ask an agent about these"). Ids only, one workspace; consumed once by
+   * the Command Centre, which sends it to a session working in that
+   * workspace or makes it the next session's context. "Add to agent context"
+   * collects into it without leaving the workspace.
+   */
+  const [agentHandoff, setAgentHandoff] = useState<AgentHandoff | null>(null)
+  /** Where "View" on an agent's change lands: a collection to open and bring into view. */
+  const [focusCollection, setFocusCollection] = useState<{ id: string; nonce: number } | null>(null)
 
   /**
    * Opening Settings from somewhere that knows which section it wants.
@@ -979,6 +994,43 @@ export function AppShell() {
     })
   }, [store, agentStore.agents, agentStore.runs])
 
+  const currentWorkspaceId = currentWorkspace?.id ?? null
+  const agentActions = useMemo<AgentActions | null>(() => {
+    if (!currentWorkspaceId) return null
+    const count = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`
+    return {
+      workspaceId: currentWorkspaceId,
+      ask: (context, intent = "ask") => {
+        const id = createId()
+        // Anything collected with "Add to agent context" in the same workspace comes along.
+        setAgentHandoff((pending) => ({
+          id,
+          context: (pending?.mode === "add" ? addToContext(pending.context, context) : undefined) ?? context,
+          mode: "ask",
+          intent,
+        }))
+        setView("command-centre")
+      },
+      add: (context) => {
+        const id = createId()
+        setAgentHandoff((pending) => ({
+          id,
+          context: (pending ? addToContext(pending.context, context) : undefined) ?? context,
+          mode: "add",
+          intent: "ask",
+        }))
+        const what = [
+          ...(context.collectionIds.length > 0 ? [count(context.collectionIds.length, "collection", "collections")] : []),
+          ...(context.tabIds.length > 0 ? [count(context.tabIds.length, "tab", "tabs")] : []),
+        ].join(" · ")
+        toast("Added to agent context", {
+          description: `${what || "This workspace"} · waiting in the Command Centre`,
+          action: { label: "Open", onClick: () => setView("command-centre") },
+        })
+      },
+    }
+  }, [currentWorkspaceId])
+
   useTitleResolution(currentWorkspace?.tabs ?? [], (tabs) => {
     if (currentWorkspace) handleTitlesResolved(currentWorkspace.id, tabs)
   })
@@ -1107,6 +1159,8 @@ export function AppShell() {
   function handleSwitchWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
+    // Context collected for an agent belongs to the workspace it came from.
+    setAgentHandoff((pending) => (pending && pending.context.workspaceId !== id ? null : pending))
     persist(switchWorkspace(store, id))
   }
 
@@ -1341,6 +1395,15 @@ export function AppShell() {
         // The workspace the user came from is the one a new session is
         // associated with by default (Phase J). They can pick another.
         {...(currentWorkspace ? { activeWorkspaceId: currentWorkspace.id } : {})}
+        handoff={agentHandoff}
+        onHandoffConsumed={(id) => setAgentHandoff((pending) => (pending?.id === id ? null : pending))}
+        onViewWorkspace={(workspaceId, collectionId) => {
+          if (store.currentId !== workspaceId && store.workspaces.some((workspace) => workspace.id === workspaceId)) {
+            handleSwitchWorkspace(workspaceId)
+          }
+          if (collectionId) setFocusCollection({ id: collectionId, nonce: Date.now() })
+          setView("workspace")
+        }}
       />
     )
   }
@@ -1431,6 +1494,7 @@ export function AppShell() {
           switchWorkspace: handleSwitchWorkspace,
           newWorkspace: () => setNewWorkspaceOpen(true),
           openUrl: (url) => void openTab(url),
+          ...(agentActions ? { askAgentAboutWorkspace: () => agentActions.ask(workspaceContext(agentActions.workspaceId)) } : {}),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
@@ -1439,6 +1503,7 @@ export function AppShell() {
 
   return (
     <CommandPaletteHostContext.Provider value={paletteHost}>
+    <AgentActionsProvider value={agentActions}>
     <div className="flex min-h-screen">
       <CommandPalette
         open={paletteOpen}
@@ -1546,10 +1611,12 @@ export function AppShell() {
             onDeleteSection={handleDeleteSection}
             onAssignTabToSection={handleAssignTabToSection}
             onReorganizeSections={handleReorganizeSections}
+            {...(focusCollection ? { focusCollection } : {})}
           />
         ))}
       </div>
     </div>
+    </AgentActionsProvider>
     </CommandPaletteHostContext.Provider>
   )
 }

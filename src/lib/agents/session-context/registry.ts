@@ -1,9 +1,11 @@
 import { capabilitiesFor } from "./capabilities";
 import { CHANGE_LIMITS, cleanCollectionName, displayLine } from "./changes";
+import { focusFitsSnapshot, isEmptyFocus, normalizeFocus } from "./focus";
 import { mintContextServerName } from "./identity";
 import { canonicalPlan, freezeOperations, planEffect, planStepLine, previewOf, validateWorkspacePlan, verifyWorkspacePlan } from "./plan";
 import { readSessionContextSnapshot, snapshotFingerprint } from "./snapshot";
 import type { ContextAuthority } from "./authorization";
+import type { SessionFocus } from "./focus";
 import type { PlanProblem, PlanVerification, WorkspaceOperation, WorkspacePlanInput, WorkspacePlanPreview } from "./plan";
 import type { SessionContextAccess, SessionContextCapability } from "./capabilities";
 import type { WorkspaceChange, WorkspaceChangeKind, WorkspaceChangeSummary } from "./changes";
@@ -287,6 +289,22 @@ export type SessionContextRegistry = {
   attend(sessionId: string): void;
   /** Whether the session's snapshot is being kept current, and since when (J.6). */
   freshness(sessionId: string): ContextFreshness | undefined;
+  /**
+   * What the user pointed the session at (./focus.ts): ids inside the bound
+   * workspace, never a grant. `undefined` when there is none.
+   */
+  focus(sessionId: string): SessionFocus | undefined;
+  /**
+   * Whether a focus names only things in the session's bound workspace.
+   * Pure: nothing is recorded. `false` for an unbound session.
+   */
+  focusFits(sessionId: string, focus: SessionFocus): boolean;
+  /**
+   * Records a focus that fits (an empty one clears it). `false`, and nothing
+   * changes, for an unbound session or a focus naming anything outside the
+   * bound workspace. Never moves the context version: focus is not content.
+   */
+  setFocus(sessionId: string, focus: SessionFocus): boolean;
   /** Proposes a change. Resolves when the user has answered and, if approved, the Command Centre has applied it. */
   requestChange(sessionId: string, change: WorkspaceChange): Promise<ContextChangeResult>;
   /** Validates a plan and describes it, without asking anyone (J.5). */
@@ -439,6 +457,8 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
   const outcomes = new Map<string, PlanOutcome[]>();
   /** When the Command Centre last asked about each session. A fact about the webview, not the workspace: never versioned. */
   const attended = new Map<string, number>();
+  /** What the user pointed each session at. Ids only, checked against the binding; never versioned. */
+  const focuses = new Map<string, SessionFocus>();
 
   function recordOutcome(sessionId: string, outcome: Omit<PlanOutcome, "at">): void {
     const list = outcomes.get(sessionId) ?? [];
@@ -758,6 +778,23 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       return { sync: now() - lastSeenAt <= ATTENDED_WINDOW_MS ? "live" : "paused", lastSeenAt };
     },
 
+    focus: (sessionId) => (bindings.has(sessionId) ? focuses.get(sessionId) : undefined),
+
+    focusFits(sessionId, focus) {
+      const binding = bindings.get(sessionId);
+      return Boolean(binding) && focusFitsSnapshot(binding!.snapshot, normalizeFocus(focus));
+    },
+
+    setFocus(sessionId, raw) {
+      const binding = bindings.get(sessionId);
+      if (!binding) return false;
+      const focus = normalizeFocus(raw);
+      if (!focusFitsSnapshot(binding.snapshot, focus)) return false;
+      if (isEmptyFocus(focus)) focuses.delete(sessionId);
+      else focuses.set(sessionId, focus);
+      return true;
+    },
+
     async requestChange(sessionId, proposed) {
       const binding = bindings.get(sessionId);
       if (!binding) return { ok: false, reason: "ended" };
@@ -967,6 +1004,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
       logs.delete(sessionId);
       outcomes.delete(sessionId);
       attended.delete(sessionId);
+      focuses.delete(sessionId);
       for (const action of [...actions.values()]) {
         if (action.sessionId !== sessionId) continue;
         if (action.status === "awaiting_approval" || action.status === "approved") {

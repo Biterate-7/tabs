@@ -11,6 +11,7 @@ import {
   isTerminalSession,
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
+import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
 import { cn } from "@/lib/utils"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 
@@ -46,12 +47,15 @@ function SessionRow({
   session,
   selected,
   projectName,
+  workspaceName,
   now,
   onSelect,
 }: {
   session: CommandCentreSession
   selected: boolean
   projectName?: string
+  /** The workspace it works in — said on every row, so two sessions in two workspaces are never confused. */
+  workspaceName?: string
   now: number
   onSelect: () => void
 }) {
@@ -94,6 +98,7 @@ function SessionRow({
             </span>
             <span className="truncate">
               · {agentName}
+              {workspaceName ? ` · ${workspaceName}` : ""}
               {projectName ? ` · ${projectName}` : ""}
             </span>
           </span>
@@ -109,6 +114,7 @@ export function SessionList({
   sessions,
   selectedSessionId,
   projectNameOf,
+  workspaceNameOf,
   onSelect,
   onNewSession,
   canCreate,
@@ -124,6 +130,8 @@ export function SessionList({
   selectedSessionId: string | null
   /** Resolves a project id to its name. Ids are internal and never shown. */
   projectNameOf: (projectId: string | undefined) => string | undefined
+  /** Resolves a workspace id to its live name. Optional: without it rows name no workspace. */
+  workspaceNameOf?: (workspaceId: string | undefined) => string | undefined
   onSelect: (sessionId: string) => void
   onNewSession: () => void
   canCreate: boolean
@@ -174,6 +182,7 @@ export function SessionList({
                       session={session}
                       selected={session.view.sessionId === selectedSessionId}
                       projectName={projectNameOf(session.view.projectId)}
+                      workspaceName={workspaceNameOf?.(workspaceIdOf(session.view))}
                       now={now}
                       onSelect={() => onSelect(session.view.sessionId)}
                     />
@@ -194,6 +203,7 @@ export function SessionList({
                       session={session}
                       selected={session.view.sessionId === selectedSessionId}
                       projectName={projectNameOf(session.view.projectId)}
+                      workspaceName={workspaceNameOf?.(workspaceIdOf(session.view))}
                       now={now}
                       onSelect={() => onSelect(session.view.sessionId)}
                     />

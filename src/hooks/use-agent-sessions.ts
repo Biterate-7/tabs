@@ -60,6 +60,8 @@ export type CreateSessionInput = {
 export type AgentSessionsApi = {
   sessions: readonly CommandCentreSession[]
   loading: boolean
+  /** An executing runtime has answered `list_sessions` at least once. */
+  listed: boolean
   error: RuntimeErrorCode | null
   /** Resolves to the new session's id, or `null` when the runtime refused. */
   createSession: (input: CreateSessionInput) => Promise<{ sessionId: string } | RuntimeErrorCode>
@@ -85,6 +87,13 @@ export function useAgentSessions(options: {
 
   const [sessions, setSessions] = useState<readonly CommandCentreSession[]>([])
   const [loading, setLoading] = useState(true)
+  /*
+    Whether an executing runtime has answered list_sessions yet. Distinct from
+    `loading`, which also goes false when the hook first runs before the
+    runtime has said it can execute (and so lists nothing): a caller deciding
+    which session something belongs to must wait for this.
+  */
+  const [listed, setListed] = useState(false)
   const [error, setError] = useState<RuntimeErrorCode | null>(null)
 
   const mountedRef = useRef(true)
@@ -109,6 +118,7 @@ export function useAgentSessions(options: {
     if (!mountedRef.current) return
 
     setLoading(false)
+    setListed(true)
 
     if (!result.ok) {
       setError(result.error.code)
@@ -194,7 +204,7 @@ export function useAgentSessions(options: {
   )
 
   return useMemo(
-    () => ({ sessions, loading, error, createSession, disposeSession, refresh }),
-    [sessions, loading, error, createSession, disposeSession, refresh]
+    () => ({ sessions, loading, listed, error, createSession, disposeSession, refresh }),
+    [sessions, loading, listed, error, createSession, disposeSession, refresh]
   )
 }

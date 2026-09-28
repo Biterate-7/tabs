@@ -12,46 +12,39 @@ import {
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { toggleId } from "@/lib/agents/command-centre/context-selection"
 import {
-  selectionToRequest,
-  summarizeSnapshot,
-  toggleId,
-} from "@/lib/agents/command-centre/context-selection"
-import { resolveContext } from "@/lib/agents/context/resolve"
+  WORKING_CONTEXT_LIMITS,
+  describeWorkingContext,
+  summarizeWorkingContext,
+} from "@/lib/agents/command-centre/working-context"
 import { cn } from "@/lib/utils"
-import type { ContextSelection } from "@/lib/agents/command-centre/context-selection"
-import type { AgentContextWorld } from "@/lib/agents/context/world"
+import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
+import type { Collection } from "@/lib/collections/types"
+import type { TabDependency } from "@/lib/dependencies/types"
+import type { Workspace } from "@/lib/workspace/types"
 
 /**
- * Choosing what the agent is told.
+ * Choosing what, inside one workspace, an agent is pointed at.
  *
- * ## Why it previews rather than promises
+ * ## One workspace — the session's
  *
- * Resolution is a pure function over data already in memory, so the dialog can
- * run the *real* resolver on every keystroke and show what the selection
- * actually produces — including what it drops. That matters because the caps
- * are the part users do not expect: ticking a workspace with four thousand
- * tabs yields a hundred, and a picker that said "Research ✓" and nothing else
- * would be quietly lying about what was attached.
+ * This used to list every workspace in the account, and a session could be
+ * sent tabs from a workspace it was not working in. Now the chooser is opened
+ * *for* a workspace — the one the session is bound to — and offers only its
+ * collections and tabs. There is no control here that could reach another,
+ * and the runtime refuses one anyway.
  *
- * The preview uses the same `resolveContext` the attach path uses, with the
- * same limits. There is no second estimate to drift from the truth.
+ * ## Why there is no "everything" box
  *
- * ## Why every source is named
- *
- * There is no "attach everything" control, because `AgentContextRequest` has
- * no way to express one and that is deliberate — a request whose meaning
- * depends on how much data the user happens to have is not a request the user
- * can reason about. "Attach this workspace" resolves to the workspace and its
- * tabs, bounded, and says so in the preview.
+ * "Use whole workspace" is the everything: the session reads the workspace
+ * itself when it needs to, so nothing is pasted into its messages. This
+ * dialog is for pointing it at *part* of it, and says what that part is by
+ * name before anything is sent.
  */
 
-const GRAPH_DEPTHS = [0, 1, 2, 3] as const
-
-/** "1 tab", "4 tabs". A count with the wrong plural reads as a bug in the count. */
-function tabCount(count: number): string {
-  return `${count} ${count === 1 ? "tab" : "tabs"}`
-}
+/** How many tabs the list renders at once — the DOM's bound, not the context's. */
+const TAB_ROWS = 100
 
 function CheckRow({
   checked,
@@ -90,266 +83,132 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 export function ContextPicker({
   open,
   onOpenChange,
-  world,
-  localRuntimeAllowed,
-  initialSelection,
+  workspace,
+  collections,
+  dependencies = [],
+  initial,
+  agentName = "The agent",
   onConfirm,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  world: AgentContextWorld
-  localRuntimeAllowed: boolean
-  initialSelection: ContextSelection
-  onConfirm: (selection: ContextSelection) => void
+  /** The session's workspace — the only one offered. */
+  workspace: Workspace | null
+  collections: readonly Collection[]
+  dependencies?: readonly TabDependency[]
+  initial: WorkingContext
+  agentName?: string
+  onConfirm: (context: WorkingContext) => void
 }) {
-  const [selection, setSelection] = useState<ContextSelection>(initialSelection)
-  const [tabQuery, setTabQuery] = useState("")
+  const [tabIds, setTabIds] = useState<readonly string[]>(initial.tabIds)
+  const [collectionIds, setCollectionIds] = useState<readonly string[]>(initial.collectionIds)
+  const [query, setQuery] = useState("")
 
-  /* Tabs of the ticked workspaces. Unticked workspaces contribute nothing to pick from. */
-  const availableTabs = useMemo(() => {
-    const workspaces = world.workspaces.filter((workspace) =>
-      selection.workspaceIds.includes(workspace.id)
-    )
-    const tabs = workspaces.flatMap((workspace) => workspace.tabs)
-    const query = tabQuery.trim().toLowerCase()
-    const filtered = query
-      ? tabs.filter((tab) => tab.title?.toLowerCase().includes(query) || tab.url?.toLowerCase().includes(query))
+  const own = useMemo(
+    () => (workspace ? collections.filter((collection) => collection.workspaceId === workspace.id) : []),
+    [collections, workspace]
+  )
+
+  const shownTabs = useMemo(() => {
+    const tabs = workspace?.tabs ?? []
+    const needle = query.trim().toLowerCase()
+    const filtered = needle
+      ? tabs.filter((tab) => tab.title?.toLowerCase().includes(needle) || tab.url.toLowerCase().includes(needle))
       : tabs
-    // Bounded for the DOM's sake, not the resolver's — the resolver has its own caps.
-    return filtered.slice(0, 100)
-  }, [world.workspaces, selection.workspaceIds, tabQuery])
+    return filtered.slice(0, TAB_ROWS)
+  }, [query, workspace])
 
-  /*
-    The live preview.
-
-    The real resolver, the real limits, the real omissions. Recomputed only
-    when the selection changes rather than on every render, because resolution
-    walks the whole world.
-  */
-  const preview = useMemo(() => {
-    const request = selectionToRequest(selection, {
-      ownerId: world.ownerId,
-      workspaceIds: world.workspaces.map((workspace) => workspace.id),
-      projectIds: world.projects.map((project) => project.id),
-    })
-    if (!request) return null
-
-    const resolution = resolveContext(request, world, { localRuntimeAllowed })
-    return resolution.ok ? resolution.snapshot : null
-  }, [selection, world, localRuntimeAllowed])
-
-  const previewRows = preview ? summarizeSnapshot(preview) : []
+  const workspaceId = initial.workspaceId
+  const chosen: WorkingContext = useMemo(() => ({ workspaceId, tabIds, collectionIds }), [workspaceId, tabIds, collectionIds])
+  const preview = useMemo(
+    () =>
+      describeWorkingContext(chosen, {
+        workspaces: workspace ? [workspace] : [],
+        collections: own,
+        dependencies,
+      }),
+    [chosen, workspace, own, dependencies]
+  )
+  const nothingChosen = tabIds.length === 0 && collectionIds.length === 0
+  const overTabs = tabIds.length > WORKING_CONTEXT_LIMITS.tabs
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/*
-        `sm:max-w-3xl`, not `max-w-3xl`: DialogContent's own default is
+        `sm:max-w-2xl`, not `max-w-2xl`: DialogContent's own default is
         `sm:max-w-sm`, and tailwind-merge only replaces a class when the
-        modifier matches too. A base-variant override loses to it above 640px,
-        which squeezed this two-column dialog to 384px and truncated every
-        workspace name to nothing.
+        modifier matches too.
       */}
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Attach Hubble context</DialogTitle>
+          <DialogTitle>Choose context</DialogTitle>
           <DialogDescription>
-            The agent is told only what you attach here. Everything else in Hubble stays private
-            to it.
+            {workspace
+              ? `From ${workspace.name}. ${agentName} is sent what you choose with your next message.`
+              : "This session's workspace no longer exists."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* One column below `sm`: two columns need ~34rem, and a phone's
-            dialog is ~22rem wide, so the preview used to be cut off. */}
-        <div className="grid max-h-[65vh] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-h-[55vh] sm:grid-cols-[minmax(18rem,1fr)_15rem] sm:grid-rows-1 sm:gap-4">
+        <div className="grid max-h-[65vh] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-h-[55vh] sm:grid-cols-[minmax(16rem,1fr)_13rem] sm:grid-rows-1 sm:gap-4">
           <div className="min-h-0 overflow-y-auto pr-1">
-            <Group title="Workspaces">
-              {world.workspaces.length === 0 ? (
-                <p className="px-2 text-body-sm text-tertiary">No workspaces yet.</p>
-              ) : (
-                world.workspaces.map((workspace) => (
-                  <CheckRow
-                    key={workspace.id}
-                    checked={selection.workspaceIds.includes(workspace.id)}
-                    onToggle={() =>
-                      setSelection((current) => ({
-                        ...current,
-                        workspaceIds: toggleId(current.workspaceIds, workspace.id),
-                      }))
-                    }
-                    label={workspace.name}
-                    detail={tabCount(workspace.tabs.length)}
-                  />
-                ))
-              )}
-            </Group>
-
             <Group title="Collections">
-              {world.collections.length === 0 ? (
-                <p className="px-2 text-body-sm text-tertiary">No collections yet.</p>
+              {own.length === 0 ? (
+                <p className="px-2 text-body-sm text-tertiary">No collections in this workspace.</p>
               ) : (
-                world.collections.map((collection) => (
+                own.map((collection) => (
                   <CheckRow
                     key={collection.id}
-                    checked={selection.collectionIds.includes(collection.id)}
-                    onToggle={() =>
-                      setSelection((current) => ({
-                        ...current,
-                        collectionIds: toggleId(current.collectionIds, collection.id),
-                      }))
-                    }
+                    checked={collectionIds.includes(collection.id)}
+                    onToggle={() => setCollectionIds((current) => toggleId(current, collection.id))}
                     label={collection.name}
-                    detail={tabCount(collection.tabIds.length)}
+                    detail={`${collection.tabIds.length} ${collection.tabIds.length === 1 ? "tab" : "tabs"}`}
                   />
                 ))
               )}
             </Group>
 
             <Group title="Tabs">
-              {selection.workspaceIds.length === 0 ? (
-                <p className="px-2 text-body-sm text-tertiary">
-                  Choose a workspace first to pick individual tabs.
-                </p>
+              <div className="px-2 pb-1.5">
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Filter tabs…"
+                  aria-label="Filter tabs"
+                  className="h-7"
+                />
+              </div>
+              {shownTabs.length === 0 ? (
+                <p className="px-2 text-body-sm text-tertiary">No matching tabs.</p>
               ) : (
-                <>
-                  <div className="px-2 pb-1.5">
-                    <Input
-                      value={tabQuery}
-                      onChange={(event) => setTabQuery(event.target.value)}
-                      placeholder="Filter tabs…"
-                      aria-label="Filter tabs"
-                      className="h-7"
-                    />
-                  </div>
-                  {availableTabs.length === 0 ? (
-                    <p className="px-2 text-body-sm text-tertiary">No matching tabs.</p>
-                  ) : (
-                    availableTabs.map((tab) => (
-                      <CheckRow
-                        key={tab.id}
-                        checked={selection.tabIds.includes(tab.id)}
-                        onToggle={() =>
-                          setSelection((current) => ({
-                            ...current,
-                            tabIds: toggleId(current.tabIds, tab.id),
-                          }))
-                        }
-                        label={tab.title || tab.url}
-                      />
-                    ))
-                  )}
-                </>
-              )}
-            </Group>
-
-            {/*
-              The graph.
-
-              Depth is meaningless without a centre, so the control is the set
-              of centres and the depth is a property of it — which is exactly
-              how `GraphContextRequest` is shaped.
-            */}
-            <Group title="Graph">
-              {selection.tabIds.length === 0 ? (
-                <p className="px-2 text-body-sm text-tertiary">
-                  Pick one or more tabs to expand their relationships.
-                </p>
-              ) : (
-                <div className="px-2">
+                shownTabs.map((tab) => (
                   <CheckRow
-                    checked={selection.graph.centerTabIds.length > 0}
-                    onToggle={() =>
-                      setSelection((current) => ({
-                        ...current,
-                        graph: {
-                          ...current.graph,
-                          centerTabIds:
-                            current.graph.centerTabIds.length > 0 ? [] : [...current.tabIds],
-                        },
-                      }))
-                    }
-                    label={`Expand ${selection.tabIds.length} selected tabs`}
+                    key={tab.id}
+                    checked={tabIds.includes(tab.id)}
+                    onToggle={() => setTabIds((current) => toggleId(current, tab.id))}
+                    label={tab.title || tab.url}
+                    detail={tab.domain}
                   />
-                  {selection.graph.centerTabIds.length > 0 && (
-                    <div className="mt-1.5 flex items-center gap-1.5" role="group" aria-label="Graph depth">
-                      {GRAPH_DEPTHS.map((depth) => (
-                        <Button
-                          key={depth}
-                          type="button"
-                          size="xs"
-                          variant={selection.graph.depth === depth ? "secondary" : "ghost"}
-                          aria-pressed={selection.graph.depth === depth}
-                          onClick={() =>
-                            setSelection((current) => ({
-                              ...current,
-                              graph: { ...current.graph, depth },
-                            }))
-                          }
-                        >
-                          Depth {depth}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                ))
               )}
-            </Group>
-
-            <Group title="Agent activity">
-              <CheckRow
-                checked={selection.activityLimit > 0}
-                onToggle={() =>
-                  setSelection((current) => ({
-                    ...current,
-                    activityLimit: current.activityLimit > 0 ? 0 : 10,
-                  }))
-                }
-                label="Recent agent runs"
-                detail={`${world.runs.length} known`}
-              />
-            </Group>
-
-            <Group title="Privacy">
-              <CheckRow
-                checked={selection.includeNotes}
-                onToggle={() =>
-                  setSelection((current) => ({ ...current, includeNotes: !current.includeNotes }))
-                }
-                label="Include my tab notes"
-                detail="Off by default"
-              />
             </Group>
           </div>
 
-          {/*
-            The preview column.
-
-            Deliberately the same summary component the context inspector uses
-            after attaching, so what the dialog promises and what the panel
-            later reports cannot disagree.
-          */}
           <div className="min-h-0 overflow-y-auto rounded-md border border-subtle bg-surface p-2.5">
-            <h3 className="text-eyebrow text-tertiary">Will be attached</h3>
-            {!preview ? (
-              <p className="mt-1.5 text-body-sm text-tertiary">Nothing selected yet.</p>
-            ) : (
-              <>
-                <dl className="mt-1.5">
-                  {previewRows.map((row) => (
-                    <div key={row.sourceType} className="flex items-baseline justify-between gap-2 py-0.5">
-                      <dt className="text-label text-tertiary">{row.label}</dt>
-                      <dd className="text-meta text-muted-foreground">
-                        {row.detail ?? row.count}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                {preview.truncated && (
-                  <p className="mt-2 text-body-sm text-warning">
-                    Some of your selection did not fit and was left out.
-                  </p>
-                )}
-              </>
+            <h3 className="text-eyebrow text-tertiary">Will be sent</h3>
+            <p className="mt-1.5 text-body-sm text-foreground">
+              {nothingChosen ? "Nothing chosen yet." : summarizeWorkingContext(preview)}
+            </p>
+            {preview.relationships.length > 0 && (
+              <p className="mt-1 text-meta text-tertiary">
+                {preview.relationships.length} {preview.relationships.length === 1 ? "relationship" : "relationships"} between them
+              </p>
             )}
+            {overTabs && (
+              <p className="mt-2 text-body-sm text-warning">
+                Only the first {WORKING_CONTEXT_LIMITS.tabs} tabs are sent.
+              </p>
+            )}
+            <p className="mt-2 text-meta text-tertiary">Titles and addresses only — never your notes, and never page contents.</p>
           </div>
         </div>
 
@@ -359,13 +218,24 @@ export function ContextPicker({
           </Button>
           <Button
             type="button"
-            disabled={!preview}
+            variant="outline"
+            disabled={!workspace}
             onClick={() => {
-              onConfirm(selection)
+              onConfirm({ workspaceId, tabIds: [], collectionIds: [] })
               onOpenChange(false)
             }}
           >
-            Attach
+            Use whole workspace
+          </Button>
+          <Button
+            type="button"
+            disabled={!workspace || nothingChosen}
+            onClick={() => {
+              onConfirm(chosen)
+              onOpenChange(false)
+            }}
+          >
+            Use these
           </Button>
         </DialogFooter>
       </DialogContent>

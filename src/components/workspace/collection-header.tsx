@@ -9,6 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { AskAgentSubmenu } from "@/components/agents/agent-actions"
+import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 
 /**
  * The row a CollectionGroup renders above its (possibly collapsed) tab list.
@@ -27,6 +29,7 @@ export function CollectionHeader({
   onOpenAll,
   onExport,
   onDelete,
+  agentContext,
 }: {
   name: string
   tabCount: number
@@ -39,6 +42,8 @@ export function CollectionHeader({
   onOpenAll: () => void
   onExport?: () => void
   onDelete: () => void
+  /** This collection, as agent context — offers "Ask agent" when the shell can take it there. */
+  agentContext?: WorkingContext
 }) {
   return (
     <div className="flex items-center gap-1 py-1">
@@ -83,6 +88,7 @@ export function CollectionHeader({
               <Download /> Export
             </DropdownMenuItem>
           )}
+          {agentContext && <AskAgentSubmenu subject="collection" context={agentContext} />}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 /> Delete collection

@@ -51,6 +51,12 @@ export type ContextSelection = {
    * has typed prose of their own.
    */
   includeNotes: boolean;
+  /**
+   * Whether to include the relationships between the selected tabs (both
+   * ends selected - the resolver never follows one outward). Optional, and
+   * off unless asked for.
+   */
+  relationships?: boolean;
 };
 
 export const EMPTY_SELECTION: ContextSelection = {
@@ -96,6 +102,7 @@ export function selectedSources(selection: ContextSelection): readonly AgentCont
   if (selection.workspaceIds.length > 0) sources.push("workspace", "tab");
   else if (selection.tabIds.length > 0) sources.push("tab");
 
+  if (selection.relationships === true && selection.tabIds.length > 0) sources.push("relationship");
   if (selection.collectionIds.length > 0) sources.push("collection");
   if (selection.projectIds.length > 0) sources.push("project");
   if (selection.graph.centerTabIds.length > 0) sources.push("graph");

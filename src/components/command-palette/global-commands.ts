@@ -44,6 +44,8 @@ export type GlobalCommandActions = {
   openUrl: (url: string) => void
   /** Present only when appearance settings are available. */
   setTheme?: (themeId: "midnight" | "hubble-light") => void
+  /** Opens the Command Centre working in the current workspace. Present inside the shell. */
+  askAgentAboutWorkspace?: () => void
 }
 
 /** How many saved tabs the palette indexes. Past this, search the workspace itself. */
@@ -64,6 +66,19 @@ export function buildGlobalCommands(
   ]
 
   const agents: Command[] = [
+    ...(actions.askAgentAboutWorkspace && current
+      ? [
+          {
+            id: "agents-ask-workspace",
+            label: `Ask agent about ${current.name}`,
+            hint: "Opens the Command Centre working in this workspace",
+            group: "Agents" as const,
+            icon: Bot,
+            onSelect: actions.askAgentAboutWorkspace,
+            keywords: ["agent", "context", "workspace", "claude", "codex", "gemini"],
+          },
+        ]
+      : []),
     { id: "agents-command-centre", label: "Open Command Centre", group: "Agents", icon: Radio, onSelect: actions.openCommandCentre, keywords: ["agent", "session"] },
     {
       id: "agents-start",

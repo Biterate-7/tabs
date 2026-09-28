@@ -84,6 +84,9 @@ export function NewSessionDialog({
   onConnectAgent,
   pickFolder,
   projectScopesFor,
+  defaultProvider,
+  contextSummaryFor,
+  firstMessage,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -150,6 +153,16 @@ export function NewSessionDialog({
    * would be refused as exceeding its approval.
    */
   projectScopesFor?: (provider: AgentProviderId) => readonly AgentPermissionScope[]
+  /** The agent to start with, when the user already chose one (from the empty state or a request). */
+  defaultProvider?: AgentProviderId
+  /**
+   * What a session in this workspace would be pointed at, in words — the
+   * tabs or collection the user brought from the workspace. `undefined`:
+   * the whole workspace.
+   */
+  contextSummaryFor?: (workspaceId: string) => string | undefined
+  /** What the user already typed; sent as the session's first message once it can take one. */
+  firstMessage?: string
   /**
    * Takes the user to where they connect their own provider credentials.
    *
@@ -194,7 +207,8 @@ export function NewSessionDialog({
   const [projectPath, setProjectPath] = useState("")
   const [projectError, setProjectError] = useState<string | null>(null)
 
-  const chosen = provider ?? startable[0]?.provider ?? null
+  const preferred = defaultProvider && startable.some((candidate) => candidate.provider === defaultProvider) ? defaultProvider : undefined
+  const chosen = provider ?? preferred ?? startable[0]?.provider ?? null
   /*
     The runtime decides the default, and there is only ever one plane to
     default to: `availableModes` returns what this host can execute in, which
@@ -252,12 +266,36 @@ export function NewSessionDialog({
         <DialogHeader>
           <DialogTitle>New agent session</DialogTitle>
           <DialogDescription>
-            Choose an agent and the project it may work in. You can attach Hubble context once the
-            session is open.
+            Choose an agent. It works in the Hubble workspace below, and in a project folder if it needs files.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {workspaces && workspaces.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="session-workspace" className="text-eyebrow text-tertiary">
+                Working in
+              </label>
+              <Select
+                value={workspaceId}
+                onValueChange={setWorkspaceChoice}
+                placeholder="No workspace"
+                options={[
+                  { value: "", label: "No workspace — no Hubble context" },
+                  ...workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name })),
+                ]}
+              />
+              {workspaceId ? (
+                <p className="text-body-sm text-muted-foreground">
+                  <span className="text-tertiary">Context · </span>
+                  {contextSummaryFor?.(workspaceId) ?? "Whole workspace"}
+                </p>
+              ) : (
+                <p className="text-body-sm text-tertiary">The agent won&apos;t see any of your Hubble workspaces.</p>
+              )}
+            </div>
+          )}
+
           <fieldset>
             <legend className="text-eyebrow text-tertiary">Agent</legend>
             <div className="mt-1.5 flex flex-col gap-1">
@@ -513,23 +551,6 @@ export function NewSessionDialog({
           </div>
           )}
 
-          {workspaces && workspaces.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <label htmlFor="session-workspace" className="text-eyebrow text-tertiary">
-                Workspace <span className="text-tertiary">· optional</span>
-              </label>
-              <Select
-                value={workspaceId}
-                onValueChange={setWorkspaceChoice}
-                placeholder="No workspace"
-                options={[
-                  { value: "", label: "No workspace" },
-                  ...workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name })),
-                ]}
-              />
-            </div>
-          )}
-
           <div className="flex flex-col gap-1">
             <label htmlFor="session-title" className="text-eyebrow text-tertiary">
               Title <span className="text-tertiary">· optional</span>
@@ -541,6 +562,13 @@ export function NewSessionDialog({
               placeholder="What this session is for"
             />
           </div>
+
+          {firstMessage && (
+            <div>
+              <p className="text-eyebrow text-tertiary">First message</p>
+              <p className="mt-1 line-clamp-3 text-body-sm text-muted-foreground">{firstMessage}</p>
+            </div>
+          )}
 
           {error && <p className="text-body-sm text-destructive">{error}</p>}
         </div>

@@ -184,7 +184,21 @@ describe("the empty state", () => {
     renderCentre(runtime)
 
     expect(await screen.findByRole("heading", { name: /command centre/i })).toBeTruthy()
-    expect(screen.getByText(/scoped projects/i)).toBeTruthy()
+    expect(screen.getByText(/inside a Hubble workspace/i)).toBeTruthy()
+    expect(screen.getByText(/no sessions yet/i)).toBeTruthy()
+  })
+
+  it("starts from the workspace the user came from, and lists the agents that could work there", async () => {
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, vi.fn(), undefined, "w1")
+
+    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
+    expect(screen.getByText(/It sees only this workspace/)).toBeTruthy()
+    const agents = screen.getByRole("region", { name: "Agents for this workspace" })
+    // The connected agent, drawn with its own mark, ready to start here.
+    expect(await within(agents).findByRole("button", { name: "Start" })).toBeTruthy()
+    expect(agents.querySelector('[data-agent-provider="claude-code"]')).not.toBeNull()
+    // Nothing invented: no sessions, no activity, no metrics.
     expect(screen.getByText(/no sessions yet/i)).toBeTruthy()
   })
 
@@ -689,112 +703,10 @@ describe("approvals", () => {
  * Context
  * ------------------------------------------------------------------ */
 
-describe("context", () => {
-  async function openPicker(runtime: ScriptedRuntime) {
-    const user = userEvent.setup()
-    renderCentre(runtime)
-    await user.click(await screen.findByRole("button", { name: /ready/i }))
-    // Two controls open the picker — the composer's paperclip and the
-    // inspector's button. Scoped to the composer so the query is unambiguous.
-    const main = screen.getByRole("main")
-    await user.click(within(main).getByRole("button", { name: /attach hubble context/i }))
-    return user
-  }
-
-  it("says nothing is attached before anything is", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    const user = userEvent.setup()
-    renderCentre(runtime)
-    await user.click(await screen.findByRole("button", { name: /ready/i }))
-
-    expect(await screen.findByText(/nothing attached/i)).toBeTruthy()
-    expect(screen.getByText(/sees only what you send it/i)).toBeTruthy()
-  })
-
-  it("previews what a selection actually resolves to", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    const user = await openPicker(runtime)
-
-    await user.click(await screen.findByRole("checkbox", { name: /research/i }))
-    // Resolved by the real resolver, so the number is the number.
-    const preview = screen.getByText(/will be attached/i).parentElement!
-    expect(within(preview).getByText("Tabs")).toBeTruthy()
-    expect(within(preview).getByText("3")).toBeTruthy()
-  })
-
-  it("attaches the resolved snapshot through the runtime", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    const user = await openPicker(runtime)
-
-    await user.click(await screen.findByRole("checkbox", { name: /research/i }))
-    await user.click(screen.getByRole("button", { name: /^attach$/i }))
-
-    await waitFor(() => {
-      const attached = runtime.commands.find(
-        (command): command is Extract<typeof command, { name: "attach_context" }> =>
-          command.name === "attach_context"
-      )
-      expect(attached).toBeDefined()
-      // The real payload, not an empty one: the snapshot id, its capture time
-      // and the attachments it produced.
-      expect(attached!.context.snapshotId).toBeTruthy()
-      expect(attached!.context.capturedAt).toBeGreaterThan(0)
-      expect(attached!.context.attachments.length).toBeGreaterThan(0)
-    })
-  })
-
-  it("shows the attached counts in the inspector", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    const user = await openPicker(runtime)
-
-    await user.click(await screen.findByRole("checkbox", { name: /research/i }))
-    await user.click(screen.getByRole("button", { name: /^attach$/i }))
-
-    const panel = await screen.findByRole("complementary", { name: /session context/i })
-    await waitFor(() => expect(within(panel).getByText("Tabs")).toBeTruthy())
-  })
-
-  it("re-attaches a second snapshot on refresh rather than mutating the first", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    const user = await openPicker(runtime)
-
-    await user.click(await screen.findByRole("checkbox", { name: /research/i }))
-    await user.click(screen.getByRole("button", { name: /^attach$/i }))
-
-    const panel = await screen.findByRole("complementary", { name: /session context/i })
-    await waitFor(() => expect(within(panel).getByText("Tabs")).toBeTruthy())
-
-    await user.click(within(panel).getByRole("button", { name: /refresh context/i }))
-
-    await waitFor(() => {
-      const attaches = runtime.commands.filter(
-        (command): command is Extract<typeof command, { name: "attach_context" }> =>
-          command.name === "attach_context"
-      )
-      expect(attaches.length).toBe(2)
-      // A new id, chained from the first: refresh mints a snapshot, it does
-      // not edit one.
-      expect(attaches[1]!.context.snapshotId).not.toBe(attaches[0]!.context.snapshotId)
-    })
-  })
-
-  it("does not attach anything when nothing was selected", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    await openPicker(runtime)
-
-    expect((screen.getByRole("button", { name: /^attach$/i }) as HTMLButtonElement).disabled).toBe(
-      true
-    )
-  })
-
-  it("keeps tab notes off unless they are asked for", async () => {
-    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
-    await openPicker(runtime)
-
-    const notes = await screen.findByRole("checkbox", { name: /include my tab notes/i })
-    expect(notes.getAttribute("aria-checked")).toBe("false")
-  })
-})
+/*
+  Choosing, attaching and showing context per session - and requests from
+  the workspace - are covered in workspace-agent.test.tsx.
+*/
 
 /* ------------------------------------------------------------------ *
  * Accessibility
@@ -1052,12 +964,15 @@ describe("session workspace context", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
+    const indicator = await screen.findByRole("button", { name: /^Working in Research/ })
     await user.click(indicator)
-    expect((await screen.findByLabelText("What the agent can read")).textContent).toBe(
+    // The popover — the side panel says the same, in fewer words.
+    const popover = within(await screen.findByRole("dialog"))
+    expect(popover.getByLabelText("What the agent can read").textContent).toBe(
       "Workspace · Tabs and search · Collections · Relationships"
     )
-    expect(screen.getByText("Collections — approval required")).toBeTruthy()
+    expect(popover.getByText("Can change collections — you approve each change")).toBeTruthy()
+    expect(popover.getByText(/Switching workspaces in Hubble doesn.t move it/)).toBeTruthy()
     // Nothing about the machinery.
     expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port|tabdump_[a-z2-7]{16}/i)
   })
@@ -1069,8 +984,12 @@ describe("session workspace context", () => {
     })
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    await user.click(await screen.findByRole("button", { name: /^Workspace context: Research/ }))
-    expect(await screen.findByText("Not allowed in this session")).toBeTruthy()
+    await user.click(await screen.findByRole("button", { name: /^Working in Research/ }))
+    expect(
+      within(await screen.findByRole("dialog")).getByText(
+        "Read only — start a session with a project that allows changing Hubble content"
+      )
+    ).toBeTruthy()
   })
 
   it("is current right after the session starts from this window's workspace", async () => {
@@ -1080,8 +999,8 @@ describe("session workspace context", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /start session/i }))
 
-    const indicator = await screen.findByRole("button", { name: /^Workspace context: Research/ })
-    expect(indicator.getAttribute("aria-label")).toBe("Workspace context: Research")
+    const indicator = await screen.findByRole("button", { name: /^Working in Research/ })
+    expect(indicator.getAttribute("aria-label")).toBe("Working in Research")
     await user.click(indicator)
     expect(await screen.findByText("Version 1 · Current")).toBeTruthy()
   })
@@ -1092,7 +1011,7 @@ describe("session workspace context", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    expect(await screen.findByRole("button", { name: "Workspace context: Research, update available" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: "Working in Research, update available" })).toBeTruthy()
     await waitFor(() => expect(runtime.commands.some((command) => command.name === "sync_session_context")).toBe(true))
     const sync = runtime.commands.find((command) => command.name === "sync_session_context")
     if (sync?.name !== "sync_session_context") throw new Error("no sync")
@@ -1108,9 +1027,10 @@ describe("session workspace context", () => {
     })
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    await user.click(await screen.findByRole("button", { name: "Workspace context unavailable for this agent" }))
-    expect(await screen.findByText("No workspace context")).toBeTruthy()
-    expect(screen.queryByRole("button", { name: /^Workspace context: / })).toBeNull()
+    // Still says where it works — and that this agent only knows what it is given.
+    await user.click(await screen.findByRole("button", { name: "Working in Research" }))
+    expect(within(await screen.findByRole("dialog")).getByText(/can.t be given live access to your workspace safely/)).toBeTruthy()
+    expect(screen.queryByText(/Version \d/)).toBeNull()
   })
 
   it("keeps the workspace across a reload — it is the runtime's, not the page's", async () => {
@@ -1118,12 +1038,12 @@ describe("session workspace context", () => {
     const runtime = createScriptedRuntime({ sessions: [contextSession()] })
     const first = renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: /^Working in Research/ })).toBeTruthy()
     first.unmount()
 
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    expect(await screen.findByRole("button", { name: /^Workspace context: Research/ })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: /^Working in Research/ })).toBeTruthy()
   })
 
   it("names the agent, the change and the workspace on the approval card — never an id", async () => {
@@ -1531,5 +1451,123 @@ describe("session workspace context", () => {
         outcome: { ok: false },
       })
     )
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Dialog keys
+ * ------------------------------------------------------------------ */
+
+/**
+ * A minimal view of the React fiber fields this file walks. React strips `key`
+ * from props, so the rendered keys are only reachable through the fiber; these
+ * tests read them there rather than asserting on a warning alone.
+ */
+type FiberLike = {
+  key: string | null
+  child: FiberLike | null
+  sibling: FiberLike | null
+  type: unknown
+}
+
+function rootFiber(container: HTMLElement): FiberLike {
+  const root = container.firstElementChild
+  if (!(root instanceof HTMLElement)) throw new Error("the command centre rendered no root element")
+  const handle = Object.keys(root).find((key) => key.startsWith("__reactFiber$"))
+  if (!handle) throw new Error("no React fiber on the command centre's root element")
+  return (root as unknown as Record<string, FiberLike>)[handle] as FiberLike
+}
+
+/** Every keyed direct child of the command centre's root element. */
+function keyedSiblings(container: HTMLElement): { name: string; key: string }[] {
+  const found: { name: string; key: string }[] = []
+  let child = rootFiber(container).child
+  while (child) {
+    if (child.key !== null) {
+      const type = child.type
+      found.push({ name: typeof type === "function" ? type.name : String(type), key: child.key })
+    }
+    child = child.sibling
+  }
+  return found
+}
+
+function keyOf(container: HTMLElement, name: string): string {
+  const match = keyedSiblings(container).find((sibling) => sibling.name === name)
+  if (!match) throw new Error(`${name} is not a keyed child of the root element; keys: ${JSON.stringify(keyedSiblings(container))}`)
+  return match.key
+}
+
+describe("the dialogs cannot collide on a React key", () => {
+  /**
+   * The regression this guards: both dialogs are siblings under the same root
+   * element, and both keys were once built from `${open}-${provider ?? ""}`
+   * alone. Closed and with no provider chosen — the state the command centre
+   * opens in — that expression is `false-` for each of them, so React saw two
+   * children with the same key on the very first render.
+   */
+  it("keys the two dialogs apart in the state where their variable parts are identical", async () => {
+    const runtime = createScriptedRuntime()
+    const { container } = renderCentre(runtime)
+    await waitFor(() => expect(runtime.commands.length).toBeGreaterThan(0))
+
+    const newSession = keyOf(container, "NewSessionDialog")
+    const connect = keyOf(container, "ConnectAgentDialog")
+
+    // Both dialogs are shut and neither has a provider, so everything after
+    // the namespace is the same string. This is the collision state.
+    expect(newSession).toBe("new-session:false-")
+    expect(connect).toBe("connect:false-")
+    expect(newSession.slice("new-session:".length)).toBe(connect.slice("connect:".length))
+
+    // The namespace is therefore the only thing keeping them apart, and it does.
+    expect(newSession).not.toBe(connect)
+  })
+
+  it("gives every keyed child of the root element a unique key", async () => {
+    const runtime = createScriptedRuntime()
+    const { container } = renderCentre(runtime)
+    await waitFor(() => expect(runtime.commands.length).toBeGreaterThan(0))
+
+    const keys = keyedSiblings(container).map((sibling) => sibling.key)
+    expect(keys.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it("still remounts each dialog per opening", async () => {
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime()
+    const { container } = renderCentre(runtime)
+
+    const closed = keyOf(container, "NewSessionDialog")
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+
+    // A different key is what forces the remount, so the dialog opens from the
+    // agent it was opened for rather than from whatever it held last time.
+    await waitFor(() => expect(keyOf(container, "NewSessionDialog")).not.toBe(closed))
+    expect(keyOf(container, "NewSessionDialog").startsWith("new-session:")).toBe(true)
+    // Its sibling is untouched, and still distinct.
+    expect(keyOf(container, "ConnectAgentDialog")).toBe("connect:false-")
+  })
+
+  it("draws no duplicate-key warning from React, opening and closing included", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const user = userEvent.setup()
+      const runtime = createScriptedRuntime()
+      renderCentre(runtime)
+      await waitFor(() => expect(runtime.commands.length).toBeGreaterThan(0))
+
+      await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+      await user.keyboard("{Escape}")
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+
+      const duplicates = warn.mock.calls
+        .map((call) => call.map(String).join(" "))
+        .filter((message) => message.includes("same key"))
+      expect(duplicates).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

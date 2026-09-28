@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef } from "react"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
+import { Button } from "@/components/ui/button"
 import {
   CONTEXT_TOOL_STAGE_LABEL,
   EVENT_PRESENTATION,
@@ -10,7 +11,10 @@ import {
   toolStage,
 } from "@/lib/agents/command-centre/presentation"
 import { buildTranscript } from "@/lib/agents/platform/chat"
+import { describeStep } from "@/lib/agents/command-centre/workspace-activity"
 import { cn } from "@/lib/utils"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
+import type { TranscriptItem } from "@/lib/agents/platform/chat"
 import type { RuntimePlanOutcomeView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 import type { AgentVisualTone } from "@/lib/agents/visual/types"
 
@@ -174,9 +178,86 @@ const AgentMessage = memo(function AgentMessage({ text, streaming }: { text: str
   )
 })
 
+/**
+ * What an agent changed in the workspace, where it happened in the session:
+ * "Updated Research · Created collection “Physics Sources” · 4 tabs".
+ *
+ * Written from what the Command Centre applied — names and counts, never a
+ * tool name or an id — so a person reads what changed, not how. "View" goes
+ * to it; "Undo" is offered only while the workspace is still exactly as the
+ * change left it (see `restoreCollections`), and is otherwise absent rather
+ * than offered and refused.
+ */
+const WorkspaceChangeRow = memo(function WorkspaceChangeRow({
+  change,
+  workspaceName,
+  onView,
+  onUndo,
+}: {
+  change: AppliedWorkspaceChange
+  workspaceName?: string
+  onView?: () => void
+  onUndo?: () => void
+}) {
+  const where = workspaceName ?? "the workspace"
+  const summary = change.ok ? change.steps.map(describeStep).join(" · ") : `Nothing changed in ${where}`
+  return (
+    <li data-workspace-change className="flex items-baseline gap-1.5 py-1">
+      {!change.ok && (
+        <span aria-hidden className="select-none text-meta text-destructive">
+          ●
+        </span>
+      )}
+      <span className={cn("shrink-0 text-body-sm", change.ok ? "text-muted-foreground" : "text-destructive")}>
+        {change.ok ? `Updated ${where}` : "Couldn't apply the approved change"}
+      </span>
+      <span className={cn("min-w-0 flex-1 truncate text-body-sm text-tertiary", change.undone && "line-through")}>{summary}</span>
+      {change.undone ? (
+        <span className="shrink-0 text-meta text-tertiary">Undone</span>
+      ) : (
+        change.ok && (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {onView && (
+              <Button type="button" size="xs" variant="ghost" onClick={onView}>
+                View
+              </Button>
+            )}
+            {onUndo && (
+              <Button type="button" size="xs" variant="ghost" onClick={onUndo}>
+                Undo
+              </Button>
+            )}
+          </span>
+        )
+      )}
+    </li>
+  )
+})
+
+type StreamRow = { type: "transcript"; item: TranscriptItem } | { type: "change"; change: AppliedWorkspaceChange }
+
+/** Changes placed among the transcript by when they happened. */
+function interleave(transcript: readonly TranscriptItem[], changes: readonly AppliedWorkspaceChange[]): StreamRow[] {
+  const pending = [...changes].sort((a, b) => a.at - b.at)
+  const rows: StreamRow[] = []
+  let next = 0
+  for (const item of transcript) {
+    const at = item.type === "message" ? item.timestamp : item.event.timestamp
+    while (next < pending.length && pending[next]!.at < at) rows.push({ type: "change", change: pending[next++]! })
+    rows.push({ type: "transcript", item })
+  }
+  while (next < pending.length) rows.push({ type: "change", change: pending[next++]! })
+  return rows
+}
+
 export function EventStream({
   events,
   planOutcomes,
+  changes,
+  workspaceName,
+  onViewChange,
+  onUndoChange,
+  canUndoChange,
   /** Rendered under the last event — the approval block and the live indicator live there. */
   children,
   className,
@@ -184,6 +265,12 @@ export function EventStream({
   events: readonly SequencedControlEvent[]
   /** How the session's approved plans ended (J.5), matched to their approvals by id. */
   planOutcomes?: readonly RuntimePlanOutcomeView[]
+  /** What the Command Centre applied for this session, in words. */
+  changes?: readonly AppliedWorkspaceChange[]
+  workspaceName?: string
+  onViewChange?: (change: AppliedWorkspaceChange) => void
+  onUndoChange?: (change: AppliedWorkspaceChange) => void
+  canUndoChange?: (change: AppliedWorkspaceChange) => boolean
   children?: React.ReactNode
   className?: string
 }) {
@@ -197,6 +284,7 @@ export function EventStream({
   // The conversation, derived from the window of events on every render —
   // one model for every provider. See lib/agents/platform/chat.ts.
   const transcript = useMemo(() => buildTranscript(events), [events])
+  const rows = useMemo(() => interleave(transcript, changes ?? []), [transcript, changes])
 
   /*
     Follows the stream only when it grows.
@@ -205,15 +293,16 @@ export function EventStream({
     new events does not yank the viewport away from something the user had
     scrolled back to read.
   */
+  const growth = events.length + (changes?.length ?? 0)
   useEffect(() => {
-    if (events.length === countRef.current) return
-    countRef.current = events.length
+    if (growth === countRef.current) return
+    countRef.current = growth
     // "nearest", not "end": inside the stream's own scroller the two are the
     // same (the end is below the fold, so it aligns to the bottom), but "end"
     // also scrolled every ancestor — a page hosting the stream (the landing
     // page's demo) jumped on every new event.
     endRef.current?.scrollIntoView({ block: "nearest" })
-  }, [events.length])
+  }, [growth])
 
   return (
     <div className={cn("min-h-0 flex-1 overflow-y-auto", className)}>
@@ -223,7 +312,20 @@ export function EventStream({
         to find out which.
       */}
       <ol aria-label="Session events" className="mx-auto flex w-full max-w-[720px] flex-col px-6 py-5">
-        {transcript.map((item) => {
+        {rows.map((row) => {
+          if (row.type === "change") {
+            const change = row.change
+            return (
+              <WorkspaceChangeRow
+                key={`change-${change.id}`}
+                change={change}
+                {...(workspaceName ? { workspaceName } : {})}
+                {...(onViewChange ? { onView: () => onViewChange(change) } : {})}
+                {...(onUndoChange && canUndoChange?.(change) ? { onUndo: () => onUndoChange(change) } : {})}
+              />
+            )
+          }
+          const item = row.item
           if (item.type === "message") {
             return item.role === "user" ? (
               <UserMessage key={item.id} text={item.text} />

@@ -1,4 +1,4 @@
-# The Agent Connector Platform (Phases J, J.1, J.2, J.3, J.4, J.5, J.6)
+# The Agent Connector Platform (Phases J, J.1, J.2, J.3, J.4, J.5, J.6, workspace ↔ agent)
 
 Hubble connects external AI agents through **one** connector framework.
 Claude Code, Gemini CLI, Grok Build, Codex and any MCP-compatible agent are
@@ -19,6 +19,7 @@ Command Centre ─ Connect Agent: choose → detect → sign in → approve → 
         │   └─ session context: registry + loopback MCP server (J.3, §12)
         │       workspace plans: validate → approve → apply → verify (J.5, §14)
         │       workspace reasoning: read-only topics, related tabs, collections (J.6, §15)
+        │       focus: what the user pointed a session at, ids in its workspace (§16)
         │
         ├── Claude adapter  ── Claude Agent SDK (canUseTool)
         └── ACP adapter     ── ONE adapter, JSON-RPC over stdio
@@ -1730,3 +1731,211 @@ became creates:
 | `find_related_tabs` / `find_relevant_collections` size | 5,860 / 505 → 5,902 / 519 | 7,656 / 1,457 → 7,698 / 1,499 |
 
 **Tests** (Windows, `npx vitest run`, this tree): 381 files passed, 5 skipped · **5851 passed, 35 skipped, 0 failed** (5886), against the J.6 baseline of 5790 / 35 / 0. New: `protocol.integration.test.ts` (38), `consistency.integration.test.ts` (13), `injection.integration.test.ts` (4), `boundary.security.test.ts` (5), one host test. Typecheck (after `next typegen`) and lint pass.
+
+## 16. Workspace ↔ Agent Integration
+
+J.3–J.6 made a session's workspace safe and useful to the agent. What was
+missing was the *product* loop around it: nothing carried what the user was
+looking at in Hubble into a session, the Command Centre did not say where an
+agent was working, and what an agent changed was only visible on the approval
+card. This phase closes the loop with the architecture that already existed:
+
+```
+ workspace ──(a selection, a collection, a tab, a graph node, a search result)──▶ context
+     ▲                                                                           │
+     │                                                             agent session (one workspace)
+     │                                                                           │
+ applied change ◀──(approved, J.4/J.5)── agent action ◀── MCP reads + focus ◀────┘
+```
+
+### 16.1 What the audit found
+
+| Gap | Where | Fix |
+| --- | --- | --- |
+| Attached context was **one selection for the whole Command Centre**: context chosen for session A rode with the next message in session B | `use-agent-context.ts` held a single `selection`/`snapshot`; the composer attached it whenever its id differed | the hook became a per-call resolver; a session's context is what the runtime reports for *that* session (`view.focus`) |
+| The picker's scope was **every workspace in the account**, so a session bound to Research could be sent Personal's tabs | `selectionToRequest(selection, { workspaceIds: world.workspaces… })` | resolved with scope = the context's own workspace; the host refuses anything else (`focusWithin`) |
+| No route from a workspace selection, collection, tab, graph node or search result into a session | — | `AgentActions` (§16.5) |
+| The agent could not tell what the user pointed at; MCP knew only the bound workspace | `SessionContextBinding` | **focus**: ids checked against the bound snapshot, in `get_workspace_summary` / `get_context_status` (§16.3) |
+| "Where is this agent working?" was a small pill; session rows did not name a workspace | `session-header.tsx`, `session-list.tsx` | "Working in <workspace>" on every session and row (§16.4) |
+| An applied change was said only on the approval row | `use-session-context.ts` | every application recorded in words: a session row, a notification with **View**, an exact **Undo** (§16.6) |
+| An approved change could be **lost**: the collection store's 400 ms save timer was cleared on unmount, and the incoming view reads storage before the outgoing one unmounts | `use-collection-store.ts` | saved in the committing effect (§16.7) |
+| A request arriving before the session list could be targeted at an empty list | `use-agent-sessions.ts` `loading` went false before an executing runtime had listed anything | `listed` |
+
+### 16.2 The working context (`lib/agents/command-centre/working-context.ts`)
+
+```ts
+type WorkingContext = { workspaceId: string; tabIds: readonly string[]; collectionIds: readonly string[] }
+```
+
+Ids inside **one** workspace, bounded (50 tabs, 20 collections — the runtime's
+`FOCUS_LIMITS`). Never titles or URLs: `describeWorkingContext` names
+everything from live Hubble state, so a renamed tab reads under its new name
+and a deleted one drops out (`missing`). The scope is **derived** from the
+shape — no ids = *Whole workspace*, one tab = *One tab*, tabs = *Selected
+tabs*, one collection = *Collection*, anything mixed = *Custom* — so a label
+can never claim what the ids do not say. It is provider-neutral: one type for
+Claude Code, Codex, Gemini, Grok and custom agents (a test holds every provider
+to identical answers). `AgentIdentity` stays identity only.
+
+| Scope | What the agent gets |
+| --- | --- |
+| Whole workspace | **Nothing attached.** A bound session reads its workspace through its own MCP server, one bounded answer at a time. |
+| Tab / selection / collection / custom | The Phase E bridge resolves exactly those ids (plus the relationships between two or more chosen tabs — both ends chosen, never followed outward), scoped to that one workspace; `attach_context` carries it; the host records it as the session's **focus** and delivers it with the next message, once. |
+
+### 16.3 MCP: focus (`session-context/focus.ts`)
+
+The contract is extended, not paralleled. No new tool, verb, capability or
+credential:
+
+- `attach_context` / `create_session { context }`: the host reads the tab and
+  collection references off the attachments (`focusFromAttachments`) and
+  refuses the whole command (`context_invalid`, nothing recorded) when any
+  `workspace` attachment names another workspace, or — for a session whose
+  workspace the runtime holds — any tab or collection is not in it.
+- `registry.setFocus` validates again against the bound snapshot and **never
+  moves the context version** (focus is attention, not content). Released with
+  the session; `detach_context` clears it.
+- `get_workspace_summary` and `get_context_status` add
+  `focus: { tabs: [{ tabId, title, domain }], collections: [{ collectionId, name, tabCount }], note }`,
+  looked up in the bound snapshot at the moment of the call (sanitized; tab
+  rows need `tabs.read`). The instructions gain one clause ("its focus is what
+  the user pointed you at") and stay under the 2 KB budget.
+- `RuntimeSessionView.focus = { tabIds, collectionIds, delivered }` — ids only;
+  the Command Centre names them itself.
+
+Focus is **attention, not access**: a session still reads its whole bound
+workspace on request and nothing outside it; every write still goes
+MCP → one decision → broker approval → Command Centre batch → verification.
+
+### 16.4 Command Centre
+
+- **Header**: agent mark and name, "Working in <workspace> ✓", and the context
+  chip. "Working in" opens what the agent can read, whether it can change
+  anything (and why not — a read-only session needs a project that allows
+  *Change Hubble content*), and that switching workspaces does not move it.
+- **Context chip** (header and composer, one component): "Context · Physics
+  collection · 3 tabs". Opens to list collections, tabs and the relationships
+  between them by name, with remove, *Use whole workspace*, *Choose tabs and
+  collections…* (the chooser offers only the session's workspace), and whether
+  the agent has it yet ("Sent with your next message" / "<Agent> has this").
+- **Side panel**: Working in → Context → Changes → Project → Session → Agents.
+- **Session rows** name their workspace.
+- **Empty state**: "Work with your <workspace> workspace", a composer the user
+  can type into at once (the first message is sent when the new session can
+  take it), the context brought from the workspace, and the connected agents.
+- **New session**: "Working in" first, with the context that comes along.
+- **Palette** (while open): change this session's context, use the whole
+  workspace, new session in this workspace.
+
+### 16.5 Workspace → agent (`components/agents/agent-actions.tsx`)
+
+The shell provides `AgentActions { workspaceId, ask(context, intent), add(context) }`;
+surfaces only describe *what* is asked about. Outside the shell every control
+hides itself.
+
+| Where | Offers |
+| --- | --- |
+| Selection toolbar (search results → select) | Ask agent ▸ Ask about these · Summarize · Compare · Organize into collections · Add to agent context |
+| A tab's menu (cards, peek, favorites, recents) | Ask agent ▸ Ask about this tab · Explain · Summarize · Add to agent context |
+| A collection's menu | Ask agent ▸ Ask about this collection · Summarize · Analyze · Organize · Add to agent context |
+| Tab inspector (the focused tab) | Ask agent about this |
+| Graph: a node's menu; the collection panel | Ask agent about this · Add to agent context; Ask agent about this collection |
+| Palette | Ask agent about <workspace> (everywhere) · Ask agent about N selected tabs · Add selected tabs to agent context · Ask agent about "<collection>" |
+
+`ask` opens the Command Centre with a **handoff**: it goes to the session on
+screen if it works in that workspace (and is the agent asked for), else the
+most recent live session there, else it becomes the next session's context —
+**never** a session in another workspace. The intent pre-fills the composer
+("Summarize these tabs."); nothing is sent on the user's behalf. `add`
+collects without leaving; switching workspaces drops what was collected.
+
+No keyboard shortcut was added: every action is reachable from ⌘K, the
+product's existing keyboard model, and there is no shortcut family an "ask"
+key would belong to.
+
+### 16.6 Agent → workspace
+
+Every approved action — a single change or a whole plan — is applied through
+the collection store's one batch (J.5's reducer; one call site, pinned by
+`operations.security.test.ts`), so the collections before and after are in
+hand. Each application is recorded once (`workspace-activity.ts`, page memory)
+in names and counts and shown as:
+
+- a row in the session where it happened: "Updated Research · Created
+  collection “Physics Sources” · 4 tabs" — no tool name, no id;
+- a notification with **View** (switches workspace if needed, opens it,
+  expands and scrolls to the collection, marks its tabs);
+- **Undo** — exact (`restoreCollections`: the workspace's collections put back
+  as they were, a created one tombstoned for sync) and offered **only while
+  the workspace is still exactly what the change left**; after any other edit
+  it is absent. The next sync moves the context version, so the agent can see
+  it with `get_context_changes`;
+- "Couldn't apply the approved change · Nothing changed in Research" when it
+  did not fit.
+
+### 16.7 Live synchronization
+
+Hubble mounts one surface at a time, and each reads collections from storage
+when it mounts. The collection store now writes in the commit that changed it
+(identical writes skipped), so a change applied in the Command Centre is on
+disk before "View" renders the workspace. The Command Centre names context
+from its own live collection store, not the shell's snapshot. The runtime copy
+follows through the existing debounced sync (version +1); the workspace and
+graph views mount fresh. Nothing is reloaded or re-imported.
+
+### 16.8 Sessions and workspaces
+
+A session is **workspace-bound** for life (J.3's binding is immutable; this
+phase keeps that and says it). Switching workspaces never moves a session; the
+Command Centre lists sessions from every workspace, each named; a new session
+defaults to the workspace the user is in; a request from Workspace B never
+reaches a session in Workspace A. Failures are separate sentences: *workspace
+deleted*, *agent cannot be given it safely* (J.4), *no live access here*
+(hosted runtime / no grant), *read only* (no project allowing changes),
+*context refused* (`context_invalid`), *not applied*.
+
+### 16.9 Security
+
+| Requirement | How |
+| --- | --- |
+| No cross-workspace context | resolver scope = the context's workspace; host `focusWithin` refuses foreign `workspace`/tab/collection references on attach and create; the registry re-checks; the chooser offers one workspace |
+| No context across sessions | the Command Centre holds no shared selection; each session's focus comes from the runtime; the composer sends only text |
+| No account-wide MCP access / enumeration | unchanged: `list_workspaces` returns the bound one; another workspace's id is refused at the server (regression-tested in both directions) |
+| Writes brokered | unchanged; no new write tool or operation |
+| Credentials | focus carries ids only; nothing new names the credential (`secrecy.test.ts` unchanged) |
+
+### 16.10 Tests
+
+New: `runtime/workspace-focus.test.ts` (real host, registry, loopback server,
+official MCP client: focus on the view and to the agent, delivered with the
+next message, live renames, cleared by detach, forgotten on dispose; Workspace
+A cannot read B and B cannot read A; foreign tab, collection and workspace
+references refused on attach and on create); `session-context/focus.test.ts`;
+`command-centre/working-context.test.ts` (with provider parity) and
+`.performance.test.ts` (800 tabs); `command-centre/workspace-agent.test.tsx`
+(Working in, choosing, removing, refusal, no cross-session leak, handoffs to
+the right session or a new one, add, typing first, change rows, View, Undo,
+failure); `agents/agent-actions.test.tsx` (every entry point, search → select
+→ ask, palette); `app-shell-agent.test.tsx` (routing, collecting, dropped on
+switch); `hooks/use-collection-store.test.tsx` (the lost-save regression — it
+fails on the previous store — and exact undo). Updated deliberately:
+`use-agent-context.test.ts` (per-call resolver), the Command Centre and demo
+tests (new labels), `shell-navigation.test.tsx` (relationships replace the
+depth control), `operations.security.test.ts` (one batch call site).
+
+### 16.11 Limitations
+
+- **The write vocabulary is still J.5's three operations.** Agents create,
+  rename and add tabs to collections. They cannot create tabs, relationships
+  or workspace metadata: each would need its own validation, approval card
+  and verification, and was not added.
+- **Writes need a project.** A session without a project folder that allows
+  *Change Hubble content* is read-only (J.3); the UI says so.
+- **Focus is attention, not a narrower permission.** A session can still read
+  its whole bound workspace on request.
+- **Graph expansion by depth** is no longer in the chooser; relationships
+  between chosen tabs are attached, and the agent reads further with
+  `get_tab_graph`.
+- **Notes are never attached** (the Phase E projection has no field for them),
+  so the chooser no longer offers a notes toggle that did nothing.
+- The change record is page memory; the workspace itself is the durable record.

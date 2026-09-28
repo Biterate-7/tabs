@@ -141,13 +141,20 @@ describe("the Agent World stays deleted", () => {
   })
 
   it("keeps the relationship graph, which is information and not a world", () => {
-    // Graph = relationships between tabs. World = deleted. The context picker
-    // offers the former on purpose.
+    // Graph = relationships between tabs. World = deleted. Context still
+    // carries the former on purpose: since the workspace ↔ agent integration
+    // the chooser sends the relationships between the tabs chosen (both ends
+    // chosen, never followed outward), and a session reads the rest of the
+    // graph itself through its own context server (get_tab_graph).
     const picker = readFileSync(
       path.join(SRC_DIR, "components/command-centre/context-picker.tsx"),
       "utf8"
     )
-    expect(picker).toContain("Graph")
-    expect(picker).toContain("centerTabIds")
+    expect(picker).toContain("relationships")
+    const workingContext = readFileSync(
+      path.join(SRC_DIR, "lib/agents/command-centre/working-context.ts"),
+      "utf8"
+    )
+    expect(workingContext).toMatch(/relationships:\s*context\.tabIds\.length > 1/)
   })
 })

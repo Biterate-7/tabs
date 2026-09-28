@@ -1,5 +1,8 @@
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
 import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
+import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus"
+import type { AgentAttachedContext } from "@/lib/agents/control/context"
+import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type {
@@ -108,6 +111,29 @@ export function createScriptedRuntime(
   const connectionViews = new Map<AgentProviderId, ProviderConnectionView>()
 
   let runtimeId: string | undefined
+  /** The snapshot each session was started with — what the host would check a focus against. */
+  const snapshots = new Map<string, SessionContextSnapshot>()
+
+  /**
+   * Context attached to a session, recorded as the host records it: its tab
+   * and collection references become the session's focus, not yet delivered.
+   * Refused, exactly as the host refuses it, when it reaches outside the
+   * session's workspace.
+   */
+  function withFocus(view: RuntimeSessionView, context: AgentAttachedContext): RuntimeSessionView | undefined {
+    const workspaceId = view.context?.workspaceId ?? view.workspaceId
+    const focus = focusFromAttachments(context.attachments)
+    if (workspaceId && !attachmentsStayIn(context.attachments, workspaceId)) return undefined
+    const snapshot = snapshots.get(view.sessionId)
+    if (workspaceId && snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined
+    const { focus: _previous, ...rest } = view
+    void _previous
+    return {
+      ...rest,
+      contextSnapshotId: context.snapshotId,
+      ...(isEmptyFocus(focus) ? {} : { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: false } }),
+    }
+  }
 
   /**
    * The reply, computed over the non-generic union.
@@ -178,8 +204,42 @@ export function createScriptedRuntime(
               }
             : {}),
         })
-        sessions = [...sessions, created]
-        return { ok: true, value: created }
+        if (command.contextSnapshot) snapshots.set(created.sessionId, command.contextSnapshot)
+        const started = command.context ? withFocus(created, command.context) : created
+        if (!started) {
+          snapshots.delete(created.sessionId)
+          return runtimeFailure<never>("context_invalid")
+        }
+        sessions = [...sessions, started]
+        return { ok: true, value: started }
+      }
+
+      case "attach_context": {
+        const target = sessions.find((s) => s.sessionId === command.sessionId)
+        if (!target) return runtimeFailure<never>("session_not_found")
+        const next = withFocus(target, command.context)
+        if (!next) return runtimeFailure<never>("context_invalid")
+        sessions = sessions.map((s) => (s.sessionId === target.sessionId ? next : s))
+        return { ok: true, value: next }
+      }
+
+      case "detach_context": {
+        const target = sessions.find((s) => s.sessionId === command.sessionId)
+        if (!target) return runtimeFailure<never>("session_not_found")
+        const { focus: _focus, contextSnapshotId: _snapshot, ...rest } = target
+        void _focus
+        void _snapshot
+        sessions = sessions.map((s) => (s.sessionId === target.sessionId ? rest : s))
+        return { ok: true, value: rest }
+      }
+
+      case "send_message": {
+        const target = sessions.find((s) => s.sessionId === command.sessionId)
+        if (!target) return runtimeFailure<never>("session_not_found")
+        // Attached context goes with this message, once.
+        const sent = target.focus ? { ...target, focus: { ...target.focus, delivered: true } } : target
+        sessions = sessions.map((s) => (s.sessionId === target.sessionId ? sent : s))
+        return { ok: true, value: sent }
       }
 
       /* Phase J.3 — session workspace context. */
@@ -207,10 +267,7 @@ export function createScriptedRuntime(
         sessions = sessions.filter((s) => s.sessionId !== command.sessionId)
         return { ok: true, value: { sessionId: command.sessionId } }
 
-      case "send_message":
       case "cancel_run":
-      case "attach_context":
-      case "detach_context":
       case "respond_to_approval":
       case "resume_session": {
         const target =

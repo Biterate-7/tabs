@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   addTabToCollection,
   addTabsToCollection,
@@ -24,7 +24,6 @@ import type { CollectionBatchOperation, CollectionBatchResult } from "@/lib/coll
 import type { Collection } from "@/lib/collections/types"
 import type { Workspace } from "@/lib/workspace/types"
 
-const SAVE_DEBOUNCE_MS = 400
 
 /**
  * Which collections currently hold any of `tabIds`.
@@ -79,11 +78,26 @@ export function useCollectionStore(workspaces: Workspace[]) {
     [rawCollections, validWorkspaceIds, tabWorkspaceOf]
   )
 
+  /*
+    Saved in the commit that produced the change — not on a timer.
+
+    This used to be debounced by 400ms, and the timer was cleared when the
+    hook unmounted, so a change made just before leaving a surface was never
+    written. That is exactly the moment an agent's approved change lands: the
+    Command Centre applies it, the user presses "View", and the workspace view
+    mounts — reading storage *before* the Command Centre's cleanup could have
+    flushed anything, since React renders the incoming view before it unmounts
+    the outgoing one. Writing here, in the effect, puts every change on disk
+    before the next user event is handled. Identical writes are skipped, so a
+    re-render that changes nothing costs a string compare.
+  */
+  const lastSaved = useRef<string | null>(null)
   useEffect(() => {
-    const timer = setTimeout(() => {
-      saveCollectionState({ version: 1, collections })
-    }, SAVE_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
+    const state = { version: 1 as const, collections }
+    const serialized = JSON.stringify(state)
+    if (serialized === lastSaved.current) return
+    lastSaved.current = serialized
+    saveCollectionState(state)
   }, [collections])
 
   // Collections the engine pulled from the server. Applied through this hook
@@ -216,6 +230,30 @@ export function useCollectionStore(workspaces: Workspace[]) {
         setCollections(result.collections)
         publishCollections(result.touched, workspaceId)
         return result
+      },
+      /**
+       * Puts one workspace's collections back exactly as they were before a
+       * change — the undo for an agent's applied change. Only while that
+       * workspace still holds exactly what the change left (`expected`):
+       * anything edited since means an undo would discard someone's later
+       * work, so it is refused and nothing moves. Every collection whose
+       * record differs is announced to sync, a removed one as a deletion.
+       */
+      restoreCollections: (
+        workspaceId: string,
+        previous: readonly Collection[],
+        expected: readonly Collection[]
+      ): boolean => {
+        const current = collections.filter((c) => c.workspaceId === workspaceId)
+        if (JSON.stringify(current) !== JSON.stringify(expected)) return false
+        setCollections([...collections.filter((c) => c.workspaceId !== workspaceId), ...previous])
+        const before = new Map(previous.map((c) => [c.id, JSON.stringify(c)]))
+        const now = new Map(current.map((c) => [c.id, JSON.stringify(c)]))
+        const changed = [...before.keys()].filter((id) => before.get(id) !== now.get(id))
+        const removed = [...now.keys()].filter((id) => !before.has(id))
+        publishCollections(changed, workspaceId)
+        publishCollections(removed, workspaceId, true)
+        return true
       },
     }
   }, [collections, tabWorkspaceOf])

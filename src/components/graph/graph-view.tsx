@@ -13,6 +13,8 @@ import { GraphContextMenu, type GraphContextMenuState } from "./graph-context-me
 import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popover"
 import { GraphNodeNotesView } from "./graph-node-notes-view"
 import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
+import { useAgentActions } from "@/components/agents/agent-actions"
+import { tabsContext } from "@/lib/agents/command-centre/working-context"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { buildClusterTree, computeClusterAnchors } from "@/lib/graph/clusters"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
@@ -904,6 +906,8 @@ export function GraphView({
     : null
 
   const contextNode = contextMenu?.node
+  // A node as agent context — only inside the shell, which knows where to send it.
+  const agentActions = useAgentActions()
   const otherWorkspaces = contextNode
     ? store.workspaces
         .filter((w) => w.id !== workspaceLookup.get(contextNode.id)?.id)
@@ -1187,6 +1191,18 @@ export function GraphView({
           setContextMenu(null)
         }}
         onClose={() => setContextMenu(null)}
+        {...(agentActions
+          ? {
+              onAskAgent: () => {
+                if (contextNode) agentActions.ask(tabsContext(contextNode.workspaceId, [contextNode.id]), "explain")
+                setContextMenu(null)
+              },
+              onAddToAgentContext: () => {
+                if (contextNode) agentActions.add(tabsContext(contextNode.workspaceId, [contextNode.id]))
+                setContextMenu(null)
+              },
+            }
+          : {})}
       />
 
       <GraphEdgePopover
