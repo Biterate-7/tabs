@@ -1,6 +1,6 @@
 "use client"
 
-import { useLayoutEffect, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, X } from "lucide-react"
 import { AgentRoster } from "@/components/command-centre/agent-roster"
 import { ApprovalPrompt } from "@/components/command-centre/approval-prompt"
@@ -10,9 +10,20 @@ import { ContextPicker } from "@/components/command-centre/context-picker"
 import { EventStream } from "@/components/command-centre/event-stream"
 import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
+import { WorkingContextChip } from "@/components/command-centre/working-context-control"
 import { IconButton } from "@/components/ui/icon-button"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
-import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
+import {
+  contextOfSession,
+  describeWorkingContext,
+  removeFromContext,
+  workspaceContext,
+  workspaceIdOf,
+  workspaceLinkOf,
+} from "@/lib/agents/command-centre/working-context"
+import { focusFromAttachments } from "@/lib/agents/session-context/focus"
+import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { phaseSentence } from "@/lib/agents/platform/lifecycle"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
@@ -72,10 +83,10 @@ const DEMO_PLATFORM = demoPlatform()
  *
  * Built from CommandCentreView's own children, because CommandCentreView
  * mounts the control-plane hooks — the runtime client, polling, provider
- * connections, MCP tokens — and the demo must start none of them. The
- * context selection is the product's own `useAgentContext`, fed the demo's
- * workspaces: the picker's preview and the panel's counts come from the real
- * resolver.
+ * connections, MCP tokens — and the demo must start none of them. A session's
+ * context is resolved by the product's own `useAgentContext`, fed the demo's
+ * workspaces, and recorded on the session the way the runtime records it —
+ * the tab and collection references of what was attached.
  *
  * The view bar says what the demo is instead of reporting a runtime, because
  * there is none: nothing typed here runs anywhere.
@@ -90,7 +101,7 @@ export function DemoCommandCentre({
 }) {
   const { state, dispatch, world, context, send } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerKey, setPickerKey] = useState<number | null>(null)
 
   const selected = state.sessions.find((entry) => entry.view.sessionId === state.selectedSessionId) ?? null
   const selectedId = selected?.view.sessionId ?? null
@@ -114,6 +125,49 @@ export function DemoCommandCentre({
   const workspaceNameOf = (workspaceId: string | undefined) =>
     workspaceId ? state.store.workspaces.find((w) => w.id === workspaceId)?.name : undefined
   const projectName = selected ? projectNameOf(selected.view.projectId) : undefined
+
+  // The session's workspace ↔ agent relationship, exactly as the Command Centre derives it.
+  const liveWorld = useMemo(
+    () => ({ workspaces: state.store.workspaces, collections: state.collections, dependencies: state.dependencies }),
+    [state.store.workspaces, state.collections, state.dependencies]
+  )
+  const link = selected ? workspaceLinkOf(selected.view, state.store.workspaces) : ({ kind: "none" } as const)
+  const sessionWorkspaceId = selected ? workspaceIdOf(selected.view) : undefined
+  const workspaceName = workspaceNameOf(sessionWorkspaceId)
+  const own = selected ? contextOfSession(selected.view) : null
+  const contextView = own ? describeWorkingContext(own, liveWorld) : null
+  const agentName = selected ? agentVisualIdentity(selected.view.provider).displayName : "The agent"
+  const delivered = selected?.view.focus?.delivered
+
+  /** Points the open session at a context — resolved by the real bridge, recorded as its focus. */
+  function applyContext(next: WorkingContext) {
+    if (!selected) return
+    const outcome = context.resolve(next)
+    if (!outcome.ok) return
+    dispatch({
+      type: "set-focus",
+      sessionId: selected.view.sessionId,
+      focus: outcome.attached ? focusFromAttachments(outcome.attached.attachments) : null,
+    })
+  }
+  const actions =
+    own && sessionWorkspaceId
+      ? {
+          onRemove: (entry: { tabId: string } | { collectionId: string }) => applyContext(removeFromContext(own, entry)),
+          onUseWholeWorkspace: () => applyContext(workspaceContext(sessionWorkspaceId)),
+          onChoose: () => setPickerKey(Date.now()),
+        }
+      : {}
+  const chip = (align: "start" | "end") => (
+    <WorkingContextChip
+      view={contextView}
+      link={link}
+      agentName={agentName}
+      {...(delivered !== undefined ? { delivered } : {})}
+      align={align}
+      {...actions}
+    />
+  )
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -152,6 +206,7 @@ export function DemoCommandCentre({
           sessions={state.sessions}
           selectedSessionId={selectedId}
           projectNameOf={projectNameOf}
+          workspaceNameOf={workspaceNameOf}
           onSelect={(id) => dispatch({ type: "select-session", id })}
           onNewSession={() => undefined}
           // Starting a session needs a runtime, and this page has none.
@@ -179,10 +234,12 @@ export function DemoCommandCentre({
               <SessionHeader
                 session={selected}
                 {...(projectName ? { projectName } : {})}
+                {...(workspaceName ? { workspaceName } : {})}
+                link={link}
+                contextControl={chip("end")}
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => dispatch({ type: "toggle-context-panel" })}
                 onDispose={() => dispatch({ type: "dispose", sessionId: selected.view.sessionId })}
-                {...(selected.view.context ? { workspaceContext: selected.view.context } : {})}
               />
               <div ref={streamRef} className="flex min-h-0 flex-1 flex-col">
               <EventStream events={events}>
@@ -208,9 +265,10 @@ export function DemoCommandCentre({
                 status={selected.view.status}
                 pending={false}
                 cancellable={selected.view.cancellable}
-                {...(context.snapshot ? { contextSummary: summarizeAttachment(context.snapshot) } : {})}
+                agentName={agentName}
+                {...(workspaceName ? { workspaceName } : {})}
                 {...(projectName ? { projectName } : {})}
-                onOpenContext={() => setPickerOpen(true)}
+                contextControl={chip("start")}
                 onCancel={() => dispatch({ type: "cancel", sessionId: selected.view.sessionId })}
                 onSend={(text) => send(selected.view.sessionId, text)}
               />
@@ -220,7 +278,7 @@ export function DemoCommandCentre({
               <div className="w-full max-w-[600px]">
                 <h2 className="text-statement text-foreground">Command Centre</h2>
                 <p className="mt-1.5 text-body text-muted-foreground">
-                  Work with your AI agents using scoped projects and the Hubble context you choose to attach. Pick a session to see what its agent did.
+                  Work with your AI agents inside a Hubble workspace, on the context you choose. Pick a session to see what its agent did.
                 </p>
               </div>
             </div>
@@ -230,26 +288,33 @@ export function DemoCommandCentre({
         {contextPanelOpen && (
           <ContextPanel
             session={selected?.view ?? null}
-            world={world}
-            snapshot={context.snapshot}
-            delta={context.delta}
+            {...(workspaceName ? { workspaceName } : {})}
+            link={link}
+            context={contextView}
+            {...(delivered !== undefined ? { delivered } : {})}
+            agentName={agentName}
             {...(projectName ? { projectName } : {})}
             runtimeStatus={null}
-            refreshing={false}
-            onEditContext={() => setPickerOpen(true)}
-            onRefreshContext={() => void context.refresh()}
+            {...actions}
           />
         )}
       </div>
 
-      <ContextPicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        world={world}
-        localRuntimeAllowed={false}
-        initialSelection={context.selection}
-        onConfirm={(selection) => void context.resolve(selection)}
-      />
+      {pickerKey !== null && own && (
+        <ContextPicker
+          key={pickerKey}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPickerKey(null)
+          }}
+          workspace={world.workspaces.find((workspace) => workspace.id === own.workspaceId) ?? null}
+          collections={world.collections}
+          dependencies={world.dependencies}
+          initial={own}
+          agentName={agentName}
+          onConfirm={applyContext}
+        />
+      )}
     </div>
   )
 }

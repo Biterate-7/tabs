@@ -1,6 +1,9 @@
 "use client"
 
-import { ExternalLink } from "lucide-react"
+import { Bot, ExternalLink } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { useAgentActions } from "@/components/agents/agent-actions"
+import { tabsContext } from "@/lib/agents/command-centre/working-context"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { IconButton } from "@/components/ui/icon-button"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
@@ -45,6 +48,9 @@ export function TabInspector({
   onRemoveDependency: (depId: string) => void
   onChangeDependencyType: (depId: string, type: DependencyType | undefined) => void
 }) {
+  // The tab in focus, as agent context — "Ask agent about this", inside the shell only.
+  const agent = useAgentActions()
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex flex-col data-[side=right]:w-full sm:data-[side=right]:max-w-sm">
@@ -63,9 +69,24 @@ export function TabInspector({
               </div>
               <div className="flex items-center justify-between pt-1">
                 <p className="text-meta text-tertiary">Workspace: {node.workspaceName}</p>
-                <IconButton aria-label="Open tab" tooltip="Open in new tab" className="size-7" onClick={() => onOpenTab(node.id)}>
-                  <ExternalLink />
-                </IconButton>
+                <div className="flex items-center gap-1">
+                  {agent && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => {
+                        agent.ask(tabsContext(node.workspaceId, [node.id]), "explain")
+                        onOpenChange(false)
+                      }}
+                    >
+                      <Bot /> Ask agent about this
+                    </Button>
+                  )}
+                  <IconButton aria-label="Open tab" tooltip="Open in new tab" className="size-7" onClick={() => onOpenTab(node.id)}>
+                    <ExternalLink />
+                  </IconButton>
+                </div>
               </div>
             </SheetHeader>
 

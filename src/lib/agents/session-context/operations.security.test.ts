@@ -49,8 +49,14 @@ describe("the operation model is data, not code", () => {
 
   it("applies an approved plan only through the store's batch, and nothing else in the store", () => {
     const hook = code("hooks/use-session-context.ts");
-    const applyPlan = hook.slice(hook.indexOf("function applyPlan"));
-    expect(applyPlan).toContain("applyCollectionBatch(workspaceId, action.operations)");
+    // Since the workspace ↔ agent integration every approved action goes
+    // through the one batch — a plan whole, a single change as a one-step
+    // batch — so the Command Centre can say exactly what changed and undo it.
+    // One call site, and a plan's operations are passed as approved, never trimmed.
+    expect(hook.match(/applyCollectionBatch\(/g)).toHaveLength(1);
+    expect(hook).toContain("applyCollectionBatch(workspaceId, operations)");
+    const planOperations = hook.slice(hook.indexOf('case "apply_plan":'));
+    expect(planOperations).toMatch(/^case "apply_plan":\s*\n(\s*\/\/.*\n)*\s*return \[\.\.\.action\.operations\]/);
     expect(hook).not.toMatch(/setCollections|localStorage|indexedDB|deleteCollection|removeTab/);
     // The plan names no method: its operations are matched by kind inside the batch, never looked up by name.
     expect(code("lib/collections/batch.ts")).not.toMatch(/\[operation\.kind\]|\[kind\]\(/);

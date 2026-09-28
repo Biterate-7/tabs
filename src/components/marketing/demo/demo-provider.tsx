@@ -11,7 +11,7 @@ import { createDemoState, demoReducer, type DemoAction, type DemoInit, type Demo
  * HubbleDemoProvider — the landing page's isolated demo state.
  *
  * One provider per demo window. It holds a DemoState (see demo-state.ts) and
- * the Command Centre's context selection, and nothing else: it has no storage
+ * the product's context resolver, and nothing else: it has no storage
  * key, opens no connection, starts no runtime and reads no filesystem. The
  * app's own stores are never imported here, so no interaction on the landing
  * page can reach a visitor's real Hubble data, even when the page is shown as
@@ -25,7 +25,7 @@ type DemoContextValue = {
   dispatch: Dispatch<DemoAction>
   /** What the context resolver may see: the demo's workspaces and collections, and nothing of the visitor's. */
   world: AgentContextWorld
-  /** The Command Centre's context selection and attached snapshot — the product's own hook, fed the demo world. */
+  /** The product's own context resolver, fed the demo world: what a session is told, resolved for real. */
   context: AgentContextApi
   /** Sends a composer message and schedules the demo's reply. */
   send: (sessionId: string, text: string) => void

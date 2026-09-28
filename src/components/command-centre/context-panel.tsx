@@ -1,60 +1,37 @@
 "use client"
 
-import { AlertTriangle, RefreshCw, Sparkles } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import {
-  describeDelta,
-  describeOmissionReason,
-  summarizeAvailable,
-  summarizeSnapshot,
-} from "@/lib/agents/command-centre/context-selection"
+import { Button } from "@/components/ui/button"
+import { WorkingContextDetails } from "./working-context-control"
 import { providerRowState } from "@/lib/agents/command-centre/presentation"
+import { WORKSPACE_LINK_DETAIL, changeAccessLabel } from "@/lib/agents/command-centre/working-context"
+import { describeStep } from "@/lib/agents/command-centre/workspace-activity"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { cn } from "@/lib/utils"
-import type { ContextDelta } from "@/lib/agents/command-centre/context-selection"
-import type { AgentContextWorld } from "@/lib/agents/context/world"
-import type { AgentContextSnapshot } from "@/lib/agents/context/types"
+import type { WorkingContextActions } from "./working-context-control"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
+import type { WorkingContextView, WorkspaceLink } from "@/lib/agents/command-centre/working-context"
 import type { RuntimeSessionView, RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
 /**
- * What the agent can actually see, and what this machine can actually do.
+ * What the agent can see, what it changed, and what this machine can do.
  *
- * ## The distinction this panel exists to make
+ * ## The questions it answers, in order
  *
- * Scoped context is a core product principle, and the way it fails is not by
- * leaking — it is by the user *believing* the agent has less, or more, than it
- * does. So this panel reports the attached **snapshot**, never the selection:
- * every count comes from items the resolver actually admitted at capture time.
- * A workspace that was ticked and then dropped for a limit appears under
- * "Not included", with the resolver's own reason.
+ * Which workspace is it working in? What is it pointed at there? What did it
+ * change? Then the project, the session and the agents. Each answer comes
+ * from the runtime (the session's workspace, its focus, what it may do) or
+ * from what the Command Centre itself applied — never from what was merely
+ * selected — and every name is Hubble's live one.
  *
- * When nothing is attached it says so plainly. It never implies the agent can
- * see the rest of Hubble.
- *
- * ## Why refresh is a button
- *
- * Phase E's snapshots are immutable by design, and refresh mints a second one
- * rather than mutating the first. That is what makes "+2 tabs · -1 collection"
- * a comparison instead of a guess — and it is why nothing here re-resolves on
- * its own. A context that silently grew would send the agent data the user
- * never attached.
+ * With no session open, it answers for the session you would start: the
+ * workspace you came from, and anything you brought with you.
  */
 
-function Section({
-  title,
-  children,
-  action,
-}: {
-  title: string
-  children: React.ReactNode
-  action?: React.ReactNode
-}) {
+function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    /* `last:` drops the rule under the final section: with the panel shorter
-       than the column, a trailing border drew a line across open space and
-       read as a cut-off edge rather than as a divider. */
-    <section className="border-b border-subtle px-4 py-3 last:border-b-0">
+    /* `last:` drops the rule under the final section. */
+    <section aria-label={title} className="border-b border-subtle px-4 py-3 last:border-b-0">
       <div className="flex min-h-6 items-center justify-between gap-2">
         <h3 className="text-eyebrow text-muted-foreground">{title}</h3>
         {action}
@@ -76,44 +53,44 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export function ContextPanel({
   session,
-  world,
-  snapshot,
-  delta,
+  workspaceName,
+  link,
+  context,
+  delivered,
+  agentName = "The agent",
+  busy = false,
+  changes = [],
+  onViewChange,
   projectName,
   runtimeStatus,
-  onRefreshContext,
-  onEditContext,
-  refreshing,
+  ...actions
 }: {
   session: RuntimeSessionView | null
-  /** The account's own data, for the Available section. Never sent anywhere. */
-  world: Pick<AgentContextWorld, "workspaces" | "collections">
-  /** The snapshot attached to this session, or `null` when none is. */
-  snapshot: AgentContextSnapshot | null
-  delta: readonly ContextDelta[]
+  /** The session's workspace — or, with no session, the one a new session would start in. */
+  workspaceName?: string
+  link: WorkspaceLink
+  /** What the agent is pointed at, described from live Hubble state. `null`: it has no Hubble context. */
+  context: WorkingContextView | null
+  delivered?: boolean
+  agentName?: string
+  busy?: boolean
+  /** What agents changed in this session's workspace, oldest first. */
+  changes?: readonly AppliedWorkspaceChange[]
+  onViewChange?: (change: AppliedWorkspaceChange) => void
   projectName?: string
   runtimeStatus: RuntimeStatus | null
-  onRefreshContext: () => void
-  onEditContext: () => void
-  refreshing: boolean
-}) {
-  const summary = snapshot ? summarizeSnapshot(snapshot) : []
-  const available = summarizeAvailable(world, snapshot)
-  const deltaText = describeDelta(delta)
+} & WorkingContextActions) {
+  const change = changeAccessLabel(link)
+  const recent = [...changes].reverse().slice(0, 5)
 
   return (
     <aside
       aria-label="Session context"
       /*
-        Hidden below `xl`, not merely narrowed.
-
-        The command centre is four fixed columns wide once the app rail is
-        counted (rail 240 + sessions 256 + this 288 = 784px of chrome), and
-        below roughly 1280px that left the centre too narrow to read. It also
-        did not degrade gracefully: nothing shrank, so this panel was simply
-        pushed off the right edge and its text clipped mid-word rather than
-        wrapping. Collapsing it outright keeps the centre usable, and the
-        header's toggle brings it back at any width where it fits.
+        Hidden below `xl`, not merely narrowed: the command centre is four
+        columns wide once the app rail is counted, and below ~1280px this
+        panel pushed the conversation too narrow to read. The header's toggle
+        brings it back wherever it fits.
       */
       className="hidden h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-subtle bg-sidebar xl:flex"
     >
@@ -121,129 +98,59 @@ export function ContextPanel({
         <h2 className="text-h2 text-foreground">Context</h2>
       </div>
 
+      <Section title="Working in">
+        {workspaceName && link.kind !== "none" && link.kind !== "workspace-missing" ? (
+          <>
+            <p className="truncate text-body-sm text-foreground">{workspaceName}</p>
+            <p className="mt-1 text-body-sm text-tertiary">
+              {session ? WORKSPACE_LINK_DETAIL[link.kind] : "A new session starts here and stays here."}
+            </p>
+            {session && <p className="mt-1 text-body-sm text-muted-foreground">{change.text}</p>}
+          </>
+        ) : (
+          <p className="text-body-sm text-tertiary">{WORKSPACE_LINK_DETAIL[link.kind]}</p>
+        )}
+      </Section>
+
+      {context && (
+        <Section title="Context">
+          <WorkingContextDetails
+            view={context}
+            link={link}
+            agentName={agentName}
+            {...(delivered !== undefined ? { delivered } : {})}
+            busy={busy}
+            {...actions}
+          />
+        </Section>
+      )}
+
+      {session && recent.length > 0 && (
+        <Section title="Changes">
+          <ul className="flex flex-col gap-1">
+            {recent.map((entry) => (
+              <li key={entry.id} className="flex items-baseline justify-between gap-2">
+                <span className={cn("min-w-0 text-body-sm", entry.undone ? "text-tertiary line-through" : "text-muted-foreground")}>
+                  {entry.ok ? entry.steps.map(describeStep).join(" · ") || "Workspace updated" : "Not applied — nothing changed"}
+                </span>
+                {entry.ok && !entry.undone && onViewChange && (
+                  <Button type="button" size="xs" variant="ghost" onClick={() => onViewChange(entry)}>
+                    View
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       <Section title="Project">
         {projectName ? (
           <Row label="Authorized" value={projectName} />
         ) : (
-          <p className="text-body-sm text-tertiary">
-            No project. The agent can read attached context but cannot reach files.
-          </p>
+          <p className="text-body-sm text-tertiary">No project. The agent can read Hubble context but cannot reach files.</p>
         )}
       </Section>
-
-      <Section
-        title="Attached"
-        /*
-          Only once there is something to edit.
-
-          With nothing attached the section already ends in a full-width
-          "Attach Hubble context" button, and a header "Edit" beside it was a
-          second route to the same dialog three lines apart.
-        */
-        action={
-          snapshot ? (
-            <div className="flex items-center gap-1">
-              <Button type="button" size="xs" variant="ghost" onClick={onEditContext}>
-                Edit
-              </Button>
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                onClick={onRefreshContext}
-                disabled={refreshing}
-                aria-label="Refresh context"
-              >
-                <RefreshCw className={cn(refreshing && "animate-spin")} />
-              </Button>
-            </div>
-          ) : undefined
-        }
-      >
-        {!snapshot ? (
-          <>
-            <p className="text-body-sm text-tertiary">
-              Nothing attached. The agent sees only what you send it.
-            </p>
-            {/*
-              The way out of the empty state, inside the section it is about.
-
-              This used to be a button below every section, outside the panel's
-              own rhythm, which read as a stray control rather than as the
-              answer to the sentence above it.
-            */}
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="mt-2.5 w-full"
-              onClick={onEditContext}
-            >
-              <Sparkles />
-              Attach Hubble context
-            </Button>
-          </>
-        ) : (
-          <>
-            {summary.map((row) => (
-              <Row
-                key={row.sourceType}
-                label={row.label}
-                value={row.detail ?? String(row.count)}
-              />
-            ))}
-            <p className="mt-1.5 text-meta text-tertiary">
-              Captured {new Date(snapshot.capturedAt).toLocaleTimeString()}
-            </p>
-            {deltaText && (
-              <p className="mt-1 text-meta text-link">Context updated · {deltaText}</p>
-            )}
-          </>
-        )}
-      </Section>
-
-      {/*
-        What the user asked for and did not get.
-
-        The resolver already recorded every one of these with a reason; not
-        showing them would leave the user believing the agent can see more than
-        it can, which is the exact misunderstanding this panel exists to
-        prevent.
-      */}
-      {snapshot && snapshot.omissions.length > 0 && (
-        <Section title="Not included">
-          {snapshot.omissions.map((omission) => (
-            <div
-              key={`${omission.sourceType}:${omission.reason}`}
-              className="flex items-baseline gap-1.5 py-0.5"
-            >
-              <AlertTriangle aria-hidden className="size-3 shrink-0 translate-y-0.5 text-warning" />
-              <span className="min-w-0 flex-1 text-label text-muted-foreground">
-                {omission.count} {omission.sourceType.replace(/_/g, " ")} ·{" "}
-                <span className="text-tertiary">{describeOmissionReason(omission.reason)}</span>
-              </span>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {/*
-        What is *not* attached, and could be.
-
-        The counterpart to "Attached", and the reason the panel can be read as
-        a scope rather than as a list: two workspaces attached means something
-        different when there are two in total than when there are nine. Every
-        row is a thing the user owns and has not sent — it says nothing about
-        what the agent can reach, which is the distinction the whole panel
-        exists to keep straight.
-      */}
-      {available.length > 0 && (
-        <Section title="Available">
-          {available.map((row) => (
-            <Row key={row.sourceType} label={row.label} value={String(row.count)} />
-          ))}
-        </Section>
-      )}
 
       <Section title="Session">
         {session ? (
@@ -258,12 +165,8 @@ export function ContextPanel({
       </Section>
 
       {/*
-        Providers, as the runtime reports them.
-
-        Three independent facts per row — available, connected, capable — and
-        no attempt to collapse them into one. A provider that is present but
-        has declared no `create_session` says "Cannot start sessions yet"
-        rather than being silently absent.
+        Providers, as the runtime reports them: available, connected and
+        capable are three facts, and none is collapsed into another.
       */}
       <Section title="Agents">
         {!runtimeStatus ? (
@@ -283,7 +186,6 @@ export function ContextPanel({
           ))
         )}
       </Section>
-
     </aside>
   )
 }

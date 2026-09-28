@@ -336,6 +336,23 @@ export type RuntimeSessionView = {
    * it was not given the context server. Never set alongside `context`.
    */
   contextUnavailable?: "provider";
+  /**
+   * What the user pointed this session at inside its workspace — the tabs
+   * and collections they selected when they asked. Ids only, checked against
+   * the session's workspace by the runtime; the Command Centre looks the names
+   * up in its own data. Absent when the session has only its workspace.
+   */
+  focus?: RuntimeSessionFocusView;
+};
+
+/**
+ * A session's focus, as the runtime holds it. `delivered` is whether the
+ * agent has been sent it yet: attached context rides with the next message.
+ */
+export type RuntimeSessionFocusView = {
+  tabIds: readonly string[];
+  collectionIds: readonly string[];
+  delivered: boolean;
 };
 
 /**

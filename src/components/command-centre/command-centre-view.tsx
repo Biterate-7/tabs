@@ -1,9 +1,11 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
-import { ArrowUp, ChevronLeft, Plus, RotateCw, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { toast } from "sonner"
+import { ArrowUp, Bot, ChevronLeft, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
+import { AgentIcon } from "@/components/agents/agent-icon"
 import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
 import { ConnectAgentDialog } from "./connect-agent-dialog"
@@ -14,6 +16,10 @@ import { EventStream } from "./event-stream"
 import { NewSessionDialog } from "./new-session-dialog"
 import { SessionHeader } from "./session-header"
 import { SessionList } from "./session-list"
+import { WorkingContextChip } from "./working-context-control"
+import type { WorkingContextActions } from "./working-context-control"
+import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
+import type { Command } from "@/components/command-palette/types"
 import { useAgentContext } from "@/hooks/use-agent-context"
 import { useAgentProjects } from "@/hooks/use-agent-projects"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
@@ -31,42 +37,80 @@ import { isChatReady } from "@/lib/agents/platform/lifecycle"
 import { grantWithinApproval } from "@/lib/agents/platform/roster"
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
-import type { AgentProviderId } from "@/lib/agents/connectors/types"
-import { RUNTIME_ERROR_PRESENTATION, runtimeBadge, runtimeBanner } from "@/lib/agents/command-centre/presentation"
-import { summarizeAttachment } from "@/lib/agents/command-centre/context-selection"
+import {
+  RUNTIME_ERROR_PRESENTATION,
+  canCreateSession,
+  canSendMessage,
+  runtimeBadge,
+  runtimeBanner,
+} from "@/lib/agents/command-centre/presentation"
+import {
+  addToContext,
+  contextOfSession,
+  describeWorkingContext,
+  handoffTarget,
+  intentPrompt,
+  removeFromContext,
+  summarizeWorkingContext,
+  withinWorkspace,
+  workspaceContext,
+  workspaceIdOf,
+  workspaceLinkOf,
+} from "@/lib/agents/command-centre/working-context"
+import {
+  collectionToView,
+  describeChange,
+  markWorkspaceChangeUndone,
+  recordWorkspaceChange,
+  subscribeWorkspaceChanges,
+  workspaceChanges,
+} from "@/lib/agents/command-centre/workspace-activity"
+import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { cn } from "@/lib/utils"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
+import type { AgentHandoff, WorkingContext, WorkspaceLink } from "@/lib/agents/command-centre/working-context"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import type { Workspace } from "@/lib/workspace/types"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeErrorCode } from "@/lib/agents/runtime/protocol"
 
 /**
- * Hubble's command centre.
+ * Hubble's command centre — where the user works with an agent *inside* a
+ * workspace.
  *
  * ## What this component is responsible for
  *
- * Composition and nothing else. Every fact it renders arrives from one of five
- * hooks, each of which speaks to the Phase F runtime through the typed command
- * client; every action it offers is one of the fourteen commands the protocol
- * defines. There is no local model of a session, no derived run state, and no
- * second opinion about whether something is allowed — the host decides, and
- * this surface restates the answer.
+ * Composition. Every fact it renders arrives from the runtime through the
+ * typed client (sessions, their workspace, what they are pointed at, what
+ * they may do) or from the app's own live data (names). There is no local
+ * model of a session and no second opinion about what is allowed.
  *
- * ## The layout
+ * ## The loop it closes
  *
- * Three columns, in the order the mental model runs: which session (left),
- * the session itself (centre), what it can see (right). The centre is the only
- * column that scrolls internally; the outer frame never does, so the composer
- * stays put while a long run streams above it.
+ *     workspace ──(a selection, a collection, a tab)──▶ context
+ *          ▲                                              │
+ *          │                                        agent session
+ *          │                                              │
+ *     applied change ◀──(approved)── agent action ◀───────┘
+ *
+ *   - **Workspace → context.** A session works in the workspace it was
+ *     started from (fixed for its life). Its context — the whole workspace,
+ *     or tabs and collections chosen in it — is attached through the Phase E
+ *     bridge, *per session*, and reported back by the runtime as the
+ *     session's focus. Requests from the workspace arrive as a handoff and
+ *     go to a session in the same workspace, or become the context of the
+ *     next one.
+ *   - **Agent → workspace.** Approved changes are applied here, through the
+ *     same collection store the workspace uses, then said in words — a row in
+ *     the session, a notification with "View", an exact "Undo" while nothing
+ *     has changed since.
  *
  * ## What it refuses to do
  *
- * It renders no session that does not exist, no event it was not sent, no
- * activity count it did not receive, and no file it has not been told about.
- * When the runtime cannot execute — a hosted deployment, or the packaged
- * desktop build, which ships no route handler at all — it says so in one
- * sentence and keeps the rest of Hubble usable, rather than presenting a
- * command centre whose every button would fail.
+ * It renders no session that does not exist, no event it was not sent, and no
+ * context the runtime did not confirm. When the runtime cannot execute it says
+ * so in one sentence and keeps the rest of Hubble usable.
  */
 export function CommandCentreView({
   world,
@@ -75,24 +119,16 @@ export function CommandCentreView({
   client,
   poll,
   /**
-   * The transport the remote-projects resource uses.
-   *
-   * Separate from `client` because it is a different resource with a different
-   * shape — the control plane's typed command endpoint versus a REST resource
-   * that carries files. Injected for the same reason: so the surface can be
-   * driven without a network.
+   * The transport the remote-projects resource uses — a REST resource, not
+   * the control plane's command endpoint. Injected for tests.
    */
   remoteFetch,
-  /**
-   * Takes the user to Settings → AI Connectors, where they connect their own
-   * provider credentials.
-   *
-   * Optional, and the dialog degrades to a sentence without a button when it
-   * is absent — a surface with nowhere to send somebody should not offer an
-   * action that goes nowhere.
-   */
+  /** Takes the user to Settings → AI Connectors. Optional; without it the dialog says where to go. */
   onOpenConnectors,
   activeWorkspaceId,
+  handoff,
+  onHandoffConsumed,
+  onViewWorkspace,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -100,8 +136,13 @@ export function CommandCentreView({
   poll?: boolean
   remoteFetch?: typeof fetch
   onOpenConnectors?: () => void
-  /** The workspace the user came from. The default association for a new session. */
+  /** The workspace the user came from: where a new session works, by default. */
   activeWorkspaceId?: string
+  /** A request from the workspace — "ask an agent about these". Consumed once. */
+  handoff?: AgentHandoff | null
+  onHandoffConsumed?: (id: string) => void
+  /** Shows a workspace (and a collection in it) — where "View" on an agent's change goes. */
+  onViewWorkspace?: (workspaceId: string, collectionId?: string) => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -126,27 +167,17 @@ export function CommandCentreView({
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null)
   const [contextPanelOpen, setContextPanelOpen] = useState(true)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
-  const [contextPickerOpen, setContextPickerOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<RuntimeErrorCode | null>(null)
 
   /*
-    Which session is on screen.
-
-    Derived from the runtime's own list rather than held independently: a
-    session that was disposed here, or lost when the host restarted, stops
-    being in `sessions` and therefore stops being selected, with no effect
-    needed to notice and no window in which the centre column renders a header
-    for something that is gone.
-
-    `requestedSessionId` is only the user's *request*; the list is what decides
-    whether it is still a real session.
+    Which session is on screen: derived from the runtime's own list, so a
+    session that is gone stops being selected with no effect needed.
   */
   const selected = useMemo(
     () => sessions.sessions.find((entry) => entry.view.sessionId === requestedSessionId) ?? null,
     [sessions.sessions, requestedSessionId]
   )
-
   const selectedSessionId = selected?.view.sessionId ?? null
 
   const session = useAgentSession({
@@ -157,13 +188,34 @@ export function CommandCentreView({
   })
 
   /*
-    The world the resolver reads is the app's own data plus the projects this
-    browser authorized — the latter live in the control plane's storage, not in
-    the workspace stores, so they are joined here rather than by the shell.
+    The on-screen session, as freshly as it is known: the session's own read
+    (re-read right after every command, such as attaching context) when it is
+    for this session, the list's otherwise.
+  */
+  const current = useMemo(() => {
+    if (!selected) return null
+    const fresh = session.session?.sessionId === selected.view.sessionId ? session.session : null
+    return fresh ? { ...selected, view: fresh } : selected
+  }, [selected, session.session])
+
+  /*
+    Session workspace context (Phase J.3): the Command Centre's own collection
+    store — the same one the workspace view uses — so an approved change is
+    made exactly as a person making it would, and names read here are live.
+  */
+  const collectionStore = useCollectionStore(world.workspaces as Workspace[])
+  const liveWorld = useMemo(
+    () => ({ workspaces: world.workspaces, collections: collectionStore.collections, dependencies: world.dependencies }),
+    [world.workspaces, world.dependencies, collectionStore.collections]
+  )
+
+  /*
+    The world the Phase E resolver reads: the app's data with the live
+    collections, plus the projects this browser authorized.
   */
   const contextWorld = useMemo<AgentContextWorld>(
-    () => ({ ...world, projects: projects.projects }),
-    [world, projects.projects]
+    () => ({ ...world, collections: collectionStore.collections, projects: projects.projects }),
+    [world, collectionStore.collections, projects.projects]
   )
 
   const context = useAgentContext({
@@ -177,66 +229,36 @@ export function CommandCentreView({
       projectId ? projects.projects.find((project) => project.id === projectId)?.name : undefined,
     [projects.projects]
   )
+  const workspaceNameOf = useCallback(
+    (workspaceId: string | undefined) =>
+      workspaceId ? world.workspaces.find((workspace) => workspace.id === workspaceId)?.name : undefined,
+    [world.workspaces]
+  )
 
   const banner = runtimeBanner(runtime.status)
-  /**
-   * `REMOTE · Ready`, `LOCAL · Ready`, or the plain refusal.
-   *
-   * The brief's requirement, and the reason it is a requirement: on a hosted
-   * deployment the old sentence ("Agent runtime unavailable") was true when it
-   * was written and is now false, because agents genuinely run — in a sandbox
-   * Hubble creates, which is nobody's computer. Naming the plane is also the
-   * honest half: a user is owed the difference between an agent editing files
-   * on their laptop and one editing files in a container.
-   */
   const badge = runtimeBadge(runtime.status)
-  const startableProviders = runtime.status?.providers ?? []
+  const startableProviders = useMemo(() => runtime.status?.providers ?? [], [runtime.status])
 
-  /*
-    Whether to talk to the remote-projects endpoint at all.
-
-    The host's own answer, relayed: a local Hubble has no remote plane and
-    should not spend a request per mount being told 503. Never inferred from a
-    hostname or a build flag.
-  */
+  // The host's own answer: a local Hubble has no remote plane to ask.
   const remoteEnabled = runtime.status?.environment === "remote" && runtime.executable
-
   const remoteProjects = useRemoteProjects({
     enabled: remoteEnabled,
     ...(remoteFetch ? { fetch: remoteFetch } : {}),
   })
 
-  /*
-    This user's own provider connections.
-
-    Read so the start dialog can say whose credentials a session is about to
-    run on — and so it can offer the Connect button when the answer is "none
-    yet". Whether somebody has connected a key changes when they press a
-    button in settings, not on a timer, so there is no polling here.
-  */
+  /* This user's own provider connections — whose credentials a session runs on. */
   const connections = useProviderConnections()
 
-  /*
-    The agent connector platform (Phase J): the roster of connected agents,
-    what is installed on this machine, and each agent's connection. Every
-    phase it reports is derived from the runtime's own answers.
-  */
+  /* The agent connector platform (Phase J): the roster of connected agents. */
   const providerKeyConnected = useCallback(
     (provider: AgentProviderId): boolean | undefined => {
       if (platformProvider(provider)?.signIn.kind !== "provider-key") return undefined
-      // Unknown, not "no", while the credential service is loading or absent.
       if (connections.loading || connections.unavailable) return undefined
       return connections.forProvider(provider)?.status === "connected"
     },
     [connections]
   )
 
-  /*
-    Where Hubble is running, asked once through the platform seam, and —
-    on the web only — whether the user has issued a Hubble MCP token, which
-    is what a custom MCP agent connects with. The desktop app has no MCP
-    server, so it asks nothing and the registry says why (Phase J.2).
-  */
   const [surface] = useState(() => agentConnectorSurface())
   const mcpTokens = useMcpTokens({ enabled: surface === "web" })
   const mcpTokenIssued = hasUsableMcpToken(mcpTokens.state, now)
@@ -257,11 +279,7 @@ export function CommandCentreView({
     setConnectOpen(true)
   }, [])
 
-  /*
-    The desktop app (Phase J.1): a project folder comes only from the native
-    picker, and Claude signs in with its own login rather than a stored key.
-    Both are answered by the shell and the runtime, never guessed here.
-  */
+  /* The desktop app (Phase J.1): folders come only from the native picker. */
   const [pickFolder] = useState(() => agentProjectFolderPicker())
   const projectScopesFor = useCallback(
     (provider: AgentProviderId) => {
@@ -282,37 +300,188 @@ export function CommandCentreView({
     () => world.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
     [world.workspaces]
   )
-  const workspaceNameOf = useCallback(
-    (workspaceId: string | undefined) =>
-      workspaceId ? world.workspaces.find((workspace) => workspace.id === workspaceId)?.name : undefined,
-    [world.workspaces]
+
+  /* ---------------- What agents changed, said in words. */
+
+  const allChanges = useSyncExternalStore(subscribeWorkspaceChanges, workspaceChanges, workspaceChanges)
+  const viewChange = useCallback(
+    (change: AppliedWorkspaceChange) => onViewWorkspace?.(change.workspaceId, collectionToView(change)),
+    [onViewWorkspace]
   )
 
-  /*
-    Session workspace context (Phase J.3): the Command Centre's own collection
-    store — the same one the workspace view uses — so an approved change is
-    made exactly as a person making it by hand would make it, and the
-    snapshots it sends are current.
-  */
-  const collectionStore = useCollectionStore(world.workspaces as Workspace[])
+  const handleApplied = useCallback(
+    (change: AppliedWorkspaceChange) => {
+      recordWorkspaceChange(change)
+      const agent = agentVisualIdentity(change.provider).displayName
+      const where = workspaceNameOf(change.workspaceId) ?? "your workspace"
+      if (!change.ok) {
+        toast.error(`${agent} · Couldn't apply the approved change`, { description: `Nothing was changed in ${where}.` })
+        return
+      }
+      toast.success(`${agent} · ${describeChange(change)}`, {
+        description: `In ${where}`,
+        ...(onViewWorkspace
+          ? { action: { label: "View", onClick: () => onViewWorkspace(change.workspaceId, collectionToView(change)) } }
+          : {}),
+      })
+    },
+    [onViewWorkspace, workspaceNameOf]
+  )
+
   const sessionContext = useSessionContext({
     client: runtime.client,
     sessions: sessions.sessions,
     world,
     collections: collectionStore.collections,
-    createCollection: collectionStore.createCollection,
-    renameCollection: collectionStore.renameCollection,
-    addTabsToCollection: collectionStore.addTabsToCollection,
     applyCollectionBatch: collectionStore.applyBatch,
+    onApplied: handleApplied,
   })
+
+  /*
+    Exact undo, only while the workspace is still what the change left.
+    Decided once per change of the collections or of the record — not per
+    render: the surface re-renders every second for its clocks.
+  */
+  const undoable = useMemo(() => {
+    const now = new Map<string, string>()
+    const ids = new Set<string>()
+    for (const change of allChanges) {
+      if (!change.ok || change.undone || !change.before || !change.after) continue
+      if (!now.has(change.workspaceId)) {
+        now.set(change.workspaceId, JSON.stringify(collectionStore.collections.filter((collection) => collection.workspaceId === change.workspaceId)))
+      }
+      if (now.get(change.workspaceId) === JSON.stringify(change.after)) ids.add(change.id)
+    }
+    return ids
+  }, [allChanges, collectionStore.collections])
+  const canUndo = useCallback((change: AppliedWorkspaceChange) => undoable.has(change.id), [undoable])
+  const undoChange = useCallback(
+    (change: AppliedWorkspaceChange) => {
+      if (!change.before || !change.after) return
+      if (collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) {
+        markWorkspaceChangeUndone(change.id)
+        toast(`Undone in ${workspaceNameOf(change.workspaceId) ?? "the workspace"}`)
+      } else {
+        toast.info("Can't undo — the workspace has changed since", { description: "Nothing was changed." })
+      }
+    },
+    [collectionStore, workspaceNameOf]
+  )
+
+  /* ---------------- Context: per session, inside its workspace. */
+
+  const [contextBusy, setContextBusy] = useState(false)
+  const [contextError, setContextError] = useState<string | null>(null)
+
+  /**
+   * Points a session at a context: resolved inside the session's workspace by
+   * the Phase E bridge and attached — or, for the whole workspace, detached,
+   * because the session reads its workspace itself. The runtime checks it
+   * again and reports it back as the session's focus.
+   */
+  const applyContext = useCallback(
+    async (sessionId: string, next: WorkingContext): Promise<boolean> => {
+      const scoped = withinWorkspace(next, liveWorld).context
+      const outcome = context.resolve(scoped)
+      if (!outcome.ok) {
+        setContextError("Hubble couldn't prepare that context. Nothing was sent.")
+        return false
+      }
+      setContextBusy(true)
+      const result = outcome.attached
+        ? await runtime.client.send({ name: "attach_context", sessionId, context: outcome.attached })
+        : await runtime.client.send({ name: "detach_context", sessionId })
+      setContextBusy(false)
+      if (!result.ok) {
+        setContextError(
+          result.error.code === "context_invalid"
+            ? "That isn't in this session's workspace, so it wasn't added."
+            : RUNTIME_ERROR_PRESENTATION[result.error.code].title
+        )
+        return false
+      }
+      setContextError(null)
+      await sessions.refresh()
+      if (sessionId === selectedSessionId) await session.refresh()
+      return true
+    },
+    [context, liveWorld, runtime.client, selectedSessionId, session, sessions]
+  )
+
+  /*
+    The context the next new session starts with — what the user brought from
+    the workspace when no session there could take it. Tied to its workspace:
+    a session started somewhere else starts with the whole of that one.
+  */
+  const [draft, setDraft] = useState<WorkingContext | null>(null)
+  const [draftText, setDraftText] = useState("")
+  const [defaultProvider, setDefaultProvider] = useState<AgentProviderId | undefined>(undefined)
+  const [firstMessage, setFirstMessage] = useState<string | undefined>(undefined)
+  const [composerSeed, setComposerSeed] = useState<{ key: string; sessionId: string; text: string } | null>(null)
+  const [queued, setQueued] = useState<{ sessionId: string; text: string } | null>(null)
+  const [pickerFor, setPickerFor] = useState<{ sessionId: string | null; key: number } | null>(null)
+
+  /* ---------------- Requests from the workspace. */
+
+  const consumed = useRef<string | null>(null)
+  useEffect(() => {
+    if (!handoff || consumed.current === handoff.id) return
+    // Wait until it is known which sessions exist; on a runtime that cannot
+    // execute there will never be any, and the request becomes a draft.
+    if (runtime.loading || (runtime.executable && !sessions.listed)) return
+    consumed.current = handoff.id
+    onHandoffConsumed?.(handoff.id)
+
+    const scoped = withinWorkspace(handoff.context, liveWorld).context
+    const prompt = intentPrompt(handoff.intent, describeWorkingContext(scoped, liveWorld)) ?? ""
+    const target = runtime.executable ? handoffTarget(sessions.sessions, handoff, selectedSessionId) : null
+    /*
+      Synchronizing with an external input — a request handed over by the
+      shell — once, after the sessions it may go to are known. There is no
+      render-time derivation of "which session took it".
+    */
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (target) {
+      const targetView = sessions.sessions.find((entry) => entry.view.sessionId === target)!.view
+      const existing = contextOfSession(targetView) ?? workspaceContext(scoped.workspaceId)
+      const next = handoff.mode === "add" ? (addToContext(existing, scoped) ?? scoped) : scoped
+      setRequestedSessionId(target)
+      void applyContext(target, next)
+      if (prompt) setComposerSeed({ key: handoff.id, sessionId: target, text: prompt })
+      if (handoff.mode === "add") {
+        toast(`Added to ${agentVisualIdentity(targetView.provider).displayName}'s context`, {
+          description: summarizeWorkingContext(describeWorkingContext(next, liveWorld)),
+        })
+      }
+    } else {
+      setRequestedSessionId(null)
+      setDraft((existing) =>
+        handoff.mode === "add" && existing ? (addToContext(existing, scoped) ?? scoped) : scoped
+      )
+      setDraftText(prompt)
+      setDefaultProvider(handoff.provider)
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [
+    applyContext,
+    handoff,
+    liveWorld,
+    onHandoffConsumed,
+    runtime.executable,
+    runtime.loading,
+    selectedSessionId,
+    sessions.listed,
+    sessions.sessions,
+  ])
+
+  /* ---------------- Starting a session. */
 
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
       setCreateError(null)
 
       // Only an agent the user connected and approved, and never on a project
-      // that grants it more than they approved it for. The runtime enforces
-      // the project grant itself; this keeps the approval step meaningful.
+      // that grants it more than they approved it for.
       const agent = platform.identity(input.provider)
       const project = input.projectId
         ? projects.projects.find((candidate) => candidate.id === input.projectId)
@@ -322,11 +491,18 @@ export function CommandCentreView({
         return
       }
 
-      setCreating(true)
-      // The workspace the session is started from goes with it, for the agent
-      // to query. What the agent may do with it is the runtime's decision.
+      // The workspace the session works in goes with it, for the agent to
+      // query; the context brought from it, if it is that workspace's.
       const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
-      const outcome = await sessions.createSession({ ...input, ...(contextSnapshot ? { contextSnapshot } : {}) })
+      const brought = draft && input.workspaceId === draft.workspaceId ? context.resolve(withinWorkspace(draft, liveWorld).context) : undefined
+      const startContext = brought?.ok && brought.attached ? brought.attached : undefined
+
+      setCreating(true)
+      const outcome = await sessions.createSession({
+        ...input,
+        ...(contextSnapshot ? { contextSnapshot } : {}),
+        ...(startContext ? { context: startContext } : {}),
+      })
       setCreating(false)
 
       if (typeof outcome === "string") {
@@ -337,65 +513,162 @@ export function CommandCentreView({
       platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
       setRequestedSessionId(outcome.sessionId)
       setNewSessionOpen(false)
+      if (startContext) setDraft(null)
+      if (firstMessage) setQueued({ sessionId: outcome.sessionId, text: firstMessage })
+      else if (draftText) setComposerSeed({ key: `new-${outcome.sessionId}`, sessionId: outcome.sessionId, text: draftText })
+      setFirstMessage(undefined)
+      setDraftText("")
     },
-    [platform, projects.projects, sessionContext, sessions]
+    [context, draft, draftText, firstMessage, liveWorld, platform, projects.projects, sessionContext, sessions]
   )
 
   /*
-    Attaching is resolve-then-send, in that order and in one turn.
-
-    The resolve happens locally and can fail on its own terms — nothing
-    selected, or a scope that names a different account — and only a snapshot
-    that actually came back is ever sent. The selection is passed into
-    `resolve` rather than being written to state first, because state would
-    not have landed yet and the resolve would run against the previous choice.
+    A first message typed before the session existed is sent once the session
+    can take one — the runtime decides when that is, and the session's own
+    read says so.
   */
-  const attachSelection = useCallback(
-    async (selection: Parameters<typeof context.setSelection>[0]) => {
-      const outcome = context.resolve(selection)
-      if (!outcome.ok || !selectedSessionId) return
+  const currentView = current?.view ?? null
+  useEffect(() => {
+    if (!queued || !currentView || currentView.sessionId !== queued.sessionId) return
+    if (!canSendMessage(currentView.status) || session.pending) return
+    const text = queued.text
+    // Sending is the external effect; clearing the queue records that it happened.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setQueued(null)
+    void session.sendMessage(text)
+  }, [currentView, queued, session])
 
-      await session.attachContext(outcome.attached)
-    },
-    [context, selectedSessionId, session]
+  /* ---------------- The on-screen session's relationship to its workspace. */
+
+  const sessionWorkspaceId = currentView ? workspaceIdOf(currentView) : undefined
+  const link: WorkspaceLink = currentView
+    ? workspaceLinkOf(currentView, world.workspaces)
+    : activeWorkspaceId
+      ? { kind: "live", canChange: false }
+      : { kind: "none" }
+  const sessionContextView = useMemo(() => {
+    if (!currentView) return null
+    const own = contextOfSession(currentView)
+    return own && link.kind !== "workspace-missing" ? describeWorkingContext(own, liveWorld) : null
+  }, [currentView, link.kind, liveWorld])
+  const draftView = useMemo(() => (draft ? describeWorkingContext(draft, liveWorld) : null), [draft, liveWorld])
+
+  const agentName = currentView ? agentVisualIdentity(currentView.provider).displayName : "The agent"
+  const workspaceShown = currentView ? sessionWorkspaceId : (draft?.workspaceId ?? activeWorkspaceId)
+  const workspaceName = workspaceNameOf(workspaceShown)
+  const delivered = currentView?.focus ? currentView.focus.delivered : undefined
+  const sessionChanges = useMemo(
+    () => (currentView ? allChanges.filter((change) => change.sessionId === currentView.sessionId) : []),
+    [allChanges, currentView]
   )
 
+  const contextActions = useMemo((): WorkingContextActions => {
+    if (!currentView || !sessionWorkspaceId || link.kind === "workspace-missing" || link.kind === "none") return {}
+    const sessionId = currentView.sessionId
+    const own = contextOfSession(currentView) ?? workspaceContext(sessionWorkspaceId)
+    return {
+      onRemove: (entry: { tabId: string } | { collectionId: string }) => void applyContext(sessionId, removeFromContext(own, entry)),
+      onUseWholeWorkspace: () => void applyContext(sessionId, workspaceContext(sessionWorkspaceId)),
+      onChoose: () => setPickerFor({ sessionId, key: Date.now() }),
+    }
+  }, [applyContext, currentView, link.kind, sessionWorkspaceId])
+
+  const draftActions = useMemo((): WorkingContextActions => {
+    if (!draft) return {}
+    return {
+      onRemove: (entry: { tabId: string } | { collectionId: string }) => setDraft(removeFromContext(draft, entry)),
+      onUseWholeWorkspace: () => setDraft(null),
+      onChoose: () => setPickerFor({ sessionId: null, key: Date.now() }),
+    }
+  }, [draft])
+
+  const pickerWorkspaceId = pickerFor
+    ? pickerFor.sessionId
+      ? (sessionWorkspaceId ?? "")
+      : (draft?.workspaceId ?? activeWorkspaceId ?? "")
+    : ""
+  const pickerWorkspace = world.workspaces.find((workspace) => workspace.id === pickerWorkspaceId) ?? null
+  const pickerInitial: WorkingContext = pickerFor?.sessionId
+    ? (currentView ? contextOfSession(currentView) : null) ?? workspaceContext(pickerWorkspaceId)
+    : draft ?? workspaceContext(pickerWorkspaceId)
+
   const errorPresentation = session.error ? RUNTIME_ERROR_PRESENTATION[session.error] : null
+
+  /*
+    While it is open, the Command Centre adds its own commands to the shell's
+    palette: change what the open session is pointed at, go back to the whole
+    workspace, or start a session where the user is.
+  */
+  const paletteHost = useCommandPaletteHost()
+  const paletteCommands: Command[] = [
+    {
+      id: "cc-change-context",
+      label: currentView ? `Change ${agentName}'s context` : "Change agent context",
+      hint: workspaceName ? `Tabs and collections in ${workspaceName}` : undefined,
+      group: "Agents",
+      icon: Bot,
+      disabled: !contextActions.onChoose,
+      keywords: ["context", "attach", "tabs", "collection"],
+      onSelect: () => contextActions.onChoose?.(),
+    },
+    {
+      id: "cc-whole-workspace",
+      label: "Use the whole workspace as context",
+      group: "Agents",
+      icon: Bot,
+      disabled: !contextActions.onUseWholeWorkspace || sessionContextView?.scope === "workspace",
+      keywords: ["clear context", "reset context"],
+      onSelect: () => contextActions.onUseWholeWorkspace?.(),
+    },
+    {
+      id: "cc-new-session",
+      label: workspaceName ? `New agent session in ${workspaceName}` : "New agent session",
+      group: "Agents",
+      icon: Bot,
+      disabled: !runtime.executable,
+      onSelect: () => setNewSessionOpen(true),
+    },
+  ]
+  useEffect(() => {
+    paletteHost?.contribute("command-centre", paletteCommands)
+  })
+  useEffect(() => () => paletteHost?.contribute("command-centre", null), [paletteHost])
+
+  /* ---------------- The agents a new session could start with. */
+
+  const startableAgents = useMemo(
+    () =>
+      platform.roster.agents.flatMap((agent) => {
+        const spec = platformProvider(agent.provider)
+        if (!spec?.chat) return []
+        // The same gate the start dialog applies: connected, sessions offered, and the runtime can start one.
+        const status = startableProviders.find((provider) => provider.provider === agent.provider)
+        const ready = platform.sessionsFor(agent.provider).available && Boolean(status && canCreateSession(status))
+        const sessionsFor = platform.sessionsFor(agent.provider)
+        return [{ provider: agent.provider, name: agent.name, ready, ...(sessionsFor.available ? {} : { reason: sessionsFor.reason }) }]
+      }),
+    [platform, startableProviders]
+  )
 
   return (
     <div className="flex h-screen max-h-screen min-h-0 min-w-0 flex-1 flex-col">
       {/*
-        Where you are, and whether agents can run here.
-
-        This row used to appear only when the runtime was *not* executable,
-        which meant the healthy state said nothing at all: `runtimeBanner`
-        has always had a "Local runtime ready" answer and nothing rendered it.
-        A command centre that is silent about its runtime until something is
-        wrong makes the user check the context panel to find out whether the
-        thing they are about to type will run.
-
-        So the row is permanent and carries two facts — location on the left,
-        runtime on the right. It stays one line of quiet text when everything
-        is fine, and only the unavailable case spends the horizontal space on
-        the gate's full sentence.
+        Where you are, and whether agents can run here: the workspace on the
+        left, the runtime on the right. Quiet when everything is fine.
       */}
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        {/* Below md the Command Centre is master–detail: this is the way
-            back from an open session to the list. */}
         {selected && (
           <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => setRequestedSessionId(null)}>
             <ChevronLeft />
           </IconButton>
         )}
         <span className="text-h2 text-foreground">Command Centre</span>
-        {selected && projectNameOf(selected.view.projectId) && (
+        {workspaceName && (
           <>
             <span aria-hidden className="text-tertiary">
               /
             </span>
-            <span className="min-w-0 truncate text-body text-muted-foreground">
-              {projectNameOf(selected.view.projectId)}
-            </span>
+            <span className="min-w-0 truncate text-body text-muted-foreground">{workspaceName}</span>
           </>
         )}
 
@@ -409,21 +682,11 @@ export function CommandCentreView({
               )}
             />
             <span className="shrink-0 text-body-sm text-muted-foreground">{badge}</span>
-            {/* After the title, so the row reads "● Agent runtime unavailable ·
-                <why>" rather than trailing off into the headline. Truncates
-                first, because the title is the part that must survive. */}
             {!runtime.executable && (
-              <span className="hidden min-w-0 truncate text-body-sm text-tertiary lg:inline">
-                · {banner.detail}
-              </span>
+              <span className="hidden min-w-0 truncate text-body-sm text-tertiary lg:inline">· {banner.detail}</span>
             )}
             {banner.reconnectable && (
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={() => void runtime.refresh()}
-              >
+              <Button type="button" size="xs" variant="outline" onClick={() => void runtime.refresh()}>
                 <RotateCw />
                 Reconnect
               </Button>
@@ -431,20 +694,7 @@ export function CommandCentreView({
           </div>
         )}
 
-        {/*
-          Back to the workspace.
-
-          Anchored here rather than floating in the empty state, where it used
-          to sit absolutely positioned against nothing — with no header on that
-          column it read as a stray glyph in open space, and it disappeared
-          entirely once a session was selected. In the bar it is in the same
-          place at every moment of the surface's life.
-        */}
-        <IconButton
-          aria-label="Close command centre"
-          className={cn("shrink-0", runtime.loading && "ml-auto")}
-          onClick={onClose}
-        >
+        <IconButton aria-label="Close command centre" className={cn("shrink-0", runtime.loading && "ml-auto")} onClick={onClose}>
           <X />
         </IconButton>
       </div>
@@ -455,6 +705,7 @@ export function CommandCentreView({
           sessions={sessions.sessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
+          workspaceNameOf={workspaceNameOf}
           onSelect={setRequestedSessionId}
           onNewSession={() => setNewSessionOpen(true)}
           canCreate={runtime.executable}
@@ -472,7 +723,10 @@ export function CommandCentreView({
               const startable =
                 chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
               if (latest) setRequestedSessionId(latest.view.sessionId)
-              else if (startable) setNewSessionOpen(true)
+              else if (startable) {
+                setDefaultProvider(agent.provider)
+                setNewSessionOpen(true)
+              }
               // Anything else is explained where it is decided: in Connect Agent.
               else openConnect(agent.provider)
             }}
@@ -480,44 +734,49 @@ export function CommandCentreView({
         </SessionList>
 
         <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && "max-md:hidden")}>
-          {selected ? (
+          {current && currentView ? (
             <>
               <SessionHeader
-                session={selected}
-                {...(projectNameOf(selected.view.projectId)
-                  ? { projectName: projectNameOf(selected.view.projectId) }
-                  : {})}
+                session={current}
+                {...(projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
+                {...(workspaceName ? { workspaceName } : {})}
+                link={link}
+                {...(currentView.context ? { contextFreshness: sessionContext.freshnessOf(currentView.context) } : {})}
+                contextControl={
+                  <WorkingContextChip
+                    view={sessionContextView}
+                    link={link}
+                    agentName={agentName}
+                    {...(delivered !== undefined ? { delivered } : {})}
+                    busy={contextBusy}
+                    {...contextActions}
+                  />
+                }
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
-                onDispose={() => void sessions.disposeSession(selected.view.sessionId)}
-                {...(selected.view.context
-                  ? {
-                      workspaceContext: selected.view.context,
-                      contextFreshness: sessionContext.freshnessOf(selected.view.context),
-                    }
-                  : {})}
-                contextUnavailable={selected.view.contextUnavailable === "provider"}
+                onDispose={() => void sessions.disposeSession(currentView.sessionId)}
               />
 
               <EventStream
                 events={session.events}
-                {...(selected.view.context?.planOutcomes ? { planOutcomes: selected.view.context.planOutcomes } : {})}
+                {...(currentView.context?.planOutcomes ? { planOutcomes: currentView.context.planOutcomes } : {})}
+                changes={sessionChanges}
+                {...(workspaceName ? { workspaceName } : {})}
+                {...(onViewWorkspace ? { onViewChange: viewChange } : {})}
+                onUndoChange={undoChange}
+                canUndoChange={canUndo}
               >
                 {session.approvals.map((approval) => (
                   <ApprovalPrompt
                     key={approval.approvalId}
                     approval={approval}
-                    {...(projectNameOf(approval.projectId)
-                      ? { projectName: projectNameOf(approval.projectId) }
-                      : {})}
+                    {...(projectNameOf(approval.projectId) ? { projectName: projectNameOf(approval.projectId) } : {})}
                     {...(approval.workspaceId && workspaceNameOf(approval.workspaceId)
                       ? { workspaceName: workspaceNameOf(approval.workspaceId) }
                       : {})}
                     pending={session.pending}
                     now={now}
-                    onRespond={(approvalId, decision) =>
-                      void session.respondToApproval(approvalId, decision)
-                    }
+                    onRespond={(approvalId, decision) => void session.respondToApproval(approvalId, decision)}
                   />
                 ))}
 
@@ -530,57 +789,66 @@ export function CommandCentreView({
                     <p className="text-body-sm text-foreground">{errorPresentation.title}</p>
                     <p className="mt-0.5 text-body-sm text-tertiary">{errorPresentation.action}</p>
                     {errorPresentation.reconnect && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        className="mt-2"
-                        onClick={() => void runtime.refresh()}
-                      >
+                      <Button type="button" size="xs" variant="outline" className="mt-2" onClick={() => void runtime.refresh()}>
                         Reconnect
                       </Button>
                     )}
                   </li>
                 )}
+
+                {contextError && (
+                  <li role="alert" className="my-2 rounded-md border border-warning/40 bg-surface px-3 py-2">
+                    <p className="text-body-sm text-foreground">Context not changed</p>
+                    <p className="mt-0.5 text-body-sm text-tertiary">{contextError}</p>
+                  </li>
+                )}
               </EventStream>
 
               <Composer
-                status={selected.view.status}
+                key={`${currentView.sessionId}:${composerSeed?.sessionId === currentView.sessionId ? composerSeed.key : ""}`}
+                status={currentView.status}
                 pending={session.pending}
-                cancellable={selected.view.cancellable}
-                {...(context.snapshot
-                  ? { contextSummary: summarizeAttachment(context.snapshot) }
-                  : {})}
-                {...(projectNameOf(selected.view.projectId)
-                  ? { projectName: projectNameOf(selected.view.projectId) }
-                  : {})}
-                onOpenContext={() => setContextPickerOpen(true)}
-                onCancel={() => void session.cancelRun()}
-                /*
-                  Context rides along only when the session has not already been
-                  told this snapshot.
-
-                  `attach_context` is what gives a session its context, and the
-                  host records which snapshot that was. Passing the same one
-                  again on every message would re-send the whole attachment each
-                  turn — the agent already has it, and it is not free. The
-                  comparison is on the snapshot id, which changes on every
-                  refresh precisely because a refresh mints a new snapshot.
-                */
-                onSend={(text) =>
-                  void session.sendMessage(
-                    text,
-                    context.snapshot && context.snapshot.id !== selected.view.contextSnapshotId
-                      ? (context.attachedContext ?? undefined)
-                      : undefined
-                  )
+                cancellable={currentView.cancellable}
+                {...(composerSeed?.sessionId === currentView.sessionId ? { initialText: composerSeed.text } : {})}
+                agentName={agentName}
+                {...(workspaceName && link.kind !== "workspace-missing" && link.kind !== "none" ? { workspaceName } : {})}
+                {...(projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
+                contextControl={
+                  <WorkingContextChip
+                    view={sessionContextView}
+                    link={link}
+                    agentName={agentName}
+                    {...(delivered !== undefined ? { delivered } : {})}
+                    busy={contextBusy}
+                    align="start"
+                    {...contextActions}
+                  />
                 }
+                onCancel={() => void session.cancelRun()}
+                // Attached context rides with the next message on its own: the
+                // runtime holds it and sends it once. Only the words go here.
+                onSend={(text) => void session.sendMessage(text)}
               />
             </>
           ) : (
             <CommandCentreEmptyState
               executable={runtime.executable}
               loading={runtime.loading}
+              {...(workspaceName ? { workspaceName } : {})}
+              agents={startableAgents}
+              defaultProvider={defaultProvider}
+              initialText={draftText}
+              contextControl={
+                draftView ? (
+                  <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" {...draftActions} />
+                ) : undefined
+              }
+              onStart={(text, provider) => {
+                setFirstMessage(text || undefined)
+                setDefaultProvider(provider)
+                setNewSessionOpen(true)
+              }}
+              onConnect={openConnect}
               onNewSession={() => setNewSessionOpen(true)}
             />
           )}
@@ -588,30 +856,32 @@ export function CommandCentreView({
 
         {contextPanelOpen && (
           <ContextPanel
-            session={session.session}
-            world={contextWorld}
-            snapshot={context.snapshot}
-            delta={context.delta}
-            {...(selected && projectNameOf(selected.view.projectId)
-              ? { projectName: projectNameOf(selected.view.projectId) }
-              : {})}
+            session={currentView}
+            {...(workspaceName ? { workspaceName } : {})}
+            link={link}
+            context={currentView ? sessionContextView : draftView}
+            {...(delivered !== undefined ? { delivered } : {})}
+            agentName={agentName}
+            busy={contextBusy}
+            changes={sessionChanges}
+            {...(onViewWorkspace ? { onViewChange: viewChange } : {})}
+            {...(currentView && projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
             runtimeStatus={runtime.status}
-            refreshing={session.pending}
-            onEditContext={() => setContextPickerOpen(true)}
-            onRefreshContext={() => {
-              // A refresh mints a second snapshot and re-attaches it, so the
-              // agent is told the newer world explicitly rather than the panel
-              // showing counts the session never received.
-              const outcome = context.refresh()
-              if (outcome.ok && selectedSessionId) void session.attachContext(outcome.attached)
-            }}
+            {...(currentView ? contextActions : draftActions)}
           />
         )}
       </div>
 
       <NewSessionDialog
+        // Remounted per opening so it starts from the agent it was opened for.
+        // The `new-session:` prefix keeps this distinct from the connect dialog,
+        // which is a sibling and would otherwise share the key `false-` when both are shut.
+        key={`new-session:${newSessionOpen}-${defaultProvider ?? ""}`}
         open={newSessionOpen}
-        onOpenChange={setNewSessionOpen}
+        onOpenChange={(next) => {
+          setNewSessionOpen(next)
+          if (!next) setFirstMessage(undefined)
+        }}
         status={runtime.status}
         providers={startableProviders}
         projects={projects.projects}
@@ -634,11 +904,16 @@ export function CommandCentreView({
         now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
         workspaces={workspaceChoices}
-        {...(activeWorkspaceId ? { defaultWorkspaceId: activeWorkspaceId } : {})}
+        {...((draft?.workspaceId ?? activeWorkspaceId) ? { defaultWorkspaceId: draft?.workspaceId ?? activeWorkspaceId } : {})}
+        {...(defaultProvider ? { defaultProvider } : {})}
+        contextSummaryFor={(workspaceId) =>
+          draftView && draft?.workspaceId === workspaceId && draftView.scope !== "workspace" ? summarizeWorkingContext(draftView) : undefined
+        }
+        {...(firstMessage ? { firstMessage } : {})}
         connectionBlocker={(provider) => {
           if (!platform.identity(provider)) return "Not connected"
-          const sessions = platform.sessionsFor(provider)
-          return sessions.available ? undefined : sessions.reason
+          const available = platform.sessionsFor(provider)
+          return available.available ? undefined : available.reason
         }}
         onConnectAgent={openConnect}
         {...(pickFolder ? { pickFolder } : {})}
@@ -647,12 +922,13 @@ export function CommandCentreView({
 
       <ConnectAgentDialog
         // Remounted per opening so it starts from the provider it was opened for.
-        key={`${connectOpen}-${connectProvider ?? ""}`}
+        // The `connect:` prefix keeps this distinct from the new-session dialog,
+        // which is a sibling and would otherwise share the key `false-` when both are shut.
+        key={`connect:${connectOpen}-${connectProvider ?? ""}`}
         open={connectOpen}
         onOpenChange={(next) => {
           setConnectOpen(next)
-          // A sign-in may have changed what the runtime reports; ask again so
-          // the start dialog does not show a stale "sign in first".
+          // A sign-in may have changed what the runtime reports; ask again.
           if (!next) void runtime.refresh()
         }}
         platform={platform}
@@ -665,76 +941,167 @@ export function CommandCentreView({
         }}
       />
 
-      <ContextPicker
-        open={contextPickerOpen}
-        onOpenChange={setContextPickerOpen}
-        world={contextWorld}
-        localRuntimeAllowed={runtime.executable}
-        initialSelection={context.selection}
-        onConfirm={(selection) => void attachSelection(selection)}
-      />
+      {pickerFor && (
+        <ContextPicker
+          key={pickerFor.key}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPickerFor(null)
+          }}
+          workspace={pickerWorkspace}
+          collections={collectionStore.collections}
+          dependencies={world.dependencies}
+          initial={pickerInitial}
+          agentName={pickerFor.sessionId ? agentName : "The agent"}
+          onConfirm={(chosen) => {
+            if (pickerFor.sessionId) void applyContext(pickerFor.sessionId, chosen)
+            else setDraft(chosen.tabIds.length === 0 && chosen.collectionIds.length === 0 ? null : chosen)
+          }}
+        />
+      )}
     </div>
   )
 }
 
 /**
- * The command centre before anything has been started.
+ * The command centre before a session is open: a starting point in the
+ * workspace the user came from, not a promotion.
  *
- * Says what the surface is for, then offers the one action that makes sense.
- * It shows no invented metrics, no sample conversation and no placeholder
- * agents — a first-run screen that fabricates activity teaches the user to
- * distrust every number the product shows afterwards.
+ * Says where a session would work, lets the user start typing straight away,
+ * and lists the agents that could take it. It shows no invented metrics, no
+ * sample conversation and no placeholder agents.
  */
 function CommandCentreEmptyState({
   executable,
   loading,
+  workspaceName,
+  agents,
+  defaultProvider,
+  initialText,
+  contextControl,
+  onStart,
+  onConnect,
   onNewSession,
 }: {
   executable: boolean
   loading: boolean
+  workspaceName?: string
+  agents: readonly { provider: AgentProviderId; name: string; ready: boolean; reason?: string }[]
+  defaultProvider?: AgentProviderId
+  initialText: string
+  contextControl?: React.ReactNode
+  onStart: (text: string, provider: AgentProviderId | undefined) => void
+  onConnect: (provider?: AgentProviderId) => void
   onNewSession: () => void
 }) {
-  return (
-    /*
-      Sits a little above centre rather than dead centre.
+  const [text, setText] = useState(initialText)
+  const [trackedInitial, setTrackedInitial] = useState(initialText)
+  // A new request from the workspace replaces what was typed, as it would in a fresh composer.
+  if (initialText !== trackedInitial) {
+    setTrackedInitial(initialText)
+    setText(initialText)
+  }
+  const ready = agents.filter((agent) => agent.ready)
+  const chosen = ready.find((agent) => agent.provider === defaultProvider) ?? ready[0]
 
-      With the composer gone there is nothing below this block, so true
-      vertical centring left it stranded in the middle of a very tall empty
-      column. Pulling it up to roughly the optical third puts it where the
-      conversation would start.
-    */
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-24">
+  return (
+    /* A little above centre — where the conversation would start. */
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-24">
       <div className="w-full max-w-[600px]">
-        <h1 className="text-statement text-foreground">Command Centre</h1>
+        <h1 className="text-statement text-foreground">
+          {workspaceName ? `Work with your ${workspaceName} workspace` : "Command Centre"}
+        </h1>
         <p className="mt-1.5 text-body text-muted-foreground">
-          Work with your AI agents using scoped projects and the Hubble context you choose to
-          attach.
+          {workspaceName
+            ? "Connect an agent and start working with the tabs and collections in this workspace. It sees only this workspace."
+            : "Work with your AI agents inside a Hubble workspace, on the context you choose."}
         </p>
 
         {loading ? (
           <p className="mt-6 text-body-sm text-tertiary">Checking the agent runtime…</p>
         ) : executable ? (
-          /*
-            The reference opens a new agent on an empty composer. A Hubble
-            session needs an agent and a scope before it can take a prompt, so
-            this composer is the door to that choice rather than a live field.
-          */
-          <button
-            type="button"
-            onClick={onNewSession}
-            className="group mt-6 flex w-full flex-col rounded-md border border-border bg-card text-left transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong focus-visible:ring-2 focus-visible:ring-ring/60"
-          >
-            <span className="px-3 pt-2.5 pb-7 text-body text-tertiary">Plan, research or build anything…</span>
-            <span className="flex items-center gap-1.5 px-2 pb-2">
-              <span className="flex h-6 items-center gap-1.5 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
-                <Plus className="size-3.5" aria-hidden />
-                New agent session
-              </span>
-              <span className="ml-auto flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                <ArrowUp className="size-3.5" aria-hidden />
-              </span>
-            </span>
-          </button>
+          <>
+            <form
+              className="mt-6 rounded-md border border-border bg-card transition-colors duration-(--duration-fast) ease-(--ease-color) focus-within:border-strong"
+              onSubmit={(event) => {
+                event.preventDefault()
+                onStart(text.trim(), chosen?.provider)
+              }}
+            >
+              <label className="sr-only" htmlFor="command-centre-first-message">
+                Ask an agent
+              </label>
+              <textarea
+                id="command-centre-first-message"
+                rows={2}
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey) return
+                  event.preventDefault()
+                  onStart(text.trim(), chosen?.provider)
+                }}
+                placeholder={
+                  chosen
+                    ? `Ask ${chosen.name}${workspaceName ? ` about ${workspaceName}` : ""}…`
+                    : "Plan, research or organize anything…"
+                }
+                className="block w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground outline-none placeholder:text-tertiary"
+              />
+              <div className="flex items-center gap-1.5 px-2 pb-2">
+                {contextControl ?? (
+                  <span className="flex h-6 items-center rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
+                    <span className="text-tertiary">Context&nbsp;</span>Whole workspace
+                  </span>
+                )}
+                <span className="min-w-0 flex-1" />
+                {chosen && (
+                  <span className="flex min-w-0 items-center gap-1 text-body-sm text-muted-foreground">
+                    <AgentIcon connector={chosen.provider} size="xs" />
+                    <span className="truncate">{chosen.name}</span>
+                  </span>
+                )}
+                <Button type="submit" size="icon-sm" shape="pill" aria-label="Start with this message">
+                  <ArrowUp />
+                </Button>
+              </div>
+            </form>
+
+            <section aria-label="Agents for this workspace" className="mt-5">
+              <h2 className="text-eyebrow text-tertiary">Agents</h2>
+              {agents.length === 0 ? (
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <p className="text-body-sm text-tertiary">No agents connected yet.</p>
+                  <Button type="button" size="xs" variant="outline" onClick={() => onConnect()}>
+                    Connect an agent
+                  </Button>
+                </div>
+              ) : (
+                <ul className="mt-1 flex flex-col">
+                  {agents.map((agent) => (
+                    <li key={agent.provider} className="flex items-center gap-2 py-1">
+                      <AgentIcon connector={agent.provider} size="sm" />
+                      <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{agent.name}</span>
+                      {agent.ready ? (
+                        <Button type="button" size="xs" variant="ghost" onClick={() => onStart(text.trim(), agent.provider)}>
+                          Start
+                        </Button>
+                      ) : agent.reason ? (
+                        <span className="shrink-0 text-label text-tertiary">{agent.reason}</span>
+                      ) : (
+                        <Button type="button" size="xs" variant="ghost" onClick={() => onConnect(agent.provider)}>
+                          Connect
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button type="button" size="xs" variant="ghost" className="mt-1 -ml-1.5" onClick={onNewSession}>
+                More options…
+              </Button>
+            </section>
+          </>
         ) : (
           <p className="mt-6 text-body-sm text-tertiary">
             Agents cannot run in this build. You can still browse workspaces, tabs, collections and

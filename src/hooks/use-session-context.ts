@@ -10,6 +10,7 @@ import type { AgentContextWorld } from "@/lib/agents/context/world"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type { RuntimeContextActionView, RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
+import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity"
 
 /**
  * The Command Centre's half of session workspace context (Phase J.3, J.4).
@@ -42,6 +43,39 @@ import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapsh
 
 const SYNC_DEBOUNCE_MS = 400
 
+/**
+ * What an applied batch did, step by step, in names and counts — read off the
+ * operations and the collections before and after, never off the agent's
+ * description of what it meant to do.
+ */
+function stepsOf(
+  operations: readonly CollectionBatchOperation[],
+  result: Extract<CollectionBatchResult, { ok: true }>,
+  before: readonly Collection[]
+): WorkspaceChangeStep[] {
+  let created = 0
+  const nameIn = (list: readonly Collection[], id: string) => list.find((collection) => collection.id === id)?.name
+  return operations.map((operation): WorkspaceChangeStep => {
+    switch (operation.kind) {
+      case "create_collection": {
+        const collectionId = result.created[created++]
+        return { kind: "created", ...(collectionId ? { collectionId } : {}), name: operation.name.trim(), tabCount: operation.tabIds.length }
+      }
+      case "rename_collection": {
+        const previousName = nameIn(before, operation.collectionId)
+        return { kind: "renamed", collectionId: operation.collectionId, name: operation.name.trim(), ...(previousName ? { previousName } : {}) }
+      }
+      case "add_tabs_to_collection":
+        return {
+          kind: "added",
+          collectionId: operation.collectionId,
+          name: nameIn(result.collections, operation.collectionId) ?? "a collection",
+          tabCount: operation.tabIds.length,
+        }
+    }
+  })
+}
+
 export type ContextFreshness = "fresh" | "update_available"
 
 export function useSessionContext(options: {
@@ -50,17 +84,15 @@ export function useSessionContext(options: {
   world: AgentContextWorld
   /** The Command Centre's collection store — the live copy, not the one the world was loaded with. */
   collections: readonly Collection[]
-  createCollection: (workspaceId: string, name: string, tabIds: string[]) => Collection
-  renameCollection: (id: string, name: string) => void
-  addTabsToCollection: (collectionId: string, tabIds: string[]) => void
-  /** The store's all-or-nothing batch (J.5): how an approved plan is applied. */
+  /** The store's all-or-nothing batch (J.5): how every approved change is applied. */
   applyCollectionBatch: (workspaceId: string, operations: readonly CollectionBatchOperation[]) => CollectionBatchResult
+  /** Told once per application, in words — what the activity rows and the notification show. */
+  onApplied?: (change: AppliedWorkspaceChange) => void
 }): {
   snapshotFor: (workspaceId: string) => SessionContextSnapshot | undefined
   freshnessOf: (context: RuntimeSessionContextView) => ContextFreshness
 } {
-  const { client, sessions, world, collections, createCollection, renameCollection, addTabsToCollection, applyCollectionBatch } =
-    options
+  const { client, sessions, world, collections, applyCollectionBatch, onApplied } = options
 
   const snapshotFor = useCallback(
     (workspaceId: string) =>
@@ -105,85 +137,93 @@ export function useSessionContext(options: {
   const applied = useRef(new Set<string>())
   useEffect(() => {
     /*
-      A plan is computed from this render's collections and committed whole,
-      so it must be the only thing applied in its pass: anything applied
-      before it in the same pass would not be in the array it replaces. A
-      plan waiting behind another change is left for the next pass, which
-      the store's own update triggers.
+      Every application — a single change (J.3–J.4) or a whole plan (J.5) —
+      goes through the store's batch, which folds it through the same reducers
+      a person's edit uses and commits the resulting array in one write. That
+      is what makes each one exact: the array before and the array after are
+      both in hand, so what changed can be said in words, and undone exactly.
+
+      Because each commit replaces the whole array computed from this render,
+      at most one change is committed per pass; the store's own update runs
+      the next pass. A change that fails commits nothing, so the pass goes on.
     */
-    let appliedThisPass = false
     for (const { view } of sessions) {
       const context = view.context
       if (!context) continue
       for (const action of context.pendingActions) {
         if (applied.current.has(action.actionId)) continue
-        if (action.kind === "apply_plan" && appliedThisPass) return
         applied.current.add(action.actionId)
-        appliedThisPass = true
 
-        if (action.kind === "apply_plan") {
-          applyPlan(view.sessionId, context.workspaceId, action)
-          return
-        }
-
-        let outcome: { ok: true; collectionId: string } | { ok: false }
+        const workspaceId = context.workspaceId
+        const before = collections.filter((collection) => collection.workspaceId === workspaceId)
+        const operations = operationsFor(action, workspaceId)
+        let result: CollectionBatchResult
         try {
-          outcome = apply(action, context.workspaceId)
+          result = operations ? applyCollectionBatch(workspaceId, operations) : { ok: false, failedAt: 0, reason: "unknown_kind" }
         } catch {
-          outcome = { ok: false }
+          result = { ok: false, failedAt: 0, reason: "unknown_kind" }
         }
-        void client.send({ name: "complete_context_action", sessionId: view.sessionId, actionId: action.actionId, outcome })
+
+        if (action.kind === "apply_plan") reportPlan(view.sessionId, workspaceId, action, result)
+        else {
+          const collectionId = result.ok ? (result.created[0] ?? ("collectionId" in action ? action.collectionId : undefined)) : undefined
+          void client.send({
+            name: "complete_context_action",
+            sessionId: view.sessionId,
+            actionId: action.actionId,
+            outcome: result.ok && collectionId ? { ok: true, collectionId } : { ok: false },
+          })
+        }
+
+        onApplied?.({
+          id: action.actionId,
+          sessionId: view.sessionId,
+          provider: view.provider,
+          workspaceId,
+          at: Date.now(),
+          ok: result.ok,
+          steps: result.ok ? stepsOf(operations ?? [], result, before) : [],
+          ...(result.ok
+            ? { before, after: result.collections.filter((collection) => collection.workspaceId === workspaceId) }
+            : {}),
+        })
+        // Committed: the rest waits for the pass the store's update starts.
+        if (result.ok) return
       }
     }
 
     /**
-     * One approved change, against the live store. Only tabs of the session's
-     * own workspace that still exist, and only a collection of that workspace:
-     * anything that has gone since the approval fails rather than half-applies.
+     * What an approved action does, as batch operations — only tabs of the
+     * session's own workspace that still exist. A single change whose tabs
+     * have all gone since the approval applies nothing rather than half.
      */
-    function apply(action: RuntimeContextActionView, workspaceId: string): { ok: true; collectionId: string } | { ok: false } {
+    function operationsFor(action: RuntimeContextActionView, workspaceId: string): CollectionBatchOperation[] | undefined {
       const known = new Set(world.workspaces.find((workspace) => workspace.id === workspaceId)?.tabs.map((tab) => tab.id))
       switch (action.kind) {
-        case "create_collection": {
-          const tabIds = action.tabIds.filter((tabId) => known.has(tabId))
-          return tabIds.length > 0
-            ? { ok: true, collectionId: createCollection(workspaceId, action.name, tabIds).id }
-            : { ok: false }
-        }
-        case "rename_collection": {
-          const collection = collections.find((entry) => entry.id === action.collectionId && entry.workspaceId === workspaceId)
-          if (!collection || !action.name.trim()) return { ok: false }
-          renameCollection(collection.id, action.name)
-          return { ok: true, collectionId: collection.id }
-        }
-        case "add_tabs_to_collection": {
-          const collection = collections.find((entry) => entry.id === action.collectionId && entry.workspaceId === workspaceId)
-          const tabIds = action.tabIds.filter((tabId) => known.has(tabId))
-          if (!collection || tabIds.length === 0) return { ok: false }
-          addTabsToCollection(collection.id, tabIds)
-          return { ok: true, collectionId: collection.id }
-        }
+        case "create_collection":
+          return [{ kind: "create_collection", name: action.name, tabIds: action.tabIds.filter((tabId) => known.has(tabId)) }]
+        case "rename_collection":
+          return [{ kind: "rename_collection", collectionId: action.collectionId, name: action.name }]
+        case "add_tabs_to_collection":
+          return [{ kind: "add_tabs_to_collection", collectionId: action.collectionId, tabIds: action.tabIds.filter((tabId) => known.has(tabId)) }]
         case "apply_plan":
-          // Applied whole by applyPlan, never one operation at a time.
-          return { ok: false }
+          // Whole, exactly as approved: a plan that no longer fits fails, it is not trimmed.
+          return [...action.operations]
       }
     }
 
     /**
-     * An approved plan (J.5), all at once through the store's batch — every
-     * operation or none. The workspace as it now stands is synced first,
-     * because that is what the runtime checks the plan against when told it
-     * was applied; then the plan's own hash and the ids it created are
-     * reported. A plan that no longer fits the live workspace changes
-     * nothing and says which operation failed.
+     * An approved plan (J.5) was applied all at once, or not at all. The
+     * workspace as it now stands is synced first, because that is what the
+     * runtime checks the plan against when told it was applied; then the
+     * plan's own hash and the ids it created are reported.
      */
-    function applyPlan(sessionId: string, workspaceId: string, action: Extract<RuntimeContextActionView, { kind: "apply_plan" }>): void {
-      let result: CollectionBatchResult
-      try {
-        result = applyCollectionBatch(workspaceId, action.operations)
-      } catch {
-        result = { ok: false, failedAt: 0, reason: "unknown_kind" }
-      }
+    function reportPlan(
+      sessionId: string,
+      workspaceId: string,
+      action: Extract<RuntimeContextActionView, { kind: "apply_plan" }>,
+      result: CollectionBatchResult
+    ): void {
       if (!result.ok) {
         void client.send({
           name: "complete_context_action",
@@ -212,17 +252,7 @@ export function useSessionContext(options: {
         })
       })()
     }
-  }, [
-    addTabsToCollection,
-    applyCollectionBatch,
-    client,
-    collections,
-    createCollection,
-    renameCollection,
-    sessions,
-    world.dependencies,
-    world.workspaces,
-  ])
+  }, [applyCollectionBatch, client, collections, onApplied, sessions, world.dependencies, world.workspaces])
 
   return { snapshotFor, freshnessOf }
 }

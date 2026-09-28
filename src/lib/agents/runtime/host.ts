@@ -11,6 +11,7 @@ import {
 import { createProject } from "@/lib/agents/control/projects";
 import { adapterSupports } from "@/lib/agents/control/types";
 import { createControlService } from "@/lib/agents/control/service";
+import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus";
 import { createCorrelationRegistry, toCorrelationView } from "./correlation";
 import { createEventJournal } from "./journal";
 import { gateFailure } from "./gate";
@@ -22,6 +23,9 @@ import type { AgentProject } from "@/lib/agents/control/projects";
 import type { AgentSession } from "@/lib/agents/control/session";
 import type { SessionContextAccess } from "@/lib/agents/session-context/capabilities";
 import type { SessionContextRegistry } from "@/lib/agents/session-context/registry";
+import type { SessionFocus } from "@/lib/agents/session-context/focus";
+import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
+import type { AgentAttachedContext } from "@/lib/agents/control/context";
 import type { AgentPermissionGrant } from "@/lib/agents/control/permissions";
 import type {
   AgentControlAdapter,
@@ -369,6 +373,13 @@ type HostSession = {
    * server. Said on the view rather than left to be guessed from an absence.
    */
   contextUnavailable?: true;
+  /**
+   * What the user pointed the session at: the tab and collection references
+   * of the context attached to it, checked against its workspace. Reported
+   * on the view (ids only) so the Command Centre can say what the agent was
+   * given; the registry holds the same focus for the agent to read.
+   */
+  focus?: SessionFocus;
 };
 
 export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
@@ -756,6 +767,30 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     return approvalsFor(sessionId).length > 0;
   }
 
+  /**
+   * Whether context attached to a session stays inside the session's own
+   * workspace — the workspace ↔ agent boundary, enforced here rather than
+   * trusted from the Command Centre that built it.
+   *
+   * A session with no workspace keeps the Phase E behaviour: there is nothing
+   * to compare with. One with a workspace refuses any `workspace` attachment
+   * but its own; and when the runtime holds that workspace (a bound session,
+   * or the snapshot a new session arrives with), every tab and collection
+   * reference must be found in it. Returns the focus to record, or
+   * `undefined` for context that reaches outside.
+   */
+  function focusWithin(
+    context: AgentAttachedContext,
+    workspaceId: string | undefined,
+    snapshot: SessionContextSnapshot | undefined
+  ): SessionFocus | undefined {
+    const focus = focusFromAttachments(context.attachments);
+    if (!workspaceId) return focus;
+    if (!attachmentsStayIn(context.attachments, workspaceId)) return undefined;
+    if (snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined;
+    return focus;
+  }
+
   /** The view a client gets. Assembled here so every command answers with the same shape. */
   function viewOf(session: AgentSession): RuntimeSessionView {
     const host = hosted.get(session.id);
@@ -797,6 +832,13 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     const context = contextViewOf(session.id);
     if (context) view.context = context;
     else if (host?.contextUnavailable) view.contextUnavailable = "provider";
+    if (host?.focus && !isEmptyFocus(host.focus)) {
+      view.focus = {
+        tabIds: [...host.focus.tabIds],
+        collectionIds: [...host.focus.collectionIds],
+        delivered: !host.undeliveredContextSnapshotId,
+      };
+    }
 
     return view;
   }
@@ -1056,6 +1098,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // the view says so.
         const providerAdapter = options.resolveAdapter(command.provider, actor.id);
         const carriesContext = Boolean(providerAdapter && adapterSupports(providerAdapter, "workspace_context"));
+        // Context a session starts with obeys the same boundary as context
+        // attached later: inside its workspace, or refused before anything runs.
+        const startFocus = command.context ? focusWithin(command.context, workspaceId, command.contextSnapshot) : undefined;
+        if (command.context && !startFocus) return runtimeFailure("context_invalid");
         const started = await actorService.startSession({
           ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
             ? {
@@ -1111,8 +1157,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           runIds: [],
           correlationId: correlation.id,
           ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
+          ...(startFocus && !isEmptyFocus(startFocus) ? { focus: startFocus } : {}),
         };
         hosted.set(started.value.id, host);
+        if (startFocus) sessionContext?.registry.setFocus(started.value.id, startFocus);
 
         // The provider process is live the moment the session is, so the run
         // that drives it starts here rather than on the first message. A
@@ -1251,6 +1299,15 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // nothing about what it may do. Validated independently of the
         // project, exactly as the brief requires — and a malformed snapshot
         // fails the attach rather than being silently dropped.
+        //
+        // What *is* consulted is the workspace: a session bound to one never
+        // accepts context naming another's tabs or collections, whoever built
+        // the attachment. Checked before anything is recorded.
+        const registry = options.sessionContext?.registry;
+        const bound = registry?.binding(command.sessionId);
+        const focus = focusWithin(command.context, owned.value.session.workspaceId, bound?.snapshot);
+        if (!focus) return runtimeFailure("context_invalid");
+
         const attached = actorService.attachContext(command.sessionId, command.context);
         if (!attached.ok) {
           return attached.error.code === "invalid-request"
@@ -1259,6 +1316,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         }
 
         owned.value.host.undeliveredContextSnapshotId = command.context.snapshotId;
+        if (isEmptyFocus(focus)) delete owned.value.host.focus;
+        else owned.value.host.focus = focus;
+        if (bound) registry?.setFocus(command.sessionId, focus);
         return { ok: true, value: viewOf(attached.value) };
       }
 
@@ -1270,6 +1330,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // told. A snapshot detached before it was ever delivered is simply
         // never said.
         delete owned.value.host.undeliveredContextSnapshotId;
+        delete owned.value.host.focus;
+        options.sessionContext?.registry.setFocus(command.sessionId, { tabIds: [], collectionIds: [] });
 
         const detached = actorService.detachContext(command.sessionId);
         return detached.ok

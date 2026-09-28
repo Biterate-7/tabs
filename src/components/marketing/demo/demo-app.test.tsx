@@ -186,21 +186,29 @@ describe("Command Centre", () => {
     expect(within(frame()).getByRole("navigation", { name: "Agent sessions" })).toBeTruthy()
   })
 
-  it("opens the context picker, selects context, and attaches it", async () => {
+  it("says where the session works, and points it at part of that workspace", async () => {
     const { user, frame } = renderCommandCentre({ selectedSessionId: GEMINI_SESSION })
-    await user.click(within(frame()).getAllByRole("button", { name: "Attach Hubble context" })[0])
-    const dialog = await screen.findByRole("dialog", { name: "Attach Hubble context" })
+    expect(within(frame()).getByRole("button", { name: /^Working in Research/ })).toBeTruthy()
+    await user.click(within(frame()).getAllByRole("button", { name: "Context: Whole workspace" })[0]!)
+    // The chip's popover; the context panel beside it offers the same button.
+    const popover = await screen.findByRole("dialog")
+    await user.click(within(popover).getByRole("button", { name: "Choose tabs and collections…" }))
+    const dialog = await screen.findByRole("dialog", { name: "Choose context" })
     // Portalled beside the window, in the app's palette, not into <body>.
     expect(dialog.closest("[data-hubble-demo-portal]")).not.toBeNull()
-    const attach = buttonByText(dialog, "Attach")
-    expect((attach as HTMLButtonElement).disabled).toBe(true)
-    await user.click(within(dialog).getByText("Research"))
-    // The real resolver previews what will be attached.
-    expect(within(dialog).getByText("Will be attached").parentElement?.textContent).toMatch(/Workspaces/)
-    expect((attach as HTMLButtonElement).disabled).toBe(false)
-    await user.click(attach)
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
-    expect(within(frame()).getAllByText(/1 workspace · 20 tabs/).length).toBeGreaterThan(0)
+    // Only the session's own workspace is offered.
+    expect(within(dialog).queryByText("Release checklist")).toBeNull()
+    const use = buttonByText(dialog, "Use these")
+    expect((use as HTMLButtonElement).disabled).toBe(true)
+    await user.click(within(dialog).getByText("Product Ideas"))
+    expect(within(dialog).getByText("Will be sent").parentElement?.textContent).toMatch(/Product Ideas collection/)
+    expect((use as HTMLButtonElement).disabled).toBe(false)
+    await user.click(use)
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose context" })).toBeNull())
+    // Resolved by the product's own bridge and recorded on the session, as the runtime would.
+    expect(
+      within(frame()).getAllByRole("button", { name: "Context: Product Ideas collection, sent with your next message" }).length
+    ).toBeGreaterThan(0)
   })
 })
 

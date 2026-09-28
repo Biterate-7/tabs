@@ -21,6 +21,7 @@ import {
   Star,
   History,
   ScanSearch,
+  Bot,
 } from "lucide-react"
 import {
   AlertDialog,
@@ -84,6 +85,8 @@ import { CollectionsSection } from "@/components/workspace/collections-section"
 import { GatherDialog } from "@/components/workspace/gather-dialog"
 import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
 import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
+import { useAgentActions } from "@/components/agents/agent-actions"
+import { collectionContext, tabsContext } from "@/lib/agents/command-centre/working-context"
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -119,6 +122,7 @@ export function WorkspaceView({
   onDeleteSection,
   onAssignTabToSection,
   onReorganizeSections,
+  focusCollection,
 }: {
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
@@ -172,6 +176,11 @@ export function WorkspaceView({
   onAssignTabToSection?: (tabId: string, sectionId: string) => void
   /** Reruns the AI section-organization engine over every unlocked tab in the workspace on demand (spec §31) — backs the command palette's "Reorganize into sections". */
   onReorganizeSections?: () => void
+  /**
+   * A collection to bring into view on arrival — "View" on a change an agent
+   * made. `nonce` makes the same collection shown twice two arrivals.
+   */
+  focusCollection?: { id: string; nonce: number }
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -287,6 +296,40 @@ export function WorkspaceView({
   const openAllCollectionTarget = openAllCollectionId
     ? (workspaceCollections.find((c) => c.id === openAllCollectionId) ?? null)
     : null
+
+  // "Ask agent" from this workspace — present only inside the shell.
+  const agent = useAgentActions()
+
+  /*
+    Arriving from "View" on an agent's change: the collection it made or
+    changed, opened and brought into view, its tabs briefly marked as the
+    ones that just moved. Once per arrival.
+  */
+  const handledFocus = useRef<number | null>(null)
+  useEffect(() => {
+    if (!focusCollection || handledFocus.current === focusCollection.nonce) return
+    const target = workspaceCollections.find((collection) => collection.id === focusCollection.id)
+    if (!target) return
+    handledFocus.current = focusCollection.nonce
+    // Arrival is an external event handed in by the shell; opening the group is its effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCollapsedCollectionIds((previous) => {
+      if (!previous.has(target.id)) return previous
+      const next = new Set(previous)
+      next.delete(target.id)
+      return next
+    })
+    markRecentlyGathered(target.tabIds)
+    const reduced =
+      document.documentElement.dataset.motion === "off" ||
+      (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-collection-id="${CSS.escape(target.id)}"]`)
+        ?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusCollection, workspaceCollections])
 
   function handleToggleCollectionExpanded(id: string) {
     setCollapsedCollectionIds((prev) => {
@@ -856,6 +899,45 @@ export function WorkspaceView({
     },
   ]
 
+  const selectedCount = selectionMode ? selectedIds.size : 0
+  const selectedLabel = selectedCount === 1 ? "1 selected tab" : `${selectedCount} selected tabs`
+  const agentCommands: Command[] = agent
+    ? [
+        {
+          id: "agent-ask-selection",
+          label: selectedCount > 0 ? `Ask agent about ${selectedLabel}` : "Ask agent about selected tabs",
+          hint: "Opens the Command Centre with them as context",
+          group: "Agents",
+          icon: Bot,
+          disabled: selectedCount === 0,
+          keywords: ["send selection to agent", "claude", "codex", "gemini", "context"],
+          onSelect: () => agent.ask(tabsContext(workspaceId, [...selectedIds])),
+        },
+        {
+          id: "agent-add-selection",
+          label: selectedCount > 0 ? `Add ${selectedLabel} to agent context` : "Add selected tabs to agent context",
+          group: "Agents",
+          icon: Bot,
+          disabled: selectedCount === 0,
+          keywords: ["context", "agent"],
+          onSelect: () => {
+            agent.add(tabsContext(workspaceId, [...selectedIds]))
+            exitSelectionMode()
+          },
+        },
+        ...workspaceCollections.map(
+          (collection): Command => ({
+            id: `agent-ask-collection-${collection.id}`,
+            label: `Ask agent about "${collection.name}"`,
+            group: "Agents",
+            icon: Bot,
+            keywords: ["collection", "context"],
+            onSelect: () => agent.ask(collectionContext(workspaceId, collection.id)),
+          })
+        ),
+      ]
+    : []
+
   const collectionCommands: Command[] = [
     {
       id: "collection-new",
@@ -1002,6 +1084,7 @@ export function WorkspaceView({
     ...navigationCommands,
     ...workspaceCommands,
     ...selectionCommands,
+    ...agentCommands,
     ...collectionCommands,
     ...sectionCommands,
     ...actionCommands,
@@ -1126,6 +1209,17 @@ export function WorkspaceView({
                   ? { name: addToCollectionTarget.name, onConfirm: handleConfirmAddToCollection }
                   : undefined
               }
+              {...(agent
+                ? {
+                    agentActions: {
+                      onAsk: (intent) => agent.ask(tabsContext(workspaceId, [...selectedIds]), intent),
+                      onAdd: () => {
+                        agent.add(tabsContext(workspaceId, [...selectedIds]))
+                        exitSelectionMode()
+                      },
+                    },
+                  }
+                : {})}
             />
           </div>
         )}

@@ -1,4 +1,4 @@
-import { Download, ExternalLink, Layers, Tag, Trash2, X } from "lucide-react"
+import { Bot, Download, ExternalLink, Layers, Tag, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import {
@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
+import { INTENT_LABELS } from "@/components/agents/agent-actions"
+import type { AgentIntent } from "@/lib/agents/command-centre/working-context"
 
 export function SelectionToolbar({
   count,
@@ -22,6 +24,7 @@ export function SelectionToolbar({
   onAddToCollection,
   onGatherNew,
   addToCollectionTarget,
+  agentActions,
 }: {
   count: number
   onRecategorize: (id: CategoryId) => void
@@ -36,6 +39,12 @@ export function SelectionToolbar({
   onGatherNew?: () => void
   /** Set while "Add tabs" was invoked from a specific collection's header menu — swaps the whole toolbar into a focused "confirm/cancel" mode instead of the general selection actions. */
   addToCollectionTarget?: { name: string; onConfirm: () => void }
+  /**
+   * Sends the selection to an agent: "Ask agent" opens the Command Centre
+   * with these tabs as the session's context; "Add to agent context" collects
+   * them without leaving. Absent outside the shell.
+   */
+  agentActions?: { onAsk: (intent: AgentIntent) => void; onAdd: () => void }
 }) {
   if (addToCollectionTarget) {
     return (
@@ -60,6 +69,26 @@ export function SelectionToolbar({
       </span>
 
       <div className="ml-auto flex items-center gap-0.5 overflow-x-auto">
+        {agentActions && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="secondary" size="sm" className="mr-1 shrink-0">
+                  <Bot /> Ask agent
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end">
+              {(Object.keys(INTENT_LABELS.selection) as (keyof typeof INTENT_LABELS.selection)[]).map((intent) => (
+                <DropdownMenuItem key={intent} onClick={() => agentActions.onAsk(intent)}>
+                  {INTENT_LABELS.selection[intent]}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={agentActions.onAdd}>Add to agent context</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

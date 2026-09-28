@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
-import { ArrowUp, Paperclip, Square } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { ArrowUp, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import {
@@ -40,22 +40,41 @@ export function Composer({
   onCancel,
   pending,
   cancellable,
-  /** What is attached right now, e.g. `Research · 12 tabs`. */
-  contextSummary,
+  contextControl,
   projectName,
-  onOpenContext,
+  agentName,
+  workspaceName,
+  initialText = "",
 }: {
   status: AgentSessionStatus
   onSend: (text: string) => void
   onCancel: () => void
   pending: boolean
   cancellable: boolean
-  contextSummary?: string
+  /** The context chip for this session — what the message goes with. */
+  contextControl?: React.ReactNode
   projectName?: string
-  onOpenContext: () => void
+  agentName?: string
+  /** The workspace the session works in. Named in the placeholder, so the question is asked of the right place. */
+  workspaceName?: string
+  /**
+   * Words to start from — a suggestion from "Summarize" or "Explain" in the
+   * workspace. The user edits or sends it; nothing is sent on their behalf.
+   * Remount (key) the composer to start from new words.
+   */
+  initialText?: string
 }) {
-  const [text, setText] = useState("")
+  const [text, setText] = useState(initialText)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Arriving from the workspace with something to ask: ready to type.
+  useEffect(() => {
+    if (!initialText) return
+    const field = textareaRef.current
+    if (!field) return
+    field.focus()
+    field.setSelectionRange(field.value.length, field.value.length)
+  }, [initialText])
 
   const sendable = canSendMessage(status)
   const canSubmit = sendable && !pending && text.trim().length > 0
@@ -106,24 +125,18 @@ export function Composer({
             onKeyDown={handleKeyDown}
             placeholder={
               sendable
-                ? projectName
-                  ? `Ask the agent to work on ${projectName}…`
-                  : "Ask the agent to work on this project…"
+                ? workspaceName
+                  ? `Ask ${agentName ?? "the agent"} about ${workspaceName}…`
+                  : projectName
+                    ? `Ask the agent to work on ${projectName}…`
+                    : "Ask the agent to work on this project…"
                 : SESSION_STATUS_DETAIL[status]
             }
             className="block w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground outline-none placeholder:text-tertiary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
 
           <div className="flex items-center gap-1.5 px-2 pb-2">
-            <button
-              type="button"
-              aria-label="Attach Hubble context"
-              onClick={onOpenContext}
-              className="flex h-6 min-w-0 max-w-[60%] items-center gap-1.5 rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground transition-colors duration-(--duration-fast) ease-(--ease-color) outline-none hover:bg-surface-active hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              <Paperclip className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">{contextSummary ?? "Add context"}</span>
-            </button>
+            {contextControl && <span className="flex min-w-0 max-w-[70%]">{contextControl}</span>}
 
             <span className="min-w-0 flex-1" />
 

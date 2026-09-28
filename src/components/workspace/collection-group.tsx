@@ -7,6 +7,7 @@ import { getDragTabId, hasDragTabId } from "@/lib/collections/drag"
 import { cn } from "@/lib/utils"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
+import { collectionContext } from "@/lib/agents/command-centre/working-context"
 import type { Collection } from "@/lib/collections/types"
 import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
@@ -95,6 +96,7 @@ export function CollectionGroup({
 
   return (
     <div
+      data-collection-id={collection.id}
       className={cn(
         "rounded-md border border-border bg-card px-2 transition-colors duration-(--duration-fast) ease-(--ease-standard)",
         dragOver && "bg-link/[0.06] ring-1 ring-link/40"
@@ -114,6 +116,7 @@ export function CollectionGroup({
         onOpenAll={onOpenAll}
         onExport={onExport}
         onDelete={onDelete}
+        agentContext={collectionContext(collection.workspaceId, collection.id)}
       />
 
       <div

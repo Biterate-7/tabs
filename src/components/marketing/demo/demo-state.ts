@@ -144,6 +144,8 @@ export type DemoAction =
   | { type: "remove-from-collection"; id: string; tabId: string }
   | { type: "move-to-collection"; tabId: string; id: string }
   | { type: "select-session"; id: string | null }
+  /** What a session is pointed at inside its workspace — as the runtime would record it, ids only. */
+  | { type: "set-focus"; sessionId: string; focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null }
   | { type: "respond"; approvalId: string; decision: "granted" | "denied" }
   | { type: "send"; sessionId: string; text: string }
   | { type: "reply"; sessionId: string }
@@ -334,6 +336,21 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
     case "select-session":
       return { ...state, selectedSessionId: action.id }
 
+    case "set-focus":
+      return {
+        ...state,
+        sessions: state.sessions.map((entry) => {
+          if (entry.view.sessionId !== action.sessionId) return entry
+          const view = { ...entry.view }
+          delete view.focus
+          const empty = !action.focus || (action.focus.tabIds.length === 0 && action.focus.collectionIds.length === 0)
+          return {
+            ...entry,
+            view: empty ? view : { ...view, focus: { tabIds: [...action.focus!.tabIds], collectionIds: [...action.focus!.collectionIds], delivered: false } },
+          }
+        }),
+      }
+
     case "respond": {
       const sessionId = Object.keys(state.approvals).find((id) =>
         state.approvals[id]?.some((approval) => approval.approvalId === action.approvalId)
@@ -394,7 +411,12 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       const messageId = `${action.sessionId}-typed-${(state.events[action.sessionId] ?? []).length + 1}`
       return {
         ...state,
-        sessions: patchSession(state.sessions, action.sessionId, "running"),
+        // The context rides with this message, as it does in Hubble.
+        sessions: patchSession(state.sessions, action.sessionId, "running").map((entry) =>
+          entry.view.sessionId === action.sessionId && entry.view.focus
+            ? { ...entry, view: { ...entry.view, focus: { ...entry.view.focus, delivered: true } } }
+            : entry
+        ),
         events: appendEvents(state, action.sessionId, [{ kind: "message_sent", summary: "Message sent.", messageId, text }]),
       }
     }
