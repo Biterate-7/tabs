@@ -1,6 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { agentRequestFailureOf } from "@/lib/agents/request-failure"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type {
   AgentProviderId,
   CredentialValidation,
@@ -73,7 +75,13 @@ export type UseProviderConnections = {
   /** Which providers Hubble can hold credentials for, from the server's registry. */
   connectable: readonly ConnectableProvider[]
   loading: boolean
-  /** The deployment cannot store credentials at all. Distinct from "you have none". */
+  /**
+   * Why the list could not be read, if it could not: not signed in to Hubble,
+   * refused, a deployment with no credential store, or anything else. `null`
+   * once it has been read. Distinct from "you have none".
+   */
+  failure: AgentRequestFailure | null
+  /** The deployment cannot store credentials at all (a 503) — `failure === "unavailable"`. */
   unavailable: boolean
   /** Whether connections survive a restart here. Rendered, so nobody is surprised. */
   durable: boolean
@@ -107,7 +115,8 @@ export function useProviderConnections(): UseProviderConnections {
   const [connections, setConnections] = useState<readonly ProviderConnectionView[]>([])
   const [connectable, setConnectable] = useState<readonly ConnectableProvider[]>([])
   const [loading, setLoading] = useState(true)
-  const [unavailable, setUnavailable] = useState(false)
+  const [failure, setFailure] = useState<AgentRequestFailure | null>(null)
+  const unavailable = failure === "unavailable"
   const [durable, setDurable] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -132,11 +141,12 @@ export function useProviderConnections(): UseProviderConnections {
       if (!alive.current) return
 
       if (!response.ok) {
-        // A 503 is the deployment saying it cannot hold credentials. Anything
-        // else is treated the same way here: the user cannot connect, and the
-        // settings page needs to say so rather than show an empty list that
-        // looks like "you have none yet".
-        setUnavailable(true)
+        // The user cannot connect either way, and the page must say so rather
+        // than show an empty list that looks like "you have none yet" — but
+        // *why* is the status's to say. A 503 is the deployment saying it
+        // cannot hold credentials; a 401 is a visitor not signed in to a
+        // deployment that can. See lib/agents/request-failure.ts.
+        setFailure(agentRequestFailureOf(response.status))
         setConnections([])
         return
       }
@@ -152,13 +162,14 @@ export function useProviderConnections(): UseProviderConnections {
 
       if (!alive.current) return
 
-      setUnavailable(false)
+      setFailure(null)
       setConnections(body.value?.connections ?? [])
       setConnectable(body.value?.connectable ?? [])
       setDurable(body.value?.durable === true)
     } catch {
       if (!alive.current) return
-      setUnavailable(true)
+      // No response: proves nothing about the deployment or the account.
+      setFailure("failed")
       setConnections([])
     } finally {
       if (alive.current) setLoading(false)
@@ -282,6 +293,7 @@ export function useProviderConnections(): UseProviderConnections {
       connections,
       connectable,
       loading,
+      failure,
       unavailable,
       durable,
       busy,
@@ -297,6 +309,7 @@ export function useProviderConnections(): UseProviderConnections {
       connections,
       connectable,
       loading,
+      failure,
       unavailable,
       durable,
       busy,

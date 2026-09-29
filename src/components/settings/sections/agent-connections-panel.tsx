@@ -55,7 +55,7 @@ export function useSettingsAgentPlatform(
     (provider: AgentProviderId): boolean | undefined => {
       const spec = platformProvider(provider)
       if (!spec || signInShape(spec, surface) !== "provider-key") return undefined
-      if (connections.loading || connections.unavailable) return undefined
+      if (connections.loading || connections.failure) return undefined
       return connections.forProvider(provider)?.status === "connected"
     },
     [connections, surface]

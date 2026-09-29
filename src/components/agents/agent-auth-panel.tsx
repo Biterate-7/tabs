@@ -336,7 +336,7 @@ function MethodBody({
         providerName={provider.displayName}
         connection={apiKeys.forProvider(provider.provider)}
         input={connectable?.input}
-        unavailable={apiKeys.unavailable}
+        listFailure={apiKeys.failure}
         durable={apiKeys.durable}
         busy={apiKeys.busy}
         onConnect={apiKeys.connect}

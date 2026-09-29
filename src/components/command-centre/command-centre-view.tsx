@@ -259,7 +259,7 @@ export function CommandCentreView({
       // Only an agent whose sign-in *here* is a key Hubble stores. Where it
       // signs in on its own (the desktop app), a stored key is irrelevant.
       if (!spec || signInKind(spec, undefined, surface) !== "provider-key") return undefined
-      if (connections.loading || connections.unavailable) return undefined
+      if (connections.loading || connections.failure) return undefined
       return connections.forProvider(provider)?.status === "connected"
     },
     [connections, surface]
@@ -953,6 +953,7 @@ export function CommandCentreView({
                 projects: remoteProjects.projects,
                 loading: remoteProjects.loading,
                 unavailable: remoteProjects.unavailable,
+                failure: remoteProjects.failure,
                 creating: remoteProjects.creating,
                 create: remoteProjects.create,
               },

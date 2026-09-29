@@ -22,6 +22,7 @@ import type {
   RemoteProjectSummary,
 } from "@/lib/agents/command-centre/remote"
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { CreateRemoteProjectInput, CreateRemoteProjectOutcome } from "@/hooks/use-remote-projects"
 
 /**
@@ -81,6 +82,7 @@ export function RemoteProjectPicker({
   projects,
   loading,
   unavailable,
+  listFailure = null,
   selectedId,
   onSelect,
   onCreate,
@@ -91,6 +93,8 @@ export function RemoteProjectPicker({
   loading: boolean
   /** The endpoint could not be read at all — a different thing from having no projects. */
   unavailable: boolean
+  /** Why, when the hook knows: a signed-out visitor is told to sign in, not that loading failed. */
+  listFailure?: AgentRequestFailure | null
   selectedId: string
   onSelect: (projectId: string) => void
   onCreate: (input: CreateRemoteProjectInput) => Promise<CreateRemoteProjectOutcome>
@@ -153,7 +157,11 @@ export function RemoteProjectPicker({
       <div className="mt-1.5 flex flex-col gap-1">
         {unavailable ? (
           <p className="text-body-sm text-tertiary">
-            Hubble could not load your remote projects.
+            {listFailure === "sign_in_required"
+              ? "Sign in to Hubble to use remote projects."
+              : listFailure === "not_permitted"
+                ? "Hubble didn't permit this request. Reload the page and try again."
+                : "Hubble could not load your remote projects."}
           </p>
         ) : loading && projects.length === 0 ? (
           <p className="text-body-sm text-tertiary">Loading projects…</p>

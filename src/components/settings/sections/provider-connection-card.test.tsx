@@ -56,7 +56,7 @@ function renderCard(over: Partial<React.ComponentProps<typeof ProviderConnection
     providerName: "Claude Code",
     connection: undefined,
     input: CLAUDE_INPUT,
-    unavailable: false,
+    listFailure: null,
     durable: true,
     busy: false,
     onConnect,
@@ -205,12 +205,36 @@ describe("providers Hubble cannot hold credentials for", () => {
     expect(screen.queryByRole("button")).toBeNull()
   })
 
-  it("says so when the deployment itself cannot store credentials", () => {
-    renderCard({ unavailable: true })
+  it("says so when the deployment itself cannot store credentials (503)", () => {
+    renderCard({ listFailure: "unavailable" })
 
     expect(screen.getByText("Unavailable")).toBeTruthy()
     expect(screen.getByText(/not set up to store provider credentials/i)).toBeTruthy()
     // And never the name of the environment variable that would fix it.
     expect(document.body.textContent).not.toContain("TABDUMP_CREDENTIAL_KEY")
+    expect(screen.queryByRole("button")).toBeNull()
+  })
+
+  it("tells a signed-out visitor to sign in to Hubble, and never blames the deployment (401)", () => {
+    // A 401 comes after the route's credential-store check, so it proves the
+    // store exists: "not set up to store" would be false.
+    renderCard({ listFailure: "sign_in_required", input: undefined })
+
+    expect(screen.getByText("Sign in required")).toBeTruthy()
+    expect(screen.getByText("Sign in to Hubble to save an API key.")).toBeTruthy()
+    expect(screen.queryByText(/not set up to store|cannot hold credentials/i)).toBeNull()
+    expect(screen.queryByRole("button")).toBeNull()
+  })
+
+  it("says a refused request was refused (403), and anything else failed to load", () => {
+    const { unmount } = renderCard({ listFailure: "not_permitted" })
+    expect(screen.getByText("Not permitted")).toBeTruthy()
+    expect(screen.queryByText(/not set up to store/i)).toBeNull()
+    unmount()
+
+    renderCard({ listFailure: "failed" })
+    expect(screen.getByText("Couldn't load")).toBeTruthy()
+    expect(screen.getByText(/couldn't load your saved API keys/i)).toBeTruthy()
+    expect(screen.queryByText(/not set up to store/i)).toBeNull()
   })
 })

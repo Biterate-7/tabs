@@ -15,6 +15,7 @@ import type {
   ProviderConnectionView,
 } from "@/lib/agents/credentials/types"
 import type { ConnectInput } from "@/hooks/use-provider-connections"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 
 /**
  * Settings → AI Connectors → Connection.
@@ -67,8 +68,13 @@ export type ProviderConnectionCardProps = {
   connection: ProviderConnectionView | undefined
   /** Absent when Hubble has no credential adapter for this provider at all. */
   input: ConnectionInputShape | undefined
-  /** The deployment cannot hold credentials — no encryption key configured. */
-  unavailable: boolean
+  /**
+   * Why this user's connections could not be read, if they could not
+   * (`useProviderConnections().failure`). `unavailable` is the deployment
+   * itself — no encryption key configured; `sign_in_required` is a visitor
+   * not signed in to a deployment that can store one.
+   */
+  listFailure: AgentRequestFailure | null
   /** Whether connections survive a restart here. */
   durable: boolean
   busy: boolean
@@ -90,7 +96,7 @@ export function ProviderConnectionCard({
   providerName,
   connection,
   input,
-  unavailable,
+  listFailure,
   durable,
   busy,
   onConnect,
@@ -150,20 +156,18 @@ export function ProviderConnectionCard({
             connection?.status === "connected" ? "text-success" : "text-tertiary"
           )}
         >
-          {statusWord(connection, input, unavailable)}
+          {statusWord(connection, input, listFailure)}
         </span>
       </div>
 
       {/* No credential adapter for this provider. Said plainly rather than
           shown as a Connect button that would fail — §20's "do not imply
           capabilities that do not exist". */}
-      {/* A deployment that cannot store credentials at all says that first:
-          it is the truer reason, and the route that would name an adapter
-          is the very thing that did not answer. */}
-      {unavailable ? (
-        <p className="mt-1 text-meta text-muted-foreground">
-          This deployment is not set up to store provider credentials.
-        </p>
+      {/* A list that could not be read says why first: it is the truer
+          reason, and the route that would name an adapter is the very thing
+          that did not answer. Only a 503 is a claim about the deployment. */}
+      {listFailure ? (
+        <p className="mt-1 text-meta text-muted-foreground">{FAILURE_DETAIL[listFailure]}</p>
       ) : !input ? (
         <p className="mt-1 text-meta text-muted-foreground">
           Hubble cannot hold credentials for {providerName} yet.
@@ -174,7 +178,7 @@ export function ProviderConnectionCard({
         <p className="mt-1 text-meta text-muted-foreground">{input.explanation}</p>
       )}
 
-      {input && !unavailable && form === "closed" && (
+      {input && !listFailure && form === "closed" && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {connection ? (
             <>
@@ -292,12 +296,28 @@ export function ProviderConnectionCard({
 }
 
 /** The status word, derived from what is actually registered rather than from a label table. */
+/** What the card says when this user's connections could not be read. */
+const FAILURE_STATUS: Record<AgentRequestFailure, string> = {
+  sign_in_required: "Sign in required",
+  not_permitted: "Not permitted",
+  unavailable: "Unavailable",
+  failed: "Couldn't load",
+}
+
+const FAILURE_DETAIL: Record<AgentRequestFailure, string> = {
+  sign_in_required: "Sign in to Hubble to save an API key.",
+  not_permitted: "Hubble didn't permit this request. Reload the page and try again.",
+  // Never the name of the environment variable that would fix it.
+  unavailable: "This deployment is not set up to store provider credentials.",
+  failed: "Hubble couldn't load your saved API keys. Try again later.",
+}
+
 function statusWord(
   connection: ProviderConnectionView | undefined,
   input: ConnectionInputShape | undefined,
-  unavailable: boolean
+  listFailure: AgentRequestFailure | null
 ): string {
-  if (unavailable) return "Unavailable"
+  if (listFailure) return FAILURE_STATUS[listFailure]
   if (!input) return "Not supported"
   if (!connection) return "Not connected"
   return CONNECTION_STATUS_LABEL[connection.status]

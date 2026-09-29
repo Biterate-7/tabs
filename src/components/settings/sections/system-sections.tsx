@@ -31,6 +31,7 @@ import { isDesktop } from "@/lib/platform/detect"
 import { modKeyLabel } from "@/lib/keyboard"
 import { useAgentConnectors } from "@/hooks/use-agent-connectors"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { Workspace } from "@/lib/workspace/types"
 import { ClaudeDesktopMcpCard } from "./claude-desktop-mcp-card"
 import { ProviderConnectionCard } from "./provider-connection-card"
@@ -103,6 +104,15 @@ export function AccountSettingsSection() {
 
 // -------------------------------------------------------------- Providers
 
+/** Why the Providers list is empty, when it could not be read. */
+const PROVIDERS_FAILURE: Record<AgentRequestFailure, string> = {
+  sign_in_required: "Sign in to Hubble to save your own provider credentials.",
+  not_permitted: "Hubble didn't permit this request. Reload the page and try again.",
+  unavailable:
+    "This deployment cannot store provider credentials. Agents that sign in on their own (Claude Code, Gemini CLI) still work on this machine.",
+  failed: "Hubble couldn't load your provider credentials. Try again later.",
+}
+
 export function ProvidersSection() {
   const connections = useProviderConnections()
   const connectors = useAgentConnectors()
@@ -114,17 +124,18 @@ export function ProvidersSection() {
         description="Your own provider credentials. Sessions you start run on your account and your key — Hubble never shares one between users."
       />
       {connections.loading && <p className="text-body-sm text-tertiary">Loading…</p>}
-      {!connections.loading && connections.unavailable && (
+      {/* Why the list is empty, when it could not be read. Only a 503 is a
+          claim about the deployment; a 401 is a visitor not signed in. */}
+      {!connections.loading && connections.failure && (
         <SectionStack>
           <GroupBlock>
             <p className="text-body-sm text-muted-foreground">
-              This deployment cannot store provider credentials. Agents that sign in on their own (Claude Code,
-              Gemini CLI) still work on this machine.
+              {PROVIDERS_FAILURE[connections.failure]}
             </p>
           </GroupBlock>
         </SectionStack>
       )}
-      {!connections.loading && !connections.unavailable && connections.connectable.length === 0 && (
+      {!connections.loading && !connections.failure && connections.connectable.length === 0 && (
         <SectionStack>
           <GroupBlock>
             <p className="text-body-sm text-muted-foreground">No provider on this deployment accepts a credential yet.</p>
@@ -139,7 +150,7 @@ export function ProvidersSection() {
             providerName={connectors.view(entry.provider)?.descriptor.displayName ?? entry.provider}
             connection={connections.forProvider(entry.provider)}
             input={entry.input}
-            unavailable={connections.unavailable}
+            listFailure={connections.failure}
             durable={connections.durable}
             busy={connections.busy}
             onConnect={connections.connect}
