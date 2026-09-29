@@ -55,6 +55,7 @@ function apiKeys(over: Partial<UseProviderConnections> = {}): UseProviderConnect
     connections: [],
     connectable: [],
     loading: false,
+    failure: null,
     unavailable: false,
     durable: true,
     busy: false,

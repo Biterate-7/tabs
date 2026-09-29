@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { seedConnectedAgent } from "@/lib/agents/platform/__fixtures__/roster"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -87,6 +87,21 @@ function renderCentre(
     ),
   }
 }
+
+/**
+ * Answers every account-scoped route with one status, as a deployment would
+ * for a signed-out visitor (401) or a missing service (503).
+ */
+function stubAccountRoutes(status: number) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ ok: false, error: { code: "x", message: "x" } }), { status }))
+  )
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 beforeEach(() => {
   window.localStorage.clear()
@@ -295,12 +310,39 @@ describe("creating a session", () => {
     expect(await screen.findByText(/Agent not signed in/i)).toBeTruthy()
   })
 
+  it("still says a deployment cannot store credentials when it cannot (503)", async () => {
+    stubAccountRoutes(503)
+    const user = userEvent.setup()
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session", "message"],
+          },
+        ],
+      }),
+    })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+    await user.click(await screen.findByRole("button", { name: /^sign in$/i }))
+    const dialog = await screen.findByRole("dialog", { name: /Connect Claude Code/i })
+    expect(within(dialog).getByText(/not set up to store provider credentials/i)).toBeTruthy()
+    expect(within(dialog).queryByText("Sign in to Hubble to save an API key.")).toBeNull()
+  })
+
   it("says the agent is not connected, and offers the way to connect it", async () => {
     // The state a user is in before they have supplied their own provider
     // credentials: the runtime is fine, the adapter is registered, and the
     // *user* has authorized nothing. That is what the host reports as
     // `authentication: "required"` once an actor's adapter cannot resolve a
-    // credential.
+    // credential. Signed out of Hubble, as production answers it: the
+    // credential route exists and says 401.
+    stubAccountRoutes(401)
     const user = userEvent.setup()
     const onOpenConnectors = vi.fn()
     const runtime = createScriptedRuntime({
@@ -335,9 +377,11 @@ describe("creating a session", () => {
     await user.click(await screen.findByRole("button", { name: /^sign in$/i }))
     const dialog = await screen.findByRole("dialog", { name: /Connect Claude Code/i })
     expect(within(dialog).getAllByText(/Anthropic API key/).length).toBeGreaterThan(0)
-    // No credential route behind jsdom: the key form says so, honestly,
+    // Signed out: the key form says to sign in to Hubble — never that the
+    // deployment cannot store credentials, which the 401 itself disproves —
     // rather than offering a Connect that would fail.
-    expect(within(dialog).getByText(/not set up to store provider credentials/i)).toBeTruthy()
+    expect(within(dialog).getByText("Sign in to Hubble to save an API key.")).toBeTruthy()
+    expect(within(dialog).queryByText(/not set up to store provider credentials/i)).toBeNull()
     // The subscription route is listed as not available, with the reason.
     expect(within(dialog).getByText(/doesn't allow apps built on the Claude Agent SDK/i)).toBeTruthy()
     expect(onOpenConnectors).not.toHaveBeenCalled()

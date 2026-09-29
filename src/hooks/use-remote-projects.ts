@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { precheckUpload } from "@/lib/agents/command-centre/remote"
+import { agentRequestFailureOf } from "@/lib/agents/request-failure"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type {
   RemoteCreateFailure,
   RemoteProjectSummary,
@@ -51,6 +53,8 @@ export type UseRemoteProjects = {
   loading: boolean
   /** Set when the list could not be read at all. Distinct from a create failure. */
   unavailable: boolean
+  /** Why it could not be read, when it could not — a 401 is "sign in", not a broken service. */
+  failure: AgentRequestFailure | null
   creating: boolean
   refresh: () => Promise<void>
   create: (input: CreateRemoteProjectInput) => Promise<CreateRemoteProjectOutcome>
@@ -110,7 +114,8 @@ export function useRemoteProjects(options: {
 
   const [projects, setProjects] = useState<readonly RemoteProjectSummary[]>([])
   const [loading, setLoading] = useState(false)
-  const [unavailable, setUnavailable] = useState(false)
+  const [failure, setFailure] = useState<AgentRequestFailure | null>(null)
+  const unavailable = failure !== null
   const [creating, setCreating] = useState(false)
 
   /*
@@ -143,18 +148,18 @@ export function useRemoteProjects(options: {
       if (!live.current) return
 
       if (!response.ok || !body?.ok) {
-        setUnavailable(true)
+        setFailure(response.ok ? "failed" : agentRequestFailureOf(response.status))
         setProjects([])
         return
       }
 
-      setUnavailable(false)
+      setFailure(null)
       setProjects(body.value.projects as RemoteProjectSummary[])
     } catch {
       // The thrown value is deliberately not read. A network error's message
       // can carry a URL, and a URL can carry a host and a port.
       if (live.current) {
-        setUnavailable(true)
+        setFailure("failed")
         setProjects([])
       }
     } finally {
@@ -238,5 +243,5 @@ export function useRemoteProjects(options: {
     [transport]
   )
 
-  return { projects, loading, unavailable, creating, refresh, create, remove }
+  return { projects, loading, unavailable, failure, creating, refresh, create, remove }
 }

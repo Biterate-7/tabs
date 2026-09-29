@@ -34,6 +34,7 @@ import type {
 } from "@/hooks/use-remote-projects"
 import type { ExecutionMode, RemoteProjectSummary } from "@/lib/agents/command-centre/remote"
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions"
+import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { AgentProject } from "@/lib/agents/control/projects"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { ProviderConnectionView } from "@/lib/agents/credentials/types"
@@ -120,6 +121,8 @@ export function NewSessionDialog({
     projects: readonly RemoteProjectSummary[]
     loading: boolean
     unavailable: boolean
+    /** Why the list could not be read, when it could not. */
+    failure?: AgentRequestFailure | null
     creating: boolean
     create: (input: CreateRemoteProjectInput) => Promise<CreateRemoteProjectOutcome>
   }
@@ -472,6 +475,7 @@ export function NewSessionDialog({
               projects={remote.projects}
               loading={remote.loading}
               unavailable={remote.unavailable}
+              listFailure={remote.failure ?? null}
               selectedId={remoteProjectId}
               onSelect={setRemoteProjectId}
               onCreate={remote.create}
