@@ -38,17 +38,103 @@ export type PlatformTransport =
   /** The agent is the client: it connects to Hubble's MCP server. Hubble starts nothing. */
   | "mcp";
 
-/** How the agent signs in. Hubble never holds the agent's own login. */
-export type PlatformSignIn =
-  /** The agent's own sign-in, which Hubble can start through the protocol (ACP `authenticate`). */
-  | { kind: "native"; summary: string }
-  /** The user's own provider API key, stored encrypted by Hubble (Settings → Agents). */
-  | { kind: "provider-key"; summary: string }
-  /** A Hubble MCP access token, issued once in Settings for the agent's config. */
-  | { kind: "mcp-token"; summary: string };
+/**
+ * How the agent signs in *here*, as one of three shapes — derived from the
+ * authentication methods below, never declared separately.
+ *
+ *   - `native` — the agent's own sign-in, which Hubble can start through the
+ *     protocol (ACP `authenticate`, or Claude Code's own CLI login).
+ *   - `provider-key` — the user's own provider API key, stored encrypted by
+ *     Hubble (Settings → Agents).
+ *   - `mcp-token` — a Hubble MCP access token, issued in Settings.
+ */
+export type PlatformSignInKind = "native" | "provider-key" | "mcp-token";
 
 /** Where Hubble itself is running. */
 export type PlatformSurface = "web" | "desktop";
+
+/* ------------------------------------------------------------------ *
+ * Authentication methods (Agent Authentication & Runtime)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What kind of credential a method uses, as a person would name it.
+ *
+ *   - `account` — the provider's own account sign-in, run by its agent in the
+ *     user's browser (OAuth). Hubble never sees the token.
+ *   - `api_key` — an API key.
+ *   - `environment` — a credential the agent reads from its own environment
+ *     or settings (a cloud provider's). Hubble never collects one.
+ *   - `hubble_token` — a Hubble-issued MCP access token (the custom agent).
+ */
+export type AgentAuthKind = "account" | "api_key" | "environment" | "hubble_token";
+
+/**
+ * Who holds the credential.
+ *
+ *   - `runtime` — the agent's own credential store. Hubble only asks whether
+ *     it is signed in. The preferred shape.
+ *   - `hubble` — Hubble's encrypted per-user store (an API key on the web,
+ *     an MCP token). Never the browser, never localStorage.
+ *   - `agent_config` — the agent's own configuration, set up outside Hubble.
+ */
+export type AuthCredentialOwner = "runtime" | "hubble" | "agent_config";
+
+/**
+ * Whether Hubble offers a method, and where.
+ *
+ * The source of truth the whole connect UI reads. A method a provider has but
+ * Hubble cannot honestly offer is `unsupported` *with the reason*, so the UI
+ * can say why rather than leave it out silently or show a button that fails.
+ */
+export type AuthMethodSupport =
+  /** Hubble offers the connection flow for it on these surfaces. */
+  | { status: "offered"; surfaces: readonly PlatformSurface[] }
+  /**
+   * Set up in the agent itself. Hubble offers no flow, and uses it when the
+   * agent reports it is in use. `setup` says where.
+   */
+  | { status: "external"; surfaces: readonly PlatformSurface[]; setup: string }
+  /** Hubble does not use it. `reason` is the sentence the UI shows. */
+  | { status: "unsupported"; reason: string };
+
+/**
+ * One way an agent can authenticate, and what Hubble does with it.
+ *
+ * Declared from the provider's **documented** mechanisms and each agent's
+ * verified behaviour — never assumed uniform across providers. See
+ * docs/agent-authentication.md for the verification behind every entry.
+ */
+export type AgentAuthMethod = {
+  /** Stable, provider-scoped. Never a credential. */
+  id: string;
+  /** What the method is called on screen. */
+  label: string;
+  kind: AgentAuthKind;
+  /**
+   * Whether this sign-in can carry a paid plan's entitlement — a Claude
+   * subscription, a ChatGPT plan, Google AI Pro. Only ever claimed where the
+   * provider documents it.
+   */
+  subscription: boolean;
+  owner: AuthCredentialOwner;
+  /** One sentence for the connect dialog: whose credential, and who keeps it. */
+  summary: string;
+  support: AuthMethodSupport;
+  /** Why it is not offered on a surface its `support` leaves out. One sentence per surface. */
+  unavailableOn?: Partial<Record<PlatformSurface, string>>;
+  /**
+   * The ids the agent itself advertises for this method (ACP `authMethods`,
+   * Claude Code's allowlisted logins). A runtime-run sign-in is offered only
+   * when the agent advertises one of them, so Hubble never starts a flow the
+   * agent does not have.
+   */
+  runtimeMethodIds?: readonly string[];
+  /** The kind the runtime reports (`authKind`) when this method is the one in use. */
+  reportedAs?: "subscription" | "account" | "api_key" | "cloud_provider";
+  /** The provider's own documentation for it. */
+  docsUrl?: string;
+};
 
 /** What Hubble does with an agent once it is connected. Shown when connecting; confirmed by the runtime. */
 export type PlatformFeature =
@@ -72,13 +158,20 @@ export type PlatformProvider = {
   provider: AgentProviderId;
   displayName: string;
   vendor: string;
-  transport: PlatformTransport;
-  signIn: PlatformSignIn;
   /**
-   * The sentence for a runtime that can start this agent's own login when
-   * `signIn` says otherwise — Claude Code in the desktop app (Phase J.1).
+   * The program that runs the agent and owns its sign-in — "Claude Code",
+   * "Gemini CLI". The provider is the company; the runtime is what Hubble
+   * starts and asks. For the custom agent, the user's own MCP client.
    */
-  nativeSignInSummary?: string;
+  runtimeName: string;
+  transport: PlatformTransport;
+  /**
+   * Every authentication method the provider documents for this agent, and
+   * whether Hubble offers it (Agent Authentication & Runtime). The connect UI
+   * shows only what is offered on the surface it is on, and says why for the
+   * rest. `platform/authentication.ts` derives everything else from this.
+   */
+  auth: readonly AgentAuthMethod[];
   /** One sentence: what connecting this agent gives you. */
   pitch: string;
   /** How to install it, for the user to run. Never run by Hubble. */
@@ -118,13 +211,82 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     provider: "claude-code",
     displayName: "Claude Code",
     vendor: "Anthropic",
+    runtimeName: "Claude Code",
     transport: "sdk",
-    signIn: {
-      kind: "provider-key",
-      summary: "Runs on your own Anthropic API key, connected in Settings → Agents.",
-    },
-    nativeSignInSummary:
-      "Signs in with your own Claude account through Claude Code's login. Hubble never sees or stores the token.",
+    // Anthropic's terms for apps built on the Claude Agent SDK (Hubble is
+    // one): use API-key authentication — an API key or a Console account — or
+    // a supported cloud provider; do not offer Claude.ai subscription login.
+    // code.claude.com/docs/en/agent-sdk/overview and …/legal-and-compliance,
+    // checked 2026-09-28. The desktop runtime reads which login Claude Code is
+    // using and refuses a subscription one (launch/native-auth.ts).
+    auth: [
+      {
+        id: "anthropic-api-key",
+        label: "Anthropic API key",
+        kind: "api_key",
+        subscription: false,
+        owner: "hubble",
+        summary:
+          "Your own key from the Claude Console, stored encrypted and used only for your sessions. Usage is billed to your Anthropic account.",
+        support: { status: "offered", surfaces: ["web"] },
+        unavailableOn: {
+          desktop:
+            "The desktop app keeps no credentials of its own. Sign in through Claude Code with an Anthropic Console account instead.",
+        },
+        reportedAs: "api_key",
+        docsUrl: "https://console.anthropic.com/settings/keys",
+      },
+      {
+        id: "anthropic-console",
+        label: "Anthropic Console account",
+        kind: "account",
+        subscription: false,
+        owner: "runtime",
+        summary:
+          "Sign in through Claude Code with your Console account. Claude Code keeps the login, and usage is billed as API usage — not a Claude subscription.",
+        support: { status: "offered", surfaces: ["desktop"] },
+        unavailableOn: {
+          web: "In the browser Claude runs on your own API key. Console sign-in happens through Claude Code in the desktop app.",
+        },
+        runtimeMethodIds: ["console"],
+        reportedAs: "account",
+        docsUrl: "https://code.claude.com/docs/en/authentication",
+      },
+      {
+        id: "claude-subscription",
+        label: "Claude subscription",
+        kind: "account",
+        subscription: true,
+        owner: "runtime",
+        summary: "Signing in with a Claude Pro, Max, Team or Enterprise plan.",
+        support: {
+          status: "unsupported",
+          reason:
+            "Anthropic doesn't allow apps built on the Claude Agent SDK, like Hubble, to use Claude subscription sign-in. Use an Anthropic API key or Console account instead.",
+        },
+        runtimeMethodIds: ["claudeai"],
+        reportedAs: "subscription",
+        docsUrl: "https://code.claude.com/docs/en/agent-sdk/overview",
+      },
+      {
+        id: "claude-cloud-provider",
+        label: "Amazon Bedrock, Google Cloud or Microsoft Foundry",
+        kind: "environment",
+        subscription: false,
+        owner: "agent_config",
+        summary: "A cloud provider's credential, configured in Claude Code's own settings. Hubble never collects it.",
+        support: {
+          status: "external",
+          surfaces: ["desktop"],
+          setup: "Set it up in Claude Code's own settings. Hubble uses it when Claude Code reports it is in use.",
+        },
+        unavailableOn: {
+          web: "In the browser Claude runs on your own Anthropic API key only.",
+        },
+        reportedAs: "cloud_provider",
+        docsUrl: "https://code.claude.com/docs/en/third-party-integrations",
+      },
+    ],
     pitch: "Anthropic's coding agent, driven through the Claude Agent SDK with per-action approval.",
     installCommand: "npm install -g @anthropic-ai/claude-code",
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
@@ -137,11 +299,41 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     provider: "openai-codex",
     displayName: "Codex",
     vendor: "OpenAI",
+    runtimeName: "Codex",
     transport: "acp",
-    signIn: {
-      kind: "native",
-      summary: "Signs in with your ChatGPT account through Codex's own login.",
-    },
+    // OpenAI documents ChatGPT sign-in and API-key sign-in for Codex
+    // (developers.openai.com/codex/auth). codex-acp advertises the ChatGPT
+    // sign-in over ACP (verified 1.13.1: method `chat-gpt`). Sessions are
+    // refused for an unrelated reason — see `sessions`: being signed in to
+    // Codex makes it authenticated, never session-ready.
+    auth: [
+      {
+        id: "chatgpt-account",
+        label: "ChatGPT account",
+        kind: "account",
+        subscription: true,
+        owner: "runtime",
+        summary: "Codex's own ChatGPT sign-in, opened in your browser. Codex keeps the login; Hubble never sees it.",
+        support: { status: "offered", surfaces: ["web", "desktop"] },
+        runtimeMethodIds: ["chat-gpt", "chatgpt"],
+        docsUrl: "https://developers.openai.com/codex/auth",
+      },
+      {
+        id: "openai-api-key",
+        label: "OpenAI API key",
+        kind: "api_key",
+        subscription: false,
+        owner: "runtime",
+        summary: "An OpenAI API key, read by Codex from its environment.",
+        support: {
+          status: "unsupported",
+          reason:
+            "Codex accepts an OpenAI API key, but Hubble starts agents with no keys in their environment and does not hand them one.",
+        },
+        runtimeMethodIds: ["api-key", "codex-api-key", "openai-api-key"],
+        docsUrl: "https://developers.openai.com/codex/auth",
+      },
+    ],
     pitch: "OpenAI's coding agent, over the Agent Client Protocol adapter.",
     installCommand: "npm install -g @agentclientprotocol/codex-acp",
     docsUrl: "https://github.com/agentclientprotocol/codex-acp",
@@ -149,7 +341,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     sessions: {
       available: false,
       reason:
-        "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so Hubble cannot approve its actions.",
+        "Codex does not ask before every action: even in its most restrictive mode it runs commands and reads files anywhere on your computer without asking, so Hubble cannot approve what it does.",
     },
     surfaces: ["web", "desktop"],
     features: SESSION_FEATURES,
@@ -158,11 +350,59 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     provider: "gemini",
     displayName: "Gemini CLI",
     vendor: "Google",
+    runtimeName: "Gemini CLI",
     transport: "acp",
-    signIn: {
-      kind: "native",
-      summary: "Signs in with your Google account through Gemini CLI's own login.",
-    },
+    // Gemini CLI documents three methods (geminicli.com/docs/resources/
+    // tos-privacy): Google login (Gemini Code Assist, including Google AI Pro
+    // and Ultra), a Gemini API key, and Vertex AI. Its ACP mode is built "for
+    // IDE and other developer tool integrations"; its terms forbid third-party
+    // software *directly* using its OAuth credentials, which Hubble never
+    // touches — Gemini CLI itself makes every request. Verified 0.61.0: the
+    // Google login is advertised as `oauth-personal`.
+    auth: [
+      {
+        id: "google-account",
+        label: "Google account",
+        kind: "account",
+        subscription: true,
+        owner: "runtime",
+        summary:
+          "Gemini CLI's own Login with Google, opened in your browser. Gemini CLI keeps the login; Hubble never sees it.",
+        support: { status: "offered", surfaces: ["web", "desktop"] },
+        runtimeMethodIds: ["oauth-personal"],
+        docsUrl: "https://geminicli.com/docs/get-started/authentication/",
+      },
+      {
+        id: "gemini-api-key",
+        label: "Gemini API key",
+        kind: "api_key",
+        subscription: false,
+        owner: "runtime",
+        summary: "A Gemini API key, read by Gemini CLI from its environment.",
+        support: {
+          status: "unsupported",
+          reason:
+            "Gemini CLI accepts a Gemini API key, but Hubble starts agents with no keys in their environment and does not hand them one. Sign in with Google instead.",
+        },
+        runtimeMethodIds: ["gemini-api-key"],
+        docsUrl: "https://geminicli.com/docs/get-started/authentication/",
+      },
+      {
+        id: "vertex-ai",
+        label: "Vertex AI",
+        kind: "environment",
+        subscription: false,
+        owner: "agent_config",
+        summary: "Google Cloud credentials, read by Gemini CLI from its environment.",
+        support: {
+          status: "unsupported",
+          reason:
+            "Vertex AI credentials come from Gemini CLI's environment, which Hubble keeps free of credentials.",
+        },
+        runtimeMethodIds: ["vertex-ai"],
+        docsUrl: "https://geminicli.com/docs/get-started/authentication/",
+      },
+    ],
     pitch: "Google's open-source coding agent, over its built-in Agent Client Protocol mode.",
     installCommand: "npm install -g @google/gemini-cli",
     docsUrl: "https://geminicli.com/docs/cli/acp-mode/",
@@ -175,11 +415,40 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     provider: "grok",
     displayName: "Grok Build",
     vendor: "xAI",
+    runtimeName: "Grok Build",
     transport: "acp",
-    signIn: {
-      kind: "native",
-      summary: "Signs in with your Grok account through Grok Build's own login.",
-    },
+    // xAI documents a browser sign-in on first launch, or `XAI_API_KEY` where
+    // there is no browser, and use "through the Agent Client Protocol (ACP) in
+    // other apps" (docs.x.ai/build/overview). Grok Build 1.0.41 advertises the
+    // browser sign-in over ACP as `grok.com`. Which xAI plans it covers is not
+    // documented there, so none is claimed.
+    auth: [
+      {
+        id: "xai-account",
+        label: "xAI account",
+        kind: "account",
+        subscription: false,
+        owner: "runtime",
+        summary: "Grok Build's own browser sign-in. Grok Build keeps the login; Hubble never sees it.",
+        support: { status: "offered", surfaces: ["web", "desktop"] },
+        runtimeMethodIds: ["grok.com"],
+        docsUrl: "https://docs.x.ai/build/overview",
+      },
+      {
+        id: "xai-api-key",
+        label: "xAI API key",
+        kind: "api_key",
+        subscription: false,
+        owner: "runtime",
+        summary: "An xAI API key, read by Grok Build from its environment.",
+        support: {
+          status: "unsupported",
+          reason:
+            "Grok Build accepts an xAI API key, but Hubble starts agents with no keys in their environment and does not hand them one.",
+        },
+        docsUrl: "https://docs.x.ai/build/overview",
+      },
+    ],
     pitch: "xAI's coding agent, over its built-in Agent Client Protocol mode.",
     // xAI's npm package (publisher xai-security@x.ai). Its site also offers a
     // piped install script; Hubble shows the package manager instead.
@@ -194,11 +463,29 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     provider: "custom",
     displayName: "Custom MCP agent",
     vendor: "Any MCP client",
+    runtimeName: "Your MCP client",
     transport: "mcp",
-    signIn: {
-      kind: "mcp-token",
-      summary: "Connects to Hubble's read-only MCP server with an access token you issue in Settings.",
-    },
+    // The agent is the client. It holds no provider credential Hubble knows
+    // of; the only credential in the picture is Hubble's own, read-only
+    // access token — and Hubble never starts the agent, so it has no
+    // provider sign-in to run.
+    auth: [
+      {
+        id: "hubble-access-token",
+        label: "Hubble access token",
+        kind: "hubble_token",
+        subscription: false,
+        owner: "hubble",
+        summary:
+          "Connects to Hubble's read-only MCP server with an access token you issue in Settings, and can revoke there.",
+        support: { status: "offered", surfaces: ["web"] },
+        unavailableOn: {
+          desktop:
+            "Custom agents connect to Hubble's MCP server, which runs with your Hubble account on the web. The desktop app does not run one.",
+        },
+        docsUrl: "https://modelcontextprotocol.io",
+      },
+    ],
     pitch:
       "Any agent that speaks MCP can read your Hubble workspaces. You run the agent yourself; Hubble never starts it, and it cannot change anything.",
     docsUrl: "https://modelcontextprotocol.io",

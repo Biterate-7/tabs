@@ -33,7 +33,8 @@ import { useCollectionStore } from "@/hooks/use-collection-store"
 import { useSessionContext } from "@/hooks/use-session-context"
 import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
-import { isChatReady } from "@/lib/agents/platform/lifecycle"
+import { isChatReady, recoveryLabel, signInKind } from "@/lib/agents/platform/lifecycle"
+import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import { grantWithinApproval } from "@/lib/agents/platform/roster"
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
@@ -249,17 +250,20 @@ export function CommandCentreView({
   /* This user's own provider connections — whose credentials a session runs on. */
   const connections = useProviderConnections()
 
+  const [surface] = useState(() => agentConnectorSurface())
+
   /* The agent connector platform (Phase J): the roster of connected agents. */
   const providerKeyConnected = useCallback(
     (provider: AgentProviderId): boolean | undefined => {
-      if (platformProvider(provider)?.signIn.kind !== "provider-key") return undefined
+      const spec = platformProvider(provider)
+      // Only an agent whose sign-in *here* is a key Hubble stores. Where it
+      // signs in on its own (the desktop app), a stored key is irrelevant.
+      if (!spec || signInKind(spec, undefined, surface) !== "provider-key") return undefined
       if (connections.loading || connections.unavailable) return undefined
       return connections.forProvider(provider)?.status === "connected"
     },
-    [connections]
+    [connections, surface]
   )
-
-  const [surface] = useState(() => agentConnectorSurface())
   const mcpTokens = useMcpTokens({ enabled: surface === "web" })
   const mcpTokenIssued = hasUsableMcpToken(mcpTokens.state, now)
 
@@ -279,6 +283,27 @@ export function CommandCentreView({
     setConnectOpen(true)
   }, [])
 
+  /*
+    The session the person was starting when a sign-in got in the way
+    (Agent Authentication & Runtime). Kept while they recover in Connect
+    Agent, and handed back to New session when they come back — the agent,
+    the workspace and the title they chose, and the first message they
+    typed (kept separately, below). Never a credential: there is none here.
+  */
+  const [resume, setResume] = useState<{ provider: AgentProviderId; workspaceId?: string; title?: string } | null>(null)
+  const recoverFromNewSession = useCallback(
+    (provider: AgentProviderId, draft?: { workspaceId?: string; title?: string }) => {
+      setResume({ provider, ...draft })
+      openConnect(provider)
+    },
+    [openConnect]
+  )
+  const returnToNewSession = useCallback(() => {
+    if (!resume) return false
+    setNewSessionOpen(true)
+    return true
+  }, [resume])
+
   /* The desktop app (Phase J.1): folders come only from the native picker. */
   const [pickFolder] = useState(() => agentProjectFolderPicker())
   const projectScopesFor = useCallback(
@@ -288,12 +313,18 @@ export function CommandCentreView({
     },
     [platform]
   )
+  /*
+    Signing in, from New session. One place for every provider and every
+    method: Connect Agent shows the methods this agent offers here — its own
+    sign-in, or a key Hubble stores — and the session the person was starting
+    is kept for when they come back.
+  */
   const signInFor = useCallback(
-    (provider?: AgentProviderId) => {
-      if (provider && platform.statusOf(provider)?.nativeSignIn) openConnect(provider)
+    (provider?: AgentProviderId, draft?: { workspaceId?: string; title?: string }) => {
+      if (provider) recoverFromNewSession(provider, draft)
       else onOpenConnectors?.()
     },
-    [onOpenConnectors, openConnect, platform]
+    [onOpenConnectors, recoverFromNewSession]
   )
 
   const workspaceChoices = useMemo(
@@ -476,8 +507,18 @@ export function CommandCentreView({
 
   /* ---------------- Starting a session. */
 
+  /*
+    One create at a time (Agent Authentication & Runtime). `creating` disables
+    the button, but only after a render; two presses in one frame would both
+    get here. The ref is checked and set synchronously, so the second press
+    finds a create in flight and does nothing — no second session, and no
+    second copy of the workspace snapshot bound to one.
+  */
+  const createInFlight = useRef(false)
+
   const handleCreate = useCallback(
     async (input: Parameters<typeof sessions.createSession>[0]) => {
+      if (createInFlight.current) return
       setCreateError(null)
 
       // Only an agent the user connected and approved, and never on a project
@@ -491,24 +532,40 @@ export function CommandCentreView({
         return
       }
 
+      // Signed in, with a sign-in Hubble may use, and reachable — refused here
+      // only when that is genuinely not so, and never by picking another way
+      // to sign in: the dialog shows the action that fixes it.
+      const prerequisite = platform.prerequisiteFor(input.provider)
+      if (!prerequisite.ok) {
+        setCreateError(refusalFor(prerequisite.phase))
+        return
+      }
+
       // The workspace the session works in goes with it, for the agent to
       // query; the context brought from it, if it is that workspace's.
       const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
       const brought = draft && input.workspaceId === draft.workspaceId ? context.resolve(withinWorkspace(draft, liveWorld).context) : undefined
       const startContext = brought?.ok && brought.attached ? brought.attached : undefined
 
+      createInFlight.current = true
       setCreating(true)
-      const outcome = await sessions.createSession({
-        ...input,
-        ...(contextSnapshot ? { contextSnapshot } : {}),
-        ...(startContext ? { context: startContext } : {}),
-      })
-      setCreating(false)
+      let outcome: Awaited<ReturnType<typeof sessions.createSession>>
+      try {
+        outcome = await sessions.createSession({
+          ...input,
+          ...(contextSnapshot ? { contextSnapshot } : {}),
+          ...(startContext ? { context: startContext } : {}),
+        })
+      } finally {
+        createInFlight.current = false
+        setCreating(false)
+      }
 
       if (typeof outcome === "string") {
         setCreateError(outcome)
         return
       }
+      setResume(null)
 
       platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
       setRequestedSessionId(outcome.sessionId)
@@ -641,11 +698,12 @@ export function CommandCentreView({
       platform.roster.agents.flatMap((agent) => {
         const spec = platformProvider(agent.provider)
         if (!spec?.chat) return []
-        // The same gate the start dialog applies: connected, sessions offered, and the runtime can start one.
+        // The same gate the start dialog applies: connected and signed in in
+        // a way Hubble may use, sessions offered, and the runtime can start one.
         const status = startableProviders.find((provider) => provider.provider === agent.provider)
-        const ready = platform.sessionsFor(agent.provider).available && Boolean(status && canCreateSession(status))
-        const sessionsFor = platform.sessionsFor(agent.provider)
-        return [{ provider: agent.provider, name: agent.name, ready, ...(sessionsFor.available ? {} : { reason: sessionsFor.reason }) }]
+        const prerequisite = platform.prerequisiteFor(agent.provider)
+        const ready = prerequisite.ok && Boolean(status && canCreateSession(status))
+        return [{ provider: agent.provider, name: agent.name, ready, ...(prerequisite.ok ? {} : { reason: prerequisite.reason }) }]
       }),
     [platform, startableProviders]
   )
@@ -876,11 +934,14 @@ export function CommandCentreView({
         // Remounted per opening so it starts from the agent it was opened for.
         // The `new-session:` prefix keeps this distinct from the connect dialog,
         // which is a sibling and would otherwise share the key `false-` when both are shut.
-        key={`new-session:${newSessionOpen}-${defaultProvider ?? ""}`}
+        key={`new-session:${newSessionOpen}-${resume?.provider ?? defaultProvider ?? ""}`}
         open={newSessionOpen}
         onOpenChange={(next) => {
           setNewSessionOpen(next)
-          if (!next) setFirstMessage(undefined)
+          if (next) return
+          // Closed by the person: what they were starting is let go of too.
+          setFirstMessage(undefined)
+          setResume(null)
         }}
         status={runtime.status}
         providers={startableProviders}
@@ -904,18 +965,38 @@ export function CommandCentreView({
         now={now}
         {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
         workspaces={workspaceChoices}
-        {...((draft?.workspaceId ?? activeWorkspaceId) ? { defaultWorkspaceId: draft?.workspaceId ?? activeWorkspaceId } : {})}
-        {...(defaultProvider ? { defaultProvider } : {})}
+        {...((resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId)
+          ? { defaultWorkspaceId: resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId }
+          : {})}
+        {...(resume?.title ? { defaultTitle: resume.title } : {})}
+        {...((resume?.provider ?? defaultProvider) ? { defaultProvider: resume?.provider ?? defaultProvider } : {})}
         contextSummaryFor={(workspaceId) =>
           draftView && draft?.workspaceId === workspaceId && draftView.scope !== "workspace" ? summarizeWorkingContext(draftView) : undefined
         }
         {...(firstMessage ? { firstMessage } : {})}
         connectionBlocker={(provider) => {
-          if (!platform.identity(provider)) return "Not connected"
-          const available = platform.sessionsFor(provider)
-          return available.available ? undefined : available.reason
+          const prerequisite = platform.prerequisiteFor(provider)
+          if (prerequisite.ok) return undefined
+          const name = agentVisualIdentity(provider).displayName
+          // Nothing to connect or sign in to fixes this one — signed in or not.
+          // The exact reason, and no action that would pretend otherwise.
+          const sessions = platform.sessionsFor(provider)
+          if (!sessions.available) {
+            return { label: "Sessions unavailable", sentence: sessions.reason, detail: sessions.reason }
+          }
+          // Not connected yet: the whole flow, from the start.
+          if (!platform.identity(provider)) {
+            return { label: prerequisite.reason, sentence: `${name} isn't connected yet.`, action: "Connect" }
+          }
+          return {
+            label: prerequisite.reason,
+            sentence: prerequisite.phase ? platform.sentenceOf(provider) : prerequisite.reason,
+            ...(prerequisite.action && prerequisite.phase
+              ? { action: recoveryLabel(prerequisite.phase, prerequisite.action) }
+              : {}),
+          }
         }}
-        onConnectAgent={openConnect}
+        onConnectAgent={(provider, intent) => recoverFromNewSession(provider, intent)}
         {...(pickFolder ? { pickFolder } : {})}
         projectScopesFor={projectScopesFor}
       />
@@ -928,16 +1009,20 @@ export function CommandCentreView({
         open={connectOpen}
         onOpenChange={(next) => {
           setConnectOpen(next)
+          if (next) return
           // A sign-in may have changed what the runtime reports; ask again.
-          if (!next) void runtime.refresh()
+          void runtime.refresh()
+          // Back to the session they were starting, with what they chose.
+          returnToNewSession()
         }}
         platform={platform}
         initialProvider={connectProvider}
+        apiKeys={connections}
         {...(onOpenConnectors ? { onOpenSettings: onOpenConnectors } : {})}
         onStartSession={() => {
           setConnectOpen(false)
           void runtime.refresh()
-          setNewSessionOpen(true)
+          if (!returnToNewSession()) setNewSessionOpen(true)
         }}
       />
 
@@ -961,6 +1046,29 @@ export function CommandCentreView({
       )}
     </div>
   )
+}
+
+/**
+ * The refusal to show when a session was not started because its agent's
+ * connection is not ready — the accurate one for the phase, never a generic
+ * "not signed in" for an agent that is simply not installed or not answering.
+ */
+function refusalFor(phase: ConnectionPhase | undefined): RuntimeErrorCode {
+  switch (phase) {
+    case "timeout":
+      return "timeout"
+    case "connection_lost":
+      return "runtime_disconnected"
+    case "error":
+      return "provider_error"
+    case "runtime_unavailable":
+      return "runtime_unavailable"
+    case "not_installed":
+    case "needs_adapter":
+      return "provider_unavailable"
+    default:
+      return "authentication_required"
+  }
 }
 
 /**

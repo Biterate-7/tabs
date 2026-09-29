@@ -293,7 +293,17 @@ export type ClaudeCredentialSource = () => Promise<ClaudeCredentialResolution>;
  */
 export type ClaudeCredentialResolution =
   | { ok: true; connectionId: string; env: Readonly<Record<string, string>> }
-  | { ok: false; reason: "not_connected" | "not_usable" | "unavailable" };
+  | { ok: false; reason: ClaudeCredentialFailure };
+
+/**
+ * Why no credential resolved.
+ *
+ * `not_permitted` (Agent Authentication & Runtime): the agent *is* signed in,
+ * but with a kind of credential Anthropic does not permit an Agent-SDK app to
+ * use — a Claude subscription. The run is refused exactly as for no
+ * credential; the source never substitutes another one.
+ */
+export type ClaudeCredentialFailure = "not_connected" | "not_usable" | "unavailable" | "not_permitted";
 
 /**
  * Whether a runtime can run, in three separate facts rather than a boolean.
@@ -312,7 +322,7 @@ export type ClaudeRuntimeAvailability =
   /** Ready. The SDK or sandbox is reachable and a credential resolved. */
   | { kind: "available" }
   /** Everything works except that this user has no usable provider connection. */
-  | { kind: "credential-required"; reason: "not_connected" | "not_usable" | "unavailable" }
+  | { kind: "credential-required"; reason: ClaudeCredentialFailure }
   /** The runtime itself cannot run here — no SDK, no sandbox, wrong machine. */
   | { kind: "unavailable" };
 

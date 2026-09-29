@@ -69,14 +69,14 @@ describe("the connection lifecycle", () => {
       connectionPhase({
         ...base,
         detection: INSTALLED,
-        status: { provider: "gemini", connection: "connected", available: true, authentication: "authenticated", capabilities: [] },
+        status: { provider: "gemini", connection: "connected", available: true, authentication: "authenticated", capabilities: ["create_session"] },
       })
     ).toBe("awaiting_approval");
     expect(
       connectionPhase({
         ...base,
         detection: INSTALLED,
-        status: { provider: "gemini", connection: "connected", available: true, authentication: "authenticated", capabilities: [] },
+        status: { provider: "gemini", connection: "connected", available: true, authentication: "authenticated", capabilities: ["create_session"] },
         approvedScopes: ["read_workspace"],
       })
     ).toBe("connected");

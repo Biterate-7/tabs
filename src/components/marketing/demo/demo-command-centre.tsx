@@ -25,7 +25,8 @@ import { focusFromAttachments } from "@/lib/agents/session-context/focus"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import { platformProvider } from "@/lib/agents/platform/catalog"
-import { phaseSentence } from "@/lib/agents/platform/lifecycle"
+import { phaseSentence, sessionPrerequisite } from "@/lib/agents/platform/lifecycle"
+import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { cn } from "@/lib/utils"
 import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS } from "./data"
@@ -36,14 +37,19 @@ import { useHubbleDemo } from "./demo-provider"
  * report them — built from the catalog rather than restated. Whether Hubble
  * starts sessions with an agent is `platformProvider(p).sessions`, the same
  * field the server's launch allowlist is tested against, so Codex reads
- * "Connected · sessions unavailable" here exactly as it does in Hubble.
+ * "Signed in · sessions unavailable" here exactly as it does in Hubble —
+ * signed in, never "Connected", because no session can be started with it.
  *
  * Every action that would reach a runtime is inert: the demo connects
  * nothing, detects nothing and signs nothing in.
  */
 function demoPlatform(): UseAgentPlatform {
   const identity = (provider: AgentProviderId) => DEMO_AGENTS.find((agent) => agent.provider === provider)
-  const phaseOf = (provider: AgentProviderId) => (identity(provider) ? ("connected" as const) : ("detected" as const))
+  const phaseOf = (provider: AgentProviderId): ConnectionPhase => {
+    if (!identity(provider)) return "detected"
+    const spec = platformProvider(provider)
+    return spec?.chat && !spec.sessions.available ? "sessions_unavailable" : "connected"
+  }
   return {
     roster: { version: 1, agents: DEMO_AGENTS },
     detections: null,
@@ -62,10 +68,22 @@ function demoPlatform(): UseAgentPlatform {
       return spec ? phaseSentence(spec, phaseOf(provider)) : ""
     },
     sessionsFor: (provider) => platformProvider(provider)?.sessions ?? { available: false, reason: "" },
+    readinessOf: () => undefined,
+    prerequisiteFor: (provider) => {
+      const spec = platformProvider(provider)
+      if (!spec) return { ok: false, reason: "" }
+      return sessionPrerequisite({
+        provider: spec,
+        phase: phaseOf(provider),
+        approved: Boolean(identity(provider)),
+        sessions: spec.sessions,
+      })
+    },
     statusOf: () => undefined,
     identity,
     detect: async () => undefined,
     connect: async () => false,
+    retry: async () => false,
     authenticate: async () => false,
     approve: () => undefined,
     disconnect: async () => undefined,

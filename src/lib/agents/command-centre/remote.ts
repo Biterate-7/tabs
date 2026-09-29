@@ -102,13 +102,13 @@ export type StartBlocker =
 export const START_BLOCKER_MESSAGE: Record<StartBlocker, string> = {
   "runtime-unavailable": "Hubble cannot run agents here.",
   "provider-unavailable": "That agent is not available on this runtime.",
-  // Accurate about what is actually missing. It used to say "needs to be
-  // signed in", which described an authorization Hubble never asks for; what
-  // the user has to do is connect their own provider credentials. The Command
+  // Accurate about what is missing without naming a method: the agent's own
+  // sign-in on one surface, the user's own key on another — the capability
+  // model decides which, and Connect Agent offers exactly that. The Command
   // Centre pairs this sentence with a Connect action — see
   // `new-session-dialog.tsx`.
   "authentication-required":
-    "This agent isn't connected yet — add your own provider credentials to run it.",
+    "This agent isn't connected yet — sign it in with a method it supports to run it here.",
   "provider-cannot-start": "That agent cannot start sessions yet.",
   "no-project": "Choose a project for the agent to work in.",
   "project-not-ready": "That environment is still being created.",
@@ -144,6 +144,9 @@ export function startBlocker(input: StartGateInput): StartBlocker | null {
   // whose runtime reports `credential-required`. See
   // `RuntimeProviderStatus.authentication` and `credentials/service.ts`.
   if (provider.authentication === "required") return "authentication-required";
+  // Signed in with a method the provider does not permit here: the runtime
+  // would refuse the session, so the button does not pretend otherwise.
+  if (provider.authIssue === "method_not_permitted") return "authentication-required";
   if (!provider.capabilities.includes("create_session")) return "provider-cannot-start";
 
   // A local session may legitimately have no project — an agent with no
@@ -327,10 +330,13 @@ export function controlAvailability(
   // The one authentication state a provider can actually prove before a run
   // starts. Everything else is `unknown`, and reporting a guess as a fact is
   // what this whole type exists to avoid.
-  if (provider.authentication === "required") {
+  if (provider.authentication === "required" || provider.authIssue === "method_not_permitted") {
     return {
       kind: "authentication-required",
-      reason: "This agent needs credentials before it can run here.",
+      reason:
+        provider.authIssue === "method_not_permitted"
+          ? "This agent is signed in with a method Hubble can't use. Connect it with a supported sign-in."
+          : "This agent needs to be signed in before it can run here.",
     };
   }
 

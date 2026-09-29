@@ -288,7 +288,11 @@ export function createScriptedRuntime(
       case "connect_provider":
       case "authenticate_provider":
       case "disconnect_provider": {
-        const view = connectionViews.get(command.provider)
+        // Like the host: a provider it reports on answers with its status
+        // (no sign-in methods of its own); only one it has no adapter for is
+        // `provider_unavailable`.
+        const reported = status.providers.find((entry) => entry.provider === command.provider)
+        const view = connectionViews.get(command.provider) ?? (reported ? { ...reported, authMethods: [] } : undefined)
         if (!view) return runtimeFailure<never>("provider_unavailable")
         if (command.name === "authenticate_provider") {
           const signedIn = {

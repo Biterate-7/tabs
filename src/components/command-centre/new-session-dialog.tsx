@@ -64,6 +64,22 @@ import type { RuntimeProviderStatus, RuntimeStatus } from "@/lib/agents/runtime/
  * Hubble supports it at all; offering it would produce a failure the user
  * could not have predicted.
  */
+/** Why an agent cannot start a session yet because of its connection, and the fix. */
+export type ConnectionBlocker = {
+  /** The row's short state: "Not connected", "Sign-in required", "Didn't respond". */
+  label: string
+  /** What the footer says: "Claude Code needs you to sign in." */
+  sentence: string
+  /** The one button that fixes it here, when there is one. */
+  action?: string
+  /**
+   * The exact prerequisite, shown under a row that cannot be chosen at all —
+   * an agent that is signed in but that Hubble will not start sessions with.
+   * A disabled row never reaches the footer, so it says why itself.
+   */
+  detail?: string
+}
+
 export function NewSessionDialog({
   open,
   onOpenChange,
@@ -80,6 +96,7 @@ export function NewSessionDialog({
   now,
   workspaces,
   defaultWorkspaceId,
+  defaultTitle,
   connectionBlocker,
   onConnectAgent,
   pickFolder,
@@ -130,14 +147,24 @@ export function NewSessionDialog({
    */
   workspaces?: readonly { id: string; name: string }[]
   defaultWorkspaceId?: string
+  /** A title the person already typed, kept across a detour to sign in. */
+  defaultTitle?: string
   /**
-   * Why an agent cannot start a session yet, when the reason is that the user
-   * has not connected and approved it (Phase J). `undefined` for an agent
-   * that is connected. Absent: no connection gate, as before.
+   * Why an agent cannot start a session yet, when the reason is its
+   * connection — not approved, not signed in, signed in with a method Hubble
+   * cannot use, not answering (Phase J; Agent Authentication & Runtime).
+   * `undefined` for an agent that is ready. Absent: no connection gate.
+   *
+   * `label` is the row's short state, `sentence` what the footer says, and
+   * `action` the one button that fixes it ("Connect", "Sign in", "Retry") —
+   * absent when nothing here can.
    */
-  connectionBlocker?: (provider: AgentProviderId) => string | undefined
-  /** Opens Connect Agent for a provider the user has not connected yet. */
-  onConnectAgent?: (provider: AgentProviderId) => void
+  connectionBlocker?: (provider: AgentProviderId) => ConnectionBlocker | undefined
+  /**
+   * Opens Connect Agent for a provider that is not ready, with what the
+   * person has chosen so far, so it can be handed back when they return.
+   */
+  onConnectAgent?: (provider: AgentProviderId, intent: { workspaceId?: string; title?: string }) => void
   /**
    * The native folder picker (the desktop app, Phase J.1).
    *
@@ -170,7 +197,7 @@ export function NewSessionDialog({
    * sentence without a button, rather than offering an action that goes
    * nowhere.
    */
-  onConnectProvider?: (provider?: AgentProviderId) => void
+  onConnectProvider?: (provider?: AgentProviderId, intent?: { workspaceId?: string; title?: string }) => void
   creating: boolean
   /** A sentence from the runtime's refusal of the last attempt. */
   error?: string
@@ -200,15 +227,31 @@ export function NewSessionDialog({
   const [mode, setMode] = useState<ExecutionMode | null>(null)
   const [projectId, setProjectId] = useState<string>("")
   const [remoteProjectId, setRemoteProjectId] = useState<string>("")
-  const [title, setTitle] = useState("")
+  const [title, setTitle] = useState(defaultTitle ?? "")
+  /** What the person has chosen so far, handed back if they leave to sign in. */
+  const intent = { ...(workspaceId ? { workspaceId } : {}), ...(title.trim() ? { title: title.trim() } : {}) }
 
   const [addingProject, setAddingProject] = useState(false)
   const [projectName, setProjectName] = useState("")
   const [projectPath, setProjectPath] = useState("")
   const [projectError, setProjectError] = useState<string | null>(null)
 
-  const preferred = defaultProvider && startable.some((candidate) => candidate.provider === defaultProvider) ? defaultProvider : undefined
-  const chosen = provider ?? preferred ?? startable[0]?.provider ?? null
+  /*
+    An agent that could start if one thing were fixed — signed in, retried —
+    stays the choice when nothing else can start, so the dialog says what is
+    missing for *it* and offers the fix, rather than "not available". Its
+    choice survives the detour (Agent Authentication & Runtime).
+  */
+  const recoverable = providers.filter(
+    (candidate) => canCreateSession(candidate) && Boolean(connectionBlocker?.(candidate.provider)?.action)
+  )
+  const preferred =
+    defaultProvider &&
+    [...startable, ...recoverable].some((candidate) => candidate.provider === defaultProvider)
+      ? defaultProvider
+      : undefined
+  const chosen = provider ?? preferred ?? startable[0]?.provider ?? recoverable[0]?.provider ?? null
+  const connectionIssue = chosen ? connectionBlocker?.(chosen) : undefined
   /*
     The runtime decides the default, and there is only ever one plane to
     default to: `availableModes` returns what this host can execute in, which
@@ -304,7 +347,7 @@ export function NewSessionDialog({
               ) : (
                 providers.map((candidate) => {
                   const unconnected = connectionBlocker?.(candidate.provider)
-                  const reason = providerUnavailableReason(candidate) ?? unconnected
+                  const reason = providerUnavailableReason(candidate) ?? unconnected?.label
                   const identity = agentVisualIdentity(candidate.provider)
                   const selected = chosen === candidate.provider
 
@@ -328,19 +371,23 @@ export function NewSessionDialog({
                         onChange={() => setProvider(candidate.provider)}
                       />
                       <AgentIcon connector={candidate.provider} size="sm" />
-                      <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">
-                        {identity.displayName}
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-body-sm text-foreground">{identity.displayName}</span>
+                        {unconnected?.detail && (
+                          <span className="text-meta text-tertiary">{unconnected.detail}</span>
+                        )}
                       </span>
                       {reason && <span className="shrink-0 text-label text-tertiary">{reason}</span>}
                       {/* The one unavailable reason with a fix one click away. */}
-                      {unconnected && !providerUnavailableReason(candidate) && onConnectAgent && (
+                      {/* The chosen agent's fix is in the footer, beside its sentence — once. */}
+                      {unconnected?.action && !providerUnavailableReason(candidate) && onConnectAgent && !selected && (
                         <Button
                           type="button"
                           size="xs"
                           variant="outline"
-                          onClick={() => onConnectAgent(candidate.provider)}
+                          onClick={() => onConnectAgent(candidate.provider, intent)}
                         >
-                          Connect
+                          {unconnected.action}
                         </Button>
                       )}
                     </label>
@@ -583,7 +630,24 @@ export function NewSessionDialog({
             project. Each has a different next step, so each gets its own
             sentence.
           */}
-          {blocker && (
+          {/*
+            The chosen agent's own connection comes first when it is the
+            thing in the way — "Claude Code needs you to sign in. [Sign in]" —
+            with the one action that fixes it. The person's choices go with
+            them and come back (Agent Authentication & Runtime).
+          */}
+          {connectionIssue && chosen ? (
+            <div className="mr-auto flex min-w-0 items-center gap-2">
+              <p role="status" className="min-w-0 text-body-sm text-tertiary">
+                {connectionIssue.sentence}
+              </p>
+              {connectionIssue.action && onConnectAgent && (
+                <Button type="button" size="sm" variant="outline" onClick={() => onConnectAgent(chosen, intent)}>
+                  {connectionIssue.action}
+                </Button>
+              )}
+            </div>
+          ) : blocker && (
             <div className="mr-auto flex min-w-0 items-center gap-2">
               <p className="min-w-0 text-body-sm text-tertiary">
                 {START_BLOCKER_MESSAGE[blocker]}
@@ -600,7 +664,7 @@ export function NewSessionDialog({
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => onConnectProvider(chosen ?? undefined)}
+                  onClick={() => onConnectProvider(chosen ?? undefined, intent)}
                 >
                   Connect
                 </Button>
@@ -612,9 +676,9 @@ export function NewSessionDialog({
           </Button>
           <Button
             type="button"
-            disabled={!chosen || creating || blocker !== null}
+            disabled={!chosen || creating || blocker !== null || Boolean(connectionIssue)}
             onClick={() => {
-              if (!chosen || blocker) return
+              if (!chosen || blocker || connectionIssue) return
 
               /*
                 The project the session is scoped to, by **id**, whichever

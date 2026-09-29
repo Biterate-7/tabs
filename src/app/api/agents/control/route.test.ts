@@ -209,12 +209,18 @@ describe("a local runtime", () => {
   });
 
   it("does not claim a provider is authenticated merely because it loaded", async () => {
-    // Three separate facts. Claude Code authenticates lazily, so anything
-    // before a run starts is a guess.
+    // Three separate facts. Loading is not signing in. Since Agent
+    // Authentication & Runtime, `get_status` waits (bounded) for the adapter's
+    // first connect to settle instead of reading it mid-connect — so the
+    // answer is the settled one: `required` where the SDK loads but this
+    // process holds no credential of the user's, `unknown` where it cannot
+    // tell. Never `authenticated`, and never a phantom `connecting`.
     const status = await post({ command: { name: "get_status" } });
     const provider = (status.body.value as RuntimeStatus).providers[0];
 
-    expect(provider.authentication).toBe("unknown");
+    expect(provider.authentication).not.toBe("authenticated");
+    expect(["unknown", "required"]).toContain(provider.authentication);
+    expect(provider.connection).not.toBe("connecting");
   });
 
   it("answers a well-formed command with 200 whatever it decided", async () => {

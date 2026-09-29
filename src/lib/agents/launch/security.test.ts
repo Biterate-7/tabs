@@ -102,7 +102,11 @@ describe("what Hubble can start", () => {
     ]);
   });
 
-  it("pins the only CLI operations Hubble runs itself: Claude Code's own sign-in (Phase J.1)", () => {
+  // Changed deliberately (Agent Authentication & Runtime): the Claude.ai
+  // subscription login (`--claudeai`) is gone. Anthropic does not permit an
+  // app built on the Claude Agent SDK to offer it; only the Console sign-in
+  // ("API usage billing instead of a Claude subscription") remains.
+  it("pins the only CLI operations Hubble runs itself: Claude Code's own Console sign-in (Phase J.1)", () => {
     const natives = PROVIDER_LAUNCH_TABLE.filter((entry) => entry.native).map((entry) => ({
       provider: entry.provider,
       executables: entry.native!.executables,
@@ -115,11 +119,18 @@ describe("what Hubble can start", () => {
         executables: ["claude"],
         statusArgs: ["auth", "status", "--json"],
         loginArgs: {
-          claudeai: ["auth", "login", "--claudeai"],
           console: ["auth", "login", "--console"],
         },
       },
     ]);
+  });
+
+  it("never offers a subscription login anywhere in the table", () => {
+    const allowlist = sources.find((entry) => entry.name === "allowlist.ts")!.code;
+    expect(allowlist).not.toContain('"--claudeai"');
+    for (const entry of PROVIDER_LAUNCH_TABLE) {
+      expect(Object.keys(entry.native?.loginArgs ?? {})).not.toContain("claudeai");
+    }
   });
 
   it("looks the operation's arguments up in the table rather than accepting them", () => {
@@ -198,6 +209,17 @@ describe("how it starts it", () => {
     }
     const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
     expect(processCode).toContain("env: agentEnvironment(options.env)");
+  });
+
+  it("marks every spawned executable as machine-local, so a hosted build does not trace the whole project into its server function", () => {
+    // Without it, Next's tracer assumes a runtime-computed program path could
+    // be any project file and ships all of them (~1,300 files) in the
+    // `/api/agents/control` function on every deployment — where this module
+    // is present but, behind the hosted-platform veto, never spawns.
+    const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
+    const spawns = processCode.match(/\bspawn\s*\([^,]*,/g) ?? [];
+    expect(spawns.length).toBeGreaterThan(0);
+    for (const call of spawns) expect(call).toMatch(/^spawn\(\/\*turbopackIgnore: true\*\/ \w+,$/);
   });
 
   it("is server-only", () => {

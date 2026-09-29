@@ -38,7 +38,9 @@ const sources = walk(PLATFORM_DIR).map((file) => ({
 describe("the platform layer", () => {
   it("found its files", () => {
     expect(sources.map((entry) => entry.name).sort()).toEqual(
-      ["catalog.ts", "chat.ts", "connector.ts", "lifecycle.ts", "roster.ts"].sort()
+      // authentication.ts: the provider-neutral auth & runtime model (Agent
+      // Authentication & Runtime). Pure derivations over the catalogue.
+      ["authentication.ts", "catalog.ts", "chat.ts", "connector.ts", "lifecycle.ts", "roster.ts"].sort()
     );
   });
 

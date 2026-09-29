@@ -24,9 +24,11 @@ import {
   controlAvailability,
 } from "@/lib/agents/command-centre/remote"
 import { cn } from "@/lib/utils"
+import { ConnectAgentDialog } from "@/components/command-centre/connect-agent-dialog"
 import { SectionHeading, SectionStack } from "./section-ui"
-import { ProviderConnectionCard } from "./provider-connection-card"
-import type { UseProviderConnections } from "@/hooks/use-provider-connections"
+import { AgentAuthenticationCard, AgentConnectionsPanel, useSettingsAgentPlatform } from "./agent-connections-panel"
+import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
+import type { PlatformSurface } from "@/lib/agents/platform/catalog"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import type { ProviderUsage } from "@/lib/agents/connectors/usage"
@@ -366,7 +368,8 @@ function ConnectorDetail({
   onConnect,
   onDisconnect,
   status,
-  connections,
+  agents,
+  onOpenConnection,
 }: {
   view: ConnectorView
   usage: ProviderUsage
@@ -377,8 +380,9 @@ function ConnectorDetail({
   onDisconnect: () => void
   /** The runtime's own report. What decides whether control is available, and where. */
   status: RuntimeStatus | null
-  /** This user's own provider credentials. The third plane, beside observation and control. */
-  connections: UseProviderConnections
+  /** How each agent authenticates and where it stands. The third plane, beside observation and control. */
+  agents: { platform: UseAgentPlatform; surface: PlatformSurface }
+  onOpenConnection: (provider: AgentProviderId) => void
 }) {
   const visual = statusVisual(view.status.kind)
   const lastObservation = relativeTime(view.status.lastObservationAt, now)
@@ -485,19 +489,16 @@ function ConnectorDetail({
         <ControlSummary view={view} status={status} />
 
         {/* The third plane. Independent of both above: a provider can be
-            observable and drivable here and still have no credential from
-            this user, which is exactly the state that stops a session. */}
-        <ProviderConnectionCard
+            observable and drivable here and still not be signed in for this
+            user, which is exactly the state that stops a session. Every
+            provider reads the same way, from the capability model: which
+            methods Hubble offers here, which is in use, which are not
+            available and why — and one way in, the Connect Agent flow. */}
+        <AgentAuthenticationCard
+          platform={agents.platform}
+          surface={agents.surface}
           provider={view.descriptor.provider}
-          providerName={view.descriptor.displayName}
-          connection={connections.forProvider(view.descriptor.provider)}
-          input={connections.connectableFor(view.descriptor.provider)?.input}
-          unavailable={connections.unavailable}
-          durable={connections.durable}
-          busy={connections.busy}
-          onConnect={connections.connect}
-          onRotate={connections.rotate}
-          onDisconnect={connections.disconnect}
+          onOpen={() => onOpenConnection(view.descriptor.provider)}
         />
 
         {(view.status.kind === "unavailable" || view.status.kind === "configuration_required") && (
@@ -548,6 +549,13 @@ export function ConnectorsSection() {
     press a button on this page, not on a timer.
   */
   const connections = useProviderConnections()
+  /*
+    How each agent authenticates and where it stands (Agent Authentication &
+    Runtime): the same platform hook, and the same Connect Agent dialog, as
+    the Command Centre — one flow for every provider and every method.
+  */
+  const agents = useSettingsAgentPlatform(runtime, connections)
+  const [connectFor, setConnectFor] = useState<AgentProviderId | null>(null)
   const [openProvider, setOpenProvider] = useState<AgentProviderId | null>(null)
   const [busy, setBusy] = useState<AgentProviderId | null>(null)
 
@@ -575,19 +583,40 @@ export function ConnectorsSection() {
 
   const open = openProvider ? connectors.view(openProvider) : undefined
 
+  const connectDialog = (
+    <ConnectAgentDialog
+      // Remounted per provider, so it opens on the agent that was chosen.
+      key={`settings-connect:${connectFor ?? ""}`}
+      open={connectFor !== null}
+      onOpenChange={(next) => {
+        if (next) return
+        setConnectFor(null)
+        // A sign-in may have changed what the runtime reports; ask again.
+        void runtime.refresh()
+      }}
+      platform={agents.platform}
+      initialProvider={connectFor}
+      apiKeys={connections}
+    />
+  )
+
   if (open) {
     return (
-      <ConnectorDetail
-        view={open}
-        usage={usageFor(open.descriptor.provider)}
-        now={now}
-        busy={busy === open.descriptor.provider}
-        onBack={() => setOpenProvider(null)}
-        onConnect={() => void handleConnect(open.descriptor.provider)}
-        onDisconnect={() => connectors.disconnect(open.descriptor.provider)}
-        status={runtime.status}
-        connections={connections}
-      />
+      <>
+        <ConnectorDetail
+          view={open}
+          usage={usageFor(open.descriptor.provider)}
+          now={now}
+          busy={busy === open.descriptor.provider}
+          onBack={() => setOpenProvider(null)}
+          onConnect={() => void handleConnect(open.descriptor.provider)}
+          onDisconnect={() => connectors.disconnect(open.descriptor.provider)}
+          status={runtime.status}
+          agents={agents}
+          onOpenConnection={setConnectFor}
+        />
+        {connectDialog}
+      </>
     )
   }
 
@@ -600,6 +629,11 @@ export function ConnectorsSection() {
         title="Agents"
         description="Connect the agents you use — Claude Code, Codex, Gemini CLI, Grok Build — and see what each one can do here."
       />
+
+      <AgentConnectionsPanel platform={agents.platform} surface={agents.surface} onOpen={setConnectFor} />
+      {connectDialog}
+
+      <p className="mb-2 text-label text-muted-foreground">Activity observation</p>
 
       {connected.length === 0 && (
         <div className="mb-6 rounded-md border border-border bg-card p-4">

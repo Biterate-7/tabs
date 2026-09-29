@@ -1,5 +1,6 @@
 import { isAgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { AdapterAuthIssue, AdapterAuthKind } from "@/lib/agents/control/authentication";
 import type { AgentCapability } from "@/lib/agents/control/capabilities";
 import type { AgentAttachedContext } from "@/lib/agents/control/context";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
@@ -204,6 +205,15 @@ export type RuntimeEnvironmentKind = "browser" | "local" | "remote" | "hosted" |
  */
 export type ProviderAuthenticationState = "unknown" | "authenticated" | "required";
 
+/**
+ * Which kind of sign-in the agent says it is using. A closed set — never the
+ * account, organisation or plan. See `AdapterAuthKind`.
+ */
+export type ProviderAuthKind = AdapterAuthKind;
+
+/** Why a signed-in agent still cannot run a session here. See `AdapterAuthIssue`. */
+export type ProviderAuthIssue = AdapterAuthIssue;
+
 export type RuntimeProviderStatus = {
   provider: AgentProviderId;
   connection:
@@ -223,6 +233,18 @@ export type RuntimeProviderStatus = {
    * desktop app (Phase J.1). Absent means false.
    */
   nativeSignIn?: boolean;
+  /**
+   * Which kind of sign-in the agent reported (Agent Authentication &
+   * Runtime). Absent when the agent does not say — the ACP agents' probe
+   * learns *whether* they are signed in, not how.
+   */
+  authKind?: ProviderAuthKind;
+  /**
+   * Set when the agent is signed in with a kind of credential Hubble may not
+   * use for it (a Claude subscription). The runtime refuses sessions on it;
+   * this says why, so the UI can offer the permitted method instead.
+   */
+  authIssue?: ProviderAuthIssue;
 };
 
 /**

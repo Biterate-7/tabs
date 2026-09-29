@@ -17,7 +17,7 @@ runtime, unchanged, through the smallest bridge that keeps every boundary.
         ▼
  Sidecar: tabdump-agent-node + agent-runtime/runtime.mjs   (Windows job object:
    createDesktopRuntime → the Phase J RuntimeHost            killed with the app)
-     ├── Claude Code  — Agent SDK → the user's installed claude.exe, own login
+     ├── Claude Code  — Agent SDK → the user's installed claude.exe, own Console login (never a subscription)
      └── Gemini · Codex · Grok — the one ACP adapter, launch allowlist
 ```
 
@@ -34,7 +34,7 @@ rolldown) and executed by a Node binary Hubble ships (`externalBin`).
 
 | Requirement | Where |
 | --- | --- |
-| No shell execution | Rust spawns one fixed binary with one fixed script; the sidecar's launch layer uses `shell: false` with literal argv. Claude's sign-in runs `claude auth login --claudeai` / `--console` from the allowlist table — the caller names an operation, never arguments. |
+| No shell execution | Rust spawns one fixed binary with one fixed script; the sidecar's launch layer uses `shell: false` with literal argv. Claude's sign-in runs `claude auth login --console` from the allowlist table — the caller names an operation, never arguments. The Claude.ai subscription login is not in the table: Anthropic does not permit Agent-SDK apps to offer it (see `agent-authentication.md`). |
 | Fixed allowlist / argv | `launch/allowlist.ts` (+ `native` entry for Claude's own CLI), pinned by `launch/security.test.ts`. |
 | Stripped environment | Rust: `env_clear()` + `SIDECAR_ENV_ALLOWLIST`; sidecar: `agentEnvironment` again per agent. No key, token, `NODE_OPTIONS` or Hubble secret passes. |
 | No raw credentials stored | Claude uses its **own** login (`claude auth login` opens Anthropic's page in the browser). Hubble only asks `claude auth status --json` and reads the one `loggedIn` boolean. |

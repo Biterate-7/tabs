@@ -47,6 +47,48 @@ import type {
 
 export const RUNTIME_ENDPOINT = "/api/agents/control";
 
+/**
+ * How long each command may take before the client gives up and answers
+ * `timeout` (Agent Authentication & Runtime).
+ *
+ * Every command is bounded, so no button and no status can wait forever on a
+ * request that will never come back — the other half of the "stuck on
+ * Connecting" fix (the host half is `settleConnects`). Each bound sits above
+ * the server's own bound for the same work, so a slow-but-finishing answer is
+ * not cut off early:
+ *
+ *   - `connect_provider` starts an agent to ask whether it is signed in (ACP:
+ *     launch + two 30 s handshakes; Claude: a 20 s status check).
+ *   - `authenticate_provider` waits on a person signing in in a browser — the
+ *     agents' own sign-in waits are 10 minutes.
+ *   - `create_session` launches an agent and settles its mode.
+ *
+ * A reply that arrives after its deadline is dropped. The host still
+ * finished the work, and the next status read shows it.
+ */
+export const COMMAND_TIMEOUT_MS: Readonly<Record<RuntimeCommandName, number>> = {
+  get_status: 20_000,
+  list_sessions: 20_000,
+  get_session: 20_000,
+  get_events: 20_000,
+  authorize_projects: 20_000,
+  create_session: 120_000,
+  resume_session: 120_000,
+  send_message: 60_000,
+  cancel_run: 30_000,
+  attach_context: 20_000,
+  detach_context: 20_000,
+  respond_to_approval: 30_000,
+  dispose_session: 30_000,
+  link_observation: 20_000,
+  detect_providers: 30_000,
+  connect_provider: 120_000,
+  authenticate_provider: 11 * 60_000,
+  disconnect_provider: 30_000,
+  sync_session_context: 20_000,
+  complete_context_action: 20_000,
+};
+
 export type RuntimeClientOptions = {
   endpoint?: string;
   /** Injected so tests need no network and no global. */
@@ -61,7 +103,12 @@ export type RuntimeClientOptions = {
    * UI cannot tell which shell it is in.
    */
   post?: (request: RuntimeRequest) => Promise<unknown>;
+  /** Overrides `COMMAND_TIMEOUT_MS`, per command. For tests. */
+  timeouts?: Partial<Record<RuntimeCommandName, number>>;
 };
+
+/** What `post` resolves to when the deadline passed first. Never a value the host can send. */
+const TIMED_OUT = Symbol("timed-out");
 
 export type RuntimeClient = {
   /** The host identity this client is currently addressing, once it has one. */
@@ -92,7 +139,7 @@ export function createRuntimeClient(options: RuntimeClientOptions = {}): Runtime
 
   let runtimeId: string | undefined;
 
-  async function post(request: RuntimeRequest): Promise<unknown> {
+  async function post(request: RuntimeRequest, signal: AbortSignal): Promise<unknown> {
     if (options.post) return options.post(request);
     const response = await transport(endpoint, {
       method: "POST",
@@ -102,9 +149,27 @@ export function createRuntimeClient(options: RuntimeClientOptions = {}): Runtime
       // path, no environment.
       credentials: "same-origin",
       body: JSON.stringify(request),
+      signal,
     });
 
     return response.json();
+  }
+
+  /** `post`, bounded by the command's deadline. Resolves `TIMED_OUT` rather than hanging. */
+  async function postWithin(request: RuntimeRequest, ms: number): Promise<unknown> {
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        resolve(TIMED_OUT);
+      }, ms);
+    });
+    try {
+      return await Promise.race([post(request, abort.signal), deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   async function send<N extends RuntimeCommandName>(
@@ -115,12 +180,14 @@ export function createRuntimeClient(options: RuntimeClientOptions = {}): Runtime
 
     let body: unknown;
     try {
-      body = await post(request);
+      body = await postWithin(request, options.timeouts?.[command.name] ?? COMMAND_TIMEOUT_MS[command.name]);
     } catch {
       // The thrown value is deliberately not read. A network error's message
       // can carry a URL, and a URL can carry a host and a port.
       return runtimeFailure<never>("runtime_disconnected") as RuntimeCommandResult<N>;
     }
+
+    if (body === TIMED_OUT) return runtimeFailure<never>("timeout") as RuntimeCommandResult<N>;
 
     if (!body || typeof body !== "object" || !("ok" in body)) {
       return runtimeFailure<never>("runtime_disconnected") as RuntimeCommandResult<N>;

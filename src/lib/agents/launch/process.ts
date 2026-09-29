@@ -37,6 +37,29 @@ import type { ResolverFs } from "./resolve";
  *
  * stderr is drained and discarded — it is the agent's diagnostic channel,
  * it may echo anything, and nothing in Hubble displays it.
+ *
+ * ## Why every `spawn` carries `turbopackIgnore`
+ *
+ * This module is in the `/api/agents/control` server function on every
+ * deployment, because that one route serves the local, remote and refused
+ * runtimes alike (runtime/server.ts). On a hosted platform it never spawns:
+ * `decideServerRuntime` vetoes local execution on any hosted marker (Vercel
+ * included) before the opt-in is read, so the local arm that builds these
+ * launchers is unreachable there.
+ *
+ * Next's file tracing cannot know that. Given a `spawn` whose executable is
+ * computed at runtime, it assumes the program might be any file in the
+ * project and traces the *whole project* into the function — every source
+ * file, doc, test, the extension and the Tauri shell (measured: ~1,300 files,
+ * ~15 MB, where every other route traces ~100–170 files, ~2–3 MB). None of it
+ * could ever be the program: the executable is a binary the user installed,
+ * found on their PATH, or `process.execPath` running an allowlisted npm
+ * package's script from the user's own global prefix — always outside the
+ * project, and only ever on the user's own machine. So the executable
+ * argument is marked `turbopackIgnore`: it tells the tracer the truth about
+ * that path. It changes nothing at runtime, and it is the same annotation the
+ * Claude Code reader uses for its machine-local paths.
+ * `launch/security.test.ts` fails if a `spawn` here loses it.
  */
 
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -147,7 +170,8 @@ export async function runNativeOperation(
   return new Promise<NativeRunResult>((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, [...args], {
+      // A machine-local executable, never a project file (see the module note).
+      child = spawn(/*turbopackIgnore: true*/ file, [...args], {
         cwd: tmpdir(),
         env: agentEnvironment(options.env) as NodeJS.ProcessEnv,
         shell: false,
@@ -253,7 +277,8 @@ export function createAcpProcessLauncher(options: ProcessLauncherOptions): AcpLa
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, args, {
+      // A machine-local executable, never a project file (see the module note).
+      child = spawn(/*turbopackIgnore: true*/ file, args, {
         cwd,
         // The allowlisted set and nothing else. `NODE_ENV` is deliberately
         // among the things an agent does not inherit.

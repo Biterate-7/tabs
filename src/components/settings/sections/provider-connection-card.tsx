@@ -33,7 +33,8 @@ import type { ConnectInput } from "@/hooks/use-provider-connections"
  *
  * ## The naming, which is a correctness question
  *
- * The button says **Connect Anthropic API**, never "Connect Claude account".
+ * The button says **Connect Anthropic API key** (the method's own label, from
+ * the credential adapter), never "Connect Claude account".
  * Hubble holds an API credential the user issued to themselves. It does not
  * hold a delegated grant, cannot act as them, and cannot see their Claude.ai
  * subscription — and the second phrasing would claim all three. The
@@ -77,6 +78,11 @@ export type ProviderConnectionCardProps = {
     secret: string
   ) => Promise<{ ok: boolean; validation?: CredentialValidation }>
   onDisconnect: (connectionId: string) => Promise<boolean>
+  /**
+   * The heading, when the card is one method among several (the connect
+   * dialog's API-key method). Default "Connection", on the Providers page.
+   */
+  title?: string
 }
 
 export function ProviderConnectionCard({
@@ -90,6 +96,7 @@ export function ProviderConnectionCard({
   onConnect,
   onRotate,
   onDisconnect,
+  title = "Connection",
 }: ProviderConnectionCardProps) {
   // `connect` opens the form for a first credential; `rotate` opens the same
   // form for a replacement. One form, two intents, because the field, the
@@ -136,7 +143,7 @@ export function ProviderConnectionCard({
   return (
     <div className="rounded-md border border-border bg-card px-4 py-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-body text-foreground">Connection</p>
+        <p className="text-body text-foreground">{title}</p>
         <span
           className={cn(
             "text-meta",
@@ -150,13 +157,16 @@ export function ProviderConnectionCard({
       {/* No credential adapter for this provider. Said plainly rather than
           shown as a Connect button that would fail — §20's "do not imply
           capabilities that do not exist". */}
-      {!input ? (
-        <p className="mt-1 text-meta text-muted-foreground">
-          Hubble cannot hold credentials for {providerName} yet.
-        </p>
-      ) : unavailable ? (
+      {/* A deployment that cannot store credentials at all says that first:
+          it is the truer reason, and the route that would name an adapter
+          is the very thing that did not answer. */}
+      {unavailable ? (
         <p className="mt-1 text-meta text-muted-foreground">
           This deployment is not set up to store provider credentials.
+        </p>
+      ) : !input ? (
+        <p className="mt-1 text-meta text-muted-foreground">
+          Hubble cannot hold credentials for {providerName} yet.
         </p>
       ) : connection ? (
         <ConnectedDetail connection={connection} durable={durable} />
@@ -190,7 +200,9 @@ export function ProviderConnectionCard({
           ) : (
             <Button type="button" size="sm" disabled={busy} onClick={() => setForm("connect")}>
               <KeyRound className="size-3.5" aria-hidden />
-              Connect {AUTH_METHOD_LABEL.api_key}
+              {/* The method's own name — "Connect Anthropic API key" — never
+                  "Connect Claude account": this is a key the user issued. */}
+              Connect {input.label}
             </Button>
           )}
         </div>
@@ -285,8 +297,8 @@ function statusWord(
   input: ConnectionInputShape | undefined,
   unavailable: boolean
 ): string {
-  if (!input) return "Not supported"
   if (unavailable) return "Unavailable"
+  if (!input) return "Not supported"
   if (!connection) return "Not connected"
   return CONNECTION_STATUS_LABEL[connection.status]
 }
