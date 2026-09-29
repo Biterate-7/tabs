@@ -44,7 +44,8 @@ reads. An entry says how a person connects an agent:
 | Field | Meaning |
 | --- | --- |
 | `transport` | `sdk` (Claude), `acp` (Gemini, Grok, Codex) or `mcp` (custom: the agent connects to Hubble) |
-| `signIn` | `native` (the agent's own login, started through the protocol), `provider-key` (Claude on the web, BYOC) or `mcp-token` |
+| `runtimeName` | The program that runs the agent and owns its sign-in (Agent Authentication & Runtime) |
+| `auth` | Every authentication method the provider documents, each `offered` / `external` / `unsupported` (with the reason) per surface — see [agent-authentication.md](agent-authentication.md). The sign-in *shape* (`native`, `provider-key`, `mcp-token`) is derived from it |
 | `sessions` | `{available: true}` or `{available: false, reason}` — mirrors the server's approval policy, see §5 |
 | `surfaces` / `unavailableOn` | where it can work (`web`, `desktop`) and the sentence for where it cannot |
 | `features` | what Hubble does with it once connected, shown on the Approve step |
@@ -53,7 +54,7 @@ reads. An entry says how a person connects an agent:
 
 | Provider | Transport | Signs in with | Desktop | Sessions |
 | --- | --- | --- | --- | --- |
-| Claude Code | Agent SDK | Claude Code's own login (desktop) / the user's own key (web) | yes | yes |
+| Claude Code | Agent SDK | An Anthropic Console account through Claude Code's own login (desktop) / the user's own API key (web). **Not** a Claude subscription — see [agent-authentication.md](agent-authentication.md) §3 | yes | yes |
 | Gemini CLI | ACP (`gemini --acp --approval-mode default`) | Google login, run by Gemini CLI | yes | yes |
 | Grok Build | ACP (`grok agent --no-leader stdio`) | Grok login, run by Grok Build | yes | yes |
 | Codex | ACP (`codex-acp`) | ChatGPT login, run by codex-acp | yes | **no** — see §5 |
@@ -110,6 +111,9 @@ An agent whose sessions are unavailable (Codex) says so in the agent list and
 on the Detect and Sign in steps, and the flow stops there: its real state is
 still asked for and shown, but it offers no sign-in, no Continue and no
 approval — nobody is asked to sign in to an agent that cannot start a session.
+A Codex that *is* signed in (in its own terminal) is `sessions_unavailable`:
+"Signed in · sessions unavailable", never "Connected" or "Awaiting your
+approval" — see `agent-authentication.md` §4.
 Should a future Codex adapter offer a mode that asks before every edit and
 command, enabling it is one launch-table entry (`approval: asking-mode`) and
 the registry's `sessions`; nothing else changes.
@@ -123,7 +127,7 @@ the agent itself, through the runtime:
 | Agent | How Hubble asks | How the user signs in |
 | --- | --- | --- |
 | ACP agents | `session/new` on a probe connection in an empty scratch directory: `-32000` = sign-in required, a session = signed in, anything else = `unknown` | ACP `authenticate` with a method id the agent advertised; the agent opens its own sign-in page |
-| Claude (desktop) | `claude auth status --json` → the single `loggedIn` boolean | `claude auth login --claudeai` / `--console` from the allowlist |
+| Claude (desktop) | `claude auth status --json` → `loggedIn`, and which kind of login (`authMethod`, `apiProvider`, whether `subscriptionType` is present); a subscription login is refused as not permitted | `claude auth login --console` from the allowlist (the `--claudeai` subscription login was removed — Agent Authentication & Runtime) |
 | Claude (web) | the user's stored provider key (BYOC) | Settings → Agents |
 
 Details that matter:
@@ -190,6 +194,7 @@ that keeps it from getting there — **modes**:
 | Gemini CLI 0.61.0 | `default` ("Prompts for approval"); others: `autoEdit`, `yolo`, `plan` | `--approval-mode default` — the CLI flag overrides a user's `yolo`/`auto_edit` setting |
 | Grok Build 1.0.41 | `ask`, then `default` ("currently equivalent to Ask"); others: `auto` (a classifier approves unasked), always-approve | `--no-leader` — see §7 |
 | codex-acp 1.13.1 | **none** | — |
+| codex-acp 2.0.0 | **none** — its new `read-only` asks before edits, not before commands or reads (below) | — |
 
 - A session starts only in an asking mode: already in one, or switched to
   the first the agent offers. An agent that offers none, reports no modes, or
@@ -209,6 +214,19 @@ that keeps it from getting there — **modes**:
   provider-specific check, and the adapter itself refuses before launching
   anything. Codex can still be detected, reached and signed in to; the UI
   says plainly that Hubble will not start sessions with it, and why.
+- **Re-checked 2026-09-29 against codex-acp 2.0.0** (released 2026-09-28),
+  which adds a genuine `read-only` mode: sandbox `readOnly`, approval
+  `on-request`, reviewer `user`. Edits now ask. Commands and reads still do
+  not: OpenAI's approvals documentation says that in read-only + on-request
+  Codex "can read files and run commands within the read-only sandbox" without
+  asking, and the read-only sandbox reads the whole disk, not the project. A
+  command Codex does not classify as a read reaches ACP as an `execute` call
+  already `in_progress` with no `session/request_permission`, which the
+  enforcement rule above stops — so a Codex session would start and then be
+  stopped at its first command. The only stricter policy, `untrusted`, has
+  been retired by OpenAI. Codex therefore stays `approval: unavailable`.
+  What would change it: a codex-acp mode that asks before every command and
+  confines reads to the working directory.
 
 ## 6. Workspace scoping
 
@@ -278,9 +296,12 @@ architecture:
    **Non-ACP agent:** write a control adapter against `AgentControlAdapter`
    (plus the `authentication`/`approval-details`/`session-release` extensions
    it genuinely has), and wire it where Claude's is.
-3. **Registry:** add a `PLATFORM_PROVIDERS` entry — name, transport, sign-in,
+3. **Registry:** add a `PLATFORM_PROVIDERS` entry — name, `runtimeName`,
+   transport, `auth` (every documented method, each offered / external /
+   unsupported with its reason — [agent-authentication.md](agent-authentication.md) §2),
    `sessions`, `surfaces`, `features`, install command (a package manager).
-   Add the provider id to `AgentProviderId` and an icon.
+   `validateAgentDefinition` must return no violations. Add the provider id to
+   `AgentProviderId` and an icon.
 4. **Tests:** extend `launch/security.test.ts` (the pinned table) and let
    `registry.test.ts` hold the two sides together; add the agent to
    `launch/integration.local.test.ts`.
@@ -359,7 +380,8 @@ the Rust shell tests pass (9 passed, 1 opt-in ignored).
 
 - **Codex sessions** are refused until an adapter offers a mode that asks
   before every edit and command (or Hubble grows a `codex app-server`
-  adapter, whose approvals are real — a separate phase).
+  adapter, whose approvals are real — a separate phase). codex-acp 2.0.0's
+  `read-only` mode closes the edit half only (§5).
 - **User-configured allow rules inside an agent** (Gemini policy files,
   Grok allow rules) can let a tool run without asking even in an asking mode.
   Hubble stops that session when the tool starts; the action itself may

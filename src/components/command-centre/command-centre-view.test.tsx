@@ -275,8 +275,12 @@ describe("creating a session", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     // Present but honest about what it cannot do, rather than hidden or
-    // offered and then failing.
-    expect(await screen.findByText(/cannot start sessions yet/i)).toBeTruthy()
+    // offered and then failing — with the exact reason, not "yet".
+    const dialog = await screen.findByRole("dialog", { name: /new agent session/i })
+    expect(within(dialog).getByText("Sessions unavailable")).toBeTruthy()
+    expect(within(dialog).getByText(/Codex does not ask before every action/)).toBeTruthy()
+    expect(within(dialog).queryByText(/cannot start sessions yet/i)).toBeNull()
+    expect((within(dialog).getByRole("radio", { name: /Codex/ }) as HTMLInputElement).disabled).toBe(true)
   })
 
   it("reports a runtime refusal instead of pretending the session exists", async () => {
@@ -316,19 +320,30 @@ describe("creating a session", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
 
-    // Accurate about what is missing. Not "signed in": Hubble never asks for
-    // an account, it asks for the user's own credentials.
-    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
+    // Accurate about what is missing, for this agent, in the brief's words —
+    // "Claude Code needs you to sign in. [Sign in]" — without naming a
+    // method: which one it supports here is the capability model's to say.
+    expect(await screen.findByText(/Claude Code needs you to sign in/i)).toBeTruthy()
 
     // Start is unavailable, and there is somewhere to go instead.
     const start = await screen.findByRole("button", { name: /start session/i })
     expect(start.hasAttribute("disabled")).toBe(true)
 
-    await user.click(await screen.findByRole("button", { name: /^connect$/i }))
-    expect(onOpenConnectors).toHaveBeenCalled()
+    // Sign in opens the same provider-neutral flow as everywhere else, on
+    // this agent, offering the method it supports here (the web: the user's
+    // own API key) — not a detour to Settings.
+    await user.click(await screen.findByRole("button", { name: /^sign in$/i }))
+    const dialog = await screen.findByRole("dialog", { name: /Connect Claude Code/i })
+    expect(within(dialog).getAllByText(/Anthropic API key/).length).toBeGreaterThan(0)
+    // No credential route behind jsdom: the key form says so, honestly,
+    // rather than offering a Connect that would fail.
+    expect(within(dialog).getByText(/not set up to store provider credentials/i)).toBeTruthy()
+    // The subscription route is listed as not available, with the reason.
+    expect(within(dialog).getByText(/doesn't allow apps built on the Claude Agent SDK/i)).toBeTruthy()
+    expect(onOpenConnectors).not.toHaveBeenCalled()
   })
 
-  it("does not offer a connect button on a surface with nowhere to send the user", async () => {
+  it("offers the in-place connect flow even on a surface with no Settings to send the user to", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({
       status: scriptedStatus({
@@ -347,10 +362,12 @@ describe("creating a session", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
 
-    // The sentence still appears — the user must know why Start is disabled —
-    // but an action that goes nowhere does not.
-    expect(await screen.findByText(/isn't connected yet/i)).toBeTruthy()
-    expect(screen.queryByRole("button", { name: /^connect$/i })).toBeNull()
+    // The sentence says why Start is disabled, and the fix no longer depends
+    // on a Settings page being reachable: Connect Agent opens right here
+    // (Agent Authentication & Runtime).
+    expect(await screen.findByText(/needs you to sign in/i)).toBeTruthy()
+    await user.click(await screen.findByRole("button", { name: /^sign in$/i }))
+    expect(await screen.findByRole("dialog", { name: /Connect Claude Code/i })).toBeTruthy()
   })
 
   it("ends a session through the runtime", async () => {

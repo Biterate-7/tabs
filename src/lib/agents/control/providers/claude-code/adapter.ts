@@ -1,6 +1,7 @@
 import { hasAdapterApprovalDetails } from "../../approval-details";
 import type { ReattachSessionRequest } from "../../binding";
 import { capabilitySet } from "../../capabilities";
+import { withTimeout } from "../../connect-settle";
 import { controlError, controlFailure } from "../../types";
 import { containsPath } from "../../projects";
 import { normalizeClaudeMessage, providerSessionIdOf } from "./normalize";
@@ -29,6 +30,7 @@ import type {
   ClaudePermissionDecision,
   ClaudePermissionRequest,
   ClaudeRuntime,
+  ClaudeRuntimeAvailability,
   ClaudeRuntimeError,
   ClaudeRuntimeHandle,
   ClaudeRuntimeMessage,
@@ -152,7 +154,16 @@ export type ClaudeCodeControlAdapterOptions = {
   now?: () => number;
   /** Mints event and approval ids. Injected so tests are deterministic. */
   createId?: () => string;
+  /**
+   * How long `connect()` may wait on the runtime's availability answer before
+   * it settles into `error` with a timeout. Never unbounded: a status that can
+   * stay `connecting` is a status a user can be shown forever.
+   */
+  connectTimeoutMs?: number;
 };
+
+/** The default bound on `connect()`. A credential lookup and a module load, not a model turn. */
+export const CLAUDE_CONNECT_TIMEOUT_MS = 15_000;
 
 /**
  * The Claude adapter, plus the one accessor the generic contract must not
@@ -222,6 +233,9 @@ export type ClaudeCodeControlAdapter = AgentControlAdapter & {
    * `invalid-session`. Neither falls through to starting anything.
    */
   reattachSession(request: ReattachSessionRequest): Promise<ControlResult<SessionHandle>>;
+
+  /** Resolves once no `connect()` is in flight. See `control/connect-settle.ts`. */
+  connectSettled(): Promise<void>;
 };
 
 export function createClaudeCodeControlAdapter(
@@ -595,6 +609,74 @@ export function createClaudeCodeControlAdapter(
     return { ok: true, value: { sessionId, status: "ready" } };
   }
 
+  /** The connect in flight, shared by every caller until it settles. */
+  let inFlightConnect: Promise<ControlResult<ControlStatus>> | undefined;
+  const connectTimeoutMs = options.connectTimeoutMs ?? CLAUDE_CONNECT_TIMEOUT_MS;
+
+  async function connectOnce(): Promise<ControlResult<ControlStatus>> {
+    setStatus({ kind: "connecting", since: now() });
+
+    // Three states where there used to be two. "The SDK is not installed"
+    // and "you have not connected your Anthropic credentials" are different
+    // problems with different fixes, and collapsing them into `unavailable`
+    // sent a user who needed to press a button looking for an installer
+    // instead. A runtime that cannot tell them apart is read through
+    // `isAvailable`, exactly as before.
+    //
+    // Bounded (Agent Authentication & Runtime): a lookup that never answers
+    // settles into `error` with a timeout rather than leaving the status on
+    // `connecting`, which a UI would show for as long as it is open.
+    const asked: Promise<ClaudeRuntimeAvailability | "timeout"> = (
+      options.runtime.describeAvailability
+        ? options.runtime.describeAvailability()
+        : options.runtime
+            .isAvailable()
+            .then((available) => (available ? ({ kind: "available" } as const) : ({ kind: "unavailable" } as const)))
+    ).catch(() => ({ kind: "unavailable" }) as const);
+    const availability = await withTimeout(asked, connectTimeoutMs, () => "timeout" as const);
+
+    if (availability === "timeout") {
+      const next: ControlStatus = {
+        kind: "error",
+        since: now(),
+        lastError: controlError("timeout"),
+        detail: "Claude Code did not answer in time.",
+      };
+      setStatus(next);
+      return controlFailure<ControlStatus>("timeout");
+    }
+
+    if (availability.kind === "credential-required") {
+      const next: ControlStatus = {
+        kind: "configuration_required",
+        since: now(),
+        lastError: controlError("configuration"),
+        // No environment variable, no provider name, no reason code. The
+        // Command Centre turns `configuration_required` into the
+        // "Claude isn't connected yet · [Connect Claude]" affordance; a
+        // sentence here would be a second, drifting copy of that.
+        detail: "Connect your own Anthropic credentials to run Claude here.",
+      };
+      setStatus(next);
+      return controlFailure<ControlStatus>("configuration");
+    }
+
+    if (availability.kind === "unavailable") {
+      const next: ControlStatus = {
+        kind: "unavailable",
+        since: now(),
+        lastError: controlError("unsupported"),
+        detail: "Claude Code is not available on this machine.",
+      };
+      setStatus(next);
+      return controlFailure<ControlStatus>("unsupported");
+    }
+
+    const next: ControlStatus = { kind: "connected", since: now() };
+    setStatus(next);
+    return { ok: true, value: next };
+  }
+
   return {
     provider: "claude-code",
 
@@ -602,50 +684,17 @@ export function createClaudeCodeControlAdapter(
 
     getConnectionStatus: () => status,
 
-    async connect() {
-      setStatus({ kind: "connecting", since: now() });
+    connectSettled() {
+      return inFlightConnect ? inFlightConnect.then(() => undefined) : Promise.resolve();
+    },
 
-      // Three states where there used to be two. "The SDK is not installed"
-      // and "you have not connected your Anthropic credentials" are different
-      // problems with different fixes, and collapsing them into `unavailable`
-      // sent a user who needed to press a button looking for an installer
-      // instead. A runtime that cannot tell them apart is read through
-      // `isAvailable`, exactly as before.
-      const availability = options.runtime.describeAvailability
-        ? await options.runtime.describeAvailability()
-        : ((await options.runtime.isAvailable())
-            ? ({ kind: "available" } as const)
-            : ({ kind: "unavailable" } as const));
-
-      if (availability.kind === "credential-required") {
-        const next: ControlStatus = {
-          kind: "configuration_required",
-          since: now(),
-          lastError: controlError("configuration"),
-          // No environment variable, no provider name, no reason code. The
-          // Command Centre turns `configuration_required` into the
-          // "Claude isn't connected yet · [Connect Claude]" affordance; a
-          // sentence here would be a second, drifting copy of that.
-          detail: "Connect your own Anthropic credentials to run Claude here.",
-        };
-        setStatus(next);
-        return controlFailure<ControlStatus>("configuration");
-      }
-
-      if (availability.kind === "unavailable") {
-        const next: ControlStatus = {
-          kind: "unavailable",
-          since: now(),
-          lastError: controlError("unsupported"),
-          detail: "Claude Code is not available on this machine.",
-        };
-        setStatus(next);
-        return controlFailure<ControlStatus>("unsupported");
-      }
-
-      const next: ControlStatus = { kind: "connected", since: now() };
-      setStatus(next);
-      return { ok: true, value: next };
+    connect() {
+      // One connect at a time: a second caller shares the first's answer
+      // rather than racing it to set the status.
+      inFlightConnect ??= connectOnce().finally(() => {
+        inFlightConnect = undefined;
+      });
+      return inFlightConnect;
     },
 
     async disconnect() {

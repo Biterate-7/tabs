@@ -62,7 +62,13 @@ function scriptedSdk(record: { options?: Record<string, unknown>; decisions: str
   };
 }
 
-function build(loggedIn: { value: boolean }) {
+/**
+ * `claude auth status` as the scripted CLI prints it. `account` stands for a
+ * permitted first-party sign-in (a Console account) — any `authMethod` other
+ * than the verified subscription marker, with no plan; `subscription` is the
+ * verified Claude.ai shape, which Hubble must refuse.
+ */
+function build(loggedIn: { value: boolean }, kind: "account" | "subscription" = "account") {
   const operations: NativeOperation[] = [];
   const record = { decisions: [] as string[], aborted: false } as {
     options?: Record<string, unknown>;
@@ -73,7 +79,15 @@ function build(loggedIn: { value: boolean }) {
     run: async (operation) => {
       operations.push(operation);
       if (operation.kind === "login") loggedIn.value = true;
-      return { ok: true, exitCode: 0, stdout: JSON.stringify({ loggedIn: loggedIn.value, email: "a@b.c" }) };
+      const signedIn =
+        kind === "subscription"
+          ? { authMethod: "claude.ai", apiProvider: "firstParty", subscriptionType: "pro" }
+          : { authMethod: "not-a-subscription", apiProvider: "firstParty" };
+      return {
+        ok: true,
+        exitCode: loggedIn.value ? 0 : 1,
+        stdout: JSON.stringify({ loggedIn: loggedIn.value, email: "a@b.c", ...(loggedIn.value ? signedIn : {}) }),
+      };
     },
   });
   const runtime = createDesktopRuntime({
@@ -130,7 +144,7 @@ describe("the desktop runtime", () => {
 });
 
 describe("Claude Code signs in with its own login", () => {
-  it("reports sign-in required, offers the native methods, and signs in through `claude auth login`", async () => {
+  it("reports sign-in required, offers only the Console sign-in, and signs in through `claude auth login --console`", async () => {
     const loggedIn = { value: false };
     const { send, operations } = build(loggedIn);
 
@@ -141,10 +155,7 @@ describe("Claude Code signs in with its own login", () => {
         connection: "configuration_required",
         authentication: "required",
         nativeSignIn: true,
-        authMethods: [
-          { id: "claudeai", name: "Sign in with Claude" },
-          { id: "console", name: "Sign in with Anthropic Console" },
-        ],
+        authMethods: [{ id: "console", name: "Sign in with Anthropic Console" }],
       },
     });
     expect(await send({ name: "create_session", provider: "claude-code" })).toMatchObject({
@@ -152,9 +163,46 @@ describe("Claude Code signs in with its own login", () => {
       error: { code: "authentication_required" },
     });
 
-    const signedIn = await send({ name: "authenticate_provider", provider: "claude-code", methodId: "claudeai" });
-    expect(signedIn).toMatchObject({ ok: true, value: { connection: "connected", authentication: "authenticated" } });
-    expect(operations).toContainEqual({ kind: "login", methodId: "claudeai" });
+    const signedIn = await send({ name: "authenticate_provider", provider: "claude-code", methodId: "console" });
+    expect(signedIn).toMatchObject({
+      ok: true,
+      value: { connection: "connected", authentication: "authenticated", authKind: "account" },
+    });
+    expect((signedIn.value as { authIssue?: string }).authIssue).toBeUndefined();
+    expect(operations).toContainEqual({ kind: "login", methodId: "console" });
+    // The account the CLI printed never leaves the runtime.
+    expect(JSON.stringify(signedIn)).not.toContain("a@b.c");
+  });
+
+  it("refuses a Claude subscription sign-in: signed in, not permitted, and no session starts on it", async () => {
+    const { send, operations } = build({ value: true }, "subscription");
+
+    const connected = await send({ name: "connect_provider", provider: "claude-code" });
+    expect(connected).toMatchObject({
+      ok: true,
+      value: {
+        connection: "configuration_required",
+        authentication: "authenticated",
+        authKind: "subscription",
+        authIssue: "method_not_permitted",
+      },
+    });
+    const status = (await send({ name: "get_status" })) as { value?: { providers: Record<string, unknown>[] } };
+    expect(status.value?.providers.find((entry) => entry.provider === "claude-code")).toMatchObject({
+      authIssue: "method_not_permitted",
+    });
+
+    // Refused before anything starts, and nothing is switched for the user.
+    expect(await send({ name: "create_session", provider: "claude-code" })).toMatchObject({
+      ok: false,
+      error: { code: "authentication_required" },
+    });
+    expect(operations.some((operation) => operation.kind === "login")).toBe(false);
+    // The subscription login cannot be started through Hubble either.
+    expect(
+      await send({ name: "authenticate_provider", provider: "claude-code", methodId: "claudeai" })
+    ).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(JSON.stringify(connected)).not.toMatch(/a@b\.c|claude\.ai|"pro"/);
   });
 
   it("refuses a sign-in method that is not in the allowlist, and runs nothing for it", async () => {

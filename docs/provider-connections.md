@@ -53,8 +53,12 @@ works.
 ## 2. Authentication model
 
 **Claude, with the user's own Anthropic API key.** That is the one method
-implemented, and the naming in the product matches it exactly: the button says
-**Connect Anthropic API**, never "Connect Claude account".
+Hubble stores, and the naming in the product matches it exactly: the button
+says **Connect Anthropic API key**, never "Connect Claude account". It is now
+one method of Claude's in the provider-neutral connect flow, beside the
+desktop app's Console sign-in through Claude Code — see
+[agent-authentication.md](agent-authentication.md), which also records why a
+Claude subscription is not offered.
 
 The distinction is a correctness question, not a style one. Hubble holds an
 API credential the user issued to themselves. It does not hold a delegated

@@ -182,11 +182,20 @@ describe("origin is a function of the correlation, not of the provider", () => {
 })
 
 describe("provider rows (Phase J.2)", () => {
-  const base = { provider: "gemini" as const, available: true, capabilities: [] }
+  const base = { provider: "gemini" as const, available: true, capabilities: ["create_session" as const] }
   it("says sign-in required for an agent that was reached but says it is signed out", () => {
     expect(providerRowState({ ...base, connection: "connected", authentication: "required" })).toEqual({ label: "Sign-in required", tone: "idle" })
   })
   it("says connected only when the agent did not say otherwise", () => {
     expect(providerRowState({ ...base, connection: "connected", authentication: "authenticated" }).label).toBe("Connected")
+  })
+  it("never says connected for a signed-in agent whose adapter cannot start a session (Codex)", () => {
+    const codex = { provider: "openai-codex" as const, available: true, capabilities: [] }
+    expect(providerRowState({ ...codex, connection: "connected", authentication: "authenticated" })).toEqual({
+      label: "Signed in · sessions unavailable",
+      tone: "idle",
+    })
+    expect(providerRowState({ ...codex, connection: "connected", authentication: "unknown" }).label).toBe("Sessions unavailable")
+    expect(providerRowState({ ...codex, connection: "connected", authentication: "required" }).label).toBe("Sign-in required")
   })
 })

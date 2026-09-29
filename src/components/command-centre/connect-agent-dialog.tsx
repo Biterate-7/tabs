@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Check, ChevronLeft, Copy, Minus, RotateCw } from "lucide-react"
+import { Check, ChevronLeft, Copy, ExternalLink, Minus, RotateCw } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,18 +12,24 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { AgentAuthPanel } from "@/components/agents/agent-auth-panel"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { PERMISSION_SCOPE_LABEL, RUNTIME_ERROR_PRESENTATION } from "@/lib/agents/command-centre/presentation"
+import { activeAuthMethod } from "@/lib/agents/platform/authentication"
 import { PLATFORM_FEATURE_LABEL, PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
 import {
   APPROVABLE_SCOPES,
   CONNECTION_PHASE_LABEL,
   defaultApprovedScopes,
+  isTransientPhase,
+  phaseRecovery,
+  recoveryLabel,
   signInKind,
   stepFor,
 } from "@/lib/agents/platform/lifecycle"
 import { cn } from "@/lib/utils"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
+import type { UseProviderConnections } from "@/hooks/use-provider-connections"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions"
 import type { ConnectStep } from "@/lib/agents/platform/lifecycle"
@@ -63,6 +69,7 @@ export function ConnectAgentDialog({
   onOpenChange,
   platform,
   initialProvider,
+  apiKeys,
   onOpenSettings,
   onStartSession,
 }: {
@@ -70,7 +77,13 @@ export function ConnectAgentDialog({
   onOpenChange: (open: boolean) => void
   platform: UseAgentPlatform
   initialProvider?: AgentProviderId | null
-  /** Settings → Agents, where provider keys and MCP tokens live. */
+  /**
+   * The user's own provider credentials, for a method whose key Hubble
+   * stores (Claude on the web). Its form lives in the dialog, so connecting a
+   * key is the same flow as any other sign-in.
+   */
+  apiKeys?: UseProviderConnections
+  /** Settings → Agents, where MCP tokens live. */
   onOpenSettings?: () => void
   onStartSession?: (provider: AgentProviderId) => void
 }) {
@@ -83,9 +96,11 @@ export function ConnectAgentDialog({
   const spec = chosen ? platformProvider(chosen) : undefined
   const phase = chosen ? platform.phaseOf(chosen) : null
   const connection = chosen ? platform.connections[chosen] : undefined
-  // How this agent signs in *here*: the runtime knows whether it can start
-  // the agent's own login in this shell (Claude, in the desktop app).
-  const signIn = spec ? signInKind(spec, chosen ? platform.statusOf(chosen) : undefined) : undefined
+  const status = chosen ? platform.statusOf(chosen) : undefined
+  // How this agent signs in *here*: the capability model's offered methods
+  // for this surface, and the runtime's word on whether it can start the
+  // agent's own login in this shell (Claude, in the desktop app).
+  const signIn = spec ? signInKind(spec, status, platform.surface) : undefined
   /*
     An agent Hubble will not start sessions with (Codex today) is never taken
     past Sign in: there is nothing for the user to sign in to or approve, and
@@ -185,7 +200,9 @@ export function ConnectAgentDialog({
                     </span>
                     <span className="shrink-0 text-label text-tertiary">
                       {CONNECTION_PHASE_LABEL[entryPhase]}
-                      {entryBlocked && entryPhase !== "not_installed" ? " · sessions unavailable" : ""}
+                      {entryBlocked && entryPhase !== "not_installed" && entryPhase !== "sessions_unavailable"
+                        ? " · sessions unavailable"
+                        : ""}
                     </span>
                   </button>
                 </li>
@@ -197,7 +214,25 @@ export function ConnectAgentDialog({
         {spec && step === "detect" && (
           <section aria-label="Detect" className="flex flex-col gap-2">
             <p className="text-body-sm text-foreground">{CONNECTION_PHASE_LABEL[phase!]}</p>
-            <p className="text-body-sm text-muted-foreground">{sentence}</p>
+            <p role="status" className="text-body-sm text-muted-foreground">{sentence}</p>
+            {/* Reached and failed, or lost: a way forward, never a dead end. */}
+            {phase && phaseRecovery(phase).includes("retry") && !busy && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button type="button" size="sm" variant="outline" onClick={() => void platform.retry(spec.provider)}>
+                  <RotateCw />
+                  {recoveryLabel(phase, "retry")}
+                </Button>
+                <a
+                  href={spec.docsUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex h-6 items-center gap-1 rounded-xs px-2 text-body-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                >
+                  {recoveryLabel(phase, "setup")}
+                  <ExternalLink className="size-3" aria-hidden />
+                </a>
+              </div>
+            )}
             {/* Before anyone installs it expecting a chat it will not get. */}
             {sessionsBlocked && sessions && !sessions.available && (
               <p role="note" className="text-body-sm text-warning">
@@ -240,11 +275,6 @@ export function ConnectAgentDialog({
                 Hubble will not start sessions with {spec.displayName}. {sessions.reason}
               </p>
             )}
-            <p className="text-body-sm text-muted-foreground">
-              {signIn === "native" && spec.signIn.kind !== "native"
-                ? (spec.nativeSignInSummary ?? spec.signIn.summary)
-                : spec.signIn.summary}
-            </p>
 
             {spec.explainer && (
               <ul aria-label={`What connecting ${spec.displayName} means`} className="flex flex-col gap-1">
@@ -257,67 +287,44 @@ export function ConnectAgentDialog({
               </ul>
             )}
 
-            {signIn === "native" && (
-              <div className="flex flex-col gap-1.5">
-                {/* The agent's own answer, asked when this step appeared. */}
-                <p role="status" className="text-body-sm text-foreground">
-                  {busy
-                    ? sentence
-                    : connection?.authentication === "authenticated"
-                      ? "Signed in."
-                      : connection
-                        ? sentence
-                        : `Hubble has not asked ${spec.displayName} yet.`}
-                </p>
-                {!sessionsBlocked && connection && connection.authMethods.length > 0 && connection.authentication !== "authenticated" && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {connection.authMethods.map((method) => (
-                      <Button
-                        key={method.id}
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        title={method.description}
-                        onClick={() => void platform.authenticate(spec.provider, method.id)}
-                      >
-                        {signInLabel(method.name)}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-                {connection?.authentication !== "authenticated" && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="self-start"
-                    disabled={busy}
-                    onClick={() => void platform.connect(spec.provider)}
-                  >
-                    <RotateCw />
-                    Check again
-                  </Button>
-                )}
-                {!sessionsBlocked && (
-                  <p className="text-meta text-tertiary">
-                    Sign-in happens in {spec.displayName}&apos;s own window or browser page. Hubble never sees
-                    your password or token, and keeps none.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {signIn !== "native" && onOpenSettings && (
-              <Button type="button" size="sm" variant="outline" className="self-start" onClick={onOpenSettings}>
-                Open AI connectors
-              </Button>
-            )}
+            {/* Every provider's methods, from the capability model: its own
+                sign-in, a key Hubble stores, or a Hubble token — only those
+                offered here, with the rest listed and explained. */}
+            <AgentAuthPanel
+              provider={spec}
+              surface={platform.surface}
+              phase={phase!}
+              sentence={sentence}
+              {...(status ? { status } : {})}
+              asked={connection !== undefined}
+              busy={busy}
+              sessionsBlocked={sessionsBlocked}
+              {...(apiKeys ? { apiKeys } : {})}
+              onSignIn={(methodId) => void platform.authenticate(spec.provider, methodId)}
+              onRetry={() => void platform.retry(spec.provider)}
+              {...(onOpenSettings ? { onOpenSettings } : {})}
+            />
           </section>
         )}
 
         {spec && step === "approve" && (
           <section aria-label="Approve" className="flex flex-col gap-3">
+            {/* The agent's own sign-in, already done: said once, with no
+                account details the runtime did not report. */}
+            {signIn === "native" && status?.authentication === "authenticated" && !status.authIssue && (
+              <div className="rounded-md border border-subtle bg-surface px-3 py-2">
+                <p className="flex items-center gap-1.5 text-body-sm text-foreground">
+                  <Check className="size-3.5 text-success" aria-hidden />
+                  Already authenticated
+                  {activeAuthMethod(spec, status) ? (
+                    <span className="text-muted-foreground"> · {activeAuthMethod(spec, status)!.label}</span>
+                  ) : null}
+                </p>
+                <p className="mt-0.5 text-meta text-muted-foreground">
+                  {spec.runtimeName} is signed in locally. Account authentication is managed by {spec.runtimeName}.
+                </p>
+              </div>
+            )}
             {spec.chat && sessions && !sessions.available ? (
               <p role="note" className="text-body-sm text-warning">
                 {spec.displayName} can be connected and signed in, but Hubble will not start sessions with it.{" "}
@@ -506,10 +513,26 @@ export function ConnectAgentDialog({
 
   /** Whether sign-in has answered enough to move on. Each kind has its own proof. */
   function canLeaveSignIn(): boolean {
-    if (!spec || phase === "sign_in_required") return false
+    if (!spec || !phase || isTransientPhase(phase)) return false
+    // Signed out, failed, not answering, or signed in a way Hubble may not
+    // use: none of these is moved past; each offers its own fix instead.
+    if (
+      phase === "sign_in_required" ||
+      phase === "auth_expired" ||
+      phase === "auth_failed" ||
+      phase === "auth_unsupported" ||
+      phase === "timeout"
+    ) {
+      return false
+    }
     if (signIn === "native") {
       // The agent itself said it is signed in. "Could not verify" is not that.
-      return connection !== undefined && connection.connection === "connected" && connection.authentication === "authenticated"
+      return (
+        connection !== undefined &&
+        connection.connection === "connected" &&
+        connection.authentication === "authenticated" &&
+        !connection.authIssue
+      )
     }
     return true
   }
@@ -520,11 +543,6 @@ const STEP_LABEL: Record<Exclude<ConnectStep, "choose">, string> = {
   sign_in: "Sign in",
   approve: "Approve",
   done: "Connected",
-}
-
-/** A method the agent named "ChatGPT" reads as a button: "Sign in with ChatGPT". Its own verb is kept. */
-function signInLabel(name: string): string {
-  return /^(sign|log)\s?in\b/i.test(name) ? name : `Sign in with ${name}`
 }
 
 function order(step: ConnectStep): number {

@@ -39,7 +39,8 @@ describe("the default, unconnected state", () => {
   it("lists every shipped provider without connecting anything", () => {
     render(<ConnectorsSection />)
 
-    expect(screen.getByText("Claude Code")).toBeTruthy()
+    // Once under Connections (how it signs in) and once under observation.
+    expect(screen.getAllByText("Claude Code")).toHaveLength(2)
     expect(screen.getByText("OpenAI / Codex")).toBeTruthy()
     expect(screen.getByText("Gemini")).toBeTruthy()
     expect(screen.getByText("Grok")).toBeTruthy()
@@ -107,7 +108,7 @@ describe("opening a connector", () => {
     await user.click(screen.getByRole("button", { name: /Grok/ }))
     await user.click(screen.getByRole("button", { name: /All connectors/ }))
 
-    expect(screen.getByText("Claude Code")).toBeTruthy()
+    expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0)
     expect(screen.getByText("Gemini")).toBeTruthy()
   })
 })

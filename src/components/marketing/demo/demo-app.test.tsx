@@ -126,8 +126,8 @@ describe("Command Centre", () => {
     expect(region.getByRole("navigation", { name: "Agent sessions" })).toBeTruthy()
     expect(region.getByRole("region", { name: "Connected agents" })).toBeTruthy()
     expect(region.getByRole("heading", { name: "Summarize the SWE-bench reading list" })).toBeTruthy()
-    // Codex is connected but, as in Hubble, runs no sessions.
-    expect(region.getByText("Connected · sessions unavailable")).toBeTruthy()
+    // Codex is signed in but, as in Hubble, runs no sessions — and is not called connected.
+    expect(region.getByText("Signed in · sessions unavailable")).toBeTruthy()
     // The view bar says what the demo is rather than reporting a runtime.
     expect(region.getByRole("status").textContent).toMatch(/Demo/)
   })

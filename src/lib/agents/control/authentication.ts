@@ -37,9 +37,47 @@ export type AdapterAuthMethod = { id: string; name: string; description?: string
  */
 export type AdapterAuthenticationState = "unknown" | "authenticated" | "required";
 
+/**
+ * Which *kind* of sign-in the agent says it is using, when it says.
+ *
+ * A closed set and only ever a kind — never the account, the organisation,
+ * the plan or anything else the agent printed. It exists because "signed in"
+ * is not the whole question: a provider can permit one kind of credential in
+ * a third-party app and forbid another (Anthropic permits an API key or a
+ * Console account for apps built on the Agent SDK, and does not permit a
+ * Claude subscription). See docs/agent-authentication.md.
+ *
+ *   - `subscription` — a consumer plan's sign-in (Claude Pro/Max/Team, …).
+ *   - `account` — the provider's own account sign-in that is not a plan's,
+ *     e.g. an Anthropic Console account billed as API usage.
+ *   - `api_key` — an API key.
+ *   - `cloud_provider` — a cloud platform's credential (Bedrock, Vertex, …).
+ */
+export type AdapterAuthKind = "subscription" | "account" | "api_key" | "cloud_provider";
+
+export const ADAPTER_AUTH_KINDS: readonly AdapterAuthKind[] = [
+  "subscription",
+  "account",
+  "api_key",
+  "cloud_provider",
+] as const;
+
+/**
+ * Why a signed-in agent still cannot run a Hubble session.
+ *
+ * `method_not_permitted`: the agent is signed in with a kind of credential its
+ * provider does not permit third-party apps to use. The adapter refuses to
+ * start a session on it — Hubble never switches the agent to another method.
+ */
+export type AdapterAuthIssue = "method_not_permitted";
+
 export type AdapterAuthentication = {
   state: AdapterAuthenticationState;
   methods: readonly AdapterAuthMethod[];
+  /** The kind of sign-in the agent reported, when it reported one. */
+  kind?: AdapterAuthKind;
+  /** Present only when the sign-in cannot be used by Hubble. */
+  issue?: AdapterAuthIssue;
 };
 
 export type AuthenticatingAdapter = AgentControlAdapter & {

@@ -1,4 +1,5 @@
 import { hasAdapterAuthentication } from "@/lib/agents/control/authentication";
+import { hasConnectSettle, withTimeout } from "@/lib/agents/control/connect-settle";
 import { hasSessionRelease } from "@/lib/agents/control/session-release";
 import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
 import { boundMessageText, normalizeControlSummary } from "@/lib/agents/control/events";
@@ -245,7 +246,15 @@ export type RuntimeHostOptions = {
    * workspace context, exactly as before.
    */
   sessionContext?: { registry: SessionContextRegistry; url(): Promise<string> };
+  /**
+   * How long `get_status` waits for adapters still connecting (Agent
+   * Authentication & Runtime). Injected so tests need not wait the default.
+   */
+  statusSettleMs?: number;
 };
+
+/** The default bound `get_status` waits for an in-flight connect. */
+export const STATUS_SETTLE_MS = 5_000;
 
 /**
  * How much of its workspace a session may touch, from its grant — never from
@@ -866,6 +875,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       const status = adapter.getConnectionStatus();
+      const described = hasAdapterAuthentication(adapter) ? adapter.describeAuthentication() : undefined;
       return {
         provider,
         connection: status.kind,
@@ -880,15 +890,45 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         //
         // An adapter with a native sign-in (Phase J) reports what the agent
         // itself last told it, which is the one better source there is.
-        authentication: hasAdapterAuthentication(adapter)
-          ? adapter.describeAuthentication().state
+        authentication: described
+          ? described.state
           : status.kind === "configuration_required"
             ? ("required" as const)
             : ("unknown" as const),
         capabilities: [...adapter.getCapabilities()],
-        ...(hasAdapterAuthentication(adapter) ? { nativeSignIn: true } : {}),
+        ...(described ? { nativeSignIn: true } : {}),
+        // Which kind of login, and whether Hubble may use it — closed values
+        // from the adapter, never the account (Agent Authentication & Runtime).
+        ...(described?.kind ? { authKind: described.kind } : {}),
+        ...(described?.issue ? { authIssue: described.issue } : {}),
       };
     });
+  }
+
+  /**
+   * Waits, briefly, for any adapter whose `connect()` is still in flight.
+   *
+   * A status read mid-connect says `connecting`, which on a host built per
+   * request (remote) was the only thing it could ever say — the production
+   * "stuck on Connecting" bug. Bounded: an adapter that has still not settled
+   * is reported as it stands, and the Command Centre's own watchdog turns a
+   * `connecting` that outlives its deadline into a timeout with a Retry.
+   */
+  async function settleConnects(ownerId: string): Promise<void> {
+    const ids = options.providers ?? [...new Set([...hosted.values()].map((session) => session.provider))];
+    const waits: Promise<void>[] = [];
+    for (const provider of ids) {
+      const adapter = options.resolveAdapter(provider, ownerId);
+      if (adapter && hasConnectSettle(adapter) && adapter.getConnectionStatus().kind === "connecting") {
+        waits.push(adapter.connectSettled().catch(() => undefined));
+      }
+    }
+    if (waits.length === 0) return;
+    await withTimeout(
+      Promise.all(waits).then(() => undefined),
+      options.statusSettleMs ?? STATUS_SETTLE_MS,
+      () => undefined
+    );
   }
 
   function statusOf(actor: RuntimeActor): RuntimeStatus {
@@ -913,7 +953,10 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   ): Promise<RuntimeResult<RuntimeCommandResults[RuntimeCommandName]>> {
     // `get_status` is the one command a refused runtime still answers. It has
     // to be: a UI that cannot ask "why not" can only show a blank screen.
-    if (command.name === "get_status") return { ok: true, value: statusOf(actor) };
+    if (command.name === "get_status") {
+      if (options.gate.allowed) await settleConnects(actor.id);
+      return { ok: true, value: statusOf(actor) };
+    }
 
     if (!options.gate.allowed) return gateFailure();
 

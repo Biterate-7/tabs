@@ -314,10 +314,12 @@ describe("the start button", () => {
 
     await user.click(await screen.findByText("API service"))
 
-    // Accurate about what is missing: the user has connected no provider
-    // credentials of their own. It used to say "needs to be signed in", which
-    // described an account authorization Hubble never asks for.
-    expect(screen.getByText(/isn't connected yet/i)).toBeTruthy()
+    // Accurate about what is missing, for this agent, with the fix beside it
+    // — and distinct from "not available on this runtime" (Agent
+    // Authentication & Runtime: "Claude Code needs you to sign in. [Sign in]").
+    expect(screen.getByText(/Claude Code needs you to sign in/i)).toBeTruthy()
+    expect(screen.getByRole("button", { name: /^sign in$/i })).toBeTruthy()
+    expect(screen.queryByText(/not available on this runtime/i)).toBeNull()
     expect(screen.getByRole("button", { name: /start session/i }).hasAttribute("disabled")).toBe(
       true
     )

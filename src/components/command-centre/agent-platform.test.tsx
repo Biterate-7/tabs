@@ -229,6 +229,62 @@ describe("Connect Agent", () => {
     expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
   })
 
+  it("tells a signed-in Codex apart from a usable one — signed in, sessions unavailable, New session disabled", async () => {
+    const user = userEvent.setup()
+    // Codex signed in with its own ChatGPT account, as the ACP adapter reports
+    // an agent it cannot hold to its approvals: reached, authenticated, no
+    // capability at all.
+    const codexStatus: RuntimeProviderStatus = {
+      provider: "openai-codex",
+      connection: "connected",
+      available: true,
+      authentication: "authenticated",
+      capabilities: [],
+    }
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "connected",
+            available: true,
+            authentication: "unknown",
+            capabilities: ["create_session", "message"],
+          },
+          codexStatus,
+        ],
+      }),
+    })
+    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "acp", launchable: true }])
+    runtime.setConnection({ ...codexStatus, nativeSignIn: true, authMethods: [{ id: "chat-gpt", name: "ChatGPT" }] })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
+
+    // Signed in, said as signed in — and not as ready, connected or awaiting an approval.
+    expect(await within(dialog).findByText("Codex is signed in, but Hubble can't start sessions with it.")).toBeTruthy()
+    expect(within(dialog).getByText(/Hubble will not start sessions with Codex. Codex does not ask before every action/)).toBeTruthy()
+    expect(within(dialog).queryByText(/Already authenticated/)).toBeNull()
+    expect(within(dialog).queryByText(/Awaiting your approval|Codex is ready|Codex is connected/)).toBeNull()
+    expect(within(dialog).queryByRole("button", { name: /approve and connect|continue/i })).toBeNull()
+    // Back in the list, one label that carries both halves, once.
+    await user.click(within(dialog).getByRole("button", { name: /all agents/i }))
+    const row = within(dialog).getByRole("button", { name: /Codex/ })
+    expect(row.textContent).toContain("Signed in · sessions unavailable")
+    expect(row.textContent).not.toMatch(/sessions unavailable.*sessions unavailable/)
+    await user.keyboard("{Escape}")
+
+    // New session: Codex is there, cannot be chosen, and says exactly why.
+    await user.click(await screen.findByRole("button", { name: /new agent session/i }))
+    const create = await screen.findByRole("dialog", { name: /new agent session/i })
+    expect((within(create).getByRole("radio", { name: /Codex/ }) as HTMLInputElement).disabled).toBe(true)
+    expect(within(create).getByText(/runs commands and reads files anywhere on your computer without asking/)).toBeTruthy()
+    expect(runtime.commands.some((command) => command.name === "create_session")).toBe(false)
+    expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
+  })
+
   it("says it is waiting on the person while an agent's own sign-in is open (Phase J.2)", async () => {
     const user = userEvent.setup()
     const runtime = runtimeWithGemini()
@@ -363,7 +419,7 @@ describe("the agent chat", () => {
 })
 
 describe("the desktop app (Phase J.1)", () => {
-  function desktopRuntime() {
+  function desktopRuntime(methods = [{ id: "console", name: "Sign in with Anthropic Console" }]) {
     const claude = {
       provider: "claude-code" as const,
       connection: "configuration_required" as const,
@@ -376,17 +432,19 @@ describe("the desktop app (Phase J.1)", () => {
     runtime.setDetections([
       { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
     ])
-    runtime.setConnection({
-      ...claude,
-      authMethods: [
-        { id: "claudeai", name: "Sign in with Claude" },
-        { id: "console", name: "Sign in with Anthropic Console" },
-      ],
-    })
+    runtime.setConnection({ ...claude, authMethods: methods })
     return runtime
   }
 
-  it("signs Claude in with its own login — no key, no settings page — then approves writes", async () => {
+  function inDesktopApp<T>(body: () => Promise<T>): Promise<T> {
+    window.__TAURI_INTERNALS__ = {}
+    return body().finally(() => {
+      delete window.__TAURI_INTERNALS__
+    })
+  }
+
+  it("signs Claude in with its own Console login — no key, no settings page — then approves writes", () =>
+    inDesktopApp(async () => {
     const user = userEvent.setup()
     const runtime = desktopRuntime()
     renderCentre(runtime)
@@ -395,11 +453,14 @@ describe("the desktop app (Phase J.1)", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: /Claude Code/ }))
 
-    expect(await within(dialog).findByText(/through Claude Code's login/i)).toBeTruthy()
+    // What the capability model offers in the desktop app, and why the rest is not.
+    expect(await within(dialog).findByText(/can authenticate using your existing Anthropic Console account/i)).toBeTruthy()
+    expect(within(dialog).getByText(/Not available in Hubble/)).toBeTruthy()
+    expect(within(dialog).getByText(/doesn't allow apps built on the Claude Agent SDK/i)).toBeTruthy()
     expect(within(dialog).queryByRole("button", { name: /open ai connectors/i })).toBeNull()
 
     // Claude Code is asked at once; it says it is signed out.
-    await user.click(await within(dialog).findByRole("button", { name: /^Sign in with Claude$/i }))
+    await user.click(await within(dialog).findByRole("button", { name: /^Sign in with Anthropic Console$/i }))
 
     // Signed in: straight to approval. Turn on changing files, which asks each time.
     const approve = await within(dialog).findByRole("group")
@@ -410,13 +471,58 @@ describe("the desktop app (Phase J.1)", () => {
     expect(runtime.commands).toContainEqual({
       name: "authenticate_provider",
       provider: "claude-code",
-      methodId: "claudeai",
+      methodId: "console",
     })
     expect(loadAgentRoster().agents[0]).toMatchObject({
       provider: "claude-code",
       approvedScopes: ["read_workspace", "read_project", "write_project"],
     })
-  })
+  }))
+
+  it("never offers a subscription sign-in, even when an older runtime advertises one", () =>
+    inDesktopApp(async () => {
+      const user = userEvent.setup()
+      const runtime = desktopRuntime([
+        { id: "claudeai", name: "Sign in with Claude" },
+        { id: "console", name: "Sign in with Anthropic Console" },
+      ])
+      renderCentre(runtime)
+
+      await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+      const dialog = await screen.findByRole("dialog")
+      await user.click(within(dialog).getByRole("button", { name: /Claude Code/ }))
+
+      expect(await within(dialog).findByRole("button", { name: /^Sign in with Anthropic Console$/i })).toBeTruthy()
+      expect(within(dialog).queryByRole("button", { name: /^Sign in with Claude$/i })).toBeNull()
+    }))
+
+  it("shows a subscription sign-in as not supported, with the permitted method instead — and never switches it", () =>
+    inDesktopApp(async () => {
+      const user = userEvent.setup()
+      const runtime = desktopRuntime()
+      runtime.setConnection({
+        provider: "claude-code",
+        connection: "configuration_required",
+        available: true,
+        authentication: "authenticated",
+        authKind: "subscription",
+        authIssue: "method_not_permitted",
+        capabilities: ["create_session", "message", "approvals"],
+        nativeSignIn: true,
+        authMethods: [{ id: "console", name: "Sign in with Anthropic Console" }],
+      })
+      renderCentre(runtime)
+
+      await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+      const dialog = await screen.findByRole("dialog")
+      await user.click(within(dialog).getByRole("button", { name: /Claude Code/ }))
+
+      expect(await within(dialog).findByText(/signed in with a Claude subscription, which Hubble can't use/i)).toBeTruthy()
+      expect(within(dialog).getByRole("button", { name: /^Sign in with Anthropic Console$/i })).toBeTruthy()
+      // Not moved past: nothing to approve until a permitted sign-in is in use.
+      expect(within(dialog).getByRole("button", { name: /continue/i }).hasAttribute("disabled")).toBe(true)
+      expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
+    }))
 })
 
 describe("re-checking approved agents (Phase J.2)", () => {

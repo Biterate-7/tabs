@@ -93,16 +93,21 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     detect: ["claude"],
     // The desktop app drives the user's installed Claude Code (where their
     // own login lives) and can start that login. Verified against 2.1.229:
-    // `claude auth status --json` → {"loggedIn": …}; `claude auth login`.
+    // `claude auth status --json` → {"loggedIn", "authMethod", "apiProvider",
+    // …}; `claude auth login --console`.
+    //
+    // Only the Console sign-in ("API usage billing instead of a Claude
+    // subscription") is offered. Anthropic does not permit an app built on
+    // the Claude Agent SDK to offer Claude.ai subscription login, so there is
+    // deliberately no `--claudeai` entry: no request can start one. See
+    // docs/agent-authentication.md and ./native-auth.ts.
     native: {
       executables: ["claude"],
       statusArgs: ["auth", "status", "--json"],
       loginArgs: {
-        claudeai: ["auth", "login", "--claudeai"],
         console: ["auth", "login", "--console"],
       },
       loginLabels: {
-        claudeai: "Sign in with Claude",
         console: "Sign in with Anthropic Console",
       },
     },
@@ -146,8 +151,20 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     // none. Its `read-only` mode ("Ask for approval") is on-request approval
     // *inside a writable workspace* — Codex edits project files and runs
     // sandboxed commands without asking. The mode is sent on every turn, so
-    // no launch option or user config narrows it. Hubble cannot be the one
-    // that approves, so it does not start Codex sessions at all.
+    // no launch option or user config narrows it.
+    //
+    // Re-checked against codex-acp 2.0.0 (2026-09-28), which adds a true
+    // `read-only` mode: sandbox `readOnly`, approval `on-request`, reviewer
+    // `user`. Edits now ask. Commands and reads still do not: OpenAI documents
+    // that in read-only + on-request Codex "can read files and run commands
+    // within the read-only sandbox" unasked, and the sandbox reads the whole
+    // disk, not the project. Such a command reaches ACP as an `execute` call
+    // already running with no `session/request_permission` — which the
+    // adapter's enforcement (acp/adapter.ts) stops as acting unasked. The
+    // only stricter policy, `untrusted`, has been retired by OpenAI. Hubble
+    // still cannot be the one that approves, so it does not start Codex
+    // sessions at all. Revisit when codex-acp offers a mode that asks before
+    // every command and confines reads to the working directory.
     provider: "openai-codex",
     detect: ["codex-acp", "codex"],
     acp: {
@@ -157,7 +174,7 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
       approval: {
         kind: "unavailable",
         reason:
-          "Codex's Agent Client Protocol adapter has no mode in which Codex asks before every edit and command, so Hubble cannot approve its actions.",
+          "Codex does not ask before every action: even in its most restrictive mode it runs commands and reads files anywhere on your computer without asking, so Hubble cannot approve what it does.",
       },
       contextIdentity: {
         kind: "unavailable",

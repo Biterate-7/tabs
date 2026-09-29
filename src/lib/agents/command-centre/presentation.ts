@@ -463,7 +463,9 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
   },
   authentication_required: {
     title: "Agent not signed in",
-    action: "Sign in to the provider on this machine, then try again.",
+    // No method named: which sign-in an agent supports here is the
+    // capability model's to say, and Connect Agent offers exactly that.
+    action: "Connect it with a sign-in it supports, then try again.",
     reconnect: false,
   },
   session_not_found: {
@@ -706,8 +708,25 @@ export const PROVIDER_CONNECTION_TONE: Record<
  * any sense a person means, so the agent's own answer wins.
  */
 export function providerRowState(provider: RuntimeProviderStatus): { label: string; tone: AgentVisualTone } {
-  if (provider.connection === "connected" && provider.authentication === "required") {
+  // Signed in, but in a way Hubble may not use for this provider (Agent
+  // Authentication & Runtime) — not "Connected", which would invite a session
+  // the runtime will refuse.
+  if (provider.authIssue === "method_not_permitted") {
+    return { label: "Sign-in not supported", tone: "bad" };
+  }
+  // The agent's own answer wins over the process state: "configuration
+  // required" because nobody is signed in is a sign-in, said in the same
+  // words the roster and Settings use.
+  if (provider.authentication === "required") {
     return { label: "Sign-in required", tone: "idle" };
+  }
+  // Reached — even signed in — but its adapter cannot start a session
+  // (Codex): signed in is not ready, so it is never shown as "Connected".
+  if (provider.connection === "connected" && !canCreateSession(provider)) {
+    return {
+      label: provider.authentication === "authenticated" ? "Signed in · sessions unavailable" : "Sessions unavailable",
+      tone: "idle",
+    };
   }
   return { label: PROVIDER_CONNECTION_LABEL[provider.connection], tone: PROVIDER_CONNECTION_TONE[provider.connection] };
 }
@@ -740,8 +759,11 @@ export function hasCapability(
  */
 export function providerUnavailableReason(provider: RuntimeProviderStatus): string | null {
   if (!provider.available) return "Not available on this machine";
-  if (provider.connection === "configuration_required") return "Needs setup";
-  if (!provider.capabilities.includes("create_session")) return "Cannot start sessions yet";
+  // Signed out is a sign-in, not setup: left to the connection blocker, which
+  // names it the same way everywhere and offers the Sign in beside it.
+  if (provider.connection === "configuration_required" && provider.authentication !== "required") return "Needs setup";
+  // Not "yet": whether it ever can is the catalogue's reason, shown beside this.
+  if (!provider.capabilities.includes("create_session")) return "Sessions unavailable";
   return null;
 }
 

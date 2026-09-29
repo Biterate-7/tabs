@@ -5,7 +5,7 @@ import { Plus } from "lucide-react"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { Button } from "@/components/ui/button"
 import { SESSION_VISUAL_STATE } from "@/lib/agents/command-centre/presentation"
-import { platformProvider } from "@/lib/agents/platform/catalog"
+import { PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
 import { liveActivity } from "@/lib/agents/platform/chat"
 import { CONNECTION_PHASE_LABEL, isChatReady } from "@/lib/agents/platform/lifecycle"
 import { cn } from "@/lib/utils"
@@ -14,6 +14,15 @@ import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentIdentity } from "@/lib/agents/platform/roster"
 import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+
+/**
+ * The agents worth suggesting to someone with none: those Hubble starts
+ * sessions with, from the catalogue. Codex is left out — it can be signed in,
+ * never used here, so inviting a connection would promise what it cannot do.
+ */
+const SESSION_AGENTS = PLATFORM_PROVIDERS.filter((spec) => spec.chat && spec.sessions.available)
+  .map((spec) => spec.displayName)
+  .join(", ")
 
 /**
  * The agents a user has connected, as persistent identities (Phase J).
@@ -66,7 +75,7 @@ export function AgentRoster({
 
       {agents.length === 0 ? (
         <p className="px-3.5 pt-1 pb-1 text-body-sm text-tertiary">
-          No agents connected. Connect Claude Code, Codex, Gemini CLI, Grok Build or any MCP agent.
+          No agents connected. Connect {SESSION_AGENTS} or any MCP agent.
         </p>
       ) : (
         <ul className="flex flex-col">
