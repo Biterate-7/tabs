@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { MarketingPage } from "./marketing-page"
 
 beforeEach(() => {
@@ -67,6 +67,31 @@ describe("MarketingPage", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /Get started/ })[0])
     fireEvent.click(screen.getAllByRole("button", { name: "Open Hubble" })[0])
     expect(onPasteTabs).toHaveBeenCalledTimes(2)
+  })
+
+  it("leads to Hubble Desktop from the header, the closing actions and the footer — without promising a download", () => {
+    render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
+    const links = screen.getAllByRole("link", { name: "Hubble Desktop" })
+    // Header, closing pair, footer. Nothing is published yet, so none says "Download".
+    expect(links).toHaveLength(3)
+    for (const link of links) expect(link.getAttribute("href")).toBe("/download")
+    expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull()
+    // The hero is unchanged: its pair is still Get started and Explore Hubble.
+    const hero = screen.getByRole("heading", { level: 1 }).closest("section")!
+    expect(within(hero).getByRole("link", { name: "Explore Hubble" })).toBeTruthy()
+    expect(within(hero).queryByRole("link", { name: "Hubble Desktop" })).toBeNull()
+  })
+
+  it("does not offer Hubble Desktop inside Hubble Desktop", () => {
+    window.__TAURI_INTERNALS__ = {}
+    try {
+      render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
+      expect(screen.queryByRole("link", { name: /Hubble Desktop|Download Hubble/ })).toBeNull()
+      // The closing pair falls back to its original second action.
+      expect(screen.getAllByRole("link", { name: "Explore Hubble" })).toHaveLength(2)
+    } finally {
+      delete window.__TAURI_INTERNALS__
+    }
   })
 
   it("writes nothing to storage just by being viewed", () => {

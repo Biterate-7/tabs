@@ -323,6 +323,27 @@ export function phaseSentence(
 }
 
 /**
+ * Whether the one thing between this agent and the person is that Hubble is
+ * running in a browser — so Hubble Desktop is the way forward.
+ *
+ * Asked of the same lifecycle, not of a list of providers: the agent is
+ * `runtime_unavailable` here, and on the desktop surface, with the local
+ * runtime the desktop app always has, it would not be. That is true of an
+ * agent that runs as a local process (Codex, Gemini CLI, Grok Build) and of
+ * any agent on a Hubble that cannot run agents at all. It is never true of
+ * one the desktop app cannot run either (a custom MCP agent), nor inside the
+ * desktop app itself.
+ */
+export function availableInDesktop(
+  provider: PlatformProvider,
+  phase: ConnectionPhase,
+  surface: PlatformSurface = "web"
+): boolean {
+  if (surface === "desktop" || phase !== "runtime_unavailable") return false;
+  return connectionPhase({ provider, surface: "desktop", executable: true, local: true }) !== "runtime_unavailable";
+}
+
+/**
  * Whether Hubble will start a session with this agent, and if not, why.
  *
  * The registry's word, and then the runtime's: an adapter that declares no

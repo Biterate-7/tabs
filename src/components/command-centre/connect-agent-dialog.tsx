@@ -15,11 +15,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { AgentAuthPanel } from "@/components/agents/agent-auth-panel"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { PERMISSION_SCOPE_LABEL, RUNTIME_ERROR_PRESENTATION } from "@/lib/agents/command-centre/presentation"
-import { activeAuthMethod } from "@/lib/agents/platform/authentication"
+import { activeAuthMethod, offeredAuthMethods } from "@/lib/agents/platform/authentication"
 import { PLATFORM_FEATURE_LABEL, PLATFORM_PROVIDERS, platformProvider } from "@/lib/agents/platform/catalog"
 import {
   APPROVABLE_SCOPES,
   CONNECTION_PHASE_LABEL,
+  availableInDesktop,
   defaultApprovedScopes,
   isTransientPhase,
   phaseRecovery,
@@ -27,8 +28,10 @@ import {
   signInKind,
   stepFor,
 } from "@/lib/agents/platform/lifecycle"
+import { DOWNLOAD_PATH, anyDesktopBuildPublished } from "@/lib/desktop/release"
 import { cn } from "@/lib/utils"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
+import type { PlatformProvider } from "@/lib/agents/platform/catalog"
 import type { UseProviderConnections } from "@/hooks/use-provider-connections"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions"
@@ -186,12 +189,15 @@ export function ConnectAgentDialog({
             {PLATFORM_PROVIDERS.map((entry) => {
               const entryPhase = platform.phaseOf(entry.provider)
               const entryBlocked = entry.chat && !platform.sessionsFor(entry.provider).available
+              // Unavailable here only because this is the browser: say where it
+              // does work, and link there, rather than leave a dead end.
+              const viaDesktop = availableInDesktop(entry, entryPhase, platform.surface)
               return (
-                <li key={entry.provider}>
+                <li key={entry.provider} className="flex items-center rounded-md border border-subtle">
                   <button
                     type="button"
                     onClick={() => reset(entry.provider)}
-                    className="flex w-full items-center gap-2.5 rounded-md border border-subtle px-2.5 py-2 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   >
                     <AgentIcon connector={entry.provider} size="sm" />
                     <span className="min-w-0 flex-1">
@@ -199,12 +205,20 @@ export function ConnectAgentDialog({
                       <span className="block truncate text-meta text-tertiary">{entry.vendor}</span>
                     </span>
                     <span className="shrink-0 text-label text-tertiary">
-                      {CONNECTION_PHASE_LABEL[entryPhase]}
+                      {viaDesktop ? (
+                        <>
+                          <span className="sr-only">{CONNECTION_PHASE_LABEL[entryPhase]} · </span>
+                          Requires Hubble Desktop
+                        </>
+                      ) : (
+                        CONNECTION_PHASE_LABEL[entryPhase]
+                      )}
                       {entryBlocked && entryPhase !== "not_installed" && entryPhase !== "sessions_unavailable"
                         ? " · sessions unavailable"
                         : ""}
                     </span>
                   </button>
+                  {viaDesktop && <DesktopLink provider={entry} compact />}
                 </li>
               )
             })}
@@ -215,6 +229,7 @@ export function ConnectAgentDialog({
           <section aria-label="Detect" className="flex flex-col gap-2">
             <p className="text-body-sm text-foreground">{CONNECTION_PHASE_LABEL[phase!]}</p>
             <p role="status" className="text-body-sm text-muted-foreground">{sentence}</p>
+            {phase && availableInDesktop(spec, phase, platform.surface) && <DesktopNote provider={spec} />}
             {/* Reached and failed, or lost: a way forward, never a dead end. */}
             {phase && phaseRecovery(phase).includes("retry") && !busy && (
               <div className="flex flex-wrap items-center gap-1.5">
@@ -544,6 +559,54 @@ export function ConnectAgentDialog({
     }
     return true
   }
+}
+
+/**
+ * The way to Hubble Desktop, for an agent that only runs there. Always the
+ * site's own download page — which says honestly whether a build is out — so
+ * this never points at an installer itself, and never says "Download" while
+ * there is nothing to download. Opens beside the app, leaving the workspace
+ * where it is.
+ */
+function DesktopLink({ provider, compact = false }: { provider: PlatformProvider; compact?: boolean }) {
+  const published = anyDesktopBuildPublished()
+  const label = compact ? (published ? "Download" : "Learn more") : published ? "Download Hubble" : "About Hubble Desktop"
+  return (
+    <a
+      href={DOWNLOAD_PATH}
+      target="_blank"
+      rel="noopener"
+      aria-label={`${published ? "Download Hubble Desktop" : "About Hubble Desktop"} — required for ${provider.displayName}`}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-xs text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        compact ? "mr-1 h-6 px-1.5 text-label" : "h-6 text-body-sm"
+      )}
+    >
+      {label}
+      <ExternalLink className="size-3" aria-hidden />
+    </a>
+  )
+}
+
+/** Why an agent needs Hubble Desktop, in two sentences, with the agent's own sign-in named from the catalogue. */
+function DesktopNote({ provider }: { provider: PlatformProvider }) {
+  const account = offeredAuthMethods(provider, "desktop").find(
+    ({ method }) => method.kind === "account" && method.owner === "runtime"
+  )?.method
+  return (
+    <div role="note" aria-label="Requires Hubble Desktop" className="rounded-md border border-subtle bg-surface px-3 py-2">
+      <p className="text-body-sm text-foreground">Requires Hubble Desktop</p>
+      <p className="mt-0.5 text-meta text-muted-foreground">
+        {provider.displayName} runs on your computer, so Hubble connects to it from Hubble Desktop.{" "}
+        {account
+          ? `There it signs in with your ${account.label}, through ${provider.runtimeName} itself.`
+          : `There it signs in through ${provider.runtimeName} itself.`}
+      </p>
+      <div className="mt-1.5">
+        <DesktopLink provider={provider} />
+      </div>
+    </div>
+  )
 }
 
 const STEP_LABEL: Record<Exclude<ConnectStep, "choose">, string> = {
