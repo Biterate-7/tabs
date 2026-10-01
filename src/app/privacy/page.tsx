@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <LegalPage title="Privacy Policy" lastUpdated="September 14, 2026">
+    <LegalPage title="Privacy Policy" lastUpdated="October 1, 2026">
       <section>
         <h2>Introduction</h2>
         <p>
@@ -78,10 +78,22 @@ export default function PrivacyPolicyPage() {
             <strong>Standard hosting/network metadata.</strong> Whoever hosts this deployment (a hosting
             provider, CDN, or reverse proxy) may process ordinary connection metadata — such as IP address,
             timestamps, and request logs — as a normal part of operating that infrastructure. Hubble&apos;s
-            own application code does not read, store, or forward this information.
+            own application code does not read, store, or forward this information, except as described in
+            the next item.
+          </li>
+          <li id="desktop-downloads">
+            <strong>Hubble Desktop download counts.</strong> When you download Hubble Desktop from this
+            site, the server adds one to a count of downloads for that day (in UTC), platform, and app
+            version — for example, &quot;October 1, Windows, 0.1.0: 12 downloads&quot;. That count is the
+            only thing stored. It does not include your IP address, your browser details, a cookie, your
+            Hubble account, or anything else that identifies you or your device, and it does not require
+            an account. To avoid counting automated requests, the server looks at your browser&apos;s
+            user-agent string and prefetch headers at the moment of the download to decide whether to
+            count it; those are not stored. The download itself is served by GitHub, which handles the
+            request under its own privacy policy.
           </li>
         </ul>
-        <p>Hubble does not use analytics scripts, advertising trackers, or session-replay tools, and does not set any tracking cookies. See the <a href="/cookies">Cookie Policy</a> for details on local storage.</p>
+        <p>Apart from the aggregate download count above, Hubble does not use analytics, advertising trackers, or session-replay tools, does not build profiles of the people who use it, and does not set any tracking cookies. See the <a href="/cookies">Cookie Policy</a> for details on local storage.</p>
       </section>
 
       <section>
@@ -91,6 +103,7 @@ export default function PrivacyPolicyPage() {
           <li>Tab data and organizational content are used to render and persist your workspace.</li>
           <li>Fetched page titles are used to replace a bare URL with a readable title in your tab list.</li>
           <li>IP-based rate limiting is used to protect the AI and sync endpoints from abuse.</li>
+          <li>Hubble Desktop download counts are used to understand how many people download Hubble Desktop, for each platform and version.</li>
           <li>
             Account details are used to identify you when you sign in and to show which account you are
             using. Synced workspace data is used to give you the same workspaces in another browser.

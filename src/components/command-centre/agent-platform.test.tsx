@@ -578,6 +578,86 @@ describe("re-checking approved agents (Phase J.2)", () => {
   })
 })
 
+describe("local-only agents on hosted web (Hubble Desktop)", () => {
+  /** What production reports: a remote runtime that runs Claude, and reaches nothing on the visitor's machine. */
+  function hostedRuntime(): ScriptedRuntime {
+    return createScriptedRuntime({
+      status: scriptedStatus({
+        environment: "remote",
+        providers: [
+          {
+            provider: "claude-code",
+            connection: "configuration_required",
+            available: true,
+            authentication: "required",
+            capabilities: ["create_session", "message"],
+          },
+        ],
+      }),
+    })
+  }
+
+  async function openChooser() {
+    const user = userEvent.setup()
+    renderCentre(hostedRuntime())
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    return { user, dialog }
+  }
+
+  function row(dialog: HTMLElement, name: RegExp) {
+    return within(dialog).getByRole("button", { name }).closest("li")!
+  }
+
+  it("says Codex, Gemini CLI and Grok Build need Hubble Desktop, keeping the truthful state, with a link to the download page", async () => {
+    const { dialog } = await openChooser()
+    for (const name of [/Codex/, /Gemini CLI/, /Grok Build/]) {
+      const entry = row(dialog, name)
+      await waitFor(() => expect(within(entry).getByText(/Requires Hubble Desktop/)).toBeTruthy())
+      // Still "Unavailable here" to assistive technology: the state is not hidden, only explained.
+      expect(within(entry).getByRole("button").textContent).toMatch(/Unavailable here/)
+      const link = within(entry).getByRole("link")
+      expect(link.getAttribute("href")).toBe("/download")
+      // Nothing is downloadable yet, so the link does not say "Download".
+      expect(link.textContent).toMatch(/Learn more/)
+      expect(link.getAttribute("aria-label")).toMatch(/About Hubble Desktop/)
+    }
+  })
+
+  it("leaves Claude Code and the custom MCP agent exactly as they were, with no desktop link", async () => {
+    const { dialog } = await openChooser()
+    const claude = row(dialog, /Claude Code/)
+    await waitFor(() => expect(within(claude).getByText("Sign-in required")).toBeTruthy())
+    expect(within(claude).queryByRole("link")).toBeNull()
+    const custom = row(dialog, /Custom MCP agent/)
+    expect(within(custom).queryByText(/Hubble Desktop/)).toBeNull()
+    expect(within(custom).queryByRole("link")).toBeNull()
+  })
+
+  it("explains it on the agent's own step, naming its own sign-in, and asks for no credential", async () => {
+    const { user, dialog } = await openChooser()
+    await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
+    expect(await within(dialog).findByText("Unavailable here")).toBeTruthy()
+    const note = within(dialog).getByRole("note", { name: "Requires Hubble Desktop" })
+    expect(note.textContent).toMatch(/Codex runs on your computer/)
+    expect(note.textContent).toMatch(/ChatGPT account, through Codex itself/)
+    expect(within(note).getByRole("link").getAttribute("href")).toBe("/download")
+    expect(within(dialog).queryByRole("textbox")).toBeNull()
+  })
+
+  it("never shows the desktop link inside the desktop app", async () => {
+    window.__TAURI_INTERNALS__ = {}
+    try {
+      const { dialog } = await openChooser()
+      await waitFor(() => expect(within(dialog).getAllByRole("button").length).toBeGreaterThan(4))
+      expect(within(dialog).queryByText(/Requires Hubble Desktop/)).toBeNull()
+      expect(within(dialog).queryByRole("link", { name: /Hubble Desktop/ })).toBeNull()
+    } finally {
+      delete window.__TAURI_INTERNALS__
+    }
+  })
+})
+
 describe("the custom agent in the desktop app (Phase J.2)", () => {
   it("is shown as unavailable, with the reason, because the desktop app runs no MCP server", async () => {
     const user = userEvent.setup()

@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function CookiePolicyPage() {
   return (
-    <LegalPage title="Cookie Policy" lastUpdated="September 14, 2026">
+    <LegalPage title="Cookie Policy" lastUpdated="October 1, 2026">
       <section>
         <h2>Hubble uses cookies only to sign you in</h2>
         <p>
@@ -84,6 +84,11 @@ export default function CookiePolicyPage() {
         <p>
           Hubble does not use analytics cookies, advertising cookies, or any third-party marketing/tracking
           scripts. There is no Google Analytics, Meta Pixel, or similar tool integrated into this application.
+        </p>
+        <p>
+          Downloading Hubble Desktop sets no cookie either. Downloads are counted on the server as an
+          aggregate number per day, platform, and version, with nothing stored about who downloaded — see{" "}
+          <a href="/privacy#desktop-downloads">Hubble Desktop download counts</a> in the Privacy Policy.
         </p>
       </section>
 

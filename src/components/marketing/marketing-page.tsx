@@ -21,6 +21,7 @@ import {
   SiteHeader,
   Stage,
   WhenNear,
+  useDesktopLink,
   useMarketingScheme,
   type PrimaryAction,
   type Scheme,
@@ -61,6 +62,8 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
       : { label: "Hubble for Chrome", onClick: onInstallExtension }
   const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
   const demoScheme = useMemo(() => ({ value: scheme, set: setScheme }), [scheme, setScheme])
+  // Hubble Desktop, closing the page — absent inside the desktop app itself.
+  const desktopLink = useDesktopLink()
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
@@ -229,7 +232,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
               Try Hubble now.
             </h2>
             <div className="m-reveal-item mt-6" style={revealStep(1)}>
-              <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" />
+              <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" secondary={desktopLink} />
             </div>
           </Container>
         </RevealSection>

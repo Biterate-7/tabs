@@ -1,0 +1,112 @@
+# Builds the Hubble Desktop Windows installer and attaches it to a DRAFT
+# GitHub Release. Nothing here publishes anything: a person installs the
+# drafted installer, checks it, and publishes the draft by hand. The website
+# links to it only after src/lib/desktop/release.ts is changed to "published"
+# in a reviewed pull request. See docs/desktop-release.md.
+#
+# Trigger: push a tag `desktop-v<version>` matching src-tauri/tauri.conf.json,
+# or run it by hand for a tag that already exists.
+name: Desktop release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. desktop-v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Never interpolated into a script directly: read through the
+      # environment and checked against a fixed pattern first.
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check the tag
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags look like desktop-v1.2.3 (got '$RELEASE_TAG')"
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$RELEASE_TAG" != "desktop-v$VERSION" ]; then
+            echo "::error::$RELEASE_TAG does not match src-tauri/tauri.conf.json version $VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # The sidecar ships a copy of this Node (scripts/build-agent-runtime.mjs),
+      # so this is the Node version installed users run their agents under.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # A release-profile build: `tauri build` without --debug. Its
+      # beforeBuildCommand builds the agent runtime sidecar and the static
+      # frontend export. No secrets are passed to it.
+      - name: Build the installer
+        run: npx tauri build --bundles nsis --ci
+
+      - name: Checksum
+        shell: bash
+        run: |
+          ASSET="Hubble_${VERSION}_x64-setup.exe"
+          cd src-tauri/target/release/bundle/nsis
+          test -f "$ASSET"
+          sha256sum "$ASSET" | tee "$ASSET.sha256"
+          echo "ASSET_DIR=$PWD" >> "$GITHUB_ENV"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Draft the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(cut -d ' ' -f 1 "$ASSET_DIR/$ASSET.sha256")
+          {
+            echo "Hubble Desktop $VERSION for Windows 10 and 11 (64-bit)."
+            echo
+            echo "Download it from https://hubble-hq.vercel.app/download."
+            echo
+            echo "- Installer: \`$ASSET\` (per-user install; no administrator rights needed)"
+            echo "- SHA-256: \`$SHA\`"
+            echo "- This installer is **not code-signed** yet, so Windows SmartScreen may show \"Windows protected your PC\" the first time it runs."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --verify-tag \
+            --title "Hubble $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$ASSET_DIR/$ASSET" \
+            "$ASSET_DIR/$ASSET.sha256"
