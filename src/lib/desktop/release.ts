@@ -56,7 +56,13 @@ export type DesktopBuild =
  * `{ status: "published", version, sha256 }`. See docs/desktop-release.md.
  */
 export const DESKTOP_BUILDS: Readonly<Record<DesktopOs, DesktopBuild>> = {
-  windows: { status: "unpublished" },
+  // https://github.com/Biterate-7/tabs/releases/tag/desktop-v0.1.0 — published
+  // 2026-10-01. The checksum is the published asset's, verified after download.
+  windows: {
+    status: "published",
+    version: "0.1.0",
+    sha256: "660326fd1312727ba4edef5cc17a2755ae437e31674ac12d4359ac67174dc9d3",
+  },
   macos: { status: "coming_soon" },
   linux: { status: "unsupported" },
 };

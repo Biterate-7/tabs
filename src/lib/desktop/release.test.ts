@@ -32,6 +32,11 @@ const PUBLISHED: Record<DesktopOs, DesktopBuild> = {
   macos: { status: "coming_soon" },
   linux: { status: "unsupported" },
 };
+/** Every OS unpublished — the state before a release, and the next version's state between draft and publish. */
+const UNPUBLISHED: Record<DesktopOs, DesktopBuild> = { ...PUBLISHED, windows: { status: "unpublished" } };
+
+/** The Windows release published on GitHub as desktop-v0.1.0, checked byte-for-byte after download. */
+const RELEASED_SHA256 = "660326fd1312727ba4edef5cc17a2755ae437e31674ac12d4359ac67174dc9d3";
 
 const UA = {
   windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
@@ -43,10 +48,22 @@ const UA = {
 };
 
 describe("the shipped release state", () => {
-  it("links to no installer: none has been published", () => {
-    for (const os of ["windows", "macos", "linux"] as const) expect(downloadUrl(os)).toBeNull();
-    expect(anyDesktopBuildPublished()).toBe(false);
-    expect(desktopLinkLabel()).toBe("Hubble Desktop");
+  it("publishes exactly the verified Windows 0.1.0 release, and nothing for macOS or Linux", () => {
+    expect(DESKTOP_BUILDS.windows).toEqual({ status: "published", version: "0.1.0", sha256: RELEASED_SHA256 });
+    expect(downloadUrl("windows")).toBe(
+      `https://github.com/${RELEASE_REPOSITORY}/releases/download/desktop-v0.1.0/Hubble_0.1.0_x64-setup.exe`
+    );
+    expect(downloadHref("windows")).toBe("/api/download?platform=windows");
+    expect(downloadUrl("macos")).toBeNull();
+    expect(downloadUrl("linux")).toBeNull();
+    expect(anyDesktopBuildPublished()).toBe(true);
+    expect(desktopLinkLabel()).toBe("Download Hubble");
+  });
+
+  it("before anything is published, links to no installer", () => {
+    for (const os of ["windows", "macos", "linux"] as const) expect(downloadUrl(os, UNPUBLISHED)).toBeNull();
+    expect(anyDesktopBuildPublished(UNPUBLISHED)).toBe(false);
+    expect(desktopLinkLabel(UNPUBLISHED)).toBe("Hubble Desktop");
   });
 
   it("claims only what the Tauri bundle config can build", () => {
@@ -155,7 +172,7 @@ describe("desktopOffer", () => {
   });
 
   it("says plainly that Windows is not yet available while it is unpublished", () => {
-    expect(desktopOffer("windows")).toEqual({
+    expect(desktopOffer("windows", UNPUBLISHED)).toEqual({
       kind: "unavailable",
       os: "windows",
       label: "Hubble for Windows",
@@ -173,8 +190,9 @@ describe("desktopOffer", () => {
   });
 
   it("asks an unknown platform to choose, and tells a phone to use a computer", () => {
-    expect(desktopOffer("unknown")).toMatchObject({ kind: "choose", label: "Download Hubble Desktop" });
-    expect(desktopOffer("unknown").kind === "choose" && desktopOffer("unknown")).toMatchObject({
+    expect(desktopOffer("unknown", UNPUBLISHED)).toMatchObject({
+      kind: "choose",
+      label: "Download Hubble Desktop",
       reason: "Hubble Desktop is not publicly available yet.",
     });
     expect(desktopOffer("unknown", PUBLISHED)).toMatchObject({ reason: "Choose your platform below." });
@@ -184,6 +202,7 @@ describe("desktopOffer", () => {
   it("labels links to the page by whether anything can be downloaded", () => {
     expect(desktopLinkLabel(PUBLISHED)).toBe("Download Hubble");
     expect(statusLabel("windows", PUBLISHED)).toBe("Version 0.1.0");
-    expect(statusLabel("windows")).toBe("Not yet available");
+    expect(statusLabel("windows", UNPUBLISHED)).toBe("Not yet available");
+    expect(statusLabel("windows")).toBe("Version 0.1.0");
   });
 });
