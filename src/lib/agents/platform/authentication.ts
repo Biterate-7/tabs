@@ -1,3 +1,4 @@
+import { isLocalProcessTransport } from "./catalog";
 import type {
   AgentAuthMethod,
   AuthMethodSupport,
@@ -225,7 +226,9 @@ export function agentCapabilities(provider: PlatformProvider, surface: PlatformS
   if (offered.some((method) => method.kind === "hubble_token")) authenticationDetection = "hubble-token";
   else if (offered.some((method) => method.owner === "hubble")) authenticationDetection = "stored-credential";
   else if (offered.some((method) => method.owner === "runtime")) {
-    authenticationDetection = provider.transport === "acp" ? "agent-probe" : "cli-status";
+    // An ACP or app-server agent is asked directly (ACP `session/new`, Codex's
+    // `account/read`); an SDK agent's own CLI reports its status.
+    authenticationDetection = isLocalProcessTransport(provider.transport) ? "agent-probe" : "cli-status";
   }
 
   return {

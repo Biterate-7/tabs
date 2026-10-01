@@ -350,12 +350,56 @@ describe("events from an adapter", () => {
 
   it("moves the session through approval and back", async () => {
     const { adapter, service, sessionId } = await running();
+    // A request a person is asked. One the service answers on the spot never
+    // makes the session wait (approval-lifecycle.test.ts).
+    Object.assign(adapter, {
+      takeApprovalDetails: () => ({
+        sessionId,
+        action: "modify_files",
+        scope: "write_project",
+        projectId: "p1",
+        targets: ["src/a.ts"],
+      }),
+    });
 
     adapter.emit({ ...base(sessionId), kind: "approval_requested", approvalId: "a1" });
     expect(service.session(sessionId)?.status).toBe("waiting_for_approval");
 
     adapter.emit({ ...base(sessionId), kind: "approval_granted", approvalId: "a1" });
     expect(service.session(sessionId)?.status).toBe("running");
+  });
+
+  it("keeps waiting on an approval the agent raised before its send returned", async () => {
+    // A provider can ask the moment it is prompted, before the send resolves.
+    // The move to `running` after the send must not erase that wait — or the
+    // next message would talk over a question still on screen.
+    let sessionId = "";
+    const adapter: Spy = spyAdapter(capabilitySet("create_session", "message"), {
+      sendMessage: async () => {
+        adapter.emit({ ...base(sessionId), kind: "approval_requested", approvalId: "a1" });
+        return { ok: true, value: undefined };
+      },
+    });
+    Object.assign(adapter, {
+      takeApprovalDetails: () => ({
+        sessionId,
+        action: "run_command",
+        scope: "run_commands",
+        projectId: "p1",
+        targets: ["Command"],
+      }),
+    });
+    const service = serviceWith(adapter);
+    const started = await service.startSession({ provider: "claude-code" });
+    sessionId = started.ok ? started.value.id : "";
+
+    expect((await service.sendMessage({ sessionId, text: "go", context: { attachments: [] } })).ok).toBe(true);
+
+    expect(service.session(sessionId)?.status).toBe("waiting_for_approval");
+    expect(await service.sendMessage({ sessionId, text: "again", context: { attachments: [] } })).toMatchObject({
+      ok: false,
+      error: { code: "approval-required" },
+    });
   });
 
   it("refuses to apply an impossible transition an adapter implies", async () => {

@@ -50,8 +50,8 @@ const WINDOW_HEIGHT = "h-[560px] md:h-[600px] xl:h-[640px]"
  * agent, a runtime, the visitor's browser or their saved Hubble data.
  *
  * Nothing is claimed that the product does not do. The integration row reads
- * the connector catalog; Codex is shown as connecting without sessions,
- * because that is what it does; the changelog is the project's own history.
+ * the connector catalog, and every agent it names runs sessions that ask
+ * before acting; the changelog is the project's own history.
  */
 export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPageProps) {
   const install = getExtensionInstallInfo()
@@ -172,7 +172,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
           <FeatureSection
             id="agents"
             title="One interface for your agents."
-            body="Claude Code, Gemini CLI and Grok Build run sessions in Hubble. Codex connects, and any MCP agent can read your workspaces. Each one runs on your own account or key."
+            body="Claude Code, Gemini CLI, Grok Build and Codex run sessions in Hubble, asking you before they act, and any MCP agent can read your workspaces. Each one runs on your own account or key."
             link={<MoreLink onClick={onPasteTabs}>Connect an agent</MoreLink>}
             stage={
               <DemoWindow

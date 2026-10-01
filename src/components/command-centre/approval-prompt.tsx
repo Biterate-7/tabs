@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "react"
 import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PLAN_CONFIDENCE_LABEL, permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
+import { readCommandPreview } from "@/lib/agents/control/command-preview"
 import { WORKSPACE_CHANGE_HEADLINE } from "@/lib/agents/session-context/changes"
 import { planStepLine } from "@/lib/agents/session-context/plan"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
+import type { ApprovalCommandPreview } from "@/lib/agents/control/command-preview"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
 import type { WorkspacePlanPreview, WorkspacePlanStep } from "@/lib/agents/session-context/plan"
 
@@ -141,6 +143,38 @@ function PlanSummary({
   )
 }
 
+/**
+ * The command itself, whole: program, arguments, paths and where it runs.
+ *
+ * For an agent whose approved command runs with the person's own system
+ * permissions (Codex), this is the entire boundary — so it is printed exactly
+ * as the agent will run it, never shortened, and wraps rather than truncates.
+ * A working directory outside the project is said in words, because that is
+ * the detail most worth noticing and the easiest to miss in a path.
+ */
+function CommandSummary({ command, agentName }: { command: ApprovalCommandPreview; agentName: string }) {
+  return (
+    <div className="mt-1">
+      <p className="text-body-sm text-muted-foreground">{agentName} wants to run:</p>
+      <pre
+        aria-label="Command"
+        className="mt-1 max-h-60 overflow-auto rounded-sm border border-subtle bg-surface px-2.5 py-2 font-mono text-code whitespace-pre-wrap break-all text-foreground"
+      >
+        {command.commandLine}
+      </pre>
+      <p className="mt-1 text-meta text-tertiary">
+        Runs in <span className="font-mono text-muted-foreground">{command.workingDirectory}</span>
+        {!command.insideProject && <span className="text-warning"> — outside this project</span>}
+      </p>
+      {command.network && (
+        <p className="mt-0.5 text-meta text-warning">
+          Asks for network access to {command.network.host} ({command.network.protocol})
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function ApprovalPrompt({
   approval,
   projectName,
@@ -169,8 +203,16 @@ export function ApprovalPrompt({
   const denyRef = useRef<HTMLButtonElement | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const expiry = expiryLabel(approval.expiresAt, now)
+  const provider = platformProvider(approval.provider)
   // The name the connector surfaces use ("Gemini CLI"), whichever agent asks.
-  const agentName = platformProvider(approval.provider)?.displayName ?? agentVisualIdentity(approval.provider).displayName
+  const agentName = provider?.displayName ?? agentVisualIdentity(approval.provider).displayName
+  // Read again here, strictly: what is printed must be exactly what is approved.
+  const command = approval.command ? readCommandPreview(approval.command) : undefined
+  // An agent whose approved commands run with the person's own permissions
+  // must show the whole command. Without one that reads, there is nothing a
+  // person could knowingly allow — so Allow is not offered.
+  const commandTrustNotice = approval.action === "run_command" ? provider?.commandTrustNotice : undefined
+  const unshowable = Boolean(commandTrustNotice || approval.command) && approval.action === "run_command" && !command
 
   /*
     Focus lands on Deny.
@@ -254,13 +296,21 @@ export function ApprovalPrompt({
             </ul>
           )}
         </div>
+      ) : command ? (
+        <CommandSummary command={command} agentName={agentName} />
+      ) : unshowable ? (
+        <p className="mt-0.5 text-body-sm text-warning">
+          Hubble can&apos;t show this command in full, so it can&apos;t be allowed.
+        </p>
       ) : (
         <p className="mt-0.5 text-body-sm text-muted-foreground">
           {permissionScopeLabel(approval.scope)}
         </p>
       )}
 
-      {!approval.change && !approval.plan && approval.targets.length > 0 && (
+      {commandTrustNotice && <p className="mt-1.5 text-meta text-muted-foreground">{commandTrustNotice}</p>}
+
+      {!approval.change && !approval.plan && !command && !unshowable && approval.targets.length > 0 && (
         <ul className="mt-1.5 flex flex-col gap-0.5">
           {approval.targets.map((target) => (
             <li key={target} className="truncate font-mono text-meta text-muted-foreground">
@@ -305,7 +355,7 @@ export function ApprovalPrompt({
           size="sm"
           variant="default"
           className="min-w-16"
-          disabled={pending || expiry.expired}
+          disabled={pending || expiry.expired || unshowable}
           onClick={() => onRespond(approval.approvalId, "granted")}
           {...(approval.plan
             ? { "aria-label": approval.plan.operationCount === 1 ? "Approve this change, once" : `Approve these ${approval.plan.operationCount} changes, once` }

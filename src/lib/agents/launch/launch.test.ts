@@ -116,8 +116,8 @@ describe("detecting installed agents", () => {
     expect(detections).toEqual([
       { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
       { provider: "gemini", installed: true, transport: "acp", launchable: true },
-      // Codex is installed but its ACP adapter is not, so it cannot be driven yet.
-      { provider: "openai-codex", installed: true, transport: "acp", launchable: false },
+      // Codex itself is what Hubble drives, over its own app-server.
+      { provider: "openai-codex", installed: true, transport: "app-server", launchable: true },
       { provider: "grok", installed: false, transport: "acp", launchable: false },
     ]);
 

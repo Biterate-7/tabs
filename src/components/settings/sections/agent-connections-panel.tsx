@@ -236,6 +236,11 @@ export function authenticationLine(
   phase: ConnectionPhase
 ): string {
   const active = activeAuthMethod(spec, status)
+  // A plan's sign-in held by the agent's own program (Codex's ChatGPT
+  // sign-in): which program the connection runs through, and which account kind.
+  if (active && phase === "connected" && active.owner === "runtime" && active.subscription) {
+    return `Connected through ${spec.runtimeName} · ${active.label}`
+  }
   if (active && phase !== "auth_unsupported") return `${active.label} · in use`
   if (status?.authentication === "authenticated" && !status.authIssue && signInShape(spec, surface, status) === "native") {
     return `Signed in through ${spec.runtimeName}`

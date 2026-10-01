@@ -230,6 +230,31 @@ An adapter **cannot set a status**. It describes what happened; the service
 decides what that means, and refuses an impossible transition rather than
 applying it.
 
+### Waiting for approval
+
+A session is `waiting_for_approval` exactly while one of its own approvals is
+open in the broker. The service owns that rule for every provider:
+
+- A request the service answers on the spot (the grant already settles it, or
+  it cannot be described) asks nobody and never makes the session wait.
+- When a person answers, the service announces `approval_granted` or
+  `approval_denied`, unless the adapter already did (Codex does). The session
+  returns to `running` when the **last** open approval is answered, not the
+  first.
+- An adapter announcing an answer to a question it stopped waiting on (a turn
+  ending) withdraws that question in the broker.
+- A turn that completes with a question still open withdraws it and returns
+  the session to `ready`. A session that ends (cancelled, failed,
+  disconnected) withdraws all its open approvals, so no card is left for a
+  session that is over, and a late answer reaches nothing.
+- After an `await` the service re-reads the session record. An agent that
+  asks before its send returns keeps the session waiting, and the next message
+  is refused.
+
+Before this, only Codex announced answers, and Claude, Gemini and Grok
+sessions stayed `waiting_for_approval` after every answer. The provider-neutral
+tests are in `control/approval-lifecycle.test.ts`.
+
 ### Why this is not `AgentRunStatus`
 
 The domain's run status answers *"how is the work going"* and is derived from

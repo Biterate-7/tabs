@@ -16,7 +16,12 @@ import { Select } from "@/components/ui/select"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { RemoteProjectPicker } from "./remote-project-picker"
-import { canCreateSession, providerUnavailableReason } from "@/lib/agents/command-centre/presentation"
+import {
+  PERMISSION_SCOPE_LABEL,
+  canCreateSession,
+  providerUnavailableReason,
+} from "@/lib/agents/command-centre/presentation"
+import { requiresApproval } from "@/lib/agents/control/permissions"
 import {
   EXECUTION_MODE_DETAIL,
   EXECUTION_MODE_LABEL,
@@ -265,6 +270,14 @@ export function NewSessionDialog({
   const chosenStatus = providers.find((candidate) => candidate.provider === chosen)
 
   const selectedRemote = remote?.projects.find((project) => project.id === remoteProjectId) ?? null
+
+  /*
+    What authorizing a folder here would grant, shown before Authorize is
+    pressed: the agent's Connect Agent approval, and nothing more. Every scope
+    that asks per use says so, and a missing Run commands is named, because
+    it is the one a person otherwise discovers only when nothing runs.
+  */
+  const folderGrant = chosen && projectScopesFor ? projectScopesFor(chosen) : null
 
   /*
     Whether Start may be pressed, and if not, precisely why.
@@ -588,6 +601,34 @@ export function NewSessionDialog({
                       : "Type the full path. Hubble checks it is a real project folder, not a drive or your home directory."}
                   </p>
                 </div>
+                {folderGrant && chosen && (
+                  <div data-testid="folder-grant" className="flex flex-col gap-0.5">
+                    <p className="text-label text-tertiary">
+                      {agentVisualIdentity(chosen).displayName} may, in this folder
+                    </p>
+                    {folderGrant.length === 0 ? (
+                      <p className="text-body-sm text-muted-foreground">
+                        Nothing yet. Choose what it may do in Connect Agent.
+                      </p>
+                    ) : (
+                      <ul className="flex flex-col gap-0.5">
+                        {folderGrant.map((scope) => (
+                          <li key={scope} className="text-body-sm text-foreground">
+                            {PERMISSION_SCOPE_LABEL[scope]}
+                            {requiresApproval(scope) && (
+                              <span className="text-meta text-tertiary"> · asks every time</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {!folderGrant.includes("run_commands") && (
+                      <p className="text-meta text-tertiary">
+                        Running commands is off for this agent. Turn it on in Connect Agent to allow it here.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {projectError && <p className="text-body-sm text-destructive">{projectError}</p>}
                 <div className="flex justify-end gap-1.5">
                   <Button type="button" size="sm" variant="ghost" onClick={() => setAddingProject(false)}>

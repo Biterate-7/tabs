@@ -1,7 +1,8 @@
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
-import { ACP_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
+import { LOCAL_PROCESS_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
+import { createLocalAppServerAdapter } from "@/lib/agents/launch/app-server-adapter";
 import { agentEnvironment } from "@/lib/agents/launch/env";
 import {
   createNativeLoginSource,
@@ -21,6 +22,7 @@ import { createRuntimeHost, LOCAL_ACTOR } from "./host";
 import { isHandshakeCommand, parseRuntimeRequest, runtimeFailure } from "./protocol";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AcpLauncher } from "@/lib/agents/control/providers/acp/launcher";
+import type { AppServerLauncher, AppServerLogin } from "@/lib/agents/control/providers/codex-app-server/launcher";
 import type { AgentControlAdapter } from "@/lib/agents/control/types";
 import type { NativeLoginState } from "@/lib/agents/launch/native-auth";
 import type { RuntimeHost } from "./host";
@@ -66,6 +68,9 @@ export type DesktopRuntimeOptions = {
   claudeLogin?: NativeLoginState;
   claudeExecutable?: string | null;
   acpLauncher?: (provider: AgentProviderId) => AcpLauncher;
+  appServerLauncher?: (provider: AgentProviderId) => AppServerLauncher;
+  appServerLogin?: (provider: AgentProviderId) => AppServerLogin;
+  platform?: NodeJS.Platform;
   detect?: () => readonly ProviderDetection[];
   now?: () => number;
 };
@@ -78,7 +83,7 @@ export type DesktopRuntime = {
   dispose(): Promise<void>;
 };
 
-const PROVIDERS: readonly AgentProviderId[] = ["claude-code", ...ACP_PROVIDERS];
+const PROVIDERS: readonly AgentProviderId[] = ["claude-code", ...LOCAL_PROCESS_PROVIDERS];
 
 export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRuntime {
   const adapters = new Map<AgentProviderId, AgentControlAdapter>();
@@ -124,10 +129,25 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRun
     });
   }
 
+  function appServerAdapter(provider: AgentProviderId): AgentControlAdapter | undefined {
+    return createLocalAppServerAdapter(provider, {
+      env: options.env,
+      ...(options.platform ? { platform: options.platform } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.appServerLauncher ? { launch: options.appServerLauncher(provider) } : {}),
+      ...(options.appServerLogin ? { login: options.appServerLogin(provider) } : {}),
+    });
+  }
+
   function resolveAdapter(provider: AgentProviderId): AgentControlAdapter | undefined {
     const existing = adapters.get(provider);
     if (existing) return existing;
-    const built = provider === "claude-code" ? claudeAdapter() : acpAdapter(provider);
+    const built =
+      provider === "claude-code"
+        ? claudeAdapter()
+        : launchEntryFor(provider)?.appServer
+          ? appServerAdapter(provider)
+          : acpAdapter(provider);
     if (built) adapters.set(provider, built);
     return built;
   }

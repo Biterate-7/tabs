@@ -1,4 +1,5 @@
 import type { ApprovalAction } from "./approvals";
+import type { ApprovalCommandPreview } from "./command-preview";
 import type { AgentPermissionScope } from "./permissions";
 import type { AgentControlAdapter } from "./types";
 
@@ -63,6 +64,12 @@ export type AdapterApprovalDetails = {
   /** Project-relative paths, or a tool label for an action with no path. Never absolute. */
   targets: readonly string[];
   reason?: string;
+  /**
+   * For `run_command`: the complete command, as the agent will run it. An
+   * adapter whose approved commands run with nothing narrower than the user's
+   * own permissions must supply it — see ./command-preview.ts.
+   */
+  command?: ApprovalCommandPreview;
 };
 
 /** An adapter that can be asked about a pending approval. */

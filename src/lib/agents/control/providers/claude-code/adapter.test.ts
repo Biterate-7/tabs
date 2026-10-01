@@ -552,6 +552,22 @@ describe("approvals", () => {
     ).toMatchObject({ behavior: "deny" });
   });
 
+  it("denies Claude's MCP resource tools, whatever the grant says, without asking", async () => {
+    // Resources are a way to read an MCP server that no Hubble decision
+    // covers. They are refused here, and by the context server itself
+    // (session-context/resources.security.test.ts).
+    const { runtime, events } = await started({
+      grant: grantOf(["read_project", "write_project", "run_commands", "mcp_tools"]),
+    });
+
+    for (const toolName of ["ListMcpResourcesTool", "ReadMcpResourceTool"]) {
+      expect(await runtime.latest().requestPermission({ toolName })).toMatchObject({ behavior: "deny" });
+    }
+    expect(events.filter((event) => event.kind === "approval_requested")).toEqual([]);
+    expect(runtime.latest().options.allowedTools).not.toContain("ReadMcpResourceTool");
+    expect(runtime.latest().options.allowedTools).not.toContain("ListMcpResourcesTool");
+  });
+
   it("denies a subagent spawn whatever the grant says", async () => {
     // A subagent's tool use cannot be attributed or gated at the point of
     // use, so the parent's grant would silently become the child's.

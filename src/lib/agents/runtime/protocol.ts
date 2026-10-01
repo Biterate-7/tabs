@@ -2,6 +2,7 @@ import { isAgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AdapterAuthIssue, AdapterAuthKind } from "@/lib/agents/control/authentication";
 import type { AgentCapability } from "@/lib/agents/control/capabilities";
+import type { ApprovalCommandPreview } from "@/lib/agents/control/command-preview";
 import type { AgentAttachedContext } from "@/lib/agents/control/context";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
@@ -294,8 +295,8 @@ export type RuntimeStatus = {
 export type ProviderDetection = {
   provider: AgentProviderId;
   installed: boolean;
-  /** How Hubble drives it: the provider SDK, or the Agent Client Protocol. */
-  transport: "sdk" | "acp";
+  /** How Hubble drives it: the provider SDK, the Agent Client Protocol, or the agent's own app-server (Codex). */
+  transport: "sdk" | "acp" | "app-server";
   /** Whether the executable Hubble would start was found. */
   launchable: boolean;
 };
@@ -515,6 +516,12 @@ export type RuntimeApprovalView = {
   change?: WorkspaceChangeSummary;
   /** A plan of workspace changes (J.5): every step the user is approving, as one immutable whole. */
   plan?: WorkspacePlanPreview;
+  /**
+   * The complete command a `run_command` approval is for — program, arguments
+   * and working directory, exactly as the agent will run it. Present when the
+   * approved command runs with the user's own permissions (Codex).
+   */
+  command?: ApprovalCommandPreview;
   requestedAt: number;
   expiresAt: number;
 };

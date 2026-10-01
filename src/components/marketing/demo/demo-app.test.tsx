@@ -126,8 +126,8 @@ describe("Command Centre", () => {
     expect(region.getByRole("navigation", { name: "Agent sessions" })).toBeTruthy()
     expect(region.getByRole("region", { name: "Connected agents" })).toBeTruthy()
     expect(region.getByRole("heading", { name: "Summarize the SWE-bench reading list" })).toBeTruthy()
-    // Codex is signed in but, as in Hubble, runs no sessions — and is not called connected.
-    expect(region.getByText("Signed in · sessions unavailable")).toBeTruthy()
+    // Every agent in the roster can run sessions now — none is shown as refused.
+    expect(region.queryByText("Signed in · sessions unavailable")).toBeNull()
     // The view bar says what the demo is rather than reporting a runtime.
     expect(region.getByRole("status").textContent).toMatch(/Demo/)
   })
@@ -300,7 +300,7 @@ describe("settings", () => {
   it("lists every connector as the catalog describes it", async () => {
     const { user, frame } = renderDemo({ view: "settings", settingsSection: "agents" })
     expect(within(frame()).getByRole("heading", { name: "Agents" })).toBeTruthy()
-    const codex = within(frame()).getByText("OpenAI's coding agent, over the Agent Client Protocol adapter.")
+    const codex = within(frame()).getByText("OpenAI's coding agent, driven through Codex's own app-server. Every command it runs waits for your approval.")
     expect(codex).toBeTruthy()
     expect(within(frame()).getAllByText("Unavailable").length).toBeGreaterThan(0)
     await user.click(within(frame()).getAllByRole("button", { name: "Shortcuts" }).find((b) => b.closest("nav[aria-label='Settings sections']"))!)

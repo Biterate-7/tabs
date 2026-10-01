@@ -1,4 +1,5 @@
 import { activeAuthMethod, agentCapabilities, signInShape, unavailableAuthMethods } from "./authentication";
+import { isLocalProcessTransport } from "./catalog";
 import type { AgentAuthMethod, PlatformProvider, PlatformSignInKind, PlatformSurface } from "./catalog";
 import type { AgentPermissionScope } from "@/lib/agents/control/permissions";
 import type {
@@ -198,7 +199,7 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
         // The SDK brings its own agent; an absent CLI is not a blocker for it.
         if (provider.transport !== "sdk") return "not_installed";
       }
-      if (provider.transport === "acp" && !facts.detection.launchable) return "needs_adapter";
+      if (isLocalProcessTransport(provider.transport) && !facts.detection.launchable) return "needs_adapter";
       // An SDK agent that drives the *installed* CLI (the desktop app) has no
       // runtime to offer when that CLI is absent.
       if (!facts.detection.installed && facts.status?.connection === "unavailable") return "not_installed";
@@ -210,8 +211,8 @@ export function connectionPhase(facts: ConnectionFacts): ConnectionPhase {
     // No detection, but the runtime said something definite about the
     // agent's sign-in (signed out, signed in, not permitted): that decides
     // below, rather than a "not checked yet" that would hide it.
-  } else if (provider.transport === "acp") {
-    // ACP agents run on the user's machine. A remote runtime cannot reach one.
+  } else if (isLocalProcessTransport(provider.transport)) {
+    // ACP and app-server agents run on the user's machine. A remote runtime cannot reach one.
     return "runtime_unavailable";
   }
 
@@ -278,7 +279,7 @@ export function phaseSentence(
       if (!provider.surfaces.includes(surface)) {
         return provider.unavailableOn?.[surface] ?? `${name} is unavailable here.`;
       }
-      return provider.transport === "acp"
+      return isLocalProcessTransport(provider.transport)
         ? `${name} is unavailable on this runtime. It runs on your own machine, from the desktop app or a local Hubble.`
         : "Agents cannot run in this Hubble.";
     }

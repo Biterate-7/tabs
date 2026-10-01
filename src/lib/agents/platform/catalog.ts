@@ -35,6 +35,11 @@ export type PlatformTransport =
   | "sdk"
   /** Over the Agent Client Protocol, as a local process the runtime starts. */
   | "acp"
+  /**
+   * Over the agent's own app-server protocol (JSON-RPC on stdio), as a local
+   * process the runtime starts — Codex's `codex app-server`. Local only, like ACP.
+   */
+  | "app-server"
   /** The agent is the client: it connects to Hubble's MCP server. Hubble starts nothing. */
   | "mcp";
 
@@ -192,10 +197,24 @@ export type PlatformProvider = {
   features: readonly PlatformFeature[];
   /**
    * Exactly what connecting it means, for a connector the user wires up
-   * themselves. Plain sentences; the custom agent is the one that needs them.
+   * themselves — or one whose trust model differs from what the feature list
+   * would suggest. Plain sentences.
    */
   explainer?: readonly string[];
+  /**
+   * For an agent whose approved commands run with the user's own system
+   * permissions and nothing narrower (Codex on Windows): the sentence every
+   * command approval says. Its presence also makes the approval card require
+   * the complete command before it offers Allow — see
+   * components/command-centre/approval-prompt.tsx.
+   */
+  commandTrustNotice?: string;
 };
+
+/** Whether Hubble drives this agent as a local process it starts (ACP or an app-server). */
+export function isLocalProcessTransport(transport: PlatformTransport): boolean {
+  return transport === "acp" || transport === "app-server";
+}
 
 /** What every agent Hubble drives in a session offers. The same list for each, because it is the same code. */
 const SESSION_FEATURES: readonly PlatformFeature[] = [
@@ -300,12 +319,13 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
     displayName: "Codex",
     vendor: "OpenAI",
     runtimeName: "Codex",
-    transport: "acp",
-    // OpenAI documents ChatGPT sign-in and API-key sign-in for Codex
-    // (developers.openai.com/codex/auth). codex-acp advertises the ChatGPT
-    // sign-in over ACP (verified 1.13.1: method `chat-gpt`). Sessions are
-    // refused for an unrelated reason — see `sessions`: being signed in to
-    // Codex makes it authenticated, never session-ready.
+    transport: "app-server",
+    // Driven directly through Codex's own app-server (verified against Codex
+    // 0.159.0; docs/codex-app-server.md) — not codex-acp, whose modes could not
+    // make Codex ask before every command. OpenAI documents ChatGPT sign-in and
+    // API-key sign-in for Codex (developers.openai.com/codex/auth). Hubble runs
+    // `codex login` — Codex's own browser sign-in — against Hubble's own Codex
+    // folder, and reads the result from the app-server's `account/read`.
     auth: [
       {
         id: "chatgpt-account",
@@ -313,9 +333,11 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
         kind: "account",
         subscription: true,
         owner: "runtime",
-        summary: "Codex's own ChatGPT sign-in, opened in your browser. Codex keeps the login; Hubble never sees it.",
+        summary:
+          "Codex's own ChatGPT sign-in, opened in your browser. Codex keeps the login in the Codex folder Hubble runs it with; Hubble never sees or keeps the login.",
         support: { status: "offered", surfaces: ["web", "desktop"] },
-        runtimeMethodIds: ["chat-gpt", "chatgpt"],
+        runtimeMethodIds: ["chatgpt"],
+        reportedAs: "subscription",
         docsUrl: "https://developers.openai.com/codex/auth",
       },
       {
@@ -331,20 +353,28 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
             "Codex accepts an OpenAI API key, but Hubble starts agents with no keys in their environment and does not hand them one.",
         },
         runtimeMethodIds: ["api-key", "codex-api-key", "openai-api-key"],
+        reportedAs: "api_key",
         docsUrl: "https://developers.openai.com/codex/auth",
       },
     ],
-    pitch: "OpenAI's coding agent, over the Agent Client Protocol adapter.",
-    installCommand: "npm install -g @agentclientprotocol/codex-acp",
-    docsUrl: "https://github.com/agentclientprotocol/codex-acp",
+    pitch: "OpenAI's coding agent, driven through Codex's own app-server. Every command it runs waits for your approval.",
+    installCommand: "npm install -g @openai/codex",
+    docsUrl: "https://developers.openai.com/codex",
     chat: true,
-    sessions: {
-      available: false,
-      reason:
-        "Codex does not ask before every action: even in its most restrictive mode it runs commands and reads files anywhere on your computer without asking, so Hubble cannot approve what it does.",
-    },
+    sessions: { available: true },
     surfaces: ["web", "desktop"],
     features: SESSION_FEATURES,
+    // Said before connecting and on every command approval, because Codex's
+    // trust model is Claude's — per-command approval — and NOT a sandbox:
+    // on Windows Codex cannot confine an approved command to the project.
+    explainer: [
+      "Hubble starts Codex in the project folder you choose and gives it context from your Hubble workspace: the workspace, the tabs and collections in focus, for this session only.",
+      "That context is what Hubble tells Codex. It does not limit what Codex can reach on your computer.",
+      "Every command Codex wants to run waits for your approval, shown in full. Approved commands run with your system permissions, like a command you run yourself — Codex is not sandboxed to the project.",
+      "Codex signs in with its own ChatGPT sign-in. Hubble never sees or keeps the login.",
+    ],
+    commandTrustNotice:
+      "Codex commands require your approval before execution. Approved commands run with your system permissions.",
   },
   {
     provider: "gemini",

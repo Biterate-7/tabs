@@ -36,9 +36,9 @@ import { useHubbleDemo } from "./demo-provider"
  * The agents the demo roster shows, as the product's platform hook would
  * report them — built from the catalog rather than restated. Whether Hubble
  * starts sessions with an agent is `platformProvider(p).sessions`, the same
- * field the server's launch allowlist is tested against, so Codex reads
- * "Signed in · sessions unavailable" here exactly as it does in Hubble —
- * signed in, never "Connected", because no session can be started with it.
+ * field the server's launch allowlist is tested against, so an agent Hubble
+ * will not start sessions with reads "Signed in · sessions unavailable" here
+ * exactly as it does in Hubble — signed in, never "Connected".
  *
  * Every action that would reach a runtime is inert: the demo connects
  * nothing, detects nothing and signs nothing in.

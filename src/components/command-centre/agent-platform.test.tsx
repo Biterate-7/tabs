@@ -52,7 +52,7 @@ function runtimeWithGemini(authentication: RuntimeProviderStatus["authentication
   runtime.setDetections([
     { provider: "claude-code", installed: true, transport: "sdk", launchable: false },
     { provider: "gemini", installed: true, transport: "acp", launchable: true },
-    { provider: "openai-codex", installed: true, transport: "acp", launchable: false },
+    { provider: "openai-codex", installed: false, transport: "app-server", launchable: false },
     { provider: "grok", installed: false, transport: "acp", launchable: false },
   ])
   runtime.setConnection({
@@ -197,43 +197,83 @@ describe("Connect Agent", () => {
     )
   })
 
-  it("tells the user Codex cannot start sessions before asking anything of them, and never asks them to sign in (Phase J.2)", async () => {
+  it("signs Codex in through Codex's own ChatGPT sign-in, and says the trust model before anything is approved", async () => {
     const user = userEvent.setup()
     const runtime = runtimeWithGemini()
-    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "acp", launchable: true }])
+    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "app-server", launchable: true }])
     runtime.setConnection({
       provider: "openai-codex",
       connection: "connected",
       available: true,
       authentication: "required",
-      capabilities: [],
+      capabilities: ["create_session", "message", "approvals", "run_commands"],
       nativeSignIn: true,
-      authMethods: [{ id: "chat-gpt", name: "ChatGPT" }],
+      authMethods: [{ id: "chatgpt", name: "Sign in with ChatGPT" }],
     })
     renderCentre(runtime)
 
     await user.click(await screen.findByRole("button", { name: /connect agent/i }))
     const dialog = await screen.findByRole("dialog")
-    // In the list, before it is even chosen.
-    expect(within(dialog).getByRole("button", { name: /Codex.*sessions unavailable/ })).toBeTruthy()
+    expect(within(dialog).getByRole("button", { name: /Codex/ }).textContent).not.toMatch(/sessions unavailable/)
     await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
 
-    // Its real state is still asked for and shown…
+    // Asked of Codex itself, and said as Codex said it.
     expect(await within(dialog).findByText("Codex is installed but not authenticated.")).toBeTruthy()
     expect(runtime.commands).toContainEqual({ name: "connect_provider", provider: "openai-codex" })
-    // …with the reason, and nothing to sign in to, continue past or approve.
-    expect(within(dialog).getByText(/Hubble will not start sessions with Codex/)).toBeTruthy()
-    expect(within(dialog).queryByRole("button", { name: /Sign in with ChatGPT/i })).toBeNull()
-    expect(within(dialog).queryByRole("button", { name: /continue/i })).toBeNull()
-    expect(within(dialog).queryByRole("button", { name: /approve and connect/i })).toBeNull()
-    expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
+    // The trust model, before anyone signs in or approves anything.
+    const explained = within(dialog).getByRole("list", { name: /What connecting Codex means/ })
+    expect(within(explained).getByText(/Approved commands run with your system permissions/)).toBeTruthy()
+    expect(within(explained).getByText(/does not limit what Codex can reach on your computer/)).toBeTruthy()
+    expect(dialog.textContent).not.toMatch(/workspace.isolated|(?<!not )sandboxed to (this|the) (workspace|project)|Work outside a project you authorized/i)
+    expect(within(dialog).queryByRole("button", { name: /continue/i })?.hasAttribute("disabled")).toBe(true)
+
+    // Codex's own sign-in: the method id Codex's adapter offered, and nothing else.
+    await user.click(await within(dialog).findByRole("button", { name: /Sign in with ChatGPT/i }))
+    expect(runtime.commands).toContainEqual({ name: "authenticate_provider", provider: "openai-codex", methodId: "chatgpt" })
   })
 
-  it("tells a signed-in Codex apart from a usable one — signed in, sessions unavailable, New session disabled", async () => {
+  it("connects a signed-in Codex as 'Connected through Codex · ChatGPT account', never as isolated", async () => {
     const user = userEvent.setup()
-    // Codex signed in with its own ChatGPT account, as the ACP adapter reports
-    // an agent it cannot hold to its approvals: reached, authenticated, no
-    // capability at all.
+    const runtime = runtimeWithGemini()
+    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "app-server", launchable: true }])
+    runtime.setConnection({
+      provider: "openai-codex",
+      connection: "connected",
+      available: true,
+      authentication: "authenticated",
+      authKind: "subscription",
+      capabilities: ["create_session", "message", "approvals", "run_commands"],
+      nativeSignIn: true,
+      authMethods: [{ id: "chatgpt", name: "Sign in with ChatGPT" }],
+    })
+    renderCentre(runtime)
+
+    await user.click(await screen.findByRole("button", { name: /connect agent/i }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
+
+    // Straight to approval: signed in, with which account kind — no account details.
+    expect(await within(dialog).findByText(/Already authenticated/)).toBeTruthy()
+    expect(within(dialog).getByText(/ChatGPT account/)).toBeTruthy()
+    const explained = within(dialog).getByRole("list", { name: /What connecting Codex means/ })
+    expect(within(explained).getByText(/Every command Codex wants to run waits for your approval, shown in full/)).toBeTruthy()
+    // Said once more beside what it may do — and it is not promised to stay in the project.
+    expect(
+      within(dialog).getByText(
+        "Codex commands require your approval before execution. Approved commands run with your system permissions."
+      )
+    ).toBeTruthy()
+    expect(within(dialog).queryByText("Work outside a project you authorized")).toBeNull()
+    expect(within(dialog).getByText("Change a file or run a command without asking you")).toBeTruthy()
+    expect(dialog.textContent).not.toMatch(/workspace.isolated|(?<!not )sandboxed to (this|the) (workspace|project)|Work outside a project you authorized/i)
+    await user.click(within(dialog).getByRole("button", { name: /approve and connect/i }))
+    expect(await within(dialog).findByText(/Codex is connected/)).toBeTruthy()
+  })
+
+  it("tells a signed-in Codex apart from a usable one where its approvals are unverified — signed in, sessions unavailable, New session disabled", async () => {
+    const user = userEvent.setup()
+    // Codex signed in with its own ChatGPT account on a platform Hubble has
+    // not verified: reached, authenticated, and no capability at all.
     const codexStatus: RuntimeProviderStatus = {
       provider: "openai-codex",
       connection: "connected",
@@ -255,8 +295,8 @@ describe("Connect Agent", () => {
         ],
       }),
     })
-    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "acp", launchable: true }])
-    runtime.setConnection({ ...codexStatus, nativeSignIn: true, authMethods: [{ id: "chat-gpt", name: "ChatGPT" }] })
+    runtime.setDetections([{ provider: "openai-codex", installed: true, transport: "app-server", launchable: true }])
+    runtime.setConnection({ ...codexStatus, nativeSignIn: true, authMethods: [{ id: "chatgpt", name: "Sign in with ChatGPT" }] })
     renderCentre(runtime)
 
     await user.click(await screen.findByRole("button", { name: /connect agent/i }))
@@ -265,7 +305,7 @@ describe("Connect Agent", () => {
 
     // Signed in, said as signed in — and not as ready, connected or awaiting an approval.
     expect(await within(dialog).findByText("Codex is signed in, but Hubble can't start sessions with it.")).toBeTruthy()
-    expect(within(dialog).getByText(/Hubble will not start sessions with Codex. Codex does not ask before every action/)).toBeTruthy()
+    expect(within(dialog).getByText(/Hubble will not start sessions with Codex. Codex cannot start sessions on this runtime yet/)).toBeTruthy()
     expect(within(dialog).queryByText(/Already authenticated/)).toBeNull()
     expect(within(dialog).queryByText(/Awaiting your approval|Codex is ready|Codex is connected/)).toBeNull()
     expect(within(dialog).queryByRole("button", { name: /approve and connect|continue/i })).toBeNull()
@@ -280,7 +320,7 @@ describe("Connect Agent", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     const create = await screen.findByRole("dialog", { name: /new agent session/i })
     expect((within(create).getByRole("radio", { name: /Codex/ }) as HTMLInputElement).disabled).toBe(true)
-    expect(within(create).getByText(/runs commands and reads files anywhere on your computer without asking/)).toBeTruthy()
+    expect(within(create).getByText(/Codex cannot start sessions on this runtime yet/)).toBeTruthy()
     expect(runtime.commands.some((command) => command.name === "create_session")).toBe(false)
     expect(runtime.commands.some((command) => command.name === "authenticate_provider")).toBe(false)
   })
@@ -310,7 +350,7 @@ describe("Connect Agent", () => {
     expect(await within(dialog).findByRole("group")).toBeTruthy()
   })
 
-  it("says Codex needs its ACP adapter when only Codex itself is installed", async () => {
+  it("shows Codex's own install command when Codex is not installed — no adapter package any more", async () => {
     const user = userEvent.setup()
     renderCentre(runtimeWithGemini())
 
@@ -318,8 +358,9 @@ describe("Connect Agent", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: /Codex/ }))
 
-    expect(await within(dialog).findByText(/program Hubble drives it through is not/i)).toBeTruthy()
-    expect(within(dialog).getByText("npm install -g @agentclientprotocol/codex-acp")).toBeTruthy()
+    expect(await within(dialog).findByText("Codex is not installed.")).toBeTruthy()
+    expect(within(dialog).getByText("npm install -g @openai/codex")).toBeTruthy()
+    expect(within(dialog).queryByText(/codex-acp/)).toBeNull()
   })
 
   it("connects a custom MCP agent without sending the runtime anything", async () => {

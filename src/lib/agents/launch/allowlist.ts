@@ -75,12 +75,49 @@ export type NativeCliEntry = {
   loginLabels: Readonly<Record<string, string>>;
 };
 
+/**
+ * An agent Hubble drives over its **own** app-server protocol — JSON-RPC on
+ * stdio, not ACP (Codex; docs/codex-app-server.md).
+ *
+ * The same rules as `AcpLaunchEntry`: executables by name, a literal argument
+ * list, an npm shim followed only into the vendor's own package. Two things
+ * are added, both because of what the agent reads from its own settings:
+ *
+ *   - `homeEnv` names the variable that points the agent at its settings
+ *     folder. Hubble sets it — never inherits it — to a folder Hubble owns
+ *     (./codex-home.ts), because the user's own folder can hold rules that
+ *     approve commands unasked and MCP servers that launch programs, and a
+ *     launch argument cannot remove either.
+ *   - `verifiedPlatforms`: where Hubble verified that the agent asks before
+ *     every command in the policy it is given. Elsewhere it is reached and
+ *     signed in to, and given no session.
+ */
+export type AppServerLaunchEntry = {
+  executables: readonly string[];
+  /** Passed verbatim. A literal in this file, never computed. */
+  args: readonly string[];
+  npmPackages?: readonly string[];
+  homeEnv: "CODEX_HOME";
+  verifiedPlatforms: readonly NodeJS.Platform[];
+  /** The oldest agent version this protocol was verified against, `major.minor.patch`. */
+  minimumVersion: string;
+  /**
+   * The agent's own sign-in, one literal argument list per method. The agent
+   * opens the provider's page in the browser itself and keeps the credential
+   * in its own store; Hubble only waits for it to finish.
+   */
+  loginArgs: Readonly<Record<string, readonly string[]>>;
+  loginLabels: Readonly<Record<string, string>>;
+};
+
 export type ProviderLaunchEntry = {
   provider: AgentProviderId;
   /** Executables whose presence means the agent is installed. */
   detect: readonly string[];
   /** How Hubble drives it, when it can. Absent: detect only. */
   acp?: AcpLaunchEntry;
+  /** How Hubble drives it over its own app-server protocol (Codex). */
+  appServer?: AppServerLaunchEntry;
   /** The agent's own CLI, for an SDK-driven agent's executable and native sign-in. */
   native?: NativeCliEntry;
 };
@@ -144,41 +181,52 @@ export const PROVIDER_LAUNCH_TABLE: readonly ProviderLaunchEntry[] = [
     },
   },
   {
-    // Codex speaks ACP through its adapter, which bundles Codex itself.
+    // Codex, driven directly over its own app-server — not codex-acp, whose
+    // four fixed modes could not make Codex ask before every command.
+    // Verified against Codex 0.159.0 (docs/codex-app-server.md):
     //
-    // Verified against @agentclientprotocol/codex-acp 1.13.1 (src/AgentMode):
-    // every mode it offers runs Codex with a `workspace-write` sandbox or
-    // none. Its `read-only` mode ("Ask for approval") is on-request approval
-    // *inside a writable workspace* — Codex edits project files and runs
-    // sandboxed commands without asking. The mode is sent on every turn, so
-    // no launch option or user config narrows it.
+    //   - With approval policy `untrusted` and reviewer `user`, every command
+    //     on Windows raises `item/commandExecution/requestApproval` first
+    //     (37 commands, reads included), and a declined one never runs.
+    //   - Each argument below closes a surface that could act without that
+    //     request. `unified_exec_tty`: `write_stdin` into an approved
+    //     interactive shell runs further input unasked. `view_image`: reads
+    //     any image on disk unasked. Web search, sub-agents, apps, plugins,
+    //     hooks, computer and browser use, image generation, goals and
+    //     memories are never offered to the model. `--listen stdio://` keeps
+    //     the server on this process's pipes: no socket, no shared daemon.
+    //   - Code mode stays on. The default model (real-agent QA, 2026-09-30)
+    //     runs every command through it; with it off, nothing can run at all.
+    //     Its cells are a bare JavaScript isolate — no fs, fetch, import,
+    //     process, WebAssembly; `load`/`store` are a key-value store, `image`
+    //     takes only a data URI — so a cell acts only through Codex's own
+    //     tools: `exec_command` and `apply_patch`, which ask Hubble first
+    //     (verified, declined: nothing ran), `write_stdin` (no tty), a clock.
+    //   - Hubble never sets `windows.sandbox`: its `elevated` value makes
+    //     Codex raise a Windows administrator prompt by itself.
     //
-    // Re-checked against codex-acp 2.0.0 (2026-09-28), which adds a true
-    // `read-only` mode: sandbox `readOnly`, approval `on-request`, reviewer
-    // `user`. Edits now ask. Commands and reads still do not: OpenAI documents
-    // that in read-only + on-request Codex "can read files and run commands
-    // within the read-only sandbox" unasked, and the sandbox reads the whole
-    // disk, not the project. Such a command reaches ACP as an `execute` call
-    // already running with no `session/request_permission` — which the
-    // adapter's enforcement (acp/adapter.ts) stops as acting unasked. The
-    // only stricter policy, `untrusted`, has been retired by OpenAI. Hubble
-    // still cannot be the one that approves, so it does not start Codex
-    // sessions at all. Revisit when codex-acp offers a mode that asks before
-    // every command and confines reads to the working directory.
+    // There is no workspace sandbox in this model. On Windows an approved
+    // command runs with the user's own permissions, exactly as an approved
+    // Claude Code command does — which is why every command approval shows the
+    // complete command, and says so.
     provider: "openai-codex",
-    detect: ["codex-acp", "codex"],
-    acp: {
-      executables: ["codex-acp"],
-      args: [],
-      npmPackages: ["@agentclientprotocol/codex-acp"],
-      approval: {
-        kind: "unavailable",
-        reason:
-          "Codex does not ask before every action: even in its most restrictive mode it runs commands and reads files anywhere on your computer without asking, so Hubble cannot approve what it does.",
+    detect: ["codex"],
+    appServer: {
+      executables: ["codex"],
+      args: ["app-server", "--listen", "stdio://", "--disable", "unified_exec_tty", "--disable", "view_image", "--disable", "multi_agent", "--disable", "multi_agent_v2", "--disable", "apps", "--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing", "--disable", "tool_suggest", "--disable", "hooks", "--disable", "computer_use", "--disable", "browser_use", "--disable", "browser_use_external", "--disable", "browser_use_full_cdp_access", "--disable", "in_app_browser", "--disable", "image_generation", "--disable", "skill_mcp_dependency_install", "--disable", "shell_snapshot", "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "guardian_approval", "--disable", "goals", "--disable", "memories", "--disable", "worktrees", "-c", "web_search=disabled", "-c", "check_for_update_on_startup=false"],
+      npmPackages: ["@openai/codex"],
+      homeEnv: "CODEX_HOME",
+      // Verified on Windows only. On macOS and Linux Codex's own sandbox runs
+      // "known safe" read commands without asking under `untrusted`.
+      verifiedPlatforms: ["win32"],
+      minimumVersion: "0.159.0",
+      // `codex login`: Codex's own ChatGPT sign-in. It opens the browser
+      // itself and stores the login in its own folder — Hubble's.
+      loginArgs: {
+        chatgpt: ["login"],
       },
-      contextIdentity: {
-        kind: "unavailable",
-        reason: "Hubble does not start Codex sessions, so there is no session to give workspace context to.",
+      loginLabels: {
+        chatgpt: "Sign in with ChatGPT",
       },
     },
   },
@@ -222,4 +270,14 @@ export function launchEntryFor(provider: AgentProviderId): ProviderLaunchEntry |
 /** Providers Hubble can drive over ACP on this machine's runtime. */
 export const ACP_PROVIDERS: readonly AgentProviderId[] = PROVIDER_LAUNCH_TABLE.filter(
   (entry) => entry.acp !== undefined
+).map((entry) => entry.provider);
+
+/** Providers Hubble drives over their own app-server protocol on this machine's runtime. */
+export const APP_SERVER_PROVIDERS: readonly AgentProviderId[] = PROVIDER_LAUNCH_TABLE.filter(
+  (entry) => entry.appServer !== undefined
+).map((entry) => entry.provider);
+
+/** Every agent Hubble starts as a local process — ACP or app-server — in the table's order. */
+export const LOCAL_PROCESS_PROVIDERS: readonly AgentProviderId[] = PROVIDER_LAUNCH_TABLE.filter(
+  (entry) => entry.acp !== undefined || entry.appServer !== undefined
 ).map((entry) => entry.provider);

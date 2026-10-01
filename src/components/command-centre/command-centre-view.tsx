@@ -35,9 +35,8 @@ import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { isChatReady, recoveryLabel, signInKind } from "@/lib/agents/platform/lifecycle"
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
-import { grantWithinApproval } from "@/lib/agents/platform/roster"
+import { grantWithinApproval, projectScopesForAgent } from "@/lib/agents/platform/roster"
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
-import { DEFAULT_PROJECT_SCOPES } from "@/hooks/use-agent-projects"
 import {
   RUNTIME_ERROR_PRESENTATION,
   canCreateSession,
@@ -308,8 +307,9 @@ export function CommandCentreView({
   const [pickFolder] = useState(() => agentProjectFolderPicker())
   const projectScopesFor = useCallback(
     (provider: AgentProviderId) => {
-      const approved = platform.identity(provider)?.approvedScopes ?? []
-      return DEFAULT_PROJECT_SCOPES.filter((scope) => approved.includes(scope))
+      // Exactly what the agent was approved for in Connect Agent — including
+      // Run commands, when the person turned it on there — and nothing else.
+      return projectScopesForAgent(platform.identity(provider))
     },
     [platform]
   )

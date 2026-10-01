@@ -297,6 +297,11 @@ export function createControlService(options: ControlServiceOptions): ControlSer
   const adapterSubscriptions = new Map<AgentProviderId, ControlUnsubscribe>();
   /** Workspace approvals (J.3) waiting on the user, and whom to tell. */
   const workspaceApprovals = new Map<string, (outcome: WorkspaceApprovalOutcome) => void>();
+  /**
+   * Approvals whose answer has been announced as an event — by the adapter
+   * (Codex says so itself) or by the service. So each answer is said once.
+   */
+  const announced = new Set<string>();
 
   function put(session: AgentSession): AgentSession {
     sessions.set(session.id, session);
@@ -310,11 +315,37 @@ export function createControlService(options: ControlServiceOptions): ControlSer
     // would turn a refusal into a second bug.
     if (!result.ok) return session;
     const moved = put(result.session);
-    if (isTerminalSessionStatus(moved.status)) options.onSessionEnded?.(moved.id);
+    if (isTerminalSessionStatus(moved.status)) {
+      withdrawApprovals(moved.id);
+      for (const approval of broker.forSession(moved.id)) announced.delete(approval.id);
+      options.onSessionEnded?.(moved.id);
+    }
     return moved;
   }
 
-  /** An event the service itself raises — for workspace approvals, which no adapter emits. */
+  /**
+   * Withdraws every question a session still has open.
+   *
+   * For a session that ended — cancelled, failed, disconnected — or a turn
+   * that finished: the agent that asked is no longer waiting, so a card left
+   * on screen could only mislead, and an answer to it could reach nothing.
+   * Withdrawn rather than denied, because the person decided nothing.
+   */
+  function withdrawApprovals(sessionId: string): void {
+    for (const approval of broker.forSession(sessionId)) {
+      if (approval.status === "requested") broker.cancel(approval.id, now());
+    }
+  }
+
+  /** Whether a person still has one of this session's questions in front of them. */
+  function awaitingAnswer(sessionId: string): boolean {
+    return broker.pending(now()).some((approval) => approval.sessionId === sessionId);
+  }
+
+  /**
+   * An event the service itself raises — for workspace approvals, which no
+   * adapter emits, and for a person's answer an adapter did not announce.
+   */
   function emitOwn(session: AgentSession, kind: AgentControlEvent["kind"], summary: string, approvalId: string): void {
     const event: AgentControlEvent = {
       id: createId(),
@@ -326,7 +357,8 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       approvalId,
     };
     if (!isWellFormedControlEvent(event)) return;
-    applyEventToSession(session, event);
+    if (kind === "approval_granted" || kind === "approval_denied") announced.add(approvalId);
+    applyEventToSession(sessions.get(session.id) ?? session, event);
     for (const listener of [...listeners]) listener(event);
   }
 
@@ -408,11 +440,27 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const session = sessions.get(event.sessionId);
       if (!session) return;
 
+      // A request the service answered on the spot — the grant already
+      // settles it, or it could not be put to anybody — asks nobody, so the
+      // session does not wait on it. Forwarded, so the stream still shows it.
       if (event.kind === "approval_requested" && event.approvalId) {
-        recordApproval(adapter, session, event.approvalId);
+        if (recordApproval(adapter, session, event.approvalId) === "answered") {
+          for (const listener of [...listeners]) listener(event);
+          return;
+        }
       }
 
-      applyEventToSession(session, event);
+      // The adapter announcing an answer. One it gave on its own — a turn
+      // ending with a question open — withdraws that question, so nobody is
+      // left looking at a card that can no longer change anything.
+      if ((event.kind === "approval_granted" || event.kind === "approval_denied") && event.approvalId) {
+        announced.add(event.approvalId);
+        if (broker.get(event.approvalId)?.status === "requested") broker.cancel(event.approvalId, now());
+      }
+
+      // Re-read: answering an approval can reach the adapter, which may have
+      // emitted — and moved this session — before control returned here.
+      applyEventToSession(sessions.get(event.sessionId) ?? session, event);
       for (const listener of [...listeners]) listener(event);
     });
 
@@ -450,16 +498,20 @@ export function createControlService(options: ControlServiceOptions): ControlSer
    *
    * Either way the adapter gets an answer. Leaving one unanswered would block
    * the provider on a decision that can never arrive.
+   *
+   * Returns `"asked"` when a person now has the question, and `"answered"`
+   * when it was settled here — the one case the session waits is the first.
    */
   function recordApproval(
     adapter: AgentControlAdapter,
     session: AgentSession,
     approvalId: string
-  ): void {
+  ): "asked" | "answered" {
     const details = readAdapterApprovalDetails(adapter, approvalId);
 
-    function deny(): void {
+    function deny(): "answered" {
       void adapter.respondToApproval(approvalId, "denied");
+      return "answered";
     }
 
     // An adapter that raised an approval it cannot describe. Nothing can be
@@ -483,13 +535,14 @@ export function createControlService(options: ControlServiceOptions): ControlSer
           targets: details.targets,
           ...(details.runId ? { runId: details.runId } : {}),
           ...(details.reason ? { reason: details.reason } : {}),
+          ...(details.command ? { command: details.command } : {}),
         },
         now()
       );
 
       // Recorded. The user answers it, and `respondToApproval` carries their
       // decision back to the adapter.
-      if (requested.ok) return;
+      if (requested.ok) return "asked";
 
       // Already recorded. An adapter reconnecting to a provider stream can
       // re-emit the request it raised a moment ago, and the first record is
@@ -497,7 +550,10 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       // Answering here would resolve a decision they have not made, and
       // `denied` is no safer than `granted` when the effect is to cancel a
       // prompt that is on screen.
-      if (requested.reason === "duplicate-id") return;
+      // (One already answered stays answered: a replay does not reopen it.)
+      if (requested.reason === "duplicate-id") {
+        return broker.get(approvalId)?.status === "requested" ? "asked" : "answered";
+      }
 
       // Malformed, or otherwise unrecordable.
       if (requested.reason !== "scope-needs-no-approval") return deny();
@@ -508,6 +564,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
     // the grant already settles this, and there is no question to put to
     // anybody. See the note above on why that is a grant rather than a prompt.
     void adapter.respondToApproval(approvalId, "granted");
+    return "answered";
   }
 
   /**
@@ -535,12 +592,22 @@ export function createControlService(options: ControlServiceOptions): ControlSer
         break;
       case "approval_granted":
       case "approval_denied":
-        if (session.status === "waiting_for_approval") move(session, "running");
+        // Waiting ends when the last open question is answered, not the
+        // first: with two on screen, answering one leaves the other.
+        if (session.status === "waiting_for_approval" && !awaitingAnswer(session.id)) move(session, "running");
         break;
       case "waiting_for_input":
         move(session, "waiting_for_input");
         break;
       case "run_completed":
+        // A finished turn waits for nothing. A question it left open can no
+        // longer change what happened, so it is withdrawn and the session
+        // goes back to ready rather than being refused the move.
+        if (session.status === "waiting_for_approval") {
+          withdrawApprovals(session.id);
+          move(move(session, "running"), "ready");
+          break;
+        }
         move(session, "ready");
         break;
       case "run_cancelled":
@@ -755,7 +822,12 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const sent = await gated.value.sendMessage(message);
       if (!sent.ok) return sent;
 
-      if (session.status === "ready") move(session, "running");
+      // Re-read, never the record from before the await: the agent may
+      // already have asked for approval, and moving that stale copy to
+      // `running` would erase the wait — letting the next message talk over
+      // a question still on screen.
+      const current = sessions.get(session.id);
+      if (current?.status === "ready") move(current, "running");
       return { ok: true, value: undefined };
     },
 
@@ -775,7 +847,9 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       const cancelled = await gated.value.cancelRun(sessionId);
       if (!cancelled.ok) return cancelled;
 
-      move(session, "cancelled");
+      // The current record, for the reason sendMessage gives. A session that
+      // failed meanwhile stays failed; `move` refuses to rewrite an ending.
+      move(sessions.get(sessionId) ?? session, "cancelled");
       return { ok: true, value: undefined };
     },
 
@@ -805,7 +879,21 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       );
       if (!gated.ok) return { ok: false, error: gated.error };
 
-      return gated.value.respondToApproval(approvalId, decision);
+      const answered = await gated.value.respondToApproval(approvalId, decision);
+
+      // The answer, said once. An adapter may announce it itself (Codex
+      // does); for one that does not, the service says it — which is what
+      // moves the session out of waiting, for every provider alike.
+      const current = sessions.get(session.id);
+      if (answered.ok && current && !announced.has(approvalId) && !isTerminalSessionStatus(current.status)) {
+        emitOwn(
+          current,
+          decision === "granted" ? "approval_granted" : "approval_denied",
+          decision === "granted" ? "Approved" : "Denied",
+          approvalId
+        );
+      }
+      return answered;
     },
 
     requestWorkspaceApproval(sessionId, request) {

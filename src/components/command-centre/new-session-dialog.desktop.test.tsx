@@ -64,6 +64,39 @@ describe("authorizing a folder on the desktop", () => {
     )
   })
 
+  it("shows what the folder grants before it is authorized, and grants Run commands when the agent was approved for it", async () => {
+    const user = userEvent.setup()
+    const { onAddProject } = renderDialog({
+      pickFolder: async () => ({ path: "C:/work/research", name: "research" }),
+      projectScopesFor: () => ["read_workspace", "read_project", "run_commands"],
+    })
+
+    await user.click(screen.getByRole("button", { name: /authorize a folder/i }))
+    const grant = screen.getByTestId("folder-grant")
+    expect(within(grant).getByText(/may, in this folder/i)).toBeTruthy()
+    const commands = within(grant).getByText("Run commands").closest("li") as HTMLElement
+    expect(commands.textContent).toMatch(/asks every time/)
+    // A read needs no per-use approval, and does not claim one.
+    expect(within(grant).getByText("Read project files").closest("li")?.textContent).not.toMatch(/asks/)
+    expect(within(grant).queryByText(/Running commands is off/i)).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: /choose folder/i }))
+    const panel = screen.getByLabelText("Folder").closest("div.rounded-md") as HTMLElement
+    await user.click(within(panel).getByRole("button", { name: /^authorize$/i }))
+    expect(onAddProject).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["read_workspace", "read_project", "run_commands"] })
+    )
+  })
+
+  it("says Run commands is off when the agent was not approved for it", async () => {
+    const user = userEvent.setup()
+    renderDialog({ projectScopesFor: () => ["read_workspace", "read_project"] })
+    await user.click(screen.getByRole("button", { name: /authorize a folder/i }))
+    const grant = screen.getByTestId("folder-grant")
+    expect(within(grant).queryByText("Run commands")).toBeNull()
+    expect(within(grant).getByText(/Running commands is off for this agent/i)).toBeTruthy()
+  })
+
   it("keeps the typed path on the web, where there is no picker", async () => {
     const user = userEvent.setup()
     renderDialog()

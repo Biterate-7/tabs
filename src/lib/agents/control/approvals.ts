@@ -1,6 +1,8 @@
+import { readCommandPreview } from "./command-preview";
 import { requiresApproval } from "./permissions";
 import { readWorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 import { readWorkspacePlanPreview } from "@/lib/agents/session-context/plan";
+import type { ApprovalCommandPreview } from "./command-preview";
 import type { AgentPermissionScope } from "./permissions";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
@@ -155,6 +157,14 @@ export type AgentApproval = {
    * malformed one is dropped, and the targets still list every step.
    */
   plan?: WorkspacePlanPreview;
+  /**
+   * For `run_command` only: the complete command — program, arguments, paths
+   * and working directory — as the agent will run it (./command-preview.ts).
+   * Unlike `change` and `plan`, a malformed one is not dropped: the request
+   * is refused, because an approval for a command the person cannot see in
+   * full is not one they can give.
+   */
+  command?: ApprovalCommandPreview;
   status: ApprovalStatus;
   requestedAt: number;
   /** After this instant the request is no longer answerable. */
@@ -176,6 +186,7 @@ export type ApprovalRequestInput = {
   reason?: string;
   change?: WorkspaceChangeSummary;
   plan?: WorkspacePlanPreview;
+  command?: ApprovalCommandPreview;
   /** How long the user has to answer. */
   ttlMs?: number;
 };
@@ -191,7 +202,9 @@ export type ApprovalRejection =
   | "no-targets"
   | "too-many-targets"
   | "scope-needs-no-approval"
-  | "duplicate-id";
+  | "duplicate-id"
+  /** A command preview that is malformed, too long to show whole, or on an action that runs no command. */
+  | "invalid-command";
 
 export type RequestApprovalResult =
   | { ok: true; approval: AgentApproval }
@@ -319,6 +332,13 @@ export function createApprovalBroker(): ApprovalBroker {
       if (targets.length === 0) return { ok: false, reason: "no-targets" };
       if (targets.length > MAX_APPROVAL_TARGETS) return { ok: false, reason: "too-many-targets" };
 
+      let command: ApprovalCommandPreview | undefined;
+      if (input.command !== undefined) {
+        if (input.action !== "run_command") return { ok: false, reason: "invalid-command" };
+        command = readCommandPreview(input.command);
+        if (!command) return { ok: false, reason: "invalid-command" };
+      }
+
       const approval: AgentApproval = {
         id: input.id,
         sessionId: input.sessionId,
@@ -334,6 +354,7 @@ export function createApprovalBroker(): ApprovalBroker {
       };
 
       if (input.runId) approval.runId = input.runId;
+      if (command) approval.command = command;
       if (input.change && input.scope === "write_workspace") {
         const change = readWorkspaceChangeSummary(input.change);
         if (change) approval.change = change;

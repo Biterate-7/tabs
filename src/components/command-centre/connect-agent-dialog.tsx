@@ -387,12 +387,20 @@ export function ConnectAgentDialog({
                 })}
               </ul>
             </fieldset>
+            {/* An agent whose approved commands run with the person's own
+                permissions (Codex) says so here, and is not promised to stay
+                inside the project: approval is its boundary, not a sandbox. */}
+            {spec.commandTrustNotice && (
+              <p role="note" className="text-meta text-warning">
+                {spec.commandTrustNotice}
+              </p>
+            )}
             <div>
               <p className="text-eyebrow text-tertiary">Never</p>
               <ul className="mt-1 flex flex-col gap-0.5">
                 {[
                   "Run a shell command through Hubble",
-                  "Work outside a project you authorized",
+                  ...(spec.commandTrustNotice ? [] : ["Work outside a project you authorized"]),
                   "Change a file or run a command without asking you",
                   "See your provider password, key or token",
                 ].map((line) => (

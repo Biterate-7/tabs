@@ -1713,6 +1713,12 @@ function toApprovalView(approval: AgentApproval): RuntimeApprovalView {
 
   if (approval.runId) view.runId = approval.runId;
   if (approval.reason) view.reason = approval.reason;
+  if (approval.command) {
+    view.command = {
+      ...approval.command,
+      ...(approval.command.network ? { network: { ...approval.command.network } } : {}),
+    };
+  }
   if (approval.change) view.change = { ...approval.change, details: [...approval.change.details] };
   if (approval.plan) {
     view.plan = {

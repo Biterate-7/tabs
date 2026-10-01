@@ -29,7 +29,7 @@ RuntimeHost ── get_status waits (bounded) for in-flight connects
 | Concept | What it is | Examples | Where it lives |
 | --- | --- | --- | --- |
 | **Provider** | The company whose model runs | Anthropic, OpenAI, Google, xAI | `PlatformProvider.vendor` |
-| **Runtime** | The program Hubble starts or asks; it owns the sign-in | Claude Code, Codex (via `codex-acp`), Gemini CLI, Grok Build | `PlatformProvider.runtimeName`, `launch/allowlist.ts` |
+| **Runtime** | The program Hubble starts or asks; it owns the sign-in | Claude Code, Codex (its own `codex app-server`), Gemini CLI, Grok Build | `PlatformProvider.runtimeName`, `launch/allowlist.ts` |
 | **Authentication method** | How the runtime proves it may use the provider | Anthropic API key, Anthropic Console account, Google account, … | `PlatformProvider.auth` |
 | **Availability** | Where it stands right now | Not installed, Sign-in required, Connected, Didn't respond | `ConnectionPhase`, derived |
 
@@ -73,7 +73,7 @@ the test suite runs every shipped entry through it:
 | --- | --- | --- | --- |
 | **Anthropic · Claude Code** (web) | **Anthropic API key** — the user's own, stored encrypted server-side, validated with `GET /v1/models` | Console sign-in (runs through Claude Code in the desktop app); **Claude subscription** (see below); cloud providers | **No** |
 | **Anthropic · Claude Code** (desktop) | **Anthropic Console account** — `claude auth login --console`, run by the user's installed Claude Code; Claude Code keeps the login | API key (the desktop app stores no credentials); **Claude subscription**. Cloud providers (Bedrock/Vertex/Foundry) configured *in Claude Code's own settings* are recognised, not collected | **No** — Console is API-usage billing, not a subscription |
-| **OpenAI · Codex** (`codex-acp`) | **ChatGPT account** — Codex's own sign-in (`chat-gpt`) | OpenAI API key (Hubble passes no keys to agents it launches) | Yes, by its runtime — **but Hubble starts no Codex sessions** (Codex runs commands and reads files unasked even in codex-acp 2.0.0's `read-only` mode; see `agent-connector-platform.md` §5), so it is shown and never offered. Signed in → `sessions_unavailable`, never "Connected" |
+| **OpenAI · Codex** (`codex app-server`) | **ChatGPT account** — Codex's own sign-in (`codex login`, method `chatgpt`), stored in Hubble's own Codex folder; state read from Codex's `account/read` | OpenAI API key (Hubble passes no keys to agents it launches; any non-ChatGPT account Codex reports is signed in but not usable) | Yes, by its runtime. Sessions on Windows, with per-command approval showing the complete command; approved commands run with the user's system permissions — see [codex-app-server.md](codex-app-server.md) |
 | **Google · Gemini CLI** | **Google account** — Gemini CLI's own Login with Google (`oauth-personal`) | Gemini API key; Vertex AI (environment credentials Hubble does not pass) | **Yes** — Gemini Code Assist, including Google AI Pro/Ultra, per Gemini CLI's terms |
 | **xAI · Grok Build** | **xAI account** — Grok Build's own browser sign-in (`grok.com`) | xAI API key (`XAI_API_KEY`; Hubble passes no keys) | Account sign-in yes; **which plans it covers is not documented, so none is claimed** |
 | **Custom MCP agent** | **Hubble access token** (web only) | — (Hubble never launches it; the desktop app runs no MCP server) | n/a |
@@ -206,7 +206,7 @@ for an old roster approval. Verified per provider (2026-09-29):
 | Claude Code | Yes — with an API key (web) or Console sign-in (desktop); a subscription sign-in is `auth_unsupported` |
 | Gemini CLI | Yes (asking mode `default`, with workspace context) |
 | Grok Build | Yes (asking modes `ask`/`default`), **without** workspace context; no live turn has ever been run |
-| Codex | **No** — `sessions_unavailable` |
+| Codex | Yes on Windows (direct app-server: every command asks, shown in full; **not** a sandbox — approved commands run with the user's permissions), with workspace context; `sessions_unavailable` elsewhere |
 | Custom MCP agent | n/a — reads Hubble over MCP; no sessions |
 
 ## 5. Observable status (no secrets)
@@ -278,8 +278,10 @@ model or the approval system changes.
 ## 9. Limitations
 
 - Claude subscription sign-in is not available in Hubble (Anthropic's terms).
-- Codex account sign-in is available through its runtime, but Hubble starts no
-  Codex sessions until an adapter offers an asking mode.
+- Codex runs sessions on Windows only, and its trust model is per-command
+  approval, not isolation: an approved command runs with the user's system
+  permissions. The user signs in to Codex once for Hubble (Hubble's own Codex
+  folder); Hubble never copies a login from `~/.codex`.
 - API keys for Gemini, Codex and Grok are not supported: Hubble launches those
   agents with no keys in their environment and has no per-user key injection
   for processes it launches.

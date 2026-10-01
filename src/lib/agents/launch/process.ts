@@ -1,15 +1,19 @@
 import "server-only";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { validateProjectPath } from "@/lib/agents/control/projects";
 import { isContextServerName } from "@/lib/agents/session-context/identity";
 import { launchEntryFor } from "./allowlist";
+import { hubbleCodexHome, prepareCodexHome } from "./codex-home";
 import { agentEnvironment } from "./env";
 import { detectProviders } from "./detect";
 import { resolveExecutable } from "./resolve";
+import type { AppServerLaunchEntry } from "./allowlist";
+import type { CodexHomeFs } from "./codex-home";
 import type { AcpLauncher } from "@/lib/agents/control/providers/acp/launcher";
+import type { AppServerLauncher } from "@/lib/agents/control/providers/codex-app-server/launcher";
 import type { AcpCloseReason, AcpTransport } from "@/lib/agents/control/providers/acp/rpc";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { ProviderDetection } from "@/lib/agents/runtime/protocol";
@@ -275,86 +279,296 @@ export function createAcpProcessLauncher(options: ProcessLauncherOptions): AcpLa
     const args =
       resolved.kind === "native" ? [...entry.args, ...contextArgs] : [resolved.script, ...entry.args, ...contextArgs];
 
+    // The allowlisted set and nothing else. `NODE_ENV` is deliberately among
+    // the things an agent does not inherit.
+    const started = await startLineProcess(file, args, cwd, agentEnvironment(options.env), () => {
+      exited = true;
+      if (releaseRequested) removeScratch();
+    });
+    if (!started) {
+      exited = true;
+      release();
+      return { ok: false, reason: "failed" };
+    }
+    return { ok: true, transport: started, cwd, release };
+  };
+}
+
+/**
+ * Starts one allowlisted program speaking newline-delimited JSON on its
+ * stdio, and returns the transport over it — or `undefined` if it could not
+ * be started. The one place a long-lived agent process is spawned, for ACP
+ * agents and app-server agents alike: `shell: false`, the environment it is
+ * given and nothing else, stderr drained and never read.
+ *
+ * `onExit` fires once the process has actually gone, which is when a scratch
+ * working directory can be removed on Windows.
+ */
+async function startLineProcess(
+  file: string,
+  args: readonly string[],
+  cwd: string,
+  env: Record<string, string>,
+  onExit: () => void
+): Promise<AcpTransport | undefined> {
+  let child: ReturnType<typeof spawn>;
+  try {
+    // A machine-local executable, never a project file (see the module note).
+    child = spawn(/*turbopackIgnore: true*/ file, [...args], {
+      cwd,
+      env: env as NodeJS.ProcessEnv,
+      shell: false,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return undefined;
+  }
+
+  const lineListeners = new Set<(line: string) => void>();
+  const closeListeners = new Set<(reason: AcpCloseReason) => void>();
+  let closed = false;
+
+  function finish(reason: AcpCloseReason): void {
+    if (closed) return;
+    closed = true;
+    for (const listener of [...closeListeners]) listener(reason);
+    lineListeners.clear();
+    closeListeners.clear();
+  }
+
+  child.stdout?.on("data", lineSplitter((line) => {
+    for (const listener of [...lineListeners]) listener(line);
+  }));
+  let stderrBytes = 0;
+  child.stderr?.on("data", (chunk: Buffer) => {
+    // Drained so the pipe never fills and stalls the agent. Never read.
+    stderrBytes += chunk.length;
+    if (stderrBytes > MAX_STDERR_BYTES) stderrBytes = MAX_STDERR_BYTES;
+  });
+  child.stdin?.on("error", () => finish("error"));
+  child.on("error", () => {
+    finish("error");
+    onExit();
+  });
+  child.on("exit", () => {
+    finish("exited");
+    onExit();
+  });
+
+  const transport: AcpTransport = {
+    send(line) {
+      if (closed || !child.stdin?.writable) return;
+      child.stdin.write(`${line}\n`);
+    },
+    onLine(listener) {
+      lineListeners.add(listener);
+      return () => lineListeners.delete(listener);
+    },
+    onClose(listener) {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    close() {
+      if (closed) return;
+      // Ending stdin first matters for an npm-installed agent on Windows:
+      // `kill` ends the Node wrapper, and the agent binary it started shares
+      // this pipe — end-of-input is what tells that binary to exit.
+      child.stdin?.end();
+      child.kill();
+      finish("closed");
+    },
+  };
+
+  // A process that could not be started reports it on the next tick; wait
+  // for that tick so a missing binary is "not installed", not a hang.
+  await new Promise((resolve) => setImmediate(resolve));
+  return closed ? undefined : transport;
+}
+
+/* ------------------------------------------------------------------ *
+ * App-server agents: Codex (docs/codex-app-server.md)
+ * ------------------------------------------------------------------ */
+
+const realCodexHomeFs: CodexHomeFs = {
+  makeDirectory(directory) {
+    mkdirSync(directory, { recursive: true });
+  },
+  readText(file) {
+    try {
+      return readFileSync(file, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
+  writeText(file, text) {
+    writeFileSync(file, text, "utf8");
+  },
+  list(directory) {
+    try {
+      return readdirSync(directory);
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+export type AppServerProcessOptions = ProcessLauncherOptions & {
+  /* Seams for tests. Production passes neither. */
+  platform?: NodeJS.Platform;
+  homeFs?: CodexHomeFs;
+};
+
+/** The allowlisted executable of an app-server agent, native or behind its npm shim. */
+function resolveAppServer(
+  entry: AppServerLaunchEntry,
+  env: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform
+): ReturnType<typeof resolveExecutable> {
+  for (const name of entry.executables) {
+    const resolved = resolveExecutable(name, {
+      env,
+      platform,
+      fs: realResolverFs,
+      ...(entry.npmPackages ? { npmPackages: entry.npmPackages } : {}),
+    });
+    if (resolved) return resolved;
+  }
+  return undefined;
+}
+
+/**
+ * The environment an app-server agent runs with: the allowlist, plus its
+ * settings folder pointed at the one Hubble owns — prepared, and refused when
+ * it holds something that could approve a command unasked. The user's own
+ * `CODEX_HOME`, if set, is never inherited: it is not on the allowlist.
+ */
+function appServerEnvironment(
+  entry: AppServerLaunchEntry,
+  options: AppServerProcessOptions
+): Record<string, string> | "unsafe-home" {
+  const platform = options.platform ?? process.platform;
+  const home = hubbleCodexHome(options.env, platform);
+  if (!home) return "unsafe-home";
+  const prepared = prepareCodexHome(home, options.homeFs ?? realCodexHomeFs, platform);
+  if (!prepared.ok) return "unsafe-home";
+  return { ...agentEnvironment(options.env), [entry.homeEnv]: home };
+}
+
+export function createAppServerProcessLauncher(options: AppServerProcessOptions): AppServerLauncher {
+  return async (request) => {
+    const entry = launchEntryFor(options.provider)?.appServer;
+    if (!entry) return { ok: false, reason: "not-installed" };
+
+    const resolved = resolveAppServer(entry, options.env, options.platform ?? process.platform);
+    if (!resolved) return { ok: false, reason: "not-installed" };
+
+    const env = appServerEnvironment(entry, options);
+    if (env === "unsafe-home") return { ok: false, reason: "unsafe-home" };
+
+    let cwd: string;
+    let scratch: string | undefined;
+    if (request.projectPath !== undefined) {
+      const checked = validateProjectPath(request.projectPath);
+      if (!checked.ok || !existsSync(request.projectPath)) return { ok: false, reason: "failed" };
+      cwd = nodePath.resolve(request.projectPath);
+    } else {
+      scratch = mkdtempSync(nodePath.join(tmpdir(), "tabdump-agent-"));
+      cwd = scratch;
+    }
+
+    let exited = false;
+    let releaseRequested = false;
+    const removeScratch = () => {
+      if (!scratch) return;
+      const target = scratch;
+      scratch = undefined;
+      try {
+        rmSync(target, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // Litter in the temp folder, not a risk.
+      }
+    };
+    const release = () => {
+      releaseRequested = true;
+      if (exited) removeScratch();
+    };
+
+    // The entry's literal arguments, and nothing else: the session's context
+    // server reaches Codex inside `thread/start`, never on this command line.
+    const file = resolved.kind === "native" ? resolved.file : process.execPath;
+    const args = resolved.kind === "native" ? [...entry.args] : [resolved.script, ...entry.args];
+
+    const started = await startLineProcess(file, args, cwd, env, () => {
+      exited = true;
+      if (releaseRequested) removeScratch();
+    });
+    if (!started) {
+      exited = true;
+      release();
+      return { ok: false, reason: "failed" };
+    }
+    return { ok: true, transport: started, cwd, release };
+  };
+}
+
+/**
+ * Runs an app-server agent's own sign-in (`codex login`) and waits for the
+ * person to finish it. The arguments are the allowlist's literal list for the
+ * method, looked up with an own-property check; the agent opens the browser
+ * and stores the login in Hubble's Codex folder. stdout and stderr are
+ * drained and discarded — they carry the sign-in URL, which is the agent's
+ * business, not Hubble's.
+ */
+export function runAppServerLogin(
+  provider: AgentProviderId,
+  methodId: string,
+  options: AppServerProcessOptions & { timeoutMs: number }
+): Promise<"completed" | "failed" | "timeout" | "unavailable"> {
+  const entry = launchEntryFor(provider)?.appServer;
+  if (!entry) return Promise.resolve("unavailable");
+  if (!Object.prototype.hasOwnProperty.call(entry.loginArgs, methodId)) return Promise.resolve("unavailable");
+  const loginArgs = entry.loginArgs[methodId];
+
+  const resolved = resolveAppServer(entry, options.env, options.platform ?? process.platform);
+  if (!resolved) return Promise.resolve("unavailable");
+  const env = appServerEnvironment(entry, options);
+  if (env === "unsafe-home") return Promise.resolve("unavailable");
+
+  const file = resolved.kind === "native" ? resolved.file : process.execPath;
+  const args = resolved.kind === "native" ? [...loginArgs] : [resolved.script, ...loginArgs];
+
+  return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
       // A machine-local executable, never a project file (see the module note).
       child = spawn(/*turbopackIgnore: true*/ file, args, {
-        cwd,
-        // The allowlisted set and nothing else. `NODE_ENV` is deliberately
-        // among the things an agent does not inherit.
-        env: agentEnvironment(options.env) as NodeJS.ProcessEnv,
+        cwd: tmpdir(),
+        env: env as NodeJS.ProcessEnv,
         shell: false,
         windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
-      exited = true;
-      release();
-      return { ok: false, reason: "failed" };
+      resolve("unavailable");
+      return;
     }
 
-    const lineListeners = new Set<(line: string) => void>();
-    const closeListeners = new Set<(reason: AcpCloseReason) => void>();
-    let closed = false;
-
-    function finish(reason: AcpCloseReason): void {
-      if (closed) return;
-      closed = true;
-      for (const listener of [...closeListeners]) listener(reason);
-      lineListeners.clear();
-      closeListeners.clear();
-    }
-
-    child.stdout?.on("data", lineSplitter((line) => {
-      for (const listener of [...lineListeners]) listener(line);
-    }));
-    let stderrBytes = 0;
-    child.stderr?.on("data", (chunk: Buffer) => {
-      // Drained so the pipe never fills and stalls the agent. Never read.
-      stderrBytes += chunk.length;
-      if (stderrBytes > MAX_STDERR_BYTES) stderrBytes = MAX_STDERR_BYTES;
-    });
-    child.stdin?.on("error", () => finish("error"));
-    child.on("error", () => {
-      exited = true;
-      finish("error");
-      if (releaseRequested) removeScratch();
-    });
-    child.on("exit", () => {
-      exited = true;
-      finish("exited");
-      if (releaseRequested) removeScratch();
-    });
-
-    const transport: AcpTransport = {
-      send(line) {
-        if (closed || !child.stdin?.writable) return;
-        child.stdin.write(`${line}\n`);
-      },
-      onLine(listener) {
-        lineListeners.add(listener);
-        return () => lineListeners.delete(listener);
-      },
-      onClose(listener) {
-        closeListeners.add(listener);
-        return () => closeListeners.delete(listener);
-      },
-      close() {
-        if (closed) return;
-        child.stdin?.end();
-        child.kill();
-        finish("closed");
-      },
+    let settled = false;
+    const done = (outcome: "completed" | "failed" | "timeout" | "unavailable") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
     };
+    const timer = setTimeout(() => {
+      child.kill();
+      done("timeout");
+    }, options.timeoutMs);
 
-    // A process that could not be started reports it on the next tick; wait
-    // for that tick so a missing binary is "not installed", not a hang.
-    await new Promise((resolve) => setImmediate(resolve));
-    if (closed) {
-      release();
-      return { ok: false, reason: "failed" };
-    }
-
-    return { ok: true, transport, cwd, release };
-  };
+    child.stdout?.on("data", () => {});
+    child.stderr?.on("data", () => {});
+    child.on("error", () => done("unavailable"));
+    child.on("exit", (code) => done(code === 0 ? "completed" : "failed"));
+  });
 }

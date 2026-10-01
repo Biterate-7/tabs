@@ -214,3 +214,33 @@ export function grantWithinApproval(
 ): boolean {
   return grantScopes.every((scope) => identity.approvedScopes.includes(scope));
 }
+
+/**
+ * Every scope a folder authorized from New session may carry.
+ *
+ * Offered, never assumed: `projectScopesForAgent` keeps only what the person
+ * turned on for the agent in Connect Agent, where `write_project`,
+ * `run_commands` and `write_workspace` are off by default. Granting one does
+ * not let it happen unasked — each change and each command still needs its
+ * own approval (control/permissions.ts: `APPROVAL_REQUIRED_PERMISSIONS`).
+ *
+ * `network_access` and `mcp_tools` are not offered in Connect Agent
+ * (`APPROVABLE_SCOPES`), and a folder never carries them.
+ */
+export const PROJECT_GRANTABLE_SCOPES: readonly AgentPermissionScope[] = [
+  "read_workspace",
+  "read_project",
+  "write_project",
+  "run_commands",
+  "write_workspace",
+];
+
+/**
+ * The scopes a folder authorized for this agent carries: exactly what the
+ * agent was approved for, within `PROJECT_GRANTABLE_SCOPES`. An agent that is
+ * not on the roster was approved for nothing and gets nothing.
+ */
+export function projectScopesForAgent(identity: AgentIdentity | undefined): AgentPermissionScope[] {
+  const approved = identity?.approvedScopes ?? [];
+  return PROJECT_GRANTABLE_SCOPES.filter((scope) => approved.includes(scope));
+}
