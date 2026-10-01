@@ -45,6 +45,8 @@ const ALLOWED = new Set([
   "src/lib/agents/control/providers/claude-code/adapter.ts",
   "src/lib/agents/control/providers/claude-code/runtime.ts",
   "src/lib/agents/control/providers/claude-code/sdk-runtime.ts",
+  // Codex (direct app-server): hands it to Codex inside `thread/start`.
+  "src/lib/agents/control/providers/codex-app-server/adapter.ts",
 ]);
 
 describe("the session context credential stays inside the runtime", () => {

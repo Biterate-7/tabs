@@ -25,12 +25,14 @@ export type DetectOptions = {
 export function detectProviders(options: DetectOptions): ProviderDetection[] {
   return PROVIDER_LAUNCH_TABLE.map((entry) => {
     const installed = entry.detect.some((name) => isOnPath(name, options));
-    const launchable = entry.acp
-      ? entry.acp.executables.some((name) =>
+    // An ACP agent or an app-server agent: a local process Hubble starts.
+    const launch = entry.acp ?? entry.appServer;
+    const launchable = launch
+      ? launch.executables.some((name) =>
           Boolean(
             resolveExecutable(name, {
               ...options,
-              ...(entry.acp?.npmPackages ? { npmPackages: entry.acp.npmPackages } : {}),
+              ...(launch.npmPackages ? { npmPackages: launch.npmPackages } : {}),
             })
           )
         )
@@ -39,7 +41,7 @@ export function detectProviders(options: DetectOptions): ProviderDetection[] {
     return {
       provider: entry.provider,
       installed,
-      transport: entry.acp ? ("acp" as const) : ("sdk" as const),
+      transport: entry.acp ? ("acp" as const) : entry.appServer ? ("app-server" as const) : ("sdk" as const),
       launchable,
     };
   });

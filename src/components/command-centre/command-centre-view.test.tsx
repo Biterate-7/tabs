@@ -290,11 +290,11 @@ describe("creating a session", () => {
 
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     // Present but honest about what it cannot do, rather than hidden or
-    // offered and then failing — with the exact reason, not "yet".
+    // offered and then failing: the runtime declared no session here (Codex
+    // on a platform where Hubble has not verified its approvals).
     const dialog = await screen.findByRole("dialog", { name: /new agent session/i })
     expect(within(dialog).getByText("Sessions unavailable")).toBeTruthy()
-    expect(within(dialog).getByText(/Codex does not ask before every action/)).toBeTruthy()
-    expect(within(dialog).queryByText(/cannot start sessions yet/i)).toBeNull()
+    expect(within(dialog).getByText(/Codex cannot start sessions on this runtime yet/)).toBeTruthy()
     expect((within(dialog).getByRole("radio", { name: /Codex/ }) as HTMLInputElement).disabled).toBe(true)
   })
 

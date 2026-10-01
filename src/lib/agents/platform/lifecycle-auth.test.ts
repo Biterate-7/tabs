@@ -235,8 +235,9 @@ describe("session prerequisites", () => {
   });
 
   it("never offers a session for an agent whose sessions are refused, whatever its sign-in", () => {
+    const refused = { available: false as const, reason: "Hubble will not start sessions with this agent." };
     expect(
-      sessionPrerequisite({ provider: codex, phase: "connected", approved: true, sessions: codex.sessions })
+      sessionPrerequisite({ provider: { ...gemini, sessions: refused }, phase: "connected", approved: true, sessions: refused })
     ).toMatchObject({ ok: false });
   });
 });
@@ -257,22 +258,25 @@ describe("sentences stay safe", () => {
  */
 describe("signed in is not session-ready", () => {
   const grok = platformProvider("grok")!;
-  const codexSignedIn = (over: Partial<ConnectionFacts> = {}): ConnectionFacts =>
+  /**
+   * Codex where Hubble has not verified its approvals (anywhere but Windows):
+   * the adapter reaches it and reads its sign-in, and declares no capability.
+   */
+  const codexUnverified = (over: Partial<ConnectionFacts> = {}): ConnectionFacts =>
     local({
       provider: codex,
-      detection: { provider: "openai-codex", installed: true, transport: "acp", launchable: true },
-      // What the ACP adapter reports for an agent it cannot hold to its
-      // approvals: reached, signed in, and no capability at all.
+      detection: { provider: "openai-codex", installed: true, transport: "app-server", launchable: true },
       status: reached({
         provider: "openai-codex",
         capabilities: [],
-        authMethods: [{ id: "chat-gpt", name: "ChatGPT" }],
+        authKind: "subscription",
+        authMethods: [{ id: "chatgpt", name: "Sign in with ChatGPT" }],
       }),
       ...over,
     });
 
-  it("shows a signed-in Codex as signed in with sessions unavailable — never awaiting an approval it cannot be given", () => {
-    expect(connectionPhase(codexSignedIn())).toBe("sessions_unavailable");
+  it("shows a signed-in Codex on an unverified platform as signed in with sessions unavailable — never awaiting an approval it cannot be given", () => {
+    expect(connectionPhase(codexUnverified())).toBe("sessions_unavailable");
     expect(CONNECTION_PHASE_LABEL.sessions_unavailable).toBe("Signed in · sessions unavailable");
     expect(phaseSentence(codex, "sessions_unavailable")).toBe(
       "Codex is signed in, but Hubble can't start sessions with it."
@@ -284,29 +288,37 @@ describe("signed in is not session-ready", () => {
   });
 
   it("does not become connected even when an old roster entry approved it", () => {
-    expect(connectionPhase(codexSignedIn({ approvedScopes: ["read_workspace", "read_project"] }))).toBe(
+    expect(connectionPhase(codexUnverified({ approvedScopes: ["read_workspace", "read_project"] }))).toBe(
       "sessions_unavailable"
     );
   });
 
   it("keeps Codex's real sign-in state when it is not signed in", () => {
     expect(
-      connectionPhase(codexSignedIn({ status: reached({ provider: "openai-codex", capabilities: [], authentication: "required" }) }))
+      connectionPhase(codexUnverified({ status: reached({ provider: "openai-codex", capabilities: [], authentication: "required" }) }))
     ).toBe("sign_in_required");
   });
 
-  it("reports authenticated and not session-ready separately, with the exact reason", () => {
-    const readiness = describeReadiness(codexSignedIn({ approvedScopes: ["read_workspace"] }));
+  it("reports authenticated and not session-ready separately, with the runtime's reason", () => {
+    const readiness = describeReadiness(codexUnverified({ approvedScopes: ["read_workspace"] }));
     expect(readiness.authenticated).toBe(true);
     expect(readiness.canCreateSession).toBe(false);
     expect(readiness.runtimeSupportsHubble).toBe(false);
-    expect(readiness.sessionsUnavailableReason).toBe(codex.sessions.available ? undefined : codex.sessions.reason);
-    expect(readiness.sessionsUnavailableReason).toMatch(/runs commands and reads files anywhere on your computer without asking/);
+    expect(readiness.sessionsUnavailableReason).toBe("Codex cannot start sessions on this runtime yet.");
   });
 
-  it("says why Codex cannot start sessions in terms of what it does, not a missing mode", () => {
-    expect(codex.sessions.available).toBe(false);
-    expect(!codex.sessions.available && codex.sessions.reason).not.toMatch(/no mode/);
+  it("treats Codex as session-ready once the runtime proves it — signed in with ChatGPT, sessions declared, approved", () => {
+    expect(codex.sessions.available).toBe(true);
+    const facts = codexUnverified({
+      status: reached({ provider: "openai-codex", capabilities: ["create_session", "message", "approvals"], authKind: "subscription" }),
+      approvedScopes: ["read_workspace", "read_project", "run_commands"],
+    });
+    expect(connectionPhase(facts)).toBe("connected");
+    expect(describeReadiness(facts).canCreateSession).toBe(true);
+    // Reached but not yet asked about sign-in: never shown as connected.
+    expect(connectionPhase({ ...facts, status: { ...facts.status!, authentication: "unknown" } })).toBe("unverified");
+    // Merely installed is not connected either.
+    expect(connectionPhase({ ...facts, status: undefined })).toBe("disconnected");
   });
 
   it("treats Gemini and Grok as session-ready once signed in and approved", () => {

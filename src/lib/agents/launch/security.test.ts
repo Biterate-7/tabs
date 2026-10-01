@@ -34,6 +34,19 @@ function codeOf(source: string): string {
     .join("\n");
 }
 
+/** Codex 0.159.0's app-server launch, verified (docs/codex-app-server.md). */
+const CODEX_APP_SERVER_ARGS = [
+  "app-server", "--listen", "stdio://",
+  "--disable", "unified_exec_tty", "--disable", "view_image", "--disable", "multi_agent", "--disable", "multi_agent_v2",
+  "--disable", "apps", "--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing",
+  "--disable", "tool_suggest", "--disable", "hooks", "--disable", "computer_use", "--disable", "browser_use",
+  "--disable", "browser_use_external", "--disable", "browser_use_full_cdp_access", "--disable", "in_app_browser",
+  "--disable", "image_generation", "--disable", "skill_mcp_dependency_install", "--disable", "shell_snapshot",
+  "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "guardian_approval",
+  "--disable", "goals", "--disable", "memories", "--disable", "worktrees",
+  "-c", "web_search=disabled", "-c", "check_for_update_on_startup=false",
+];
+
 const sources = walk(LAUNCH_DIR).map((file) => ({
   file: path.relative(SRC_DIR, file),
   name: path.basename(file),
@@ -45,13 +58,13 @@ describe("what Hubble can start", () => {
     expect(
       PROVIDER_LAUNCH_TABLE.map((entry) => ({
         provider: entry.provider,
-        executables: entry.acp?.executables ?? [],
-        args: entry.acp?.args ?? [],
+        executables: (entry.acp ?? entry.appServer)?.executables ?? [],
+        args: (entry.acp ?? entry.appServer)?.args ?? [],
       }))
     ).toEqual([
       { provider: "claude-code", executables: [], args: [] },
       { provider: "gemini", executables: ["gemini"], args: ["--acp", "--approval-mode", "default"] },
-      { provider: "openai-codex", executables: ["codex-acp"], args: [] },
+      { provider: "openai-codex", executables: ["codex"], args: CODEX_APP_SERVER_ARGS },
       { provider: "grok", executables: ["grok"], args: ["agent", "--no-leader", "stdio"] },
     ]);
   });
@@ -64,10 +77,56 @@ describe("what Hubble can start", () => {
       }))
     ).toEqual([
       { provider: "gemini", approval: ["default"] },
-      // Every codex-acp mode lets Codex write inside the workspace unasked.
-      { provider: "openai-codex", approval: "unavailable" },
       { provider: "grok", approval: ["ask", "default"] },
     ]);
+    // Codex is no longer driven through codex-acp, whose modes all acted
+    // unasked; it is an app-server agent (below), and nothing launches codex-acp.
+    expect(JSON.stringify(PROVIDER_LAUNCH_TABLE)).not.toContain("codex-acp");
+  });
+
+  it("pins every Codex switch that keeps it asking — verified against Codex 0.159.0", () => {
+    const codex = PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "openai-codex")!.appServer!;
+    const disabled = codex.args.flatMap((arg, index) => (codex.args[index - 1] === "--disable" ? [arg] : []));
+    // Interactive terminals: `write_stdin` into an approved shell ran further input unasked.
+    expect(disabled).toContain("unified_exec_tty");
+    // Read any image on disk without asking.
+    expect(disabled).toContain("view_image");
+    for (const surface of ["multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "computer_use", "browser_use", "browser_use_external", "image_generation"]) {
+      expect(disabled).toContain(surface);
+    }
+    // Hosted web search off; the server on this process's own pipes.
+    expect(codex.args).toContain("web_search=disabled");
+    expect(codex.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
+    for (const arg of codex.args) {
+      // Never loosen approval, never widen the sandbox, never switch anything
+      // on, and never touch the Windows sandbox (its elevated mode raises an
+      // administrator prompt by itself).
+      expect(arg).not.toMatch(/never|danger|full-access|yolo|bypass|on-request|auto_review|^--enable$|windows\.sandbox|approval_policy|sandbox_mode/);
+    }
+    // Code mode stays ON (real-agent QA, 2026-09-30): the default model runs
+    // every command through it, and its cells are a bare JavaScript isolate —
+    // no fs, fetch, import, process or WebAssembly — whose only way to act is
+    // Codex's own tools (exec_command, apply_patch), which ask Hubble.
+    expect(disabled).not.toContain("code_mode_host");
+    expect(codex.verifiedPlatforms).toEqual(["win32"]);
+    expect(codex.minimumVersion).toBe("0.159.0");
+  });
+
+  it("points Codex at Hubble's own folder — the user's CODEX_HOME is never inherited", () => {
+    const codex = PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "openai-codex")!.appServer!;
+    expect(codex.homeEnv).toBe("CODEX_HOME");
+    expect(AGENT_ENV_ALLOWLIST).not.toContain("CODEX_HOME");
+    const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
+    expect(processCode).toContain("{ ...agentEnvironment(options.env), [entry.homeEnv]: home }");
+    expect(processCode).toContain("prepareCodexHome(home, options.homeFs ?? realCodexHomeFs, platform)");
+  });
+
+  it("runs Codex's own sign-in with a literal argument list, looked up with an own-property check", () => {
+    const codex = PROVIDER_LAUNCH_TABLE.find((entry) => entry.provider === "openai-codex")!.appServer!;
+    expect(codex.loginArgs).toEqual({ chatgpt: ["login"] });
+    const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
+    expect(processCode).toContain("Object.prototype.hasOwnProperty.call(entry.loginArgs, methodId)");
+    expect(processCode).toContain("const loginArgs = entry.loginArgs[methodId];");
   });
 
   it("never lists a mode in which an agent approves its own actions as an asking mode", () => {
@@ -95,9 +154,9 @@ describe("what Hubble can start", () => {
   });
 
   it("follows npm shims only into the vendors' own packages", () => {
-    expect(PROVIDER_LAUNCH_TABLE.flatMap((entry) => entry.acp?.npmPackages ?? [])).toEqual([
+    expect(PROVIDER_LAUNCH_TABLE.flatMap((entry) => (entry.acp ?? entry.appServer)?.npmPackages ?? [])).toEqual([
       "@google/gemini-cli",
-      "@agentclientprotocol/codex-acp",
+      "@openai/codex",
       "@xai-official/grok",
     ]);
   });
@@ -150,7 +209,9 @@ describe("what Hubble can start", () => {
     const values = [...allowlist.matchAll(/args:\s*(\[[^\n]*)/g)];
     expect(values.length).toBe(3);
     for (const match of values) {
-      expect(match[1]).toMatch(/^\[("[a-z-]+"(, )?)*\],?$/);
+      // Plain tokens only — Codex's feature names and `key=value` settings
+      // included — and nothing interpolated, spread or computed.
+      expect(match[1]).toMatch(/^\[("[a-z0-9_=:/.-]+"(, )?)*\],?$/);
     }
   });
 });
@@ -195,7 +256,10 @@ describe("how it starts it", () => {
       mcpConfirmationOptionIds: ["proceed_always_server", "proceed_always_tool"],
     });
     expect(identity.grok?.kind).toBe("unavailable");
-    expect(identity["openai-codex"]?.kind).toBe("unavailable");
+    // Codex takes its context server in `thread/start`, not on its command
+    // line: an app-server launch appends nothing to the entry's arguments.
+    const processCode = sources.find((entry) => entry.name === "process.ts")!.code;
+    expect(processCode).toContain("resolved.kind === \"native\" ? [...entry.args] : [resolved.script, ...entry.args]");
   });
 
   it("revalidates the working directory with the project validator", () => {

@@ -22,8 +22,10 @@ Command Centre ─ Connect Agent: choose → detect → sign in → approve → 
         │       focus: what the user pointed a session at, ids in its workspace (§16)
         │
         ├── Claude adapter  ── Claude Agent SDK (canUseTool)
-        └── ACP adapter     ── ONE adapter, JSON-RPC over stdio
-                 │   Gemini CLI · Grok Build · Codex (reach + sign-in only)
+        ├── ACP adapter     ── ONE adapter, JSON-RPC over stdio
+        │        │   Gemini CLI · Grok Build
+        └── Codex adapter   ── `codex app-server`, its own JSON-RPC over stdio
+                 │   Codex — per-command approval, NOT a sandbox (codex-app-server.md)
                  ▼
         lib/agents/launch/  (server-only) allowlist · resolve · detect · env · spawn
         │
@@ -43,7 +45,7 @@ reads. An entry says how a person connects an agent:
 
 | Field | Meaning |
 | --- | --- |
-| `transport` | `sdk` (Claude), `acp` (Gemini, Grok, Codex) or `mcp` (custom: the agent connects to Hubble) |
+| `transport` | `sdk` (Claude), `acp` (Gemini, Grok), `app-server` (Codex) or `mcp` (custom: the agent connects to Hubble) |
 | `runtimeName` | The program that runs the agent and owns its sign-in (Agent Authentication & Runtime) |
 | `auth` | Every authentication method the provider documents, each `offered` / `external` / `unsupported` (with the reason) per surface — see [agent-authentication.md](agent-authentication.md). The sign-in *shape* (`native`, `provider-key`, `mcp-token`) is derived from it |
 | `sessions` | `{available: true}` or `{available: false, reason}` — mirrors the server's approval policy, see §5 |
@@ -57,7 +59,7 @@ reads. An entry says how a person connects an agent:
 | Claude Code | Agent SDK | An Anthropic Console account through Claude Code's own login (desktop) / the user's own API key (web). **Not** a Claude subscription — see [agent-authentication.md](agent-authentication.md) §3 | yes | yes |
 | Gemini CLI | ACP (`gemini --acp --approval-mode default`) | Google login, run by Gemini CLI | yes | yes |
 | Grok Build | ACP (`grok agent --no-leader stdio`) | Grok login, run by Grok Build | yes | yes |
-| Codex | ACP (`codex-acp`) | ChatGPT login, run by codex-acp | yes | **no** — see §5 |
+| Codex | its own app-server (`codex app-server`, locked down — [codex-app-server.md](codex-app-server.md)) | ChatGPT login through `codex login`, into Hubble's own Codex folder | yes | **yes, on Windows** — every command asks and is shown in full; approved commands run with the user's system permissions (not a sandbox) |
 | Custom MCP agent | MCP (Hubble is the server) | a Hubble MCP token issued in Settings | no — see §8 | none (it is the client) |
 
 The registry is not the last word: the runtime reports what is installed,
@@ -107,16 +109,21 @@ The Connect Agent steps (`detect → sign in → approve → done`) are a table 
 those phases, so reopening the dialog lands where the agent really is.
 Disconnect is offered on every step for an agent already in the roster.
 
-An agent whose sessions are unavailable (Codex) says so in the agent list and
-on the Detect and Sign in steps, and the flow stops there: its real state is
-still asked for and shown, but it offers no sign-in, no Continue and no
-approval — nobody is asked to sign in to an agent that cannot start a session.
-A Codex that *is* signed in (in its own terminal) is `sessions_unavailable`:
-"Signed in · sessions unavailable", never "Connected" or "Awaiting your
-approval" — see `agent-authentication.md` §4.
-Should a future Codex adapter offer a mode that asks before every edit and
-command, enabling it is one launch-table entry (`approval: asking-mode`) and
-the registry's `sessions`; nothing else changes.
+An agent whose sessions are unavailable says so in the agent list and on the
+Detect and Sign in steps, and the flow stops there: its real state is still
+asked for and shown, but it offers no Continue and no approval. A signed-in
+agent the runtime declares no session for — Codex on a platform where Hubble
+has not verified its approvals — is `sessions_unavailable`: "Signed in ·
+sessions unavailable", never "Connected" or "Awaiting your approval" — see
+`agent-authentication.md` §4.
+
+**Codex** (since the direct app-server integration) is an ordinary
+session-capable agent on Windows. Its connect flow states the trust model
+before anything is approved — the `explainer` and `commandTrustNotice` in its
+catalogue entry — and its Approve step does **not** list "Work outside a
+project you authorized" among the things it never does: approval is its
+boundary, not a sandbox. Connected, its row reads "Connected through Codex ·
+ChatGPT account".
 
 ## 3. Authentication, from the provider
 
@@ -129,6 +136,7 @@ the agent itself, through the runtime:
 | ACP agents | `session/new` on a probe connection in an empty scratch directory: `-32000` = sign-in required, a session = signed in, anything else = `unknown` | ACP `authenticate` with a method id the agent advertised; the agent opens its own sign-in page |
 | Claude (desktop) | `claude auth status --json` → `loggedIn`, and which kind of login (`authMethod`, `apiProvider`, whether `subscriptionType` is present); a subscription login is refused as not permitted | `claude auth login --console` from the allowlist (the `--claudeai` subscription login was removed — Agent Authentication & Runtime) |
 | Claude (web) | the user's stored provider key (BYOC) | Settings → Agents |
+| Codex | `account/read` on a probe `codex app-server` that starts no thread: `chatgpt` = signed in and usable, any other account = signed in and not usable, `null` = sign-in required | `codex login` (literal, from the allowlist) — Codex's own ChatGPT sign-in, which opens the browser itself and keeps the login in Hubble's Codex folder; Codex is asked again afterwards |
 
 Details that matter:
 
@@ -193,8 +201,8 @@ that keeps it from getting there — **modes**:
 | --- | --- | --- |
 | Gemini CLI 0.61.0 | `default` ("Prompts for approval"); others: `autoEdit`, `yolo`, `plan` | `--approval-mode default` — the CLI flag overrides a user's `yolo`/`auto_edit` setting |
 | Grok Build 1.0.41 | `ask`, then `default` ("currently equivalent to Ask"); others: `auto` (a classifier approves unasked), always-approve | `--no-leader` — see §7 |
-| codex-acp 1.13.1 | **none** | — |
-| codex-acp 2.0.0 | **none** — its new `read-only` asks before edits, not before commands or reads (below) | — |
+| codex-acp 1.13.1 / 2.0.0 | **none** (history, below) — Codex is no longer driven through codex-acp | — |
+| Codex 0.159.0, direct app-server | not modes: `approvalPolicy: untrusted` + `approvalsReviewer: user` + read-only, sent on every thread and turn and checked on Codex's reply | the literal lock-down list — [codex-app-server.md](codex-app-server.md) |
 
 - A session starts only in an asking mode: already in one, or switched to
   the first the agent offers. An agent that offers none, reports no modes, or
@@ -203,7 +211,18 @@ that keeps it from getting there — **modes**:
 - A `current_mode_update` out of the asking modes mid-session stops the
   session at once ("The agent switched to a mode where it approves its own
   actions, so Hubble stopped it.").
-- **Codex cannot be held to this.** In codex-acp every mode runs Codex with a
+- **Codex, 2026-09-30: session-capable through its own app-server.** Hubble
+  now drives `codex app-server` directly (control/providers/codex-app-server/).
+  Under `untrusted` + reviewer `user`, every command on Windows raises
+  `item/commandExecution/requestApproval` first; Hubble answers `accept` or
+  `decline` only, after showing the complete command. The trust model is
+  Claude's — per-command approval — and **not** a workspace sandbox: an
+  approved command runs with the user's system permissions, which the product
+  says on every Codex command approval. Sessions are declared on Windows only.
+  Full detail, including every switched-off surface and why:
+  [codex-app-server.md](codex-app-server.md). The two bullets below are the
+  codex-acp history that led there.
+- **(History) Codex could not be held to this through codex-acp.** In codex-acp every mode runs Codex with a
   `workspace-write` sandbox or none; its mode named `read-only` ("Ask for
   approval") is on-request approval *inside a writable workspace* — Codex
   edits project files and runs sandboxed commands without asking, and the
@@ -248,22 +267,22 @@ the desktop app too.
 
 | Requirement | How it is met |
 | --- | --- |
-| No shell execution | `launch/allowlist.ts` is the whole list of programs and literal argv. `shell: false` always. Windows npm `.cmd` shims are followed to the allowlisted vendor package's own script (`@google/gemini-cli`, `@agentclientprotocol/codex-acp`, `@xai-official/grok`) and run with Node — never `cmd.exe`. |
-| Fixed argument policy | Every `args` array is a literal pinned by `launch/security.test.ts`, which also forbids `yolo`/`always-approve`/`bypass`/`--leader` and pins `--approval-mode default` and `--no-leader`. |
-| Stripped environment | `launch/env.ts` allowlist (home, temp, PATH) — no key, no token, no Hubble secret. The desktop shell strips again before the sidecar starts. |
+| No shell execution | `launch/allowlist.ts` is the whole list of programs and literal argv. `shell: false` always. Windows npm `.cmd` shims are followed to the allowlisted vendor package's own script (`@google/gemini-cli`, `@openai/codex`, `@xai-official/grok`) and run with Node — never `cmd.exe`. |
+| Fixed argument policy | Every `args` array is a literal pinned by `launch/security.test.ts`, which also forbids `yolo`/`always-approve`/`bypass`/`--leader`, pins `--approval-mode default` and `--no-leader`, and pins every Codex lock-down switch (`unified_exec_tty`, `view_image`, sub-agents, apps, plugins, hooks, computer/browser use, web search) while forbidding any argument that would loosen approval, widen the sandbox or set `windows.sandbox`. |
+| Stripped environment | `launch/env.ts` allowlist (home, temp, PATH) — no key, no token, no Hubble secret. The desktop shell strips again before the sidecar starts. Codex additionally gets `CODEX_HOME` pointed at Hubble's own folder — never the user's `~/.codex`, whose rules can approve commands unasked (`launch/codex-home.ts`). |
 | No credentials in Hubble | Provider logins stay in each agent's own store. The frontend never receives a token; the roster cannot hold one. |
-| Explicit approval | §5. |
-| Workspace boundaries | §6. |
-| Process isolation | One process per ACP session, in the authorized project or a private scratch dir. Grok is pinned `--no-leader`: in leader mode (configurable in `config.toml`) a session would run in a shared background process outside Hubble's tree and working directory. |
+| Explicit approval | §5. Codex command approvals carry the complete command line and working directory (`control/command-preview.ts`); one too long to show whole is refused, not truncated. |
+| Workspace boundaries | §6. For Codex, workspace *context* is scoped; OS access is not — an approved Codex command runs with the user's permissions, and the product says so. |
+| Process isolation | One process per ACP or Codex session, in the authorized project or a private scratch dir. Grok is pinned `--no-leader`: in leader mode (configurable in `config.toml`) a session would run in a shared background process outside Hubble's tree and working directory. Codex's app-server listens on stdio only (`--listen stdio://`); ending a session ends its process, and with it anything an approved command left running. |
 | Windows Job Object cleanup | The desktop shell puts the sidecar — and so every agent it starts — in a `KILL_ON_JOB_CLOSE` job (Phase J.1). |
 | Session-scoped MCP credentials | Minted per session by the runtime, memory only, hashed, bound to one session + one workspace + a capability set; revoked on session end, disconnect and shutdown; 12 h ceiling (§12). There is no global MCP token. |
 | Context identity | A context call is recognised from the agent's own structure — never a tool name or title — or the agent is not given the context server at all (§13.2). |
 | No arbitrary executables | No custom agent is ever launched; the registry has no field that could name a program (`registry.test.ts`). |
 
-**Inside the agent, not Hubble:** codex-acp 1.13 on Windows starts its own
-bundled `codex.exe` with `shell: true`. That is the agent's own process
-management, below the boundary Hubble controls, and moot while Codex
-sessions are refused.
+**Inside the agent, not Hubble:** the npm-installed `codex` is a Node wrapper
+that starts the native `codex.exe` on the same pipes. Ending a session ends
+stdin before killing the wrapper, which is what makes `codex.exe` exit —
+verified: no `codex.exe` is left behind.
 
 ## 8. Custom agents
 

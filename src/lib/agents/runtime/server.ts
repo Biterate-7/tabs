@@ -1,7 +1,8 @@
 import "server-only";
 import { createAcpControlAdapter } from "@/lib/agents/control/providers/acp/adapter";
 import { createClaudeCodeControlAdapter } from "@/lib/agents/control/providers/claude-code/adapter";
-import { ACP_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
+import { LOCAL_PROCESS_PROVIDERS, launchEntryFor } from "@/lib/agents/launch/allowlist";
+import { createLocalAppServerAdapter } from "@/lib/agents/launch/app-server-adapter";
 import { createAcpProcessLauncher, detectLocalProviders } from "@/lib/agents/launch/process";
 import { createRemoteClaudeRuntime } from "@/lib/agents/control/providers/claude-code/remote-runtime";
 import { createSdkClaudeRuntime } from "@/lib/agents/control/providers/claude-code/sdk-runtime";
@@ -68,10 +69,11 @@ const REPORTED_PROVIDERS: readonly AgentProviderId[] = ["claude-code"];
 
 /**
  * A local runtime also drives every ACP agent in the launch allowlist
- * (Phase J). Remote does not: the ACP agents run on the user's own machine,
- * with the user's own native sign-in, and a sandbox has neither.
+ * (Phase J), and every app-server agent (Codex). Remote does not: those agents
+ * run on the user's own machine, with the user's own native sign-in, and a
+ * sandbox has neither.
  */
-const LOCAL_REPORTED_PROVIDERS: readonly AgentProviderId[] = [...REPORTED_PROVIDERS, ...ACP_PROVIDERS];
+const LOCAL_REPORTED_PROVIDERS: readonly AgentProviderId[] = [...REPORTED_PROVIDERS, ...LOCAL_PROCESS_PROVIDERS];
 
 /* ------------------------------------------------------------------ *
  * The decision
@@ -261,12 +263,19 @@ const localAcpByActor = new Map<string, AgentControlAdapter>();
 let localContextServer: SessionContextServer | undefined;
 
 function localAcpAdapter(provider: AgentProviderId, ownerId: string): AgentControlAdapter | undefined {
-  const entry = launchEntryFor(provider)?.acp;
-  if (!entry) return undefined;
-
   const key = `${provider}\u0000${ownerId}`;
   const existing = localAcpByActor.get(key);
   if (existing) return existing;
+
+  // An app-server agent (Codex): same ownership rules, its own adapter.
+  if (launchEntryFor(provider)?.appServer) {
+    const adapter = createLocalAppServerAdapter(provider, { env: process.env });
+    if (adapter) localAcpByActor.set(key, adapter);
+    return adapter;
+  }
+
+  const entry = launchEntryFor(provider)?.acp;
+  if (!entry) return undefined;
 
   // Workspace context reaches ACP sessions through the host's session
   // context server (Phase J.3), bound per session to one workspace — for an

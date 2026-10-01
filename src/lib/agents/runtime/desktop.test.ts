@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AgentError, createFakeAgent } from "@/lib/agents/control/providers/acp/__fixtures__/fake-agent";
+import { createFakeCodex, THREAD_ID, TURN_ID } from "@/lib/agents/control/providers/codex-app-server/__fixtures__/fake-codex";
+import type { FakeCodexHandler } from "@/lib/agents/control/providers/codex-app-server/__fixtures__/fake-codex";
 import { createNativeLoginState } from "@/lib/agents/launch/native-auth";
 import { createDesktopRuntime } from "./desktop";
 import { handleDesktopLine } from "./desktop-protocol";
@@ -351,7 +353,11 @@ describe("the desktop gate cannot be reached from the web", () => {
  * ------------------------------------------------------------------ */
 
 describe("ACP agents in the desktop runtime (Phase J.2)", () => {
-  function buildAcp(options: { signedIn: boolean }) {
+  function buildAcp(options: {
+    signedIn: boolean;
+    platform?: NodeJS.Platform;
+    codexHandlers?: Record<string, FakeCodexHandler>;
+  }) {
     const agents = new Map<string, FakeAgent>();
     const agentFor = (provider: string) => {
       let agent = agents.get(provider);
@@ -389,13 +395,22 @@ describe("ACP agents in the desktop runtime (Phase J.2)", () => {
       }
       return agent;
     };
+    // Codex is an app-server agent: a scripted `codex app-server`.
+    const codex = createFakeCodex({
+      "account/read": () =>
+        options.signedIn ? { account: { type: "chatgpt" }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: true },
+      ...options.codexHandlers,
+    });
     const runtime = createDesktopRuntime({
       env: { PATH: "C:/Tools", USERPROFILE: "C:/Users/alice" },
       claudeExecutable: null,
       acpLauncher: (provider) => agentFor(provider).launcher,
+      appServerLauncher: () => codex.launcher,
+      appServerLogin: () => async () => "failed",
+      platform: options.platform ?? "win32",
       detect: () => [
         { provider: "gemini", installed: true, transport: "acp", launchable: true },
-        { provider: "openai-codex", installed: true, transport: "acp", launchable: true },
+        { provider: "openai-codex", installed: true, transport: "app-server", launchable: true },
         { provider: "grok", installed: true, transport: "acp", launchable: true },
       ],
       runtimeId: "desktop-1",
@@ -407,22 +422,94 @@ describe("ACP agents in the desktop runtime (Phase J.2)", () => {
         error?: { code: string };
       };
     }
-    return { runtime, send, agentFor };
+    return { runtime, send, agentFor, codex };
   }
 
-  it("declares sessions for the agents that ask, and none for Codex, which cannot", async () => {
+  it("declares sessions for every agent that asks — Codex where its approvals are verified, and nowhere else", async () => {
     const { send } = buildAcp({ signedIn: true });
     const status = await send({ name: "get_status" });
     const providers = (status.value as { providers: { provider: string; capabilities: string[] }[] }).providers;
     const capabilitiesOf = (provider: string) => providers.find((entry) => entry.provider === provider)!.capabilities;
     expect(capabilitiesOf("gemini")).toContain("create_session");
     expect(capabilitiesOf("grok")).toContain("create_session");
-    expect(capabilitiesOf("openai-codex")).toEqual([]);
+    expect(capabilitiesOf("openai-codex")).toEqual(expect.arrayContaining(["create_session", "approvals", "run_commands"]));
 
-    expect(await send({ name: "create_session", provider: "openai-codex" })).toMatchObject({
+    const elsewhere = buildAcp({ signedIn: true, platform: "darwin" });
+    const other = (await elsewhere.send({ name: "get_status" })).value as { providers: { provider: string; capabilities: string[] }[] };
+    expect(other.providers.find((entry) => entry.provider === "openai-codex")!.capabilities).toEqual([]);
+    expect(await elsewhere.send({ name: "create_session", provider: "openai-codex" })).toMatchObject({
       ok: false,
       error: { code: "unsupported" },
     });
+  });
+
+  it("runs a Codex session through the real host and broker: the approval carries the complete command, and Codex hears only accept or decline", async () => {
+    const replies: unknown[] = [];
+    const { send, codex } = buildAcp({
+      signedIn: true,
+      codexHandlers: {
+        "turn/start": (_params, ctx) => {
+          void (async () => {
+            ctx.notify("item/started", { threadId: THREAD_ID, turnId: TURN_ID, item: { type: "commandExecution", id: "c1", status: "inProgress" } });
+            const answer = await ctx.ask("item/commandExecution/requestApproval", {
+              kind: "command", threadId: THREAD_ID, turnId: TURN_ID, itemId: "c1", startedAtMs: 1, environmentId: "local",
+              command: "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -Command 'Get-Content notes.md'",
+              cwd: "C:\\work\\research",
+            });
+            replies.push(answer.result);
+            ctx.notify("item/completed", { threadId: THREAD_ID, turnId: TURN_ID, item: { type: "commandExecution", id: "c1", status: "declined" } });
+            ctx.notify("turn/completed", { threadId: THREAD_ID, turn: { id: TURN_ID, status: "completed", error: null } });
+          })();
+          return { turn: { id: TURN_ID, status: "inProgress" } };
+        },
+      },
+    });
+    expect(await send({ name: "connect_provider", provider: "openai-codex" })).toMatchObject({
+      ok: true,
+      value: { connection: "connected", authentication: "authenticated", nativeSignIn: true, authKind: "subscription" },
+    });
+    await send({
+      name: "authorize_projects",
+      projects: [
+        {
+          id: "p1",
+          name: "Research",
+          path: PROJECT_ROOT,
+          providers: ["openai-codex"],
+          permissions: { scopes: ["read_workspace", "read_project", "run_commands"], projectId: "p1", grantedAt: 1 },
+        },
+      ],
+    });
+    const created = await send({ name: "create_session", provider: "openai-codex", projectId: "p1", workspaceId: "w1" });
+    expect(created).toMatchObject({ ok: true, value: { provider: "openai-codex", projectId: "p1" } });
+    const sessionId = String(created.value!.sessionId);
+
+    await send({ name: "send_message", sessionId, text: "read the notes" });
+    await settle(40);
+    const waiting = await send({ name: "get_session", sessionId });
+    const approvals = (waiting.value as { approvals: Record<string, unknown>[] }).approvals;
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({
+      provider: "openai-codex",
+      action: "run_command",
+      scope: "run_commands",
+      command: {
+        commandLine: "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -Command 'Get-Content notes.md'",
+        workingDirectory: ".",
+        insideProject: true,
+      },
+    });
+
+    await send({ name: "respond_to_approval", approvalId: String(approvals[0].approvalId), decision: "denied" });
+    await settle(40);
+    expect(replies).toEqual([{ decision: "decline" }]);
+    // Found in real-agent QA: the session must leave "waiting for approval"
+    // once answered — the run's end is otherwise refused as a transition.
+    const after = await send({ name: "get_session", sessionId });
+    expect((after.value as { session: { status: string } }).session.status).toBe("ready");
+
+    expect(await send({ name: "dispose_session", sessionId })).toMatchObject({ ok: true });
+    expect(codex.closed).toBeGreaterThan(0);
   });
 
   it("reports each agent's own sign-in answer on connect", async () => {

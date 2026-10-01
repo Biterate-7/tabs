@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { setStorageNamespace } from "@/lib/storage/namespace"
 import { resetConnectorManager } from "@/lib/agents/connectors/app-manager"
 import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
+import { authenticationLine } from "./agent-connections-panel"
 import { ConnectorsSection } from "./connectors-section"
 
 /**
@@ -53,16 +54,28 @@ describe("the connections list", () => {
     expect(text).toContain("Unavailable here")
   })
 
-  it("says why Codex cannot start sessions on its row, whatever its sign-in, and never offers to connect it", async () => {
+  it("offers to connect Codex like any agent that asks before every action", async () => {
     const user = userEvent.setup()
     render(<ConnectorsSection />)
     const row = within(connections()).getByText("Codex").closest("div")!.parentElement!
-    expect(row.textContent).toMatch(
-      /Sessions · Codex does not ask before every action: even in its most restrictive mode it runs commands and reads files anywhere on your computer without asking/
-    )
-    expect(within(row).queryByRole("button", { name: "Connect" })).toBeNull()
-    await user.click(within(row).getByRole("button", { name: "Details" }))
+    expect(row.textContent).not.toMatch(/Sessions ·/)
+    await user.click(within(row).getByRole("button", { name: "Connect" }))
     expect(await screen.findByRole("dialog", { name: /Connect Codex/ })).toBeTruthy()
+  })
+
+  it("says a connected Codex is connected through Codex, with its ChatGPT account — never an account detail", () => {
+    const codex = PLATFORM_PROVIDERS.find((provider) => provider.provider === "openai-codex")!
+    const status = {
+      provider: "openai-codex" as const,
+      connection: "connected" as const,
+      available: true,
+      authentication: "authenticated" as const,
+      authKind: "subscription" as const,
+      capabilities: ["create_session" as const],
+    }
+    expect(authenticationLine(codex, "desktop", status, "connected")).toBe("Connected through Codex · ChatGPT account")
+    // Before it is approved, the sign-in in use — not "connected".
+    expect(authenticationLine(codex, "desktop", status, "awaiting_approval")).toBe("ChatGPT account · in use")
   })
 
   it("opens the same Connect Agent flow for the chosen agent", async () => {
@@ -80,7 +93,7 @@ describe("the connections list", () => {
     // Every agent but the one Hubble cannot start sessions with, which offers its details instead.
     const unusable = PLATFORM_PROVIDERS.filter((provider) => provider.chat && !provider.sessions.available)
     expect(buttons).toHaveLength(PLATFORM_PROVIDERS.length - unusable.length)
-    expect(within(connections()).getAllByRole("button", { name: "Details" })).toHaveLength(unusable.length)
+    expect(within(connections()).queryAllByRole("button", { name: "Details" })).toHaveLength(unusable.length)
     // Described by the agent's name and state, so a screen reader hears which.
     const describedBy = buttons[0]!.getAttribute("aria-describedby")!.split(" ")
     expect(describedBy.map((id) => document.getElementById(id)?.textContent).join(" ")).toMatch(/Claude Code.*Unavailable here/)

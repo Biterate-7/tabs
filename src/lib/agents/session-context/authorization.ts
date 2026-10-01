@@ -47,7 +47,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types";
  * server makes the per-tool decision when the call arrives.
  */
 
-export type ContextRequestOrigin = "context-server" | "claude-sdk" | "acp";
+export type ContextRequestOrigin = "context-server" | "claude-sdk" | "acp" | "app-server";
 
 export type SessionContextRequest = {
   sessionId: string;

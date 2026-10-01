@@ -692,6 +692,16 @@ describe("approval-required operations cannot bypass the broker", () => {
         emit = null;
       };
     };
+    // A request a person can actually be asked: the service waits only on
+    // one of those. (One it cannot describe is denied on the spot and never
+    // leaves the session waiting — see the next case.)
+    let sessionId = "";
+    Object.assign(adapter, {
+      takeApprovalDetails: (approvalId: string) =>
+        approvalId === "a9"
+          ? { sessionId, action: "modify_files", scope: "write_project", projectId: "p1", targets: ["src/a.ts"] }
+          : undefined,
+    });
 
     const service = createControlService({
       runtime: ALLOW,
@@ -701,7 +711,7 @@ describe("approval-required operations cannot bypass the broker", () => {
 
     const started = await service.startSession({ provider: "claude-code" });
     expect(started.ok).toBe(true);
-    const sessionId = started.ok ? started.value.id : "";
+    sessionId = started.ok ? started.value.id : "";
 
     // Driven through the real path rather than by setting a field: the
     // adapter raises `approval_requested`, the service moves the session into
@@ -727,11 +737,11 @@ describe("approval-required operations cannot bypass the broker", () => {
     });
 
     expect(blocked).toMatchObject({ ok: false, error: { code: "approval-required" } });
-    // The claim is that the *message* never reached the provider. The adapter
-    // is also told how the approval was answered — this one is denied, because
-    // this adapter raised a request it cannot describe and nothing
-    // undescribable may be granted — and that call is not the one under test.
+    // The claim is that the *message* never reached the provider, and the
+    // question is still the person's to answer — nothing answered it for them.
     expect(adapter.calls).not.toContain("sendMessage");
+    expect(adapter.calls).not.toContain("respondToApproval");
+    expect(service.approvals.get("a9")?.status).toBe("requested");
   });
 
   it("denies an approval the adapter cannot describe, rather than leaving the provider blocked", async () => {
@@ -910,6 +920,9 @@ describe("the control plane persists no secret", () => {
   const SESSION_CONTEXT_HEADER = new Map<string, RegExp>([
     [path.join("src", "lib", "agents", "control", "providers", "acp", "adapter.ts"), /\bbearer\b/i],
     [path.join("src", "lib", "agents", "control", "providers", "claude-code", "sdk-runtime.ts"), /\bbearer\b/i],
+    // Codex (direct app-server): the header travels inside `thread/start`,
+    // over Codex's stdin, in that one thread's MCP configuration.
+    [path.join("src", "lib", "agents", "control", "providers", "codex-app-server", "protocol.ts"), /\bbearer\b/i],
   ]);
 
   it("declares no credential field anywhere", () => {
@@ -947,6 +960,13 @@ describe("the control plane persists no secret", () => {
     const claude = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "claude-code", "sdk-runtime.ts"), "utf8"));
     expect(claude).toMatch(/Authorization: "Bearer " \+ "\$" \+ "\{" \+ CONTEXT_TOKEN_ENV \+ "\}"/);
     expect(claude).not.toMatch(/Bearer \$\{/);
+    // Codex: built only from the session's own entry, handed to the thread
+    // builder by the adapter straight from the request.
+    const codexProtocol = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "codex-app-server", "protocol.ts"), "utf8"));
+    expect(codexProtocol.match(/Bearer \$\{[^}]+\}/g)).toEqual(["Bearer ${input.sessionServer.token}"]);
+    const codexAdapter = codeOf(readFileSync(path.join(CONTROL_DIR, "providers", "codex-app-server", "adapter.ts"), "utf8"));
+    expect(codexAdapter).toContain("const contextServer = request.contextServer;");
+    expect(codexAdapter).toContain("token: contextServer.token");
   });
 
   it("registers both of its keys as account-scoped", async () => {

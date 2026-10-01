@@ -34,6 +34,53 @@ import type { SessionContextRegistry } from "./registry";
 
 export const MAX_CONTEXT_REQUEST_BYTES = 64 * 1024;
 
+/**
+ * The only requests an agent may make of its context server. Nothing else
+ * reaches the MCP SDK.
+ *
+ * Everything this server lets an agent read or change is a **tool**, and
+ * every tool call is decided by `authorizeContextRequest`: reads by the
+ * session's capabilities, changes by the person, one at a time. MCP has other
+ * ways to read a server — resources, resource templates, prompts, completions
+ * — that no Hubble decision covers, and some agents use them without asking
+ * anyone (Codex's `read_mcp_resource` raises no approval). The SDK would
+ * answer those straight from whatever had been registered.
+ *
+ * So they are refused here, by allowlist, before the SDK sees the request. A
+ * resource added to the server later is unreachable — refused, never served
+ * unasked — until it is given a Hubble decision and a place on this list.
+ */
+export const CONTEXT_SERVER_METHODS: readonly string[] = [
+  "initialize",
+  "ping",
+  "tools/list",
+  "tools/call",
+];
+
+/**
+ * The first message in a request body the server will not answer, or
+ * `undefined` when every one is allowed.
+ *
+ * A notification (no `id`) cannot return anything, so it cannot read
+ * anything: those are let through. A response (no `method`) answers a
+ * question, and this server never asks one, so it is refused too.
+ */
+function refusedMessage(body: unknown): { id: string | number | null } | undefined {
+  for (const message of Array.isArray(body) ? body : [body]) {
+    if (typeof message !== "object" || message === null) return { id: null };
+    const { method, id } = message as { method?: unknown; id?: unknown };
+    const replyId = typeof id === "string" || typeof id === "number" ? id : null;
+    if (typeof method !== "string") return { id: replyId };
+    const isNotification = id === undefined;
+    if (isNotification) {
+      if (!method.startsWith("notifications/")) return { id: null };
+      continue;
+    }
+    if (!CONTEXT_SERVER_METHODS.includes(method)) return { id: replyId };
+  }
+  return undefined;
+}
+
 export type SessionContextServer = {
   /** The loopback URL agents are given. Starts listening on first use. */
   url(): Promise<string>;
@@ -93,6 +140,22 @@ export function createSessionContextServer(options: {
       body = JSON.parse(text);
     } catch {
       return refuse(res, 400, -32700, "Parse error.");
+    }
+
+    // Resources, prompts and anything else no Hubble decision covers: an
+    // ordinary JSON-RPC "method not found", so a client treats it as a failed
+    // call rather than a broken server. See `CONTEXT_SERVER_METHODS`.
+    const refused = refusedMessage(body);
+    if (refused) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: refused.id,
+          error: { code: -32601, message: "Hubble does not offer that on this server." },
+        })
+      );
+      return;
     }
 
     const mcp = createSessionContextMcpServer({

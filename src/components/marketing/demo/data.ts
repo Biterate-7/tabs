@@ -226,9 +226,8 @@ export const DEMO_DEPENDENCIES: readonly TabDependency[] = [
 // --------------------------------------------------------------- agents
 
 /**
- * Connected agents, as the roster keeps them. Codex is connected but, exactly
- * as in the product, Hubble does not start sessions with it — its adapter has
- * no approval mode — so the roster says so and it has no session below.
+ * Connected agents, as the roster keeps them. Codex is connected and idle:
+ * the demo simply shows no Codex session below.
  */
 export const DEMO_AGENTS: readonly AgentIdentity[] = (
   [
@@ -248,7 +247,7 @@ export const DEMO_AGENTS: readonly AgentIdentity[] = (
 }))
 
 /** Who Hubble will start sessions with — the catalog's own answer, restated for the demo's roster. */
-export const DEMO_SESSION_PROVIDERS: ReadonlySet<AgentProviderId> = new Set(["claude-code", "gemini", "grok"])
+export const DEMO_SESSION_PROVIDERS: ReadonlySet<AgentProviderId> = new Set(["claude-code", "gemini", "openai-codex", "grok"])
 
 function context(workspaceId: string, workspaceName: string, write: boolean): RuntimeSessionContextView {
   return {

@@ -43,14 +43,21 @@ import type { AuthorizedProjectInput } from "@/lib/agents/runtime/protocol"
  * leave it authorized until the process restarted.
  */
 
-/** What a new project is granted when the user authorizes a folder for an agent. */
+/**
+ * What a new project is granted when the caller names no scopes.
+ *
+ * A fallback only. The Command Centre always names them: a folder authorized
+ * from New session carries exactly what the agent was approved for in
+ * Connect Agent (`projectScopesForAgent`, platform/roster.ts), which is where
+ * Run commands is turned on. This list never includes `run_commands`, so a
+ * caller that forgets to ask cannot hand an agent command execution.
+ */
 export const DEFAULT_PROJECT_SCOPES: readonly AgentPermissionScope[] = [
   "read_workspace",
   "read_project",
   "write_project",
-  // Offered, not assumed: the Command Centre narrows this list to what the
-  // user approved for the agent in Connect Agent (projectScopesFor), where it
-  // is off by default — and each use still asks (J.3).
+  // Offered, not assumed: narrowed to the agent's approval as above, off by
+  // default there — and each use still asks (J.3).
   "write_workspace",
 ] as const
 

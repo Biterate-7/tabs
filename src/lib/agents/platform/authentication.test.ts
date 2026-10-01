@@ -221,7 +221,14 @@ describe("capabilities", () => {
       supportsAccountAuth: true,
       authenticationDetection: "cli-status",
     });
-    expect(agentCapabilities(codex, "desktop")).toMatchObject({ supportsSessionControl: false });
+    expect(agentCapabilities(codex, "desktop")).toMatchObject({
+      transport: "app-server",
+      supportsSessionControl: true,
+      supportsSubscriptionAuth: true,
+      supportsApiKey: false,
+      // Asked of Codex itself, through its app-server.
+      authenticationDetection: "agent-probe",
+    });
     expect(agentCapabilities(custom, "web")).toMatchObject({
       supportsLocalRuntime: false,
       supportsSessionControl: false,
