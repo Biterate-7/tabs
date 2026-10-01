@@ -20,6 +20,8 @@
     "desktop:build": "tauri build",
     "migrate:credentials": "node scripts/migrate-credentials.mjs",
     "migrate:mcp": "node scripts/migrate-mcp.mjs",
+    "migrate:downloads": "node scripts/migrate-downloads.mjs",
+    "downloads:report": "node scripts/report-downloads.mjs",
     "desktop:runtime": "node scripts/build-agent-runtime.mjs"
   },
   "dependencies": {
