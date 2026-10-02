@@ -1,5 +1,5 @@
 import "server-only";
-import { gateSyncRequest } from "@/lib/sync/http";
+import { MAX_DISCOVERED_WORKSPACES, gateSyncRequest } from "@/lib/sync/http";
 
 export const runtime = "nodejs";
 
@@ -31,9 +31,6 @@ export const runtime = "nodejs";
  * cannot drift weaker than they are. Ownership is the repository's
  * `WHERE user_id = $1`; nothing here reads an identity from the request.
  */
-
-/** A ceiling on the answer, not a page size. See the note above. */
-export const MAX_DISCOVERED_WORKSPACES = 200;
 
 export async function GET(request: Request): Promise<Response> {
   // `mutating: false`, like pull: a GET has no body to police and changes
