@@ -283,7 +283,15 @@ export function EventStream({
   const countRef = useRef(events.length)
   // The conversation, derived from the window of events on every render —
   // one model for every provider. See lib/agents/platform/chat.ts.
-  const transcript = useMemo(() => buildTranscript(events), [events])
+  /*
+    Each read Hubble's context server answered is the activity timeline's to
+    tell, grouped into "Read workspace · 18 tabs" there. One row per call here
+    would bury the conversation under its own bookkeeping.
+  */
+  const transcript = useMemo(
+    () => buildTranscript(events).filter((item) => item.type !== "event" || item.event.kind !== "context_read"),
+    [events]
+  )
   const rows = useMemo(() => interleave(transcript, changes ?? []), [transcript, changes])
 
   /*

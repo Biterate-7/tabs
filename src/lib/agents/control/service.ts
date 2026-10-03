@@ -6,7 +6,7 @@ import {
   isWellFormedContext,
   isWellFormedMessage,
 } from "./context";
-import { isWellFormedControlEvent } from "./events";
+import { contextCountsLine, isContextEventKind, isWellFormedControlEvent } from "./events";
 import { isCapabilityPermitted, NO_PERMISSIONS } from "./permissions";
 import { isProviderAuthorized } from "./projects";
 import { denyNonServerRuntime } from "./runtime";
@@ -21,7 +21,7 @@ import { adapterSupports, controlFailure } from "./types";
 import type { ApprovalBroker } from "./approvals";
 import type { AgentCapability } from "./capabilities";
 import type { AgentAttachedContext, AgentMessageInput } from "./context";
-import type { AgentControlEvent } from "./events";
+import type { AgentControlEvent, ControlContextInfo } from "./events";
 import type { AgentPermissionGrant } from "./permissions";
 import type { AgentProject } from "./projects";
 import type { RuntimeDecision } from "./runtime";
@@ -217,11 +217,30 @@ export type ControlService = {
    */
   requestWorkspaceApproval(
     sessionId: string,
-    request: { targets: readonly string[]; reason: string; change?: WorkspaceChangeSummary; plan?: WorkspacePlanPreview }
+    request: {
+      targets: readonly string[];
+      reason: string;
+      change?: WorkspaceChangeSummary;
+      plan?: WorkspacePlanPreview;
+      /** The registry's id for the change, kept on the approval so what is applied can be traced to it. */
+      actionId?: string;
+    }
   ): Promise<WorkspaceApprovalOutcome>;
 
   /** Withdraws a session's outstanding workspace approvals — it ended. */
   cancelWorkspaceApprovals(sessionId: string): void;
+
+  /**
+   * Says what Hubble's context server did for a session's agent — the session
+   * was bound to its workspace, or a read was answered — as an event on the
+   * session's own stream, so the activity timeline reads it like any other.
+   *
+   * Hubble's to raise and nobody else's: adapters cannot emit these kinds
+   * (see `ensureSubscribed`). Dropped for a session that has ended or that
+   * is bound to a different workspace than the one named — activity never
+   * crosses workspaces.
+   */
+  recordContextEvent(sessionId: string, kind: "context_loaded" | "context_read", context: ControlContextInfo): void;
 
   /**
    * The context a session currently holds, or undefined for one holding none.
@@ -436,6 +455,9 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       // `file_modified` with an absolute path must not reach a consumer.
       if (!isWellFormedControlEvent(event)) return;
       if (event.provider !== provider) return;
+      // What Hubble's context server did is Hubble's to say. An adapter
+      // claiming a workspace read would be fabricating activity.
+      if (isContextEventKind(event.kind)) return;
 
       const session = sessions.get(event.sessionId);
       if (!session) return;
@@ -914,6 +936,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
           reason: request.reason,
           ...(request.change ? { change: request.change } : {}),
           ...(request.plan ? { plan: request.plan } : {}),
+          ...(request.actionId ? { contextActionId: request.actionId } : {}),
         },
         now()
       );
@@ -931,6 +954,24 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       for (const approval of broker.forSession(sessionId)) {
         if (approval.workspaceId && approval.status === "requested") broker.cancel(approval.id, now());
       }
+    },
+
+    recordContextEvent(sessionId, kind, context) {
+      const session = sessions.get(sessionId);
+      if (!session || isTerminalSessionStatus(session.status)) return;
+      if (!session.workspaceId || session.workspaceId !== context.workspaceId) return;
+      const event: AgentControlEvent = {
+        id: createId(),
+        sessionId,
+        provider: session.provider,
+        kind,
+        timestamp: now(),
+        summary: contextCountsLine(context),
+        context: { ...context },
+      };
+      if (!isWellFormedControlEvent(event)) return;
+      // A read changes nothing about the session's state; it is only said.
+      for (const listener of [...listeners]) listener(event);
     },
 
     contextFor(sessionId) {

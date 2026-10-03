@@ -23,6 +23,8 @@ import {
   updateWorkspaceLogo,
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
+import { restoreWorkspaceCollections } from "@/lib/collections/restore"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import type { Collection } from "@/lib/collections/types"
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
 import type { Tab } from "@/lib/tabs/types"
@@ -39,7 +41,6 @@ import {
   RESEARCH_ID,
   SWE_APPROVAL,
   SWE_TAB_IDS,
-  contextTool,
 } from "./data"
 
 /*
@@ -57,6 +58,14 @@ import {
  * an approved collection is created in the workspace, a denied one is not —
  * and a message typed into the composer gets a reply that says plainly that
  * no agent is connected to this page.
+ *
+ * An approval plays out in the steps the app goes through, one action each,
+ * so the same states appear in the same order: `respond` (approved — the
+ * session is running), `apply-approved` (the Command Centre applies the
+ * change and records it, as an `AppliedWorkspaceChange`), `finish-approved`
+ * (the agent replies and its run ends). `undo` reverses a recorded change
+ * through the same restore the collection store uses, and records the undo
+ * on the change — never by deleting it.
  */
 
 /** The destinations the demo's rail can open. Mirrors AppShell's `view` union. */
@@ -80,6 +89,8 @@ export type DemoState = {
   sessions: CommandCentreSession[]
   events: Record<string, SequencedControlEvent[]>
   approvals: Record<string, RuntimeApprovalView[]>
+  /** What the demo's "Command Centre" applied for its agents, as the app records it. */
+  changes: AppliedWorkspaceChange[]
   /** The Command Centre's open session. `null` shows the list (master) on phones. */
   selectedSessionId: string | null
   paletteOpen: boolean
@@ -111,6 +122,7 @@ export function createDemoState(init: DemoInit = {}): DemoState {
     sessions: withSequence([...DEMO_SESSIONS], DEMO_EVENTS as Record<string, SequencedControlEvent[]>),
     events: Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
     approvals: Object.fromEntries(Object.entries(DEMO_APPROVALS).map(([id, list]) => [id, [...list]])),
+    changes: [],
     selectedSessionId: init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
     paletteOpen: false,
     contextPanelOpen: init.contextPanelOpen ?? true,
@@ -147,6 +159,11 @@ export type DemoAction =
   /** What a session is pointed at inside its workspace — as the runtime would record it, ids only. */
   | { type: "set-focus"; sessionId: string; focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null }
   | { type: "respond"; approvalId: string; decision: "granted" | "denied" }
+  /** The Command Centre applies an approved change, after the approval. */
+  | { type: "apply-approved"; approvalId: string }
+  /** The agent says what it did and its run ends, after the change is applied. */
+  | { type: "finish-approved"; approvalId: string }
+  | { type: "undo"; changeId: string }
   | { type: "send"; sessionId: string; text: string }
   | { type: "reply"; sessionId: string }
   | { type: "cancel"; sessionId: string }
@@ -368,7 +385,8 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
           approvals,
           sessions: patchSession(state.sessions, sessionId, "ready"),
           events: appendEvents(state, sessionId, [
-            { kind: "approval_denied", summary: approval.change?.subject ?? "Denied", approvalId: approval.approvalId },
+            // The control service's own words for a workspace decision.
+            { kind: "approval_denied", summary: approval.workspaceId ? "Workspace change declined" : "Denied", approvalId: approval.approvalId },
             {
               kind: "message_received",
               summary: "Reply",
@@ -379,29 +397,93 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
         }
       }
 
-      // Granted. The Command Centre, which owns the workspace, applies the
-      // approved change exactly as a person would — here, the one approval in
-      // the fixture: a new collection holding the three tabs the card named.
-      const isSwe = approval.approvalId === SWE_APPROVAL.approvalId
-      const workspaceId = approval.workspaceId ?? RESEARCH_ID
-      const next = isSwe ? addCollection(state, workspaceId, "SWE-bench", [...SWE_TAB_IDS]) : null
+      // Granted: as in the runtime, the agent's run carries on while the
+      // Command Centre applies the change (`apply-approved`, next).
       return {
         ...state,
         approvals,
-        ...(next ? { collections: next.collections, created: next.created } : {}),
-        // The run is over; the session is not — it waits for the next message.
-        sessions: patchSession(state.sessions, sessionId, "ready"),
+        sessions: patchSession(state.sessions, sessionId, "running"),
         events: appendEvents(state, sessionId, [
-          { kind: "approval_granted", summary: approval.change?.subject ?? "Allowed", approvalId: approval.approvalId },
-          { kind: "tool_finished", summary: "Created “SWE-bench”", tool: { ...contextTool("create_collection"), ok: true } },
+          { kind: "approval_granted", summary: approval.workspaceId ? "Workspace change approved" : "Approved", approvalId: approval.approvalId },
+        ]),
+      }
+    }
+
+    case "apply-approved": {
+      // The one approval in the fixture that changes the workspace: a new
+      // collection holding the three tabs the card named.
+      if (action.approvalId !== SWE_APPROVAL.approvalId) return state
+      const sessionId = SWE_APPROVAL.sessionId
+      const events = state.events[sessionId] ?? []
+      const granted = events.some((event) => event.kind === "approval_granted" && event.approvalId === action.approvalId)
+      if (!granted || state.changes.some((change) => change.approvalId === action.approvalId)) return state
+      const session = state.sessions.find((entry) => entry.view.sessionId === sessionId)
+      if (!session) return state
+
+      // Applied the way the Command Centre applies it — through the product's
+      // own collection reducer — and recorded with the collections either
+      // side, which is what makes an exact undo possible.
+      const workspaceId = SWE_APPROVAL.workspaceId ?? RESEARCH_ID
+      const before = state.collections.filter((collection) => collection.workspaceId === workspaceId)
+      const next = addCollection(state, workspaceId, "SWE-bench", [...SWE_TAB_IDS])
+      const after = next.collections.filter((collection) => collection.workspaceId === workspaceId)
+      // No event: Claude Code reports no result for a Hubble tool call, so
+      // in Hubble too the change is the Command Centre's record, not the journal's.
+      const last = events[events.length - 1]
+      const change: AppliedWorkspaceChange = {
+        id: `demo-change-${next.created}`,
+        sessionId,
+        provider: session.view.provider,
+        workspaceId,
+        at: Math.max(last?.timestamp ?? DEMO_NOW, DEMO_NOW) + 500,
+        ok: true,
+        approvalId: action.approvalId,
+        steps: [{ kind: "created", collectionId: next.id, name: "SWE-bench", tabCount: SWE_TAB_IDS.length }],
+        before,
+        after,
+      }
+      return {
+        ...state,
+        collections: next.collections,
+        created: next.created,
+        changes: [...state.changes, change],
+      }
+    }
+
+    case "finish-approved": {
+      const change = state.changes.find((candidate) => candidate.approvalId === action.approvalId)
+      if (!change) return state
+      const messageId = `${action.approvalId}-granted`
+      if ((state.events[change.sessionId] ?? []).some((event) => event.messageId === messageId)) return state
+      return {
+        ...state,
+        // The run is over; the session is not — it waits for the next message.
+        sessions: patchSession(state.sessions, change.sessionId, "ready"),
+        events: appendEvents(state, change.sessionId, [
           {
             kind: "message_received",
             summary: "Reply",
-            messageId: `${approval.approvalId}-granted`,
+            messageId,
             text: "Done. “SWE-bench” is in Research with the paper, the leaderboard and the repository. Nothing else changed.",
           },
           { kind: "run_completed", summary: "Run completed." },
         ]),
+      }
+    }
+
+    case "undo": {
+      const change = state.changes.find((candidate) => candidate.id === action.changeId)
+      if (!change || !change.ok || change.undone || !change.before || !change.after) return state
+      // Refused, with nothing moved, if the workspace changed since — exactly as in Hubble.
+      const restored = restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)
+      if (!restored) return state
+      const last = (state.events[change.sessionId] ?? []).at(-1)
+      // The demo's clock, kept moving forward: the undo is told after everything before it.
+      const undoneAt = Math.max(last?.timestamp ?? DEMO_NOW, change.at, DEMO_NOW) + 1_000
+      return {
+        ...state,
+        collections: restored.collections,
+        changes: state.changes.map((candidate) => (candidate.id === change.id ? { ...candidate, undone: true, undoneAt } : candidate)),
       }
     }
 

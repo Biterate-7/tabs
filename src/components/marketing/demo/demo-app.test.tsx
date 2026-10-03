@@ -129,7 +129,7 @@ describe("Command Centre", () => {
     // Every agent in the roster can run sessions now — none is shown as refused.
     expect(region.queryByText("Signed in · sessions unavailable")).toBeNull()
     // The view bar says what the demo is rather than reporting a runtime.
-    expect(region.getByRole("status").textContent).toMatch(/Demo/)
+    expect(region.getAllByRole("status").some((status) => /Demo/.test(status.textContent ?? ""))).toBe(true)
   })
 
   it("renders the approval card without taking focus on load", () => {
@@ -143,7 +143,8 @@ describe("Command Centre", () => {
     const { user, frame } = renderCommandCentre()
     await user.click(buttonByText(within(frame()).getByRole("group", { name: "Approval required" }), "Allow"))
     expect(within(frame()).queryByRole("group", { name: "Approval required" })).toBeNull()
-    expect(within(frame()).getByText(/“SWE-bench” is in Research/)).toBeTruthy()
+    // Approved, applied, answered — the app's steps, paced by the demo.
+    expect(await within(frame()).findByText(/“SWE-bench” is in Research/, {}, { timeout: 3_000 })).toBeTruthy()
     await user.click(within(frame()).getByRole("button", { name: "Workspace" }))
     expect(within(frame()).getByText("SWE-bench")).toBeTruthy()
   })

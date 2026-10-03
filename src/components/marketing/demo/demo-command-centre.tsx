@@ -1,7 +1,9 @@
 "use client"
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, X } from "lucide-react"
+import { AgentActivity } from "@/components/agents/agent-activity"
+import { ActivityPopover } from "@/components/command-centre/activity-popover"
 import { AgentRoster } from "@/components/command-centre/agent-roster"
 import { ApprovalPrompt } from "@/components/command-centre/approval-prompt"
 import { Composer } from "@/components/command-centre/composer"
@@ -12,7 +14,11 @@ import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
 import { WorkingContextChip } from "@/components/command-centre/working-context-control"
 import { IconButton } from "@/components/ui/icon-button"
+import { useSessionActivity } from "@/hooks/use-agent-activity"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
+import { SESSION_STATUS_LABEL, SESSION_VISUAL_STATE } from "@/lib/agents/command-centre/presentation"
+import { collectionsMatch } from "@/lib/collections/restore"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import {
   contextOfSession,
   describeWorkingContext,
@@ -29,7 +35,7 @@ import { phaseSentence, sessionPrerequisite } from "@/lib/agents/platform/lifecy
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { cn } from "@/lib/utils"
-import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS } from "./data"
+import { DEMO_AGENTS, DEMO_KNOWN_APPROVALS, DEMO_NOW, DEMO_PROJECTS } from "./data"
 import { useHubbleDemo } from "./demo-provider"
 
 /**
@@ -108,6 +114,12 @@ const DEMO_PLATFORM = demoPlatform()
  *
  * The view bar says what the demo is instead of reporting a runtime, because
  * there is none: nothing typed here runs anywhere.
+ *
+ * The agent's activity — the timeline, the action inspector, Undo — is the
+ * app's own `AgentActivity`, fed by the product's `useSessionActivity` from
+ * the demo's records (its events, approvals and applied changes) exactly as
+ * CommandCentreView feeds it from the runtime's. Only the data differs; a
+ * structural test keeps it that way (demo-parity.test.tsx).
  */
 export function DemoCommandCentre({
   onClose,
@@ -117,7 +129,7 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, context, send } = useHubbleDemo()
+  const { state, dispatch, world, context, send, respond, undo } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
 
@@ -156,6 +168,52 @@ export function DemoCommandCentre({
   const contextView = own ? describeWorkingContext(own, liveWorld) : null
   const agentName = selected ? agentVisualIdentity(selected.view.provider).displayName : "The agent"
   const delivered = selected?.view.focus?.delivered
+
+  /* ---------------- What the agent did — the app's own derivation, on the demo's records. */
+
+  const sessionChanges = useMemo(
+    () => (selectedId ? state.changes.filter((change) => change.sessionId === selectedId) : []),
+    [state.changes, selectedId]
+  )
+  const canUndo = useCallback(
+    (change: AppliedWorkspaceChange) =>
+      change.ok && !change.undone && Boolean(change.after) && collectionsMatch(state.collections, change.workspaceId, change.after!),
+    [state.collections]
+  )
+  const activity = useSessionActivity({
+    session: selected?.view ?? null,
+    events,
+    approvals,
+    changes: sessionChanges,
+    agentName,
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(projectName ? { projectName } : {}),
+    now: DEMO_NOW,
+    knownApprovals: DEMO_KNOWN_APPROVALS,
+    canUndo,
+  })
+  /** "View" — the workspace the change was made in, as the app's View goes there. */
+  const viewChange = (change: AppliedWorkspaceChange) => {
+    dispatch({ type: "switch-workspace", id: change.workspaceId })
+    dispatch({ type: "navigate", view: "workspace" })
+  }
+  const viewChangeById = (changeId: string) => {
+    const change = sessionChanges.find((candidate) => candidate.id === changeId)
+    if (change) viewChange(change)
+  }
+  const activityView = selected ? (
+    <AgentActivity
+      entries={activity.entries}
+      provider={selected.view.provider}
+      agentName={agentName}
+      state={SESSION_VISUAL_STATE[selected.view.status]}
+      statusLabel={SESSION_STATUS_LABEL[selected.view.status]}
+      now={DEMO_NOW}
+      inspect={activity.inspect}
+      onUndo={undo}
+      onViewChange={viewChangeById}
+    />
+  ) : null
 
   /** Points the open session at a context — resolved by the real bridge, recorded as its focus. */
   function applyContext(next: WorkingContext) {
@@ -258,9 +316,21 @@ export function DemoCommandCentre({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => dispatch({ type: "toggle-context-panel" })}
                 onDispose={() => dispatch({ type: "dispose", sessionId: selected.view.sessionId })}
+                activityControl={
+                  <ActivityPopover waiting={activity.waiting} className={contextPanelOpen ? "xl:hidden" : undefined}>
+                    {activityView}
+                  </ActivityPopover>
+                }
               />
               <div ref={streamRef} className="flex min-h-0 flex-1 flex-col">
-              <EventStream events={events}>
+              <EventStream
+                events={events}
+                changes={sessionChanges}
+                {...(workspaceName ? { workspaceName } : {})}
+                onViewChange={viewChange}
+                onUndoChange={(change) => undo(change.id)}
+                canUndoChange={canUndo}
+              >
                 {approvals.map((approval) => (
                   <ApprovalPrompt
                     key={approval.approvalId}
@@ -273,7 +343,7 @@ export function DemoCommandCentre({
                     // Already on screen when the page loads: taking focus
                     // would scroll the visitor to it.
                     autoFocus={false}
-                    onRespond={(approvalId, decision) => dispatch({ type: "respond", approvalId, decision })}
+                    onRespond={respond}
                   />
                 ))}
               </EventStream>
@@ -313,6 +383,9 @@ export function DemoCommandCentre({
             agentName={agentName}
             {...(projectName ? { projectName } : {})}
             runtimeStatus={null}
+            changes={sessionChanges}
+            onViewChange={viewChange}
+            {...(activityView ? { activity: activityView } : {})}
             {...actions}
           />
         )}

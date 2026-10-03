@@ -1,4 +1,5 @@
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import { contextCountsLine } from "@/lib/agents/control/events"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentIdentity } from "@/lib/agents/platform/roster"
 import type { RuntimeApprovalView, RuntimeSessionContextView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
@@ -331,15 +332,41 @@ export const DEMO_SESSIONS: readonly CommandCentreSession[] = [
     projectId: DEMO_PROJECTS[0].id,
     updatedAt: DEMO_NOW - 5 * HOUR,
     workspaceId: BUILD_ID,
+    context: context(BUILD_ID, "Hubble Build", false),
   }),
 ]
 
 // --------------------------------------------------------------- events
 
 /** Hubble's context tools as Claude Code names them: the minted server shape the Command Centre recognises. */
-export function contextTool(name: string) {
-  return { name: `mcp__tabdump_hubbledemosessio__${name}` }
+export function contextTool(name: string, callId?: string) {
+  return { name: `mcp__tabdump_hubbledemosessio__${name}`, ...(callId ? { callId } : {}) }
 }
+
+/**
+ * What Hubble's context server reports about its own answer — the event the
+ * runtime raises after each read (see session-context/activity.ts). Counts
+ * only, and here derived from the fixture itself, so the timeline's numbers
+ * are the workspace's.
+ */
+function contextRead(workspaceId: string, operation: string, counts: { tabs?: number; collections?: number; matches?: number; groups?: number }) {
+  const context = { workspaceId, operation, ok: true, ...counts }
+  // Summarised as the control service summarises it.
+  return { kind: "context_read" as const, summary: contextCountsLine(context), context }
+}
+
+function contextLoaded(workspaceId: string) {
+  const workspace = DEMO_WORKSPACES.find((candidate) => candidate.id === workspaceId)!
+  const context = {
+    workspaceId,
+    tabs: workspace.tabs.length,
+    collections: DEMO_COLLECTIONS.filter((collection) => collection.workspaceId === workspaceId).length,
+  }
+  return { kind: "context_loaded" as const, summary: contextCountsLine(context), context }
+}
+
+const researchCollections = () => DEMO_COLLECTIONS.filter((collection) => collection.workspaceId === RESEARCH_ID)
+const productIdeas = () => DEMO_COLLECTIONS.find((collection) => collection.id === "c-product-ideas")!
 
 type EventInput = Partial<SequencedControlEvent> & Pick<SequencedControlEvent, "kind" | "summary">
 
@@ -354,14 +381,25 @@ export function buildEvents(sessionId: string, provider: AgentProviderId, inputs
   }))
 }
 
+/*
+ * The approval as the broker reports it: Hubble's own reason and target
+ * lines for a workspace change (session-context/registry.ts), and the
+ * `write_workspace` scope every workspace change is asked under.
+ */
 export const SWE_APPROVAL: RuntimeApprovalView = {
   approvalId: "approval-swe-collection",
   sessionId: CLAUDE_SESSION,
   provider: "claude-code",
   action: "change_workspace",
-  scope: "collections.write",
+  scope: "write_workspace",
   workspaceId: RESEARCH_ID,
-  targets: [],
+  targets: [
+    `New collection "SWE-bench"`,
+    "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?",
+    "SWE-bench Leaderboard",
+    "SWE-bench/SWE-bench",
+  ],
+  reason: "Create a collection in this workspace.",
   change: {
     kind: "create_collection",
     subject: "SWE-bench",
@@ -379,12 +417,38 @@ export const SWE_APPROVAL: RuntimeApprovalView = {
 /** The tabs the approved collection would hold — the same three the card names. */
 export const SWE_TAB_IDS = ["t-swe-paper", "t-swe-board", "t-swe-repo"] as const
 
+/** Claude Code's call that proposed the collection, answered once the change is applied. */
+export const SWE_CALL_ID = "claude-call-4"
+
+export const RELEASE_APPROVAL: RuntimeApprovalView = {
+  approvalId: "approval-release-edit",
+  sessionId: CLAUDE_RELEASE_SESSION,
+  provider: "claude-code",
+  action: "modify_files",
+  scope: "write_project",
+  projectId: DEMO_PROJECTS[0].id,
+  targets: ["CHANGELOG.md"],
+  reason: "Add a 0.9 section with the three changes from the Release checklist.",
+  requestedAt: DEMO_NOW - 5 * HOUR - 9 * MIN,
+  expiresAt: DEMO_NOW - 5 * HOUR + MIN,
+}
+
+/**
+ * Approvals the demo's sessions asked for, as the broker reported them —
+ * what the Command Centre remembers about an approval once it is answered,
+ * so the decision on the timeline can still say what was approved.
+ */
+export const DEMO_KNOWN_APPROVALS: ReadonlyMap<string, RuntimeApprovalView> = new Map(
+  [SWE_APPROVAL, RELEASE_APPROVAL].map((approval) => [approval.approvalId, approval])
+)
+
 export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent[]>> = {
   [CLAUDE_SESSION]: buildEvents(
     CLAUDE_SESSION,
     "claude-code",
     [
       { kind: "session_started", summary: "Session started." },
+      contextLoaded(RESEARCH_ID),
       {
         kind: "message_sent",
         summary: "Message sent.",
@@ -392,9 +456,15 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
         text: "Read the SWE-bench tabs in Research and tell me what each one is. If they belong together, put them in a collection.",
       },
       { kind: "thinking", summary: "Planning the summary" },
-      { kind: "tool_started", summary: "Reading Research", tool: contextTool("get_workspace_summary") },
-      { kind: "tool_started", summary: "Searching for SWE-bench", tool: contextTool("search_tabs") },
-      { kind: "tool_started", summary: "Checking existing collections", tool: contextTool("find_relevant_collections") },
+      { kind: "tool_started", summary: "Reading Research", tool: contextTool("get_workspace_summary", "claude-call-1") },
+      contextRead(RESEARCH_ID, "get_workspace_summary", { tabs: RESEARCH_TABS.length, collections: researchCollections().length }),
+      { kind: "tool_started", summary: "Searching for SWE-bench", tool: contextTool("search_tabs", "claude-call-2") },
+      contextRead(RESEARCH_ID, "search_tabs", { matches: SWE_TAB_IDS.length }),
+      { kind: "tool_started", summary: "Checking existing collections", tool: contextTool("find_relevant_collections", "claude-call-3") },
+      // None of Research's collections holds a SWE-bench tab, so none is relevant.
+      contextRead(RESEARCH_ID, "find_relevant_collections", {
+        collections: researchCollections().filter((collection) => collection.tabIds.some((id) => (SWE_TAB_IDS as readonly string[]).includes(id))).length,
+      }),
       {
         kind: "message_received",
         summary: "Reply",
@@ -402,8 +472,9 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
         text:
           "Three tabs are about SWE-bench: the paper that introduced it, its public leaderboard, and the benchmark's repository. None of your collections covers them yet.\n\nI'd like to group them into a new collection, “SWE-bench”.",
       },
-      { kind: "tool_started", summary: "Proposing “SWE-bench”", tool: contextTool("create_collection") },
-      { kind: "approval_requested", summary: "Create collection “SWE-bench”", approvalId: SWE_APPROVAL.approvalId },
+      { kind: "tool_started", summary: "Proposing “SWE-bench”", tool: contextTool("create_collection", SWE_CALL_ID) },
+      // Hubble's own event for a workspace change, in the control service's words.
+      { kind: "approval_requested", summary: "Wants to change your Hubble workspace", approvalId: SWE_APPROVAL.approvalId },
     ],
     DEMO_NOW - 3 * MIN
   ),
@@ -412,14 +483,18 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
     "gemini",
     [
       { kind: "session_started", summary: "Session started." },
+      contextLoaded(RESEARCH_ID),
       {
         kind: "message_sent",
         summary: "Message sent.",
         messageId: "gemini-m1",
         text: "Look at Product Ideas and suggest themes. Don't change anything yet.",
       },
-      { kind: "tool_started", summary: "Reading Product Ideas", tool: contextTool("get_collection") },
-      { kind: "tool_started", summary: "Grouping tabs by topic", tool: contextTool("analyze_topics") },
+      { kind: "tool_started", summary: "Reading Product Ideas", tool: contextTool("get_collection", "gemini-call-1") },
+      contextRead(RESEARCH_ID, "get_collection", { tabs: productIdeas().tabIds.length }),
+      { kind: "tool_started", summary: "Grouping tabs by topic", tool: contextTool("analyze_topics", "gemini-call-2") },
+      // The two themes the reply names, over the collection's tabs.
+      contextRead(RESEARCH_ID, "analyze_topics", { groups: 2, tabs: productIdeas().tabIds.length }),
       {
         kind: "message_delta",
         summary: "Reply",
@@ -434,8 +509,10 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
     "grok",
     [
       { kind: "session_started", summary: "Session started." },
+      contextLoaded(BUILD_ID),
       { kind: "message_sent", summary: "Message sent.", messageId: "grok-m1", text: "Are there duplicate tabs in Hubble Build?" },
-      { kind: "tool_started", summary: "Looking for duplicates", tool: contextTool("find_duplicate_tabs") },
+      { kind: "tool_started", summary: "Looking for duplicates", tool: contextTool("find_duplicate_tabs", "grok-call-1") },
+      contextRead(BUILD_ID, "find_duplicate_tabs", { groups: BUILD_TABS.filter((tab) => tab.isDuplicate).length }),
       {
         kind: "message_received",
         summary: "Reply",
@@ -451,18 +528,31 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
     "claude-code",
     [
       { kind: "session_started", summary: "Session started." },
+      contextLoaded(BUILD_ID),
       {
         kind: "message_sent",
         summary: "Message sent.",
         messageId: "release-m1",
         text: "Draft release notes for 0.9 from the Release checklist collection and the changelog in the project.",
       },
-      { kind: "tool_started", summary: "Reading Release checklist", tool: contextTool("get_collection") },
+      { kind: "tool_started", summary: "Reading Release checklist", tool: contextTool("get_collection", "release-call-1") },
+      contextRead(BUILD_ID, "get_collection", {
+        tabs: DEMO_COLLECTIONS.find((collection) => collection.name === "Release checklist")!.tabIds.length,
+      }),
       { kind: "file_read", summary: "Read CHANGELOG.md", file: { relativePath: "CHANGELOG.md", projectId: DEMO_PROJECTS[0].id } },
       { kind: "file_read", summary: "Read docs/command-centre.md", file: { relativePath: "docs/command-centre.md", projectId: DEMO_PROJECTS[0].id } },
-      { kind: "approval_requested", summary: "Edit CHANGELOG.md", approvalId: "approval-release-edit" },
-      { kind: "approval_granted", summary: "Edit CHANGELOG.md", approvalId: "approval-release-edit" },
-      { kind: "file_modified", summary: "Updated CHANGELOG.md", file: { relativePath: "CHANGELOG.md", projectId: DEMO_PROJECTS[0].id } },
+      // Claude Code's order: the edit is announced as the tool is called, then
+      // waits on the approval, and is a fact only when the call finishes.
+      { kind: "tool_started", summary: "Edit", tool: { name: "Edit", callId: "release-call-2" } },
+      { kind: "file_modified", summary: "Edit CHANGELOG.md", file: { relativePath: "CHANGELOG.md", projectId: DEMO_PROJECTS[0].id } },
+      {
+        kind: "approval_requested",
+        summary: "Edit CHANGELOG.md",
+        approvalId: RELEASE_APPROVAL.approvalId,
+        tool: { name: "Edit", callId: "release-call-2" },
+      },
+      { kind: "approval_granted", summary: "Approved", approvalId: RELEASE_APPROVAL.approvalId },
+      { kind: "tool_finished", summary: "Edit", tool: { name: "Edit", callId: "release-call-2", ok: true } },
       {
         kind: "message_received",
         summary: "Reply",

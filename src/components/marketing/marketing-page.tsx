@@ -141,7 +141,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
             id="command-centre"
             layout="wide"
             title="Command your agents."
-            body="Every session in one place: what you asked, the Hubble tools the agent called, and the one decision it is waiting on. Allow the collection Claude Code proposes, deny it, or send it a message."
+            body="Every session in one place: what you asked, what the agent did, and the one decision it is waiting on. Allow the collection Claude Code proposes, then open it in the activity to see what changed — and undo it."
             link={<MoreLink onClick={onPasteTabs}>Open the Command Centre</MoreLink>}
             stage={
               <DemoWindow

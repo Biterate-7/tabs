@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type Dispatch, type ReactNode } from "react"
 import { useAgentContext, type AgentContextApi } from "@/hooks/use-agent-context"
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
+import { restoreWorkspaceCollections } from "@/lib/collections/restore"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
 import { DEMO_NOW } from "./data"
 import { createDemoState, demoReducer, type DemoAction, type DemoInit, type DemoState } from "./demo-state"
@@ -29,6 +30,10 @@ type DemoContextValue = {
   context: AgentContextApi
   /** Sends a composer message and schedules the demo's reply. */
   send: (sessionId: string, text: string) => void
+  /** Answers an approval; an approved change then plays out in the app's own steps. */
+  respond: (approvalId: string, decision: "granted" | "denied") => void
+  /** Undoes a recorded change exactly. `false` when it could not be, and nothing moved. */
+  undo: (changeId: string) => boolean
   /** Opens a saved tab's page in a new browser tab. Never navigates the landing page itself. */
   openUrl: (url: string) => void
   scheme?: { value: DemoScheme; set: (scheme: DemoScheme) => void }
@@ -38,6 +43,13 @@ const DemoContext = createContext<DemoContextValue | null>(null)
 
 /** How long the demo waits before replying — long enough to read the message landing, short enough not to feel staged. */
 export const DEMO_REPLY_DELAY_MS = 700
+
+/**
+ * The pause between the steps of an approved change — approved, applied,
+ * answered — so each state the app passes through is on screen long enough
+ * to see. The states and their order are the app's; only the pacing is set.
+ */
+export const DEMO_STEP_DELAY_MS = 450
 
 export function HubbleDemoProvider({
   init,
@@ -93,6 +105,38 @@ export function HubbleDemoProvider({
     timers.current.add(timer)
   }, [])
 
+  const respond = useCallback(
+    (approvalId: string, decision: "granted" | "denied") => {
+      dispatch({ type: "respond", approvalId, decision })
+      if (decision !== "granted") return
+      const steps: DemoAction[] = [
+        { type: "apply-approved", approvalId },
+        { type: "finish-approved", approvalId },
+      ]
+      steps.forEach((step, index) => {
+        const timer = setTimeout(() => {
+          timers.current.delete(timer)
+          dispatch(step)
+        }, DEMO_STEP_DELAY_MS * (index + 1))
+        timers.current.add(timer)
+      })
+    },
+    []
+  )
+
+  // Decided against the state on screen, so the answer is known before the
+  // reducer runs — the same check the reducer makes, through the same restore.
+  const undo = useCallback(
+    (changeId: string) => {
+      const change = state.changes.find((candidate) => candidate.id === changeId)
+      if (!change || !change.ok || change.undone || !change.before || !change.after) return false
+      if (!restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)) return false
+      dispatch({ type: "undo", changeId })
+      return true
+    },
+    [state.changes, state.collections]
+  )
+
   const openUrl = useCallback((url: string) => {
     if (!isSafeOpenUrl(url)) return
     // Hubble's own demo pages live on a reserved domain that resolves nowhere.
@@ -101,8 +145,8 @@ export function HubbleDemoProvider({
   }, [])
 
   const value = useMemo<DemoContextValue>(
-    () => ({ state, dispatch, world, context, send, openUrl, ...(scheme ? { scheme } : {}) }),
-    [state, world, context, send, openUrl, scheme]
+    () => ({ state, dispatch, world, context, send, respond, undo, openUrl, ...(scheme ? { scheme } : {}) }),
+    [state, world, context, send, respond, undo, openUrl, scheme]
   )
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>

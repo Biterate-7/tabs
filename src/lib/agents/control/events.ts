@@ -48,7 +48,17 @@ export type AgentControlEventKind =
   | "waiting_for_input"
   | "error"
   | "run_completed"
-  | "run_cancelled";
+  | "run_cancelled"
+  /**
+   * Hubble bound the session to its workspace and handed the agent its
+   * context server. Raised by Hubble, never by an adapter. See `ControlContextInfo`.
+   */
+  | "context_loaded"
+  /**
+   * The agent read its workspace through Hubble's context server, and the
+   * server answered. Raised by Hubble, never by an adapter.
+   */
+  | "context_read";
 
 export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "session_started",
@@ -71,6 +81,8 @@ export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "error",
   "run_completed",
   "run_cancelled",
+  "context_loaded",
+  "context_read",
 ] as const;
 
 export function isAgentControlEventKind(value: unknown): value is AgentControlEventKind {
@@ -100,6 +112,20 @@ export const APPROVAL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "approval_granted",
   "approval_denied",
 ] as const;
+
+/**
+ * Kinds Hubble raises about its own context server, which therefore carry
+ * `context`. No adapter may emit one: the service drops them at the boundary,
+ * so an agent cannot claim to have read a workspace it never asked about.
+ */
+export const CONTEXT_EVENT_KINDS: readonly AgentControlEventKind[] = [
+  "context_loaded",
+  "context_read",
+] as const;
+
+export function isContextEventKind(kind: AgentControlEventKind): boolean {
+  return (CONTEXT_EVENT_KINDS as readonly string[]).includes(kind);
+}
 
 /** Kinds after which no further event for that run is expected. */
 export const TERMINAL_EVENT_KINDS: readonly AgentControlEventKind[] = [
@@ -145,6 +171,83 @@ export type ControlFileInfo = {
   /** The project this path is relative to, by Hubble's project id — never a path. */
   projectId: string;
 };
+
+/**
+ * What Hubble's context server did for the agent, as counts.
+ *
+ * ## Why this is Hubble's to say, not the adapter's
+ *
+ * An adapter sees a tool call go out and — for some providers — never sees it
+ * come back, and it never sees what was in the answer. The session's context
+ * server is the one place that knows, for every provider alike, that a search
+ * found fourteen tabs. So the server measures its own answer and Hubble raises
+ * the event; the numbers are the answer's, not a guess.
+ *
+ * ## What may never appear here
+ *
+ * Counts and Hubble's own identifiers only. No titles, no URLs, no tab ids, no
+ * query text: an activity record is read by people who did not ask the
+ * question, and "searched for <the user's words>" is not theirs to see.
+ */
+export type ControlContextInfo = {
+  /** The workspace the session is bound to, by Hubble's id. */
+  workspaceId: string;
+  /**
+   * On `context_read`, which of the context server's read tools answered
+   * (`search_tabs`, `get_workspace_summary`, …) — Hubble's vocabulary, never a
+   * provider's.
+   */
+  operation?: string;
+  /** On `context_read`: whether the server answered rather than refused. */
+  ok?: boolean;
+  /** Tabs the answer covered — or, on `context_loaded`, the workspace held. */
+  tabs?: number;
+  collections?: number;
+  /** Tabs a search or a relatedness query matched. */
+  matches?: number;
+  /** Topic or duplicate groups found. */
+  groups?: number;
+};
+
+/** The count fields of `ControlContextInfo`, so validation and consumers list them once. */
+export const CONTROL_CONTEXT_COUNTS = ["tabs", "collections", "matches", "groups"] as const;
+
+/** Far above any real workspace, far below anything that would look like a payload. */
+export const MAX_CONTROL_CONTEXT_COUNT = 1_000_000;
+
+const countOf = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`;
+
+/**
+ * A context event's summary: its counts in words ("18 tabs · 3 collections",
+ * "14 matching tabs"), authored here from numbers and fixed words only, so
+ * nothing a provider or a page said can reach it.
+ */
+export function contextCountsLine(info: ControlContextInfo): string {
+  const parts: string[] = [];
+  if (info.matches !== undefined) parts.push(countOf(info.matches, "matching tab", "matching tabs"));
+  if (info.groups !== undefined) parts.push(countOf(info.groups, "group", "groups"));
+  if (info.tabs !== undefined) parts.push(countOf(info.tabs, "tab", "tabs"));
+  if (info.collections !== undefined) parts.push(countOf(info.collections, "collection", "collections"));
+  if (info.ok === false) return "Hubble could not answer";
+  return parts.length > 0 ? parts.join(" · ") : "Answered";
+}
+
+function isWellFormedContextInfo(info: ControlContextInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  if (typeof info.workspaceId !== "string" || info.workspaceId.length === 0 || info.workspaceId.length > 128) {
+    return false;
+  }
+  if (info.operation !== undefined && !(typeof info.operation === "string" && /^[a-z_]{1,48}$/.test(info.operation))) {
+    return false;
+  }
+  if (info.ok !== undefined && typeof info.ok !== "boolean") return false;
+  for (const key of CONTROL_CONTEXT_COUNTS) {
+    const value = info[key];
+    if (value === undefined) continue;
+    if (!Number.isInteger(value) || value < 0 || value > MAX_CONTROL_CONTEXT_COUNT) return false;
+  }
+  return true;
+}
 
 /**
  * Kinds that may carry conversation text. Nothing else may.
@@ -205,6 +308,8 @@ export type AgentControlEvent = {
   file?: ControlFileInfo;
   /** The approval this event concerns. See ./approvals.ts. */
   approvalId?: string;
+  /** What Hubble's context server did, on the `CONTEXT_EVENT_KINDS` only. */
+  context?: ControlContextInfo;
   /**
    * The message itself, on the three `TEXT_EVENT_KINDS` only.
    *
@@ -274,6 +379,12 @@ export function isWellFormedControlEvent(event: AgentControlEvent): boolean {
 
   if (event.tool && event.tool.name.length > MAX_TOOL_NAME_LENGTH) return false;
 
+  // Context counts belong to Hubble's own context kinds, and those kinds
+  // always carry them: a `context_read` with nothing read is not a read.
+  const contextKind = isContextEventKind(event.kind);
+  if (contextKind !== (event.context !== undefined)) return false;
+  if (event.context && !isWellFormedContextInfo(event.context)) return false;
+
   if (event.text !== undefined) {
     // Text belongs to prose kinds only. A tool result is never a message.
     if (!(TEXT_EVENT_KINDS as readonly string[]).includes(event.kind)) return false;
@@ -326,6 +437,10 @@ export function domainEventKindFor(
     case "thinking":
     case "message_sent":
     case "message_delta":
+    // Context reads fire per tool call and the workspace itself is the
+    // durable record of what was there; the timeline reads them live.
+    case "context_loaded":
+    case "context_read":
       // Deliberately dropped from the durable log. See above.
       return null;
   }

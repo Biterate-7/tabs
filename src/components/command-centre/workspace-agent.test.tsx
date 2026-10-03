@@ -398,7 +398,9 @@ describe("what the agent changed", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    const row = (await screen.findByText("Couldn't apply the approved change")).closest("li")!
+    // The stream's row; the activity timeline beside it says the same thing in its own place.
+    const stream = await screen.findByRole("list", { name: /session events/i })
+    const row = (await within(stream).findByText("Couldn't apply the approved change")).closest("li")!
     expect(row.textContent).toContain("Nothing changed in Research")
     expect(JSON.stringify(loadCollectionState())).not.toContain("Reading list")
     await waitFor(() =>

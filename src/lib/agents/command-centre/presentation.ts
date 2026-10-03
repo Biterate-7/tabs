@@ -222,6 +222,8 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   error: { register: "lifecycle", label: "Error", tone: "bad" },
   run_completed: { register: "lifecycle", label: "Run completed", tone: "good" },
   run_cancelled: { register: "lifecycle", label: "Run cancelled", tone: "muted" },
+  context_loaded: { register: "lifecycle", label: "Workspace context loaded", tone: "muted" },
+  context_read: { register: "activity", label: "Hubble", tone: "idle" },
 };
 
 /* ------------------------------------------------------------------ *

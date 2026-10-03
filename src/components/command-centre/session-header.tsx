@@ -46,6 +46,7 @@ export function SessionHeader({
   contextPanelOpen,
   onToggleContextPanel,
   onDispose,
+  activityControl,
 }: {
   session: CommandCentreSession
   projectName?: string
@@ -59,6 +60,12 @@ export function SessionHeader({
   contextPanelOpen: boolean
   onToggleContextPanel: () => void
   onDispose: () => void
+  /**
+   * The activity timeline's own entry point, for where the context panel
+   * (which carries it) is not on screen. Rendered by the caller, which owns
+   * the popover and decides when it shows.
+   */
+  activityControl?: React.ReactNode
 }) {
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
@@ -94,6 +101,8 @@ export function SessionHeader({
           {contextControl && <span className="min-w-0 max-w-64">{contextControl}</span>}
           <AgentStatusPill tone={sessionStatusTone(view.status)} label={SESSION_STATUS_LABEL[view.status]} />
         </span>
+
+        {activityControl}
 
         <IconButton aria-label="End session" destructive onClick={onDispose}>
           <Trash2 />

@@ -168,8 +168,16 @@ describe("collections", () => {
 })
 
 describe("the Command Centre", () => {
-  it("allowing the approval creates the collection it named, and the session waits for the next message", () => {
-    const state = run(createDemoState(), { type: "respond", approvalId: SWE_APPROVAL.approvalId, decision: "granted" })
+  it("allowing the approval runs, then applies the change, then the session waits for the next message", () => {
+    const approved = run(createDemoState(), { type: "respond", approvalId: SWE_APPROVAL.approvalId, decision: "granted" })
+    // Approved is not done: nothing is in the workspace until the change is applied.
+    expect(approved.collections.some((c) => c.name === "SWE-bench")).toBe(false)
+    expect(approved.changes).toEqual([])
+    expect(approved.sessions.find((s) => s.view.sessionId === CLAUDE_SESSION)!.view.status).toBe("running")
+    const applied = run(approved, { type: "apply-approved", approvalId: SWE_APPROVAL.approvalId })
+    expect(applied.changes).toHaveLength(1)
+    expect(applied.changes[0]).toMatchObject({ approvalId: SWE_APPROVAL.approvalId, sessionId: CLAUDE_SESSION, ok: true })
+    const state = run(applied, { type: "finish-approved", approvalId: SWE_APPROVAL.approvalId })
     const created = state.collections.find((c) => c.name === "SWE-bench")!
     expect(created.workspaceId).toBe(RESEARCH_ID)
     expect(created.tabIds).toEqual([...SWE_TAB_IDS])
@@ -178,7 +186,7 @@ describe("the Command Centre", () => {
     expect(session.view.status).toBe("ready")
     expect(session.view.awaitingApproval).toBe(false)
     const kinds = state.events[CLAUDE_SESSION].map((e) => e.kind)
-    expect(kinds.slice(-4)).toEqual(["approval_granted", "tool_finished", "message_received", "run_completed"])
+    expect(kinds.slice(-3)).toEqual(["approval_granted", "message_received", "run_completed"])
     expect(session.view.latestSequence).toBe(state.events[CLAUDE_SESSION].length)
   })
 

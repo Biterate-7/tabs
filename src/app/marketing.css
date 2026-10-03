@@ -305,6 +305,21 @@
   box-shadow: var(--m-window-shadow);
 }
 
+/* Where a window's overlays portal to: a fixed, empty layer at the viewport's
+   corner. In the app the page never scrolls, so a popover focused a frame
+   before it is positioned is already in view; on this page it would sit at
+   the portal's place in the flow, below the window, and focusing it scrolled
+   the visitor there. Fixed, it is always in view — focus moves nothing — and
+   the positioner places popovers against it exactly as before. */
+.tabdump-marketing .m-demo-portal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: var(--hb-z-popover);
+}
+
 /* In the app a destination fills the viewport (h-screen). In a window, the
    window is the viewport, so viewport-high views fill the window instead of
    running past its bottom edge and taking their scroll areas with them. */

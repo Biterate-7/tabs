@@ -413,8 +413,13 @@ export type RuntimePlanOperationView =
   | { kind: "rename_collection"; collectionId: string; name: string }
   | { kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] };
 
-/** An approved change, exactly as the Command Centre applies it (J.3–J.4) — or an approved plan, applied all at once (J.5). */
-export type RuntimeContextActionView =
+/**
+ * An approved change, exactly as the Command Centre applies it (J.3–J.4) — or
+ * an approved plan, applied all at once (J.5). `approvalId` names the approval
+ * that allowed it, when the broker still holds it, so the applied change can
+ * be traced back to that approval by id.
+ */
+export type RuntimeContextActionView = { approvalId?: string } & (
   | { actionId: string; kind: "create_collection"; name: string; tabIds: readonly string[] }
   | { actionId: string; kind: "rename_collection"; collectionId: string; name: string }
   | { actionId: string; kind: "add_tabs_to_collection"; collectionId: string; tabIds: readonly string[] }
@@ -425,7 +430,8 @@ export type RuntimeContextActionView =
       /** Echoed back on completion; any other value is refused. Not a secret — a binding. */
       planHash: string;
       operations: readonly RuntimePlanOperationView[];
-    };
+    }
+);
 
 /** What became of a plan (J.5). Counts and a version; the approval it answered, when known. */
 export type RuntimePlanOutcomeView = {

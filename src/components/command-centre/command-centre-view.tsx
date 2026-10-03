@@ -6,6 +6,8 @@ import { ArrowUp, Bot, ChevronLeft, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { AgentIcon } from "@/components/agents/agent-icon"
+import { AgentActivity } from "@/components/agents/agent-activity"
+import { ActivityPopover } from "./activity-popover"
 import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
 import { ConnectAgentDialog } from "./connect-agent-dialog"
@@ -20,6 +22,7 @@ import { WorkingContextChip } from "./working-context-control"
 import type { WorkingContextActions } from "./working-context-control"
 import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
+import { useSessionActivity } from "@/hooks/use-agent-activity"
 import { useAgentContext } from "@/hooks/use-agent-context"
 import { useAgentProjects } from "@/hooks/use-agent-projects"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
@@ -39,6 +42,8 @@ import { grantWithinApproval, projectScopesForAgent } from "@/lib/agents/platfor
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import {
   RUNTIME_ERROR_PRESENTATION,
+  SESSION_STATUS_LABEL,
+  SESSION_VISUAL_STATE,
   canCreateSession,
   canSendMessage,
   runtimeBadge,
@@ -66,6 +71,7 @@ import {
   workspaceChanges,
 } from "@/lib/agents/command-centre/workspace-activity"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { collectionsMatch } from "@/lib/collections/restore"
 import { cn } from "@/lib/utils"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
@@ -374,29 +380,38 @@ export function CommandCentreView({
     render: the surface re-renders every second for its clocks.
   */
   const undoable = useMemo(() => {
-    const now = new Map<string, string>()
     const ids = new Set<string>()
     for (const change of allChanges) {
       if (!change.ok || change.undone || !change.before || !change.after) continue
-      if (!now.has(change.workspaceId)) {
-        now.set(change.workspaceId, JSON.stringify(collectionStore.collections.filter((collection) => collection.workspaceId === change.workspaceId)))
-      }
-      if (now.get(change.workspaceId) === JSON.stringify(change.after)) ids.add(change.id)
+      if (collectionsMatch(collectionStore.collections, change.workspaceId, change.after)) ids.add(change.id)
     }
     return ids
   }, [allChanges, collectionStore.collections])
   const canUndo = useCallback((change: AppliedWorkspaceChange) => undoable.has(change.id), [undoable])
+  /*
+    The one way a change is undone, wherever it is asked for: the store puts
+    the workspace's collections back exactly (refusing, with nothing moved,
+    if anything changed since), and only then is the undo recorded — as its
+    own fact, after the change, which keeps its place in the history.
+  */
+  const tryUndo = useCallback(
+    (change: AppliedWorkspaceChange): boolean => {
+      if (!change.ok || change.undone || !change.before || !change.after) return false
+      if (!collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) return false
+      markWorkspaceChangeUndone(change.id)
+      return true
+    },
+    [collectionStore]
+  )
   const undoChange = useCallback(
     (change: AppliedWorkspaceChange) => {
-      if (!change.before || !change.after) return
-      if (collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) {
-        markWorkspaceChangeUndone(change.id)
+      if (tryUndo(change)) {
         toast(`Undone in ${workspaceNameOf(change.workspaceId) ?? "the workspace"}`)
       } else {
         toast.info("Can't undo — the workspace has changed since", { description: "Nothing was changed." })
       }
     },
-    [collectionStore, workspaceNameOf]
+    [tryUndo, workspaceNameOf]
   )
 
   /* ---------------- Context: per session, inside its workspace. */
@@ -619,6 +634,63 @@ export function CommandCentreView({
     [allChanges, currentView]
   )
 
+  /*
+    What the on-screen agent has been doing, from the same records the
+    stream above reads — its events, its approvals and what was applied for it.
+    Built once here and drawn in two places: the context panel, and the
+    header popover where that panel is not on screen.
+  */
+  const sessionProjectName = projectNameOf(currentView?.projectId)
+  const {
+    entries: activity,
+    inspect: inspectActivity,
+    waiting: activityWaiting,
+  } = useSessionActivity({
+    session: currentView,
+    events: session.events,
+    approvals: session.approvals,
+    changes: sessionChanges,
+    agentName,
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(sessionProjectName ? { projectName: sessionProjectName } : {}),
+    now,
+    canUndo,
+  })
+  const viewActivityChange = useCallback(
+    (changeId: string) => {
+      const change = sessionChanges.find((candidate) => candidate.id === changeId)
+      if (change) viewChange(change)
+    },
+    [sessionChanges, viewChange]
+  )
+  // The inspector's Undo says the outcome itself, in place; no notification on top.
+  const undoActivityChange = useCallback(
+    (changeId: string) => {
+      const change = sessionChanges.find((candidate) => candidate.id === changeId)
+      return change ? tryUndo(change) : false
+    },
+    [sessionChanges, tryUndo]
+  )
+  const currentProvider = currentView?.provider
+  const startAnotherSession = useCallback(() => {
+    if (currentProvider) setDefaultProvider(currentProvider)
+    setNewSessionOpen(true)
+  }, [currentProvider])
+  const activityTimeline = currentView ? (
+    <AgentActivity
+      entries={activity}
+      provider={currentView.provider}
+      agentName={agentName}
+      state={SESSION_VISUAL_STATE[currentView.status]}
+      statusLabel={SESSION_STATUS_LABEL[currentView.status]}
+      now={now}
+      inspect={inspectActivity}
+      onUndo={undoActivityChange}
+      {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
+      {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
+    />
+  ) : null
+
   const contextActions = useMemo((): WorkingContextActions => {
     if (!currentView || !sessionWorkspaceId || link.kind === "workspace-missing" || link.kind === "none") return {}
     const sessionId = currentView.sessionId
@@ -813,6 +885,11 @@ export function CommandCentreView({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
                 onDispose={() => void sessions.disposeSession(currentView.sessionId)}
+                activityControl={
+                  <ActivityPopover waiting={activityWaiting} className={contextPanelOpen ? "xl:hidden" : undefined}>
+                    {activityTimeline}
+                  </ActivityPopover>
+                }
               />
 
               <EventStream
@@ -925,6 +1002,7 @@ export function CommandCentreView({
             {...(onViewWorkspace ? { onViewChange: viewChange } : {})}
             {...(currentView && projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
             runtimeStatus={runtime.status}
+            activity={activityTimeline}
             {...(currentView ? contextActions : draftActions)}
           />
         )}

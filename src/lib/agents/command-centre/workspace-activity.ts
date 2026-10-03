@@ -35,6 +35,13 @@ export type AppliedWorkspaceChange = {
   workspaceId: string
   at: number
   ok: boolean
+  /** The approved plan this applied (J.5), so its verified outcome joins the right record. */
+  planId?: string
+  /**
+   * The approval that allowed it, as the runtime reported it with the action
+   * — how the activity inspector joins a result to its request, by id.
+   */
+  approvalId?: string
   steps: readonly WorkspaceChangeStep[]
   /**
    * The workspace's collections either side of the change, for an exact undo
@@ -46,6 +53,11 @@ export type AppliedWorkspaceChange = {
   after?: readonly Collection[]
   /** Set once the user undid it. */
   undone?: boolean
+  /**
+   * When it was undone. The record itself stays — undoing is a second fact,
+   * told after the first, never a rewrite of what the agent did.
+   */
+  undoneAt?: number
 }
 
 const MAX_RECORDS = 100
@@ -63,8 +75,8 @@ export function recordWorkspaceChange(change: AppliedWorkspaceChange): void {
   emit()
 }
 
-export function markWorkspaceChangeUndone(id: string): void {
-  records = records.map((record) => (record.id === id ? { ...record, undone: true } : record))
+export function markWorkspaceChangeUndone(id: string, at: number = Date.now()): void {
+  records = records.map((record) => (record.id === id && !record.undone ? { ...record, undone: true, undoneAt: at } : record))
   emit()
 }
 
@@ -106,6 +118,42 @@ export function describeChange(change: Pick<AppliedWorkspaceChange, "ok" | "step
   if (!first) return "Workspace updated"
   const rest = change.steps.length - 1
   return rest > 0 ? `${describeStep(first)} · ${plural(rest, "more change", "more changes")}` : describeStep(first)
+}
+
+/**
+ * What undoing a change did, as its own line in the history:
+ * `Undid creation of “Physics Sources”`. The original change keeps its own
+ * line; this one is told after it.
+ */
+export function describeUndo(change: Pick<AppliedWorkspaceChange, "steps">): string {
+  const [first] = change.steps
+  if (change.steps.length !== 1 || !first) return `Undid ${plural(change.steps.length, "workspace change", "workspace changes")}`
+  switch (first.kind) {
+    case "created":
+      return `Undid creation of “${first.name}”`
+    case "renamed":
+      return first.previousName ? `Undid renaming “${first.previousName}” to “${first.name}”` : `Undid renaming “${first.name}”`
+    case "added":
+      return `Undid adding ${plural(first.tabCount, "tab", "tabs")} to “${first.name}”`
+  }
+}
+
+/**
+ * What an undo will do, one line per step — what the confirmation lists
+ * before anything moves. Read off the recorded steps, which were read off the
+ * collections either side of the change.
+ */
+export function undoEffects(change: Pick<AppliedWorkspaceChange, "steps">): string[] {
+  return change.steps.map((step) => {
+    switch (step.kind) {
+      case "created":
+        return `Remove the collection “${step.name}”`
+      case "renamed":
+        return step.previousName ? `Rename “${step.name}” back to “${step.previousName}”` : `Give “${step.name}” its previous name back`
+      case "added":
+        return `Take ${plural(step.tabCount, "tab", "tabs")} back out of “${step.name}”`
+    }
+  })
 }
 
 /** The collection a "View" should land on, when there is one. */

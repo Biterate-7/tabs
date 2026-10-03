@@ -690,8 +690,35 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       reason: request.reason,
       ...(request.change ? { change: request.change } : {}),
       ...(request.plan ? { plan: request.plan } : {}),
+      actionId: request.actionId,
     });
   });
+
+  // What the context server answered goes onto the session's own stream, as
+  // Hubble's event, for the owner's service to journal like any other. The
+  // binding names the owner and the workspace; the service refuses a
+  // workspace that is not the session's.
+  options.sessionContext?.registry.setActivityListener((sessionId, binding, activity) => {
+    const ownerId = hosted.get(sessionId)?.ownerId ?? binding.ownerId;
+    const { tool, ok, ...counts } = activity;
+    serviceFor(ownerId).recordContextEvent(sessionId, "context_read", {
+      workspaceId: binding.workspaceId,
+      operation: tool,
+      ok,
+      ...counts,
+    });
+  });
+
+  /** Says, once, that a session was started holding its workspace — and how much of it. */
+  function announceContextLoaded(ownerId: string, sessionId: string): void {
+    const binding = options.sessionContext?.registry.binding(sessionId);
+    if (!binding) return;
+    serviceFor(ownerId).recordContextEvent(sessionId, "context_loaded", {
+      workspaceId: binding.workspaceId,
+      tabs: binding.snapshot.workspace.tabs.length,
+      collections: binding.snapshot.collections.length,
+    });
+  }
 
   /** Revokes a session's credential and withdraws its pending workspace approvals. Idempotent. */
   function releaseContext(sessionId: string): void {
@@ -705,6 +732,12 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     const binding = registry?.binding(sessionId);
     if (!registry || !binding) return undefined;
     const outcomes = registry.planOutcomes(sessionId);
+    // The session owner's approvals: each names the change it authorized, so
+    // what the Command Centre applies — and each plan's outcome — can say
+    // which approval allowed it.
+    const ownerId = hosted.get(sessionId)?.ownerId;
+    const approvals = ownerId === undefined ? [] : serviceFor(ownerId).approvals.forSession(sessionId);
+    const approvalOf = (actionId: string) => approvals.find((approval) => approval.contextActionId === actionId)?.id;
     const view: RuntimeSessionContextView = {
       workspaceId: binding.workspaceId,
       workspaceName: binding.snapshot.workspace.name,
@@ -713,6 +746,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       syncedAt: binding.syncedAt,
       fingerprint: binding.fingerprint,
       pendingActions: registry.pendingApplications(sessionId).flatMap((action): RuntimeContextActionView[] => {
+        const approvalId = approvalOf(action.id);
+        const approval = approvalId ? { approvalId } : {};
         if (action.plan) {
           // The approved plan, exactly as the registry froze it. The reasons
           // and confidence were the user's to read; applying needs only the
@@ -720,6 +755,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           return [
             {
               actionId: action.id,
+              ...approval,
               kind: "apply_plan",
               planId: action.plan.planId,
               planHash: action.plan.hash,
@@ -740,19 +776,17 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!change) return [];
         switch (change.kind) {
           case "create_collection":
-            return [{ actionId: action.id, kind: change.kind, name: change.name, tabIds: [...change.tabIds] }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, name: change.name, tabIds: [...change.tabIds] }];
           case "rename_collection":
-            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, name: change.name }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, collectionId: change.collectionId, name: change.name }];
           case "add_tabs_to_collection":
-            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] }];
         }
       }),
     };
     if (outcomes.length > 0) {
       // Each outcome names the approval it answered, so the Command Centre
       // can put the result where the user approved it.
-      const ownerId = hosted.get(sessionId)?.ownerId;
-      const approvals = ownerId === undefined ? [] : serviceFor(ownerId).approvals.forSession(sessionId);
       view.planOutcomes = outcomes.map((outcome) => {
         const approvalId = approvals.find((approval) => approval.plan?.planId === outcome.planId)?.id;
         return { ...outcome, ...(approvalId ? { approvalId } : {}) };
@@ -1211,6 +1245,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // existed, and the events it emitted belong somewhere.
         startRun(started.value.id, host);
         captureProviderSession(started.value.id, host);
+        announceContextLoaded(actor.id, started.value.id);
 
         const session = actorService.session(started.value.id);
         return session

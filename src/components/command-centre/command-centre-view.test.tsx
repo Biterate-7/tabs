@@ -603,9 +603,11 @@ describe("the event stream", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    expect(await screen.findByText("Analyze the project")).toBeTruthy()
-    expect(screen.getByText("I found three files.")).toBeTruthy()
-    expect(screen.getByText("src/analysis.py")).toBeTruthy()
+    // Within the stream: the activity timeline beside it names the file too.
+    const stream = await screen.findByRole("list", { name: /session events/i })
+    expect(await within(stream).findByText("Analyze the project")).toBeTruthy()
+    expect(within(stream).getByText("I found three files.")).toBeTruthy()
+    expect(within(stream).getByText("src/analysis.py")).toBeTruthy()
   })
 
   it("asks only for events past the cursor", async () => {

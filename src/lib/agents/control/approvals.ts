@@ -165,6 +165,13 @@ export type AgentApproval = {
    * full is not one they can give.
    */
   command?: ApprovalCommandPreview;
+  /**
+   * For `write_workspace` only: the workspace change this approval authorizes,
+   * by the session context registry's action id — so the change the Command
+   * Centre later applies can be traced back to the approval that allowed it,
+   * by id rather than by timing or wording.
+   */
+  contextActionId?: string;
   status: ApprovalStatus;
   requestedAt: number;
   /** After this instant the request is no longer answerable. */
@@ -187,6 +194,7 @@ export type ApprovalRequestInput = {
   change?: WorkspaceChangeSummary;
   plan?: WorkspacePlanPreview;
   command?: ApprovalCommandPreview;
+  contextActionId?: string;
   /** How long the user has to answer. */
   ttlMs?: number;
 };
@@ -363,6 +371,7 @@ export function createApprovalBroker(): ApprovalBroker {
         const plan = readWorkspacePlanPreview(input.plan);
         if (plan) approval.plan = plan;
       }
+      if (input.contextActionId && input.scope === "write_workspace") approval.contextActionId = input.contextActionId;
       if (input.reason) {
         const bounded = boundReason(input.reason);
         if (bounded) approval.reason = bounded;

@@ -63,6 +63,7 @@ export function ContextPanel({
   onViewChange,
   projectName,
   runtimeStatus,
+  activity,
   ...actions
 }: {
   session: RuntimeSessionView | null
@@ -79,6 +80,8 @@ export function ContextPanel({
   onViewChange?: (change: AppliedWorkspaceChange) => void
   projectName?: string
   runtimeStatus: RuntimeStatus | null
+  /** The session's activity timeline, rendered by the caller (components/agents/agent-activity-timeline.tsx). */
+  activity?: React.ReactNode
 } & WorkingContextActions) {
   const change = changeAccessLabel(link)
   const recent = [...changes].reverse().slice(0, 5)
@@ -111,6 +114,12 @@ export function ContextPanel({
           <p className="text-body-sm text-tertiary">{WORKSPACE_LINK_DETAIL[link.kind]}</p>
         )}
       </Section>
+
+      {/*
+        What the agent has been doing, second only to where: the question a
+        person glancing at a working session asks first.
+      */}
+      {session && activity && <Section title="Activity">{activity}</Section>}
 
       {context && (
         <Section title="Context">
