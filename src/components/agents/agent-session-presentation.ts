@@ -34,7 +34,8 @@ export function formatElapsed(ms: number): string | null {
   if (minutes < 60) return `${minutes} min`
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours} hr ${minutes % 60} min`
-  return `${Math.floor(hours / 24)} days`
+  const days = Math.floor(hours / 24)
+  return days === 1 ? "1 day" : `${days} days`
 }
 
 export const RUN_STATUS_WORDS: Record<AgentRunStatus, string> = {

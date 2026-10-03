@@ -25,6 +25,7 @@ import {
 } from "@/lib/workspace/store"
 import { restoreWorkspaceCollections } from "@/lib/collections/restore"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
+import type { AgentHistoryDetail } from "@/lib/agents/activity/history"
 import type { Collection } from "@/lib/collections/types"
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
 import type { Tab } from "@/lib/tabs/types"
@@ -35,6 +36,7 @@ import {
   DEMO_COLLECTIONS,
   DEMO_DEPENDENCIES,
   DEMO_EVENTS,
+  DEMO_HISTORY,
   DEMO_NOW,
   DEMO_SESSIONS,
   DEMO_WORKSPACES,
@@ -93,6 +95,14 @@ export type DemoState = {
   changes: AppliedWorkspaceChange[]
   /** The Command Centre's open session. `null` shows the list (master) on phones. */
   selectedSessionId: string | null
+  /**
+   * Agent history: sessions that ended before the visitor arrived, as Hubble
+   * reads them back (lib/agents/activity/history.ts). An undo appends a
+   * record; the session's own records are never rewritten.
+   */
+  history: AgentHistoryDetail[]
+  /** The past session open in the Command Centre, by id. Exclusive with `selectedSessionId`. */
+  selectedHistoryId: string | null
   paletteOpen: boolean
   /** The Command Centre's context panel (shown from `xl`, as in the app). */
   contextPanelOpen: boolean
@@ -107,6 +117,7 @@ export type DemoInit = {
   view?: DemoView
   currentId?: string
   selectedSessionId?: string | null
+  selectedHistoryId?: string | null
   sidebarCollapsed?: boolean
   contextPanelOpen?: boolean
   settingsSection?: DemoSettingsSection
@@ -123,7 +134,9 @@ export function createDemoState(init: DemoInit = {}): DemoState {
     events: Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
     approvals: Object.fromEntries(Object.entries(DEMO_APPROVALS).map(([id, list]) => [id, [...list]])),
     changes: [],
-    selectedSessionId: init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
+    selectedSessionId: init.selectedHistoryId ? null : init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
+    history: [...DEMO_HISTORY],
+    selectedHistoryId: init.selectedHistoryId ?? null,
     paletteOpen: false,
     contextPanelOpen: init.contextPanelOpen ?? true,
     sidebarCollapsed: init.sidebarCollapsed ?? false,
@@ -164,6 +177,10 @@ export type DemoAction =
   /** The agent says what it did and its run ends, after the change is applied. */
   | { type: "finish-approved"; approvalId: string }
   | { type: "undo"; changeId: string }
+  /** Opens a past session from agent history, or closes it. */
+  | { type: "select-history"; id: string | null }
+  /** Undoes a past session's change exactly — recorded as its own record after the change. */
+  | { type: "undo-history"; sessionId: string; changeId: string }
   | { type: "send"; sessionId: string; text: string }
   | { type: "reply"; sessionId: string }
   | { type: "cancel"; sessionId: string }
@@ -351,7 +368,28 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       return { ...state, collections: moveTabToCollection(state.collections, action.tabId, action.id, DEMO_NOW) }
 
     case "select-session":
-      return { ...state, selectedSessionId: action.id }
+      return { ...state, selectedSessionId: action.id, ...(action.id ? { selectedHistoryId: null } : {}) }
+
+    case "select-history":
+      return { ...state, selectedHistoryId: action.id, ...(action.id ? { selectedSessionId: null } : {}) }
+
+    case "undo-history": {
+      const detail = state.history.find((entry) => entry.session.sessionId === action.sessionId)
+      const change = detail?.records.changes.find((candidate) => candidate.id === action.changeId)
+      if (!detail || !change || !change.ok || !change.before || !change.after) return state
+      if (detail.records.undos.some((undo) => undo.changeId === change.id)) return state
+      // The same restore, the same refusal: nothing moves if the workspace changed since.
+      const restored = restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)
+      if (!restored) return state
+      const at = Math.max(detail.session.lastActivityAt, change.at, DEMO_NOW) + 1_000
+      return {
+        ...state,
+        collections: restored.collections,
+        history: state.history.map((entry) =>
+          entry === detail ? { ...entry, records: { ...entry.records, undos: [...entry.records.undos, { changeId: change.id, at }] } } : entry
+        ),
+      }
+    }
 
     case "set-focus":
       return {

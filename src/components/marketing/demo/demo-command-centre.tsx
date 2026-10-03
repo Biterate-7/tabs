@@ -4,17 +4,21 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, X } from "lucide-react"
 import { AgentActivity } from "@/components/agents/agent-activity"
 import { ActivityPopover } from "@/components/command-centre/activity-popover"
+import { AgentHistoryList } from "@/components/command-centre/agent-history-list"
 import { AgentRoster } from "@/components/command-centre/agent-roster"
 import { ApprovalPrompt } from "@/components/command-centre/approval-prompt"
 import { Composer } from "@/components/command-centre/composer"
 import { ContextPanel } from "@/components/command-centre/context-panel"
 import { ContextPicker } from "@/components/command-centre/context-picker"
 import { EventStream } from "@/components/command-centre/event-stream"
+import { HistorySessionView } from "@/components/command-centre/history-session-view"
 import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
 import { WorkingContextChip } from "@/components/command-centre/working-context-control"
 import { IconButton } from "@/components/ui/icon-button"
-import { useSessionActivity } from "@/hooks/use-agent-activity"
+import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
+import type { AgentHistoryListState } from "@/hooks/use-agent-history"
+import { historySessionStatus } from "@/lib/agents/activity/history"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
 import { SESSION_STATUS_LABEL, SESSION_VISUAL_STATE } from "@/lib/agents/command-centre/presentation"
 import { collectionsMatch } from "@/lib/collections/restore"
@@ -129,7 +133,7 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, context, send, respond, undo } = useHubbleDemo()
+  const { state, dispatch, world, context, send, respond, undo, undoHistory } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
 
@@ -215,6 +219,41 @@ export function DemoCommandCentre({
     />
   ) : null
 
+  /*
+    Agent history — the app's own list, pane, hook and AgentActivity, fed the
+    demo's past sessions (data.ts) for the workspace on screen, exactly as
+    CommandCentreView feeds them from the runtime's answer.
+  */
+  const historyWorkspaceId = state.store.currentId
+  const historyState = useMemo<AgentHistoryListState>(
+    () => ({
+      kind: "ready",
+      workspaceId: historyWorkspaceId,
+      sessions: state.history
+        .filter((entry) => entry.session.workspaceId === historyWorkspaceId)
+        .map((entry) => entry.session)
+        .sort((a, b) => b.lastActivityAt - a.lastActivityAt),
+      hasMore: false,
+      loadingMore: false,
+    }),
+    [state.history, historyWorkspaceId]
+  )
+  const liveIds = useMemo(() => new Set(state.sessions.map((entry) => entry.view.sessionId)), [state.sessions])
+  const openHistory = !selected
+    ? (state.history.find((entry) => entry.session.sessionId === state.selectedHistoryId && entry.session.workspaceId === historyWorkspaceId) ?? null)
+    : null
+  const historyAgentName = openHistory ? agentVisualIdentity(openHistory.session.provider).displayName : "The agent"
+  const historyWorkspaceName = workspaceNameOf(openHistory?.session.workspaceId)
+  const historyActivity = useHistorySessionActivity({
+    detail: openHistory,
+    agentName: historyAgentName,
+    ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+    ...(openHistory && projectNameOf(openHistory.session.projectId) ? { projectName: projectNameOf(openHistory.session.projectId) } : {}),
+    now: DEMO_NOW,
+    canUndo,
+  })
+  const historyStatus = openHistory ? historySessionStatus(openHistory.session.status) : null
+
   /** Points the open session at a context — resolved by the real bridge, recorded as its focus. */
   function applyContext(next: WorkingContext) {
     if (!selected) return
@@ -248,8 +287,15 @@ export function DemoCommandCentre({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        {selected && showSessions && (
-          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => dispatch({ type: "select-session", id: null })}>
+        {(selected || openHistory) && showSessions && (
+          <IconButton
+            aria-label="All sessions"
+            className="-ml-1.5 md:hidden"
+            onClick={() => {
+              dispatch({ type: "select-session", id: null })
+              dispatch({ type: "select-history", id: null })
+            }}
+          >
             <ChevronLeft />
           </IconButton>
         )}
@@ -278,7 +324,7 @@ export function DemoCommandCentre({
       <div className="flex min-h-0 flex-1">
         {showSessions && (
         <SessionList
-          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
+          className={selected || openHistory ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={state.sessions}
           selectedSessionId={selectedId}
           projectNameOf={projectNameOf}
@@ -288,6 +334,16 @@ export function DemoCommandCentre({
           // Starting a session needs a runtime, and this page has none.
           canCreate={false}
           now={DEMO_NOW}
+          history={
+            <AgentHistoryList
+              state={historyState}
+              selectedSessionId={openHistory?.session.sessionId ?? null}
+              onSelect={(entry) => dispatch({ type: "select-history", id: entry.sessionId })}
+              {...(workspaceNameOf(historyWorkspaceId) ? { workspaceName: workspaceNameOf(historyWorkspaceId) } : {})}
+              now={DEMO_NOW}
+              hiddenSessionIds={liveIds}
+            />
+          }
         >
           <AgentRoster
             platform={DEMO_PLATFORM}
@@ -304,8 +360,31 @@ export function DemoCommandCentre({
         </SessionList>
         )}
 
-        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && showSessions && "max-md:hidden")}>
-          {selected ? (
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !openHistory && showSessions && "max-md:hidden")}>
+          {openHistory && historyStatus ? (
+            <HistorySessionView
+              session={openHistory.session}
+              state={{ kind: "ready", detail: openHistory }}
+              {...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {})}
+              now={DEMO_NOW}
+              onClose={() => dispatch({ type: "select-history", id: null })}
+            >
+              <AgentActivity
+                entries={historyActivity.entries}
+                provider={openHistory.session.provider}
+                agentName={historyAgentName}
+                state={SESSION_VISUAL_STATE[historyStatus]}
+                statusLabel={SESSION_STATUS_LABEL[historyStatus]}
+                now={DEMO_NOW}
+                inspect={historyActivity.inspect}
+                onUndo={(changeId) => undoHistory(openHistory.session.sessionId, changeId)}
+                onViewChange={(changeId) => {
+                  const change = historyActivity.history?.changes.find((candidate) => candidate.id === changeId)
+                  if (change) viewChange(change)
+                }}
+              />
+            </HistorySessionView>
+          ) : selected ? (
             <>
               <SessionHeader
                 session={selected}
@@ -373,7 +452,8 @@ export function DemoCommandCentre({
           )}
         </main>
 
-        {contextPanelOpen && (
+        {/* A past session is told whole in its own pane; this panel describes a live one — as in the app. */}
+        {contextPanelOpen && !openHistory && (
           <ContextPanel
             session={selected?.view ?? null}
             {...(workspaceName ? { workspaceName } : {})}

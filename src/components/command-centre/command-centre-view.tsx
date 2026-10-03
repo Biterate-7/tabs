@@ -8,6 +8,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AgentActivity } from "@/components/agents/agent-activity"
 import { ActivityPopover } from "./activity-popover"
+import { AgentHistoryList } from "./agent-history-list"
 import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
 import { ConnectAgentDialog } from "./connect-agent-dialog"
@@ -15,6 +16,7 @@ import { Composer } from "./composer"
 import { ContextPanel } from "./context-panel"
 import { ContextPicker } from "./context-picker"
 import { EventStream } from "./event-stream"
+import { HistorySessionView } from "./history-session-view"
 import { NewSessionDialog } from "./new-session-dialog"
 import { SessionHeader } from "./session-header"
 import { SessionList } from "./session-list"
@@ -22,7 +24,8 @@ import { WorkingContextChip } from "./working-context-control"
 import type { WorkingContextActions } from "./working-context-control"
 import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
-import { useSessionActivity } from "@/hooks/use-agent-activity"
+import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
+import { useAgentHistory, useHistorySession } from "@/hooks/use-agent-history"
 import { useAgentContext } from "@/hooks/use-agent-context"
 import { useAgentProjects } from "@/hooks/use-agent-projects"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
@@ -46,6 +49,7 @@ import {
   SESSION_VISUAL_STATE,
   canCreateSession,
   canSendMessage,
+  isTerminalSession,
   runtimeBadge,
   runtimeBanner,
 } from "@/lib/agents/command-centre/presentation"
@@ -72,6 +76,8 @@ import {
 } from "@/lib/agents/command-centre/workspace-activity"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { collectionsMatch } from "@/lib/collections/restore"
+import { historySessionStatus } from "@/lib/agents/activity/history"
+import type { AgentHistorySession } from "@/lib/agents/activity/history"
 import { cn } from "@/lib/utils"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
@@ -349,6 +355,22 @@ export function CommandCentreView({
   const handleApplied = useCallback(
     (change: AppliedWorkspaceChange) => {
       recordWorkspaceChange(change)
+      // The same record, durably (agent history): names, counts and the
+      // snapshot either side, for the session's history and its undo. The
+      // runtime adds whose, where and which approval itself. A Hubble that
+      // keeps no history refuses, and nothing else changes.
+      void runtime.client.send({
+        name: "record_workspace_change",
+        sessionId: change.sessionId,
+        change: {
+          id: change.id,
+          at: change.at,
+          ok: change.ok,
+          ...(change.planId ? { planId: change.planId } : {}),
+          steps: change.steps,
+          ...(change.before && change.after ? { before: change.before, after: change.after } : {}),
+        },
+      })
       const agent = agentVisualIdentity(change.provider).displayName
       const where = workspaceNameOf(change.workspaceId) ?? "your workspace"
       if (!change.ok) {
@@ -362,7 +384,7 @@ export function CommandCentreView({
           : {}),
       })
     },
-    [onViewWorkspace, workspaceNameOf]
+    [onViewWorkspace, workspaceNameOf, runtime.client]
   )
 
   const sessionContext = useSessionContext({
@@ -399,9 +421,17 @@ export function CommandCentreView({
       if (!change.ok || change.undone || !change.before || !change.after) return false
       if (!collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) return false
       markWorkspaceChangeUndone(change.id)
+      // Told to agent history as its own fact, after the change.
+      void runtime.client.send({
+        name: "record_workspace_undo",
+        workspaceId: change.workspaceId,
+        sessionId: change.sessionId,
+        changeId: change.id,
+        at: Date.now(),
+      })
       return true
     },
-    [collectionStore]
+    [collectionStore, runtime.client]
   )
   const undoChange = useCallback(
     (change: AppliedWorkspaceChange) => {
@@ -691,6 +721,90 @@ export function CommandCentreView({
     />
   ) : null
 
+  /* ---------------- Agent history: this workspace's past sessions. */
+
+  /*
+    Scoped to the workspace on screen, and only that one: the runtime answers
+    for this account and this workspace, and nothing here asks about another.
+    Re-read when the live sessions change shape — one appears, ends or goes —
+    which is when history can have changed; never on a timer.
+  */
+  const historyWorkspaceId = activeWorkspaceId
+  const liveSessionIds = useMemo(() => new Set(sessions.sessions.map((entry) => entry.view.sessionId)), [sessions.sessions])
+  const historyRefreshKey = useMemo(
+    () => sessions.sessions.map((entry) => `${entry.view.sessionId}:${isTerminalSession(entry.view.status) ? 1 : 0}`).join(","),
+    [sessions.sessions]
+  )
+  const history = useAgentHistory({
+    client: runtime.client,
+    workspaceId: historyWorkspaceId,
+    // Only once the runtime has answered the handshake: a command sent before
+    // it carries no runtime id, is refused as `runtime_disconnected`, and that
+    // refusal makes the client forget the id the handshake is about to set.
+    enabled: Boolean(runtime.status?.runtimeId),
+    refreshKey: `${runtime.status?.runtimeId ?? ""}|${historyRefreshKey}`,
+  })
+  const [historySelection, setHistorySelection] = useState<AgentHistorySession | null>(null)
+  // A live session on screen wins; a history session of another workspace is never shown.
+  const shownHistory = !current && historySelection?.workspaceId === historyWorkspaceId ? historySelection : null
+  const historySession = useHistorySession({
+    client: runtime.client,
+    workspaceId: shownHistory?.workspaceId,
+    sessionId: shownHistory?.sessionId ?? null,
+  })
+  const historyDetail = historySession.state.kind === "ready" ? historySession.state.detail : null
+  const historyAgentName = shownHistory ? agentVisualIdentity(shownHistory.provider).displayName : "The agent"
+  const historyWorkspaceName = workspaceNameOf(shownHistory?.workspaceId)
+  const historyProjectName = projectNameOf(historyDetail?.session.projectId)
+  /*
+    The same undo rule as a live change: offered only while the workspace
+    still holds exactly what the change left. An old change is not undoable
+    because it is old, and not undoable at all without both snapshots.
+  */
+  const canUndoHistory = useCallback(
+    (change: AppliedWorkspaceChange) =>
+      change.ok && !change.undone && Boolean(change.before && change.after) && collectionsMatch(collectionStore.collections, change.workspaceId, change.after!),
+    [collectionStore.collections]
+  )
+  const { entries: historyEntries, inspect: inspectHistory, history: reconstructed } = useHistorySessionActivity({
+    detail: historyDetail,
+    agentName: historyAgentName,
+    ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+    ...(historyProjectName ? { projectName: historyProjectName } : {}),
+    now,
+    canUndo: canUndoHistory,
+  })
+  const { recordUndo: recordHistoryUndo } = historySession
+  const undoHistoryChange = useCallback(
+    (changeId: string): boolean => {
+      const change = reconstructed?.changes.find((candidate) => candidate.id === changeId)
+      if (!change?.ok || change.undone || !change.before || !change.after) return false
+      // The workspace is put back exactly, or not at all…
+      if (!collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) return false
+      // …and only then is the undo told — to this page's record, if it
+      // applied the change, and to history, as a new fact after the change.
+      markWorkspaceChangeUndone(change.id)
+      void recordHistoryUndo(change.id)
+      return true
+    },
+    [reconstructed, collectionStore, recordHistoryUndo]
+  )
+  const viewHistoryChange = useCallback(
+    (changeId: string) => {
+      const change = reconstructed?.changes.find((candidate) => candidate.id === changeId)
+      if (change) viewChange(change)
+    },
+    [reconstructed, viewChange]
+  )
+  const selectHistorySession = useCallback((entry: AgentHistorySession) => {
+    setRequestedSessionId(null)
+    setHistorySelection(entry)
+  }, [])
+  const selectLiveSession = useCallback((sessionId: string) => {
+    setHistorySelection(null)
+    setRequestedSessionId(sessionId)
+  }, [])
+
   const contextActions = useMemo((): WorkingContextActions => {
     if (!currentView || !sessionWorkspaceId || link.kind === "workspace-missing" || link.kind === "none") return {}
     const sessionId = currentView.sessionId
@@ -787,8 +901,15 @@ export function CommandCentreView({
         left, the runtime on the right. Quiet when everything is fine.
       */}
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        {selected && (
-          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => setRequestedSessionId(null)}>
+        {(selected || shownHistory) && (
+          <IconButton
+            aria-label="All sessions"
+            className="-ml-1.5 md:hidden"
+            onClick={() => {
+              setRequestedSessionId(null)
+              setHistorySelection(null)
+            }}
+          >
             <ChevronLeft />
           </IconButton>
         )}
@@ -831,15 +952,28 @@ export function CommandCentreView({
 
       <div className="flex min-h-0 flex-1">
         <SessionList
-          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
+          className={selected || shownHistory ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={sessions.sessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
           workspaceNameOf={workspaceNameOf}
-          onSelect={setRequestedSessionId}
+          onSelect={selectLiveSession}
           onNewSession={() => setNewSessionOpen(true)}
           canCreate={runtime.executable}
           now={now}
+          history={
+            <AgentHistoryList
+              // A runtime that cannot be reached cannot be asked: unavailable, never "no activity".
+              state={!runtime.loading && !runtime.status ? { kind: "unavailable" } : history.state}
+              selectedSessionId={shownHistory?.sessionId ?? null}
+              onSelect={selectHistorySession}
+              {...(workspaceNameOf(historyWorkspaceId) ? { workspaceName: workspaceNameOf(historyWorkspaceId) } : {})}
+              now={now}
+              hiddenSessionIds={liveSessionIds}
+              onLoadMore={history.loadMore}
+              onRetry={history.retry}
+            />
+          }
         >
           <AgentRoster
             platform={platform}
@@ -852,7 +986,7 @@ export function CommandCentreView({
               const chat = platformProvider(agent.provider)?.chat === true
               const startable =
                 chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
-              if (latest) setRequestedSessionId(latest.view.sessionId)
+              if (latest) selectLiveSession(latest.view.sessionId)
               else if (startable) {
                 setDefaultProvider(agent.provider)
                 setNewSessionOpen(true)
@@ -863,8 +997,30 @@ export function CommandCentreView({
           />
         </SessionList>
 
-        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && "max-md:hidden")}>
-          {current && currentView ? (
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !shownHistory && "max-md:hidden")}>
+          {shownHistory && !current ? (
+            <HistorySessionView
+              session={shownHistory}
+              state={historySession.state}
+              {...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {})}
+              now={now}
+              onClose={() => setHistorySelection(null)}
+              onRetry={historySession.retry}
+            >
+              <AgentActivity
+                entries={historyEntries}
+                provider={shownHistory.provider}
+                agentName={historyAgentName}
+                state={SESSION_VISUAL_STATE[historySessionStatus(historyDetail?.session.status ?? shownHistory.status)]}
+                statusLabel={SESSION_STATUS_LABEL[historySessionStatus(historyDetail?.session.status ?? shownHistory.status)]}
+                now={now}
+                inspect={inspectHistory}
+                onUndo={undoHistoryChange}
+                {...(onViewWorkspace ? { onViewChange: viewHistoryChange } : {})}
+                {...(runtime.executable ? { onNewSession: () => setNewSessionOpen(true) } : {})}
+              />
+            </HistorySessionView>
+          ) : current && currentView ? (
             <>
               <SessionHeader
                 session={current}
@@ -989,7 +1145,8 @@ export function CommandCentreView({
           )}
         </main>
 
-        {contextPanelOpen && (
+        {/* A past session is told whole in its own pane; this panel describes a live one. */}
+        {contextPanelOpen && !shownHistory && (
           <ContextPanel
             session={currentView}
             {...(workspaceName ? { workspaceName } : {})}

@@ -530,6 +530,11 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     action: "Hubble only runs agents that ask for approval. Check the agent's own approval settings, then start a new session.",
     reconnect: false,
   },
+  history_unavailable: {
+    title: "Agent history unavailable",
+    action: "This Hubble keeps no agent history, so past sessions can't be shown. Live sessions still work.",
+    reconnect: false,
+  },
 };
 
 /* ------------------------------------------------------------------ *

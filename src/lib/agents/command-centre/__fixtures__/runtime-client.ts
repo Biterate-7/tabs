@@ -1,4 +1,6 @@
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
+import { reviveHistoryChange } from "@/lib/agents/activity/history"
+import type { AgentHistoryStore } from "@/lib/agents/activity/history-store"
 import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus"
 import type { AgentAttachedContext } from "@/lib/agents/control/context"
@@ -57,6 +59,9 @@ export type ScriptedRuntime = {
   setConnection: (view: ProviderConnectionView) => void
 }
 
+/** The actor a scripted runtime answers history for — the local actor, as on a Hubble with no accounts. */
+export const FIXTURE_HISTORY_OWNER = "local"
+
 export const FIXTURE_RUNTIME_ID = "runtime-fixture"
 
 export function scriptedStatus(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
@@ -97,8 +102,15 @@ export function createScriptedRuntime(
   initial: {
     status?: RuntimeStatus
     sessions?: readonly RuntimeSessionView[]
+    /**
+     * Agent history, answered as the host answers it — owner- and
+     * workspace-scoped through the store. Absent: `history_unavailable`, as a
+     * host with no database says.
+     */
+    history?: AgentHistoryStore
   } = {}
 ): ScriptedRuntime {
+  const history = initial.history
   let status = initial.status ?? scriptedStatus()
   let sessions = initial.sessions ?? []
   let correlations: readonly RuntimeCorrelationView[] = []
@@ -307,6 +319,63 @@ export function createScriptedRuntime(
           return { ok: true, value: { ...view, connection: "disconnected" as const } }
         }
         return { ok: true, value: view }
+      }
+
+      case "list_history":
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        return history
+          .listSessions(FIXTURE_HISTORY_OWNER, command.workspaceId, {
+            ...(command.before ? { before: command.before } : {}),
+            ...(command.limit ? { limit: command.limit } : {}),
+          })
+          .then((value) => ({ ok: true, value }))
+
+      case "get_history":
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        return history
+          .readSession(FIXTURE_HISTORY_OWNER, command.workspaceId, command.sessionId)
+          .then((value) => (value ? { ok: true, value } : runtimeFailure<never>("session_not_found")))
+
+      case "record_workspace_change": {
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        const target = sessions.find((s) => s.sessionId === command.sessionId)
+        const workspaceId = target?.workspaceId ?? target?.context?.workspaceId
+        if (!target || !workspaceId) return runtimeFailure<never>("session_not_found")
+        const approvalId = target.context?.pendingActions.find((action) => action.actionId === command.change.id)?.approvalId
+        const change = reviveHistoryChange(
+          { ...command.change, sessionId: target.sessionId, provider: target.provider, workspaceId, ...(approvalId ? { approvalId } : {}) },
+          { sessionId: target.sessionId, workspaceId }
+        )
+        if (!change) return runtimeFailure<never>("invalid_request")
+        return history
+          .write(FIXTURE_HISTORY_OWNER, {
+            sessions: [
+              {
+                sessionId: target.sessionId,
+                workspaceId,
+                provider: target.provider,
+                status: target.status,
+                startedAt: target.createdAt,
+                lastActivityAt: Math.max(target.updatedAt, change.at),
+                ...(target.title ? { title: target.title } : {}),
+              },
+            ],
+            records: [{ sessionId: target.sessionId, kind: "change", key: change.id, at: change.at, data: change }],
+          })
+          .then(() => ({ ok: true, value: { sessionId: target.sessionId } }))
+      }
+
+      case "record_workspace_undo": {
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        const { workspaceId, sessionId, changeId, at } = command
+        return history.hasAppliedChange(FIXTURE_HISTORY_OWNER, workspaceId, sessionId, changeId).then(async (known) => {
+          if (!known) return runtimeFailure<never>("session_not_found")
+          await history.write(FIXTURE_HISTORY_OWNER, {
+            sessions: [],
+            records: [{ sessionId, kind: "undo", key: changeId, at, data: { changeId, at } }],
+          })
+          return { ok: true, value: { sessionId, changeId } }
+        })
       }
 
       default:

@@ -34,6 +34,8 @@ type DemoContextValue = {
   respond: (approvalId: string, decision: "granted" | "denied") => void
   /** Undoes a recorded change exactly. `false` when it could not be, and nothing moved. */
   undo: (changeId: string) => boolean
+  /** Undoes a past session's change exactly, as `undo` does a live one. */
+  undoHistory: (sessionId: string, changeId: string) => boolean
   /** Opens a saved tab's page in a new browser tab. Never navigates the landing page itself. */
   openUrl: (url: string) => void
   scheme?: { value: DemoScheme; set: (scheme: DemoScheme) => void }
@@ -137,6 +139,19 @@ export function HubbleDemoProvider({
     [state.changes, state.collections]
   )
 
+  const undoHistory = useCallback(
+    (sessionId: string, changeId: string) => {
+      const detail = state.history.find((entry) => entry.session.sessionId === sessionId)
+      const change = detail?.records.changes.find((candidate) => candidate.id === changeId)
+      if (!detail || !change || !change.ok || !change.before || !change.after) return false
+      if (detail.records.undos.some((undo) => undo.changeId === changeId)) return false
+      if (!restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)) return false
+      dispatch({ type: "undo-history", sessionId, changeId })
+      return true
+    },
+    [state.history, state.collections]
+  )
+
   const openUrl = useCallback((url: string) => {
     if (!isSafeOpenUrl(url)) return
     // Hubble's own demo pages live on a reserved domain that resolves nowhere.
@@ -145,8 +160,8 @@ export function HubbleDemoProvider({
   }, [])
 
   const value = useMemo<DemoContextValue>(
-    () => ({ state, dispatch, world, context, send, respond, undo, openUrl, ...(scheme ? { scheme } : {}) }),
-    [state, world, context, send, respond, undo, openUrl, scheme]
+    () => ({ state, dispatch, world, context, send, respond, undo, undoHistory, openUrl, ...(scheme ? { scheme } : {}) }),
+    [state, world, context, send, respond, undo, undoHistory, openUrl, scheme]
   )
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>

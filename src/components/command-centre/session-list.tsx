@@ -14,6 +14,7 @@ import {
 import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
 import { cn } from "@/lib/utils"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import type { AgentSessionStatus } from "@/lib/agents/control/session"
 
 /**
  * The sessions this runtime is holding.
@@ -60,10 +61,52 @@ function SessionRow({
   onSelect: () => void
 }) {
   const { view } = session
-  const state = SESSION_VISUAL_STATE[view.status]
-
   const agentName = platformProvider(view.provider)?.displayName ?? view.provider
-  const title = view.title ?? SESSION_STATUS_LABEL[view.status]
+
+  return (
+    <SessionListRow
+      status={view.status}
+      title={view.title ?? SESSION_STATUS_LABEL[view.status]}
+      agentName={agentName}
+      {...(workspaceName ? { workspaceName } : {})}
+      {...(projectName ? { projectName } : {})}
+      time={relativeTime(view.updatedAt, now)}
+      selected={selected}
+      onSelect={onSelect}
+    />
+  )
+}
+
+/**
+ * One row of the session column, from plain values — the live list's rows
+ * and agent history's (./agent-history-list.tsx) are this same row, so a
+ * session reads the same before and after its runtime is gone.
+ */
+export function SessionListRow({
+  status,
+  title,
+  agentName,
+  workspaceName,
+  projectName,
+  time,
+  timeLabel,
+  selected,
+  onSelect,
+}: {
+  status: AgentSessionStatus
+  title: string
+  agentName: string
+  workspaceName?: string
+  projectName?: string
+  /** Short, on the right: "4m", or a clock time. */
+  time: string
+  /** The time in full, for assistive technology and the tooltip. */
+  timeLabel?: string
+  selected: boolean
+  onSelect: () => void
+}) {
+  const state = SESSION_VISUAL_STATE[status]
+  const details = [title === agentName ? undefined : agentName, workspaceName, projectName].filter(Boolean)
 
   /*
     The reference's task row: a status glyph in a 16px gutter, the task on
@@ -85,7 +128,7 @@ function SessionRow({
         )}
       >
         <span className="flex h-4 items-center">
-          <AgentStatusGlyph state={state} label={SESSION_STATUS_LABEL[view.status]} />
+          <AgentStatusGlyph state={state} label={SESSION_STATUS_LABEL[status]} />
         </span>
 
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -93,18 +136,19 @@ function SessionRow({
             {title}
           </span>
           <span className="flex min-w-0 items-center gap-1 text-meta text-tertiary">
-            <span className={cn("shrink-0", AGENT_TONE_TEXT_CLASS[sessionStatusTone(view.status)] === "text-destructive" && "text-destructive")}>
-              {SESSION_STATUS_LABEL[view.status]}
+            <span className={cn("shrink-0", AGENT_TONE_TEXT_CLASS[sessionStatusTone(status)] === "text-destructive" && "text-destructive")}>
+              {SESSION_STATUS_LABEL[status]}
             </span>
             <span className="truncate">
-              · {agentName}
-              {workspaceName ? ` · ${workspaceName}` : ""}
-              {projectName ? ` · ${projectName}` : ""}
+              {/* The agent is not named twice when it is the row's title — an untitled past session. */}
+              {details.length > 0 ? `· ${details.join(" · ")}` : null}
             </span>
           </span>
         </span>
 
-        <span className="shrink-0 pt-px text-meta text-tertiary">{relativeTime(view.updatedAt, now)}</span>
+        <span className="shrink-0 pt-px text-meta text-tertiary" {...(timeLabel ? { title: timeLabel } : {})}>
+          {time}
+        </span>
       </button>
     </li>
   )
@@ -120,10 +164,13 @@ export function SessionList({
   canCreate,
   now,
   children,
+  history,
   className,
 }: {
   /** Rendered above the sessions — the connected-agents roster (Phase J). */
   children?: React.ReactNode
+  /** Rendered below them — agent history for the workspace on screen (./agent-history-list.tsx). */
+  history?: React.ReactNode
   /** Layout classes from the view — used to make the list full-width master on narrow screens. */
   className?: string
   sessions: readonly CommandCentreSession[]
@@ -213,6 +260,7 @@ export function SessionList({
             )}
           </>
         )}
+        {history}
       </nav>
     </div>
   )

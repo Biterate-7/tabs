@@ -1,4 +1,7 @@
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import { historyApprovalOf, historyChangeOf, historyEventOf } from "@/lib/agents/activity/history"
+import type { AgentHistoryDetail, AgentHistorySession } from "@/lib/agents/activity/history"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import { contextCountsLine } from "@/lib/agents/control/events"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentIdentity } from "@/lib/agents/platform/roster"
@@ -568,3 +571,157 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
 export const DEMO_APPROVALS: Readonly<Record<string, readonly RuntimeApprovalView[]>> = {
   [CLAUDE_SESSION]: [SWE_APPROVAL],
 }
+
+// --------------------------------------------------------------- history
+
+/*
+ * Agent history: sessions that ended before the visitor arrived, as Hubble
+ * keeps them (lib/agents/activity/history.ts). Each is written the way the
+ * runtime writes one — the session's canonical events, its approvals and the
+ * change the Command Centre applied, each through the product's own history
+ * reducers — so what the demo opens is what Hubble reads back after a
+ * restart, with the conversation's text already dropped.
+ */
+
+export const HISTORY_IDEAS_SESSION = "session-history-claude-ideas"
+export const HISTORY_SCHOOL_SESSION = "session-history-gemini-school"
+export const HISTORY_COURSES_SESSION = "session-history-codex-courses"
+export const HISTORY_RELEASE_SESSION = "session-history-grok-release"
+
+export const HISTORY_IDEAS_APPROVAL: RuntimeApprovalView = {
+  approvalId: "approval-history-ideas",
+  sessionId: HISTORY_IDEAS_SESSION,
+  provider: "claude-code",
+  action: "change_workspace",
+  scope: "write_workspace",
+  workspaceId: RESEARCH_ID,
+  targets: [`New collection "Product Ideas"`, "Linear", "Figma", "Hacker News"],
+  reason: "Create a collection in this workspace.",
+  change: { kind: "create_collection", subject: "Product Ideas", tabCount: 3, details: ["Linear", "Figma", "Hacker News"] },
+  requestedAt: DEMO_NOW - DAY - 40 * MIN + 32_000,
+  expiresAt: DEMO_NOW - DAY - 35 * MIN,
+}
+
+function historyDetail(
+  session: Omit<AgentHistorySession, "startedAt" | "lastActivityAt" | "endedAt">,
+  events: readonly SequencedControlEvent[],
+  more: { approvals?: readonly RuntimeApprovalView[]; changes?: readonly AppliedWorkspaceChange[] } = {}
+): AgentHistoryDetail {
+  const startedAt = events[0]!.timestamp
+  const lastActivityAt = events[events.length - 1]!.timestamp
+  return {
+    session: {
+      ...session,
+      startedAt,
+      lastActivityAt,
+      ...(session.status === "completed" || session.status === "failed" ? { endedAt: lastActivityAt } : {}),
+    },
+    records: {
+      events: events.map(historyEventOf).filter((event): event is SequencedControlEvent => event !== null),
+      approvals: (more.approvals ?? []).map(historyApprovalOf),
+      changes: (more.changes ?? []).map(historyChangeOf),
+      undos: [],
+      planOutcomes: [],
+    },
+  }
+}
+
+const ideasEvents = buildEvents(
+  HISTORY_IDEAS_SESSION,
+  "claude-code",
+  [
+    { kind: "session_started", summary: "Session started." },
+    // Research as it was then: "Product Ideas" is what this session made.
+    {
+      kind: "context_loaded",
+      summary: contextCountsLine({ workspaceId: RESEARCH_ID, tabs: RESEARCH_TABS.length, collections: researchCollections().length - 1 }),
+      context: { workspaceId: RESEARCH_ID, tabs: RESEARCH_TABS.length, collections: researchCollections().length - 1 },
+    },
+    { kind: "message_sent", summary: "Message sent.", messageId: "ideas-m1", text: "Group my product tabs in Research." },
+    { kind: "tool_started", summary: "Reading Research", tool: contextTool("get_workspace_summary", "ideas-call-1") },
+    contextRead(RESEARCH_ID, "get_workspace_summary", { tabs: RESEARCH_TABS.length, collections: researchCollections().length - 1 }),
+    { kind: "tool_started", summary: "Searching for product tabs", tool: contextTool("search_tabs", "ideas-call-2") },
+    contextRead(RESEARCH_ID, "search_tabs", { matches: productIdeas().tabIds.length }),
+    { kind: "tool_started", summary: "Proposing “Product Ideas”", tool: contextTool("create_collection", "ideas-call-3") },
+    { kind: "approval_requested", summary: "Wants to change your Hubble workspace", approvalId: HISTORY_IDEAS_APPROVAL.approvalId },
+    { kind: "approval_granted", summary: "Workspace change approved", approvalId: HISTORY_IDEAS_APPROVAL.approvalId },
+    { kind: "message_received", summary: "Reply", messageId: "ideas-m2", text: "“Product Ideas” now holds Linear, Figma and Hacker News." },
+    { kind: "run_completed", summary: "Run completed." },
+  ],
+  DEMO_NOW - DAY - 40 * MIN
+)
+
+export const DEMO_HISTORY: readonly AgentHistoryDetail[] = [
+  historyDetail(
+    { sessionId: HISTORY_IDEAS_SESSION, workspaceId: RESEARCH_ID, provider: "claude-code", status: "completed", title: "Group the product ideas" },
+    ideasEvents,
+    {
+      approvals: [HISTORY_IDEAS_APPROVAL],
+      changes: [
+        {
+          id: "history-change-ideas",
+          sessionId: HISTORY_IDEAS_SESSION,
+          provider: "claude-code",
+          workspaceId: RESEARCH_ID,
+          // Applied once the approval came back, before the agent's reply.
+          at: ideasEvents[9]!.timestamp + 500,
+          ok: true,
+          approvalId: HISTORY_IDEAS_APPROVAL.approvalId,
+          steps: [{ kind: "created", collectionId: "c-product-ideas", name: "Product Ideas", tabCount: productIdeas().tabIds.length }],
+          // Research's collections either side — the exact inverse an undo needs.
+          before: researchCollections().filter((collection) => collection.id !== "c-product-ideas"),
+          after: researchCollections(),
+        },
+      ],
+    }
+  ),
+  historyDetail(
+    { sessionId: HISTORY_SCHOOL_SESSION, workspaceId: RESEARCH_ID, provider: "gemini", status: "failed", title: "Find themes in School" },
+    buildEvents(
+      HISTORY_SCHOOL_SESSION,
+      "gemini",
+      [
+        { kind: "session_started", summary: "Session started." },
+        contextLoaded(RESEARCH_ID),
+        { kind: "message_sent", summary: "Message sent.", messageId: "school-m1", text: "What connects the School tabs?" },
+        { kind: "tool_started", summary: "Reading School", tool: contextTool("get_collection", "school-call-1") },
+        contextRead(RESEARCH_ID, "get_collection", { tabs: DEMO_COLLECTIONS.find((collection) => collection.id === "c-school")!.tabIds.length }),
+        { kind: "error", summary: "Agent disconnected unexpectedly" },
+      ],
+      DEMO_NOW - 2 * DAY - 3 * HOUR
+    )
+  ),
+  // Recorded while it worked; the runtime that drove it stopped. History says
+  // "Disconnected", never "Running".
+  historyDetail(
+    { sessionId: HISTORY_COURSES_SESSION, workspaceId: RESEARCH_ID, provider: "openai-codex", status: "running", title: "Summarise the course pages" },
+    buildEvents(
+      HISTORY_COURSES_SESSION,
+      "openai-codex",
+      [
+        { kind: "session_started", summary: "Session started." },
+        contextLoaded(RESEARCH_ID),
+        { kind: "message_sent", summary: "Message sent.", messageId: "courses-m1", text: "Summarise the course pages in Research." },
+        { kind: "tool_started", summary: "Searching for courses", tool: contextTool("search_tabs", "courses-call-1") },
+        contextRead(RESEARCH_ID, "search_tabs", { matches: 2 }),
+      ],
+      DEMO_NOW - 3 * DAY - 5 * HOUR
+    )
+  ),
+  // Another workspace's: never listed while Research is on screen.
+  historyDetail(
+    { sessionId: HISTORY_RELEASE_SESSION, workspaceId: BUILD_ID, provider: "grok", status: "completed", title: "Check the release links" },
+    buildEvents(
+      HISTORY_RELEASE_SESSION,
+      "grok",
+      [
+        { kind: "session_started", summary: "Session started." },
+        contextLoaded(BUILD_ID),
+        { kind: "tool_started", summary: "Reading Release checklist", tool: contextTool("get_collection", "links-call-1") },
+        contextRead(BUILD_ID, "get_collection", { tabs: 3 }),
+        { kind: "run_completed", summary: "Run completed." },
+      ],
+      DEMO_NOW - DAY - 6 * HOUR
+    )
+  ),
+]

@@ -167,6 +167,12 @@ export type AgentActivityInput = {
   approvals?: readonly RuntimeApprovalView[];
   /** Approvals seen earlier and since answered, so their entry can still say what they asked. */
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>;
+  /**
+   * Plans' verified outcomes. Absent: the live session's own
+   * (`session.context.planOutcomes`). Agent history passes the ones it kept,
+   * because a session read back from history holds no live context.
+   */
+  planOutcomes?: readonly RuntimePlanOutcomeView[];
   /** Workspace changes the Command Centre applied. Filtered to this session and workspace here. */
   changes?: readonly AppliedWorkspaceChange[];
   agentName: string;
@@ -485,8 +491,13 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
   };
 
   for (const event of events) {
-    lastEvent = event;
+    // A gap in the sequence is events this list does not hold — agent
+    // history keeps no `thinking` or `message_delta` (./history.ts). Whatever
+    // they were, they were not files, so they end "just finished" exactly as
+    // they would have here had they been present.
     if (event.kind !== "file_created" && event.kind !== "file_modified") justFinished = undefined;
+    else if (lastEvent && event.sequence !== lastEvent.sequence + 1) justFinished = undefined;
+    lastEvent = event;
     switch (event.kind) {
       case "session_started":
       case "session_resumed":
@@ -827,7 +838,7 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
 
   /* ---------------- Approvals: what became of each. */
 
-  const outcomes = session.context?.planOutcomes ?? [];
+  const outcomes = input.planOutcomes ?? session.context?.planOutcomes ?? [];
   const outcomeByApproval = new Map<string, RuntimePlanOutcomeView>();
   for (const outcome of outcomes) if (outcome.approvalId) outcomeByApproval.set(outcome.approvalId, outcome);
 

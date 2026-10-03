@@ -1,12 +1,14 @@
 "use client"
 
 import { useCallback, useMemo } from "react"
+import { reconstructHistorySession } from "@/lib/agents/activity/history"
 import { inspectActivityEntry } from "@/lib/agents/activity/inspector"
 import { buildAgentActivityTimeline } from "@/lib/agents/activity/timeline"
+import type { AgentHistoryDetail, ReconstructedHistorySession } from "@/lib/agents/activity/history"
 import type { ActionInspection } from "@/lib/agents/activity/inspector"
 import type { AgentActivityEntry } from "@/lib/agents/activity/timeline"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
-import type { RuntimeApprovalView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { RuntimeApprovalView, RuntimePlanOutcomeView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 
 /**
  * One session's activity timeline, derived live from what the session hook
@@ -69,8 +71,10 @@ export function useAgentActivity(options: {
    * own, so nothing it shows is remembered here.
    */
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
+  /** Plans' outcomes, when they are not the live session's own — agent history's. */
+  planOutcomes?: readonly RuntimePlanOutcomeView[]
 }): readonly AgentActivityEntry[] {
-  const { session, events, approvals, changes, agentName, workspaceName, now, knownApprovals } = options
+  const { session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes } = options
 
   return useMemo(() => {
     if (!session) return []
@@ -83,6 +87,7 @@ export function useAgentActivity(options: {
         approvals,
         knownApprovals: knownApprovals ?? remembered,
         ...(changes ? { changes } : {}),
+        ...(planOutcomes ? { planOutcomes } : {}),
         agentName,
         ...(workspaceName ? { workspaceName } : {}),
         now,
@@ -91,7 +96,7 @@ export function useAgentActivity(options: {
       console.warn("Hubble could not build the agent activity timeline.", error)
       return []
     }
-  }, [session, events, approvals, changes, agentName, workspaceName, now, knownApprovals])
+  }, [session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes])
 }
 
 /**
@@ -111,10 +116,11 @@ export function useActivityInspector(options: {
   workspaceName?: string
   projectName?: string
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
+  planOutcomes?: readonly RuntimePlanOutcomeView[]
   /** Whether an applied change can be undone exactly right now. Absent: no undo is offered. */
   canUndo?: (change: AppliedWorkspaceChange) => boolean
 }): (entryId: string) => ActionInspection | null {
-  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, canUndo } = options
+  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, canUndo } = options
   return useCallback(
     (entryId: string) => {
       if (!session) return null
@@ -126,6 +132,7 @@ export function useActivityInspector(options: {
           approvals,
           knownApprovals: knownApprovals ?? remembered,
           ...(changes ? { changes } : {}),
+          ...(planOutcomes ? { planOutcomes } : {}),
           agentName,
           ...(workspaceName ? { workspaceName } : {}),
           ...(projectName ? { projectName } : {}),
@@ -137,7 +144,7 @@ export function useActivityInspector(options: {
         return null
       }
     },
-    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, canUndo]
+    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, canUndo]
   )
 }
 
@@ -158,6 +165,7 @@ export function useSessionActivity(options: {
   projectName?: string
   now: number
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
+  planOutcomes?: readonly RuntimePlanOutcomeView[]
   canUndo?: (change: AppliedWorkspaceChange) => boolean
 }): {
   entries: readonly AgentActivityEntry[]
@@ -176,8 +184,62 @@ export function useSessionActivity(options: {
     ...(options.workspaceName ? { workspaceName: options.workspaceName } : {}),
     ...(projectName ? { projectName } : {}),
     ...(options.knownApprovals ? { knownApprovals: options.knownApprovals } : {}),
+    ...(options.planOutcomes ? { planOutcomes: options.planOutcomes } : {}),
     ...(canUndo ? { canUndo } : {}),
   })
   const waiting = useMemo(() => entries.some((entry) => entry.status === "waiting"), [entries])
   return { entries, inspect, waiting }
+}
+
+const NO_EVENTS: readonly SequencedControlEvent[] = []
+const NO_APPROVALS: readonly RuntimeApprovalView[] = []
+const NO_KNOWN_APPROVALS: ReadonlyMap<string, RuntimeApprovalView> = new Map()
+
+/**
+ * A session read back from agent history, as every surface shows it: the
+ * same `useSessionActivity` the live session uses, fed the records history
+ * kept (lib/agents/activity/history.ts) instead of the runtime's journal.
+ * Same entries, same inspector, same undo rules — there is no second
+ * timeline for the past.
+ *
+ * Nothing is remembered from this page: the approvals history kept are the
+ * ones used, and none is waiting. The Command Centre and the landing page's
+ * demonstration both call this with their own detail — the runtime's, or the
+ * demo's fixture.
+ */
+export function useHistorySessionActivity(options: {
+  detail: AgentHistoryDetail | null
+  agentName: string
+  workspaceName?: string
+  projectName?: string
+  now: number
+  canUndo?: (change: AppliedWorkspaceChange) => boolean
+}): {
+  entries: readonly AgentActivityEntry[]
+  inspect: (entryId: string) => ActionInspection | null
+  history: ReconstructedHistorySession | null
+} {
+  const { detail, agentName, workspaceName, projectName, now, canUndo } = options
+  const history = useMemo(() => {
+    if (!detail) return null
+    try {
+      return reconstructHistorySession(detail)
+    } catch (error) {
+      console.warn("Hubble could not read that agent history.", error)
+      return null
+    }
+  }, [detail])
+  const { entries, inspect } = useSessionActivity({
+    session: history?.session ?? null,
+    events: history?.events ?? NO_EVENTS,
+    approvals: NO_APPROVALS,
+    ...(history ? { changes: history.changes, planOutcomes: history.planOutcomes } : {}),
+    knownApprovals: history?.knownApprovals ?? NO_KNOWN_APPROVALS,
+    agentName,
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(projectName ? { projectName } : {}),
+    now,
+    ...(canUndo ? { canUndo } : {}),
+  })
+  return { entries, inspect, history }
 }

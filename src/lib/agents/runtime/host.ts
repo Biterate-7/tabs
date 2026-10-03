@@ -13,12 +13,17 @@ import { createProject } from "@/lib/agents/control/projects";
 import { adapterSupports } from "@/lib/agents/control/types";
 import { createControlService } from "@/lib/agents/control/service";
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus";
+import { historyApprovalOf, historyEventOf, historyOutcomeOf, eventRecordKey, reviveHistoryChange } from "@/lib/agents/activity/history";
+import { createAgentHistoryRecorder } from "@/lib/agents/activity/history-recorder";
 import { createCorrelationRegistry, toCorrelationView } from "./correlation";
 import { createEventJournal } from "./journal";
 import { gateFailure } from "./gate";
 import { runtimeFailure } from "./protocol";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentApproval } from "@/lib/agents/control/approvals";
+import type { AgentHistoryRecord, AgentHistorySession } from "@/lib/agents/activity/history";
+import type { AgentHistorySeen } from "@/lib/agents/activity/history-recorder";
+import type { AgentHistoryStore } from "@/lib/agents/activity/history-store";
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { AgentProject } from "@/lib/agents/control/projects";
 import type { AgentSession } from "@/lib/agents/control/session";
@@ -251,6 +256,14 @@ export type RuntimeHostOptions = {
    * Authentication & Runtime). Injected so tests need not wait the default.
    */
   statusSettleMs?: number;
+  /**
+   * Agent history (Hubble 1.3): where this host keeps its sessions' activity
+   * after it is gone. Absent — no database, the desktop sidecar, a test that
+   * does not care — history commands answer `history_unavailable` and nothing
+   * else changes. `seen` is shared by hosts of one process (a remote host is
+   * built per request) so a replayed event is not offered twice.
+   */
+  history?: { store: AgentHistoryStore; seen?: AgentHistorySeen };
 };
 
 /** The default bound `get_status` waits for an in-flight connect. */
@@ -293,6 +306,14 @@ export type RuntimeHost = {
 
   /** Tears down every session and releases every provider process. */
   dispose(): Promise<void>;
+
+  /**
+   * Resolves once the agent history offered so far is written, or has failed
+   * to be. Never rejects. A request handler awaits it so that what a command
+   * changed is durable before the response — which matters on a host that
+   * does not outlive the request.
+   */
+  settleHistory(): Promise<void>;
 };
 
 /* ------------------------------------------------------------------ *
@@ -410,6 +431,18 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   const journal = createEventJournal();
   const listeners = new Set<(event: AgentControlEvent & { sequence: number }) => void>();
   const hosted = new Map<string, HostSession>();
+
+  /**
+   * Agent history: the same events the journal accepts, and the records the
+   * timeline joins them to, kept after this process. See
+   * lib/agents/activity/history.ts for what is and is not kept.
+   */
+  const historyStore = options.history?.store;
+  const history = historyStore
+    ? createAgentHistoryRecorder({ store: historyStore, ...(options.history?.seen ? { seen: options.history.seen } : {}) })
+    : undefined;
+  /** Newest event per session, for the session's last activity. */
+  const lastEventAt = new Map<string, number>();
 
   /**
    * Projects each actor has synced, by actor id then project id.
@@ -569,6 +602,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       createId: () => `cs-${createId()}`,
       // A session that ends takes its workspace credential with it (J.3).
       onSessionEnded: (sessionId) => releaseContext(sessionId),
+      // Every status it reaches is history's too, said or not by an event.
+      onSessionMoved: (session) => recordSession(session.id),
     });
 
     service.subscribe((event) => onEvent(event));
@@ -609,6 +644,75 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     }
 
     for (const listener of [...listeners]) listener(appended.event);
+
+    // The same canonical event, durably — after the live listeners, and
+    // queued rather than awaited, so history never slows the live stream.
+    recordEvent(appended.event);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Agent history (Hubble 1.3)
+   * ---------------------------------------------------------------- */
+
+  /** The workspace a session belongs to: its own, or the one its context is bound to. */
+  function workspaceOf(session: AgentSession): string | undefined {
+    return session.workspaceId ?? options.sessionContext?.registry.binding(session.id)?.workspaceId;
+  }
+
+  /**
+   * Offers the session as it now stands — status, title, its approvals and
+   * its plans' outcomes — to history. Cheap when nothing changed (the
+   * recorder skips what it already wrote). A session in no workspace is not
+   * history's: history is a workspace's.
+   */
+  function recordSession(sessionId: string): void {
+    if (!history) return;
+    const host = hosted.get(sessionId);
+    if (!host) return;
+    const actorService = serviceFor(host.ownerId);
+    const session = actorService.session(sessionId);
+    if (!session) return;
+    const workspaceId = workspaceOf(session);
+    if (!workspaceId) return;
+
+    const record: AgentHistorySession = {
+      sessionId,
+      workspaceId,
+      provider: session.provider,
+      status: session.status,
+      ...(session.title ? { title: session.title } : {}),
+      ...(session.projectId ? { projectId: session.projectId } : {}),
+      ...(host.contextUnavailable ? { contextUnavailable: true } : {}),
+      startedAt: session.createdAt,
+      lastActivityAt: Math.max(session.updatedAt, lastEventAt.get(sessionId) ?? 0),
+      ...(session.endedAt !== undefined ? { endedAt: session.endedAt } : {}),
+    };
+    history.session(host.ownerId, record);
+
+    const records: AgentHistoryRecord[] = [];
+    for (const approval of actorService.approvals.forSession(sessionId)) {
+      const view = historyApprovalOf(toApprovalView(approval));
+      records.push({ kind: "approval", key: view.approvalId, at: view.requestedAt, data: view });
+    }
+    for (const outcome of contextViewOf(sessionId)?.planOutcomes ?? []) {
+      const kept = historyOutcomeOf(outcome);
+      records.push({ kind: "plan_outcome", key: kept.planId, at: kept.at, data: kept });
+    }
+    if (records.length > 0) history.records(host.ownerId, sessionId, records);
+  }
+
+  function recordEvent(event: AgentControlEvent & { sequence: number }): void {
+    if (!history) return;
+    const host = hosted.get(event.sessionId);
+    if (!host) return;
+    lastEventAt.set(event.sessionId, Math.max(lastEventAt.get(event.sessionId) ?? 0, event.timestamp));
+    const kept = historyEventOf(event);
+    // Transport — a streamed piece of a reply, a thought — is not kept, and
+    // says nothing about the session either; its time is noted above and is
+    // written with the next event that is.
+    if (!kept) return;
+    recordSession(event.sessionId);
+    history.records(host.ownerId, event.sessionId, [{ kind: "event", key: eventRecordKey(kept), at: kept.timestamp, data: kept }]);
   }
 
   /**
@@ -1455,6 +1559,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
+        lastEventAt.delete(command.sessionId);
         correlations.removeControlSession(command.sessionId);
 
         // The durable record goes too, or the next request would rehydrate a
@@ -1575,7 +1680,128 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         }
         return { ok: true, value: { sessionId: command.sessionId } };
       }
+
+      /* ---------------- Agent history (Hubble 1.3). */
+
+      case "list_history": {
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        // What this process has offered is written first, so a session that
+        // just ended is in the list that is about to be read.
+        await history.flush();
+        try {
+          const page = await historyStore.listSessions(actor.id, command.workspaceId, {
+            ...(command.before ? { before: command.before } : {}),
+            ...(command.limit ? { limit: command.limit } : {}),
+          });
+          return { ok: true, value: page };
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+      }
+
+      case "get_history": {
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        await history.flush();
+        let detail;
+        try {
+          detail = await historyStore.readSession(actor.id, command.workspaceId, command.sessionId);
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+        // Another actor's, another workspace's and a missing one are the same answer.
+        return detail ? { ok: true, value: detail } : runtimeFailure("session_not_found");
+      }
+
+      case "record_workspace_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        if (!history) return runtimeFailure("history_unavailable");
+        const session = owned.value.session;
+        const workspaceId = workspaceOf(session);
+        if (!workspaceId) return runtimeFailure("invalid_session_state");
+
+        // Whose, where and which approval are the runtime's to say, not the
+        // caller's: the approval is the one this session's broker issued for
+        // this very action, and a plan id is kept only if one of this
+        // session's approvals was for that plan.
+        const approvals = actorService.approvals.forSession(session.id);
+        const approvalId = approvals.find((approval) => approval.contextActionId === command.change.id)?.id;
+        const planId =
+          command.change.planId && approvals.some((approval) => approval.plan?.planId === command.change.planId)
+            ? command.change.planId
+            : undefined;
+        const change = reviveHistoryChange(
+          {
+            ...command.change,
+            sessionId: session.id,
+            provider: session.provider,
+            workspaceId,
+            at: Math.min(Math.max(command.change.at, session.createdAt), now()),
+            planId,
+            approvalId,
+          },
+          { sessionId: session.id, workspaceId }
+        );
+        if (!change) return runtimeFailure("invalid_request");
+
+        recordSession(session.id);
+        history.records(actor.id, session.id, [{ kind: "change", key: change.id, at: change.at, data: change }]);
+        return { ok: true, value: { sessionId: session.id } };
+      }
+
+      case "record_workspace_undo": {
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        await history.flush();
+        try {
+          // Only a change this actor's session in this workspace recorded as
+          // applied. The change itself is not touched: the undo is a second
+          // record, after it.
+          if (!(await historyStore.hasAppliedChange(actor.id, command.workspaceId, command.sessionId, command.changeId))) {
+            return runtimeFailure("session_not_found");
+          }
+          const at = Math.min(command.at, now());
+          await historyStore.write(actor.id, {
+            sessions: [],
+            records: [{ sessionId: command.sessionId, kind: "undo", key: command.changeId, at, data: { changeId: command.changeId, at } }],
+          });
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+        return { ok: true, value: { sessionId: command.sessionId, changeId: command.changeId } };
+      }
     }
+  }
+
+  /**
+   * Every command, and then whatever it changed about a session offered to
+   * history — a decision, an applied plan, a cancel. Commands that change
+   * nothing offer an unchanged session, which costs nothing.
+   */
+  async function runAndRecord(
+    actor: RuntimeActor,
+    command: RuntimeCommand
+  ): Promise<RuntimeResult<RuntimeCommandResults[RuntimeCommandName]>> {
+    const result = await run(actor, command);
+    if (history) {
+      if (command.name === "create_session" || command.name === "resume_session") {
+        // Events the session raised while it was being created arrived before
+        // the host held it, so `onEvent` could not attribute them; the
+        // journal kept them, and history takes them from there. Idempotent:
+        // an event already recorded is the same record.
+        if (result.ok) {
+          const sessionId = (result.value as RuntimeSessionView).sessionId;
+          recordSession(sessionId);
+          for (const event of journal.read(sessionId).events) recordEvent(event);
+        }
+      } else if (command.name === "respond_to_approval") {
+        const sessionId = serviceFor(actor.id).approvals.get(command.approvalId)?.sessionId;
+        if (sessionId) recordSession(sessionId);
+      } else {
+        const named = sessionIdOf(command);
+        if (named && hosted.get(named)?.ownerId === actor.id) recordSession(named);
+      }
+    }
+    return result;
   }
 
   /**
@@ -1621,7 +1847,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   return {
     runtimeId,
 
-    execute: run as RuntimeHost["execute"],
+    execute: runAndRecord as RuntimeHost["execute"],
+
+    settleHistory: () => history?.flush() ?? Promise.resolve(),
 
     subscribe(listener) {
       listeners.add(listener);
@@ -1651,6 +1879,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
       hosted.clear();
       journal.clear();
+      lastEventAt.clear();
       listeners.clear();
       projectsByActor.clear();
 
@@ -1660,6 +1889,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       // host's sessions in the same process.
       for (const service of services.values()) service.dispose();
       services.clear();
+
+      // What the cancellations above recorded is written before the host is gone.
+      await history?.flush();
     },
   };
 }
@@ -1716,7 +1948,12 @@ function sessionIdOf(command: RuntimeCommand): string | undefined {
     case "link_observation":
     case "sync_session_context":
     case "complete_context_action":
+    case "record_workspace_change":
       return command.sessionId;
+    // History may name a session this process never held, or no longer does.
+    case "list_history":
+    case "get_history":
+    case "record_workspace_undo":
     case "get_status":
     case "list_sessions":
     case "authorize_projects":

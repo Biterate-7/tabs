@@ -134,6 +134,8 @@ export type ActionInspectorInput = {
   events: readonly SequencedControlEvent[];
   approvals?: readonly RuntimeApprovalView[];
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>;
+  /** Plans' verified outcomes; absent means the live session's own. See `AgentActivityInput.planOutcomes`. */
+  planOutcomes?: readonly RuntimePlanOutcomeView[];
   changes?: readonly AppliedWorkspaceChange[];
   agentName: string;
   workspaceName?: string;
@@ -239,7 +241,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
     (change) => change.sessionId === sessionId && (!workspaceId || change.workspaceId === workspaceId)
   );
   const events = input.events.filter((event) => event.sessionId === sessionId);
-  const outcomes = session.context?.planOutcomes ?? [];
+  const outcomes = input.planOutcomes ?? session.context?.planOutcomes ?? [];
 
   /* ---------------- Resolve the action from its references. */
 

@@ -4,7 +4,18 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { buildAgentActivityTimeline } from "@/lib/agents/activity/timeline"
-import { CLAUDE_RELEASE_SESSION, CLAUDE_SESSION, DEMO_APPROVALS, DEMO_EVENTS, DEMO_KNOWN_APPROVALS, DEMO_NOW, DEMO_SESSIONS } from "./data"
+import { reconstructHistorySession } from "@/lib/agents/activity/history"
+import {
+  CLAUDE_RELEASE_SESSION,
+  CLAUDE_SESSION,
+  DEMO_APPROVALS,
+  DEMO_EVENTS,
+  DEMO_HISTORY,
+  DEMO_KNOWN_APPROVALS,
+  DEMO_NOW,
+  DEMO_SESSIONS,
+  HISTORY_IDEAS_SESSION,
+} from "./data"
 import { DemoApp } from "./demo-app"
 import { DemoFrame } from "./demo-frame"
 import { HubbleDemoProvider } from "./demo-provider"
@@ -53,6 +64,10 @@ const SHARED_SESSION_UI: ReadonlyArray<[string, string]> = [
   ["@/components/command-centre/composer", "Composer"],
   ["@/components/command-centre/session-list", "SessionList"],
   ["@/components/command-centre/agent-roster", "AgentRoster"],
+  // Agent history (Hubble 1.3): the same list, the same past-session pane, the same hook.
+  ["@/components/command-centre/agent-history-list", "AgentHistoryList"],
+  ["@/components/command-centre/history-session-view", "HistorySessionView"],
+  ["@/hooks/use-agent-activity", "useHistorySessionActivity"],
 ]
 
 /** CommandCentreView imports its siblings relatively; normalise those to the same `@/` paths. */
@@ -89,6 +104,18 @@ describe("the demo is built from the app's own session UI", () => {
         expect(source, `${path} restates "${words}"`).not.toContain(words)
       }
     }
+  })
+
+  it("never draws agent history itself: no list, pane, status reading or reconstruction of its own", () => {
+    for (const { path, source } of marketingSources()) {
+      // History reaches the page only as the app's components and hook, fed the demo's records.
+      expect(source, path).not.toMatch(/reconstructHistorySession|readHistoryDetail/)
+      for (const words of ["Agent history unavailable", "No agent activity yet.", "Show older sessions", "Yesterday", "Worked in"]) {
+        expect(source, `${path} restates "${words}"`).not.toContain(words)
+      }
+    }
+    // And the demo's history is the product's persisted shape, made by the product's own reducers.
+    expect(read("components/marketing/demo/data.ts")).toMatch(/historyEventOf[\s\S]*historyApprovalOf[\s\S]*historyChangeOf/)
   })
 })
 
@@ -206,5 +233,81 @@ describe("the demo shows what the product derives", () => {
     expect(inspector.getByText("Add a 0.9 section with the three changes from the Release checklist.")).toBeTruthy()
     expect(inspector.queryByRole("button", { name: /Undo/ })).toBeNull()
     expect(inspector.getByText(/^Undo isn't available for this change\./)).toBeTruthy()
+  })
+})
+
+describe("the demo's agent history is the product's", () => {
+  function historyPane(frame: () => ReturnType<typeof within>) {
+    return within(frame().getByRole("region", { name: "Past agent session" }))
+  }
+  const paneTitles = (pane: ReturnType<typeof within>) =>
+    pane
+      .getAllByRole("listitem")
+      .map((row: HTMLElement) => row.querySelector("[data-activity-title]")?.textContent)
+      .filter(Boolean)
+
+  it("lists the workspace's past sessions, with how each ended read for now, and none of another workspace's", () => {
+    const { frame } = renderWindow({ view: "command-centre", selectedSessionId: null, contextPanelOpen: true })
+    const history = within(frame().getByRole("region", { name: "Agent history" }))
+    expect(history.getByRole("button", { name: /Group the product ideas/ }).textContent).toContain("Completed")
+    expect(history.getByRole("button", { name: /Find themes in School/ }).textContent).toContain("Failed")
+    // Recorded as running; its runtime is gone, so it is disconnected — never "Running".
+    expect(history.getByRole("button", { name: /Summarise the course pages/ }).textContent).toContain("Disconnected")
+    expect(history.queryByText(/Check the release links/)).toBeNull()
+  })
+
+  it("opens a past session into exactly the timeline Hubble's builder makes from the kept records", async () => {
+    const { user, frame } = renderWindow({ view: "command-centre", selectedSessionId: null, contextPanelOpen: true })
+    await user.click(within(frame().getByRole("region", { name: "Agent history" })).getByRole("button", { name: /Group the product ideas/ }))
+    const pane = historyPane(frame)
+
+    const reconstructed = reconstructHistorySession(DEMO_HISTORY.find((entry) => entry.session.sessionId === HISTORY_IDEAS_SESSION)!)
+    const expected = buildAgentActivityTimeline({
+      session: reconstructed.session,
+      events: reconstructed.events,
+      approvals: [],
+      knownApprovals: reconstructed.knownApprovals,
+      changes: reconstructed.changes,
+      planOutcomes: reconstructed.planOutcomes,
+      agentName: "Claude Code",
+      workspaceName: "Research",
+      now: DEMO_NOW,
+    })
+    expect(paneTitles(pane)).toEqual([...expected].reverse().map((entry) => entry.title))
+    expect(paneTitles(pane)).toContain("Created collection “Product Ideas”")
+    expect(paneTitles(pane)).toContain("Action approved")
+  })
+
+  it("inspects the past action by reference and undoes it exactly, as a new entry after it", async () => {
+    const { user, frame } = renderWindow({ view: "command-centre", selectedSessionId: null, contextPanelOpen: true })
+    await user.click(within(frame().getByRole("region", { name: "Agent history" })).getByRole("button", { name: /Group the product ideas/ }))
+    const pane = historyPane(frame)
+    await user.click(pane.getByRole("button", { name: /Created collection “Product Ideas”/ }))
+    const article = pane.getByRole("article")
+    const inspector = within(article)
+    expect(article.getAttribute("data-action-status")).toBe("completed")
+    expect(inspector.getByText("Requested by Claude Code")).toBeTruthy()
+    expect(inspector.getByText("Created “Product Ideas” in Research.")).toBeTruthy()
+
+    await user.click(inspector.getByRole("button", { name: "Undo" }))
+    await user.click(inspector.getByRole("button", { name: "Undo change" }))
+    await waitFor(() => expect(article.getAttribute("data-action-status")).toBe("undone"))
+    await user.click(inspector.getByRole("button", { name: "All activity" }))
+    expect(paneTitles(pane)).toContain("Undid creation of “Product Ideas”")
+    expect(paneTitles(pane)).toContain("Created collection “Product Ideas”")
+  })
+
+  it("refuses the past undo once the workspace has moved on — the same rule as the app", async () => {
+    const { user, frame } = renderWindow({ view: "command-centre", selectedSessionId: CLAUDE_SESSION, contextPanelOpen: true })
+    // Approve the live demo change: Research gains a collection, so the past change's snapshot no longer matches.
+    await user.click(within(frame().getByRole("group", { name: "Approval required" })).getByRole("button", { name: /Allow/ }))
+    await waitFor(() => expect(frame().getAllByText(/Created collection “SWE-bench”/).length).toBeGreaterThan(0), { timeout: 3_000 })
+
+    await user.click(within(frame().getByRole("region", { name: "Agent history" })).getByRole("button", { name: /Group the product ideas/ }))
+    const pane = historyPane(frame)
+    await user.click(pane.getByRole("button", { name: /Created collection “Product Ideas”/ }))
+    const inspector = within(pane.getByRole("article"))
+    expect(inspector.queryByRole("button", { name: "Undo" })).toBeNull()
+    expect(inspector.getByText(/the workspace has changed since/)).toBeTruthy()
   })
 })

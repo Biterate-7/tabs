@@ -87,6 +87,10 @@ export const COMMAND_TIMEOUT_MS: Readonly<Record<RuntimeCommandName, number>> = 
   disconnect_provider: 30_000,
   sync_session_context: 20_000,
   complete_context_action: 20_000,
+  list_history: 20_000,
+  get_history: 20_000,
+  record_workspace_change: 20_000,
+  record_workspace_undo: 20_000,
 };
 
 export type RuntimeClientOptions = {

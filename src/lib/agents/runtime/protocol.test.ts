@@ -75,6 +75,14 @@ describe("what the parser accepts", () => {
         methodId: "oauth-personal",
       },
       disconnect_provider: { name: "disconnect_provider", provider: "gemini" },
+      list_history: { name: "list_history", workspaceId: "w1" },
+      get_history: { name: "get_history", workspaceId: "w1", sessionId: "s1" },
+      record_workspace_change: {
+        name: "record_workspace_change",
+        sessionId: "s1",
+        change: { id: "a1", at: T0, ok: true, steps: [{ kind: "created", name: "Pricing", tabCount: 2 }] },
+      },
+      record_workspace_undo: { name: "record_workspace_undo", workspaceId: "w1", sessionId: "s1", changeId: "a1", at: T0 },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {

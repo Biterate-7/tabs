@@ -104,6 +104,13 @@ export type ControlServiceOptions = {
    * holds for it — its workspace-context credential — ends with it (J.3).
    */
   onSessionEnded?: (sessionId: string) => void;
+  /**
+   * Told after every status transition the lifecycle allowed, with the
+   * session as it now is — so agent history records `failed` or
+   * `disconnected` even when no event said so. Observational: it changes
+   * nothing about the transition.
+   */
+  onSessionMoved?: (session: AgentSession) => void;
 };
 
 /** How a workspace approval ended, as the context layer that asked hears it. */
@@ -339,6 +346,7 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       for (const approval of broker.forSession(moved.id)) announced.delete(approval.id);
       options.onSessionEnded?.(moved.id);
     }
+    options.onSessionMoved?.(moved);
     return moved;
   }
 

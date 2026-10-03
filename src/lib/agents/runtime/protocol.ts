@@ -11,6 +11,9 @@ import type { SessionContextCapability } from "@/lib/agents/session-context/capa
 import type { WorkspaceChangeSummary } from "@/lib/agents/session-context/changes";
 import type { WorkspacePlanPreview } from "@/lib/agents/session-context/plan";
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
+import type { AgentHistoryCursor, AgentHistoryDetail, AgentHistoryPage } from "@/lib/agents/activity/history";
+import type { WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
+import type { Collection } from "@/lib/collections/types";
 
 /**
  * The browser to local-runtime command contract.
@@ -102,7 +105,9 @@ export type RuntimeErrorCode =
   /** The adapter does not implement this. */
   | "unsupported"
   /** The agent would not work in a mode where it asks Hubble before acting. */
-  | "approval_unenforceable";
+  | "approval_unenforceable"
+  /** This runtime keeps no agent history: no database, or one without history's tables. */
+  | "history_unavailable";
 
 export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "runtime_unavailable",
@@ -122,6 +127,7 @@ export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "invalid_request",
   "unsupported",
   "approval_unenforceable",
+  "history_unavailable",
 ] as const;
 
 export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
@@ -155,6 +161,7 @@ const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   invalid_request: "Hubble could not read that request.",
   unsupported: "This agent cannot do that yet.",
   approval_unenforceable: "That agent would not agree to ask before acting.",
+  history_unavailable: "Agent history is not kept here.",
 };
 
 export type RuntimeError = { code: RuntimeErrorCode; message: string };
@@ -562,7 +569,12 @@ export type RuntimeCommandName =
   | "disconnect_provider"
   /* Phase J.3 — session workspace context. Neither names a credential. */
   | "sync_session_context"
-  | "complete_context_action";
+  | "complete_context_action"
+  /* Hubble 1.3 — agent history. Scoped by the actor and a workspace, always. */
+  | "list_history"
+  | "get_history"
+  | "record_workspace_change"
+  | "record_workspace_undo";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -585,6 +597,10 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "disconnect_provider",
   "sync_session_context",
   "complete_context_action",
+  "list_history",
+  "get_history",
+  "record_workspace_change",
+  "record_workspace_undo",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -710,7 +726,38 @@ export type RuntimeCommand =
         | { ok: true; collectionId: string }
         | { ok: true; planHash: string; created: readonly string[] }
         | { ok: false; failedAt?: number };
-    };
+    }
+  /**
+   * One page of this actor's agent history in one workspace, newest first.
+   * Never another workspace's, and never another actor's.
+   */
+  | { name: "list_history"; workspaceId: string; before?: AgentHistoryCursor; limit?: number }
+  /** One history session of this workspace, with the records its timeline is built from. */
+  | { name: "get_history"; workspaceId: string; sessionId: string }
+  /**
+   * What the Command Centre applied for one of this session's approved
+   * actions — names, counts and the snapshot either side, for history and
+   * its undo. The runtime fills in whose, where and which approval itself.
+   */
+  | { name: "record_workspace_change"; sessionId: string; change: RecordedWorkspaceChange }
+  /**
+   * The person undid a recorded change. Recorded as its own fact after the
+   * change, which stays exactly as it was. Accepted only for a change this
+   * actor's session in this workspace recorded as applied.
+   */
+  | { name: "record_workspace_undo"; workspaceId: string; sessionId: string; changeId: string; at: number };
+
+/** An applied change as the Command Centre reports it. See `AppliedWorkspaceChange`. */
+export type RecordedWorkspaceChange = {
+  /** The approved action's id. */
+  id: string;
+  at: number;
+  ok: boolean;
+  planId?: string;
+  steps: readonly WorkspaceChangeStep[];
+  before?: readonly Collection[];
+  after?: readonly Collection[];
+};
 
 /** What each command answers with. Keyed by name so the client can type one call generically. */
 export type RuntimeCommandResults = {
@@ -741,6 +788,10 @@ export type RuntimeCommandResults = {
   connect_provider: ProviderConnectionView;
   authenticate_provider: ProviderConnectionView;
   disconnect_provider: ProviderConnectionView;
+  list_history: AgentHistoryPage;
+  get_history: AgentHistoryDetail;
+  record_workspace_change: { sessionId: string };
+  record_workspace_undo: { sessionId: string; changeId: string };
 };
 
 export type RuntimeCommandResult<N extends RuntimeCommandName> = RuntimeResult<
@@ -772,6 +823,10 @@ export const MAX_AUTHORIZED_PROJECTS = 100;
 export const MAX_COMMAND_PATH_LENGTH = 4096;
 /** Per project. A project reaching more directories than this is not a project. */
 export const MAX_ADDITIONAL_DIRECTORIES = 20;
+/** Agent history (Hubble 1.3): a page, and what one recorded change may carry. */
+export const MAX_HISTORY_PAGE = 50;
+export const MAX_RECORDED_STEPS = 50;
+export const MAX_RECORDED_COLLECTIONS = 500;
 
 function id(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -1110,6 +1165,68 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
           ? { failedAt: outcome.failedAt }
           : {};
       return { name: "complete_context_action", sessionId, actionId, outcome: { ok: false, ...failedAt } };
+    }
+
+    case "list_history": {
+      const workspaceId = id(raw.workspaceId);
+      if (!workspaceId) return null;
+      const command: Extract<RuntimeCommand, { name: "list_history" }> = { name: "list_history", workspaceId };
+      if (raw.before !== undefined && raw.before !== null) {
+        const before = raw.before as { lastActivityAt?: unknown; sessionId?: unknown };
+        const sessionId = id(before.sessionId);
+        if (!sessionId || typeof before.lastActivityAt !== "number" || !Number.isFinite(before.lastActivityAt)) return null;
+        command.before = { lastActivityAt: before.lastActivityAt, sessionId };
+      }
+      if (raw.limit !== undefined && raw.limit !== null) {
+        if (typeof raw.limit !== "number" || !Number.isInteger(raw.limit) || raw.limit < 1 || raw.limit > MAX_HISTORY_PAGE) return null;
+        command.limit = raw.limit;
+      }
+      return command;
+    }
+
+    case "get_history": {
+      const workspaceId = id(raw.workspaceId);
+      const sessionId = id(raw.sessionId);
+      return workspaceId && sessionId ? { name: "get_history", workspaceId, sessionId } : null;
+    }
+
+    case "record_workspace_change": {
+      const sessionId = id(raw.sessionId);
+      const change = raw.change as Record<string, unknown> | null | undefined;
+      if (!sessionId || !change || typeof change !== "object") return null;
+      const changeId = id(change.id);
+      if (!changeId || typeof change.at !== "number" || !Number.isFinite(change.at) || typeof change.ok !== "boolean") return null;
+      const planId = optionalId(change.planId);
+      if (planId === null) return null;
+      if (!Array.isArray(change.steps) || change.steps.length > MAX_RECORDED_STEPS) return null;
+      for (const snapshot of [change.before, change.after]) {
+        if (snapshot !== undefined && (!Array.isArray(snapshot) || snapshot.length > MAX_RECORDED_COLLECTIONS)) return null;
+      }
+      // Shape only. The host revalidates every step and collection against
+      // the session's own workspace (lib/agents/activity/history.ts) before
+      // keeping any of it.
+      return {
+        name: "record_workspace_change",
+        sessionId,
+        change: {
+          id: changeId,
+          at: change.at,
+          ok: change.ok,
+          ...(planId !== undefined ? { planId } : {}),
+          steps: change.steps as WorkspaceChangeStep[],
+          ...(change.before !== undefined ? { before: change.before as Collection[] } : {}),
+          ...(change.after !== undefined ? { after: change.after as Collection[] } : {}),
+        },
+      };
+    }
+
+    case "record_workspace_undo": {
+      const workspaceId = id(raw.workspaceId);
+      const sessionId = id(raw.sessionId);
+      const changeId = id(raw.changeId);
+      if (!workspaceId || !sessionId || !changeId) return null;
+      if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at < 0) return null;
+      return { name: "record_workspace_undo", workspaceId, sessionId, changeId, at: raw.at };
     }
   }
 }
