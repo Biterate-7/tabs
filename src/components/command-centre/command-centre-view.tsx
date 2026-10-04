@@ -1076,8 +1076,8 @@ export function CommandCentreView({
           history={
             <AgentHistoryList
               // A runtime that cannot be reached cannot be asked — never "no
-              // activity", and never "doesn't keep history" either. A list
-              // already read stays on screen while it reconnects.
+              // activity", and never "doesn't keep history" either. (Across a
+              // runtime restart the hook keeps the list it read while it re-reads.)
               state={!runtime.loading && !runtime.status && history.state.kind !== "ready" ? { kind: "disconnected" } : history.state}
               selectedSessionId={shownHistory?.sessionId ?? null}
               onSelect={selectHistorySession}

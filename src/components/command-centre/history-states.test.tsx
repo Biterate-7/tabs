@@ -3,6 +3,8 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { AgentHistoryList } from "./agent-history-list"
 import { HistorySessionView } from "./history-session-view"
+import { SessionListRow } from "./session-list"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { formatClockTime } from "@/lib/time-format"
 import type { AgentHistoryListState } from "@/hooks/use-agent-history"
 import type { AgentHistorySession } from "@/lib/agents/activity/history"
@@ -76,6 +78,21 @@ describe("the agent history list", () => {
     expect(region.getAllByText(/Codex/).length).toBeGreaterThan(0)
     expect(region.queryByText(/openai-codex|OpenAI \/ Codex/)).toBeNull()
     expect(region.getByText(formatClockTime(NOW - 2 * HOUR))).toBeTruthy()
+  })
+})
+
+describe("an untitled session reads the same live and in history", () => {
+  it("is named by its agent in the live list — not by its status beside the status pill", () => {
+    render(
+      <ul>
+        <SessionListRow status="ready" title={agentDisplayName("gemini")} agentName={agentDisplayName("gemini")} workspaceName="Research" time="now" selected={false} onSelect={vi.fn()} />
+      </ul>
+    )
+    const row = screen.getByRole("button")
+    expect(row.textContent).toContain("Gemini CLI")
+    expect(row.textContent).not.toMatch(/Ready.*Ready/)
+    // The agent is not named twice when it is the title.
+    expect(row.textContent!.match(/Gemini CLI/g)).toHaveLength(1)
   })
 })
 

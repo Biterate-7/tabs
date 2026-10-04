@@ -193,6 +193,17 @@ describe("runtime status is reported truthfully", () => {
  * Empty state
  * ------------------------------------------------------------------ */
 
+describe("an untitled live session", () => {
+  it("is named by its agent in the session list, as it will be in history — never 'Ready · Ready'", async () => {
+    const runtime = createScriptedRuntime({ sessions: [scriptedSession({ status: "ready" })] })
+    renderCentre(runtime)
+    const list = within(await screen.findByRole("navigation", { name: "Agent sessions" }))
+    const row = await list.findByRole("button", { name: /Claude Code/ })
+    expect(row.textContent).not.toMatch(/Ready.*Ready/)
+    expect(row.textContent).not.toMatch(/claude-code/)
+  })
+})
+
 describe("the empty state", () => {
   it("never leaves an agent that is not ready as a dead end: it says why and offers the fix", async () => {
     const runtime = createScriptedRuntime({

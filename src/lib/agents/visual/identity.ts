@@ -1,5 +1,6 @@
-import { UNKNOWN_AGENT_NAME, platformProvider, providerDisplayName } from "@/lib/agents/platform/catalog";
+import { UNKNOWN_AGENT_NAME, platformProvider } from "@/lib/agents/platform/catalog";
 import { agentVisualIdentity } from "./app-identities";
+import { hasAgentVisualIdentity } from "./registry";
 import type { PlatformFeature } from "@/lib/agents/platform/catalog";
 import type { AgentMarkComponent } from "./types";
 
@@ -33,6 +34,10 @@ import type { AgentMarkComponent } from "./types";
  * arrives with an id like `cursor-agent`. That id is an internal key, so it
  * is not printed: the agent reads as "Unknown agent" with the generic mark,
  * and everything around it keeps working.
+ *
+ * A provider the catalog does not ship but a host registered a visual
+ * identity for (`registerAgentVisualIdentity`, the extensibility seam) is
+ * named by that registration — its own words, chosen on purpose.
  */
 export type AgentDisplayIdentity = {
   /** The stored provider id. A key for lookups and marks — never rendered as text. */
@@ -62,15 +67,16 @@ export function agentIdentity(provider: string | undefined | null): AgentDisplay
   const visual = agentVisualIdentity(provider);
   const spec = provider ? platformProvider(provider as Parameters<typeof platformProvider>[0]) : undefined;
   if (!spec) {
+    const name = agentDisplayName(provider);
     return {
       providerId: provider ?? "",
-      displayName: UNKNOWN_AGENT_NAME,
-      shortName: UNKNOWN_AGENT_NAME,
+      displayName: name,
+      shortName: name,
       brandName: "",
       icon: visual.icon,
       accentColor: visual.accentColor,
       capabilities: { chat: false, sessions: false, features: [] },
-      known: false,
+      known: Boolean(provider && hasAgentVisualIdentity(provider)),
     };
   }
   return {
@@ -87,5 +93,8 @@ export function agentIdentity(provider: string | undefined | null): AgentDisplay
 
 /** The agent's name, as every product surface says it. Never a provider id. */
 export function agentDisplayName(provider: string | undefined | null): string {
-  return providerDisplayName(provider);
+  const spec = provider ? platformProvider(provider as Parameters<typeof platformProvider>[0]) : undefined;
+  if (spec) return spec.displayName;
+  // A host-registered identity names itself; anything else is the registry's "Unknown agent".
+  return provider && hasAgentVisualIdentity(provider) ? agentVisualIdentity(provider).displayName : UNKNOWN_AGENT_NAME;
 }

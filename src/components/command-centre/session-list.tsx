@@ -57,7 +57,8 @@ function SessionRow({
   return (
     <SessionListRow
       status={view.status}
-      title={view.title ?? SESSION_STATUS_LABEL[view.status]}
+      // Untitled, it is named by its agent — as the same session is in agent history.
+      title={view.title ?? agentName}
       agentName={agentName}
       {...(workspaceName ? { workspaceName } : {})}
       {...(projectName ? { projectName } : {})}

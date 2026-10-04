@@ -263,3 +263,11 @@ describe("one vocabulary for status, approvals and failures (UX consistency pass
     expect(RUNTIME_ERROR_PRESENTATION.runtime_disconnected.reconnect).toBe(true);
   });
 });
+
+describe("the conversation and the timeline name a file edit the same way", () => {
+  it("says Edited — never Modified next to the timeline's Edited", async () => {
+    const { EVENT_PRESENTATION } = await import("./presentation");
+    expect(EVENT_PRESENTATION.file_modified.label).toBe("Edited");
+    expect(EVENT_PRESENTATION.file_created.label).toBe("Created");
+  });
+});

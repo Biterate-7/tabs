@@ -271,7 +271,8 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   tool_finished: { register: "activity", label: "Tool", tone: "idle" },
   file_read: { register: "activity", label: "Read", tone: "idle" },
   file_created: { register: "activity", label: "Created", tone: "good" },
-  file_modified: { register: "activity", label: "Modified", tone: "good" },
+  // "Edited", as the activity timeline and the inspector say it.
+  file_modified: { register: "activity", label: "Edited", tone: "good" },
   command_started: { register: "activity", label: "Command", tone: "live" },
   command_finished: { register: "activity", label: "Command", tone: "idle" },
   approval_requested: { register: "lifecycle", label: "Asked for approval", tone: "bad" },

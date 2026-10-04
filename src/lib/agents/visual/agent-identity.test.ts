@@ -103,3 +103,21 @@ describe("every agent surface asks the one identity", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("a provider a host registered", () => {
+  it("is named by its registration — still never by its id", async () => {
+    const { registerAgentVisualIdentity, clearAgentVisualIdentities, FALLBACK_VISUAL_IDENTITY } = await import("./registry");
+    const { resetAgentVisualIdentitySeeding } = await import("./app-identities");
+    registerAgentVisualIdentity({ ...FALLBACK_VISUAL_IDENTITY, id: "acme-agent" as never, displayName: "Acme Agent" });
+    try {
+      expect(agentDisplayName("acme-agent")).toBe("Acme Agent");
+      expect(agentIdentity("acme-agent")).toMatchObject({ displayName: "Acme Agent", known: true, capabilities: { sessions: false } });
+      // A catalog provider is still the catalog's, whatever is registered.
+      expect(agentDisplayName("openai-codex")).toBe("Codex");
+    } finally {
+      clearAgentVisualIdentities();
+      resetAgentVisualIdentitySeeding();
+    }
+    expect(agentDisplayName("acme-agent")).toBe(UNKNOWN_AGENT_NAME);
+  });
+});
