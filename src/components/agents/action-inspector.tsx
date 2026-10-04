@@ -5,8 +5,8 @@ import { ArrowRight, ChevronLeft, CircleAlert, CircleCheck, CircleDot, CircleMin
 import { Button } from "@/components/ui/button"
 import { AgentIcon } from "./agent-icon"
 import { AgentStatusPill } from "./agent-status-pill"
-import { formatTimeAgo } from "./agent-session-presentation"
-import { ACTION_STATUS_LABEL, ACTION_VISUAL_STATE } from "@/lib/agents/activity/inspector"
+import { formatRelativeTime, formatTimestamp } from "@/lib/time-format"
+import { ACTION_STATUS_LABEL, ACTION_VISUAL_STATE, UNDO_REFUSED_WORKSPACE_CHANGED } from "@/lib/agents/activity/inspector"
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import type { ActionChainStep, ActionChangeLine, ActionInspection } from "@/lib/agents/activity/inspector"
@@ -53,9 +53,7 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types"
  */
 
 function timeLabel(at: number | undefined, now: number): string | null {
-  if (at === undefined) return null
-  if (now - at < 60_000) return "Just now"
-  return formatTimeAgo(at, now)
+  return formatRelativeTime(at, now)
 }
 
 function ChainGlyph({ step }: { step: ActionChainStep }) {
@@ -277,7 +275,7 @@ export function ActionInspector({
             {inspection.handoff.createdAt !== undefined && (
               <Fact label="Created">
                 <time dateTime={new Date(inspection.handoff.createdAt).toISOString()}>
-                  {new Date(inspection.handoff.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                  {formatTimestamp(inspection.handoff.createdAt, now)}
                 </time>
               </Fact>
             )}
@@ -349,7 +347,7 @@ export function ActionInspector({
       {phase.kind === "failed" && (
         <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
           <p className="text-body-sm text-foreground">Couldn&apos;t undo this change</p>
-          <p className="mt-0.5 text-meta text-tertiary">The workspace has not been modified.</p>
+          <p className="mt-0.5 text-meta text-tertiary">{UNDO_REFUSED_WORKSPACE_CHANGED} Nothing was changed.</p>
           <div className="mt-2 flex items-center justify-end gap-1.5">
             <Button type="button" size="sm" variant="ghost" onClick={() => setPhase({ kind: "idle" })}>
               Cancel

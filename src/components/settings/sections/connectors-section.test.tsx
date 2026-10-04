@@ -41,10 +41,12 @@ describe("the default, unconnected state", () => {
 
     // Once under Connections (how it signs in) and once under observation.
     expect(screen.getAllByText("Claude Code")).toHaveLength(2)
-    expect(screen.getByText("OpenAI / Codex")).toBeTruthy()
-    expect(screen.getByText("Gemini")).toBeTruthy()
-    expect(screen.getByText("Grok")).toBeTruthy()
-    expect(screen.getByText("Custom agent")).toBeTruthy()
+    // The same names the Command Centre uses — one catalog, never "OpenAI / Codex" here and "Codex" there.
+    expect(screen.getAllByText("Codex").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Gemini CLI").length).toBeGreaterThan(0)
+    expect(screen.queryByText("OpenAI / Codex")).toBeNull()
+    expect(screen.getAllByText("Grok Build").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Custom MCP agent").length).toBeGreaterThan(0)
   })
 
   it("says plainly that nothing is connected, rather than showing a dead page", () => {
@@ -109,7 +111,7 @@ describe("opening a connector", () => {
     await user.click(screen.getByRole("button", { name: /All connectors/ }))
 
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0)
-    expect(screen.getByText("Gemini")).toBeTruthy()
+    expect(screen.getAllByText("Gemini CLI").length).toBeGreaterThan(0)
   })
 })
 

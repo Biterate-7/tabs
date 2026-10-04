@@ -1,10 +1,4 @@
-import {
-  CLAUDE_CODE_DESCRIPTOR,
-  CODEX_DESCRIPTOR,
-  CUSTOM_DESCRIPTOR,
-  GEMINI_DESCRIPTOR,
-  GROK_DESCRIPTOR,
-} from "@/lib/agents/connectors/catalog";
+import { platformProvider } from "@/lib/agents/platform/catalog";
 import {
   ClaudeCodeMark,
   CodexMark,
@@ -31,10 +25,11 @@ import type { AgentVisualIdentity } from "./types";
  *
  * ## Display names are not restated here
  *
- * Every `displayName` below is read from the connector descriptor rather than
- * written out again. Two independently-typed copies of "OpenAI / Codex" would
- * drift the first time one was edited, and the settings page and the world
- * would then disagree about what the same agent is called.
+ * Every `displayName` below is read from the platform catalog — the provider
+ * registry every product surface names agents from (see ./identity.ts) —
+ * rather than written out again. Two independently-typed copies of a name
+ * drift the first time one is edited: this file once read "OpenAI / Codex"
+ * from a second table while the session list said "Codex".
  *
  * ## Identities exist for providers that cannot be observed yet
  *
@@ -56,6 +51,11 @@ import type { AgentVisualIdentity } from "./types";
  * error tone whatever accent its identity carries, because a brand colour
  * must not be able to make a broken run look fine.
  */
+/** The catalog's name for a provider Hubble ships. */
+function nameOf(provider: Parameters<typeof platformProvider>[0]): string {
+  return platformProvider(provider)?.displayName ?? provider;
+}
+
 const ACCENTS = {
   claudeCode: "#d0784f",
   codex: "#4fae8f",
@@ -67,31 +67,31 @@ export function defaultAgentVisualCatalog(): AgentVisualIdentity[] {
   return [
     {
       id: "claude-code",
-      displayName: CLAUDE_CODE_DESCRIPTOR.displayName,
+      displayName: nameOf("claude-code"),
       icon: ClaudeCodeMark,
       accentColor: ACCENTS.claudeCode,
     },
     {
       id: "openai-codex",
-      displayName: CODEX_DESCRIPTOR.displayName,
+      displayName: nameOf("openai-codex"),
       icon: CodexMark,
       accentColor: ACCENTS.codex,
     },
     {
       id: "gemini",
-      displayName: GEMINI_DESCRIPTOR.displayName,
+      displayName: nameOf("gemini"),
       icon: GeminiMark,
       accentColor: ACCENTS.gemini,
     },
     {
       id: "grok",
-      displayName: GROK_DESCRIPTOR.displayName,
+      displayName: nameOf("grok"),
       icon: GrokMark,
       accentColor: ACCENTS.grok,
     },
     {
       id: "custom",
-      displayName: CUSTOM_DESCRIPTOR.displayName,
+      displayName: nameOf("custom"),
       icon: CustomAgentMark,
       // No accent of its own: a custom agent belongs to whoever brought it,
       // and inventing a brand colour for someone else's integration would be

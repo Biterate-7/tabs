@@ -34,8 +34,8 @@ import {
   workspaceLinkOf,
 } from "@/lib/agents/command-centre/working-context"
 import { focusFromAttachments } from "@/lib/agents/session-context/focus"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
-import { agentDisplayName, canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { phaseSentence, sessionPrerequisite } from "@/lib/agents/platform/lifecycle"
@@ -183,7 +183,7 @@ export function DemoCommandCentre({
   const workspaceName = workspaceNameOf(sessionWorkspaceId)
   const own = selected ? contextOfSession(selected.view) : null
   const contextView = own ? describeWorkingContext(own, liveWorld) : null
-  const agentName = selected ? agentVisualIdentity(selected.view.provider).displayName : "The agent"
+  const agentName = selected ? agentDisplayName(selected.view.provider) : "The agent"
   const delivered = selected?.view.focus?.delivered
 
   /* ---------------- What the agent did — the app's own derivation, on the demo's records. */
@@ -268,7 +268,7 @@ export function DemoCommandCentre({
   const openHistory = !selected
     ? (state.history.find((entry) => entry.session.sessionId === state.selectedHistoryId && entry.session.workspaceId === historyWorkspaceId) ?? null)
     : null
-  const historyAgentName = openHistory ? agentVisualIdentity(openHistory.session.provider).displayName : "The agent"
+  const historyAgentName = openHistory ? agentDisplayName(openHistory.session.provider) : "The agent"
   const historyWorkspaceName = workspaceNameOf(openHistory?.session.workspaceId)
   const historyActivity = useHistorySessionActivity({
     detail: openHistory,

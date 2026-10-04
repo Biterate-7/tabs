@@ -299,7 +299,7 @@ describe("requests from the workspace", () => {
     expect(await screen.findByRole("button", { name: "Context: 2 tabs" })).toBeTruthy()
     expect(commandsNamed(runtime, "attach_context")).toHaveLength(0)
 
-    await user.click(within(screen.getByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: "Start" }))
+    await user.click(within(screen.getByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
     const dialog = await screen.findByRole("dialog", { name: "New agent session" })
     expect(within(dialog).getByText("2 tabs")).toBeTruthy()
     await user.click(within(dialog).getByRole("button", { name: /start session/i }))

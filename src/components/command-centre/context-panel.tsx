@@ -6,7 +6,7 @@ import { WorkingContextDetails } from "./working-context-control"
 import { providerRowState } from "@/lib/agents/command-centre/presentation"
 import { WORKSPACE_LINK_DETAIL, changeAccessLabel } from "@/lib/agents/command-centre/working-context"
 import { describeStep } from "@/lib/agents/command-centre/workspace-activity"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { cn } from "@/lib/utils"
 import type { WorkingContextActions } from "./working-context-control"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
@@ -186,7 +186,7 @@ export function ContextPanel({
           runtimeStatus.providers.map((provider) => (
             <div key={provider.provider} className="flex items-baseline justify-between gap-3 py-0.5">
               <span className="min-w-0 truncate text-label text-muted-foreground">
-                {agentVisualIdentity(provider.provider).displayName}
+                {agentDisplayName(provider.provider)}
               </span>
               <span className={cn("shrink-0 text-label", AGENT_TONE_TEXT_CLASS[providerRowState(provider).tone])}>
                 {providerRowState(provider).label}

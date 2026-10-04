@@ -125,6 +125,65 @@ export const SESSION_STATUS_RECOVERY: Record<AgentSessionStatus, string | null> 
   disconnected: "Reconnect the runtime, then start a new session.",
 };
 
+/* ------------------------------------------------------------------ *
+ * Approvals
+ * ------------------------------------------------------------------ */
+
+/**
+ * What became of an approval, in one word each — the live card, the activity
+ * timeline, the conversation, the Action Inspector and agent history all say
+ * these, so an approval is never "granted" in one place and "approved" in the
+ * next. Expired (nobody answered in time) and withdrawn (the session ended or
+ * the agent moved on first) stay apart: one is the clock, the other the agent.
+ */
+export type ApprovalState = "waiting" | "approved" | "rejected" | "expired" | "withdrawn";
+
+export const APPROVAL_STATE_LABEL: Record<ApprovalState, string> = {
+  waiting: "Waiting for approval",
+  approved: "Approved",
+  rejected: "Rejected",
+  expired: "Expired",
+  withdrawn: "Withdrawn",
+};
+
+/** An approval nobody answered, as a timeline row names it — the noun is needed where it stands alone. */
+export const APPROVAL_CLOSED_TITLE = {
+  expired: "Approval expired",
+  withdrawn: "Approval withdrawn",
+} as const;
+
+/** The request row once it has been answered, so the answer has its own row beneath it. */
+export const APPROVAL_REQUESTED_TITLE = "Asked for approval";
+
+/* ------------------------------------------------------------------ *
+ * Agent failures, named
+ * ------------------------------------------------------------------ */
+
+/** "Codex stopped unexpectedly" — an agent that failed, never "the agent failed" or an error code. */
+export function agentStoppedUnexpectedly(agentName: string): string {
+  return `${agentName} stopped unexpectedly`;
+}
+
+/**
+ * A refusal's title with the agent named where the failure is the agent's.
+ *
+ * `RUNTIME_ERROR_PRESENTATION` is fixed text for every code; three codes are
+ * about one agent, and a person reads "Codex didn't respond" faster than "The
+ * agent did not answer". `starting` is for a session that never began, where
+ * the honest sentence is that Hubble could not reach the agent at all.
+ */
+export function runtimeErrorTitle(code: RuntimeErrorCode, agentName?: string, options: { starting?: boolean } = {}): string {
+  if (agentName) {
+    if (options.starting && (code === "provider_error" || code === "timeout" || code === "provider_unavailable")) {
+      return `Couldn't connect to ${agentName}`;
+    }
+    if (code === "provider_error") return agentStoppedUnexpectedly(agentName);
+    if (code === "timeout") return `${agentName} didn't respond`;
+    if (code === "authentication_required") return `${agentName} isn't signed in`;
+  }
+  return RUNTIME_ERROR_PRESENTATION[code].title;
+}
+
 export function sessionStatusTone(status: AgentSessionStatus): AgentVisualTone {
   return AGENT_VISUAL_STATE_PRESENTATION[SESSION_VISUAL_STATE[status]].tone;
 }
@@ -215,13 +274,13 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   file_modified: { register: "activity", label: "Modified", tone: "good" },
   command_started: { register: "activity", label: "Command", tone: "live" },
   command_finished: { register: "activity", label: "Command", tone: "idle" },
-  approval_requested: { register: "lifecycle", label: "Approval requested", tone: "bad" },
-  approval_granted: { register: "lifecycle", label: "Approval granted", tone: "good" },
-  approval_denied: { register: "lifecycle", label: "Approval denied", tone: "bad" },
+  approval_requested: { register: "lifecycle", label: "Asked for approval", tone: "bad" },
+  approval_granted: { register: "lifecycle", label: "Approved", tone: "good" },
+  approval_denied: { register: "lifecycle", label: "Rejected", tone: "bad" },
   waiting_for_input: { register: "lifecycle", label: "Waiting for input", tone: "idle" },
   error: { register: "lifecycle", label: "Error", tone: "bad" },
-  run_completed: { register: "lifecycle", label: "Run completed", tone: "good" },
-  run_cancelled: { register: "lifecycle", label: "Run cancelled", tone: "muted" },
+  run_completed: { register: "lifecycle", label: "Finished", tone: "good" },
+  run_cancelled: { register: "lifecycle", label: "Cancelled", tone: "muted" },
   context_loaded: { register: "lifecycle", label: "Workspace context loaded", tone: "muted" },
   context_read: { register: "activity", label: "Hubble", tone: "idle" },
   handoff_sent: { register: "lifecycle", label: "Handed off", tone: "muted" },
@@ -451,8 +510,8 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     reconnect: false,
   },
   runtime_disconnected: {
-    title: "Runtime disconnected",
-    action: "Hubble lost the local runtime. Reconnect to continue.",
+    title: "Agent runtime disconnected",
+    action: "Hubble lost the connection to the agent runtime. Reconnect to continue.",
     reconnect: true,
   },
   ownership_denied: {
@@ -498,13 +557,13 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     reconnect: false,
   },
   context_invalid: {
-    title: "Context could not be attached",
-    action: "Rebuild the context selection and attach it again.",
+    title: "Couldn't load workspace context",
+    action: "The workspace changed or the selection no longer fits it. Choose the context again, then try again.",
     reconnect: false,
   },
   provider_error: {
-    title: "The agent failed",
-    action: "The provider stopped on an error. Check the event stream, then retry.",
+    title: "The agent stopped unexpectedly",
+    action: "Check the conversation for what it last said, then try again.",
     reconnect: false,
   },
   cancellation: {
@@ -513,8 +572,8 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
     reconnect: false,
   },
   timeout: {
-    title: "The agent did not answer",
-    action: "The provider timed out. Try again.",
+    title: "The agent didn't respond",
+    action: "It took too long to answer. Try again.",
     reconnect: false,
   },
   invalid_request: {

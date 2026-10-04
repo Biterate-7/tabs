@@ -111,7 +111,7 @@ describe("the roster", () => {
 
     const roster = await screen.findByRole("region", { name: /connected agents/i })
     expect(
-      await within(roster).findByRole("button", { name: /claude-code — Waiting for your approval/i })
+      await within(roster).findByRole("button", { name: /Claude Code — Waiting for your approval/i })
     ).toBeTruthy()
     expect(within(roster).getByText(/Launch plan/)).toBeTruthy()
   })

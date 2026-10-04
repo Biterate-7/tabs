@@ -41,6 +41,12 @@ export type AgentHistoryListState =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "unavailable" }
+  /**
+   * The runtime cannot be reached right now — set by the host, never by this
+   * hook. Not "unavailable": this Hubble may well keep history; it just
+   * cannot be asked until the runtime is back.
+   */
+  | { kind: "disconnected" }
   | { kind: "failed" }
   | { kind: "ready"; workspaceId: string; sessions: readonly AgentHistorySession[]; hasMore: boolean; loadingMore: boolean }
 

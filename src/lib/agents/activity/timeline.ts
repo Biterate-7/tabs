@@ -1,5 +1,13 @@
 import { describeStep, describeUndo } from "@/lib/agents/command-centre/workspace-activity";
-import { isLiveSession, isTerminalSession, toolStage } from "@/lib/agents/command-centre/presentation";
+import {
+  APPROVAL_CLOSED_TITLE,
+  APPROVAL_REQUESTED_TITLE,
+  APPROVAL_STATE_LABEL,
+  agentStoppedUnexpectedly,
+  isLiveSession,
+  isTerminalSession,
+  toolStage,
+} from "@/lib/agents/command-centre/presentation";
 import { relativePathBasename } from "@/lib/agents/paths";
 import { agentDisplayName, handoffPassedLine } from "@/lib/agents/handoff/handoff";
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
@@ -23,7 +31,7 @@ import type {
  *     Read workspace                   · 18 tabs · 3 collections
  *     Found 14 relevant tabs           · Searched Research
  *     Asked for approval               · Create collection “Physics” · 4 tabs
- *     Action approved
+ *     Approved
  *     Created collection “Physics”     · 4 tabs
  *
  * ## Where every entry comes from
@@ -760,7 +768,7 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
           id: `approval:${approvalId}`,
           kind: "approval_required",
           status: "waiting",
-          title: "Waiting for approval",
+          title: APPROVAL_STATE_LABEL.waiting,
           ...(description ? { description } : {}),
           at: event.timestamp,
           refs: { approvalId, sequence: event.sequence },
@@ -781,7 +789,7 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
           id: `decision:${approvalId}`,
           kind: granted ? "action_approved" : "action_rejected",
           status: granted ? "completed" : "info",
-          title: granted ? "Action approved" : "Action rejected",
+          title: granted ? APPROVAL_STATE_LABEL.approved : APPROVAL_STATE_LABEL.rejected,
           ...(request?.description ? { description: request.description } : {}),
           at: event.timestamp,
           refs: { approvalId, sequence: event.sequence },
@@ -808,7 +816,7 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
           id: `error:${event.id}`,
           kind: "error",
           status: "failed",
-          title: `${agentName} stopped on an error`,
+          title: agentStoppedUnexpectedly(agentName),
           ...(description ? { description } : {}),
           at: event.timestamp,
           refs: { sequence: event.sequence },
@@ -834,8 +842,8 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
           id: `cancelled:${event.id}`,
           kind: "cancelled",
           status: "info",
-          title: "Stopped",
-          description: "The run was cancelled",
+          title: "Cancelled",
+          description: "The run was stopped before it finished",
           at: event.timestamp,
           refs: { sequence: event.sequence },
         });
@@ -916,7 +924,7 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
     entry.status = "info";
     if (decided.has(approvalId)) {
       entry.kind = "action_requested";
-      entry.title = "Asked for approval";
+      entry.title = APPROVAL_REQUESTED_TITLE;
       continue;
     }
     const outcome = outcomeByApproval.get(approvalId);
@@ -924,8 +932,8 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
     entry.kind = "approval_closed";
     entry.title =
       outcome?.status === "expired" || (known && known.expiresAt <= now)
-        ? "Approval expired"
-        : "Approval withdrawn";
+        ? APPROVAL_CLOSED_TITLE.expired
+        : APPROVAL_CLOSED_TITLE.withdrawn;
   }
 
   /* ---------------- What the Command Centre applied, placed by when. */
@@ -1147,11 +1155,11 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
       case "disconnected":
         return { kind: "disconnected" as const, status: "failed" as const, title: `${agentName} disconnected`, action: true };
       case "failed":
-        return { kind: "error" as const, status: "failed" as const, title: `${agentName} stopped on an error`, action: true };
+        return { kind: "error" as const, status: "failed" as const, title: agentStoppedUnexpectedly(agentName), action: true };
       case "cancelled":
-        return { kind: "ended" as const, status: "info" as const, title: "Session ended", action: false };
+        return { kind: "ended" as const, status: "info" as const, title: "Session cancelled", action: false };
       case "completed":
-        return { kind: "completed" as const, status: "completed" as const, title: "Session complete", action: false };
+        return { kind: "completed" as const, status: "completed" as const, title: "Session completed", action: false };
       default:
         return undefined;
     }

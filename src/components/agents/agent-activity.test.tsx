@@ -136,7 +136,7 @@ describe("undo", () => {
     expect(screen.queryByRole("group", { name: "Undo this change?" })).toBeNull()
   })
 
-  it("says so when undo is refused — the workspace has not been modified — and offers Try again", async () => {
+  it("says so when undo is refused — in plain words, nothing changed — and offers Try again", async () => {
     const user = userEvent.setup()
     const onUndo = vi.fn(() => false)
     renderActivity({ onUndo })
@@ -145,7 +145,7 @@ describe("undo", () => {
     await user.click(screen.getByRole("button", { name: "Undo change" }))
     const alert = within(screen.getByRole("alert"))
     expect(alert.getByText("Couldn't undo this change")).toBeTruthy()
-    expect(alert.getByText("The workspace has not been modified.")).toBeTruthy()
+    expect(alert.getByText("This change can't be undone because the workspace has changed since it was made. Nothing was changed.")).toBeTruthy()
     await user.click(alert.getByRole("button", { name: "Try again" }))
     expect(onUndo).toHaveBeenCalledTimes(2)
     expect(onUndo).toHaveBeenLastCalledWith("ctxa-1")

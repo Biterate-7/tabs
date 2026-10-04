@@ -29,7 +29,7 @@ import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { getOnboardingState } from "@/lib/onboarding"
 import { isDesktop } from "@/lib/platform/detect"
 import { modKeyLabel } from "@/lib/keyboard"
-import { useAgentConnectors } from "@/hooks/use-agent-connectors"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
 import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { Workspace } from "@/lib/workspace/types"
@@ -115,7 +115,6 @@ const PROVIDERS_FAILURE: Record<AgentRequestFailure, string> = {
 
 export function ProvidersSection() {
   const connections = useProviderConnections()
-  const connectors = useAgentConnectors()
 
   return (
     <div>
@@ -147,7 +146,7 @@ export function ProvidersSection() {
           <ProviderConnectionCard
             key={entry.provider}
             provider={entry.provider}
-            providerName={connectors.view(entry.provider)?.descriptor.displayName ?? entry.provider}
+            providerName={agentDisplayName(entry.provider)}
             connection={connections.forProvider(entry.provider)}
             input={entry.input}
             listFailure={connections.failure}

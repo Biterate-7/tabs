@@ -29,7 +29,7 @@ import {
   availableModes,
   startBlocker,
 } from "@/lib/agents/command-centre/remote"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { AUTH_METHOD_LABEL } from "@/lib/agents/credentials/types"
 import { cn } from "@/lib/utils"
 import type { AddProjectInput, AddProjectOutcome } from "@/hooks/use-agent-projects"
@@ -364,7 +364,7 @@ export function NewSessionDialog({
                 providers.map((candidate) => {
                   const unconnected = connectionBlocker?.(candidate.provider)
                   const reason = providerUnavailableReason(candidate) ?? unconnected?.label
-                  const identity = agentVisualIdentity(candidate.provider)
+                  const agentName = agentDisplayName(candidate.provider)
                   const selected = chosen === candidate.provider
 
                   return (
@@ -388,7 +388,7 @@ export function NewSessionDialog({
                       />
                       <AgentIcon connector={candidate.provider} size="sm" />
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-body-sm text-foreground">{identity.displayName}</span>
+                        <span className="truncate text-body-sm text-foreground">{agentName}</span>
                         {unconnected?.detail && (
                           <span className="text-meta text-tertiary">{unconnected.detail}</span>
                         )}
@@ -604,7 +604,7 @@ export function NewSessionDialog({
                 {folderGrant && chosen && (
                   <div data-testid="folder-grant" className="flex flex-col gap-0.5">
                     <p className="text-label text-tertiary">
-                      {agentVisualIdentity(chosen).displayName} may, in this folder
+                      {agentDisplayName(chosen)} may, in this folder
                     </p>
                     {folderGrant.length === 0 ? (
                       <p className="text-body-sm text-muted-foreground">

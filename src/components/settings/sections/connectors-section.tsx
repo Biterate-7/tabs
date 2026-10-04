@@ -32,6 +32,7 @@ import type { PlatformSurface } from "@/lib/agents/platform/catalog"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
 import type { AgentProviderId, ConnectorStatusKind } from "@/lib/agents/connectors/types"
 import type { ProviderUsage } from "@/lib/agents/connectors/usage"
+import { formatRelativeTime } from "@/lib/time-format"
 import type { AgentState } from "@/lib/agents/types"
 import type { RuntimeStatus } from "@/lib/agents/runtime/protocol"
 
@@ -105,17 +106,6 @@ function useAgentSnapshot(manager: ConnectorManager): AgentSnapshot {
   return snapshot
 }
 
-function relativeTime(timestamp: number | undefined, now: number): string | null {
-  if (!timestamp) return null
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1000))
-  if (seconds < 5) return "just now"
-  if (seconds < 60) return `${seconds} sec ago`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} hr ago`
-  return `${Math.round(hours / 24)} days ago`
-}
 
 /** One line of real numbers, or nothing. Never "0 runs · 0 artifacts" for a provider that has done nothing. */
 function usageLine(usage: ProviderUsage): string | null {
@@ -385,7 +375,7 @@ function ConnectorDetail({
   onOpenConnection: (provider: AgentProviderId) => void
 }) {
   const visual = statusVisual(view.status.kind)
-  const lastObservation = relativeTime(view.status.lastObservationAt, now)
+  const lastObservation = formatRelativeTime(view.status.lastObservationAt, now)
   const connected = view.status.kind === "connected"
   const live = connected || view.status.kind === "reconnecting" || view.status.kind === "connecting"
 

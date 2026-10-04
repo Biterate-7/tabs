@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ArrowRight, CircleAlert, CircleCheck, CircleDot, LoaderCircle } from "lucide-react"
+import { ArrowLeft, ArrowRight, CircleAlert, CircleCheck, CircleDot, LoaderCircle } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -15,8 +15,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { AgentIcon } from "@/components/agents/agent-icon"
-import { RUNTIME_ERROR_PRESENTATION } from "@/lib/agents/command-centre/presentation"
-import { HANDOFF_LIMITS, agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff"
+import { RUNTIME_ERROR_PRESENTATION, runtimeErrorTitle } from "@/lib/agents/command-centre/presentation"
+import { HANDOFF_LIMITS, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
@@ -77,7 +78,13 @@ type Phase =
   | { kind: "starting"; preview: RuntimeHandoffPreview }
   | { kind: "failed"; provider: AgentProviderId; title: string; detail: string; retry: boolean }
 
-/** One sentence for a refusal, in the runtime's own words — with the one handoff-specific case said plainly. */
+/**
+ * One sentence for a refusal, in the runtime's own words — with the
+ * handoff-specific cases said plainly. Preparing reads the source session's
+ * workspace context, so a context refusal there is "Couldn't load workspace
+ * context"; a refusal once Continue was pressed is "Couldn't start handoff",
+ * with what the runtime said beneath it. Never a code.
+ */
 function refusal(code: RuntimeErrorCode, starting: boolean): { title: string; detail: string } {
   if (code === "context_invalid" && starting) {
     return { title: "The work changed since this preview", detail: "Nothing was sent. Review what will be passed and continue again." }
@@ -86,6 +93,9 @@ function refusal(code: RuntimeErrorCode, starting: boolean): { title: string; de
     return { title: "This session can't be handed on right now", detail: "Wait for the agent to finish, or answer what it is waiting on." }
   }
   const presentation = RUNTIME_ERROR_PRESENTATION[code]
+  if (starting && !presentation.reconnect && code !== "runtime_unavailable") {
+    return { title: "Couldn't start handoff", detail: `${presentation.title}. Nothing was sent.` }
+  }
   return { title: presentation.title, detail: presentation.action }
 }
 
@@ -208,14 +218,15 @@ export function HandoffDialog({
     }
     const { handoff } = result.value
     if (handoff.status !== "ready") {
+      const why = result.value.error ? `${runtimeErrorTitle(result.value.error.code, target, { starting: true })}. ` : ""
       setPhase({
         kind: "failed",
         provider: preview.targetProvider,
-        title: handoff.failure === "context_not_delivered" ? `${target} didn't receive the handoff` : `Couldn't start a ${target} session`,
+        title: handoff.failure === "context_not_delivered" ? `${target} didn't receive the handoff` : "Couldn't start handoff",
         detail:
           handoff.failure === "context_not_delivered"
             ? `The ${target} session started, but it wasn't told anything. ${source.agentName}'s session is as it was.`
-            : `${result.value.error ? `${RUNTIME_ERROR_PRESENTATION[result.value.error.code].title} ` : ""}Nothing was changed, and ${source.agentName}'s session is as it was.`,
+            : `${why}${target}'s session couldn't be started. Nothing was changed, and ${source.agentName}'s session is as it was.`,
         retry: true,
       })
       return
@@ -272,13 +283,13 @@ export function HandoffDialog({
                     </Button>
                   ) : agent.state === "not_connected" ? (
                     <>
-                      <span className="shrink-0 text-label text-tertiary">{agent.reason ?? "Not connected"}</span>
-                      <Button type="button" size="xs" variant="outline" onClick={() => onConnect(agent.provider)}>
+                      <span className="min-w-0 shrink truncate text-label text-tertiary">{agent.reason ?? "Not connected"}</span>
+                      <Button type="button" size="xs" variant="outline" onClick={() => onConnect(agent.provider)} aria-label={`Connect ${agent.name}`}>
                         Connect
                       </Button>
                     </>
                   ) : (
-                    <span className="shrink-0 text-label text-tertiary">{agent.reason ?? "Unavailable"}</span>
+                    <span className="min-w-0 shrink truncate text-label text-tertiary">{agent.reason ?? "Unavailable"}</span>
                   )}
                 </li>
               ))}
@@ -291,14 +302,17 @@ export function HandoffDialog({
         )}
 
         {phase.kind === "preparing" && (
-          <ol aria-label="Handoff progress" className="flex flex-col">
-            <Step state="active" label="Preparing handoff" />
-          </ol>
+          <div role="status" aria-live="polite">
+            <ol aria-label="Handoff progress" className="flex flex-col">
+              <Step state="active" label={`Reviewing what ${targetName ?? "the agent"} would receive`} />
+            </ol>
+          </div>
         )}
 
         {(phase.kind === "preview" || phase.kind === "starting") && (
           <HandoffPreview
             preview={phase.preview}
+            source={source}
             workspaceName={workspaceName}
             include={include}
             onInclude={setInclude}
@@ -312,10 +326,12 @@ export function HandoffDialog({
         )}
 
         {phase.kind === "starting" && (
-          <ol aria-label="Handoff progress" className="flex flex-col border-t border-subtle pt-2">
-            <Step state="done" label="Preparing handoff" />
-            <Step state="active" label={`Starting ${targetName ?? "the agent"} and sending context`} />
-          </ol>
+          <div role="status" aria-live="polite" className="border-t border-subtle pt-2">
+            <ol aria-label="Handoff progress" className="flex flex-col">
+              <Step state="done" label="Context reviewed" />
+              <Step state="active" label={`Starting a ${targetName ?? "new"} session with this context`} />
+            </ol>
+          </div>
         )}
 
         {phase.kind === "failed" && (
@@ -343,6 +359,11 @@ export function HandoffDialog({
             </>
           ) : (
             <>
+              {/* Back to the agents, keeping the instruction typed so far. */}
+              <Button type="button" variant="ghost" className="sm:mr-auto" disabled={phase.kind === "starting"} onClick={() => setPhase({ kind: "choose" })}>
+                <ArrowLeft />
+                Back
+              </Button>
               <Button type="button" variant="ghost" disabled={phase.kind === "starting"} onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
@@ -360,6 +381,7 @@ export function HandoffDialog({
 /** Exactly what would be passed, from the runtime's preview, with a box for each mode. */
 function HandoffPreview({
   preview,
+  source,
   workspaceName,
   include,
   onInclude,
@@ -371,6 +393,7 @@ function HandoffPreview({
   disabled,
 }: {
   preview: RuntimeHandoffPreview
+  source: { provider: AgentProviderId; agentName: string; statusLabel: string }
   workspaceName?: string
   include: HandoffInclude
   onInclude: (include: HandoffInclude) => void
@@ -387,8 +410,21 @@ function HandoffPreview({
   const focus = workspace ? focusLine(workspace) : undefined
   return (
     <div className="flex min-w-0 flex-col gap-2" data-handoff-preview>
-      <dl className="flex items-baseline gap-2">
-        <dt className="w-24 shrink-0 text-eyebrow text-tertiary">Workspace</dt>
+      {/* Where you are, what is handed on, and who receives it — before anything else. */}
+      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+        <dt className="text-eyebrow text-tertiary">From</dt>
+        <dd className="flex min-w-0 items-center gap-1.5 text-body-sm text-foreground">
+          <AgentIcon connector={source.provider} size="xs" />
+          <span className="truncate">{source.agentName}</span>
+          <span className="shrink-0 text-meta text-tertiary">· {source.statusLabel}</span>
+        </dd>
+        <dt className="text-eyebrow text-tertiary">To</dt>
+        <dd className="flex min-w-0 items-center gap-1.5 text-body-sm text-foreground">
+          <AgentIcon connector={preview.targetProvider} size="xs" />
+          <span className="truncate">{target}</span>
+          <span className="shrink-0 text-meta text-tertiary">· New session</span>
+        </dd>
+        <dt className="text-eyebrow text-tertiary">Workspace</dt>
         <dd className="min-w-0 truncate text-body-sm text-foreground">{workspaceName ?? "This workspace"}</dd>
       </dl>
 
@@ -481,7 +517,7 @@ export function handoffAgentOptions(
   canStart: (provider: AgentProviderId) => boolean
 ): HandoffAgentOption[] {
   return PLATFORM_PROVIDERS.filter((spec) => spec.chat).map((spec): HandoffAgentOption => {
-    const base = { provider: spec.provider, name: platform.identity(spec.provider)?.name ?? spec.displayName }
+    const base = { provider: spec.provider, name: agentDisplayName(spec.provider) }
     if (!platform.identity(spec.provider)) return { ...base, state: "not_connected", reason: "Not connected" }
     const sessions = platform.sessionsFor(spec.provider)
     if (!sessions.available) return { ...base, state: "unavailable", reason: "Sessions unavailable" }

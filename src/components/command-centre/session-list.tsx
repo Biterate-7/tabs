@@ -4,7 +4,6 @@ import { useMemo } from "react"
 import { Plus } from "lucide-react"
 import { AgentStatusGlyph } from "@/components/agents/agent-status-glyph"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import { platformProvider } from "@/lib/agents/platform/catalog"
 import {
   SESSION_STATUS_LABEL,
   SESSION_VISUAL_STATE,
@@ -12,9 +11,10 @@ import {
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
 import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
-import { agentDisplayName } from "@/lib/agents/handoff/handoff"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { SessionHandoffLinks } from "@/lib/agents/handoff/handoff"
 import { cn } from "@/lib/utils"
+import { formatCompactTime } from "@/lib/time-format"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
 
@@ -34,17 +34,6 @@ import type { AgentSessionStatus } from "@/lib/agents/control/session"
  * a permanent "Ended (0)" is a row that never says anything.
  */
 
-function relativeTime(timestamp: number, now: number): string {
-  const elapsed = Math.max(0, now - timestamp)
-  const minutes = Math.floor(elapsed / 60_000)
-
-  if (minutes < 1) return "now"
-  if (minutes < 60) return `${minutes}m`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
-}
 
 function SessionRow({
   session,
@@ -63,7 +52,7 @@ function SessionRow({
   onSelect: () => void
 }) {
   const { view } = session
-  const agentName = platformProvider(view.provider)?.displayName ?? view.provider
+  const agentName = agentDisplayName(view.provider)
 
   return (
     <SessionListRow
@@ -72,7 +61,7 @@ function SessionRow({
       agentName={agentName}
       {...(workspaceName ? { workspaceName } : {})}
       {...(projectName ? { projectName } : {})}
-      time={relativeTime(view.updatedAt, now)}
+      time={formatCompactTime(view.updatedAt, now) ?? ""}
       {...(view.handoff ? { handoff: view.handoff } : {})}
       selected={selected}
       onSelect={onSelect}

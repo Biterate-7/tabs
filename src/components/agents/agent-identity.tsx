@@ -2,6 +2,7 @@
 
 import { memo } from "react"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import { AgentIcon } from "./agent-icon"
@@ -53,7 +54,7 @@ function AgentIdentityImpl({
   iconOnly = false,
   className,
 }: AgentIdentityProps) {
-  const displayName = name ?? agentVisualIdentity(connector).displayName
+  const displayName = name ?? agentDisplayName(connector)
 
   if (iconOnly) {
     return <AgentIcon connector={connector} state={state} size={size} label={displayName} className={className} />

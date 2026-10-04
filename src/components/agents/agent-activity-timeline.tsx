@@ -3,10 +3,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleMinus, LoaderCircle, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { formatTimeAgo } from "./agent-session-presentation"
+import { formatRelativeTime } from "@/lib/time-format"
 import { AgentIcon } from "./agent-icon"
 import { activityTime } from "@/lib/agents/activity/timeline"
-import { agentDisplayName } from "@/lib/agents/handoff/handoff"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { cn } from "@/lib/utils"
 import type { AgentActivityEntry, AgentActivityStatus } from "@/lib/agents/activity/timeline"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
@@ -80,9 +80,7 @@ function StatusGlyph({ entry }: { entry: AgentActivityEntry }) {
 }
 
 function timeLabel(entry: AgentActivityEntry, now: number): string | null {
-  const at = activityTime(entry)
-  if (now - at < 60_000) return "Just now"
-  return formatTimeAgo(at, now)
+  return formatRelativeTime(activityTime(entry), now)
 }
 
 /** What a row says to a screen reader, in one sentence. */
@@ -164,7 +162,8 @@ const TimelineRow = memo(
           )}
           {action?.kind === "new_session" && onNewSession && (
             <Button type="button" size="xs" variant="ghost" className="-ml-2 mt-0.5" onClick={onNewSession}>
-              Start a new session
+              {/* A connection that never completed is retried; anything that ended starts afresh. */}
+              {entry.kind === "connection_failed" ? "Try again" : "Start a new session"}
             </Button>
           )}
           {action?.kind === "open_session" && onOpenSession && (
@@ -323,7 +322,7 @@ function AgentActivityTimelineImpl({
         </div>
       )}
       {onContinue && (
-        <Button type="button" size="xs" variant="outline" className="mb-2.5 self-start" onClick={onContinue} data-handoff-continue>
+        <Button type="button" size="xs" variant="outline" className="mb-2.5 self-start" onClick={onContinue} aria-haspopup="dialog" data-handoff-continue>
           Continue with…
         </Button>
       )}

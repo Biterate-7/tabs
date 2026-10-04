@@ -219,7 +219,7 @@ describe("the timeline from a real MCP-connected session", () => {
     // answered, and the scripted agent never finishes its turn — so the last
     // entry is the truthful "Working…", not a made-up completion.
     expect((await h.snapshotOf(sessionId)).session.status).toBe("running");
-    expect(after.map((entry) => entry.title).slice(-3)).toEqual(["Asked for approval", "Action approved", "Working…"]);
+    expect(after.map((entry) => entry.title).slice(-3)).toEqual(["Asked for approval", "Approved", "Working…"]);
     expect(after.at(-2)).toMatchObject({ description: "Create collection “Pricing” · 2 tabs" });
     expect(after.some((entry) => entry.status === "waiting")).toBe(false);
     // A proposal is not a read: no "Read workspace" row for it.
@@ -283,7 +283,7 @@ describe("disconnect", () => {
       "Gemini connected",
       "Workspace context loaded",
       "Read workspace",
-      "Gemini stopped on an error",
+      "Gemini stopped unexpectedly",
     ]);
     expect(entries.at(-1)).toMatchObject({ status: "failed", description: "Agent disconnected unexpectedly", action: { kind: "new_session" } });
     expect(entries.some((entry) => entry.status === "active" || entry.status === "waiting")).toBe(false);

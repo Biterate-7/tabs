@@ -4,7 +4,8 @@ import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { SessionListRow } from "./session-list"
 import { historySessionStatus } from "@/lib/agents/activity/history"
-import { platformProvider } from "@/lib/agents/platform/catalog"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
+import { formatClockTime, formatDayLabel, formatFullTimestamp } from "@/lib/time-format"
 import type { AgentHistoryListState } from "@/hooks/use-agent-history"
 import type { AgentHistorySession } from "@/lib/agents/activity/history"
 
@@ -34,25 +35,6 @@ import type { AgentHistorySession } from "@/lib/agents/activity/history"
  * activity yet." is about this workspace, and a failed read can be retried.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000
-
-function startOfDay(at: number): number {
-  const date = new Date(at)
-  date.setHours(0, 0, 0, 0)
-  return date.getTime()
-}
-
-/** "Today", "Yesterday", or the date. Relative to `now`, which the caller supplies. */
-export function historyDayLabel(at: number, now: number): string {
-  const days = Math.round((startOfDay(now) - startOfDay(at)) / DAY_MS)
-  if (days <= 0) return "Today"
-  if (days === 1) return "Yesterday"
-  return new Date(at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })
-}
-
-export function historyClock(at: number): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-}
 
 function Message({ title, detail, action }: { title: string; detail?: string; action?: React.ReactNode }) {
   return (
@@ -91,7 +73,7 @@ export function AgentHistoryList({
     const groups: { label: string; sessions: AgentHistorySession[] }[] = []
     for (const session of state.sessions) {
       if (hiddenSessionIds?.has(session.sessionId)) continue
-      const label = historyDayLabel(session.lastActivityAt, now)
+      const label = formatDayLabel(session.lastActivityAt, now)
       const last = groups[groups.length - 1]
       if (last?.label === label) last.sessions.push(session)
       else groups.push({ label, sessions: [session] })
@@ -109,6 +91,10 @@ export function AgentHistoryList({
 
       {state.kind === "unavailable" && (
         <Message title="Agent history unavailable" detail="This Hubble doesn't keep past agent sessions. Live sessions still work." />
+      )}
+
+      {state.kind === "disconnected" && (
+        <Message title="Agent history unavailable" detail="Hubble can't reach the agent runtime right now. Past sessions show again once it's back." />
       )}
 
       {state.kind === "failed" && (
@@ -134,7 +120,7 @@ export function AgentHistoryList({
           <ul className="flex flex-col">
             {day.sessions.map((session) => {
               const status = historySessionStatus(session.status)
-              const agentName = platformProvider(session.provider)?.displayName ?? session.provider
+              const agentName = agentDisplayName(session.provider)
               const at = session.endedAt ?? session.lastActivityAt
               return (
                 <SessionListRow
@@ -143,8 +129,8 @@ export function AgentHistoryList({
                   title={session.title ?? agentName}
                   agentName={agentName}
                   {...(workspaceName ? { workspaceName } : {})}
-                  time={historyClock(at)}
-                  timeLabel={new Date(at).toLocaleString()}
+                  time={formatClockTime(at)}
+                  timeLabel={formatFullTimestamp(at)}
                   {...(session.handoff ? { handoff: session.handoff } : {})}
                   selected={session.sessionId === selectedSessionId}
                   onSelect={() => onSelect(session)}

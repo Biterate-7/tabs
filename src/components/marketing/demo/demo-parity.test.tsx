@@ -100,7 +100,7 @@ describe("the demo is built from the app's own session UI", () => {
       expect(source, path).not.toMatch(/@\/components\/agents\/(agent-activity-timeline|action-inspector)"/)
       expect(source, path).not.toMatch(/buildAgentActivityTimeline|inspectActivityEntry/)
       // The timeline's and inspector's words come from the product's builders, never restated.
-      for (const words of ["Waiting for approval", "Action approved", "Workspace context loaded", "Requested by", "Undid creation", "Couldn't undo"]) {
+      for (const words of ["Waiting for approval", "Asked for approval", "Approval expired", "Workspace context loaded", "Requested by", "Undid creation", "Couldn't undo"]) {
         expect(source, `${path} restates "${words}"`).not.toContain(words)
       }
     }
@@ -196,7 +196,7 @@ describe("the demo shows what the product derives", () => {
     // Approved is not done: the session runs, then the change is applied.
     const rows = () => activity().getAllByRole("listitem")
     expect(rows()[0]!.getAttribute("data-activity-status")).toBe("active")
-    expect(titles()).toContain("Action approved")
+    expect(titles()).toContain("Approved")
     expect(titles()).not.toContain("Created collection “SWE-bench”")
     await waitFor(() => expect(titles()).toContain("Created collection “SWE-bench”"), { timeout: 3_000 })
     // The run ends after the change is applied; until then its live "now" row stays on top, as in the app.
@@ -275,7 +275,7 @@ describe("the demo's agent history is the product's", () => {
     })
     expect(paneTitles(pane)).toEqual([...expected].reverse().map((entry) => entry.title))
     expect(paneTitles(pane)).toContain("Created collection “Product Ideas”")
-    expect(paneTitles(pane)).toContain("Action approved")
+    expect(paneTitles(pane)).toContain("Approved")
   })
 
   it("inspects the past action by reference and undoes it exactly, as a new entry after it", async () => {

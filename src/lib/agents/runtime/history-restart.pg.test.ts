@@ -123,7 +123,7 @@ describePostgres("agent history survives a runtime restart", () => {
       "Read workspace",
       "Found 2 relevant tabs",
       "Asked for approval",
-      "Action approved",
+      "Approved",
       "Created collection “Pricing”",
       "Replied",
       "Finished",

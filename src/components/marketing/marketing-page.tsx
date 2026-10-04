@@ -271,7 +271,7 @@ function DemoWindow({
 /** Integrations, read from the connector catalog so the row cannot claim more than Hubble does. */
 const INTEGRATIONS: { name: string; note: string; mark: ReactNode }[] = [
   ...PLATFORM_PROVIDERS.map((spec) => ({
-    name: spec.provider === "custom" ? "MCP" : spec.displayName,
+    name: spec.shortName,
     note: !spec.chat ? "Reads over MCP" : spec.sessions.available ? "Sessions" : "Connects",
     mark: <AgentIcon connector={spec.provider} size="sm" />,
   })),

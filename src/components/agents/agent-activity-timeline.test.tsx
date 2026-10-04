@@ -170,7 +170,7 @@ describe("live updates", () => {
       scriptedEvent({ id: "f1", kind: "file_created", summary: "x", file: { relativePath: "research-summary.md", projectId: "p1" } }),
     ])
     await waitFor(() =>
-      expect(result.current.map((item) => item.title).slice(-3)).toEqual(["Asked for approval", "Action approved", "Created research-summary.md"])
+      expect(result.current.map((item) => item.title).slice(-3)).toEqual(["Asked for approval", "Approved", "Created research-summary.md"])
     )
     expect(result.current.at(-2)!.description).toBe("Create research-summary.md")
     await act(async () => {})

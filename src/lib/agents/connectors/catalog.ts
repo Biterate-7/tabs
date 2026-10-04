@@ -2,6 +2,7 @@ import { createClaudeCodeControlSeam } from "@/lib/agents/control/providers/clau
 import { createCodexControlAdapter } from "@/lib/agents/control/providers/codex";
 import { createClaudeCodeConnector, CLAUDE_CODE_DESCRIPTOR } from "./providers/claude-code";
 import { createDeclaredConnector } from "./providers/declared";
+import { platformProvider } from "@/lib/agents/platform/catalog";
 import { NO_CAPABILITIES } from "./types";
 import type { ClaudeCodeConnectorOptions } from "./providers/claude-code";
 import type { ConnectorRegistration } from "./registry";
@@ -50,9 +51,18 @@ import type { ProviderDescriptor } from "./types";
  * it, not that anything works now.
  */
 
+/**
+ * A provider's name, from the platform catalog — the one table every surface
+ * names agents from — so Settings → Connectors cannot call an agent something
+ * the Command Centre does not.
+ */
+function nameOf(provider: ProviderDescriptor["provider"]): string {
+  return platformProvider(provider)?.displayName ?? provider;
+}
+
 const CODEX_DESCRIPTOR: ProviderDescriptor = {
   provider: "openai-codex",
-  displayName: "OpenAI / Codex",
+  displayName: nameOf("openai-codex"),
   summary: "Would observe Codex sessions and the files they change.",
   capabilities: NO_CAPABILITIES,
   requirement:
@@ -61,7 +71,7 @@ const CODEX_DESCRIPTOR: ProviderDescriptor = {
 
 const GEMINI_DESCRIPTOR: ProviderDescriptor = {
   provider: "gemini",
-  displayName: "Gemini",
+  displayName: nameOf("gemini"),
   summary: "Would observe Gemini agent sessions and their activity.",
   capabilities: NO_CAPABILITIES,
   requirement:
@@ -70,7 +80,7 @@ const GEMINI_DESCRIPTOR: ProviderDescriptor = {
 
 const GROK_DESCRIPTOR: ProviderDescriptor = {
   provider: "grok",
-  displayName: "Grok",
+  displayName: nameOf("grok"),
   summary: "Would observe Grok agent sessions and their activity.",
   capabilities: NO_CAPABILITIES,
   requirement:
@@ -89,7 +99,7 @@ const GROK_DESCRIPTOR: ProviderDescriptor = {
  */
 const CUSTOM_DESCRIPTOR: ProviderDescriptor = {
   provider: "custom",
-  displayName: "Custom agent",
+  displayName: nameOf("custom"),
   summary: "Bring your own agent by implementing the connector contract.",
   capabilities: NO_CAPABILITIES,
   requirement:

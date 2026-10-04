@@ -1,5 +1,5 @@
 import { describeApproval } from "./timeline";
-import { isLiveSession } from "@/lib/agents/command-centre/presentation";
+import { APPROVAL_CLOSED_TITLE, APPROVAL_STATE_LABEL, isLiveSession } from "@/lib/agents/command-centre/presentation";
 import { collectionToView, undoEffects } from "@/lib/agents/command-centre/workspace-activity";
 import { relativePathBasename } from "@/lib/agents/paths";
 import { agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff";
@@ -62,14 +62,14 @@ export type ActionStatus =
   | "undone";
 
 export const ACTION_STATUS_LABEL: Record<ActionStatus, string> = {
-  waiting_for_approval: "Waiting for approval",
-  approved: "Approved",
+  waiting_for_approval: APPROVAL_STATE_LABEL.waiting,
+  approved: APPROVAL_STATE_LABEL.approved,
   running: "Running",
   completed: "Completed",
   failed: "Failed",
-  rejected: "Rejected",
-  expired: "Approval expired",
-  withdrawn: "Withdrawn",
+  rejected: APPROVAL_STATE_LABEL.rejected,
+  expired: APPROVAL_STATE_LABEL.expired,
+  withdrawn: APPROVAL_STATE_LABEL.withdrawn,
   undone: "Undone",
 };
 
@@ -179,8 +179,8 @@ export function isInspectable(entry: AgentActivityEntry): boolean {
 
 const PREVIOUS_OUTCOME: Record<NonNullable<SessionHandoff["context"]["previousResult"]>["outcome"], string> = {
   finished: "Finished",
-  stopped: "Stopped before finishing",
-  failed: "Stopped on an error",
+  stopped: "Cancelled before finishing",
+  failed: "Stopped unexpectedly",
   waiting: "Waiting on you",
   idle: "Not started",
 };
@@ -286,6 +286,13 @@ function inspectHandoff(entry: AgentActivityEntry, input: ActionInspectorInput):
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * Why an applied change can no longer be undone, in the one sentence every
+ * surface uses — the inspector, its Undo when it is refused, and the toast
+ * the conversation's own Undo shows. Plain words: no snapshot, no hash.
+ */
+export const UNDO_REFUSED_WORKSPACE_CHANGED = "This change can't be undone because the workspace has changed since it was made.";
 
 const APPROVAL_ACTION: Record<string, string> = {
   create_files: "Create file",
@@ -446,7 +453,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
     if (resultEntry) return resultEntry.status === "failed" ? "failed" : "completed";
     if (decision?.kind === "approval_denied") return "rejected";
     if (decision?.kind === "approval_granted") return live && session.status === "running" ? "running" : "approved";
-    if (requestEntry?.kind === "approval_closed") return requestEntry.title === "Approval expired" ? "expired" : "withdrawn";
+    if (requestEntry?.kind === "approval_closed") return requestEntry.title === APPROVAL_CLOSED_TITLE.expired ? "expired" : "withdrawn";
     if (requestEntry?.status === "waiting") return "waiting_for_approval";
     // Asked, and no longer waiting, with no decision on record: the request ended unanswered.
     if (requestEntry) return "withdrawn";
@@ -545,9 +552,9 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   if (approvalId) {
     if (decision) {
       const granted = decision.kind === "approval_granted";
-      chain.push({ key: "decision", label: granted ? "Approved" : "Rejected", at: decision.timestamp, tone: granted ? "done" : "neutral" });
+      chain.push({ key: "decision", label: granted ? APPROVAL_STATE_LABEL.approved : APPROVAL_STATE_LABEL.rejected, at: decision.timestamp, tone: granted ? "done" : "neutral" });
     } else if (status === "waiting_for_approval") {
-      chain.push({ key: "decision", label: "Waiting for approval", tone: "waiting" });
+      chain.push({ key: "decision", label: APPROVAL_STATE_LABEL.waiting, tone: "waiting" });
     } else if (status === "expired" || status === "withdrawn" || status === "rejected") {
       chain.push({ key: "decision", label: ACTION_STATUS_LABEL[status], ...(outcome ? { at: outcome.at } : {}), tone: "neutral" });
     }
@@ -581,7 +588,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
       if (!input.canUndo?.(change)) {
         return {
           kind: "unavailable",
-          reason: "Undo isn't available — the workspace has changed since, and undoing now would discard those later edits.",
+          reason: UNDO_REFUSED_WORKSPACE_CHANGED,
         };
       }
       return { kind: "available", changeId: change.id, effects: undoEffects(change), label: change.steps.length > 1 ? "Undo all" : "Undo" };

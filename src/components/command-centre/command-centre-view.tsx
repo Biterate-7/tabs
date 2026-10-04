@@ -47,6 +47,7 @@ import { grantWithinApproval, projectScopesForAgent } from "@/lib/agents/platfor
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import {
   RUNTIME_ERROR_PRESENTATION,
+  runtimeErrorTitle,
   SESSION_STATUS_LABEL,
   SESSION_VISUAL_STATE,
   canCreateSession,
@@ -76,10 +77,11 @@ import {
   subscribeWorkspaceChanges,
   workspaceChanges,
 } from "@/lib/agents/command-centre/workspace-activity"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { collectionsMatch } from "@/lib/collections/restore"
 import { historySessionStatus } from "@/lib/agents/activity/history"
-import { agentDisplayName, canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { UNDO_REFUSED_WORKSPACE_CHANGED } from "@/lib/agents/activity/inspector"
+import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
 import { runtimeHandoffTransport } from "@/lib/agents/handoff/transport"
 import type { AgentHistorySession } from "@/lib/agents/activity/history"
 import { cn } from "@/lib/utils"
@@ -184,7 +186,8 @@ export function CommandCentreView({
   const [contextPanelOpen, setContextPanelOpen] = useState(true)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<RuntimeErrorCode | null>(null)
+  /** Why the last start was refused, and for which agent — so it can say "Couldn't connect to Codex". */
+  const [createError, setCreateError] = useState<{ code: RuntimeErrorCode; provider: AgentProviderId } | null>(null)
 
   /*
     Which session is on screen: derived from the runtime's own list, so a
@@ -375,7 +378,7 @@ export function CommandCentreView({
           ...(change.before && change.after ? { before: change.before, after: change.after } : {}),
         },
       })
-      const agent = agentVisualIdentity(change.provider).displayName
+      const agent = agentDisplayName(change.provider)
       const where = workspaceNameOf(change.workspaceId) ?? "your workspace"
       if (!change.ok) {
         toast.error(`${agent} · Couldn't apply the approved change`, { description: `Nothing was changed in ${where}.` })
@@ -442,7 +445,7 @@ export function CommandCentreView({
       if (tryUndo(change)) {
         toast(`Undone in ${workspaceNameOf(change.workspaceId) ?? "the workspace"}`)
       } else {
-        toast.info("Can't undo — the workspace has changed since", { description: "Nothing was changed." })
+        toast.info("Couldn't undo this change", { description: `${UNDO_REFUSED_WORKSPACE_CHANGED} Nothing was changed.` })
       }
     },
     [tryUndo, workspaceNameOf]
@@ -529,7 +532,7 @@ export function CommandCentreView({
       void applyContext(target, next)
       if (prompt) setComposerSeed({ key: handoff.id, sessionId: target, text: prompt })
       if (handoff.mode === "add") {
-        toast(`Added to ${agentVisualIdentity(targetView.provider).displayName}'s context`, {
+        toast(`Added to ${agentDisplayName(targetView.provider)}'s context`, {
           description: summarizeWorkingContext(describeWorkingContext(next, liveWorld)),
         })
       }
@@ -577,7 +580,7 @@ export function CommandCentreView({
         ? projects.projects.find((candidate) => candidate.id === input.projectId)
         : undefined
       if (!agent || (project && !grantWithinApproval(agent, project.permissions.scopes))) {
-        setCreateError("permission_denied")
+        setCreateError({ code: "permission_denied", provider: input.provider })
         return
       }
 
@@ -586,7 +589,7 @@ export function CommandCentreView({
       // to sign in: the dialog shows the action that fixes it.
       const prerequisite = platform.prerequisiteFor(input.provider)
       if (!prerequisite.ok) {
-        setCreateError(refusalFor(prerequisite.phase))
+        setCreateError({ code: refusalFor(prerequisite.phase), provider: input.provider })
         return
       }
 
@@ -611,7 +614,7 @@ export function CommandCentreView({
       }
 
       if (typeof outcome === "string") {
-        setCreateError(outcome)
+        setCreateError({ code: outcome, provider: input.provider })
         return
       }
       setResume(null)
@@ -659,7 +662,7 @@ export function CommandCentreView({
   }, [currentView, link.kind, liveWorld])
   const draftView = useMemo(() => (draft ? describeWorkingContext(draft, liveWorld) : null), [draft, liveWorld])
 
-  const agentName = currentView ? agentVisualIdentity(currentView.provider).displayName : "The agent"
+  const agentName = currentView ? agentDisplayName(currentView.provider) : "The agent"
   const workspaceShown = currentView ? sessionWorkspaceId : (draft?.workspaceId ?? activeWorkspaceId)
   const workspaceName = workspaceNameOf(workspaceShown)
   const delivered = currentView?.focus ? currentView.focus.delivered : undefined
@@ -745,7 +748,7 @@ export function CommandCentreView({
     sessionId: shownHistory?.sessionId ?? null,
   })
   const historyDetail = historySession.state.kind === "ready" ? historySession.state.detail : null
-  const historyAgentName = shownHistory ? agentVisualIdentity(shownHistory.provider).displayName : "The agent"
+  const historyAgentName = shownHistory ? agentDisplayName(shownHistory.provider) : "The agent"
   const historyWorkspaceName = workspaceNameOf(shownHistory?.workspaceId)
   const historyProjectName = projectNameOf(historyDetail?.session.projectId)
   /*
@@ -932,7 +935,9 @@ export function CommandCentreView({
     ? (currentView ? contextOfSession(currentView) : null) ?? workspaceContext(pickerWorkspaceId)
     : draft ?? workspaceContext(pickerWorkspaceId)
 
-  const errorPresentation = session.error ? RUNTIME_ERROR_PRESENTATION[session.error] : null
+  const errorPresentation = session.error
+    ? { ...RUNTIME_ERROR_PRESENTATION[session.error], title: runtimeErrorTitle(session.error, agentName) }
+    : null
 
   /*
     While it is open, the Command Centre adds its own commands to the shell's
@@ -978,7 +983,7 @@ export function CommandCentreView({
 
   const startableAgents = useMemo(
     () =>
-      platform.roster.agents.flatMap((agent) => {
+      platform.roster.agents.flatMap((agent): StartableAgent[] => {
         const spec = platformProvider(agent.provider)
         if (!spec?.chat) return []
         // The same gate the start dialog applies: connected and signed in in
@@ -986,7 +991,17 @@ export function CommandCentreView({
         const status = startableProviders.find((provider) => provider.provider === agent.provider)
         const prerequisite = platform.prerequisiteFor(agent.provider)
         const ready = prerequisite.ok && Boolean(status && canCreateSession(status))
-        return [{ provider: agent.provider, name: agent.name, ready, ...(prerequisite.ok ? {} : { reason: prerequisite.reason }) }]
+        const name = agentDisplayName(agent.provider)
+        if (ready) return [{ provider: agent.provider, name, ready }]
+        // Never a dead end: what is wrong, and — when connecting or signing in
+        // fixes it — the action that does, through the existing Connect flow.
+        if (prerequisite.ok) return [{ provider: agent.provider, name, ready, reason: "Unavailable here" }]
+        const action = prerequisite.action
+          ? prerequisite.phase
+            ? recoveryLabel(prerequisite.phase, prerequisite.action)
+            : "Connect"
+          : undefined
+        return [{ provider: agent.provider, name, ready, reason: prerequisite.reason, ...(action ? { action } : {}) }]
       }),
     [platform, startableProviders]
   )
@@ -1060,8 +1075,10 @@ export function CommandCentreView({
           now={now}
           history={
             <AgentHistoryList
-              // A runtime that cannot be reached cannot be asked: unavailable, never "no activity".
-              state={!runtime.loading && !runtime.status ? { kind: "unavailable" } : history.state}
+              // A runtime that cannot be reached cannot be asked — never "no
+              // activity", and never "doesn't keep history" either. A list
+              // already read stays on screen while it reconnects.
+              state={!runtime.loading && !runtime.status && history.state.kind !== "ready" ? { kind: "disconnected" } : history.state}
               selectedSessionId={shownHistory?.sessionId ?? null}
               onSelect={selectHistorySession}
               {...(workspaceNameOf(historyWorkspaceId) ? { workspaceName: workspaceNameOf(historyWorkspaceId) } : {})}
@@ -1174,7 +1191,7 @@ export function CommandCentreView({
                 )}
 
                 {errorPresentation && (
-                  <li className="my-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
+                  <li role="alert" className="my-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
                     <p className="text-body-sm text-foreground">{errorPresentation.title}</p>
                     <p className="mt-0.5 text-body-sm text-tertiary">{errorPresentation.action}</p>
                     {errorPresentation.reconnect && (
@@ -1297,7 +1314,7 @@ export function CommandCentreView({
         {...(onOpenConnectors || pickFolder ? { onConnectProvider: signInFor } : {})}
         creating={creating}
         now={now}
-        {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
+        {...(createError ? { error: runtimeErrorTitle(createError.code, agentDisplayName(createError.provider), { starting: true }) } : {})}
         workspaces={workspaceChoices}
         {...((resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId)
           ? { defaultWorkspaceId: resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId }
@@ -1311,7 +1328,7 @@ export function CommandCentreView({
         connectionBlocker={(provider) => {
           const prerequisite = platform.prerequisiteFor(provider)
           if (prerequisite.ok) return undefined
-          const name = agentVisualIdentity(provider).displayName
+          const name = agentDisplayName(provider)
           // Nothing to connect or sign in to fixes this one — signed in or not.
           // The exact reason, and no action that would pretend otherwise.
           const sessions = platform.sessionsFor(provider)
@@ -1408,6 +1425,9 @@ export function CommandCentreView({
   )
 }
 
+/** An agent the empty state offers. `action`: what fixes one that is not ready, through Connect Agent — absent when nothing the person does would. */
+type StartableAgent = { provider: AgentProviderId; name: string; ready: boolean; reason?: string; action?: string }
+
 /**
  * The refusal to show when a session was not started because its agent's
  * connection is not ready — the accurate one for the phase, never a generic
@@ -1454,7 +1474,7 @@ function CommandCentreEmptyState({
   executable: boolean
   loading: boolean
   workspaceName?: string
-  agents: readonly { provider: AgentProviderId; name: string; ready: boolean; reason?: string }[]
+  agents: readonly StartableAgent[]
   defaultProvider?: AgentProviderId
   initialText: string
   contextControl?: React.ReactNode
@@ -1551,15 +1571,18 @@ function CommandCentreEmptyState({
                       <AgentIcon connector={agent.provider} size="sm" />
                       <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{agent.name}</span>
                       {agent.ready ? (
-                        <Button type="button" size="xs" variant="ghost" onClick={() => onStart(text.trim(), agent.provider)}>
+                        <Button type="button" size="xs" variant="ghost" onClick={() => onStart(text.trim(), agent.provider)} aria-label={`Start with ${agent.name}`}>
                           Start
                         </Button>
-                      ) : agent.reason ? (
-                        <span className="shrink-0 text-label text-tertiary">{agent.reason}</span>
                       ) : (
-                        <Button type="button" size="xs" variant="ghost" onClick={() => onConnect(agent.provider)}>
-                          Connect
-                        </Button>
+                        <>
+                          {agent.reason && <span className="min-w-0 shrink truncate text-label text-tertiary">{agent.reason}</span>}
+                          {(agent.action || !agent.reason) && (
+                            <Button type="button" size="xs" variant="outline" onClick={() => onConnect(agent.provider)} aria-label={`${agent.action ?? "Connect"} — ${agent.name}`}>
+                              {agent.action ?? "Connect"}
+                            </Button>
+                          )}
+                        </>
                       )}
                     </li>
                   ))}

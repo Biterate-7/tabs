@@ -1,5 +1,5 @@
 import { isAgentProviderId } from "@/lib/agents/connectors/types";
-import { platformProvider } from "@/lib/agents/platform/catalog";
+import { providerDisplayName } from "@/lib/agents/platform/catalog";
 import { focusFitsSnapshot } from "@/lib/agents/session-context/focus";
 import type { AgentActivityEntry } from "@/lib/agents/activity/timeline";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -341,7 +341,7 @@ export function readHandoffInstruction(value: unknown): string | undefined {
  * ------------------------------------------------------------------ */
 
 export function agentDisplayName(provider: AgentProviderId): string {
-  return platformProvider(provider)?.displayName ?? provider;
+  return providerDisplayName(provider);
 }
 
 export type HandoffEnvelopeInput = {

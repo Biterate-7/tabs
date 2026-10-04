@@ -1,3 +1,4 @@
+import { formatRelativeTime } from "@/lib/time-format"
 import type { AgentRunArtifactRole, AgentRunStatus, AgentWorkItemStatus } from "@/lib/agents/types"
 
 /**
@@ -33,7 +34,7 @@ export function formatElapsed(ms: number): string | null {
   if (minutes < 1) return "under a minute"
   if (minutes < 60) return `${minutes} min`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hr ${minutes % 60} min`
+  if (hours < 24) return minutes % 60 === 0 ? `${hours} hr` : `${hours} hr ${minutes % 60} min`
   const days = Math.floor(hours / 24)
   return days === 1 ? "1 day" : `${days} days`
 }
@@ -84,17 +85,15 @@ export function isProducedRole(role: AgentRunArtifactRole): boolean {
 }
 
 /**
- * A stored timestamp as "2 hr 5 min ago".
+ * A stored timestamp as "5 min ago", "Yesterday", "3 days ago".
  *
- * Built on `formatElapsed`, which the world already uses, so the two
- * surfaces round the same way and no second convention appears. Returns null
- * for a timestamp in the future rather than saying "in a while": the clock
- * here is the caller's `now`, and a record ahead of it is a clock
- * disagreement, not a prediction worth rendering.
+ * The canonical relative time (lib/time-format.ts), so a moment reads the
+ * same here as in the activity timeline, agent history and the inspector. A
+ * record slightly ahead of `now` is a clock disagreement and reads as "Just
+ * now"; null only for a timestamp that was never recorded.
  */
 export function formatTimeAgo(timestamp: number, now: number): string | null {
-  const elapsed = formatElapsed(now - timestamp)
-  return elapsed === null ? null : `${elapsed} ago`
+  return formatRelativeTime(timestamp, now)
 }
 
 /**

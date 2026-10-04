@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react"
 import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { PLAN_CONFIDENCE_LABEL, permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
+import { APPROVAL_CLOSED_TITLE, PLAN_CONFIDENCE_LABEL, permissionScopeLabel, approvalActionLabel } from "@/lib/agents/command-centre/presentation"
 import { readCommandPreview } from "@/lib/agents/control/command-preview"
 import { WORKSPACE_CHANGE_HEADLINE } from "@/lib/agents/session-context/changes"
 import { planStepLine } from "@/lib/agents/session-context/plan"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
 import type { ApprovalCommandPreview } from "@/lib/agents/control/command-preview"
@@ -204,8 +204,8 @@ export function ApprovalPrompt({
   const [reviewing, setReviewing] = useState(false)
   const expiry = expiryLabel(approval.expiresAt, now)
   const provider = platformProvider(approval.provider)
-  // The name the connector surfaces use ("Gemini CLI"), whichever agent asks.
-  const agentName = provider?.displayName ?? agentVisualIdentity(approval.provider).displayName
+  // The name every surface uses ("Gemini CLI"), whichever agent asks.
+  const agentName = agentDisplayName(approval.provider)
   // Read again here, strictly: what is printed must be exactly what is approved.
   const command = approval.command ? readCommandPreview(approval.command) : undefined
   // An agent whose approved commands run with the person's own permissions
@@ -251,9 +251,10 @@ export function ApprovalPrompt({
       <div className="flex items-baseline justify-between gap-3">
         <span className="flex items-center gap-1.5 text-eyebrow text-link">
           <span aria-hidden className="size-1.5 rounded-full bg-current" />
-          Approval required
+          {expiry.expired ? APPROVAL_CLOSED_TITLE.expired : "Approval required"}
         </span>
-        <span className="shrink-0 text-meta text-tertiary">{expiry.text}</span>
+        {/* A countdown re-announced every second would drown the card it belongs to. */}
+        {!expiry.expired && <span aria-live="off" className="shrink-0 text-meta text-tertiary">{expiry.text}</span>}
       </div>
 
       {/*
@@ -365,7 +366,7 @@ export function ApprovalPrompt({
         </Button>
         {expiry.expired && (
           <span className="ml-1 text-body-sm text-tertiary">
-            This decision timed out. Send the task again.
+            Nobody answered in time, so nothing was changed. Send the task again to retry.
           </span>
         )}
       </div>

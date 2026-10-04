@@ -123,7 +123,7 @@ describe("event creation, from real records", () => {
     });
   });
 
-  it("an approval creates 'Action approved' and the request stops waiting", () => {
+  it("an approval creates 'Approved' and the request stops waiting", () => {
     const entries = build({
       events: [
         started(),
@@ -132,17 +132,17 @@ describe("event creation, from real records", () => {
       ],
       knownApprovals: new Map([["a1", approval()]]),
     });
-    expect(titles(entries).slice(1)).toEqual(["Asked for approval", "Action approved"]);
+    expect(titles(entries).slice(1)).toEqual(["Asked for approval", "Approved"]);
     expect(entries[1]!.status).toBe("info");
     expect(entries[2]).toMatchObject({ kind: "action_approved", status: "completed", description: "Create research-summary.md" });
   });
 
-  it("a rejection creates 'Action rejected', not a failure", () => {
+  it("a rejection creates 'Rejected', not a failure", () => {
     const entries = build({
       events: [started(), event({ kind: "approval_requested", approvalId: "a1" }), event({ kind: "approval_denied", approvalId: "a1" })],
       knownApprovals: new Map([["a1", approval()]]),
     });
-    expect(entries.at(-1)).toMatchObject({ kind: "action_rejected", title: "Action rejected", status: "info" });
+    expect(entries.at(-1)).toMatchObject({ kind: "action_rejected", title: "Rejected", status: "info" });
     expect(entries.some((entry) => entry.status === "failed")).toBe(false);
   });
 
@@ -173,7 +173,7 @@ describe("event creation, from real records", () => {
       events: [started(), event({ kind: "error", summary: "The agent stopped with an error." })],
     });
     const failure = entries.at(-1)!;
-    expect(failure).toMatchObject({ kind: "error", status: "failed", title: "Claude Code stopped on an error", description: "The agent stopped with an error" });
+    expect(failure).toMatchObject({ kind: "error", status: "failed", title: "Claude Code stopped unexpectedly", description: "The agent stopped with an error" });
     expect(failure.action).toEqual({ kind: "new_session" });
     // Said once, even though the session's status also says it failed.
     expect(entries.filter((entry) => entry.status === "failed")).toHaveLength(1);
@@ -375,7 +375,7 @@ describe("lifecycle", () => {
       "Read workspace",
       "Found 14 relevant tabs",
       "Asked for approval",
-      "Action approved",
+      "Approved",
       "Edited research-summary.md",
       "Replied",
       "Finished",
@@ -395,7 +395,7 @@ describe("lifecycle", () => {
         event({ kind: "error", summary: "Agent disconnected unexpectedly." }),
       ],
     });
-    expect(titles(entries)).toEqual(["Gemini connected", "Couldn't edit a.ts", "Gemini stopped on an error"]);
+    expect(titles(entries)).toEqual(["Gemini connected", "Couldn't edit a.ts", "Gemini stopped unexpectedly"]);
     expect(entries.at(-1)!.action).toEqual({ kind: "new_session" });
   });
 
@@ -456,7 +456,7 @@ describe("lifecycle", () => {
       ],
     });
     expect(failedFirst.some((entry) => entry.status === "failed")).toBe(false);
-    expect(failedFirst.at(-1)!.title).toBe("Action rejected");
+    expect(failedFirst.at(-1)!.title).toBe("Rejected");
   });
 
   it("a question waits on the person while the session does", () => {

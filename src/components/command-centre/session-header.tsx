@@ -11,7 +11,7 @@ import {
   SESSION_VISUAL_STATE,
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { ContextFreshness } from "@/hooks/use-session-context"
 import type { WorkspaceLink } from "@/lib/agents/command-centre/working-context"
@@ -69,7 +69,7 @@ export function SessionHeader({
 }) {
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
-  const identity = agentVisualIdentity(view.provider)
+  const agentName = agentDisplayName(view.provider)
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
@@ -79,11 +79,11 @@ export function SessionHeader({
 
       <div className="flex min-w-0 flex-col">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-h2 text-foreground">{view.title ?? identity.displayName}</h1>
+          <h1 className="truncate text-h2 text-foreground">{view.title ?? agentName}</h1>
           {projectName && <span className="shrink-0 truncate text-body-sm text-tertiary">{projectName}</span>}
         </div>
         <div className="flex min-w-0 items-center gap-1 text-meta text-tertiary">
-          {view.title && <span className="shrink-0">{identity.displayName} ·</span>}
+          {view.title && <span className="shrink-0">{agentName} ·</span>}
           <WorkingInIndicator
             workspaceName={workspaceName}
             link={link}

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { inspectActivityEntry, isInspectable } from "./inspector";
+import { ACTION_STATUS_LABEL, UNDO_REFUSED_WORKSPACE_CHANGED, inspectActivityEntry, isInspectable } from "./inspector";
 import { buildAgentActivityTimeline } from "./timeline";
 import type { ActionInspection, ActionInspectorInput } from "./inspector";
 import type { AgentActivityEntry } from "./timeline";
@@ -192,7 +192,7 @@ describe("opening an action", () => {
     const records = approvedCollectionRecords();
     const fromResult = open(records, "Created collection “Pricing Research”").inspection!;
     const fromRequest = open(records, "Asked for approval").inspection!;
-    const fromDecision = open(records, "Action approved").inspection!;
+    const fromDecision = open(records, "Approved").inspection!;
     expect(fromRequest.key).toBe(fromResult.key);
     expect(fromDecision.key).toBe(fromResult.key);
     expect(fromRequest.status).toBe("completed");
@@ -312,7 +312,7 @@ describe("status comes from the records, never from the request", () => {
       ],
       knownApprovals: new Map([["wa-1", workspaceApproval()]]),
     };
-    const { inspection } = open(records, "Action rejected");
+    const { inspection } = open(records, "Rejected");
     expect(inspection).toMatchObject({
       status: "rejected",
       title: "Create collection “Pricing Research” · 5 tabs",
@@ -332,7 +332,7 @@ describe("status comes from the records, never from the request", () => {
       event({ kind: "approval_granted", summary: "Approved", approvalId: "a-file" }),
     ];
     const known = new Map([["a-file", fileApproval()]]);
-    const running = open({ session: session({ status: "running" }), events: begin, knownApprovals: known }, "Action approved").inspection!;
+    const running = open({ session: session({ status: "running" }), events: begin, knownApprovals: known }, "Approved").inspection!;
     expect(running.status).toBe("running");
 
     const failed = open(
@@ -341,7 +341,7 @@ describe("status comes from the records, never from the request", () => {
         events: [...begin, event({ kind: "tool_finished", summary: "Write", tool: { name: "Write", callId: "w1", ok: false } })],
         knownApprovals: known,
       },
-      "Action approved"
+      "Approved"
     ).inspection!;
     expect(failed).toMatchObject({
       key: running.key,
@@ -406,6 +406,19 @@ describe("undo", () => {
     expect((inspection!.undo as { reason: string }).reason).toMatch(/workspace has changed since/);
   });
 
+  it("explains a refused undo in the one plain sentence every surface uses — no snapshots, no hashes", () => {
+    const records = { ...approvedCollectionRecords(), canUndo: () => false };
+    const { inspection } = open(records, "Created collection “Pricing Research”");
+    expect(inspection!.undo).toEqual({ kind: "unavailable", reason: UNDO_REFUSED_WORKSPACE_CHANGED });
+    expect(UNDO_REFUSED_WORKSPACE_CHANGED).toBe("This change can't be undone because the workspace has changed since it was made.");
+    expect(UNDO_REFUSED_WORKSPACE_CHANGED).not.toMatch(/snapshot|hash|fingerprint|id/i);
+  });
+
+  it("labels an unanswered approval Expired or Withdrawn, in the shared approval words", () => {
+    expect(ACTION_STATUS_LABEL.expired).toBe("Expired");
+    expect(ACTION_STATUS_LABEL.withdrawn).toBe("Withdrawn");
+  });
+
   it("is never offered for a file: Hubble keeps no copy to put back", () => {
     const records: Records = {
       session: session(),
@@ -436,7 +449,7 @@ describe("isolation", () => {
       appliedCreate({ id: "other-ws", workspaceId: "w-personal" }),
       appliedCreate({ id: "other-session", sessionId: "s2" }),
     ];
-    const { inspection, entries } = open(records, "Action approved");
+    const { inspection, entries } = open(records, "Approved");
     // Approved, with nothing applied in this session's workspace: only what was asked.
     expect(inspection!.status).toBe("approved");
     expect(inspection!.changes?.planned).toBe(true);
@@ -450,7 +463,7 @@ describe("isolation", () => {
       events: [started(), event({ kind: "approval_requested", summary: "Asked", approvalId: "wa-1" }), event({ kind: "approval_granted", approvalId: "wa-1" })],
       knownApprovals: new Map([["wa-1", workspaceApproval({ sessionId: "s2", reason: "Another session's reason." })]]),
     };
-    const { inspection } = open(records, "Action approved");
+    const { inspection } = open(records, "Approved");
     expect(inspection!.request?.reason).toBeUndefined();
   });
 });
