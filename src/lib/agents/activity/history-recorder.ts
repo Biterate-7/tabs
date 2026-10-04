@@ -1,4 +1,5 @@
 import type { AgentHistoryRecord, AgentHistorySession } from "./history";
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { AgentHistoryRecordInput, AgentHistoryStore } from "./history-store";
 
 /**
@@ -31,6 +32,8 @@ export type AgentHistoryRecorder = {
   session(ownerId: string, session: AgentHistorySession): void;
   /** Records of a session already offered through `session`. */
   records(ownerId: string, sessionId: string, records: readonly AgentHistoryRecord[]): void;
+  /** A handoff that ended (Hubble 1.4). Its source session must already have been offered. */
+  handoff(ownerId: string, handoff: SessionHandoff): void;
   /** Resolves once everything offered so far has been written (or has failed). Never rejects. */
   flush(): Promise<void>;
 };
@@ -76,7 +79,12 @@ export function createAgentHistoryRecorder(options: {
       console.warn(`Hubble could not record agent history${typeof code === "string" ? ` (${code})` : ""}. Live activity is unaffected.`);
     });
 
-  type Pending = { sessions: Map<string, { session: AgentHistorySession; key: string }>; records: AgentHistoryRecordInput[]; keys: string[] };
+  type Pending = {
+    sessions: Map<string, { session: AgentHistorySession; key: string }>;
+    records: AgentHistoryRecordInput[];
+    keys: string[];
+    handoffs: Map<string, SessionHandoff>;
+  };
   const pending = new Map<string, Pending>();
   let chain: Promise<void> = Promise.resolve();
   let scheduled = false;
@@ -84,7 +92,7 @@ export function createAgentHistoryRecorder(options: {
   const pendingFor = (ownerId: string): Pending => {
     let entry = pending.get(ownerId);
     if (!entry) {
-      entry = { sessions: new Map(), records: [], keys: [] };
+      entry = { sessions: new Map(), records: [], keys: [], handoffs: new Map() };
       pending.set(ownerId, entry);
     }
     return entry;
@@ -109,10 +117,12 @@ export function createAgentHistoryRecorder(options: {
           await store.write(ownerId, {
             sessions: [...batch.sessions.values()].map((entry) => entry.session),
             records: batch.records,
+            ...(batch.handoffs.size > 0 ? { handoffs: [...batch.handoffs.values()] } : {}),
           });
           // Remembered only once written, so a failed write is offered again.
           for (const entry of batch.sessions.values()) seen.add(entry.key);
           for (const key of batch.keys) seen.add(key);
+          for (const id of batch.handoffs.keys()) seen.add(id);
         } catch (error) {
           onError(error);
         }
@@ -142,6 +152,14 @@ export function createAgentHistoryRecorder(options: {
         added = true;
       }
       if (added) schedule();
+    },
+
+    handoff(ownerId, handoff) {
+      // Written once: a handoff does not change after it ends.
+      const identity = `h\u0000${ownerId}\u0000${handoff.handoffId}`;
+      if (seen.has(identity)) return;
+      pendingFor(ownerId).handoffs.set(identity, structuredClone(handoff));
+      schedule();
     },
 
     flush() {

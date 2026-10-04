@@ -3,6 +3,8 @@ import { historyApprovalOf, historyChangeOf, historyEventOf } from "@/lib/agents
 import type { AgentHistoryDetail, AgentHistorySession } from "@/lib/agents/activity/history"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import { contextCountsLine } from "@/lib/agents/control/events"
+import { buildHandoffEnvelope, handoffLinksOf } from "@/lib/agents/handoff/handoff"
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentIdentity } from "@/lib/agents/platform/roster"
 import type { RuntimeApprovalView, RuntimeSessionContextView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
@@ -252,6 +254,11 @@ export const DEMO_AGENTS: readonly AgentIdentity[] = (
 
 /** Who Hubble will start sessions with — the catalog's own answer, restated for the demo's roster. */
 export const DEMO_SESSION_PROVIDERS: ReadonlySet<AgentProviderId> = new Set(["claude-code", "gemini", "openai-codex", "grok"])
+
+/** A session's workspace context as the runtime reports it. Exported for the demo's handoff target. */
+export function demoSessionContext(workspaceId: string, workspaceName: string, write: boolean): RuntimeSessionContextView {
+  return context(workspaceId, workspaceName, write)
+}
 
 function context(workspaceId: string, workspaceName: string, write: boolean): RuntimeSessionContextView {
   return {
@@ -587,6 +594,8 @@ export const HISTORY_IDEAS_SESSION = "session-history-claude-ideas"
 export const HISTORY_SCHOOL_SESSION = "session-history-gemini-school"
 export const HISTORY_COURSES_SESSION = "session-history-codex-courses"
 export const HISTORY_RELEASE_SESSION = "session-history-grok-release"
+/** Codex, continuing "Group the product ideas" — a past explicit handoff (Hubble 1.4). */
+export const HISTORY_ROADMAP_SESSION = "session-history-codex-roadmap"
 
 export const HISTORY_IDEAS_APPROVAL: RuntimeApprovalView = {
   approvalId: "approval-history-ideas",
@@ -605,16 +614,19 @@ export const HISTORY_IDEAS_APPROVAL: RuntimeApprovalView = {
 function historyDetail(
   session: Omit<AgentHistorySession, "startedAt" | "lastActivityAt" | "endedAt">,
   events: readonly SequencedControlEvent[],
-  more: { approvals?: readonly RuntimeApprovalView[]; changes?: readonly AppliedWorkspaceChange[] } = {}
+  more: { approvals?: readonly RuntimeApprovalView[]; changes?: readonly AppliedWorkspaceChange[]; handoffs?: readonly SessionHandoff[] } = {}
 ): AgentHistoryDetail {
   const startedAt = events[0]!.timestamp
   const lastActivityAt = events[events.length - 1]!.timestamp
+  // The relationship from the explicit handoff records, as the store reads it back.
+  const handoff = handoffLinksOf(session.sessionId, more.handoffs ?? [])
   return {
     session: {
       ...session,
       startedAt,
       lastActivityAt,
       ...(session.status === "completed" || session.status === "failed" ? { endedAt: lastActivityAt } : {}),
+      ...(handoff ? { handoff } : {}),
     },
     records: {
       events: events.map(historyEventOf).filter((event): event is SequencedControlEvent => event !== null),
@@ -622,6 +634,7 @@ function historyDetail(
       changes: (more.changes ?? []).map(historyChangeOf),
       undos: [],
       planOutcomes: [],
+      ...(more.handoffs && more.handoffs.length > 0 ? { handoffs: more.handoffs } : {}),
     },
   }
 }
@@ -647,9 +660,110 @@ const ideasEvents = buildEvents(
     { kind: "approval_granted", summary: "Workspace change approved", approvalId: HISTORY_IDEAS_APPROVAL.approvalId },
     { kind: "message_received", summary: "Reply", messageId: "ideas-m2", text: "“Product Ideas” now holds Linear, Figma and Hacker News." },
     { kind: "run_completed", summary: "Run completed." },
+    // The person continued with Codex — the runtime's own words on the source.
+    {
+      kind: "handoff_sent",
+      summary: "Handed off to Codex",
+      handoff: {
+        handoffId: "handoff-history-ideas",
+        workspaceId: RESEARCH_ID,
+        peerProvider: "openai-codex",
+        peerSessionId: HISTORY_ROADMAP_SESSION,
+        outcome: "ready",
+      },
+    },
   ],
   DEMO_NOW - DAY - 40 * MIN
 )
+
+/**
+ * The past handoff, as the runtime recorded it: Claude Code's result in the
+ * timeline's words, the workspace in counts, the person's instruction.
+ * demo-parity.test.tsx checks the result line against what
+ * `prepareHandoffPreview` derives from the session's own records.
+ */
+export const HISTORY_IDEAS_HANDOFF: SessionHandoff = {
+  handoffId: "handoff-history-ideas",
+  workspaceId: RESEARCH_ID,
+  sourceSessionId: HISTORY_IDEAS_SESSION,
+  sourceProvider: "claude-code",
+  targetProvider: "openai-codex",
+  targetSessionId: HISTORY_ROADMAP_SESSION,
+  status: "ready",
+  context: {
+    workspace: { tabs: RESEARCH_TABS.length, collections: researchCollections().length },
+    previousResult: { outcome: "finished", lines: [{ title: "Created collection “Product Ideas”", description: "3 tabs" }], more: 0 },
+  },
+  instruction: "Turn the product ideas into a short roadmap.",
+  createdAt: ideasEvents[ideasEvents.length - 1]!.timestamp,
+  updatedAt: ideasEvents[ideasEvents.length - 1]!.timestamp,
+}
+
+const roadmapReceived = {
+  handoffId: HISTORY_IDEAS_HANDOFF.handoffId,
+  workspaceId: RESEARCH_ID,
+  peerProvider: "claude-code" as const,
+  peerSessionId: HISTORY_IDEAS_SESSION,
+}
+
+const roadmapEvents = buildEvents(
+  HISTORY_ROADMAP_SESSION,
+  "openai-codex",
+  [
+    { kind: "session_started", summary: "Session started." },
+    {
+      kind: "message_sent",
+      summary: "Handoff from Claude Code",
+      handoff: roadmapReceived,
+      text: buildHandoffEnvelope({
+        workspaceName: "Research",
+        sourceProvider: "claude-code",
+        sourceTitle: "Group the product ideas",
+        context: HISTORY_IDEAS_HANDOFF.context,
+        contextTools: true,
+        instruction: HISTORY_IDEAS_HANDOFF.instruction!,
+      }),
+    },
+    { kind: "handoff_received", summary: "Handoff from Claude Code", handoff: roadmapReceived },
+    contextLoaded(RESEARCH_ID),
+    { kind: "tool_started", summary: "Reading Product Ideas", tool: contextTool("get_collection", "roadmap-call-1") },
+    contextRead(RESEARCH_ID, "get_collection", { tabs: productIdeas().tabIds.length }),
+    { kind: "message_received", summary: "Reply", messageId: "roadmap-m1", text: "Roadmap: Linear for planning, Figma for the board, Hacker News for launch." },
+    { kind: "run_completed", summary: "Run completed." },
+  ],
+  HISTORY_IDEAS_HANDOFF.createdAt + 1_000
+)
+
+/* ---------------------------------------------------------------- the live handoff (Hubble 1.4) */
+
+/**
+ * What the demo's Codex does when a visitor continues Claude Code's work with
+ * it: gathers the tabs an implementation would start from into a collection —
+ * asking first, like every agent's workspace change.
+ */
+export const HANDOFF_PLAN = {
+  name: "Implementation Plan",
+  tabIds: ["t-swe-repo", "t-mcp", "t-acp"],
+  titles: ["SWE-bench/SWE-bench", "Model Context Protocol", "Agent Client Protocol"],
+  reply: "Done. “Implementation Plan” is in Research with the SWE-bench repository and the two protocol specs it builds on.",
+} as const
+
+/** Codex's request, as the broker would report it — the same shape as Claude Code's. */
+export function handoffApproval(sessionId: string, approvalId: string, requestedAt: number): RuntimeApprovalView {
+  return {
+    approvalId,
+    sessionId,
+    provider: "openai-codex",
+    action: "change_workspace",
+    scope: "write_workspace",
+    workspaceId: RESEARCH_ID,
+    targets: [`New collection "${HANDOFF_PLAN.name}"`, ...HANDOFF_PLAN.titles],
+    reason: "Create a collection in this workspace.",
+    change: { kind: "create_collection", subject: HANDOFF_PLAN.name, tabCount: HANDOFF_PLAN.tabIds.length, details: [...HANDOFF_PLAN.titles] },
+    requestedAt,
+    expiresAt: requestedAt + 5 * MIN,
+  }
+}
 
 export const DEMO_HISTORY: readonly AgentHistoryDetail[] = [
   historyDetail(
@@ -657,6 +771,7 @@ export const DEMO_HISTORY: readonly AgentHistoryDetail[] = [
     ideasEvents,
     {
       approvals: [HISTORY_IDEAS_APPROVAL],
+      handoffs: [HISTORY_IDEAS_HANDOFF],
       changes: [
         {
           id: "history-change-ideas",
@@ -674,6 +789,11 @@ export const DEMO_HISTORY: readonly AgentHistoryDetail[] = [
         },
       ],
     }
+  ),
+  historyDetail(
+    { sessionId: HISTORY_ROADMAP_SESSION, workspaceId: RESEARCH_ID, provider: "openai-codex", status: "completed", title: "Turn the ideas into a roadmap" },
+    roadmapEvents,
+    { handoffs: [HISTORY_IDEAS_HANDOFF] }
   ),
   historyDetail(
     { sessionId: HISTORY_SCHOOL_SESSION, workspaceId: RESEARCH_ID, provider: "gemini", status: "failed", title: "Find themes in School" },

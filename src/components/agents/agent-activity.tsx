@@ -76,6 +76,7 @@ export function AgentActivity({
           onBack={back}
           {...(onViewChange ? { onView: onViewChange } : {})}
           {...(onUndo ? { onUndo } : {})}
+          {...(timeline.onOpenSession ? { onOpenSession: timeline.onOpenSession } : {})}
           autoFocus={autoFocus}
         />
       ) : (

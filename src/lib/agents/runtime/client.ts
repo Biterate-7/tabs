@@ -91,6 +91,9 @@ export const COMMAND_TIMEOUT_MS: Readonly<Record<RuntimeCommandName, number>> = 
   get_history: 20_000,
   record_workspace_change: 20_000,
   record_workspace_undo: 20_000,
+  prepare_handoff: 20_000,
+  // Starts the target agent's session (create_session's bound) and delivers the handoff.
+  start_handoff: 150_000,
 };
 
 export type RuntimeClientOptions = {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ChevronLeft, CircleAlert, CircleCheck, CircleDot, CircleMinus, LoaderCircle, Undo2 } from "lucide-react"
+import { ArrowRight, ChevronLeft, CircleAlert, CircleCheck, CircleDot, CircleMinus, LoaderCircle, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentIcon } from "./agent-icon"
 import { AgentStatusPill } from "./agent-status-pill"
@@ -10,6 +10,7 @@ import { ACTION_STATUS_LABEL, ACTION_VISUAL_STATE } from "@/lib/agents/activity/
 import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import type { ActionChainStep, ActionChangeLine, ActionInspection } from "@/lib/agents/activity/inspector"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
 
 /**
  * One agent action, opened from the activity timeline: what was asked, who
@@ -95,6 +96,7 @@ export function ActionInspector({
   onBack,
   onView,
   onUndo,
+  onOpenSession,
   autoFocus = true,
   className,
 }: {
@@ -105,6 +107,8 @@ export function ActionInspector({
   onView?: (changeId: string) => void
   /** Reverses an applied change exactly. Returns whether it was undone; `false` means nothing moved. */
   onUndo?: (changeId: string) => boolean
+  /** Opens the session on the other end of a handoff. */
+  onOpenSession?: (sessionId: string, provider: AgentProviderId) => void
   /** Move focus to the heading on open. Off where taking focus would scroll a host page. */
   autoFocus?: boolean
   className?: string
@@ -240,6 +244,45 @@ export function ActionInspector({
             </ul>
           </Fact>
         )}
+        {inspection.handoff && (
+          <>
+            <Fact label="From">{inspection.handoff.from.name}</Fact>
+            <Fact label="To">{inspection.handoff.to.name}</Fact>
+            {inspection.handoff.workspaceName && <Fact label="Workspace">{inspection.handoff.workspaceName}</Fact>}
+            {inspection.handoff.context.length > 0 && (
+              <Fact label="Context">
+                {inspection.handoff.context.map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
+              </Fact>
+            )}
+            {inspection.handoff.previousResult && (
+              <Fact label="Previous result">
+                <ul className="flex flex-col">
+                  {inspection.handoff.previousResult.map((line, index) => (
+                    <li key={index} className={cn("min-w-0 break-words", index === 0 && "text-muted-foreground")}>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </Fact>
+            )}
+            {inspection.handoff.instruction && (
+              <Fact label="Instruction">
+                <span className="block whitespace-pre-wrap break-words">{inspection.handoff.instruction}</span>
+              </Fact>
+            )}
+            {inspection.handoff.createdAt !== undefined && (
+              <Fact label="Created">
+                <time dateTime={new Date(inspection.handoff.createdAt).toISOString()}>
+                  {new Date(inspection.handoff.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                </time>
+              </Fact>
+            )}
+          </>
+        )}
         {inspection.file && (
           <Fact label="File">
             <span className="break-all">{inspection.file.relativePath}</span>
@@ -261,6 +304,15 @@ export function ActionInspector({
               {undo.label}
             </Button>
           )}
+        </div>
+      )}
+
+      {inspection.handoff?.peer && onOpenSession && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Button type="button" size="sm" variant="outline" onClick={() => onOpenSession(inspection.handoff!.peer!.sessionId, inspection.handoff!.peer!.provider)}>
+            Open {inspection.handoff.peer.name} session
+            <ArrowRight />
+          </Button>
         </div>
       )}
 

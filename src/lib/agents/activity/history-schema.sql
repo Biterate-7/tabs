@@ -64,3 +64,45 @@ CREATE TABLE IF NOT EXISTS tabdump_agent_history_records (
   FOREIGN KEY (owner_id, session_id)
     REFERENCES tabdump_agent_history_sessions (owner_id, id) ON DELETE CASCADE
 );
+
+-- Hubble 1.4 — explicit agent handoffs.
+--
+-- One row per handoff the person made from one agent session to another:
+-- the explicit relationship `source session -> handoff -> target session`,
+-- stored by id and never inferred from times, names or neighbouring rows.
+-- Additive like everything above: a database migrated for 1.3 gains this
+-- table, and nothing above it changes. Until it exists, history works exactly
+-- as before and handoffs are simply not kept.
+--
+-- Only handoffs that ended are kept (`ready`, `failed`); one being prepared or
+-- cancelled is not a fact about either session. `data` holds what was passed,
+-- as src/lib/agents/handoff/handoff.ts reduces it — context counts, the
+-- source's result lines in the timeline's words, the person's scrubbed
+-- instruction. No transcript, no reasoning, no credential: there is nowhere
+-- to put one.
+
+CREATE TABLE IF NOT EXISTS tabdump_agent_handoffs (
+  owner_id            TEXT NOT NULL,
+  id                  TEXT NOT NULL,
+  -- Both sessions work here. A handoff never crosses workspaces.
+  workspace_id        TEXT NOT NULL,
+  source_session_id   TEXT NOT NULL,
+  source_provider     TEXT NOT NULL,
+  target_provider     TEXT NOT NULL,
+  -- Set whenever the target session exists (always on 'ready').
+  target_session_id   TEXT,
+  status              TEXT NOT NULL CHECK (status IN ('ready', 'failed')),
+  failure             TEXT CHECK (failure IN ('session_not_created', 'context_not_delivered')),
+  created_at          BIGINT NOT NULL,
+  updated_at          BIGINT NOT NULL,
+  data                JSONB NOT NULL,
+  PRIMARY KEY (owner_id, id),
+  FOREIGN KEY (owner_id, source_session_id)
+    REFERENCES tabdump_agent_history_sessions (owner_id, id) ON DELETE CASCADE
+);
+
+-- A session's handoffs, both ways.
+CREATE INDEX IF NOT EXISTS tabdump_agent_handoffs_source_idx
+  ON tabdump_agent_handoffs (owner_id, source_session_id);
+CREATE INDEX IF NOT EXISTS tabdump_agent_handoffs_target_idx
+  ON tabdump_agent_handoffs (owner_id, target_session_id);

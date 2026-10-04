@@ -83,6 +83,14 @@ describe("what the parser accepts", () => {
         change: { id: "a1", at: T0, ok: true, steps: [{ kind: "created", name: "Pricing", tabCount: 2 }] },
       },
       record_workspace_undo: { name: "record_workspace_undo", workspaceId: "w1", sessionId: "s1", changeId: "a1", at: T0 },
+      prepare_handoff: { name: "prepare_handoff", sourceSessionId: "s1", targetProvider: "openai-codex" },
+      start_handoff: {
+        name: "start_handoff",
+        sourceSessionId: "s1",
+        targetProvider: "openai-codex",
+        fingerprint: "0123456789abcdef",
+        include: { workspace: true, previousResult: true },
+      },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {

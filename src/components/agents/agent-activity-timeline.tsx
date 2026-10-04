@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button"
 import { formatTimeAgo } from "./agent-session-presentation"
 import { AgentIcon } from "./agent-icon"
 import { activityTime } from "@/lib/agents/activity/timeline"
+import { agentDisplayName } from "@/lib/agents/handoff/handoff"
 import { cn } from "@/lib/utils"
 import type { AgentActivityEntry, AgentActivityStatus } from "@/lib/agents/activity/timeline"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentVisualState } from "@/lib/agents/visual/types"
 
 /**
@@ -100,12 +102,14 @@ type RowProps = {
   time: string | null
   onViewChange?: (changeId: string) => void
   onNewSession?: () => void
+  /** Opens the session on the other end of a handoff. */
+  onOpenSession?: (sessionId: string, provider: AgentProviderId) => void
   /** Set when the entry has more to show: opens it in the action inspector. */
   onInspect?: (entryId: string) => void
 }
 
 const TimelineRow = memo(
-  function TimelineRow({ entry, last, time, onViewChange, onNewSession, onInspect }: RowProps) {
+  function TimelineRow({ entry, last, time, onViewChange, onNewSession, onOpenSession, onInspect }: RowProps) {
     const at = activityTime(entry)
     const waiting = entry.status === "waiting"
     const action = entry.action
@@ -163,6 +167,11 @@ const TimelineRow = memo(
               Start a new session
             </Button>
           )}
+          {action?.kind === "open_session" && onOpenSession && (
+            <Button type="button" size="xs" variant="ghost" className="-ml-2 mt-0.5" onClick={() => onOpenSession(action.sessionId, action.provider)}>
+              Open {agentDisplayName(action.provider)} session
+            </Button>
+          )}
         </div>
       </li>
     )
@@ -172,6 +181,7 @@ const TimelineRow = memo(
     previous.time === next.time &&
     previous.onViewChange === next.onViewChange &&
     previous.onNewSession === next.onNewSession &&
+    previous.onOpenSession === next.onOpenSession &&
     previous.onInspect === next.onInspect &&
     signatureOf(previous.entry) === signatureOf(next.entry)
 )
@@ -238,6 +248,13 @@ export type AgentActivityTimelineProps = {
   onViewChange?: (changeId: string) => void
   /** Offered on an entry the session cannot recover from. */
   onNewSession?: () => void
+  /** Opens the session on the other end of a handoff (Hubble 1.4). */
+  onOpenSession?: (sessionId: string, provider: AgentProviderId) => void
+  /**
+   * "Continue with…": hands this session's work to another agent. Offered by
+   * the host only when the session can be handed on; absent, no button.
+   */
+  onContinue?: () => void
   /**
    * Opens an entry in the action inspector. Offered only on entries
    * `isInspectable` accepts — informational entries stay plain text.
@@ -259,6 +276,8 @@ function AgentActivityTimelineImpl({
   now,
   onViewChange,
   onNewSession,
+  onOpenSession,
+  onContinue,
   onInspect,
   isInspectable,
   maxVisible = DEFAULT_VISIBLE_ACTIVITY,
@@ -303,6 +322,11 @@ function AgentActivityTimelineImpl({
           {statusLabel && <span className="ml-auto shrink-0 text-meta text-tertiary">{statusLabel}</span>}
         </div>
       )}
+      {onContinue && (
+        <Button type="button" size="xs" variant="outline" className="mb-2.5 self-start" onClick={onContinue} data-handoff-continue>
+          Continue with…
+        </Button>
+      )}
 
       {entries.length === 0 ? (
         <p className="text-body-sm text-tertiary">Nothing yet. What {agentName} does will appear here as it happens.</p>
@@ -316,6 +340,7 @@ function AgentActivityTimelineImpl({
               time={timeLabel(entry, now)}
               {...(onViewChange ? { onViewChange } : {})}
               {...(onNewSession ? { onNewSession } : {})}
+              {...(onOpenSession ? { onOpenSession } : {})}
               {...(onInspect && isInspectable?.(entry) ? { onInspect } : {})}
             />
           ))}

@@ -14,6 +14,8 @@ import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapsh
 import type { AgentHistoryCursor, AgentHistoryDetail, AgentHistoryPage } from "@/lib/agents/activity/history";
 import type { WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
 import type { Collection } from "@/lib/collections/types";
+import type { HandoffInclude, SessionHandoff, SessionHandoffLinks } from "@/lib/agents/handoff/handoff";
+import { HANDOFF_FINGERPRINT_PATTERN } from "@/lib/agents/handoff/handoff";
 
 /**
  * The browser to local-runtime command contract.
@@ -373,6 +375,40 @@ export type RuntimeSessionView = {
    * up in its own data. Absent when the session has only its workspace.
    */
   focus?: RuntimeSessionFocusView;
+  /**
+   * The explicit handoffs this session is part of (Hubble 1.4): the one it
+   * was started by, and those it handed on. From the runtime's own records,
+   * never inferred.
+   */
+  handoff?: SessionHandoffLinks;
+};
+
+/** A handoff as the runtime describes it (Hubble 1.4): the record itself. */
+export type RuntimeHandoffView = SessionHandoff;
+
+/**
+ * What a handoff would pass, before the person confirms (Hubble 1.4) —
+ * computed by the runtime from the source session's own records, so the
+ * preview is exactly what the target would receive.
+ *
+ * Holds nothing open: confirming re-derives the same context and is refused
+ * if it no longer matches `fingerprint` — the person is never sent something
+ * they did not see. Backing out needs no command at all.
+ */
+export type RuntimeHandoffPreview = {
+  sourceSessionId: string;
+  sourceProvider: AgentProviderId;
+  targetProvider: AgentProviderId;
+  workspaceId: string;
+  /** Every mode that could be passed. A mode with nothing behind it is absent. */
+  context: SessionHandoff["context"];
+  /**
+   * Whether the target agent can be handed Hubble's workspace tools. When it
+   * cannot, workspace context is said to be unavailable rather than claimed.
+   */
+  contextTools: boolean;
+  /** Binds a confirmation to this preview. Not a secret. */
+  fingerprint: string;
 };
 
 /**
@@ -574,7 +610,10 @@ export type RuntimeCommandName =
   | "list_history"
   | "get_history"
   | "record_workspace_change"
-  | "record_workspace_undo";
+  | "record_workspace_undo"
+  /* Hubble 1.4 — explicit agent handoff. The person's, one step at a time. */
+  | "prepare_handoff"
+  | "start_handoff";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -601,6 +640,8 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_history",
   "record_workspace_change",
   "record_workspace_undo",
+  "prepare_handoff",
+  "start_handoff",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -745,7 +786,37 @@ export type RuntimeCommand =
    * change, which stays exactly as it was. Accepted only for a change this
    * actor's session in this workspace recorded as applied.
    */
-  | { name: "record_workspace_undo"; workspaceId: string; sessionId: string; changeId: string; at: number };
+  | { name: "record_workspace_undo"; workspaceId: string; sessionId: string; changeId: string; at: number }
+  /**
+   * The person chose "Continue with…" an agent (Hubble 1.4). Checks the
+   * source session is this actor's, in a workspace and finished with its
+   * turn, and the target agent is available; then answers with exactly what
+   * could be passed. Starts nothing and keeps nothing. The snapshot, when
+   * sent, must be of the source's own workspace.
+   */
+  | {
+      name: "prepare_handoff";
+      sourceSessionId: string;
+      targetProvider: AgentProviderId;
+      contextSnapshot?: SessionContextSnapshot;
+    }
+  /**
+   * The person confirmed the preview. The same source, agent and snapshot,
+   * the modes they kept, their words, and the project the new session may
+   * use — by id, and only one this actor authorized for that agent: the
+   * grant is the project's, and the handoff adds none. Refused unless the
+   * context still matches the preview's `fingerprint`.
+   */
+  | {
+      name: "start_handoff";
+      sourceSessionId: string;
+      targetProvider: AgentProviderId;
+      contextSnapshot?: SessionContextSnapshot;
+      fingerprint: string;
+      include: HandoffInclude;
+      instruction?: string;
+      projectId?: string;
+    };
 
 /** An applied change as the Command Centre reports it. See `AppliedWorkspaceChange`. */
 export type RecordedWorkspaceChange = {
@@ -766,7 +837,12 @@ export type RuntimeCommandResults = {
     sessions: readonly RuntimeSessionView[];
     correlations: readonly RuntimeCorrelationView[];
   };
-  get_session: { session: RuntimeSessionView; approvals: readonly RuntimeApprovalView[] };
+  get_session: {
+    session: RuntimeSessionView;
+    approvals: readonly RuntimeApprovalView[];
+    /** Handoffs this session is the source or target of (Hubble 1.4). Absent: none. */
+    handoffs?: readonly RuntimeHandoffView[];
+  };
   get_events: { events: readonly SequencedControlEvent[]; latestSequence: number };
   authorize_projects: AuthorizedProjectsResult;
   create_session: RuntimeSessionView;
@@ -792,6 +868,14 @@ export type RuntimeCommandResults = {
   get_history: AgentHistoryDetail;
   record_workspace_change: { sessionId: string };
   record_workspace_undo: { sessionId: string; changeId: string };
+  prepare_handoff: RuntimeHandoffPreview;
+  /**
+   * The handoff as it ended. A handoff that failed is answered here, not as an
+   * error — it happened, it is recorded, and the person is told exactly where
+   * it stopped (`handoff.failure`) and why (`error`). `session` is the new
+   * session whenever one exists.
+   */
+  start_handoff: { handoff: RuntimeHandoffView; session?: RuntimeSessionView; error?: RuntimeError };
 };
 
 export type RuntimeCommandResult<N extends RuntimeCommandName> = RuntimeResult<
@@ -827,6 +911,8 @@ export const MAX_ADDITIONAL_DIRECTORIES = 20;
 export const MAX_HISTORY_PAGE = 50;
 export const MAX_RECORDED_STEPS = 50;
 export const MAX_RECORDED_COLLECTIONS = 500;
+/** A handoff instruction before it is scrubbed and bounded (HANDOFF_LIMITS.instruction) by the host. */
+export const MAX_HANDOFF_INSTRUCTION_INPUT = 8_000;
 
 function id(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -1227,6 +1313,45 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       if (!workspaceId || !sessionId || !changeId) return null;
       if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at < 0) return null;
       return { name: "record_workspace_undo", workspaceId, sessionId, changeId, at: raw.at };
+    }
+
+    case "prepare_handoff":
+    case "start_handoff": {
+      const sourceSessionId = id(raw.sourceSessionId);
+      if (!sourceSessionId || !isAgentProviderId(raw.targetProvider)) return null;
+      let contextSnapshot: SessionContextSnapshot | undefined;
+      if (raw.contextSnapshot !== undefined && raw.contextSnapshot !== null) {
+        // Shape-checked against the workspace it names; the host refuses any
+        // workspace but the source session's own.
+        const workspace = (raw.contextSnapshot as { workspace?: { id?: unknown } }).workspace;
+        const workspaceId = id(workspace?.id);
+        if (!workspaceId) return null;
+        const snapshot = readSessionContextSnapshot(raw.contextSnapshot, workspaceId);
+        if (!snapshot) return null;
+        contextSnapshot = snapshot;
+      }
+      const base = { sourceSessionId, targetProvider: raw.targetProvider, ...(contextSnapshot ? { contextSnapshot } : {}) };
+      if (raw.name === "prepare_handoff") return { name: "prepare_handoff", ...base };
+
+      if (typeof raw.fingerprint !== "string" || !HANDOFF_FINGERPRINT_PATTERN.test(raw.fingerprint)) return null;
+      const include = raw.include as { workspace?: unknown; previousResult?: unknown } | null | undefined;
+      if (!include || typeof include !== "object") return null;
+      if (typeof include.workspace !== "boolean" || typeof include.previousResult !== "boolean") return null;
+      const projectId = optionalId(raw.projectId);
+      if (projectId === null) return null;
+      const command: Extract<RuntimeCommand, { name: "start_handoff" }> = {
+        name: "start_handoff",
+        ...base,
+        fingerprint: raw.fingerprint,
+        include: { workspace: include.workspace, previousResult: include.previousResult },
+      };
+      if (raw.instruction !== undefined && raw.instruction !== null) {
+        if (typeof raw.instruction !== "string" || raw.instruction.length > MAX_HANDOFF_INSTRUCTION_INPUT) return null;
+        // Scrubbed and bounded by the host, which owns what is kept and sent.
+        if (raw.instruction.trim()) command.instruction = raw.instruction;
+      }
+      if (projectId !== undefined) command.projectId = projectId;
+      return command;
     }
   }
 }

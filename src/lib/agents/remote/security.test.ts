@@ -186,7 +186,10 @@ describe("no arbitrary shell or filesystem surface", () => {
     // session's own workspace, and an action outcome. Agent history (1.3)
     // added four: a workspace id, a session id, a page cursor, and an applied
     // change's names, counts and collection snapshot — never a path or a sandbox.
-    expect(RUNTIME_COMMAND_NAMES).toHaveLength(24);
+    // Handoff (1.4) added two: a session id, a provider id, a workspace
+    // snapshot of that session's own workspace, two booleans, a fingerprint,
+    // a project id and the person's instruction — never a path or a sandbox.
+    expect(RUNTIME_COMMAND_NAMES).toHaveLength(26);
     expect(RUNTIME_COMMAND_NAMES.slice(14)).toEqual([
       "detect_providers",
       "connect_provider",
@@ -198,6 +201,8 @@ describe("no arbitrary shell or filesystem surface", () => {
       "get_history",
       "record_workspace_change",
       "record_workspace_undo",
+      "prepare_handoff",
+      "start_handoff",
     ]);
   });
 

@@ -12,6 +12,8 @@ import {
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
 import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
+import { agentDisplayName } from "@/lib/agents/handoff/handoff"
+import type { SessionHandoffLinks } from "@/lib/agents/handoff/handoff"
 import { cn } from "@/lib/utils"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
@@ -71,10 +73,27 @@ function SessionRow({
       {...(workspaceName ? { workspaceName } : {})}
       {...(projectName ? { projectName } : {})}
       time={relativeTime(view.updatedAt, now)}
+      {...(view.handoff ? { handoff: view.handoff } : {})}
       selected={selected}
       onSelect={onSelect}
     />
   )
+}
+
+/**
+ * A session's handoffs in two quiet words — "← Claude Code" for the work it
+ * was handed, "→ Codex" for where it went next — from the runtime's explicit
+ * records. Only handoffs that arrived: a failed one is the source's activity,
+ * not a relationship.
+ */
+export function handoffRelation(links: SessionHandoffLinks | undefined): { from?: string; to?: string } {
+  if (!links) return {}
+  const arrived = (links.to ?? []).filter((link) => link.status === "ready")
+  const last = arrived[arrived.length - 1]
+  return {
+    ...(links.from?.status === "ready" ? { from: agentDisplayName(links.from.provider) } : {}),
+    ...(last ? { to: arrived.length > 1 ? `${agentDisplayName(last.provider)} +${arrived.length - 1}` : agentDisplayName(last.provider) } : {}),
+  }
 }
 
 /**
@@ -90,6 +109,7 @@ export function SessionListRow({
   projectName,
   time,
   timeLabel,
+  handoff,
   selected,
   onSelect,
 }: {
@@ -98,6 +118,8 @@ export function SessionListRow({
   agentName: string
   workspaceName?: string
   projectName?: string
+  /** The handoffs this session is part of — drawn as "← Claude Code" / "→ Codex". */
+  handoff?: SessionHandoffLinks
   /** Short, on the right: "4m", or a clock time. */
   time: string
   /** The time in full, for assistive technology and the tooltip. */
@@ -107,6 +129,7 @@ export function SessionListRow({
 }) {
   const state = SESSION_VISUAL_STATE[status]
   const details = [title === agentName ? undefined : agentName, workspaceName, projectName].filter(Boolean)
+  const relation = handoffRelation(handoff)
 
   /*
     The reference's task row: a status glyph in a 16px gutter, the task on
@@ -144,6 +167,24 @@ export function SessionListRow({
               {details.length > 0 ? `· ${details.join(" · ")}` : null}
             </span>
           </span>
+          {(relation.from || relation.to) && (
+            <span className="flex min-w-0 items-center gap-2 text-meta text-tertiary" data-handoff-relation>
+              {relation.from && (
+                <span className="truncate" title={`Continued from ${relation.from}`}>
+                  <span className="sr-only">Continued from </span>
+                  <span aria-hidden>← </span>
+                  {relation.from}
+                </span>
+              )}
+              {relation.to && (
+                <span className="truncate" title={`Handed off to ${relation.to}`}>
+                  <span className="sr-only">Handed off to </span>
+                  <span aria-hidden>→ </span>
+                  {relation.to}
+                </span>
+              )}
+            </span>
+          )}
         </span>
 
         <span className="shrink-0 pt-px text-meta text-tertiary" {...(timeLabel ? { title: timeLabel } : {})}>

@@ -58,7 +58,14 @@ export type AgentControlEventKind =
    * The agent read its workspace through Hubble's context server, and the
    * server answered. Raised by Hubble, never by an adapter.
    */
-  | "context_read";
+  | "context_read"
+  /**
+   * The person handed this session's work to another agent (Hubble 1.4) — or
+   * tried to. Raised by Hubble, on the source session. See `ControlHandoffInfo`.
+   */
+  | "handoff_sent"
+  /** This session was started by a handoff, and received it. Raised by Hubble, on the target session. */
+  | "handoff_received";
 
 export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "session_started",
@@ -83,6 +90,8 @@ export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "run_cancelled",
   "context_loaded",
   "context_read",
+  "handoff_sent",
+  "handoff_received",
 ] as const;
 
 export function isAgentControlEventKind(value: unknown): value is AgentControlEventKind {
@@ -125,6 +134,17 @@ export const CONTEXT_EVENT_KINDS: readonly AgentControlEventKind[] = [
 
 export function isContextEventKind(kind: AgentControlEventKind): boolean {
   return (CONTEXT_EVENT_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Kinds Hubble raises about a handoff, which therefore carry `handoff`. No
+ * adapter may emit one — an agent cannot claim it was handed work, or hand
+ * work on: handoffs are the person's, and only the runtime records them.
+ */
+export const HANDOFF_EVENT_KINDS: readonly AgentControlEventKind[] = ["handoff_sent", "handoff_received"] as const;
+
+export function isHandoffEventKind(kind: AgentControlEventKind): boolean {
+  return (HANDOFF_EVENT_KINDS as readonly string[]).includes(kind);
 }
 
 /** Kinds after which no further event for that run is expected. */
@@ -208,6 +228,48 @@ export type ControlContextInfo = {
   /** Topic or duplicate groups found. */
   groups?: number;
 };
+
+/**
+ * A handoff, as the event on either session's stream names it (Hubble 1.4).
+ *
+ * Ids and closed values only. What was handed over — the context counts, the
+ * previous result, the person's instruction — is the handoff record's
+ * (lib/agents/handoff/handoff.ts), joined by `handoffId`; the stream says
+ * only that it happened, and with whom.
+ *
+ * Also carried by the one `message_sent` that delivered the handoff to the
+ * target agent, so that message is known for what it is by reference rather
+ * than guessed from where it sits.
+ */
+export type ControlHandoffInfo = {
+  handoffId: string;
+  /** The workspace both sessions work in. A handoff never crosses workspaces. */
+  workspaceId: string;
+  /** The agent on the other end. */
+  peerProvider: AgentProviderId;
+  /** The session on the other end, when one exists. */
+  peerSessionId?: string;
+  /** On `handoff_sent`: whether the target received it. */
+  outcome?: "ready" | "failed";
+  /** On a failed `handoff_sent`: where it stopped. */
+  failure?: "session_not_created" | "context_not_delivered";
+};
+
+function isWellFormedHandoffInfo(info: ControlHandoffInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  for (const key of ["handoffId", "workspaceId"] as const) {
+    const value = info[key];
+    if (typeof value !== "string" || value.length === 0 || value.length > 200) return false;
+  }
+  if (typeof info.peerProvider !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(info.peerProvider)) return false;
+  if (info.peerSessionId !== undefined && (typeof info.peerSessionId !== "string" || !info.peerSessionId || info.peerSessionId.length > 200)) {
+    return false;
+  }
+  if (info.outcome !== undefined && info.outcome !== "ready" && info.outcome !== "failed") return false;
+  if (info.failure !== undefined && info.failure !== "session_not_created" && info.failure !== "context_not_delivered") return false;
+  if ((info.outcome === "failed") !== (info.failure !== undefined)) return false;
+  return true;
+}
 
 /** The count fields of `ControlContextInfo`, so validation and consumers list them once. */
 export const CONTROL_CONTEXT_COUNTS = ["tabs", "collections", "matches", "groups"] as const;
@@ -310,6 +372,8 @@ export type AgentControlEvent = {
   approvalId?: string;
   /** What Hubble's context server did, on the `CONTEXT_EVENT_KINDS` only. */
   context?: ControlContextInfo;
+  /** The handoff this event is about, on the `HANDOFF_EVENT_KINDS` (and the `message_sent` that delivered one). */
+  handoff?: ControlHandoffInfo;
   /**
    * The message itself, on the three `TEXT_EVENT_KINDS` only.
    *
@@ -385,6 +449,16 @@ export function isWellFormedControlEvent(event: AgentControlEvent): boolean {
   if (contextKind !== (event.context !== undefined)) return false;
   if (event.context && !isWellFormedContextInfo(event.context)) return false;
 
+  // A handoff event always says which handoff; nothing else may carry one but
+  // the message that delivered it.
+  const handoffKind = isHandoffEventKind(event.kind);
+  if (handoffKind && event.handoff === undefined) return false;
+  if (event.handoff !== undefined) {
+    if (!handoffKind && event.kind !== "message_sent") return false;
+    if (!isWellFormedHandoffInfo(event.handoff)) return false;
+    if (event.kind === "handoff_sent" && event.handoff.outcome === undefined) return false;
+  }
+
   if (event.text !== undefined) {
     // Text belongs to prose kinds only. A tool result is never a message.
     if (!(TEXT_EVENT_KINDS as readonly string[]).includes(event.kind)) return false;
@@ -441,6 +515,9 @@ export function domainEventKindFor(
     // durable record of what was there; the timeline reads them live.
     case "context_loaded":
     case "context_read":
+    // A handoff's durable record is agent history's (lib/agents/handoff).
+    case "handoff_sent":
+    case "handoff_received":
       // Deliberately dropped from the durable log. See above.
       return null;
   }

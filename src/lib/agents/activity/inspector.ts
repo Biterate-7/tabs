@@ -2,6 +2,8 @@ import { describeApproval } from "./timeline";
 import { isLiveSession } from "@/lib/agents/command-centre/presentation";
 import { collectionToView, undoEffects } from "@/lib/agents/command-centre/workspace-activity";
 import { relativePathBasename } from "@/lib/agents/paths";
+import { agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff";
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { ActivityRefs, AgentActivityEntry } from "./timeline";
 import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -88,9 +90,9 @@ export const ACTION_VISUAL_STATE: Record<ActionStatus, AgentVisualState> = {
   undone: "idle",
 };
 
-/** One step of request → approval → result → undo, in order. */
+/** One step of request → approval → result → undo, in order — or, for a handoff, request → session → delivery. */
 export type ActionChainStep = {
-  key: "requested" | "decision" | "running" | "result" | "undone";
+  key: "requested" | "decision" | "running" | "result" | "undone" | "session" | "delivered";
   label: string;
   at?: number;
   tone: "done" | "active" | "waiting" | "failed" | "neutral";
@@ -124,7 +126,26 @@ export type ActionInspection = {
   view?: { changeId: string; label: "Open collection" | "View changes" };
   /** A file the action is about, project-relative. Hubble cannot open project files, so it is named, not linked. */
   file?: { relativePath: string; projectName?: string };
+  /** A handoff (Hubble 1.4): who to whom, and exactly what was passed. */
+  handoff?: HandoffInspection;
   undo?: ActionUndo;
+};
+
+/** A handoff, as the inspector tells it. Names, counts, the timeline's result lines, the person's words. */
+export type HandoffInspection = {
+  /** Which end this session is. */
+  direction: "sent" | "received";
+  from: { provider: AgentProviderId; name: string };
+  to: { provider: AgentProviderId; name: string };
+  workspaceName?: string;
+  /** "18 tabs · 3 collections", and what was selected — or that none was passed. */
+  context: readonly string[];
+  /** The source session's results, as passed. Absent when the person left them out. */
+  previousResult?: readonly string[];
+  instruction?: string;
+  createdAt?: number;
+  /** The session on the other end, when there is one. */
+  peer?: { sessionId: string; provider: AgentProviderId; name: string };
 };
 
 export type ActionInspectorInput = {
@@ -140,6 +161,8 @@ export type ActionInspectorInput = {
   agentName: string;
   workspaceName?: string;
   projectName?: string;
+  /** Handoffs this session was part of (Hubble 1.4). A handoff entry is resolved from these, by id. */
+  handoffs?: readonly SessionHandoff[];
   /**
    * Whether an applied change can be undone exactly right now — the workspace
    * still holds what it left. Decided by the owner of the workspace; absent
@@ -151,7 +174,115 @@ export type ActionInspectorInput = {
 /** Whether an entry stands for an action there is more to say about. Lifecycle and reads are not. */
 export function isInspectable(entry: AgentActivityEntry): boolean {
   const refs = entry.refs;
-  return Boolean(refs && (refs.approvalId || refs.changeId || refs.planId || refs.file));
+  return Boolean(refs && (refs.approvalId || refs.changeId || refs.planId || refs.file || refs.handoffId));
+}
+
+const PREVIOUS_OUTCOME: Record<NonNullable<SessionHandoff["context"]["previousResult"]>["outcome"], string> = {
+  finished: "Finished",
+  stopped: "Stopped before finishing",
+  failed: "Stopped on an error",
+  waiting: "Waiting on you",
+  idle: "Not started",
+};
+
+/**
+ * A handoff entry, told from the handoff record it names — never from the
+ * entry's words. Without the record (an older page, a handoff kept nowhere)
+ * the events still say who to whom and whether it arrived.
+ */
+function inspectHandoff(entry: AgentActivityEntry, input: ActionInspectorInput): ActionInspection {
+  const handoffId = entry.refs!.handoffId!;
+  const record = input.handoffs?.find((candidate) => candidate.handoffId === handoffId);
+  const { session } = input;
+  const received = entry.kind === "handoff_received";
+  const event = input.events.find(
+    (candidate) =>
+      candidate.sessionId === session.sessionId &&
+      candidate.handoff?.handoffId === handoffId &&
+      (candidate.kind === "handoff_sent" || candidate.kind === "handoff_received")
+  );
+  const peerProvider = event?.handoff?.peerProvider ?? (received ? record?.sourceProvider : record?.targetProvider);
+  const peerSessionId = event?.handoff?.peerSessionId ?? (received ? record?.sourceSessionId : record?.targetSessionId);
+  // Both ends by the same name the session list uses, so "From" and "To" read alike.
+  const self = { provider: session.provider, name: agentDisplayName(session.provider) };
+  const peer = peerProvider ? { provider: peerProvider, name: agentDisplayName(peerProvider) } : undefined;
+  const from = received ? (peer ?? self) : self;
+  const to = received ? self : (peer ?? self);
+  const failed = entry.kind === "handoff_failed" || record?.status === "failed";
+  const failure = record?.failure ?? event?.handoff?.failure;
+
+  const context: string[] = [];
+  if (record) {
+    const workspace = record.context.workspace;
+    if (workspace) {
+      context.push(workspaceContextLine(workspace));
+      const focus = focusLine(workspace);
+      if (focus) context.push(`Selected: ${focus}`);
+    } else {
+      context.push("Workspace context not shared");
+    }
+  }
+  const result = record?.context.previousResult;
+  const previousResult = result
+    ? [
+        PREVIOUS_OUTCOME[result.outcome],
+        ...result.lines.map((line) => (line.description ? `${line.title} · ${line.description}` : line.title)),
+        ...(result.more > 0 ? [`…and ${plural(result.more, "more result", "more results")}`] : []),
+      ]
+    : undefined;
+
+  const createdAt = record?.createdAt ?? event?.timestamp ?? entry.at;
+  const chain: ActionChainStep[] = [{ key: "requested", label: "Handed off by you", at: createdAt, tone: "done" }];
+  if (failed && failure === "session_not_created") {
+    chain.push({ key: "session", label: `${to.name} session couldn't start`, at: record?.updatedAt ?? entry.at, tone: "failed" });
+  } else {
+    chain.push({ key: "session", label: `${to.name} session started`, tone: "done" });
+    chain.push(
+      failed
+        ? { key: "delivered", label: "Context not delivered", at: record?.updatedAt ?? entry.at, tone: "failed" }
+        : { key: "delivered", label: received ? "Received" : "Delivered", at: record?.updatedAt ?? entry.at, tone: "done" }
+    );
+  }
+
+  const where = input.workspaceName ? ` in ${input.workspaceName}` : "";
+  return {
+    key: `handoff:${handoffId}`,
+    title: entry.title,
+    status: failed ? "failed" : "completed",
+    agentName: input.agentName,
+    provider: session.provider,
+    ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+    action: "Handoff",
+    chain,
+    result: failed
+      ? {
+          tone: "failure",
+          text:
+            failure === "context_not_delivered"
+              ? `${to.name}'s session started, but the handoff didn't reach it. It wasn't told anything.`
+              : `${to.name}'s session couldn't be started. Nothing was changed, and ${from.name}'s session is as it was.`,
+        }
+      : received
+        ? { tone: "success", text: `Continuing ${from.name}'s work${where}.` }
+        : { tone: "success", text: `${to.name} received the handoff and continues${where}.` },
+    handoff: {
+      direction: received ? "received" : "sent",
+      from,
+      to,
+      ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+      context,
+      ...(previousResult ? { previousResult } : {}),
+      ...(record?.instruction ? { instruction: record.instruction } : {}),
+      createdAt,
+      ...(peerSessionId && peer ? { peer: { sessionId: peerSessionId, provider: peer.provider, name: peer.name } } : {}),
+    },
+    // A handoff moves no tab and no collection, so there is nothing of its own
+    // to put back; what the next agent changes is undone on its own entry.
+    undo: {
+      kind: "unavailable",
+      reason: "A handoff doesn't change the workspace, so there's nothing to undo. Changes the next agent makes can each be undone on their own.",
+    },
+  };
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -231,6 +362,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   const entry = input.entries.find((candidate) => candidate.id === entryId);
   if (!entry || !isInspectable(entry)) return null;
   const refs = entry.refs!;
+  if (refs.handoffId) return inspectHandoff(entry, input);
   const { session, agentName } = input;
   const sessionId = session.sessionId;
   const workspaceId = session.workspaceId ?? session.context?.workspaceId;

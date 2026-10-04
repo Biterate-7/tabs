@@ -224,6 +224,8 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   run_cancelled: { register: "lifecycle", label: "Run cancelled", tone: "muted" },
   context_loaded: { register: "lifecycle", label: "Workspace context loaded", tone: "muted" },
   context_read: { register: "activity", label: "Hubble", tone: "idle" },
+  handoff_sent: { register: "lifecycle", label: "Handed off", tone: "muted" },
+  handoff_received: { register: "lifecycle", label: "Handoff received", tone: "muted" },
 };
 
 /* ------------------------------------------------------------------ *

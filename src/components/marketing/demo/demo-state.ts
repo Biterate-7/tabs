@@ -1,5 +1,8 @@
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
-import type { RuntimeApprovalView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { RuntimeApprovalView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import { contextCountsLine } from "@/lib/agents/control/events"
+import { agentDisplayName, handoffLinksOf } from "@/lib/agents/handoff/handoff"
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
 import {
   addTabsToCollection,
@@ -32,6 +35,10 @@ import type { Tab } from "@/lib/tabs/types"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import {
   CLAUDE_SESSION,
+  DEMO_KNOWN_APPROVALS,
+  HANDOFF_PLAN,
+  contextTool,
+  demoSessionContext,
   DEMO_APPROVALS,
   DEMO_COLLECTIONS,
   DEMO_DEPENDENCIES,
@@ -103,6 +110,16 @@ export type DemoState = {
   history: AgentHistoryDetail[]
   /** The past session open in the Command Centre, by id. Exclusive with `selectedSessionId`. */
   selectedHistoryId: string | null
+  /** Handoffs the visitor made (Hubble 1.4), as the runtime records them. */
+  handoffs: SessionHandoff[]
+  /**
+   * What each approval in the demo would change once approved, by approval
+   * id — Claude Code's SWE-bench collection, and whatever a handed-off agent
+   * asks for. The Command Centre applies it exactly as it applies any other.
+   */
+  pendingChanges: Record<string, DemoPendingChange>
+  /** Approvals raised during the visit, remembered after they are answered — as the Command Centre remembers them. */
+  seenApprovals: RuntimeApprovalView[]
   paletteOpen: boolean
   /** The Command Centre's context panel (shown from `xl`, as in the app). */
   contextPanelOpen: boolean
@@ -111,6 +128,55 @@ export type DemoState = {
   settingsSection: DemoSettingsSection
   /** How many things the visitor has created, for deterministic ids. */
   created: number
+}
+
+export type DemoPendingChange = {
+  sessionId: string
+  workspaceId: string
+  name: string
+  tabIds: readonly string[]
+  /** The agent's reply once it is applied, and once it is declined. */
+  reply: string
+  declined: string
+}
+
+const SWE_CHANGE: DemoPendingChange = {
+  sessionId: CLAUDE_SESSION,
+  workspaceId: SWE_APPROVAL.workspaceId ?? RESEARCH_ID,
+  name: "SWE-bench",
+  tabIds: SWE_TAB_IDS,
+  reply: "Done. “SWE-bench” is in Research with the paper, the leaderboard and the repository. Nothing else changed.",
+  declined: "Understood — I won't create it. The three SWE-bench tabs stay where they are in Research.",
+}
+
+/** Every approval the demo can describe: the fixture's, and those raised during the visit. */
+export function demoKnownApprovals(state: Pick<DemoState, "seenApprovals">): ReadonlyMap<string, RuntimeApprovalView> {
+  if (state.seenApprovals.length === 0) return DEMO_KNOWN_APPROVALS
+  return new Map([...DEMO_KNOWN_APPROVALS, ...state.seenApprovals.map((approval) => [approval.approvalId, approval] as const)])
+}
+
+/**
+ * The session a handoff starts, as the runtime describes it: the target
+ * agent, working in the source's workspace, holding its context only if the
+ * visitor passed it, and linked to the source by the handoff record.
+ */
+export function demoHandoffTarget(handoff: SessionHandoff, title: string | undefined, workspaceName: string): RuntimeSessionView {
+  return {
+    sessionId: handoff.targetSessionId!,
+    provider: handoff.targetProvider,
+    status: "running",
+    runIds: [`${handoff.targetSessionId}-run-1`],
+    awaitingApproval: false,
+    cancellable: true,
+    resumable: false,
+    latestSequence: 0,
+    createdAt: DEMO_NOW,
+    updatedAt: DEMO_NOW,
+    workspaceId: handoff.workspaceId,
+    ...(title ? { title } : {}),
+    ...(handoff.context.workspace ? { context: demoSessionContext(handoff.workspaceId, workspaceName, true) } : {}),
+    handoff: { from: { handoffId: handoff.handoffId, sessionId: handoff.sourceSessionId, provider: handoff.sourceProvider, status: "ready" } },
+  }
 }
 
 export type DemoInit = {
@@ -137,6 +203,9 @@ export function createDemoState(init: DemoInit = {}): DemoState {
     selectedSessionId: init.selectedHistoryId ? null : init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
     history: [...DEMO_HISTORY],
     selectedHistoryId: init.selectedHistoryId ?? null,
+    handoffs: [],
+    pendingChanges: { [SWE_APPROVAL.approvalId]: SWE_CHANGE },
+    seenApprovals: [],
     paletteOpen: false,
     contextPanelOpen: init.contextPanelOpen ?? true,
     sidebarCollapsed: init.sidebarCollapsed ?? false,
@@ -181,6 +250,14 @@ export type DemoAction =
   | { type: "select-history"; id: string | null }
   /** Undoes a past session's change exactly — recorded as its own record after the change. */
   | { type: "undo-history"; sessionId: string; changeId: string }
+  /**
+   * The visitor continued a session with another agent (Hubble 1.4): the
+   * handoff as the demo's transport recorded it, and the envelope the target
+   * agent is told — built by the product's own functions.
+   */
+  | { type: "handoff-start"; handoff: SessionHandoff; envelope: string; title?: string; workspaceName: string }
+  /** The handed-off agent reads the workspace and asks to change it. */
+  | { type: "handoff-work"; sessionId: string; approval: RuntimeApprovalView }
   | { type: "send"; sessionId: string; text: string }
   | { type: "reply"; sessionId: string }
   | { type: "cancel"; sessionId: string }
@@ -429,7 +506,7 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
               kind: "message_received",
               summary: "Reply",
               messageId: `${approval.approvalId}-denied`,
-              text: "Understood — I won't create it. The three SWE-bench tabs stay where they are in Research.",
+              text: state.pendingChanges[approval.approvalId]?.declined ?? SWE_CHANGE.declined,
             },
           ]),
         }
@@ -448,10 +525,11 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
     }
 
     case "apply-approved": {
-      // The one approval in the fixture that changes the workspace: a new
-      // collection holding the three tabs the card named.
-      if (action.approvalId !== SWE_APPROVAL.approvalId) return state
-      const sessionId = SWE_APPROVAL.sessionId
+      // An approval that changes the workspace: a new collection holding the
+      // tabs the card named — Claude Code's, or a handed-off agent's.
+      const pending = state.pendingChanges[action.approvalId]
+      if (!pending) return state
+      const sessionId = pending.sessionId
       const events = state.events[sessionId] ?? []
       const granted = events.some((event) => event.kind === "approval_granted" && event.approvalId === action.approvalId)
       if (!granted || state.changes.some((change) => change.approvalId === action.approvalId)) return state
@@ -461,9 +539,9 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       // Applied the way the Command Centre applies it — through the product's
       // own collection reducer — and recorded with the collections either
       // side, which is what makes an exact undo possible.
-      const workspaceId = SWE_APPROVAL.workspaceId ?? RESEARCH_ID
+      const workspaceId = pending.workspaceId
       const before = state.collections.filter((collection) => collection.workspaceId === workspaceId)
-      const next = addCollection(state, workspaceId, "SWE-bench", [...SWE_TAB_IDS])
+      const next = addCollection(state, workspaceId, pending.name, [...pending.tabIds])
       const after = next.collections.filter((collection) => collection.workspaceId === workspaceId)
       // No event: Claude Code reports no result for a Hubble tool call, so
       // in Hubble too the change is the Command Centre's record, not the journal's.
@@ -476,7 +554,7 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
         at: Math.max(last?.timestamp ?? DEMO_NOW, DEMO_NOW) + 500,
         ok: true,
         approvalId: action.approvalId,
-        steps: [{ kind: "created", collectionId: next.id, name: "SWE-bench", tabCount: SWE_TAB_IDS.length }],
+        steps: [{ kind: "created", collectionId: next.id, name: pending.name, tabCount: pending.tabIds.length }],
         before,
         after,
       }
@@ -502,7 +580,7 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
             kind: "message_received",
             summary: "Reply",
             messageId,
-            text: "Done. “SWE-bench” is in Research with the paper, the leaderboard and the repository. Nothing else changed.",
+            text: state.pendingChanges[action.approvalId]?.reply ?? SWE_CHANGE.reply,
           },
           { kind: "run_completed", summary: "Run completed." },
         ]),
@@ -522,6 +600,84 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
         ...state,
         collections: restored.collections,
         changes: state.changes.map((candidate) => (candidate.id === change.id ? { ...candidate, undone: true, undoneAt } : candidate)),
+      }
+    }
+
+    case "handoff-start": {
+      const { handoff } = action
+      const targetId = handoff.targetSessionId
+      const source = state.sessions.find((entry) => entry.view.sessionId === handoff.sourceSessionId)
+      if (!targetId || !source || state.sessions.some((entry) => entry.view.sessionId === targetId)) return state
+      const handoffs = [...state.handoffs, handoff]
+      const target: CommandCentreSession = { origin: "controlled", view: demoHandoffTarget(handoff, action.title, action.workspaceName) }
+      // Both sessions' links, from the records — never from where they sit.
+      const linked = [target, ...state.sessions].map((entry) => {
+        const links = handoffLinksOf(entry.view.sessionId, handoffs)
+        return links ? { ...entry, view: { ...entry.view, handoff: links } } : entry
+      })
+      const withTarget = { ...state, sessions: linked }
+      const received = { handoffId: handoff.handoffId, workspaceId: handoff.workspaceId, peerProvider: handoff.sourceProvider, peerSessionId: handoff.sourceSessionId }
+      const workspace = handoff.context.workspace
+      const targetEvents = appendEvents(withTarget, targetId, [
+        { kind: "session_started", summary: "Session started." },
+        // What the agent was told, marked as the handoff by reference.
+        { kind: "message_sent", summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`, handoff: received, text: action.envelope },
+        { kind: "handoff_received", summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`, handoff: received },
+        ...(workspace
+          ? [
+              {
+                kind: "context_loaded" as const,
+                summary: contextCountsLine({ workspaceId: handoff.workspaceId, tabs: workspace.tabs, collections: workspace.collections }),
+                context: { workspaceId: handoff.workspaceId, tabs: workspace.tabs, collections: workspace.collections },
+              },
+            ]
+          : []),
+      ])
+      const events = appendEvents({ ...withTarget, events: targetEvents }, handoff.sourceSessionId, [
+        {
+          kind: "handoff_sent",
+          summary: `Handed off to ${agentDisplayName(handoff.targetProvider)}`,
+          handoff: { handoffId: handoff.handoffId, workspaceId: handoff.workspaceId, peerProvider: handoff.targetProvider, peerSessionId: targetId, outcome: "ready" },
+        },
+      ])
+      return { ...withTarget, events, handoffs, selectedSessionId: targetId, selectedHistoryId: null }
+    }
+
+    case "handoff-work": {
+      const session = state.sessions.find((entry) => entry.view.sessionId === action.sessionId)
+      if (!session || session.view.status !== "running" || state.pendingChanges[action.approval.approvalId]) return state
+      const workspaceId = session.view.workspaceId ?? RESEARCH_ID
+      const workspace = state.store.workspaces.find((candidate) => candidate.id === workspaceId)
+      const counts = {
+        workspaceId,
+        operation: "get_workspace_summary",
+        ok: true,
+        tabs: workspace?.tabs.length ?? 0,
+        collections: state.collections.filter((collection) => collection.workspaceId === workspaceId).length,
+      }
+      return {
+        ...state,
+        approvals: { ...state.approvals, [action.sessionId]: [action.approval] },
+        seenApprovals: [...state.seenApprovals, action.approval],
+        pendingChanges: {
+          ...state.pendingChanges,
+          [action.approval.approvalId]: {
+            sessionId: action.sessionId,
+            workspaceId,
+            name: HANDOFF_PLAN.name,
+            tabIds: HANDOFF_PLAN.tabIds,
+            reply: HANDOFF_PLAN.reply,
+            declined: `Understood — I won't create “${HANDOFF_PLAN.name}”. Nothing in ${workspace?.name ?? "the workspace"} changed.`,
+          },
+        },
+        sessions: patchSession(state.sessions, action.sessionId, "waiting_for_approval"),
+        events: appendEvents(state, action.sessionId, [
+          { kind: "tool_started", summary: "Reading the workspace", tool: contextTool("get_workspace_summary", `${action.sessionId}-call-1`) },
+          // Summarised as the control service summarises it.
+          { kind: "context_read", summary: contextCountsLine(counts), context: counts },
+          { kind: "tool_started", summary: `Proposing “${HANDOFF_PLAN.name}”`, tool: contextTool("create_collection", `${action.sessionId}-call-2`) },
+          { kind: "approval_requested", summary: "Wants to change your Hubble workspace", approvalId: action.approval.approvalId },
+        ]),
       }
     }
 

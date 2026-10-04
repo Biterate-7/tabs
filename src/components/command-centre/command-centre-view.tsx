@@ -16,6 +16,8 @@ import { Composer } from "./composer"
 import { ContextPanel } from "./context-panel"
 import { ContextPicker } from "./context-picker"
 import { EventStream } from "./event-stream"
+import { HandoffDialog, handoffAgentOptions } from "./handoff-dialog"
+import type { HandoffStartResult } from "./handoff-dialog"
 import { HistorySessionView } from "./history-session-view"
 import { NewSessionDialog } from "./new-session-dialog"
 import { SessionHeader } from "./session-header"
@@ -77,6 +79,8 @@ import {
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
 import { collectionsMatch } from "@/lib/collections/restore"
 import { historySessionStatus } from "@/lib/agents/activity/history"
+import { agentDisplayName, canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { runtimeHandoffTransport } from "@/lib/agents/handoff/transport"
 import type { AgentHistorySession } from "@/lib/agents/activity/history"
 import { cn } from "@/lib/utils"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
@@ -680,6 +684,7 @@ export function CommandCentreView({
     events: session.events,
     approvals: session.approvals,
     changes: sessionChanges,
+    handoffs: session.handoffs,
     agentName,
     ...(workspaceName ? { workspaceName } : {}),
     ...(sessionProjectName ? { projectName: sessionProjectName } : {}),
@@ -706,20 +711,7 @@ export function CommandCentreView({
     if (currentProvider) setDefaultProvider(currentProvider)
     setNewSessionOpen(true)
   }, [currentProvider])
-  const activityTimeline = currentView ? (
-    <AgentActivity
-      entries={activity}
-      provider={currentView.provider}
-      agentName={agentName}
-      state={SESSION_VISUAL_STATE[currentView.status]}
-      statusLabel={SESSION_STATUS_LABEL[currentView.status]}
-      now={now}
-      inspect={inspectActivity}
-      onUndo={undoActivityChange}
-      {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
-      {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
-    />
-  ) : null
+
 
   /* ---------------- Agent history: this workspace's past sessions. */
 
@@ -804,6 +796,111 @@ export function CommandCentreView({
     setHistorySelection(null)
     setRequestedSessionId(sessionId)
   }, [])
+
+  /* ---------------- Explicit handoff (Hubble 1.4): "Continue with…". */
+
+  /*
+    The dialog's source, and the copy of its workspace the preview and the
+    confirmation both carry — taken once, when the person opens it, so the
+    runtime fingerprints exactly what they read.
+  */
+  const [handoffSource, setHandoffSource] = useState<{
+    key: number
+    sessionId: string
+    provider: AgentProviderId
+    title?: string
+    statusLabel: string
+    workspaceId: string
+    projectId?: string
+    transport: ReturnType<typeof runtimeHandoffTransport>
+  } | null>(null)
+  const canContinue = Boolean(currentView && runtime.executable && sessionWorkspaceId && canHandOffFrom(currentView.status))
+  const continueWith = useCallback(() => {
+    if (!currentView || !sessionWorkspaceId) return
+    setHandoffSource({
+      key: Date.now(),
+      sessionId: currentView.sessionId,
+      provider: currentView.provider,
+      ...(currentView.title ? { title: currentView.title } : {}),
+      statusLabel: SESSION_STATUS_LABEL[currentView.status],
+      workspaceId: sessionWorkspaceId,
+      ...(currentView.projectId ? { projectId: currentView.projectId } : {}),
+      transport: runtimeHandoffTransport(runtime.client, currentView.sessionId, sessionContext.snapshotFor(sessionWorkspaceId)),
+    })
+  }, [currentView, runtime.client, sessionContext, sessionWorkspaceId])
+  const handoffAgents = useMemo(
+    () =>
+      handoffAgentOptions(platform, (provider) => {
+        const status = startableProviders.find((entry) => entry.provider === provider)
+        return Boolean(status && canCreateSession(status))
+      }),
+    [platform, startableProviders]
+  )
+  /** Projects the new session may use with that agent: ones it is authorized for, within what it was approved for. */
+  const handoffProjectsFor = useCallback(
+    (provider: AgentProviderId) => {
+      const agent = platform.identity(provider)
+      const options = projects.projects
+        .filter((project) => project.providers.includes(provider) && Boolean(agent && grantWithinApproval(agent, project.permissions.scopes)))
+        .map((project) => ({ id: project.id, name: project.name }))
+      const sourceProject = handoffSource?.projectId
+      return { options, ...(sourceProject && options.some((option) => option.id === sourceProject) ? { defaultId: sourceProject } : {}) }
+    },
+    [platform, projects.projects, handoffSource?.projectId]
+  )
+  const handleHandoffStarted = useCallback(
+    async (result: HandoffStartResult) => {
+      const source = handoffSource
+      setHandoffSource(null)
+      const target = result.session
+      if (!target || !source) return
+      platform.recordSession(target.provider, target.sessionId, source.workspaceId)
+      await sessions.refresh()
+      setHistorySelection(null)
+      setRequestedSessionId(target.sessionId)
+      toast(`${agentDisplayName(target.provider)} received the handoff`, {
+        description: `Continuing ${agentDisplayName(source.provider)}'s work${workspaceNameOf(source.workspaceId) ? ` in ${workspaceNameOf(source.workspaceId)}` : ""}`,
+      })
+    },
+    [handoffSource, platform, sessions, workspaceNameOf]
+  )
+  /*
+    The session on the other end of a handoff: live, if this runtime holds it;
+    otherwise from agent history — always of this workspace, because a
+    handoff never leaves one.
+  */
+  const openHandoffSession = useCallback(
+    (sessionId: string, provider: AgentProviderId) => {
+      if (sessions.sessions.some((entry) => entry.view.sessionId === sessionId)) {
+        setHistorySelection(null)
+        setRequestedSessionId(sessionId)
+        return
+      }
+      const workspaceId = sessionWorkspaceId ?? historySelection?.workspaceId ?? activeWorkspaceId
+      if (!workspaceId) return
+      const listed = history.state.kind === "ready" ? history.state.sessions.find((entry) => entry.sessionId === sessionId) : undefined
+      setRequestedSessionId(null)
+      setHistorySelection(listed ?? { sessionId, workspaceId, provider, status: "disconnected", startedAt: 0, lastActivityAt: 0 })
+    },
+    [sessions.sessions, sessionWorkspaceId, historySelection?.workspaceId, activeWorkspaceId, history.state]
+  )
+
+  const activityTimeline = currentView ? (
+    <AgentActivity
+      entries={activity}
+      provider={currentView.provider}
+      agentName={agentName}
+      state={SESSION_VISUAL_STATE[currentView.status]}
+      statusLabel={SESSION_STATUS_LABEL[currentView.status]}
+      now={now}
+      inspect={inspectActivity}
+      onUndo={undoActivityChange}
+      {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
+      {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
+      {...(canContinue ? { onContinue: continueWith } : {})}
+      onOpenSession={openHandoffSession}
+    />
+  ) : null
 
   const contextActions = useMemo((): WorkingContextActions => {
     if (!currentView || !sessionWorkspaceId || link.kind === "workspace-missing" || link.kind === "none") return {}
@@ -1018,6 +1115,7 @@ export function CommandCentreView({
                 onUndo={undoHistoryChange}
                 {...(onViewWorkspace ? { onViewChange: viewHistoryChange } : {})}
                 {...(runtime.executable ? { onNewSession: () => setNewSessionOpen(true) } : {})}
+                onOpenSession={openHandoffSession}
               />
             </HistorySessionView>
           ) : current && currentView ? (
@@ -1261,6 +1359,32 @@ export function CommandCentreView({
           if (!returnToNewSession()) setNewSessionOpen(true)
         }}
       />
+
+      {handoffSource && (
+        <HandoffDialog
+          key={handoffSource.key}
+          open
+          onOpenChange={(open) => {
+            // Closing before Continue is the cancel: nothing was started, and nothing is kept.
+            if (!open) setHandoffSource(null)
+          }}
+          source={{
+            provider: handoffSource.provider,
+            agentName: agentDisplayName(handoffSource.provider),
+            ...(handoffSource.title ? { title: handoffSource.title } : {}),
+            statusLabel: handoffSource.statusLabel,
+          }}
+          {...(workspaceNameOf(handoffSource.workspaceId) ? { workspaceName: workspaceNameOf(handoffSource.workspaceId) } : {})}
+          agents={handoffAgents}
+          onConnect={(provider) => {
+            setHandoffSource(null)
+            openConnect(provider)
+          }}
+          projectsFor={handoffProjectsFor}
+          transport={handoffSource.transport}
+          onStarted={(result) => void handleHandoffStarted(result)}
+        />
+      )}
 
       {pickerFor && (
         <ContextPicker

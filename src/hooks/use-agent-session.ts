@@ -7,6 +7,7 @@ import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type {
   RuntimeApprovalView,
   RuntimeErrorCode,
+  RuntimeHandoffView,
   RuntimeSessionView,
   SequencedControlEvent,
 } from "@/lib/agents/runtime/protocol"
@@ -80,9 +81,13 @@ type SessionData = {
   session: RuntimeSessionView | null
   events: readonly SequencedControlEvent[]
   approvals: readonly RuntimeApprovalView[]
+  /** Handoffs this session was part of (Hubble 1.4), as the runtime reports them. */
+  handoffs: readonly RuntimeHandoffView[]
   loading: boolean
   error: RuntimeErrorCode | null
 }
+
+const NO_HANDOFFS: readonly RuntimeHandoffView[] = []
 
 /** At module scope so its identity is stable and it can be a hook dependency. */
 function emptyData(id: string | null): SessionData {
@@ -91,6 +96,7 @@ function emptyData(id: string | null): SessionData {
     session: null,
     events: [],
     approvals: [],
+    handoffs: NO_HANDOFFS,
     loading: id !== null,
     error: null,
   }
@@ -101,6 +107,7 @@ export type AgentSessionApi = {
   session: RuntimeSessionView | null
   events: readonly SequencedControlEvent[]
   approvals: readonly RuntimeApprovalView[]
+  handoffs: readonly RuntimeHandoffView[]
   loading: boolean
   error: RuntimeErrorCode | null
   /** Set while a user-initiated command is in flight, so controls can disable. */
@@ -189,6 +196,7 @@ export function useAgentSession(options: {
       error: null,
       session: viewResult.value.session,
       approvals: viewResult.value.approvals,
+      handoffs: viewResult.value.handoffs ?? NO_HANDOFFS,
     }))
 
     const cursor =
@@ -318,6 +326,7 @@ export function useAgentSession(options: {
       session: current.session,
       events: current.events,
       approvals: current.approvals,
+      handoffs: current.handoffs,
       loading: current.loading,
       error: current.error,
       pending,

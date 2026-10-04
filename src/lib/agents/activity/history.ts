@@ -1,6 +1,8 @@
 import { isWellFormedControlEvent } from "@/lib/agents/control/events";
 import { isAgentSessionStatus, isTerminalSessionStatus } from "@/lib/agents/control/session";
 import { isAgentProviderId } from "@/lib/agents/connectors/types";
+import { handoffLinksOf, readHandoffLinks, readSessionHandoff } from "@/lib/agents/handoff/handoff";
+import type { SessionHandoff, SessionHandoffLinks } from "@/lib/agents/handoff/handoff";
 import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentControlEventKind } from "@/lib/agents/control/events";
@@ -110,6 +112,11 @@ export type AgentHistorySession = {
   endedAt?: number;
   /** More events happened than history keeps; the ones kept are the first. */
   truncated?: boolean;
+  /**
+   * The handoffs this session was part of (Hubble 1.4), from the explicit
+   * handoff records — the work it was handed, and what it handed on.
+   */
+  handoff?: SessionHandoffLinks;
 };
 
 /** An undo the person made, recorded as its own fact after the change it undid. */
@@ -123,6 +130,8 @@ export type AgentHistoryRecords = {
   changes: readonly AppliedWorkspaceChange[];
   undos: readonly AgentHistoryUndo[];
   planOutcomes: readonly RuntimePlanOutcomeView[];
+  /** Handoffs this session was the source or the target of (Hubble 1.4). Absent: none, or none kept. */
+  handoffs?: readonly SessionHandoff[];
 };
 
 export type AgentHistoryDetail = { session: AgentHistorySession; records: AgentHistoryRecords };
@@ -186,6 +195,7 @@ export function historyEventOf(event: SequencedControlEvent): SequencedControlEv
   if (event.file) kept.file = { relativePath: event.file.relativePath, projectId: event.file.projectId };
   if (event.approvalId) kept.approvalId = event.approvalId;
   if (event.context) kept.context = { ...event.context };
+  if (event.handoff) kept.handoff = { ...event.handoff };
   if (event.messageId) kept.messageId = event.messageId;
   if (event.sourceId) kept.sourceId = event.sourceId;
   // `text` is never copied. See the note at the top of this file.
@@ -483,7 +493,28 @@ export function reviveHistorySession(raw: unknown): AgentHistorySession | null {
     lastActivityAt: raw.lastActivityAt,
     ...(raw.endedAt !== undefined ? { endedAt: raw.endedAt as number } : {}),
     ...(raw.truncated === true ? { truncated: true } : {}),
+    ...(() => {
+      const handoff = readHandoffLinks(raw.handoff);
+      return handoff ? { handoff } : {};
+    })(),
   };
+}
+
+/**
+ * The handoffs a session's history may show: readable, in its workspace, and
+ * naming it as source or target. Anything else is dropped, never repaired.
+ */
+export function readHistoryHandoffs(raw: unknown, session: { sessionId: string; workspaceId: string }): SessionHandoff[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 100)
+    .map(readSessionHandoff)
+    .filter(
+      (handoff): handoff is SessionHandoff =>
+        handoff !== null &&
+        handoff.workspaceId === session.workspaceId &&
+        (handoff.sourceSessionId === session.sessionId || handoff.targetSessionId === session.sessionId)
+    );
 }
 
 /** One stored record, revalidated for its session. `null`: unreadable, and so not shown. */
@@ -564,7 +595,9 @@ export function readHistoryDetail(raw: unknown): AgentHistoryDetail | null {
   push("change", input.changes);
   push("undo", input.undos);
   push("plan_outcome", input.planOutcomes);
-  return { session, records: groupHistoryRecords(revived) };
+  const records = groupHistoryRecords(revived);
+  const handoffs = readHistoryHandoffs(input.handoffs, session);
+  return { session, records: handoffs.length > 0 ? { ...records, handoffs } : records };
 }
 
 export function readHistoryPage(raw: unknown): AgentHistoryPage | null {
@@ -599,6 +632,7 @@ export type ReconstructedHistorySession = {
   knownApprovals: ReadonlyMap<string, RuntimeApprovalView>;
   changes: readonly AppliedWorkspaceChange[];
   planOutcomes: readonly RuntimePlanOutcomeView[];
+  handoffs: readonly SessionHandoff[];
 };
 
 /**
@@ -631,6 +665,9 @@ export function reconstructHistorySession(detail: AgentHistoryDetail): Reconstru
     ...(session.projectId ? { projectId: session.projectId } : {}),
     ...(session.contextUnavailable ? { contextUnavailable: "provider" as const } : {}),
   };
+  // The relationship as the handoff records state it, or as the session row did.
+  const handoff = handoffLinksOf(session.sessionId, records.handoffs ?? []) ?? session.handoff;
+  if (handoff) view.handoff = handoff;
 
   return {
     session: view,
@@ -641,5 +678,6 @@ export function reconstructHistorySession(detail: AgentHistoryDetail): Reconstru
       return at !== undefined && change.ok ? { ...change, undone: true, undoneAt: at } : change;
     }),
     planOutcomes: records.planOutcomes,
+    handoffs: records.handoffs ?? [],
   };
 }

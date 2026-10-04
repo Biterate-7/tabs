@@ -1,6 +1,8 @@
 import { describeStep, describeUndo } from "@/lib/agents/command-centre/workspace-activity";
 import { isLiveSession, isTerminalSession, toolStage } from "@/lib/agents/command-centre/presentation";
 import { relativePathBasename } from "@/lib/agents/paths";
+import { agentDisplayName, handoffPassedLine } from "@/lib/agents/handoff/handoff";
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
 import type { ContextToolStage } from "@/lib/agents/command-centre/presentation";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -94,6 +96,12 @@ export type AgentActivityKind =
   | "workspace_updated"
   /** A workspace change the person undid — told after the change, which keeps its own entry. */
   | "undone"
+  /** The person handed this session's work to another agent (Hubble 1.4). */
+  | "handoff_sent"
+  /** A handoff that did not reach the other agent. */
+  | "handoff_failed"
+  /** This session was started by a handoff. */
+  | "handoff_received"
   | "action_failed"
   | "error"
   | "completed"
@@ -123,7 +131,9 @@ export type AgentActivityAction =
   /** Show what an applied workspace change did. */
   | { kind: "view_change"; changeId: string }
   /** The session cannot continue; a new one can. */
-  | { kind: "new_session" };
+  | { kind: "new_session" }
+  /** The session on the other end of a handoff. */
+  | { kind: "open_session"; sessionId: string; provider: AgentProviderId };
 
 export type AgentActivityEntry = {
   /** Stable, derived from the source record. Never shown. */
@@ -158,6 +168,8 @@ export type ActivityRefs = {
   sequence?: number;
   /** The project file a file entry is about. Project-relative, as the event carried it. */
   file?: { relativePath: string; projectId: string; operation: "created" | "updated" };
+  /** The handoff a handoff entry is about (Hubble 1.4). */
+  handoffId?: string;
 };
 
 export type AgentActivityInput = {
@@ -175,7 +187,11 @@ export type AgentActivityInput = {
   planOutcomes?: readonly RuntimePlanOutcomeView[];
   /** Workspace changes the Command Centre applied. Filtered to this session and workspace here. */
   changes?: readonly AppliedWorkspaceChange[];
+  /** Handoffs this session was part of, for what each passed (Hubble 1.4). The events say that they happened. */
+  handoffs?: readonly SessionHandoff[];
   agentName: string;
+  /** Another agent's name — the one on the other end of a handoff. Defaults to the catalog's. */
+  agentNameOf?: (provider: AgentProviderId) => string;
   /** The session's workspace by its live name. */
   workspaceName?: string;
   now: number;
@@ -436,6 +452,9 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
     })
     .sort((a, b) => a.sequence - b.sequence);
 
+  const nameOf = input.agentNameOf ?? agentDisplayName;
+  const handoffById = new Map((input.handoffs ?? []).map((handoff) => [handoff.handoffId, handoff]));
+
   let startEvent: SequencedControlEvent | undefined;
   const open = new Map<string, OpenCall>();
   let lastCallKey: string | undefined;
@@ -690,6 +709,8 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
       }
 
       case "message_sent":
+        // The message that delivered a handoff: "Handoff received" says it.
+        if (event.handoff) break;
         endReads();
         push({
           id: `sent:${event.id}`,
@@ -819,6 +840,49 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
           refs: { sequence: event.sequence },
         });
         break;
+
+      case "handoff_sent": {
+        const info = event.handoff;
+        if (!info || (workspaceId && info.workspaceId !== workspaceId)) break;
+        endReads();
+        const peer = nameOf(info.peerProvider);
+        const record = handoffById.get(info.handoffId);
+        const failed = info.outcome === "failed";
+        push({
+          id: `handoff:${info.handoffId}`,
+          kind: failed ? "handoff_failed" : "handoff_sent",
+          status: failed ? "failed" : "completed",
+          title: failed ? `Couldn't hand off to ${peer}` : `Handed off to ${peer}`,
+          description: failed
+            ? info.failure === "context_not_delivered"
+              ? `${peer} didn't receive the handoff`
+              : `${peer}'s session couldn't be started. Nothing was changed`
+            : record
+              ? handoffPassedLine(record)
+              : `Continued in a new ${peer} session`,
+          at: event.timestamp,
+          refs: { handoffId: info.handoffId, sequence: event.sequence },
+          ...(info.peerSessionId ? { action: { kind: "open_session" as const, sessionId: info.peerSessionId, provider: info.peerProvider } } : {}),
+        });
+        break;
+      }
+
+      case "handoff_received": {
+        const info = event.handoff;
+        if (!info || (workspaceId && info.workspaceId !== workspaceId)) break;
+        endReads();
+        push({
+          id: `handoff-received:${info.handoffId}`,
+          kind: "handoff_received",
+          status: "info",
+          title: "Handoff received",
+          description: `From ${nameOf(info.peerProvider)}`,
+          at: event.timestamp,
+          refs: { handoffId: info.handoffId, sequence: event.sequence },
+          ...(info.peerSessionId ? { action: { kind: "open_session" as const, sessionId: info.peerSessionId, provider: info.peerProvider } } : {}),
+        });
+        break;
+      }
 
       case "thinking":
       case "message_delta":

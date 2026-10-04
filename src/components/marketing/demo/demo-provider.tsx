@@ -5,8 +5,30 @@ import { useAgentContext, type AgentContextApi } from "@/hooks/use-agent-context
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
 import { restoreWorkspaceCollections } from "@/lib/collections/restore"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
-import { DEMO_NOW } from "./data"
-import { createDemoState, demoReducer, type DemoAction, type DemoInit, type DemoState } from "./demo-state"
+import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
+import {
+  buildHandoffEnvelope,
+  canHandOffFrom,
+  readHandoffInstruction,
+  selectHandoffContext,
+} from "@/lib/agents/handoff/handoff"
+import { prepareHandoffPreview } from "@/lib/agents/handoff/preview"
+import { runtimeFailure } from "@/lib/agents/runtime/protocol"
+import { buildSessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
+import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
+import type { HandoffTransport } from "@/lib/agents/handoff/transport"
+import type { RuntimeResult } from "@/lib/agents/runtime/protocol"
+import { DEMO_NOW, DEMO_SESSION_PROVIDERS, handoffApproval } from "./data"
+import {
+  createDemoState,
+  demoHandoffTarget,
+  demoKnownApprovals,
+  demoReducer,
+  type DemoAction,
+  type DemoInit,
+  type DemoState,
+} from "./demo-state"
 
 /*
  * HubbleDemoProvider — the landing page's isolated demo state.
@@ -38,6 +60,12 @@ type DemoContextValue = {
   undoHistory: (sessionId: string, changeId: string) => boolean
   /** Opens a saved tab's page in a new browser tab. Never navigates the landing page itself. */
   openUrl: (url: string) => void
+  /**
+   * The handoff dialog's transport for one session (Hubble 1.4):
+   * the runtime's two steps played deterministically on this page — the
+   * same preview, envelope and record functions, no network.
+   */
+  handoff: (sourceSessionId: string) => HandoffTransport
   scheme?: { value: DemoScheme; set: (scheme: DemoScheme) => void }
 }
 
@@ -152,6 +180,93 @@ export function HubbleDemoProvider({
     [state.history, state.collections]
   )
 
+  /*
+    The demo's handoff transport. Reads the state at the moment it is asked,
+    as the runtime reads its own records — the latest, not the render's.
+  */
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  const handoff = useCallback((sourceSessionId: string): HandoffTransport => {
+    /** What the runtime would check and preview, from the demo's records. */
+    const candidate = (target: AgentProviderId) => {
+      const current = stateRef.current
+      const entry = current.sessions.find((session) => session.view.sessionId === sourceSessionId)
+      if (!entry) return runtimeFailure<never>("session_not_found")
+      const workspaceId = workspaceIdOf(entry.view)
+      if (!workspaceId || !canHandOffFrom(entry.view.status)) return runtimeFailure<never>("invalid_session_state")
+      if (!DEMO_SESSION_PROVIDERS.has(target)) return runtimeFailure<never>("provider_unavailable")
+      const snapshot = buildSessionContextSnapshot(
+        { workspaces: current.store.workspaces, collections: current.collections, dependencies: current.dependencies },
+        workspaceId
+      )
+      const prepared = prepareHandoffPreview({
+        session: entry.view,
+        workspaceId,
+        events: current.events[sourceSessionId] ?? [],
+        knownApprovals: demoKnownApprovals(current),
+        changes: current.changes.filter((change) => change.sessionId === sourceSessionId),
+        ...(snapshot ? { snapshot } : {}),
+        ...(entry.view.focus ? { focus: entry.view.focus } : {}),
+        targetProvider: target,
+        contextTools: true,
+        now: DEMO_NOW,
+      })
+      return { ok: true as const, value: { ...prepared, source: entry.view, workspaceName: snapshot?.workspace.name ?? "", count: current.handoffs.length } }
+    }
+
+    return {
+      prepare: async (target) => {
+        const found = candidate(target)
+        return found.ok ? { ok: true, value: found.value.preview } : found
+      },
+      start: async ({ preview, include, instruction }): Promise<RuntimeResult<{ handoff: SessionHandoff; session: ReturnType<typeof demoHandoffTarget> }>> => {
+        const found = candidate(preview.targetProvider)
+        if (!found.ok) return found
+        // What the visitor saw is what is sent, or nothing is — as in Hubble.
+        if (found.value.preview.fingerprint !== preview.fingerprint) return runtimeFailure("context_invalid")
+        const { source, workspaceName } = found.value
+        const n = found.value.count + 1
+        const said = readHandoffInstruction(instruction)
+        const record: SessionHandoff = {
+          handoffId: `demo-handoff-${n}`,
+          workspaceId: preview.workspaceId,
+          sourceSessionId,
+          sourceProvider: source.provider,
+          targetProvider: preview.targetProvider,
+          targetSessionId: `session-handoff-${n}`,
+          status: "ready",
+          context: selectHandoffContext(found.value.preview.context, include),
+          ...(said ? { instruction: said } : {}),
+          createdAt: DEMO_NOW,
+          updatedAt: DEMO_NOW,
+        }
+        const envelope = buildHandoffEnvelope({
+          workspaceName,
+          sourceProvider: source.provider,
+          ...(source.title ? { sourceTitle: source.title } : {}),
+          context: record.context,
+          contextTools: true,
+          ...(said ? { instruction: said } : {}),
+        })
+        dispatch({ type: "handoff-start", handoff: record, envelope, ...(source.title ? { title: source.title } : {}), workspaceName })
+        // The new agent reads the workspace, then asks before changing it.
+        const timer = setTimeout(() => {
+          timers.current.delete(timer)
+          dispatch({
+            type: "handoff-work",
+            sessionId: record.targetSessionId!,
+            approval: handoffApproval(record.targetSessionId!, `approval-handoff-${n}`, DEMO_NOW),
+          })
+        }, DEMO_STEP_DELAY_MS * 3)
+        timers.current.add(timer)
+        return { ok: true, value: { handoff: record, session: demoHandoffTarget(record, source.title, workspaceName) } }
+      },
+    }
+  }, [])
+
   const openUrl = useCallback((url: string) => {
     if (!isSafeOpenUrl(url)) return
     // Hubble's own demo pages live on a reserved domain that resolves nowhere.
@@ -160,8 +275,8 @@ export function HubbleDemoProvider({
   }, [])
 
   const value = useMemo<DemoContextValue>(
-    () => ({ state, dispatch, world, context, send, respond, undo, undoHistory, openUrl, ...(scheme ? { scheme } : {}) }),
-    [state, world, context, send, respond, undo, undoHistory, openUrl, scheme]
+    () => ({ state, dispatch, world, context, send, respond, undo, undoHistory, openUrl, handoff, ...(scheme ? { scheme } : {}) }),
+    [state, world, context, send, respond, undo, undoHistory, openUrl, handoff, scheme]
   )
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>

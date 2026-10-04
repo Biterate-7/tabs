@@ -2,7 +2,9 @@ import "server-only";
 import { getPool, postgresConnectionString } from "@/lib/auth/store/postgres";
 import { isTerminalSessionStatus, TERMINAL_SESSION_STATUSES } from "@/lib/agents/control/session";
 import { HISTORY_LIMITS, groupHistoryRecords, reviveHistoryRecord, reviveHistorySession } from "./history";
+import { handoffLinksOf, readSessionHandoff } from "@/lib/agents/handoff/handoff";
 import { pageLimit } from "./history-store";
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { Pool, PoolClient } from "pg";
 import type { AgentHistoryRecord, AgentHistorySession } from "./history";
 import type { AgentHistoryListOptions, AgentHistoryStore, AgentHistoryWrite } from "./history-store";
@@ -35,6 +37,23 @@ type SessionRow = {
 
 type RecordRow = { kind: string; data: unknown };
 
+type HandoffRow = {
+  id: string;
+  workspace_id: string;
+  source_session_id: string;
+  source_provider: string;
+  target_provider: string;
+  target_session_id: string | null;
+  status: string;
+  failure: string | null;
+  created_at: string | number;
+  updated_at: string | number;
+  data: { context?: unknown; instruction?: unknown } | null;
+};
+
+const HANDOFF_COLUMNS =
+  "id, workspace_id, source_session_id, source_provider, target_provider, target_session_id, status, failure, created_at, updated_at, data";
+
 const SESSION_COLUMNS =
   "id, workspace_id, provider, status, title, project_id, context_unavailable, truncated, started_at, last_activity_at, ended_at";
 
@@ -58,10 +77,35 @@ function toSession(row: SessionRow): AgentHistorySession | null {
   });
 }
 
+/** A row back into the domain type, through the same reader the wire uses. */
+function toHandoff(row: HandoffRow): SessionHandoff | null {
+  return readSessionHandoff({
+    handoffId: row.id,
+    workspaceId: row.workspace_id,
+    sourceSessionId: row.source_session_id,
+    sourceProvider: row.source_provider,
+    targetProvider: row.target_provider,
+    ...(row.target_session_id ? { targetSessionId: row.target_session_id } : {}),
+    status: row.status,
+    ...(row.failure ? { failure: row.failure } : {}),
+    context: row.data?.context ?? {},
+    ...(row.data?.instruction !== undefined ? { instruction: row.data.instruction } : {}),
+    createdAt: toMillis(row.created_at),
+    updatedAt: toMillis(row.updated_at),
+  });
+}
+
 const TERMINAL = `ARRAY[${TERMINAL_SESSION_STATUSES.map((status) => `'${status}'`).join(", ")}]`;
 
 export class PostgresAgentHistoryStore implements AgentHistoryStore {
-  constructor(private readonly pool: Pool) {}
+  /**
+   * `handoffs`: whether the 1.4 handoffs table exists. A database migrated
+   * for 1.3 only keeps history exactly as before and keeps no handoffs.
+   */
+  constructor(
+    private readonly pool: Pool,
+    private readonly options: { handoffs: boolean } = { handoffs: true }
+  ) {}
 
   async write(ownerId: string, batch: AgentHistoryWrite): Promise<void> {
     if (batch.sessions.length === 0 && batch.records.length === 0) return;
@@ -77,6 +121,9 @@ export class PostgresAgentHistoryStore implements AgentHistoryStore {
         bySession.set(record.sessionId, list);
       }
       for (const [sessionId, records] of bySession) await this.insertRecords(client, ownerId, sessionId, records);
+      if (this.options.handoffs) {
+        for (const handoff of batch.handoffs ?? []) await this.insertHandoff(client, ownerId, handoff);
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -183,6 +230,53 @@ export class PostgresAgentHistoryStore implements AgentHistoryStore {
     }
   }
 
+  /**
+   * One ended handoff, written once. The SELECT is the guard: it inserts only
+   * when the source session is this owner's *and* in the handoff's workspace,
+   * so no write can attach a handoff to another account's session or move one
+   * across workspaces.
+   */
+  private async insertHandoff(client: PoolClient, ownerId: string, handoff: SessionHandoff): Promise<void> {
+    // Ended ones only; the source and its workspace are checked by the SELECT below.
+    if (handoff.status !== "ready" && handoff.status !== "failed") return;
+    await client.query(
+      `INSERT INTO tabdump_agent_handoffs
+         (owner_id, id, workspace_id, source_session_id, source_provider, target_provider, target_session_id,
+          status, failure, created_at, updated_at, data)
+       SELECT $1, $2, s.workspace_id, s.id, $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+         FROM tabdump_agent_history_sessions s
+        WHERE s.owner_id = $1 AND s.id = $3 AND s.workspace_id = $12
+       ON CONFLICT (owner_id, id) DO NOTHING`,
+      [
+        ownerId,
+        handoff.handoffId,
+        handoff.sourceSessionId,
+        handoff.sourceProvider,
+        handoff.targetProvider,
+        handoff.targetSessionId ?? null,
+        handoff.status,
+        handoff.failure ?? null,
+        handoff.createdAt,
+        handoff.updatedAt,
+        JSON.stringify({ context: handoff.context, ...(handoff.instruction ? { instruction: handoff.instruction } : {}) }),
+        handoff.workspaceId,
+      ]
+    );
+  }
+
+  /** This owner's handoffs in this workspace naming any of these sessions, oldest first. */
+  private async handoffsFor(ownerId: string, workspaceId: string, sessionIds: readonly string[]): Promise<SessionHandoff[]> {
+    if (!this.options.handoffs || sessionIds.length === 0) return [];
+    const result = await this.pool.query<HandoffRow>(
+      `SELECT ${HANDOFF_COLUMNS} FROM tabdump_agent_handoffs
+        WHERE owner_id = $1 AND workspace_id = $2
+          AND (source_session_id = ANY($3::TEXT[]) OR target_session_id = ANY($3::TEXT[]))
+        ORDER BY created_at, id`,
+      [ownerId, workspaceId, [...sessionIds]]
+    );
+    return result.rows.map(toHandoff).filter((handoff): handoff is SessionHandoff => handoff !== null);
+  }
+
   async listSessions(ownerId: string, workspaceId: string, options: AgentHistoryListOptions = {}) {
     const limit = pageLimit(options.limit);
     const before = options.before;
@@ -196,7 +290,13 @@ export class PostgresAgentHistoryStore implements AgentHistoryStore {
       [ownerId, workspaceId, before?.lastActivityAt ?? null, before?.sessionId ?? "", limit + 1]
     );
     const all = result.rows.map(toSession);
-    const sessions = all.slice(0, limit).filter((session): session is AgentHistorySession => session !== null);
+    const page = all.slice(0, limit).filter((session): session is AgentHistorySession => session !== null);
+    // Each session's handoffs, both ways, in one more statement for the page.
+    const handoffs = await this.handoffsFor(ownerId, workspaceId, page.map((session) => session.sessionId));
+    const sessions = page.map((session) => {
+      const links = handoffLinksOf(session.sessionId, handoffs);
+      return links ? { ...session, handoff: links } : session;
+    });
     const lastRow = result.rows[Math.min(limit, result.rows.length) - 1];
     return {
       sessions,
@@ -225,7 +325,13 @@ export class PostgresAgentHistoryStore implements AgentHistoryStore {
     const revived = records.rows
       .map((record) => reviveHistoryRecord(record.kind, record.data, session))
       .filter((record): record is AgentHistoryRecord => record !== null);
-    return { session, records: groupHistoryRecords(revived) };
+    const grouped = groupHistoryRecords(revived);
+    const handoffs = await this.handoffsFor(ownerId, workspaceId, [sessionId]);
+    const links = handoffLinksOf(sessionId, handoffs);
+    return {
+      session: links ? { ...session, handoff: links } : session,
+      records: handoffs.length > 0 ? { ...grouped, handoffs } : grouped,
+    };
   }
 
   async hasAppliedChange(ownerId: string, workspaceId: string, sessionId: string, changeId: string): Promise<boolean> {
@@ -255,8 +361,15 @@ export async function createPostgresAgentHistoryStore(): Promise<AgentHistorySto
 
 /** The store on this pool, or `undefined` while the database has no history tables. */
 export async function postgresAgentHistoryStoreFor(pool: Pool): Promise<AgentHistoryStore | undefined> {
-  const found = await pool.query<{ ready: boolean }>(
-    `SELECT to_regclass('public.tabdump_agent_history_records') IS NOT NULL AS ready`
+  const found = await pool.query<{ ready: boolean; handoffs: boolean }>(
+    `SELECT to_regclass('public.tabdump_agent_history_records') IS NOT NULL AS ready,
+            to_regclass('public.tabdump_agent_handoffs') IS NOT NULL AS handoffs`
   );
-  return found.rows[0]?.ready ? new PostgresAgentHistoryStore(pool) : undefined;
+  const row = found.rows[0];
+  if (!row?.ready) return undefined;
+  if (!row.handoffs) {
+    // History as 1.3 kept it; handoffs still work live, they are just not kept.
+    console.warn("Hubble agent history has no handoffs table yet. Run `npm run migrate:agent-history` to keep handoffs.");
+  }
+  return new PostgresAgentHistoryStore(pool, { handoffs: row.handoffs === true });
 }

@@ -9,6 +9,7 @@ import type { ActionInspection } from "@/lib/agents/activity/inspector"
 import type { AgentActivityEntry } from "@/lib/agents/activity/timeline"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import type { RuntimeApprovalView, RuntimePlanOutcomeView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 
 /**
  * One session's activity timeline, derived live from what the session hook
@@ -73,8 +74,10 @@ export function useAgentActivity(options: {
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
   /** Plans' outcomes, when they are not the live session's own — agent history's. */
   planOutcomes?: readonly RuntimePlanOutcomeView[]
+  /** Handoffs the session was part of (Hubble 1.4), for what each passed. */
+  handoffs?: readonly SessionHandoff[]
 }): readonly AgentActivityEntry[] {
-  const { session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes } = options
+  const { session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes, handoffs } = options
 
   return useMemo(() => {
     if (!session) return []
@@ -88,6 +91,7 @@ export function useAgentActivity(options: {
         knownApprovals: knownApprovals ?? remembered,
         ...(changes ? { changes } : {}),
         ...(planOutcomes ? { planOutcomes } : {}),
+        ...(handoffs ? { handoffs } : {}),
         agentName,
         ...(workspaceName ? { workspaceName } : {}),
         now,
@@ -96,7 +100,7 @@ export function useAgentActivity(options: {
       console.warn("Hubble could not build the agent activity timeline.", error)
       return []
     }
-  }, [session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes])
+  }, [session, events, approvals, changes, agentName, workspaceName, now, knownApprovals, planOutcomes, handoffs])
 }
 
 /**
@@ -117,10 +121,11 @@ export function useActivityInspector(options: {
   projectName?: string
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
   planOutcomes?: readonly RuntimePlanOutcomeView[]
+  handoffs?: readonly SessionHandoff[]
   /** Whether an applied change can be undone exactly right now. Absent: no undo is offered. */
   canUndo?: (change: AppliedWorkspaceChange) => boolean
 }): (entryId: string) => ActionInspection | null {
-  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, canUndo } = options
+  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo } = options
   return useCallback(
     (entryId: string) => {
       if (!session) return null
@@ -133,6 +138,7 @@ export function useActivityInspector(options: {
           knownApprovals: knownApprovals ?? remembered,
           ...(changes ? { changes } : {}),
           ...(planOutcomes ? { planOutcomes } : {}),
+          ...(handoffs ? { handoffs } : {}),
           agentName,
           ...(workspaceName ? { workspaceName } : {}),
           ...(projectName ? { projectName } : {}),
@@ -144,7 +150,7 @@ export function useActivityInspector(options: {
         return null
       }
     },
-    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, canUndo]
+    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo]
   )
 }
 
@@ -166,6 +172,7 @@ export function useSessionActivity(options: {
   now: number
   knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>
   planOutcomes?: readonly RuntimePlanOutcomeView[]
+  handoffs?: readonly SessionHandoff[]
   canUndo?: (change: AppliedWorkspaceChange) => boolean
 }): {
   entries: readonly AgentActivityEntry[]
@@ -185,6 +192,7 @@ export function useSessionActivity(options: {
     ...(projectName ? { projectName } : {}),
     ...(options.knownApprovals ? { knownApprovals: options.knownApprovals } : {}),
     ...(options.planOutcomes ? { planOutcomes: options.planOutcomes } : {}),
+    ...(options.handoffs ? { handoffs: options.handoffs } : {}),
     ...(canUndo ? { canUndo } : {}),
   })
   const waiting = useMemo(() => entries.some((entry) => entry.status === "waiting"), [entries])
@@ -233,7 +241,7 @@ export function useHistorySessionActivity(options: {
     session: history?.session ?? null,
     events: history?.events ?? NO_EVENTS,
     approvals: NO_APPROVALS,
-    ...(history ? { changes: history.changes, planOutcomes: history.planOutcomes } : {}),
+    ...(history ? { changes: history.changes, planOutcomes: history.planOutcomes, handoffs: history.handoffs } : {}),
     knownApprovals: history?.knownApprovals ?? NO_KNOWN_APPROVALS,
     agentName,
     ...(workspaceName ? { workspaceName } : {}),

@@ -11,6 +11,8 @@ import { Composer } from "@/components/command-centre/composer"
 import { ContextPanel } from "@/components/command-centre/context-panel"
 import { ContextPicker } from "@/components/command-centre/context-picker"
 import { EventStream } from "@/components/command-centre/event-stream"
+import { HandoffDialog, handoffAgentOptions } from "@/components/command-centre/handoff-dialog"
+import type { HandoffTransport } from "@/lib/agents/handoff/transport"
 import { HistorySessionView } from "@/components/command-centre/history-session-view"
 import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
@@ -33,14 +35,16 @@ import {
 } from "@/lib/agents/command-centre/working-context"
 import { focusFromAttachments } from "@/lib/agents/session-context/focus"
 import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName, canHandOffFrom } from "@/lib/agents/handoff/handoff"
 import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { phaseSentence, sessionPrerequisite } from "@/lib/agents/platform/lifecycle"
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { cn } from "@/lib/utils"
-import { DEMO_AGENTS, DEMO_KNOWN_APPROVALS, DEMO_NOW, DEMO_PROJECTS } from "./data"
+import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS, DEMO_SESSION_PROVIDERS } from "./data"
 import { useHubbleDemo } from "./demo-provider"
+import { demoKnownApprovals } from "./demo-state"
 
 /**
  * The agents the demo roster shows, as the product's platform hook would
@@ -104,6 +108,9 @@ function demoPlatform(): UseAgentPlatform {
 /** One for every demo window: it holds no state, only the catalog's answers. */
 const DEMO_PLATFORM = demoPlatform()
 
+/** The agents a handoff can go to, from the same roster answers — by the Command Centre's own helper. */
+const DEMO_HANDOFF_AGENTS = handoffAgentOptions(DEMO_PLATFORM, (provider) => DEMO_SESSION_PROVIDERS.has(provider))
+
 /**
  * The Command Centre, laid out as CommandCentreView lays it out: the view
  * bar, then sessions (with the agent roster above them), the open session,
@@ -133,9 +140,13 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, context, send, respond, undo, undoHistory } = useHubbleDemo()
+  const { state, dispatch, world, context, send, respond, undo, undoHistory, handoff } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
+  /** The session a handoff was opened for — as the Command Centre holds it. */
+  const [handoffFor, setHandoffFor] = useState<{ key: number; sessionId: string; transport: HandoffTransport } | null>(null)
+  const seenApprovals = state.seenApprovals
+  const knownApprovals = useMemo(() => demoKnownApprovals({ seenApprovals }), [seenApprovals])
 
   const selected = state.sessions.find((entry) => entry.view.sessionId === state.selectedSessionId) ?? null
   const selectedId = selected?.view.sessionId ?? null
@@ -167,6 +178,8 @@ export function DemoCommandCentre({
   )
   const link = selected ? workspaceLinkOf(selected.view, state.store.workspaces) : ({ kind: "none" } as const)
   const sessionWorkspaceId = selected ? workspaceIdOf(selected.view) : undefined
+  // The same rule as the Command Centre: a session in a workspace, done with its turn.
+  const canContinue = Boolean(selected && sessionWorkspaceId && canHandOffFrom(selected.view.status))
   const workspaceName = workspaceNameOf(sessionWorkspaceId)
   const own = selected ? contextOfSession(selected.view) : null
   const contextView = own ? describeWorkingContext(own, liveWorld) : null
@@ -184,16 +197,21 @@ export function DemoCommandCentre({
       change.ok && !change.undone && Boolean(change.after) && collectionsMatch(state.collections, change.workspaceId, change.after!),
     [state.collections]
   )
+  const sessionHandoffs = useMemo(
+    () => (selectedId ? state.handoffs.filter((entry) => entry.sourceSessionId === selectedId || entry.targetSessionId === selectedId) : []),
+    [state.handoffs, selectedId]
+  )
   const activity = useSessionActivity({
     session: selected?.view ?? null,
     events,
     approvals,
     changes: sessionChanges,
+    handoffs: sessionHandoffs,
     agentName,
     ...(workspaceName ? { workspaceName } : {}),
     ...(projectName ? { projectName } : {}),
     now: DEMO_NOW,
-    knownApprovals: DEMO_KNOWN_APPROVALS,
+    knownApprovals,
     canUndo,
   })
   /** "View" — the workspace the change was made in, as the app's View goes there. */
@@ -204,6 +222,11 @@ export function DemoCommandCentre({
   const viewChangeById = (changeId: string) => {
     const change = sessionChanges.find((candidate) => candidate.id === changeId)
     if (change) viewChange(change)
+  }
+  /** The other end of a handoff: a live session if the demo holds it, else its history — as in the app. */
+  const openHandoffSession = (sessionId: string) => {
+    if (state.sessions.some((entry) => entry.view.sessionId === sessionId)) dispatch({ type: "select-session", id: sessionId })
+    else if (state.history.some((entry) => entry.session.sessionId === sessionId)) dispatch({ type: "select-history", id: sessionId })
   }
   const activityView = selected ? (
     <AgentActivity
@@ -216,8 +239,11 @@ export function DemoCommandCentre({
       inspect={activity.inspect}
       onUndo={undo}
       onViewChange={viewChangeById}
+      {...(canContinue ? { onContinue: () => setHandoffFor({ key: Date.now(), sessionId: selected.view.sessionId, transport: handoff(selected.view.sessionId) }) } : {})}
+      onOpenSession={openHandoffSession}
     />
   ) : null
+  const handoffSource = handoffFor ? state.sessions.find((entry) => entry.view.sessionId === handoffFor.sessionId)?.view : undefined
 
   /*
     Agent history — the app's own list, pane, hook and AgentActivity, fed the
@@ -382,6 +408,7 @@ export function DemoCommandCentre({
                   const change = historyActivity.history?.changes.find((candidate) => candidate.id === changeId)
                   if (change) viewChange(change)
                 }}
+                onOpenSession={openHandoffSession}
               />
             </HistorySessionView>
           ) : selected ? (
@@ -470,6 +497,33 @@ export function DemoCommandCentre({
           />
         )}
       </div>
+
+      {handoffFor && handoffSource && (
+        <HandoffDialog
+          key={handoffFor.key}
+          open
+          onOpenChange={(open) => {
+            if (!open) setHandoffFor(null)
+          }}
+          source={{
+            provider: handoffSource.provider,
+            agentName: agentDisplayName(handoffSource.provider),
+            ...(handoffSource.title ? { title: handoffSource.title } : {}),
+            statusLabel: SESSION_STATUS_LABEL[handoffSource.status],
+          }}
+          {...(workspaceNameOf(handoffSource.workspaceId) ? { workspaceName: workspaceNameOf(handoffSource.workspaceId) } : {})}
+          agents={DEMO_HANDOFF_AGENTS}
+          onConnect={() => {
+            setHandoffFor(null)
+            dispatch({ type: "settings-section", section: "agents" })
+          }}
+          transport={handoffFor.transport}
+          onStarted={(result) => {
+            setHandoffFor(null)
+            if (result.session) dispatch({ type: "select-session", id: result.session.sessionId })
+          }}
+        />
+      )}
 
       {pickerKey !== null && own && (
         <ContextPicker

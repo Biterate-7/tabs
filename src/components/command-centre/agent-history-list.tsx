@@ -145,6 +145,7 @@ export function AgentHistoryList({
                   {...(workspaceName ? { workspaceName } : {})}
                   time={historyClock(at)}
                   timeLabel={new Date(at).toLocaleString()}
+                  {...(session.handoff ? { handoff: session.handoff } : {})}
                   selected={session.sessionId === selectedSessionId}
                   onSelect={() => onSelect(session)}
                 />

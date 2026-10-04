@@ -94,3 +94,11 @@ The demo renders the same `AgentHistoryList`, `HistorySessionView`,
 `useHistorySessionActivity` and `AgentActivity`, fed deterministic records
 produced by the same reducers (`DEMO_HISTORY` in `marketing/demo/data.ts`).
 `demo-parity.test.tsx` fails if it stops.
+
+## 7. Handoffs (Hubble 1.4)
+
+An explicit handoff between two sessions is kept in its own table,
+`tabdump_agent_handoffs`, in the same schema file and applied by the same
+`npm run migrate:agent-history`. Sessions read back with their links
+(`AgentHistorySession.handoff`) and their handoff records
+(`AgentHistoryRecords.handoffs`). See [agent-handoff.md](agent-handoff.md).

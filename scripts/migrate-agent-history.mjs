@@ -5,8 +5,10 @@
  *   npm run migrate:agent-history
  *
  * What lets a Hubble with a database keep its agents' activity after the
- * runtime restarts (Hubble 1.3). Without these tables the runtime reports
- * agent history as unavailable — and keeps running agents exactly as before.
+ * runtime restarts (Hubble 1.3) — and, since Hubble 1.4, the explicit
+ * handoffs between sessions (`tabdump_agent_handoffs`). Without these tables
+ * the runtime reports agent history as unavailable — and keeps running agents
+ * exactly as before. Re-running it on a 1.3 database adds only the new table.
  *
  * Additive and idempotent: every statement in the schema is IF NOT EXISTS,
  * so this creates what is missing and touches nothing else. It never drops

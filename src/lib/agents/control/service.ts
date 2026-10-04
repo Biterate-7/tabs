@@ -6,7 +6,7 @@ import {
   isWellFormedContext,
   isWellFormedMessage,
 } from "./context";
-import { contextCountsLine, isContextEventKind, isWellFormedControlEvent } from "./events";
+import { contextCountsLine, isContextEventKind, isHandoffEventKind, isWellFormedControlEvent } from "./events";
 import { isCapabilityPermitted, NO_PERMISSIONS } from "./permissions";
 import { isProviderAuthorized } from "./projects";
 import { denyNonServerRuntime } from "./runtime";
@@ -466,6 +466,9 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       // What Hubble's context server did is Hubble's to say. An adapter
       // claiming a workspace read would be fabricating activity.
       if (isContextEventKind(event.kind)) return;
+      // A handoff is the person's, recorded by the runtime (Hubble 1.4). An
+      // adapter claiming one — or a message that delivered one — is refused.
+      if (isHandoffEventKind(event.kind) || event.handoff !== undefined) return;
 
       const session = sessions.get(event.sessionId);
       if (!session) return;
