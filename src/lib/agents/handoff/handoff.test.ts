@@ -128,7 +128,7 @@ describe("the previous result", () => {
 
 describe("workspace context", () => {
   it("is counts of the snapshot, and of the focus only when it fits the snapshot", () => {
-    expect(workspaceContextOf(SNAPSHOT, { tabIds: ["t1"], collectionIds: ["c1"] })).toEqual({ tabs: 2, collections: 1, focus: { tabs: 1, collections: 1 } });
+    expect(workspaceContextOf(SNAPSHOT, { tabIds: ["t1"], collectionIds: ["c1"] })).toEqual({ tabs: 2, collections: 1, focus: { tabs: 1, collections: 1, collectionIds: ["c1"] } });
     // A focus naming anything outside the workspace is not carried at all.
     expect(workspaceContextOf(SNAPSHOT, { tabIds: ["t1", "elsewhere"], collectionIds: [] })).toEqual({ tabs: 2, collections: 1 });
     expect(workspaceContextOf(SNAPSHOT, undefined)).toEqual({ tabs: 2, collections: 1 });

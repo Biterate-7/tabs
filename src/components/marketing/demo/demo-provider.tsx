@@ -1,7 +1,6 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type Dispatch, type ReactNode } from "react"
-import { useAgentContext, type AgentContextApi } from "@/hooks/use-agent-context"
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
 import { restoreWorkspaceCollections } from "@/lib/collections/restore"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
@@ -15,6 +14,9 @@ import {
 import { prepareHandoffPreview } from "@/lib/agents/handoff/preview"
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
 import { buildSessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { contextWorldOfSnapshot, handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { HandoffTransport } from "@/lib/agents/handoff/transport"
@@ -34,7 +36,7 @@ import {
  * HubbleDemoProvider — the landing page's isolated demo state.
  *
  * One provider per demo window. It holds a DemoState (see demo-state.ts) and
- * the product's context resolver, and nothing else: it has no storage
+ * the world the product's Context Pack is built from, and nothing else: it has no storage
  * key, opens no connection, starts no runtime and reads no filesystem. The
  * app's own stores are never imported here, so no interaction on the landing
  * page can reach a visitor's real Hubble data, even when the page is shown as
@@ -48,8 +50,6 @@ type DemoContextValue = {
   dispatch: Dispatch<DemoAction>
   /** What the context resolver may see: the demo's workspaces and collections, and nothing of the visitor's. */
   world: AgentContextWorld
-  /** The product's own context resolver, fed the demo world: what a session is told, resolved for real. */
-  context: AgentContextApi
   /** Sends a composer message and schedules the demo's reply. */
   send: (sessionId: string, text: string) => void
   /** Answers an approval; an approved change then plays out in the app's own steps. */
@@ -106,15 +106,6 @@ export function HubbleDemoProvider({
     [state.store.workspaces, state.collections, state.dependencies]
   )
 
-  // Deterministic snapshot ids and capture times, so a snapshot attached in
-  // the demo reads the same on every visit.
-  const snapshotCounter = useRef(0)
-  const now = useCallback(() => DEMO_NOW, [])
-  const createSnapshotId = useCallback(() => {
-    snapshotCounter.current += 1
-    return `demo-snapshot-${snapshotCounter.current}`
-  }, [])
-  const context = useAgentContext({ world, localRuntimeAllowed: false, now, createSnapshotId })
 
   const timers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   useEffect(() => {
@@ -214,7 +205,10 @@ export function HubbleDemoProvider({
         contextTools: true,
         now: DEMO_NOW,
       })
-      return { ok: true as const, value: { ...prepared, source: entry.view, workspaceName: snapshot?.workspace.name ?? "", count: current.handoffs.length } }
+      return {
+        ok: true as const,
+        value: { ...prepared, source: entry.view, snapshot, workspaceName: snapshot?.workspace.name ?? "", count: current.handoffs.length },
+      }
     }
 
     return {
@@ -227,7 +221,7 @@ export function HubbleDemoProvider({
         if (!found.ok) return found
         // What the visitor saw is what is sent, or nothing is — as in Hubble.
         if (found.value.preview.fingerprint !== preview.fingerprint) return runtimeFailure("context_invalid")
-        const { source, workspaceName } = found.value
+        const { source, workspaceName, snapshot, focus } = found.value
         const n = found.value.count + 1
         const said = readHandoffInstruction(instruction)
         const record: SessionHandoff = {
@@ -243,6 +237,19 @@ export function HubbleDemoProvider({
           createdAt: DEMO_NOW,
           updatedAt: DEMO_NOW,
         }
+        // The canonical Context Pack, built as the runtime builds it: from the
+        // source's workspace copy and focus, with the modes the visitor kept.
+        const pack =
+          record.context.workspace && snapshot
+            ? handoffContextPack({
+                world: contextWorldOfSnapshot(snapshot),
+                workspaceId: preview.workspaceId,
+                ...(focus ? { focus } : {}),
+                context: record.context,
+                ...(said ? { instruction: said } : {}),
+              })
+            : undefined
+        const packed = pack ? contextPackAttachedContext(pack, DEMO_NOW) : null
         const envelope = buildHandoffEnvelope({
           workspaceName,
           sourceProvider: source.provider,
@@ -250,8 +257,17 @@ export function HubbleDemoProvider({
           context: record.context,
           contextTools: true,
           ...(said ? { instruction: said } : {}),
+          ...(pack && packed ? { pack } : {}),
         })
-        dispatch({ type: "handoff-start", handoff: record, envelope, ...(source.title ? { title: source.title } : {}), workspaceName })
+        const delivery = packed ? contextDeliveryOf(packed, preview.workspaceId) : undefined
+        dispatch({
+          type: "handoff-start",
+          handoff: record,
+          envelope,
+          ...(source.title ? { title: source.title } : {}),
+          workspaceName,
+          ...(packed ? { pack: { contextId: packed.snapshotId, ...(delivery ? { delivery } : {}), ...(focus ? { focus } : {}) } } : {}),
+        })
         // The new agent reads the workspace, then asks before changing it.
         const timer = setTimeout(() => {
           timers.current.delete(timer)
@@ -275,8 +291,8 @@ export function HubbleDemoProvider({
   }, [])
 
   const value = useMemo<DemoContextValue>(
-    () => ({ state, dispatch, world, context, send, respond, undo, undoHistory, openUrl, handoff, ...(scheme ? { scheme } : {}) }),
-    [state, world, context, send, respond, undo, undoHistory, openUrl, handoff, scheme]
+    () => ({ state, dispatch, world, send, respond, undo, undoHistory, openUrl, handoff, ...(scheme ? { scheme } : {}) }),
+    [state, world, send, respond, undo, undoHistory, openUrl, handoff, scheme]
   )
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>

@@ -28,7 +28,14 @@ import { useCommandPaletteHost } from "@/components/command-palette/palette-host
 import type { Command } from "@/components/command-palette/types"
 import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
 import { useAgentHistory, useHistorySession } from "@/hooks/use-agent-history"
-import { useAgentContext } from "@/hooks/use-agent-context"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
+import { handoffThatStarted, sessionContextPack } from "@/lib/agents/context-pack/session"
+import { useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { selectHandoffContext } from "@/lib/agents/handoff/handoff"
+import type { HandoffInclude } from "@/lib/agents/handoff/handoff"
+import type { RuntimeHandoffPreview } from "@/lib/agents/runtime/protocol"
 import { useAgentProjects } from "@/hooks/use-agent-projects"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { useAgentSession } from "@/hooks/use-agent-session"
@@ -147,6 +154,7 @@ export function CommandCentreView({
   handoff,
   onHandoffConsumed,
   onViewWorkspace,
+  onUpdateWorkspaceBrief,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -161,6 +169,8 @@ export function CommandCentreView({
   onHandoffConsumed?: (id: string) => void
   /** Shows a workspace (and a collection in it) — where "View" on an agent's change goes. */
   onViewWorkspace?: (workspaceId: string, collectionId?: string) => void
+  /** Saves a workspace's brief (Hubble 1.5) to the app's workspace store. Absent: the brief is read-only here. */
+  onUpdateWorkspaceBrief?: (workspaceId: string, brief: { description: string; focus: string }) => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -236,12 +246,6 @@ export function CommandCentreView({
     () => ({ ...world, collections: collectionStore.collections, projects: projects.projects }),
     [world, collectionStore.collections, projects.projects]
   )
-
-  const context = useAgentContext({
-    world: contextWorld,
-    // The server's answer, relayed. Never a guess made in the browser.
-    localRuntimeAllowed: runtime.executable,
-  })
 
   const projectNameOf = useCallback(
     (projectId: string | undefined) =>
@@ -457,22 +461,31 @@ export function CommandCentreView({
   const [contextError, setContextError] = useState<string | null>(null)
 
   /**
-   * Points a session at a context: resolved inside the session's workspace by
-   * the Phase E bridge and attached — or, for the whole workspace, detached,
-   * because the session reads its workspace itself. The runtime checks it
-   * again and reports it back as the session's focus.
+   * Points a session at a context: its Context Pack (Hubble 1.5) — the
+   * selection resolved inside the session's workspace by the Phase E bridge,
+   * with the workspace's brief — attached; or, when the pack has nothing to
+   * attach (the whole workspace, no brief), detached, because the session
+   * reads its workspace itself. The runtime checks it again and reports it
+   * back as the session's focus and context id.
    */
   const applyContext = useCallback(
     async (sessionId: string, next: WorkingContext): Promise<boolean> => {
-      const scoped = withinWorkspace(next, liveWorld).context
-      const outcome = context.resolve(scoped)
-      if (!outcome.ok) {
+      const built = sessionContextPack({
+        world: contextWorld,
+        workspaceId: next.workspaceId,
+        selection: next,
+        sessionId,
+        changes: workspaceChanges(),
+        ...(sessionId === selectedSessionId ? { handoffFrom: handoffThatStarted(sessionId, session.handoffs) } : {}),
+      })
+      if (!built.ok) {
         setContextError("Hubble couldn't prepare that context. Nothing was sent.")
         return false
       }
+      const attached = contextPackAttachedContext(built.pack, Date.now())
       setContextBusy(true)
-      const result = outcome.attached
-        ? await runtime.client.send({ name: "attach_context", sessionId, context: outcome.attached })
+      const result = attached
+        ? await runtime.client.send({ name: "attach_context", sessionId, context: attached })
         : await runtime.client.send({ name: "detach_context", sessionId })
       setContextBusy(false)
       if (!result.ok) {
@@ -488,7 +501,7 @@ export function CommandCentreView({
       if (sessionId === selectedSessionId) await session.refresh()
       return true
     },
-    [context, liveWorld, runtime.client, selectedSessionId, session, sessions]
+    [contextWorld, runtime.client, selectedSessionId, session, sessions]
   )
 
   /*
@@ -596,8 +609,17 @@ export function CommandCentreView({
       // The workspace the session works in goes with it, for the agent to
       // query; the context brought from it, if it is that workspace's.
       const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
-      const brought = draft && input.workspaceId === draft.workspaceId ? context.resolve(withinWorkspace(draft, liveWorld).context) : undefined
-      const startContext = brought?.ok && brought.attached ? brought.attached : undefined
+      // The new session's Context Pack: what was brought from the workspace,
+      // if it is this one's, else the whole workspace — with its brief.
+      const brought = input.workspaceId
+        ? sessionContextPack({
+            world: contextWorld,
+            workspaceId: input.workspaceId,
+            selection: draft && input.workspaceId === draft.workspaceId ? draft : null,
+            changes: workspaceChanges(),
+          })
+        : undefined
+      const startContext = (brought?.ok ? contextPackAttachedContext(brought.pack, Date.now()) : null) ?? undefined
 
       createInFlight.current = true
       setCreating(true)
@@ -628,7 +650,7 @@ export function CommandCentreView({
       setFirstMessage(undefined)
       setDraftText("")
     },
-    [context, draft, draftText, firstMessage, liveWorld, platform, projects.projects, sessionContext, sessions]
+    [contextWorld, draft, draftText, firstMessage, platform, projects.projects, sessionContext, sessions]
   )
 
   /*
@@ -672,6 +694,43 @@ export function CommandCentreView({
   )
 
   /*
+    The Context Pack (Hubble 1.5): what the on-screen session is given — built
+    by the same recipe applyContext attaches with, so comparing its id with
+    the one the runtime reports says whether the agent has it. With no
+    session, the pack a new session here would start with.
+  */
+  const packWorkspaceId = currentView ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : workspaceShown
+  const { pack: sessionPack, state: packState, brief } = useSessionContextPack({
+    world: contextWorld,
+    session: currentView,
+    workspaceId: packWorkspaceId,
+    events: session.events,
+    handoffs: session.handoffs,
+    changes: allChanges,
+    draft,
+  })
+  const sendContextUpdate = useMemo(() => {
+    if (!currentView || !sessionWorkspaceId || packState !== "changed") return undefined
+    const sessionId = currentView.sessionId
+    const own = contextOfSession(currentView) ?? workspaceContext(sessionWorkspaceId)
+    return () => void applyContext(sessionId, own)
+  }, [applyContext, currentView, packState, sessionWorkspaceId])
+
+  /* The workspace's brief (Hubble 1.5): live, and edited in place. */
+  const briefWorkspace = workspaceShown ? world.workspaces.find((workspace) => workspace.id === workspaceShown) : undefined
+  const saveBrief = useMemo(
+    () =>
+      briefWorkspace && onUpdateWorkspaceBrief
+        ? (next: { description: string; focus: string }) => onUpdateWorkspaceBrief(briefWorkspace.id, next)
+        : undefined,
+    [briefWorkspace, onUpdateWorkspaceBrief]
+  )
+  const collectionName = useCallback(
+    (collectionId: string) => collectionStore.collections.find((collection) => collection.id === collectionId)?.name,
+    [collectionStore.collections]
+  )
+
+  /*
     What the on-screen agent has been doing, from the same records the
     stream above reads — its events, its approvals and what was applied for it.
     Built once here and drawn in two places: the context panel, and the
@@ -693,6 +752,7 @@ export function CommandCentreView({
     ...(sessionProjectName ? { projectName: sessionProjectName } : {}),
     now,
     canUndo,
+    collectionName,
   })
   const viewActivityChange = useCallback(
     (changeId: string) => {
@@ -768,7 +828,24 @@ export function CommandCentreView({
     ...(historyProjectName ? { projectName: historyProjectName } : {}),
     now,
     canUndo: canUndoHistory,
+    collectionName,
   })
+  /* What the past session was given (Hubble 1.5), from the records history kept. */
+  const historyContext = useMemo(
+    () =>
+      reconstructed
+        ? contextProvenanceOf({
+            session: reconstructed.session,
+            events: reconstructed.events,
+            handoffs: reconstructed.handoffs,
+            at: Number.MAX_SAFE_INTEGER,
+            ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+            collectionName,
+            agentName: agentDisplayName,
+          })
+        : undefined,
+    [reconstructed, historyWorkspaceName, collectionName]
+  )
   const { recordUndo: recordHistoryUndo } = historySession
   const undoHistoryChange = useCallback(
     (changeId: string): boolean => {
@@ -850,6 +927,24 @@ export function CommandCentreView({
       return { options, ...(sourceProject && options.some((option) => option.id === sourceProject) ? { defaultId: sourceProject } : {}) }
     },
     [platform, projects.projects, handoffSource?.projectId]
+  )
+  /*
+    The Context Pack the handoff would pass (Hubble 1.5): the source's focus
+    as the runtime holds it, in the workspace the preview names, with the
+    modes the person kept — the same recipe the runtime sends it by.
+  */
+  const handoffSourceId = handoffSource?.sessionId
+  const handoffPackFor = useCallback(
+    (preview: RuntimeHandoffPreview, include: HandoffInclude) => {
+      const focus = sessions.sessions.find((entry) => entry.view.sessionId === handoffSourceId)?.view.focus
+      return handoffContextPack({
+        world: contextWorld,
+        workspaceId: preview.workspaceId,
+        ...(focus ? { focus: { tabIds: focus.tabIds, collectionIds: focus.collectionIds } } : {}),
+        context: selectHandoffContext(preview.context, include),
+      })
+    },
+    [contextWorld, handoffSourceId, sessions.sessions]
   )
   const handleHandoffStarted = useCallback(
     async (result: HandoffStartResult) => {
@@ -1120,6 +1215,7 @@ export function CommandCentreView({
               now={now}
               onClose={() => setHistorySelection(null)}
               onRetry={historySession.retry}
+              {...(historyContext ? { context: historyContext } : {})}
             >
               <AgentActivity
                 entries={historyEntries}
@@ -1150,6 +1246,9 @@ export function CommandCentreView({
                     agentName={agentName}
                     {...(delivered !== undefined ? { delivered } : {})}
                     busy={contextBusy}
+                    pack={sessionPack}
+                    {...(packState ? { packState } : {})}
+                    {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
                     {...contextActions}
                   />
                 }
@@ -1226,6 +1325,9 @@ export function CommandCentreView({
                     agentName={agentName}
                     {...(delivered !== undefined ? { delivered } : {})}
                     busy={contextBusy}
+                    pack={sessionPack}
+                    {...(packState ? { packState } : {})}
+                    {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
                     align="start"
                     {...contextActions}
                   />
@@ -1246,7 +1348,7 @@ export function CommandCentreView({
               initialText={draftText}
               contextControl={
                 draftView ? (
-                  <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" {...draftActions} />
+                  <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" pack={sessionPack} {...draftActions} />
                 ) : undefined
               }
               onStart={(text, provider) => {
@@ -1276,6 +1378,11 @@ export function CommandCentreView({
             runtimeStatus={runtime.status}
             activity={activityTimeline}
             {...(currentView ? contextActions : draftActions)}
+            pack={sessionPack}
+            {...(packState ? { packState } : {})}
+            {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
+            {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
+            {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
           />
         )}
       </div>
@@ -1400,6 +1507,7 @@ export function CommandCentreView({
           projectsFor={handoffProjectsFor}
           transport={handoffSource.transport}
           onStarted={(result) => void handleHandoffStarted(result)}
+          packFor={handoffPackFor}
         />
       )}
 

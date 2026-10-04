@@ -469,6 +469,8 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       // A handoff is the person's, recorded by the runtime (Hubble 1.4). An
       // adapter claiming one — or a message that delivered one — is refused.
       if (isHandoffEventKind(event.kind) || event.handoff !== undefined) return;
+      // So is the record of which context a message delivered (Hubble 1.5).
+      if (event.delivery !== undefined) return;
 
       const session = sessions.get(event.sessionId);
       if (!session) return;

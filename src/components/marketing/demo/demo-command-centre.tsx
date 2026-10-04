@@ -34,6 +34,14 @@ import {
   workspaceLinkOf,
 } from "@/lib/agents/command-centre/working-context"
 import { focusFromAttachments } from "@/lib/agents/session-context/focus"
+import { useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { contextDeliveryOf, contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
+import { handoffThatStarted, sessionContextPack } from "@/lib/agents/context-pack/session"
+import { selectHandoffContext } from "@/lib/agents/handoff/handoff"
+import type { HandoffInclude } from "@/lib/agents/handoff/handoff"
+import type { RuntimeHandoffPreview } from "@/lib/agents/runtime/protocol"
 import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
 import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
@@ -119,7 +127,7 @@ const DEMO_HANDOFF_AGENTS = handoffAgentOptions(DEMO_PLATFORM, (provider) => DEM
  * Built from CommandCentreView's own children, because CommandCentreView
  * mounts the control-plane hooks — the runtime client, polling, provider
  * connections, MCP tokens — and the demo must start none of them. A session's
- * context is resolved by the product's own `useAgentContext`, fed the demo's
+ * context is its Context Pack, built by the product's own recipe from the demo's
  * workspaces, and recorded on the session the way the runtime records it —
  * the tab and collection references of what was attached.
  *
@@ -140,7 +148,7 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, context, send, respond, undo, undoHistory, handoff } = useHubbleDemo()
+  const { state, dispatch, world, send, respond, undo, undoHistory, handoff } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
   /** The session a handoff was opened for — as the Command Centre holds it. */
@@ -192,6 +200,10 @@ export function DemoCommandCentre({
     () => (selectedId ? state.changes.filter((change) => change.sessionId === selectedId) : []),
     [state.changes, selectedId]
   )
+  const collectionName = useCallback(
+    (collectionId: string) => state.collections.find((collection) => collection.id === collectionId)?.name,
+    [state.collections]
+  )
   const canUndo = useCallback(
     (change: AppliedWorkspaceChange) =>
       change.ok && !change.undone && Boolean(change.after) && collectionsMatch(state.collections, change.workspaceId, change.after!),
@@ -201,6 +213,24 @@ export function DemoCommandCentre({
     () => (selectedId ? state.handoffs.filter((entry) => entry.sourceSessionId === selectedId || entry.targetSessionId === selectedId) : []),
     [state.handoffs, selectedId]
   )
+  /* The Context Pack (Hubble 1.5) — the Command Centre's own hook, on the demo's records. */
+  const sessionHandoffsForPack = useMemo(
+    () => (selectedId ? state.handoffs.filter((entry) => entry.targetSessionId === selectedId) : []),
+    [state.handoffs, selectedId]
+  )
+  const { pack, state: packState, brief } = useSessionContextPack({
+    world,
+    session: selected?.view ?? null,
+    workspaceId: selected ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : state.store.currentId,
+    events,
+    handoffs: sessionHandoffsForPack,
+    changes: state.changes,
+  })
+  const briefWorkspaceId = selected ? sessionWorkspaceId : state.store.currentId
+  const saveBrief = briefWorkspaceId
+    ? (next: { description: string; focus: string }) => dispatch({ type: "set-brief", workspaceId: briefWorkspaceId, brief: next })
+    : undefined
+
   const activity = useSessionActivity({
     session: selected?.view ?? null,
     events,
@@ -213,6 +243,7 @@ export function DemoCommandCentre({
     now: DEMO_NOW,
     knownApprovals,
     canUndo,
+    collectionName,
   })
   /** "View" — the workspace the change was made in, as the app's View goes there. */
   const viewChange = (change: AppliedWorkspaceChange) => {
@@ -277,18 +308,59 @@ export function DemoCommandCentre({
     ...(openHistory && projectNameOf(openHistory.session.projectId) ? { projectName: projectNameOf(openHistory.session.projectId) } : {}),
     now: DEMO_NOW,
     canUndo,
+    collectionName,
   })
+  /* What the past session was given (Hubble 1.5), by the product's own provenance, from its records. */
+  const historyContext = historyActivity.history
+    ? contextProvenanceOf({
+        session: historyActivity.history.session,
+        events: historyActivity.history.events,
+        handoffs: historyActivity.history.handoffs,
+        at: Number.MAX_SAFE_INTEGER,
+        ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+        collectionName,
+        agentName: agentDisplayName,
+      })
+    : undefined
   const historyStatus = openHistory ? historySessionStatus(openHistory.session.status) : null
 
-  /** Points the open session at a context — resolved by the real bridge, recorded as its focus. */
+  /**
+   * Points the open session at a context — its Context Pack, by the Command
+   * Centre's own recipe, recorded as the runtime records an attach: the focus,
+   * the pack's id, and what the next message will say it delivered.
+   */
   function applyContext(next: WorkingContext) {
     if (!selected) return
-    const outcome = context.resolve(next)
-    if (!outcome.ok) return
+    const built = sessionContextPack({
+      world,
+      workspaceId: next.workspaceId,
+      selection: next,
+      sessionId: selected.view.sessionId,
+      changes: state.changes,
+      ...(handoffThatStarted(selected.view.sessionId, state.handoffs) ? { handoffFrom: handoffThatStarted(selected.view.sessionId, state.handoffs)! } : {}),
+    })
+    if (!built.ok) return
+    const attached = contextPackAttachedContext(built.pack, DEMO_NOW)
+    const delivery = attached ? contextDeliveryOf(attached, next.workspaceId) : undefined
     dispatch({
       type: "set-focus",
       sessionId: selected.view.sessionId,
-      focus: outcome.attached ? focusFromAttachments(outcome.attached.attachments) : null,
+      focus: attached ? focusFromAttachments(attached.attachments) : null,
+      context: attached ? { contextId: attached.snapshotId, ...(delivery ? { delivery } : {}) } : null,
+    })
+  }
+  const sendContextUpdate =
+    selected && sessionWorkspaceId && packState === "changed"
+      ? () => applyContext(own ?? workspaceContext(sessionWorkspaceId))
+      : undefined
+  /** The pack a handoff would pass — the Command Centre's recipe, on the demo's world. */
+  const handoffPackFor = (preview: RuntimeHandoffPreview, include: HandoffInclude) => {
+    const focus = state.sessions.find((entry) => entry.view.sessionId === handoffFor?.sessionId)?.view.focus
+    return handoffContextPack({
+      world,
+      workspaceId: preview.workspaceId,
+      ...(focus ? { focus: { tabIds: focus.tabIds, collectionIds: focus.collectionIds } } : {}),
+      context: selectHandoffContext(preview.context, include),
     })
   }
   const actions =
@@ -306,6 +378,9 @@ export function DemoCommandCentre({
       agentName={agentName}
       {...(delivered !== undefined ? { delivered } : {})}
       align={align}
+      pack={pack}
+      {...(packState ? { packState } : {})}
+      {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
       {...actions}
     />
   )
@@ -394,6 +469,7 @@ export function DemoCommandCentre({
               {...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {})}
               now={DEMO_NOW}
               onClose={() => dispatch({ type: "select-history", id: null })}
+              {...(historyContext ? { context: historyContext } : {})}
             >
               <AgentActivity
                 entries={historyActivity.entries}
@@ -494,6 +570,11 @@ export function DemoCommandCentre({
             onViewChange={viewChange}
             {...(activityView ? { activity: activityView } : {})}
             {...actions}
+            pack={pack}
+            {...(packState ? { packState } : {})}
+            {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
+            {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
+            {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
           />
         )}
       </div>
@@ -522,6 +603,7 @@ export function DemoCommandCentre({
             setHandoffFor(null)
             if (result.session) dispatch({ type: "select-session", id: result.session.sessionId })
           }}
+          packFor={handoffPackFor}
         />
       )}
 

@@ -4,6 +4,10 @@ import type { AgentHistoryStore } from "@/lib/agents/activity/history-store"
 import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus"
 import type { AgentAttachedContext } from "@/lib/agents/control/context"
+import type { ControlContextDeliveryInfo } from "@/lib/agents/control/events"
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { contextWorldOfSnapshot, handoffContextPack } from "@/lib/agents/context-pack/handoff"
 import { canHandOffFrom, handoffLinksOf, readHandoffInstruction, selectHandoffContext } from "@/lib/agents/handoff/handoff"
 import { prepareHandoffPreview } from "@/lib/agents/handoff/preview"
 import type { HandoffFailure, SessionHandoff } from "@/lib/agents/handoff/handoff"
@@ -64,6 +68,8 @@ export type ScriptedRuntime = {
   failHandoff: (failure: HandoffFailure | null) => void
   /** Handoffs the runtime recorded. */
   readonly handoffs: readonly SessionHandoff[]
+  /** Messages sent, with the context each delivered — as the host records it on the message (Hubble 1.5). */
+  readonly sentMessages: readonly { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[]
 }
 
 /** The actor a scripted runtime answers history for — the local actor, as on a Hubble with no accounts. */
@@ -131,6 +137,7 @@ export function createScriptedRuntime(
 
   let runtimeId: string | undefined
   const handoffs: SessionHandoff[] = []
+  const sentMessages: { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[] = []
   let handoffFailure: HandoffFailure | null = null
   /** Each session as the host describes it: with its handoff links, from the records. */
   const linked = (view: RuntimeSessionView): RuntimeSessionView => {
@@ -163,6 +170,8 @@ export function createScriptedRuntime(
   }
   /** The snapshot each session was started with — what the host would check a focus against. */
   const snapshots = new Map<string, SessionContextSnapshot>()
+  /** The context attached to each session, for what its next message records delivering (Hubble 1.5). */
+  const attachedContexts = new Map<string, AgentAttachedContext>()
 
   /**
    * Context attached to a session, recorded as the host records it: its tab
@@ -178,9 +187,11 @@ export function createScriptedRuntime(
     if (workspaceId && snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined
     const { focus: _previous, ...rest } = view
     void _previous
+    attachedContexts.set(view.sessionId, context)
     return {
       ...rest,
       contextSnapshotId: context.snapshotId,
+      contextDelivered: false,
       ...(isEmptyFocus(focus) ? {} : { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: false } }),
     }
   }
@@ -222,7 +233,7 @@ export function createScriptedRuntime(
       case "start_handoff": {
         const candidate = handoffCandidate(command)
         if (!candidate.ok) return candidate
-        const { source, workspaceId, preview } = candidate.value
+        const { source, workspaceId, preview, focus } = candidate.value
         if (preview.fingerprint !== command.fingerprint) return runtimeFailure<never>("context_invalid")
         const instruction = readHandoffInstruction(command.instruction)
         const record: SessionHandoff = {
@@ -241,6 +252,18 @@ export function createScriptedRuntime(
           handoffs.push({ ...record, status: "failed", failure: "session_not_created" })
           return { ok: true, value: { handoff: handoffs[handoffs.length - 1], error: { code: "provider_error", message: "The agent stopped unexpectedly." } } }
         }
+        // The canonical Context Pack goes with the envelope, as the host sends it (Hubble 1.5).
+        const pack =
+          record.context.workspace && command.contextSnapshot
+            ? handoffContextPack({
+                world: contextWorldOfSnapshot(command.contextSnapshot),
+                workspaceId,
+                ...(focus ? { focus } : {}),
+                context: record.context,
+                ...(instruction ? { instruction } : {}),
+              })
+            : undefined
+        const packed = pack ? contextPackAttachedContext(pack, 1_700_000_000_000) : null
         const target = scriptedSession({
           sessionId: `session-${sessions.length + 1}`,
           provider: command.targetProvider,
@@ -248,7 +271,12 @@ export function createScriptedRuntime(
           workspaceId,
           ...(source.title ? { title: source.title } : {}),
           ...(command.projectId ? { projectId: command.projectId } : {}),
+          ...(packed ? { contextSnapshotId: packed.snapshotId, contextDelivered: true } : {}),
+          ...(packed && focus && (focus.tabIds.length > 0 || focus.collectionIds.length > 0)
+            ? { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: true } }
+            : {}),
         })
+        if (packed) attachedContexts.set(target.sessionId, packed)
         sessions = [...sessions, target]
         if (handoffFailure === "context_not_delivered") {
           handoffs.push({ ...record, targetSessionId: target.sessionId, status: "failed", failure: "context_not_delivered" })
@@ -329,9 +357,11 @@ export function createScriptedRuntime(
       case "detach_context": {
         const target = sessions.find((s) => s.sessionId === command.sessionId)
         if (!target) return runtimeFailure<never>("session_not_found")
-        const { focus: _focus, contextSnapshotId: _snapshot, ...rest } = target
+        const { focus: _focus, contextSnapshotId: _snapshot, contextDelivered: _delivered, ...rest } = target
         void _focus
         void _snapshot
+        void _delivered
+        attachedContexts.delete(target.sessionId)
         sessions = sessions.map((s) => (s.sessionId === target.sessionId ? rest : s))
         return { ok: true, value: rest }
       }
@@ -339,9 +369,18 @@ export function createScriptedRuntime(
       case "send_message": {
         const target = sessions.find((s) => s.sessionId === command.sessionId)
         if (!target) return runtimeFailure<never>("session_not_found")
-        // Attached context goes with this message, once.
-        const sent = target.focus ? { ...target, focus: { ...target.focus, delivered: true } } : target
+        // Attached context goes with this message, once — and, as the host
+        // does, the message records what it delivered.
+        const owed = target.contextDelivered === false ? attachedContexts.get(target.sessionId) : undefined
+        const workspaceId = target.context?.workspaceId ?? target.workspaceId
+        const delivery = owed && workspaceId ? contextDeliveryOf(owed, workspaceId) : undefined
+        const sent = {
+          ...target,
+          ...(target.focus ? { focus: { ...target.focus, delivered: true } } : {}),
+          ...(target.contextSnapshotId ? { contextDelivered: true } : {}),
+        }
         sessions = sessions.map((s) => (s.sessionId === target.sessionId ? sent : s))
+        sentMessages.push({ sessionId: target.sessionId, text: command.text, ...(delivery ? { delivery } : {}) })
         return { ok: true, value: sent }
       }
 
@@ -520,6 +559,7 @@ export function createScriptedRuntime(
       handoffFailure = failure
     },
     handoffs,
+    sentMessages,
   }
 }
 

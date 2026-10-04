@@ -344,8 +344,14 @@ export type RuntimeSessionView = {
   projectId?: string;
   workspaceId?: string;
   title?: string;
-  /** The context snapshot currently attached, by the bridge's id. */
+  /** The context snapshot currently attached, by the bridge's id — a Context Pack's `pack-<fingerprint>` (Hubble 1.5). */
   contextSnapshotId?: string;
+  /**
+   * Whether the agent has been sent the attached context yet (Hubble 1.5).
+   * Set whenever `contextSnapshotId` is: attached context rides with the
+   * next message, and context a session started with, with its first.
+   */
+  contextDelivered?: boolean;
   /** Every control run this session has produced, oldest first. */
   runIds: readonly string[];
   /** The run currently in flight, if any. */

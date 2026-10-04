@@ -255,6 +255,46 @@ export type ControlHandoffInfo = {
   failure?: "session_not_created" | "context_not_delivered";
 };
 
+/**
+ * The context a message carried to the agent (Hubble 1.5) — the provenance
+ * an action's "Context used" is read from.
+ *
+ * Raised by Hubble alone, on the one `message_sent` that delivered attached
+ * context: the runtime knows what it sent, and an adapter never says. Counts
+ * and Hubble's own ids only — the collections are named by id so their names
+ * are looked up live, and nothing a page or a provider wrote is in here.
+ */
+export type ControlContextDeliveryInfo = {
+  /** The attached context's id: a Context Pack's `pack-<fingerprint>`. */
+  contextId: string;
+  /** The workspace the session is bound to. */
+  workspaceId: string;
+  tabs: number;
+  collections: number;
+  relationships: number;
+  /** Whether the workspace's brief or its recent changes went with it. */
+  workspace: boolean;
+  /** The collections sent, bounded. */
+  collectionIds: readonly string[];
+};
+
+export const MAX_DELIVERY_COLLECTION_IDS = 20;
+
+function isWellFormedDeliveryInfo(info: ControlContextDeliveryInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  for (const key of ["contextId", "workspaceId"] as const) {
+    const value = info[key];
+    if (typeof value !== "string" || value.length === 0 || value.length > 200) return false;
+  }
+  for (const key of ["tabs", "collections", "relationships"] as const) {
+    const value = info[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > MAX_CONTROL_CONTEXT_COUNT) return false;
+  }
+  if (typeof info.workspace !== "boolean") return false;
+  if (!Array.isArray(info.collectionIds) || info.collectionIds.length > MAX_DELIVERY_COLLECTION_IDS) return false;
+  return info.collectionIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200);
+}
+
 function isWellFormedHandoffInfo(info: ControlHandoffInfo): boolean {
   if (typeof info !== "object" || info === null) return false;
   for (const key of ["handoffId", "workspaceId"] as const) {
@@ -374,6 +414,8 @@ export type AgentControlEvent = {
   context?: ControlContextInfo;
   /** The handoff this event is about, on the `HANDOFF_EVENT_KINDS` (and the `message_sent` that delivered one). */
   handoff?: ControlHandoffInfo;
+  /** The context this `message_sent` delivered to the agent (Hubble 1.5). Hubble's alone. */
+  delivery?: ControlContextDeliveryInfo;
   /**
    * The message itself, on the three `TEXT_EVENT_KINDS` only.
    *
@@ -457,6 +499,12 @@ export function isWellFormedControlEvent(event: AgentControlEvent): boolean {
     if (!handoffKind && event.kind !== "message_sent") return false;
     if (!isWellFormedHandoffInfo(event.handoff)) return false;
     if (event.kind === "handoff_sent" && event.handoff.outcome === undefined) return false;
+  }
+
+  // Delivered context rides on the message that carried it, and only there.
+  if (event.delivery !== undefined) {
+    if (event.kind !== "message_sent") return false;
+    if (!isWellFormedDeliveryInfo(event.delivery)) return false;
   }
 
   if (event.text !== undefined) {

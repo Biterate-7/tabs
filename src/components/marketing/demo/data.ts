@@ -198,8 +198,15 @@ function workspace(id: string, name: string, tabs: Tab[], sections: Section[]): 
   return { id, name, tabs, sections, createdAt: DEMO_NOW - 14 * DAY, updatedAt: DEMO_NOW - HOUR }
 }
 
+/** Research's brief (Hubble 1.5): the person's own two lines, as they would write them. */
+export const RESEARCH_BRIEF = {
+  description: "Reading on AI agents and product ideas for Hubble.",
+  focus: "Comparing how coding agents are evaluated, starting with SWE-bench.",
+  updatedAt: DEMO_NOW - DAY,
+} as const
+
 export const DEMO_WORKSPACES: readonly Workspace[] = [
-  workspace(RESEARCH_ID, "Research", RESEARCH_TABS, RESEARCH_SECTIONS),
+  { ...workspace(RESEARCH_ID, "Research", RESEARCH_TABS, RESEARCH_SECTIONS), brief: { ...RESEARCH_BRIEF } },
   workspace(BUILD_ID, "Hubble Build", BUILD_TABS, BUILD_SECTIONS),
   workspace(SEMESTER_ID, "Semester", SEMESTER_TABS, SEMESTER_SECTIONS),
 ]

@@ -196,6 +196,8 @@ export function historyEventOf(event: SequencedControlEvent): SequencedControlEv
   if (event.approvalId) kept.approvalId = event.approvalId;
   if (event.context) kept.context = { ...event.context };
   if (event.handoff) kept.handoff = { ...event.handoff };
+  // Which context the message delivered (Hubble 1.5): counts and ids, for provenance.
+  if (event.delivery) kept.delivery = { ...event.delivery, collectionIds: [...event.delivery.collectionIds] };
   if (event.messageId) kept.messageId = event.messageId;
   if (event.sourceId) kept.sourceId = event.sourceId;
   // `text` is never copied. See the note at the top of this file.

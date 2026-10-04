@@ -1,11 +1,13 @@
 import { isAgentProviderId } from "@/lib/agents/connectors/types";
 import { providerDisplayName } from "@/lib/agents/platform/catalog";
 import { focusFitsSnapshot } from "@/lib/agents/session-context/focus";
+import { scrubSecretShapes } from "@/lib/secret-shapes";
 import type { AgentActivityEntry } from "@/lib/agents/activity/timeline";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentSessionStatus } from "@/lib/agents/control/session";
 import type { SessionFocus } from "@/lib/agents/session-context/focus";
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
+import type { ContextPack } from "@/lib/agents/context-pack/pack";
 
 /**
  * An explicit agent handoff (Hubble 1.4): the person hands the work of one
@@ -95,8 +97,18 @@ export type HandoffWorkspaceContext = {
   tabs: number;
   collections: number;
   /** The tabs and collections the source session was pointed at, carried over by reference. */
-  focus?: { tabs: number; collections: number };
+  focus?: {
+    tabs: number;
+    collections: number;
+    /** Which collections, by id, so their names are looked up live (Hubble 1.5). Bounded. */
+    collectionIds?: readonly string[];
+  };
+  /** The workspace has a brief, and it went with the context (Hubble 1.5). */
+  brief?: true;
 };
+
+/** A project file a previous result touched, project-relative (Hubble 1.5). */
+export type HandoffFile = { path: string; change: "created" | "updated" };
 
 /** One thing the source session did, in the activity timeline's own words. */
 export type HandoffResultLine = { title: string; description?: string };
@@ -108,6 +120,8 @@ export type HandoffPreviousResult = {
   lines: readonly HandoffResultLine[];
   /** Results beyond the bound, said as a count rather than dropped silently. */
   more: number;
+  /** The project files those results created or edited (Hubble 1.5). Bounded; absent when none. */
+  files?: readonly HandoffFile[];
 };
 
 /**
@@ -158,6 +172,12 @@ export const HANDOFF_LIMITS = {
   instruction: 2_000,
   /** Result lines passed on; beyond it the rest is a count. */
   resultLines: 12,
+  /** Files a previous result names. */
+  files: 20,
+  /** A project-relative path. */
+  path: 300,
+  /** Collections a focus names by id. */
+  focusCollections: 20,
   /** One result line's text. */
   lineText: 300,
   id: 200,
@@ -211,7 +231,8 @@ function outcomeOf(status: AgentSessionStatus): HandoffPreviousResult["outcome"]
   }
 }
 
-const line = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, HANDOFF_LIMITS.lineText);
+/** One line of handoff text: collapsed, scrubbed of anything shaped like a credential, bounded. */
+const line = (value: string) => scrubSecretShapes(value.replace(/\s+/g, " ").trim()).slice(0, HANDOFF_LIMITS.lineText);
 
 /**
  * What the source session did, from its own activity timeline — the same
@@ -234,7 +255,31 @@ export function summarizePreviousResult(
     title: line(entry.title),
     ...(entry.description ? { description: line(entry.description) } : {}),
   }));
-  return { outcome: outcomeOf(status), lines: kept, more: Math.max(0, results.length - kept.length) };
+  // The files behind those results, from the timeline's own file references.
+  const byPath = new Map<string, HandoffFile>();
+  for (const entry of results) {
+    const file = entry.refs?.file;
+    if (!file || !isProjectPath(file.relativePath)) continue;
+    const existing = byPath.get(file.relativePath);
+    if (!existing || (existing.change === "updated" && file.operation === "created")) {
+      byPath.set(file.relativePath, { path: file.relativePath, change: file.operation });
+    }
+  }
+  const files = [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).slice(0, HANDOFF_LIMITS.files);
+  return {
+    outcome: outcomeOf(status),
+    lines: kept,
+    more: Math.max(0, results.length - kept.length),
+    ...(files.length > 0 ? { files } : {}),
+  };
+}
+
+/** A path that stays inside its project: relative, no `..`, no drive. */
+export function isProjectPath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > HANDOFF_LIMITS.path) return false;
+  if (/[\u0000-\u001F\u007F]/.test(value)) return false;
+  if (value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:/.test(value)) return false;
+  return !value.split(/[\\/]/).includes("..");
 }
 
 /* ------------------------------------------------------------------ *
@@ -244,12 +289,22 @@ export function summarizePreviousResult(
 /** How much of the workspace a snapshot holds, and how much of it the focus names. */
 export function workspaceContextOf(snapshot: SessionContextSnapshot, focus: SessionFocus | undefined): HandoffWorkspaceContext {
   const fits = focus && focusFitsSnapshot(snapshot, focus) ? focus : undefined;
+  const brief = snapshot.workspace.brief;
   return {
     tabs: snapshot.workspace.tabs.length,
     collections: snapshot.collections.length,
     ...(fits && (fits.tabIds.length > 0 || fits.collectionIds.length > 0)
-      ? { focus: { tabs: fits.tabIds.length, collections: fits.collectionIds.length } }
+      ? {
+          focus: {
+            tabs: fits.tabIds.length,
+            collections: fits.collectionIds.length,
+            ...(fits.collectionIds.length > 0
+              ? { collectionIds: [...fits.collectionIds].sort().slice(0, HANDOFF_LIMITS.focusCollections) }
+              : {}),
+          },
+        }
       : {}),
+    ...(brief?.description || brief?.focus ? { brief: true as const } : {}),
   };
 }
 
@@ -274,6 +329,15 @@ export function workspaceContextLine(context: HandoffWorkspaceContext): string {
   return `${plural(context.tabs, "tab", "tabs")} · ${plural(context.collections, "collection", "collections")}`;
 }
 
+/** "Pricing Research collection · 5 tabs" — a pack's selection by name, or `undefined` when it has none. */
+export function packSelectionLine(pack: Pick<ContextPack, "collections" | "tabs">): string | undefined {
+  const parts = [
+    ...pack.collections.map((collection) => `${line(collection.name)} collection`),
+    ...(pack.tabs.length > 0 ? [plural(pack.tabs.length, "tab", "tabs")] : []),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 /** "3 tabs · 1 collection" of focus, or `undefined` when there is none. */
 export function focusLine(context: HandoffWorkspaceContext): string | undefined {
   const focus = context.focus;
@@ -289,34 +353,12 @@ export function focusLine(context: HandoffWorkspaceContext): string | undefined 
  * The person's instruction
  * ------------------------------------------------------------------ */
 
-/**
- * Shapes that are credentials far more often than they are anything else.
+/*
  * The instruction is the one free text a handoff carries, so it is scrubbed
- * before it is kept or sent: a key pasted by mistake goes nowhere.
+ * before it is kept or sent: a key pasted by mistake goes nowhere. The shapes
+ * are shared with the workspace brief (lib/secret-shapes.ts).
  */
-const SECRET_SHAPES: readonly RegExp[] = [
-  /\bsk-[A-Za-z0-9_-]{16,}/g, // OpenAI / Anthropic style keys (sk-…, sk-ant-…)
-  /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}/g, // GitHub tokens
-  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, // Slack tokens
-  /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key ids
-  /\bAIza[0-9A-Za-z_-]{30,}/g, // Google API keys
-  /\bxai-[A-Za-z0-9]{20,}/g, // xAI keys
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWTs
-  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}/gi, // Authorization header values
-  /\b(?:api[_-]?key|access[_-]?token|secret|password|passwd)\s*[:=]\s*\S{6,}/gi, // key=value pairs
-];
-
-export const REDACTED = "[redacted]";
-
-/** Whether text holds something shaped like a credential. */
-export function containsSecretShape(value: string): boolean {
-  return SECRET_SHAPES.some((pattern) => {
-    pattern.lastIndex = 0;
-    const found = pattern.test(value);
-    pattern.lastIndex = 0;
-    return found;
-  });
-}
+export { REDACTED, containsSecretShape } from "@/lib/secret-shapes";
 
 /**
  * The instruction as it may be kept and sent: control characters gone (line
@@ -331,7 +373,7 @@ export function readHandoffInstruction(value: unknown): string | undefined {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  for (const pattern of SECRET_SHAPES) text = text.replace(pattern, REDACTED);
+  text = scrubSecretShapes(text);
   if (!text) return undefined;
   return text.length > HANDOFF_LIMITS.instruction ? text.slice(0, HANDOFF_LIMITS.instruction).trimEnd() : text;
 }
@@ -353,6 +395,12 @@ export type HandoffEnvelopeInput = {
   /** Whether the target was handed Hubble's workspace tools (the context server). */
   contextTools: boolean;
   instruction?: string;
+  /**
+   * The canonical Context Pack of what is handed over (Hubble 1.5): the
+   * brief and the selection by name. Its resources travel as the message's
+   * attachments; the envelope only says what they are.
+   */
+  pack?: Pick<ContextPack, "workspace" | "collections" | "tabs" | "files">;
 };
 
 const RESULT_OUTCOME_WORDS: Record<HandoffPreviousResult["outcome"], string> = {
@@ -378,6 +426,8 @@ export function buildHandoffEnvelope(input: HandoffEnvelopeInput): string {
   );
   lines.push("");
   lines.push(`Workspace: ${line(input.workspaceName) || "Untitled workspace"}`);
+  if (input.context.workspace && input.pack?.workspace.description) lines.push(`Workspace purpose: ${line(input.pack.workspace.description)}`);
+  if (input.context.workspace && input.pack?.workspace.focus) lines.push(`Current focus: ${line(input.pack.workspace.focus)}`);
   lines.push(`Previous agent: ${agentDisplayName(input.sourceProvider)}`);
   if (input.sourceTitle) lines.push(`Previous session: ${line(input.sourceTitle)}`);
 
@@ -388,15 +438,25 @@ export function buildHandoffEnvelope(input: HandoffEnvelopeInput): string {
     if (result.lines.length === 0) lines.push("- No workspace or file changes were recorded.");
     for (const entry of result.lines) lines.push(`- ${entry.title}${entry.description ? ` (${entry.description})` : ""}`);
     if (result.more > 0) lines.push(`- …and ${plural(result.more, "more result", "more results")}`);
+    const files = result.files ?? [];
+    if (files.length > 0) {
+      lines.push(`Files: ${files.map((file) => `${line(file.path)} (${file.change === "created" ? "created" : "edited"})`).join(", ")}`);
+    }
   }
 
   const workspace = input.context.workspace;
   lines.push("");
   if (workspace && input.contextTools) {
     lines.push(`Workspace context: ${workspaceContextLine(workspace)}`);
-    const focus = focusLine(workspace);
+    const named = input.pack ? packSelectionLine(input.pack) : undefined;
+    const focus = named ?? focusLine(workspace);
     if (focus) lines.push(`Selected: ${focus}`);
     lines.push("Read it through Hubble's workspace tools. Changes to the workspace ask the person first.");
+  } else if (workspace && input.pack) {
+    // The pack still travels with this message; only the live reads do not.
+    const named = packSelectionLine(input.pack);
+    if (named) lines.push(`Selected: ${named}`);
+    lines.push("Workspace context: only what Hubble lists with this message. You can't read the rest of the workspace in this session.");
   } else if (workspace) {
     lines.push("Workspace context: not available to you in this session.");
   } else {
@@ -479,12 +539,25 @@ const OUTCOMES = new Set(["finished", "stopped", "failed", "waiting", "idle"]);
 
 function readWorkspaceContext(raw: unknown): HandoffWorkspaceContext | null {
   if (!isRecord(raw) || !isCount(raw.tabs) || !isCount(raw.collections)) return null;
+  if (raw.brief !== undefined && raw.brief !== true) return null;
+  const brief = raw.brief === true ? { brief: true as const } : {};
   if (raw.focus !== undefined) {
     const focus = raw.focus;
     if (!isRecord(focus) || !isCount(focus.tabs) || !isCount(focus.collections)) return null;
-    return { tabs: raw.tabs, collections: raw.collections, focus: { tabs: focus.tabs, collections: focus.collections } };
+    let collectionIds: string[] | undefined;
+    if (focus.collectionIds !== undefined) {
+      if (!Array.isArray(focus.collectionIds) || focus.collectionIds.length > HANDOFF_LIMITS.focusCollections) return null;
+      if (!focus.collectionIds.every(isId)) return null;
+      collectionIds = [...(focus.collectionIds as string[])];
+    }
+    return {
+      tabs: raw.tabs,
+      collections: raw.collections,
+      focus: { tabs: focus.tabs, collections: focus.collections, ...(collectionIds ? { collectionIds } : {}) },
+      ...brief,
+    };
   }
-  return { tabs: raw.tabs, collections: raw.collections };
+  return { tabs: raw.tabs, collections: raw.collections, ...brief };
 }
 
 function readPreviousResult(raw: unknown): HandoffPreviousResult | null {
@@ -496,7 +569,21 @@ function readPreviousResult(raw: unknown): HandoffPreviousResult | null {
     if (entry.description !== undefined && (typeof entry.description !== "string" || entry.description.length > HANDOFF_LIMITS.lineText)) return null;
     lines.push({ title: entry.title, ...(entry.description ? { description: entry.description as string } : {}) });
   }
-  return { outcome: raw.outcome as HandoffPreviousResult["outcome"], lines, more: raw.more };
+  let files: HandoffFile[] | undefined;
+  if (raw.files !== undefined) {
+    if (!Array.isArray(raw.files) || raw.files.length > HANDOFF_LIMITS.files) return null;
+    files = [];
+    for (const file of raw.files) {
+      if (!isRecord(file) || !isProjectPath(file.path) || (file.change !== "created" && file.change !== "updated")) return null;
+      files.push({ path: file.path, change: file.change });
+    }
+  }
+  return {
+    outcome: raw.outcome as HandoffPreviousResult["outcome"],
+    lines,
+    more: raw.more,
+    ...(files && files.length > 0 ? { files } : {}),
+  };
 }
 
 /** A handoff as it arrives from the wire or the database, revalidated field by field. `null`: unreadable. */

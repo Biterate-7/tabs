@@ -1,6 +1,13 @@
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { RuntimeApprovalView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 import { contextCountsLine } from "@/lib/agents/control/events"
+import type { ControlContextDeliveryInfo } from "@/lib/agents/control/events"
+import { contextOfSession } from "@/lib/agents/command-centre/working-context"
+import { emptyContextWorld } from "@/lib/agents/context/world"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
+import { sessionContextPack } from "@/lib/agents/context-pack/session"
+import { setWorkspaceBrief } from "@/lib/workspace/brief"
 import { agentDisplayName, handoffLinksOf } from "@/lib/agents/handoff/handoff"
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
@@ -113,6 +120,11 @@ export type DemoState = {
   /** Handoffs the visitor made (Hubble 1.4), as the runtime records them. */
   handoffs: SessionHandoff[]
   /**
+   * Context attached to a session and not yet sent (Hubble 1.5): what its
+   * next message delivers, as the runtime records it on that message.
+   */
+  pendingDelivery: Record<string, ControlContextDeliveryInfo>
+  /**
    * What each approval in the demo would change once approved, by approval
    * id — Claude Code's SWE-bench collection, and whatever a handed-off agent
    * asks for. The Command Centre applies it exactly as it applies any other.
@@ -189,21 +201,57 @@ export type DemoInit = {
   settingsSection?: DemoSettingsSection
 }
 
+/**
+ * The fixture's sessions as the runtime would hold them (Hubble 1.5): each
+ * was started with its Context Pack — built by the product's own recipe from
+ * the demo's workspaces — and its first message delivered it, which that
+ * message records. A session with nothing to attach reads its workspace.
+ */
+function seedContext(
+  sessions: readonly CommandCentreSession[],
+  events: Record<string, SequencedControlEvent[]>,
+  world: Pick<DemoState, "collections" | "dependencies"> & { workspaces: WorkspaceStore["workspaces"] }
+): { sessions: CommandCentreSession[]; events: Record<string, SequencedControlEvent[]> } {
+  const contextWorld = { ...emptyContextWorld(null), workspaces: world.workspaces, collections: world.collections, dependencies: world.dependencies }
+  const nextEvents = { ...events }
+  const nextSessions = sessions.map((entry) => {
+    const workspaceId = entry.view.workspaceId
+    if (!workspaceId) return entry
+    const built = sessionContextPack({ world: contextWorld, workspaceId, selection: contextOfSession(entry.view), sessionId: entry.view.sessionId, changes: [] })
+    const attached = built.ok ? contextPackAttachedContext(built.pack, DEMO_NOW) : null
+    if (!attached) return entry
+    const delivery = contextDeliveryOf(attached, workspaceId)
+    const list = nextEvents[entry.view.sessionId] ?? []
+    const first = list.findIndex((event) => event.kind === "message_sent" && !event.handoff)
+    if (first >= 0 && delivery) nextEvents[entry.view.sessionId] = list.map((event, index) => (index === first ? { ...event, delivery } : event))
+    return { ...entry, view: { ...entry.view, contextSnapshotId: attached.snapshotId, contextDelivered: first >= 0 } }
+  })
+  return { sessions: nextSessions, events: nextEvents }
+}
+
 export function createDemoState(init: DemoInit = {}): DemoState {
   const workspaces = DEMO_WORKSPACES.map((workspace) => ({ ...workspace, tabs: [...workspace.tabs] }))
+  const collections = DEMO_COLLECTIONS.map((c) => ({ ...c, tabIds: [...c.tabIds] }))
+  const dependencies = [...DEMO_DEPENDENCIES]
+  const seeded = seedContext(
+    withSequence([...DEMO_SESSIONS], DEMO_EVENTS as Record<string, SequencedControlEvent[]>),
+    Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
+    { workspaces, collections, dependencies }
+  )
   return {
     view: init.view ?? "workspace",
     store: { version: 1, currentId: init.currentId ?? RESEARCH_ID, workspaces },
-    collections: DEMO_COLLECTIONS.map((c) => ({ ...c, tabIds: [...c.tabIds] })),
-    dependencies: [...DEMO_DEPENDENCIES],
-    sessions: withSequence([...DEMO_SESSIONS], DEMO_EVENTS as Record<string, SequencedControlEvent[]>),
-    events: Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
+    collections,
+    dependencies,
+    sessions: seeded.sessions,
+    events: seeded.events,
     approvals: Object.fromEntries(Object.entries(DEMO_APPROVALS).map(([id, list]) => [id, [...list]])),
     changes: [],
     selectedSessionId: init.selectedHistoryId ? null : init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
     history: [...DEMO_HISTORY],
     selectedHistoryId: init.selectedHistoryId ?? null,
     handoffs: [],
+    pendingDelivery: {},
     pendingChanges: { [SWE_APPROVAL.approvalId]: SWE_CHANGE },
     seenApprovals: [],
     paletteOpen: false,
@@ -239,7 +287,15 @@ export type DemoAction =
   | { type: "move-to-collection"; tabId: string; id: string }
   | { type: "select-session"; id: string | null }
   /** What a session is pointed at inside its workspace — as the runtime would record it, ids only. */
-  | { type: "set-focus"; sessionId: string; focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null }
+  | {
+      type: "set-focus"
+      sessionId: string
+      focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null
+      /** The Context Pack attached (Hubble 1.5): its id, and what its next message will record delivering. `null`: detached. */
+      context?: { contextId: string; delivery?: ControlContextDeliveryInfo } | null
+    }
+  /** The person's brief for a workspace (Hubble 1.5), through the product's own store function. */
+  | { type: "set-brief"; workspaceId: string; brief: { description: string; focus: string } }
   | { type: "respond"; approvalId: string; decision: "granted" | "denied" }
   /** The Command Centre applies an approved change, after the approval. */
   | { type: "apply-approved"; approvalId: string }
@@ -255,7 +311,15 @@ export type DemoAction =
    * handoff as the demo's transport recorded it, and the envelope the target
    * agent is told — built by the product's own functions.
    */
-  | { type: "handoff-start"; handoff: SessionHandoff; envelope: string; title?: string; workspaceName: string }
+  | {
+      type: "handoff-start"
+      handoff: SessionHandoff
+      envelope: string
+      title?: string
+      workspaceName: string
+      /** The Context Pack sent with the envelope (Hubble 1.5), and the source focus it carried. */
+      pack?: { contextId: string; delivery?: ControlContextDeliveryInfo; focus?: { tabIds: readonly string[]; collectionIds: readonly string[] } }
+    }
   /** The handed-off agent reads the workspace and asks to change it. */
   | { type: "handoff-work"; sessionId: string; approval: RuntimeApprovalView }
   | { type: "send"; sessionId: string; text: string }
@@ -468,13 +532,24 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       }
     }
 
-    case "set-focus":
+    case "set-focus": {
+      const pendingDelivery = { ...state.pendingDelivery }
+      if (action.context !== undefined) {
+        delete pendingDelivery[action.sessionId]
+        if (action.context?.delivery) pendingDelivery[action.sessionId] = action.context.delivery
+      }
       return {
         ...state,
+        pendingDelivery,
         sessions: state.sessions.map((entry) => {
           if (entry.view.sessionId !== action.sessionId) return entry
           const view = { ...entry.view }
           delete view.focus
+          if (action.context !== undefined) {
+            delete view.contextSnapshotId
+            delete view.contextDelivered
+            if (action.context) Object.assign(view, { contextSnapshotId: action.context.contextId, contextDelivered: false })
+          }
           const empty = !action.focus || (action.focus.tabIds.length === 0 && action.focus.collectionIds.length === 0)
           return {
             ...entry,
@@ -482,6 +557,12 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
           }
         }),
       }
+    }
+
+    case "set-brief": {
+      const store = setWorkspaceBrief(state.store, action.workspaceId, action.brief, DEMO_NOW)
+      return store === state.store ? state : { ...state, store }
+    }
 
     case "respond": {
       const sessionId = Object.keys(state.approvals).find((id) =>
@@ -609,7 +690,17 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       const source = state.sessions.find((entry) => entry.view.sessionId === handoff.sourceSessionId)
       if (!targetId || !source || state.sessions.some((entry) => entry.view.sessionId === targetId)) return state
       const handoffs = [...state.handoffs, handoff]
-      const target: CommandCentreSession = { origin: "controlled", view: demoHandoffTarget(handoff, action.title, action.workspaceName) }
+      const base = demoHandoffTarget(handoff, action.title, action.workspaceName)
+      const pack = action.pack
+      const focus = pack?.focus && (pack.focus.tabIds.length > 0 || pack.focus.collectionIds.length > 0) ? pack.focus : undefined
+      const target: CommandCentreSession = {
+        origin: "controlled",
+        view: {
+          ...base,
+          ...(pack ? { contextSnapshotId: pack.contextId, contextDelivered: true } : {}),
+          ...(focus ? { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: true } } : {}),
+        },
+      }
       // Both sessions' links, from the records — never from where they sit.
       const linked = [target, ...state.sessions].map((entry) => {
         const links = handoffLinksOf(entry.view.sessionId, handoffs)
@@ -621,7 +712,13 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       const targetEvents = appendEvents(withTarget, targetId, [
         { kind: "session_started", summary: "Session started." },
         // What the agent was told, marked as the handoff by reference.
-        { kind: "message_sent", summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`, handoff: received, text: action.envelope },
+        {
+          kind: "message_sent",
+          summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`,
+          handoff: received,
+          text: action.envelope,
+          ...(pack?.delivery ? { delivery: pack.delivery } : {}),
+        },
         { kind: "handoff_received", summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`, handoff: received },
         ...(workspace
           ? [
@@ -687,13 +784,30 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       const messageId = `${action.sessionId}-typed-${(state.events[action.sessionId] ?? []).length + 1}`
       return {
         ...state,
-        // The context rides with this message, as it does in Hubble.
+        // The context rides with this message, as it does in Hubble — and the
+        // message records what it delivered.
         sessions: patchSession(state.sessions, action.sessionId, "running").map((entry) =>
-          entry.view.sessionId === action.sessionId && entry.view.focus
-            ? { ...entry, view: { ...entry.view, focus: { ...entry.view.focus, delivered: true } } }
+          entry.view.sessionId === action.sessionId
+            ? {
+                ...entry,
+                view: {
+                  ...entry.view,
+                  ...(entry.view.focus ? { focus: { ...entry.view.focus, delivered: true } } : {}),
+                  ...(entry.view.contextSnapshotId ? { contextDelivered: true } : {}),
+                },
+              }
             : entry
         ),
-        events: appendEvents(state, action.sessionId, [{ kind: "message_sent", summary: "Message sent.", messageId, text }]),
+        pendingDelivery: Object.fromEntries(Object.entries(state.pendingDelivery).filter(([id]) => id !== action.sessionId)),
+        events: appendEvents(state, action.sessionId, [
+          {
+            kind: "message_sent",
+            summary: "Message sent.",
+            messageId,
+            text,
+            ...(state.pendingDelivery[action.sessionId] ? { delivery: state.pendingDelivery[action.sessionId] } : {}),
+          },
+        ]),
       }
     }
 

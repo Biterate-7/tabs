@@ -17,6 +17,11 @@ import {
   HISTORY_IDEAS_SESSION,
 } from "./data"
 import { DemoApp } from "./demo-app"
+import { createDemoState } from "./demo-state"
+import { RESEARCH_BRIEF } from "./data"
+import { emptyContextWorld } from "@/lib/agents/context/world"
+import { contextPackId } from "@/lib/agents/context-pack/pack"
+import { sessionContextPack } from "@/lib/agents/context-pack/session"
 import { DemoFrame } from "./demo-frame"
 import { HubbleDemoProvider } from "./demo-provider"
 import type { DemoInit } from "./demo-state"
@@ -68,6 +73,12 @@ const SHARED_SESSION_UI: ReadonlyArray<[string, string]> = [
   ["@/components/command-centre/agent-history-list", "AgentHistoryList"],
   ["@/components/command-centre/history-session-view", "HistorySessionView"],
   ["@/hooks/use-agent-activity", "useHistorySessionActivity"],
+  // Context Intelligence (Hubble 1.5): the same pack, built by the same recipe, attached the same way.
+  ["@/hooks/use-session-context-pack", "useSessionContextPack"],
+  ["@/lib/agents/context-pack/session", "sessionContextPack"],
+  ["@/lib/agents/context-pack/attach", "contextPackAttachedContext"],
+  ["@/lib/agents/context-pack/handoff", "handoffContextPack"],
+  ["@/lib/agents/context-pack/provenance", "contextProvenanceOf"],
 ]
 
 /** CommandCentreView imports its siblings relatively; normalise those to the same `@/` paths. */
@@ -101,6 +112,16 @@ describe("the demo is built from the app's own session UI", () => {
       expect(source, path).not.toMatch(/buildAgentActivityTimeline|inspectActivityEntry/)
       // The timeline's and inspector's words come from the product's builders, never restated.
       for (const words of ["Waiting for approval", "Asked for approval", "Approval expired", "Workspace context loaded", "Requested by", "Undid creation", "Couldn't undo"]) {
+        expect(source, `${path} restates "${words}"`).not.toContain(words)
+      }
+    }
+  })
+
+  it("never builds or words a Context Pack itself", () => {
+    for (const { path, source } of marketingSources()) {
+      expect(source, path).not.toMatch(/buildContextPack|contextPackRows|contextPackLine|resolveContext\(/)
+      expect(source, path).not.toMatch(/@\/components\/agents\/context-pack-inspector"/)
+      for (const words of ["What the agent receives", "read on request", "Changed since", "Context used"]) {
         expect(source, `${path} restates "${words}"`).not.toContain(words)
       }
     }
@@ -309,5 +330,50 @@ describe("the demo's agent history is the product's", () => {
     const inspector = within(pane.getByRole("article"))
     expect(inspector.queryByRole("button", { name: "Undo" })).toBeNull()
     expect(inspector.getByText(/the workspace has changed since/)).toBeTruthy()
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Context Intelligence (Hubble 1.5)
+ * ------------------------------------------------------------------ */
+
+describe("the demo's context is the product's Context Pack", () => {
+  it("starts each fixture session with the pack the product's recipe builds — a deterministic adapter, not a picture", () => {
+    const state = createDemoState()
+    const world = { ...emptyContextWorld(null), workspaces: state.store.workspaces, collections: state.collections, dependencies: state.dependencies }
+    const claude = state.sessions.find((entry) => entry.view.sessionId === CLAUDE_SESSION)!.view
+    const built = sessionContextPack({ world, workspaceId: claude.workspaceId!, sessionId: CLAUDE_SESSION, changes: [] })
+    expect(built.ok).toBe(true)
+    expect(claude.contextSnapshotId).toBe(built.ok ? contextPackId(built.pack) : "")
+    expect(claude.contextDelivered).toBe(true)
+    // Its first message records what it delivered, as the runtime's does.
+    const first = state.events[CLAUDE_SESSION]!.find((event) => event.kind === "message_sent")!
+    expect(first.delivery).toMatchObject({ workspaceId: claude.workspaceId, workspace: true })
+    // Deterministic: two visits, one pack.
+    expect(createDemoState().sessions.map((entry) => entry.view.contextSnapshotId)).toEqual(state.sessions.map((entry) => entry.view.contextSnapshotId))
+  })
+
+  it("shows the workspace brief and what the agent receives, with the app's own panel, and lets the visitor edit the brief", async () => {
+    const { user, frame } = renderWindow({ view: "command-centre", selectedSessionId: CLAUDE_SESSION, contextPanelOpen: true })
+    const panel = within(frame().getByRole("complementary", { name: "Session context" }))
+    expect(panel.getByText(RESEARCH_BRIEF.description)).toBeTruthy()
+    expect(panel.getByText(RESEARCH_BRIEF.focus)).toBeTruthy()
+    const receives = within(panel.getByRole("region", { name: "What the agent receives" }))
+    expect(receives.getByText("Claude Code has this")).toBeTruthy()
+
+    await user.click(panel.getByRole("button", { name: "Edit brief for Research" }))
+    const focus = panel.getByLabelText("Current focus")
+    await user.clear(focus)
+    await user.type(focus, "Picking a benchmark{Enter}")
+    expect(panel.getByText("Picking a benchmark")).toBeTruthy()
+    // The brief changed after the session was sent its pack: the app's own words say so.
+    expect(receives.getByText("Changed since Claude Code received it")).toBeTruthy()
+  })
+
+  it("names the context an action ran with, from the delivery its session recorded", async () => {
+    const { user, activity } = renderWindow({ view: "command-centre", selectedSessionId: CLAUDE_SESSION, contextPanelOpen: true })
+    await user.click(activity().getByRole("button", { name: /Waiting for approval/ }))
+    const used = screen.getByRole("list", { name: "Context used" })
+    expect(within(used).getByText("Research workspace · Workspace brief")).toBeTruthy()
   })
 })

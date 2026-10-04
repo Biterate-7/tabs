@@ -1,5 +1,6 @@
 "use client"
 
+import type { ContextProvenance } from "@/lib/agents/context-pack/provenance"
 import { X } from "lucide-react"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AgentStatusPill } from "@/components/agents/agent-status-pill"
@@ -36,6 +37,7 @@ export function HistorySessionView({
   now,
   onClose,
   onRetry,
+  context,
   children,
 }: {
   /** The session as the list read it — enough for the header while its records load. */
@@ -47,6 +49,8 @@ export function HistorySessionView({
   onRetry?: () => void
   /** The session's activity, rendered by the caller (components/agents/agent-activity.tsx). */
   children?: React.ReactNode
+  /** What Hubble gave the agent over the session (Hubble 1.5), from its records. */
+  context?: ContextProvenance
 }) {
   const shown = state.kind === "ready" ? state.detail.session : session
   // Opened from a handoff before its record arrived, the session is known by
@@ -89,6 +93,19 @@ export function HistorySessionView({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-2xl px-4 py-4">
+          {context && state.kind === "ready" && (
+            <section aria-label="Context used" className="mb-4">
+              <h2 className="text-eyebrow text-muted-foreground">Context used</h2>
+              <ul className="mt-1 flex flex-col">
+                {context.lines.map((line) => (
+                  <li key={line} className="min-w-0 break-words text-body-sm text-foreground">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-meta text-tertiary">As it was when the session ran — names are today&apos;s.</p>
+            </section>
+          )}
           <h2 className="text-eyebrow text-muted-foreground">Activity</h2>
           <p className="mt-1 text-meta text-tertiary">
             This session has ended, so it can&apos;t be continued. Hubble keeps what the agent did in this workspace, not the

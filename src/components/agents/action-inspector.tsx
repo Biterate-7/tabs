@@ -287,6 +287,17 @@ export function ActionInspector({
             {inspection.file.projectName && <span className="block text-meta text-tertiary">In {inspection.file.projectName}</span>}
           </Fact>
         )}
+        {inspection.context && (
+          <Fact label="Context used">
+            <ul aria-label="Context used" className="flex flex-col">
+              {inspection.context.lines.map((line) => (
+                <li key={line} className="min-w-0 break-words">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </Fact>
+        )}
       </dl>
 
       {(inspection.view || canUndo) && phase.kind === "idle" && (

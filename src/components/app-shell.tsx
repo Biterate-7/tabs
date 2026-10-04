@@ -36,6 +36,7 @@ import {
   updateWorkspaceLogo,
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
+import { setWorkspaceBrief } from "@/lib/workspace/brief"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
@@ -1180,6 +1181,12 @@ export function AppShell() {
     persist(updateWorkspaceLogo(store, id, logo))
   }
 
+  function handleUpdateWorkspaceBrief(id: string, brief: { description: string; focus: string }) {
+    if (!store) return
+    const next = setWorkspaceBrief(store, id, brief)
+    if (next !== store) persist(next)
+  }
+
   function handleDeleteWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
@@ -1404,6 +1411,7 @@ export function AppShell() {
           if (collectionId) setFocusCollection({ id: collectionId, nonce: Date.now() })
           setView("workspace")
         }}
+        onUpdateWorkspaceBrief={handleUpdateWorkspaceBrief}
       />
     )
   }

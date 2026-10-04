@@ -24,6 +24,9 @@ import {
   selectHandoffContext,
 } from "@/lib/agents/handoff/handoff";
 import { prepareHandoffPreview } from "@/lib/agents/handoff/preview";
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach";
+import { contextWorldOfSnapshot, handoffContextPack } from "@/lib/agents/context-pack/handoff";
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance";
 import { createCorrelationRegistry, toCorrelationView } from "./correlation";
 import { createEventJournal } from "./journal";
 import { gateFailure } from "./gate";
@@ -409,6 +412,13 @@ type HostSession = {
    * creation and delivers it with the first message itself.
    */
   undeliveredContextSnapshotId?: string;
+  /**
+   * The session was started with context, which its adapter delivers with
+   * the first message (Hubble 1.5). Until that message is sent the agent has
+   * not been told, and the view says so; the message that carries it records
+   * what it carried.
+   */
+  startContextPending?: true;
   /**
    * The session was started from a workspace, but its agent cannot prove
    * which of its calls are Hubble's (J.4), so it was not given the context
@@ -1014,8 +1024,11 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       view.focus = {
         tabIds: [...host.focus.tabIds],
         collectionIds: [...host.focus.collectionIds],
-        delivered: !host.undeliveredContextSnapshotId,
+        delivered: !host.undeliveredContextSnapshotId && !host.startContextPending,
       };
+    }
+    if (session.contextSnapshotId && host) {
+      view.contextDelivered = !host.undeliveredContextSnapshotId && !host.startContextPending;
     }
     const links = host ? handoffLinksOf(session.id, handoffsOf(host.ownerId)) : undefined;
     if (links) view.handoff = links;
@@ -1350,6 +1363,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       correlationId: correlation.id,
       ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
       ...(startFocus && !isEmptyFocus(startFocus) ? { focus: startFocus } : {}),
+      ...(command.context ? { startContextPending: true as const } : {}),
     };
     hosted.set(started.value.id, host);
     if (startFocus) sessionContext?.registry.setFocus(started.value.id, startFocus);
@@ -1622,6 +1636,13 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const owed = host.undeliveredContextSnapshotId
           ? (actorService.contextFor(command.sessionId)?.attachments ?? [])
           : [];
+        // What this message delivers, for provenance (Hubble 1.5): the context
+        // owed since an attach, or the context the session was started with,
+        // which its adapter sends with the first message.
+        const delivering =
+          host.undeliveredContextSnapshotId || host.startContextPending
+            ? actorService.contextFor(command.sessionId)
+            : undefined;
 
         const sent = await actorService.sendMessage({
           sessionId: command.sessionId,
@@ -1634,6 +1655,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // Cleared after the send rather than before, so a failed send leaves
         // the context still owed instead of silently dropping it.
         delete host.undeliveredContextSnapshotId;
+        delete host.startContextPending;
+        const delivery = delivering && session.workspaceId ? contextDeliveryOf(delivering, session.workspaceId) : undefined;
 
         if (!host.activeRunId) startRun(command.sessionId, host);
 
@@ -1652,6 +1675,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           summary: normalizeControlSummary(command.text),
           text: boundMessageText(command.text),
           ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+          ...(delivery ? { delivery } : {}),
         });
 
         const after = actorService.session(command.sessionId);
@@ -1716,6 +1740,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // told. A snapshot detached before it was ever delivered is simply
         // never said.
         delete owned.value.host.undeliveredContextSnapshotId;
+        delete owned.value.host.startContextPending;
         delete owned.value.host.focus;
         options.sessionContext?.registry.setFocus(command.sessionId, { tabIds: [], collectionIds: [] });
 
@@ -2047,7 +2072,21 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         record.status = "sending_context";
         record.updatedAt = now();
 
-        // 2. The handoff itself, as the target's first message.
+        // 2. The handoff itself, as the target's first message: the envelope,
+        //    and the canonical Context Pack's resources as its attachments
+        //    (Hubble 1.5) — built from the same workspace copy, inside the
+        //    same workspace, so nothing in it can reach outside.
+        const pack =
+          passWorkspace && snapshot
+            ? handoffContextPack({
+                world: contextWorldOfSnapshot(snapshot),
+                workspaceId: preview.workspaceId,
+                ...(focus ? { focus } : {}),
+                context: record.context,
+                ...(instruction ? { instruction } : {}),
+              })
+            : undefined;
+        const packed = pack ? contextPackAttachedContext(pack, now()) : null;
         const envelope = buildHandoffEnvelope({
           workspaceName: snapshot?.workspace.name ?? "",
           sourceProvider: source.provider,
@@ -2055,12 +2094,20 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           context: record.context,
           contextTools: Boolean(options.sessionContext?.registry.binding(targetId)),
           ...(instruction ? { instruction } : {}),
+          ...(pack && packed ? { pack } : {}),
         });
+        // Recorded as the session's attached context, as an attach would be,
+        // so the Command Centre can tell the target has exactly this pack.
+        // Owed until the envelope is sent: a send that fails leaves it owed.
+        if (packed && serviceFor(actor.id).attachContext(targetId, packed).ok) {
+          targetHost.undeliveredContextSnapshotId = packed.snapshotId;
+        }
         const sent = await serviceFor(actor.id).sendMessage({
           sessionId: targetId,
           text: envelope,
-          context: { attachments: [] },
+          context: { attachments: packed ? [...packed.attachments] : [] },
         });
+        if (sent.ok) delete targetHost.undeliveredContextSnapshotId;
         if (!sent.ok) {
           // The session exists and holds its workspace — said — but the agent
           // was told nothing, and the handoff says so.
@@ -2086,6 +2133,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           summary: normalizeControlSummary(`Handoff from ${agentDisplayName(source.provider)}`),
           text: boundMessageText(envelope),
           handoff: { ...info, peerProvider: source.provider, peerSessionId: source.id },
+          ...(packed && contextDeliveryOf(packed, record.workspaceId) ? { delivery: contextDeliveryOf(packed, record.workspaceId)! } : {}),
           ...(targetHost.activeRunId ? { runId: targetHost.activeRunId } : {}),
         });
         raiseHandoffEvent(actor.id, targetId, "handoff_received", { ...info, peerProvider: source.provider, peerSessionId: source.id });

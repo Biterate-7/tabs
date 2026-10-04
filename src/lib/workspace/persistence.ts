@@ -1,5 +1,6 @@
 import { scopedKey } from "@/lib/storage/namespace";
 import { stripWrongTypedTabFields } from "@/lib/tabs/sanitize";
+import { readWorkspaceBrief } from "./brief";
 import type { Tab } from "@/lib/tabs/types";
 import type { WorkspaceStore } from "./types";
 
@@ -147,6 +148,13 @@ function repairWorkspaceStore(store: WorkspaceStore): WorkspaceStore {
   for (const workspace of store.workspaces) {
     for (const tab of workspace.tabs) stripWrongTypedTabFields(tab);
     dropDanglingEntityRefs(workspace);
+    // A brief is re-read like any optional field: a malformed one is dropped,
+    // a usable one is kept in its re-read form, and the workspace stays.
+    if (workspace.brief !== undefined) {
+      const brief = readWorkspaceBrief(workspace.brief);
+      if (brief) workspace.brief = brief;
+      else delete workspace.brief;
+    }
   }
   return store;
 }

@@ -4,6 +4,8 @@ import { collectionToView, undoEffects } from "@/lib/agents/command-centre/works
 import { relativePathBasename } from "@/lib/agents/paths";
 import { agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff";
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
+import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance";
+import type { ContextProvenance } from "@/lib/agents/context-pack/provenance";
 import type { ActivityRefs, AgentActivityEntry } from "./timeline";
 import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
@@ -128,6 +130,8 @@ export type ActionInspection = {
   file?: { relativePath: string; projectName?: string };
   /** A handoff (Hubble 1.4): who to whom, and exactly what was passed. */
   handoff?: HandoffInspection;
+  /** What Hubble had given the agent by the time it acted (Hubble 1.5) — resources, never reasoning. */
+  context?: ContextProvenance;
   undo?: ActionUndo;
 };
 
@@ -169,6 +173,8 @@ export type ActionInspectorInput = {
    * means no undo is offered.
    */
   canUndo?: (change: AppliedWorkspaceChange) => boolean;
+  /** A collection's live name, for context provenance. Absent or unknown: counted, not named. */
+  collectionName?: (collectionId: string) => string | undefined;
 };
 
 /** Whether an entry stands for an action there is more to say about. Lifecycle and reads are not. */
@@ -605,6 +611,19 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
 
   const action = actionOf(change, view, file);
 
+  // What the agent had been given when it asked — or, with no request on
+  // record, when the result arrived.
+  const actedAt = request?.at ?? resultAt ?? entry.at;
+  const context = contextProvenanceOf({
+    session,
+    events,
+    ...(input.handoffs ? { handoffs: input.handoffs } : {}),
+    at: actedAt,
+    ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+    ...(input.collectionName ? { collectionName: input.collectionName } : {}),
+    agentName: agentDisplayName,
+  });
+
   return {
     key: approvalId ? `approval:${approvalId}` : change ? `change:${change.id}` : entry.id,
     title,
@@ -619,6 +638,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
     ...(changesSection ? { changes: changesSection } : {}),
     ...(viewTarget ? { view: viewTarget } : {}),
     ...(file ? { file: { relativePath: file.relativePath, ...(input.projectName ? { projectName: input.projectName } : {}) } } : {}),
+    ...(context ? { context } : {}),
     ...(undo ? { undo } : {}),
   };
 }

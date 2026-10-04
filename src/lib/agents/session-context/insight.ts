@@ -75,7 +75,8 @@ export function tabRow(tab: Tab, collections: CollectionIndex): TabRow {
  * ------------------------------------------------------------------ */
 
 export type WorkspaceSummary = {
-  workspace: { workspaceId: string; name: string };
+  /** `description` and `focus` are the user's own brief (Hubble 1.5), when they wrote one. */
+  workspace: { workspaceId: string; name: string; description?: string; focus?: string };
   tabs: { total: number; uncategorized: number; pinned: number; favorites: number; withNotes: number };
   collections: {
     total: number;
@@ -114,7 +115,12 @@ export function summarizeWorkspace(snapshot: SessionContextSnapshot): WorkspaceS
   const duplicates = findDuplicateGroups(tabs.map((tab) => ({ id: tab.id, normalizedUrl: tab.normalizedUrl, domain: tab.domain })));
 
   return {
-    workspace: { workspaceId: snapshot.workspace.id, name: sanitizeText(snapshot.workspace.name) ?? "Untitled workspace" },
+    workspace: {
+      workspaceId: snapshot.workspace.id,
+      name: sanitizeText(snapshot.workspace.name) ?? "Untitled workspace",
+      ...(snapshot.workspace.brief?.description ? { description: snapshot.workspace.brief.description } : {}),
+      ...(snapshot.workspace.brief?.focus ? { focus: snapshot.workspace.brief.focus } : {}),
+    },
     tabs: {
       total: tabs.length,
       uncategorized: tabs.filter((tab) => !inCollection.has(tab.id)).length,

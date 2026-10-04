@@ -16,7 +16,9 @@ import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { RUNTIME_ERROR_PRESENTATION, runtimeErrorTitle } from "@/lib/agents/command-centre/presentation"
-import { HANDOFF_LIMITS, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff"
+import { HANDOFF_LIMITS, focusLine, packSelectionLine, workspaceContextLine } from "@/lib/agents/handoff/handoff"
+import { contextPackLine } from "@/lib/agents/context-pack/present"
+import type { ContextPack } from "@/lib/agents/context-pack/pack"
 import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
@@ -141,7 +143,12 @@ function Mode({
       <label className={cn("flex items-center gap-2 rounded-md px-1 py-1", disabled ? "opacity-60" : "hover:bg-surface-hover has-focus-visible:bg-surface-hover")}>
         <Checkbox checked={checked} disabled={disabled} onCheckedChange={onToggle} />
         <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{label}</span>
-        {detail && <span className="shrink-0 text-meta text-tertiary">{detail}</span>}
+        {/* Bounded, so a long Context Pack line truncates instead of squeezing the label to nothing. */}
+        {detail && (
+          <span className="max-w-[60%] shrink-0 truncate text-meta text-tertiary" title={detail}>
+            {detail}
+          </span>
+        )}
       </label>
       {children && <div className="pl-7">{children}</div>}
     </div>
@@ -159,6 +166,7 @@ export function HandoffDialog({
   transport,
   onStarted,
   initialProvider,
+  packFor,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -176,6 +184,12 @@ export function HandoffDialog({
   onStarted: (result: HandoffStartResult) => void
   /** Opens straight on this agent's preview — "Continue with Codex". */
   initialProvider?: AgentProviderId
+  /**
+   * The canonical Context Pack the handoff would pass with these modes
+   * (Hubble 1.5) — built by the host from the same workspace and focus the
+   * runtime builds it from, so the names shown are the ones sent.
+   */
+  packFor?: (preview: RuntimeHandoffPreview, include: HandoffInclude) => ContextPack | undefined
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: "choose" })
   const [include, setInclude] = useState<HandoffInclude>({ workspace: true, previousResult: true })
@@ -322,6 +336,7 @@ export function HandoffDialog({
             projectId={projectId}
             onProject={setProjectId}
             disabled={phase.kind === "starting"}
+            pack={packFor?.(phase.preview, include)}
           />
         )}
 
@@ -391,7 +406,9 @@ function HandoffPreview({
   projectId,
   onProject,
   disabled,
+  pack,
 }: {
+  pack?: ContextPack | undefined
   preview: RuntimeHandoffPreview
   source: { provider: AgentProviderId; agentName: string; statusLabel: string }
   workspaceName?: string
@@ -407,7 +424,8 @@ function HandoffPreview({
   const target = agentDisplayName(preview.targetProvider)
   const workspace = preview.context.workspace
   const result = preview.context.previousResult
-  const focus = workspace ? focusLine(workspace) : undefined
+  const focus = pack ? packSelectionLine(pack) : workspace ? focusLine(workspace) : undefined
+  const files = result?.files?.length ?? 0
   return (
     <div className="flex min-w-0 flex-col gap-2" data-handoff-preview>
       {/* Where you are, what is handed on, and who receives it — before anything else. */}
@@ -435,11 +453,20 @@ function HandoffPreview({
           disabled={!workspace || disabled}
           onToggle={() => onInclude({ ...include, workspace: !include.workspace })}
           label="Workspace context"
-          {...(workspace ? { detail: workspaceContextLine(workspace) } : { detail: "Not available" })}
+          {...(workspace ? { detail: pack && include.workspace ? contextPackLine(pack) : workspaceContextLine(workspace) } : { detail: "Not available" })}
         >
-          {focus && include.workspace && <p className="text-meta text-tertiary">Current focus · {focus}</p>}
+          {pack && include.workspace && (pack.workspace.description || pack.workspace.focus) && (
+            <p className="line-clamp-2 break-words text-meta text-muted-foreground" data-handoff-brief>
+              {[pack.workspace.description, pack.workspace.focus ? `Focus · ${pack.workspace.focus}` : undefined].filter(Boolean).join(" · ")}
+            </p>
+          )}
+          {focus && include.workspace && <p className="truncate text-meta text-tertiary">Selected · {focus}</p>}
           {workspace && !preview.contextTools && (
-            <p className="text-meta text-warning">{target} can&apos;t be given Hubble&apos;s workspace tools, so it will be told the workspace isn&apos;t available.</p>
+            <p className="text-meta text-warning">
+              {pack
+                ? `${target} can't be given Hubble's workspace tools, so it only knows what's listed here.`
+                : `${target} can't be given Hubble's workspace tools, so it will be told the workspace isn't available.`}
+            </p>
           )}
         </Mode>
         <Mode
@@ -447,7 +474,14 @@ function HandoffPreview({
           disabled={!result || disabled}
           onToggle={() => onInclude({ ...include, previousResult: !include.previousResult })}
           label="Previous result"
-          {...(result ? { detail: result.lines.length === 0 ? "No changes recorded" : `${result.lines.length + result.more} ${result.lines.length + result.more === 1 ? "result" : "results"}` } : {})}
+          {...(result
+            ? {
+                detail:
+                  result.lines.length === 0
+                    ? "No changes recorded"
+                    : `${result.lines.length + result.more} ${result.lines.length + result.more === 1 ? "result" : "results"}${files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""}`,
+              }
+            : {})}
         >
           {result && include.previousResult && result.lines.length > 0 && (
             <ul className="flex flex-col">
