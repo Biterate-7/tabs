@@ -286,6 +286,11 @@ export const EVENT_PRESENTATION: Record<AgentControlEventKind, EventPresentation
   context_read: { register: "activity", label: "Hubble", tone: "idle" },
   handoff_sent: { register: "lifecycle", label: "Handed off", tone: "muted" },
   handoff_received: { register: "lifecycle", label: "Handoff received", tone: "muted" },
+  // Hubble's own measurements of project work (Hubble 1.6). The summary says what; the label says whose.
+  project_changed: { register: "lifecycle", label: "Project changed", tone: "good" },
+  project_change_undone: { register: "lifecycle", label: "Undo", tone: "muted" },
+  verification_started: { register: "activity", label: "Check", tone: "live" },
+  verification_finished: { register: "lifecycle", label: "Check", tone: "idle" },
 };
 
 /* ------------------------------------------------------------------ *
@@ -595,6 +600,11 @@ export const RUNTIME_ERROR_PRESENTATION: Record<RuntimeErrorCode, RuntimeErrorPr
   history_unavailable: {
     title: "Agent history unavailable",
     action: "This Hubble keeps no agent history, so past sessions can't be shown. Live sessions still work.",
+    reconnect: false,
+  },
+  project_unavailable: {
+    title: "Project unavailable",
+    action: "Hubble can't access this project. It may have moved, or its folder may not be readable.",
     reconnect: false,
   },
 };

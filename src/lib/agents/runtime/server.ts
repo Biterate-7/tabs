@@ -13,6 +13,7 @@ import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
 import { resolveProviderCredential } from "@/lib/agents/credentials/server";
 import { assertExecutionAllowed, denyRemoteExecution } from "./gate";
 import { createRuntimeHost } from "./host";
+import { createProjectHost } from "@/lib/agents/project-host";
 import { agentHistoryOption } from "@/lib/agents/activity/history-server";
 import { createSessionContextServer } from "@/lib/agents/session-context/http";
 import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
@@ -425,6 +426,8 @@ function localHostWith(
     // Only a local runtime can say what is installed on the user's machine.
     ...(local ? { detect: local.detect } : {}),
     ...(sessionContext ? { sessionContext } : {}),
+    // Project execution (Hubble 1.6): only a runtime on the machine that holds the projects.
+    ...(local ? { projects: createProjectHost(process.env) } : {}),
     // Agent history (Hubble 1.3): kept when this server has a database, and
     // reported unavailable — never faked in memory — when it has none.
     ...withHistory(),

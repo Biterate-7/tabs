@@ -85,7 +85,10 @@ export async function runHandoffScenario(options: {
   const grokAgent = first.agents.get("grok")!;
   const prompts = grokAgent.received.filter((message) => message.method === "session/prompt");
   expect(prompts).toHaveLength(1);
-  const told = ((prompts[0]!.params as { prompt: { text: string }[] }).prompt[0]!.text);
+  const prompt = (prompts[0]!.params as { prompt: { text: string }[] }).prompt.map((part) => part.text).join("\n");
+  // Hubble 1.6: the project the target works in arrives in Hubble's context block, before the envelope.
+  expect(prompt).toMatch(/\[project\] [^\n]+ — [^\n]*You may/);
+  const told = prompt.includes("</hubble-context>") ? prompt.slice(prompt.lastIndexOf("</hubble-context>") + 17).trim() : prompt;
   expect(told.split("\n")[0]).toBe("HUBBLE HANDOFF");
   expect(told).toContain("Workspace: Research");
   expect(told).toContain("Previous agent: Gemini CLI");

@@ -6,6 +6,7 @@ import { AgentActivityTimeline } from "./agent-activity-timeline"
 import { isInspectable } from "@/lib/agents/activity/inspector"
 import type { AgentActivityTimelineProps } from "./agent-activity-timeline"
 import type { ActionInspection } from "@/lib/agents/activity/inspector"
+import type { ProjectWorkActions } from "./project-work"
 
 /**
  * The agent's activity, with each action one click deep:
@@ -31,9 +32,12 @@ export function AgentActivity({
   inspect,
   onUndo,
   onViewChange,
+  project,
   autoFocus = true,
   ...timeline
 }: AgentActivityTimelineProps & {
+  /** A live session's project actions (Hubble 1.6): undo, review and checks. Absent: read-only. */
+  project?: ProjectWorkActions
   /** Resolves an entry into the action it stands for, or `null` when there is nothing more to show. */
   inspect: (entryId: string) => ActionInspection | null
   /** Reverses an applied change exactly; `false` when it could not be, and nothing moved. */
@@ -77,6 +81,7 @@ export function AgentActivity({
           {...(onViewChange ? { onView: onViewChange } : {})}
           {...(onUndo ? { onUndo } : {})}
           {...(timeline.onOpenSession ? { onOpenSession: timeline.onOpenSession } : {})}
+          {...(project ? { project } : {})}
           autoFocus={autoFocus}
         />
       ) : (

@@ -37,6 +37,7 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { setWorkspaceBrief } from "@/lib/workspace/brief"
+import { setWorkspaceProject } from "@/lib/workspace/project"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
@@ -1187,6 +1188,13 @@ export function AppShell() {
     if (next !== store) persist(next)
   }
 
+  /** Attaches a project to a workspace, or detaches it (Hubble 1.6). A reference by id; the project itself is unchanged. */
+  function handleAttachWorkspaceProject(id: string, projectId: string | null) {
+    if (!store) return
+    const next = setWorkspaceProject(store, id, projectId)
+    if (next !== store) persist(next)
+  }
+
   function handleDeleteWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
@@ -1412,6 +1420,7 @@ export function AppShell() {
           setView("workspace")
         }}
         onUpdateWorkspaceBrief={handleUpdateWorkspaceBrief}
+        onAttachWorkspaceProject={handleAttachWorkspaceProject}
       />
     )
   }

@@ -94,6 +94,12 @@ export const COMMAND_TIMEOUT_MS: Readonly<Record<RuntimeCommandName, number>> = 
   prepare_handoff: 20_000,
   // Starts the target agent's session (create_session's bound) and delivers the handoff.
   start_handoff: 150_000,
+  // Reads marker files and .git/HEAD, and hashes at most a pack's files.
+  inspect_project: 30_000,
+  // Answers as soon as the check has started; its end arrives as an event.
+  run_project_check: 20_000,
+  undo_project_change: 30_000,
+  review_project_change: 20_000,
 };
 
 export type RuntimeClientOptions = {

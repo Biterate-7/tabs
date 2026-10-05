@@ -6,7 +6,7 @@ import {
   isWellFormedContext,
   isWellFormedMessage,
 } from "./context";
-import { contextCountsLine, isContextEventKind, isHandoffEventKind, isWellFormedControlEvent } from "./events";
+import { contextCountsLine, isContextEventKind, isHandoffEventKind, isProjectEventKind, isWellFormedControlEvent } from "./events";
 import { isCapabilityPermitted, NO_PERMISSIONS } from "./permissions";
 import { isProviderAuthorized } from "./projects";
 import { denyNonServerRuntime } from "./runtime";
@@ -471,6 +471,9 @@ export function createControlService(options: ControlServiceOptions): ControlSer
       if (isHandoffEventKind(event.kind) || event.handoff !== undefined) return;
       // So is the record of which context a message delivered (Hubble 1.5).
       if (event.delivery !== undefined) return;
+      // And Hubble's measurements of project work (Hubble 1.6): an agent cannot report
+      // its own change as measured, its own undo, or a check it did not run.
+      if (isProjectEventKind(event.kind)) return;
 
       const session = sessions.get(event.sessionId);
       if (!session) return;

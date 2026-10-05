@@ -9,7 +9,18 @@ import {
   isLiveSessionStatus,
   isTerminalSessionStatus,
 } from "@/lib/agents/control/session";
-import { createProject, isProviderAuthorized } from "@/lib/agents/control/projects";
+import { createProject, isProviderAuthorized, isWorkspaceAllowed } from "@/lib/agents/control/projects";
+import { isGranted } from "@/lib/agents/control/permissions";
+import { isSecretLikePath } from "@/lib/agents/project/secrets";
+import { projectChangeDetail, projectChangeTitle, projectUndoTitle } from "@/lib/agents/project/changes";
+import { verificationTitle } from "@/lib/agents/project/checks";
+import { createProjectLedger } from "./project-ledger";
+import { describeProject } from "@/lib/agents/project/describe";
+import { AGENT_CAPABILITIES } from "@/lib/agents/control/capabilities";
+import type { ProjectDescriptor } from "@/lib/agents/project/describe";
+import type { ApprovalProjectFile } from "@/lib/agents/project/changes";
+import type { CheckRunResult, ProjectHost } from "@/lib/agents/project/seam";
+import type { ControlProjectChangeInfo, ControlProjectUndoInfo, ControlVerificationInfo } from "@/lib/agents/control/events";
 import { adapterSupports } from "@/lib/agents/control/types";
 import { createControlService } from "@/lib/agents/control/service";
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus";
@@ -279,6 +290,14 @@ export type RuntimeHostOptions = {
    * built per request) so a replayed event is not offered twice.
    */
   history?: { store: AgentHistoryStore; seen?: AgentHistorySeen };
+  /**
+   * Project execution (Hubble 1.6): this machine's access to its projects'
+   * files and checks (lib/agents/project-host). Supplied only by a local
+   * runtime's wiring — the web's opted-in server and the desktop sidecar.
+   * Absent: nothing is inspected, measured, undone or checked, and the
+   * commands that would say `unsupported`.
+   */
+  projects?: ProjectHost;
 };
 
 /** The default bound `get_status` waits for an in-flight connect. */
@@ -497,6 +516,16 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   const projectsByActor = new Map<string, Map<string, AgentProject>>();
 
   /**
+   * Project execution (Hubble 1.6): what approved writes changed, the
+   * per-file notes an approval card shows, and the check each session is
+   * running. See ./project-ledger.ts.
+   */
+  const projectHost = options.projects;
+  const ledger = projectHost ? createProjectLedger({ files: projectHost.files }) : undefined;
+  const approvalFiles = new Map<string, ApprovalProjectFile[]>();
+  const runningChecks = new Map<string, string>();
+
+  /**
    * The project this session may use.
    *
    * Consults the host's own trusted source first, then what this actor
@@ -689,6 +718,108 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     // The same canonical event, durably — after the live listeners, and
     // queued rather than awaited, so history never slows the live stream.
     recordEvent(appended.event);
+
+    if (session) observeProjectWork(appended.event, session.ownerId);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Project execution (Hubble 1.6)
+   * ---------------------------------------------------------------- */
+
+  const FILE_APPROVAL_ACTIONS = new Set(["modify_files", "create_files", "delete_files"]);
+
+  /** What the agent's own stream says about project work, turned into measurements. */
+  function observeProjectWork(event: AgentControlEvent, ownerId: string): void {
+    if (!ledger) return;
+    if ((event.kind === "file_created" || event.kind === "file_modified") && event.file) {
+      const complete = ledger.noteFile(event.sessionId, event.file.relativePath, event.kind === "file_created" ? "created" : "modified");
+      if (complete) void recordProjectChange(ownerId, complete.changeId);
+      return;
+    }
+    // A turn that ended measures whatever it was allowed to change, reported or not.
+    if (event.kind === "run_completed" || event.kind === "run_cancelled" || event.kind === "error") {
+      for (const entry of ledger.openFor(event.sessionId)) void recordProjectChange(ownerId, entry.changeId);
+      return;
+    }
+    if (event.kind === "approval_requested" && event.approvalId) void annotateApproval(ownerId, event.approvalId);
+  }
+
+  /** Measures a change and says so on its session's stream — once. */
+  async function recordProjectChange(ownerId: string, changeId: string): Promise<void> {
+    if (!ledger) return;
+    const entry = ledger.get(changeId);
+    if (!entry || entry.status !== "open") return;
+    const info = await ledger.finalize(changeId);
+    if (!info) return;
+    const detail = projectChangeDetail(info);
+    raiseProjectEvent(ownerId, entry.sessionId, "project_changed", detail ? `${projectChangeTitle(info)} · ${detail}` : projectChangeTitle(info), {
+      projectChange: info,
+    });
+  }
+
+  /** The notes an approval card adds about its files: secret-like, or changed outside this session. */
+  async function annotateApproval(ownerId: string, approvalId: string): Promise<void> {
+    const approval = serviceFor(ownerId).approvals.get(approvalId);
+    if (!ledger || !approval?.projectId || !FILE_APPROVAL_ACTIONS.has(approval.action)) return;
+    const project = projectFor(ownerId, approval.projectId);
+    if (!project || project.source !== "local") return;
+    approvalFiles.set(approvalId, await ledger.annotate(approval.sessionId, project.path, approval.targets));
+  }
+
+  /** An approval's view, with its per-file notes when it is about project files. */
+  function withProjectFiles(view: RuntimeApprovalView): RuntimeApprovalView {
+    if (!view.projectId || !FILE_APPROVAL_ACTIONS.has(view.action)) return view;
+    const files = approvalFiles.get(view.approvalId) ?? view.targets.map((path) => (isSecretLikePath(path) ? { path, sensitive: true as const } : { path }));
+    return { ...view, projectFiles: files.map((file) => ({ ...file })) };
+  }
+
+  function raiseProjectEvent(
+    ownerId: string,
+    sessionId: string,
+    kind: "project_changed" | "project_change_undone" | "verification_started" | "verification_finished",
+    summary: string,
+    slice: { projectChange?: ControlProjectChangeInfo; projectUndo?: ControlProjectUndoInfo; verification?: ControlVerificationInfo }
+  ): void {
+    const host = hosted.get(sessionId);
+    const session = host?.ownerId === ownerId ? serviceFor(ownerId).session(sessionId) : undefined;
+    if (!host || !session) return;
+    const event: AgentControlEvent = {
+      id: `project-${createId()}`,
+      sessionId,
+      provider: session.provider,
+      kind,
+      timestamp: now(),
+      summary: normalizeControlSummary(summary),
+      ...slice,
+      ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+    };
+    if (isWellFormedControlEvent(event)) onEvent(event);
+  }
+
+  /**
+   * A project described for one agent (Hubble 1.6): the grant intersected with
+   * that agent's own abilities, plus what this runtime finds when it looks.
+   */
+  async function describeProjectFor(actorId: string, projectId: string, provider: AgentProviderId, files: readonly string[]): Promise<ProjectDescriptor | undefined> {
+    const project = projectFor(actorId, projectId);
+    if (!project) return undefined;
+    const adapter = options.resolveAdapter(provider, actorId);
+    const providerCapabilities = adapter ? AGENT_CAPABILITIES.filter((capability) => adapterSupports(adapter, capability)) : [];
+    const local = Boolean(projectHost && !options.remote && project.source === "local");
+    const found = local ? await projectHost!.files.inspect(project.path, files.slice(0, 20)) : undefined;
+    return describeProject({
+      project,
+      ...(found ? { inspection: { projectId: project.id, inspectedAt: now(), ...found } } : {}),
+      providerCapabilities,
+      local,
+    });
+  }
+
+  /** The local project a session works in, when this runtime can reach it. */
+  function localProjectOf(actorId: string, session: AgentSession): AgentProject | undefined {
+    if (!session.projectId) return undefined;
+    const project = projectFor(actorId, session.projectId);
+    return project && project.source === "local" ? project : undefined;
   }
 
   /* ---------------------------------------------------------------- *
@@ -948,7 +1079,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     return serviceFor(ownerId)
       .approvals.forSession(sessionId)
       .filter((approval) => approval.status === "requested" && approval.expiresAt > at)
-      .map(toApprovalView);
+      .map((approval) => withProjectFiles(toApprovalView(approval)));
   }
 
   function pendingApproval(sessionId: string): boolean {
@@ -970,13 +1101,29 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   function focusWithin(
     context: AgentAttachedContext,
     workspaceId: string | undefined,
-    snapshot: SessionContextSnapshot | undefined
+    snapshot: SessionContextSnapshot | undefined,
+    projectId: string | undefined
   ): SessionFocus | undefined {
     const focus = focusFromAttachments(context.attachments);
+    if (!projectRefsFit(context.attachments, projectId)) return undefined;
     if (!workspaceId) return focus;
     if (!attachmentsStayIn(context.attachments, workspaceId)) return undefined;
     if (snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined;
     return focus;
+  }
+
+  /**
+   * Project references in attached context (Hubble 1.6): a `project` may name
+   * only the session's own project, and `file`s exist only for a session that
+   * has one. Context can describe the project an agent works in; it can never
+   * point it at another.
+   */
+  function projectRefsFit(attachments: AgentAttachedContext["attachments"], projectId: string | undefined): boolean {
+    return attachments.every((attachment) => {
+      if (attachment.kind === "project") return projectId !== undefined && attachment.id === projectId;
+      if (attachment.kind === "file") return projectId !== undefined;
+      return true;
+    });
   }
 
   /** The view a client gets. Assembled here so every command answers with the same shape. */
@@ -1268,6 +1415,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     };
 
     if (!options.gate.allowed) status.detail = options.gate.detail;
+    // Whether this runtime can work on local projects at all (Hubble 1.6).
+    if (options.gate.allowed && projectHost && !options.remote) status.projects = true;
     return status;
   }
 
@@ -1302,11 +1451,20 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     // Context a session starts with obeys the same boundary as context
     // attached later: inside its workspace, or refused before anything runs.
     const startFocus = command.context
-      ? focusWithin(command.context, workspaceId, command.contextSnapshot)
+      ? focusWithin(command.context, workspaceId, command.contextSnapshot, command.projectId)
       : extra.focus && command.contextSnapshot && focusFitsSnapshot(command.contextSnapshot, extra.focus)
         ? extra.focus
         : undefined;
     if (command.context && !startFocus) return runtimeFailure("context_invalid");
+    // A project attached to workspaces is theirs (Hubble 1.6), and one this
+    // runtime can reach must be there before an agent is started in it.
+    if (command.projectId) {
+      const project = projectFor(actor.id, command.projectId);
+      if (project && !isWorkspaceAllowed(project, workspaceId)) return runtimeFailure("project_scope_violation");
+      if (project && project.source === "local" && projectHost && (await projectHost.files.access(project.path)) !== "ready") {
+        return runtimeFailure("project_unavailable");
+      }
+    }
     const started = await actorService.startSession({
       ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
         ? {
@@ -1483,6 +1641,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
               providers: candidate.providers,
               additionalDirectories: candidate.additionalDirectories ?? [],
               permissions: candidate.permissions as AgentProject["permissions"],
+              ...(candidate.workspaceIds ? { workspaceIds: candidate.workspaceIds } : {}),
             },
             now()
           );
@@ -1617,6 +1776,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!owned.ok) return owned;
 
         const { session, host } = owned.value;
+        if (command.context && !projectRefsFit(command.context.attachments, session.projectId)) return runtimeFailure("context_invalid");
 
         // Explicit serialization rather than unsafe concurrency. One provider
         // process holds one conversation; a second turn pushed into it while
@@ -1715,7 +1875,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // the attachment. Checked before anything is recorded.
         const registry = options.sessionContext?.registry;
         const bound = registry?.binding(command.sessionId);
-        const focus = focusWithin(command.context, owned.value.session.workspaceId, bound?.snapshot);
+        const focus = focusWithin(command.context, owned.value.session.workspaceId, bound?.snapshot, owned.value.session.projectId);
         if (!focus) return runtimeFailure("context_invalid");
 
         const attached = actorService.attachContext(command.sessionId, command.context);
@@ -1761,6 +1921,37 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const owned = own(actor, approval.sessionId);
         if (!owned.ok) return owned;
 
+        // Hubble 1.6: the copy is taken now, while the agent is still waiting
+        // on this answer — so it is the file as it was before the agent
+        // touched it. An earlier change still open on the same files is
+        // measured first: its result is this one's starting point.
+        if (
+          command.decision === "granted" &&
+          ledger &&
+          approval.status === "requested" &&
+          approval.scope === "write_project" &&
+          approval.projectId &&
+          FILE_APPROVAL_ACTIONS.has(approval.action)
+        ) {
+          const project = projectFor(actor.id, approval.projectId);
+          if (project && project.source === "local") {
+            for (const entry of ledger.openFor(approval.sessionId, approval.targets)) {
+              await recordProjectChange(actor.id, entry.changeId);
+            }
+            const contextId = actorService.contextFor(approval.sessionId)?.snapshotId;
+            await ledger.open({
+              changeId: approval.id,
+              ownerId: actor.id,
+              sessionId: approval.sessionId,
+              projectId: project.id,
+              root: project.path,
+              targets: approval.targets,
+              ...(contextId ? { contextId } : {}),
+              now: now(),
+            });
+          }
+        }
+
         const answered = await actorService.respondToApproval(
           command.approvalId,
           command.decision
@@ -1785,6 +1976,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         }
         releaseAdapterSession(actor.id, command.sessionId);
         releaseContext(command.sessionId);
+        // Its copies of project files go with it (Hubble 1.6).
+        ledger?.forgetSession(command.sessionId);
+        runningChecks.delete(command.sessionId);
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
@@ -2014,6 +2208,82 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
       /* ---------------- Explicit agent handoff (Hubble 1.4). */
 
+      /* ------------------------------------------------------------ *
+       * Project execution (Hubble 1.6)
+       * ------------------------------------------------------------ */
+
+      case "inspect_project": {
+        const project = projectFor(actor.id, command.projectId);
+        if (!project) return runtimeFailure("project_scope_violation");
+        if (command.workspaceId !== undefined && !isWorkspaceAllowed(project, command.workspaceId)) {
+          return runtimeFailure("project_scope_violation");
+        }
+        // Only a runtime on the machine that holds the folder can look at it.
+        if (!projectHost || options.remote || project.source !== "local") return runtimeFailure("unsupported");
+        const found = await projectHost.files.inspect(project.path, command.files ?? []);
+        return { ok: true, value: { projectId: project.id, inspectedAt: now(), ...found } };
+      }
+
+      case "run_project_check": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const project = projectHost && !options.remote ? localProjectOf(actor.id, owned.value.session) : undefined;
+        if (!project || !projectHost) return runtimeFailure("unsupported");
+        // A check runs the project's own code, so it needs what running commands needs.
+        if (!isGranted(project.permissions, "run_commands", project.id)) return runtimeFailure("permission_denied");
+        if (runningChecks.has(command.sessionId)) return runtimeFailure("invalid_session_state");
+
+        const checkId = `check-${createId()}`;
+        const changeId = ledger?.latestRecorded(command.sessionId)?.changeId;
+        const base = { checkId, projectId: project.id, check: command.check, ...(changeId ? { changeId } : {}) };
+        runningChecks.set(command.sessionId, checkId);
+        raiseProjectEvent(actor.id, command.sessionId, "verification_started", verificationTitle(command.check, "running"), {
+          verification: { ...base, outcome: "running" },
+        });
+        void projectHost.checks
+          .run(project.path, command.check)
+          .catch((): CheckRunResult => ({ outcome: "error", durationMs: 0 }))
+          .then((result) => {
+            if (runningChecks.get(command.sessionId) !== checkId) return;
+            runningChecks.delete(command.sessionId);
+            raiseProjectEvent(actor.id, command.sessionId, "verification_finished", verificationTitle(command.check, result.outcome), {
+              verification: {
+                ...base,
+                outcome: result.outcome,
+                durationMs: result.durationMs,
+                ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+                ...(result.git ? { git: result.git } : {}),
+              },
+            });
+          });
+        return { ok: true, value: { checkId } };
+      }
+
+      case "undo_project_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        if (!ledger) return runtimeFailure("unsupported");
+        const result = await ledger.undo(actor.id, command.sessionId, command.changeId);
+        if (!result) return runtimeFailure("invalid_request");
+        const info: ControlProjectUndoInfo = {
+          changeId: command.changeId,
+          projectId: result.projectId ?? owned.value.session.projectId ?? "unknown",
+          outcome: result.outcome,
+          files: result.files,
+          ...(result.reason ? { reason: result.reason } : {}),
+        };
+        raiseProjectEvent(actor.id, command.sessionId, "project_change_undone", projectUndoTitle(info), { projectUndo: info });
+        return { ok: true, value: { outcome: result.outcome, files: result.files, ...(result.reason ? { reason: result.reason } : {}) } };
+      }
+
+      case "review_project_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        if (!ledger) return runtimeFailure("unsupported");
+        const review = ledger.review(actor.id, command.sessionId, command.changeId);
+        return review ? { ok: true, value: review } : runtimeFailure("invalid_request");
+      }
+
       case "prepare_handoff": {
         const candidate = handoffCandidate(actor, command);
         return candidate.ok ? { ok: true, value: candidate.value.preview } : candidate;
@@ -2076,6 +2346,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         //    and the canonical Context Pack's resources as its attachments
         //    (Hubble 1.5) — built from the same workspace copy, inside the
         //    same workspace, so nothing in it can reach outside.
+        // The project, described for the *target* (Hubble 1.6): its capabilities are
+        // that agent's own under the project's grant — never inherited from the source.
+        const targetProject = command.projectId ? await describeProjectFor(actor.id, command.projectId, command.targetProvider, record.context.previousResult?.files?.map((file) => file.path) ?? []) : undefined;
         const pack =
           passWorkspace && snapshot
             ? handoffContextPack({
@@ -2084,6 +2357,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
                 ...(focus ? { focus } : {}),
                 context: record.context,
                 ...(instruction ? { instruction } : {}),
+                ...(targetProject ? { project: targetProject } : {}),
               })
             : undefined;
         const packed = pack ? contextPackAttachedContext(pack, now()) : null;
@@ -2376,6 +2650,11 @@ function sessionIdOf(command: RuntimeCommand): string | undefined {
     case "start_handoff":
       return command.sourceSessionId;
     // History may name a session this process never held, or no longer does.
+    case "run_project_check":
+    case "undo_project_change":
+    case "review_project_change":
+      return command.sessionId;
+    case "inspect_project":
     case "list_history":
     case "get_history":
     case "record_workspace_undo":

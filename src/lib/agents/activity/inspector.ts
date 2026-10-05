@@ -2,6 +2,9 @@ import { describeApproval } from "./timeline";
 import { APPROVAL_CLOSED_TITLE, APPROVAL_STATE_LABEL, isLiveSession } from "@/lib/agents/command-centre/presentation";
 import { collectionToView, undoEffects } from "@/lib/agents/command-centre/workspace-activity";
 import { relativePathBasename } from "@/lib/agents/paths";
+import { lineCountsText, PROJECT_UNDO_UNAVAILABLE, projectChangeResult, projectChangeTitle, undoRefusalText } from "@/lib/agents/project/changes";
+import { verificationDetail, verificationTitle } from "@/lib/agents/project/checks";
+import type { ControlProjectChangeInfo, ControlVerificationInfo } from "@/lib/agents/control/events";
 import { agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff";
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance";
@@ -94,7 +97,7 @@ export const ACTION_VISUAL_STATE: Record<ActionStatus, AgentVisualState> = {
 
 /** One step of request → approval → result → undo, in order — or, for a handoff, request → session → delivery. */
 export type ActionChainStep = {
-  key: "requested" | "decision" | "running" | "result" | "undone" | "session" | "delivered";
+  key: "requested" | "decision" | "running" | "result" | "verification" | "undone" | "session" | "delivered";
   label: string;
   at?: number;
   tone: "done" | "active" | "waiting" | "failed" | "neutral";
@@ -104,7 +107,8 @@ export type ActionChangeLine = { sign: "add" | "change" | "remove"; text: string
 
 export type ActionUndo =
   /** Hubble knows the exact inverse and the workspace still holds what the change left. */
-  | { kind: "available"; changeId: string; effects: readonly string[]; label: "Undo" | "Undo all" }
+  /** `target: "project"` (Hubble 1.6): the runtime puts project files back; otherwise the workspace's owner does. */
+  | { kind: "available"; changeId: string; effects: readonly string[]; label: "Undo" | "Undo all"; target?: "project" }
   | { kind: "unavailable"; reason: string }
   | { kind: "done"; at?: number };
 
@@ -133,7 +137,16 @@ export type ActionInspection = {
   /** What Hubble had given the agent by the time it acted (Hubble 1.5) — resources, never reasoning. */
   context?: ContextProvenance;
   undo?: ActionUndo;
+  /**
+   * The checks run on this change (Hubble 1.6), latest first per check — the
+   * project's answer, kept apart from whether the change itself applied.
+   */
+  verification?: readonly VerificationLine[];
+  /** A measured project change that can be checked, and reviewed line by line, now (live sessions only). */
+  project?: { changeId: string; reviewable: boolean; verifiable: boolean };
 };
+
+export type VerificationLine = { checkId: string; title: string; detail?: string; tone: "success" | "failure" | "neutral" | "active" };
 
 /** A handoff, as the inspector tells it. Names, counts, the timeline's result lines, the person's words. */
 export type HandoffInspection = {
@@ -175,12 +188,58 @@ export type ActionInspectorInput = {
   canUndo?: (change: AppliedWorkspaceChange) => boolean;
   /** A collection's live name, for context provenance. Absent or unknown: counted, not named. */
   collectionName?: (collectionId: string) => string | undefined;
+  /**
+   * Whether this is the live session, on a runtime that holds its project
+   * changes (Hubble 1.6). Only then are project undo, review and checks offered:
+   * a past session is read-only.
+   */
+  projectLive?: boolean;
 };
+
+/** Said where a past session's project change is shown: history is read-only. */
+export const PROJECT_UNDO_ONLY_LIVE = "Project changes can be undone only from the live session, while Hubble still holds the earlier version.";
+
+function verificationLines(events: readonly SequencedControlEvent[], changeId: string): VerificationLine[] {
+  const byCheck = new Map<string, ControlVerificationInfo>();
+  for (const event of events) {
+    if ((event.kind === "verification_started" || event.kind === "verification_finished") && event.verification?.changeId === changeId) {
+      byCheck.set(event.verification.checkId, event.verification);
+    }
+  }
+  return [...byCheck.values()].reverse().map((info) => {
+    const detail = verificationDetail({
+      outcome: info.outcome,
+      ...(info.exitCode !== undefined ? { exitCode: info.exitCode } : {}),
+      ...(info.durationMs !== undefined ? { durationMs: info.durationMs } : {}),
+      ...(info.git ? { git: info.git } : {}),
+    });
+    return {
+      checkId: info.checkId,
+      title: verificationTitle(info.check, info.outcome),
+      ...(detail ? { detail } : {}),
+      tone: info.outcome === "running" ? "active" : info.outcome === "passed" ? "success" : info.outcome === "failed" ? "failure" : "neutral",
+    };
+  });
+}
+
+function projectChangeLines(info: ControlProjectChangeInfo): ActionChangeLine[] {
+  return info.files.map((file) => {
+    const sign: ActionChangeLine["sign"] = file.change === "created" ? "add" : file.change === "deleted" ? "remove" : "change";
+    const note = file.sensitive
+      ? "may hold secrets — not read"
+      : file.change === "unchanged"
+        ? "not changed"
+        : file.binary
+          ? "binary"
+          : lineCountsText(file);
+    return { sign, text: note ? `${file.path} · ${note}` : file.path };
+  });
+}
 
 /** Whether an entry stands for an action there is more to say about. Lifecycle and reads are not. */
 export function isInspectable(entry: AgentActivityEntry): boolean {
   const refs = entry.refs;
-  return Boolean(refs && (refs.approvalId || refs.changeId || refs.planId || refs.file || refs.handoffId));
+  return Boolean(refs && (refs.approvalId || refs.changeId || refs.planId || refs.file || refs.handoffId || refs.projectChangeId));
 }
 
 const PREVIOUS_OUTCOME: Record<NonNullable<SessionHandoff["context"]["previousResult"]>["outcome"], string> = {
@@ -391,7 +450,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   /* ---------------- Resolve the action from its references. */
 
   let change = refs.changeId ? changes.find((candidate) => candidate.id === refs.changeId) : undefined;
-  let approvalId = refs.approvalId ?? change?.approvalId;
+  let approvalId = refs.approvalId ?? refs.projectChangeId ?? change?.approvalId;
   let outcome: RuntimePlanOutcomeView | undefined =
     (approvalId ? outcomes.find((candidate) => candidate.approvalId === approvalId) : undefined) ??
     (refs.planId ? outcomes.find((candidate) => candidate.planId === refs.planId) : undefined) ??
@@ -435,11 +494,20 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   const planEntry = outcome ? input.entries.find((candidate) => candidate.id === `plan:${outcome!.planId}`) : undefined;
   const resultEntry = changeEntry ?? fileEntry ?? stepEntry ?? planEntry;
 
+  /* ---------------- A project change, as Hubble measured it (Hubble 1.6). */
+
+  const projectEvent = approvalId ? events.find((event) => event.kind === "project_changed" && event.projectChange?.changeId === approvalId) : undefined;
+  const projectChange = projectEvent?.projectChange;
+  const projectUndos = approvalId ? events.filter((event) => event.kind === "project_change_undone" && event.projectUndo?.changeId === approvalId) : [];
+  const lastProjectUndo = projectUndos[projectUndos.length - 1];
+  const projectUndone = projectUndos.find((event) => event.projectUndo!.outcome !== "refused");
+
   /* ---------------- Where it stands — from the records, never assumed. */
 
   const live = isLiveSession(session.status);
   const status = ((): ActionStatus => {
     if (change) return !change.ok ? "failed" : change.undone ? "undone" : "completed";
+    if (projectChange) return projectChange.outcome === "not_applied" ? "failed" : projectUndone ? "undone" : "completed";
     if (outcome) {
       switch (outcome.status) {
         case "applied":
@@ -473,7 +541,12 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   // A step that failed without saying which file ("A step didn't work") is
   // named by what was approved instead: the pill already says it failed.
   const genericFailure = resultEntry === stepEntry && stepEntry?.kind === "action_failed" && requestSummary !== undefined;
-  const title = (finished && !genericFailure ? resultEntry?.title : undefined) ?? requestSummary ?? entry.title;
+  // A measured project change is titled by what Hubble found, not by what was asked.
+  const title =
+    (finished && projectChange ? projectChangeTitle(projectChange) : undefined) ??
+    (finished && !genericFailure ? resultEntry?.title : undefined) ??
+    requestSummary ??
+    entry.title;
 
   const request =
     approvalId && (view || requestEntry || requestEvent)
@@ -487,8 +560,12 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
         }
       : undefined;
 
-  const resultAt = change?.at ?? outcome?.at ?? (resultEntry ? (resultEntry.completedAt ?? resultEntry.at) : undefined);
+  const resultAt = change?.at ?? outcome?.at ?? projectEvent?.timestamp ?? (resultEntry ? (resultEntry.completedAt ?? resultEntry.at) : undefined);
   const result = ((): ActionInspection["result"] => {
+    // A measured project change says what Hubble found on disk, never what was asked.
+    if (projectChange && (status === "completed" || status === "undone" || status === "failed")) {
+      return projectChangeResult(projectChange, input.projectName);
+    }
     switch (status) {
       case "completed":
       case "undone": {
@@ -542,7 +619,9 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
   /* ---------------- What changed, or what was asked to. */
 
   let changesSection: ActionInspection["changes"];
-  if (change?.ok && change.steps.length > 0) {
+  if (projectChange) {
+    changesSection = { planned: false, lines: projectChangeLines(projectChange) };
+  } else if (change?.ok && change.steps.length > 0) {
     changesSection = { planned: false, lines: change.steps.map(stepLine) };
   } else if (file && (status === "completed" || status === "undone")) {
     changesSection = { planned: false, lines: [{ sign: file.operation === "created" ? "add" : "change", text: file.relativePath }] };
@@ -574,7 +653,17 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
       tone: status === "failed" ? "failed" : "done",
     });
   }
-  if (status === "undone") chain.push({ key: "undone", label: "Undone", ...(change?.undoneAt !== undefined ? { at: change.undoneAt } : {}), tone: "done" });
+  const verification = approvalId && projectChange ? verificationLines(events, approvalId) : [];
+  const latestCheck = verification[0];
+  if (latestCheck && latestCheck.tone !== "active") {
+    chain.push({ key: "verification", label: latestCheck.title, tone: latestCheck.tone === "failure" ? "failed" : latestCheck.tone === "success" ? "done" : "neutral" });
+  } else if (latestCheck) {
+    chain.push({ key: "verification", label: latestCheck.title, tone: "active" });
+  }
+  if (status === "undone") {
+    const at = change?.undoneAt ?? projectUndone?.timestamp;
+    chain.push({ key: "undone", label: "Undone", ...(at !== undefined ? { at } : {}), tone: "done" });
+  }
 
   /* ---------------- What can be done with it. */
 
@@ -587,8 +676,25 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
       : undefined;
 
   const undo = ((): ActionUndo | undefined => {
-    if (status === "undone") return { kind: "done", ...(change?.undoneAt !== undefined ? { at: change.undoneAt } : {}) };
+    if (status === "undone") {
+      const at = change?.undoneAt ?? projectUndone?.timestamp;
+      return { kind: "done", ...(at !== undefined ? { at } : {}) };
+    }
     if (status !== "completed") return undefined;
+    // A project change (Hubble 1.6): undone by the runtime, exactly, or refused with the reason.
+    if (projectChange) {
+      if (lastProjectUndo?.projectUndo?.outcome === "refused") return { kind: "unavailable", reason: undoRefusalText(lastProjectUndo.projectUndo.reason) };
+      if (projectChange.undo !== "available") return { kind: "unavailable", reason: PROJECT_UNDO_UNAVAILABLE[projectChange.undo] };
+      if (!input.projectLive) return { kind: "unavailable", reason: PROJECT_UNDO_ONLY_LIVE };
+      const files = projectChange.files.filter((file) => file.change !== "unchanged").length;
+      return {
+        kind: "available",
+        changeId: projectChange.changeId,
+        effects: [`Puts ${plural(files, "file", "files")} back exactly as they were — only if nothing else has changed ${files === 1 ? "it" : "them"} since`],
+        label: "Undo",
+        target: "project",
+      };
+    }
     if (change?.ok) {
       if (!change.before || !change.after) return { kind: "unavailable", reason: "Undo isn't available for this change." };
       if (!input.canUndo?.(change)) {
@@ -621,8 +727,14 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
     at: actedAt,
     ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
     ...(input.collectionName ? { collectionName: input.collectionName } : {}),
+    ...(input.projectName ? { projectName: () => input.projectName } : {}),
     agentName: agentDisplayName,
   });
+
+  const projectActions =
+    projectChange && projectChange.outcome !== "not_applied" && input.projectLive
+      ? { changeId: projectChange.changeId, reviewable: status !== "undone", verifiable: status === "completed" }
+      : undefined;
 
   return {
     key: approvalId ? `approval:${approvalId}` : change ? `change:${change.id}` : entry.id,
@@ -640,5 +752,7 @@ export function inspectActivityEntry(entryId: string, input: ActionInspectorInpu
     ...(file ? { file: { relativePath: file.relativePath, ...(input.projectName ? { projectName: input.projectName } : {}) } } : {}),
     ...(context ? { context } : {}),
     ...(undo ? { undo } : {}),
+    ...(verification.length > 0 ? { verification } : {}),
+    ...(projectActions ? { project: projectActions } : {}),
   };
 }

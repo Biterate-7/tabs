@@ -16,6 +16,11 @@ import type { WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-
 import type { Collection } from "@/lib/collections/types";
 import type { HandoffInclude, SessionHandoff, SessionHandoffLinks } from "@/lib/agents/handoff/handoff";
 import { HANDOFF_FINGERPRINT_PATTERN } from "@/lib/agents/handoff/handoff";
+import { isProjectCheckId } from "@/lib/agents/project/checks";
+import type { ProjectCheckId } from "@/lib/agents/project/checks";
+import type { ProjectInspection } from "@/lib/agents/project/inspection";
+import type { ApprovalProjectFile, ProjectChangeReview } from "@/lib/agents/project/changes";
+import type { ControlProjectUndoInfo } from "@/lib/agents/control/events";
 
 /**
  * The browser to local-runtime command contract.
@@ -109,7 +114,9 @@ export type RuntimeErrorCode =
   /** The agent would not work in a mode where it asks Hubble before acting. */
   | "approval_unenforceable"
   /** This runtime keeps no agent history: no database, or one without history's tables. */
-  | "history_unavailable";
+  | "history_unavailable"
+  /** The project's folder cannot be reached — moved, deleted, or not readable (Hubble 1.6). */
+  | "project_unavailable";
 
 export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "runtime_unavailable",
@@ -130,6 +137,7 @@ export const RUNTIME_ERROR_CODES: readonly RuntimeErrorCode[] = [
   "unsupported",
   "approval_unenforceable",
   "history_unavailable",
+  "project_unavailable",
 ] as const;
 
 export function isRuntimeErrorCode(value: unknown): value is RuntimeErrorCode {
@@ -164,6 +172,7 @@ const RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   unsupported: "This agent cannot do that yet.",
   approval_unenforceable: "That agent would not agree to ask before acting.",
   history_unavailable: "Agent history is not kept here.",
+  project_unavailable: "Hubble can't access this project.",
 };
 
 export type RuntimeError = { code: RuntimeErrorCode; message: string };
@@ -283,6 +292,12 @@ export type RuntimeStatus = {
   /** Present only when execution is refused. One safe sentence. */
   detail?: string;
   providers: readonly RuntimeProviderStatus[];
+  /**
+   * Whether this runtime can work on local projects (Hubble 1.6): it runs on
+   * the machine that holds them, and can inspect, measure, undo and check.
+   * Absent everywhere else - a browser, a hosted deployment, a sandbox.
+   */
+  projects?: boolean;
 };
 
 /* ------------------------------------------------------------------ *
@@ -542,6 +557,8 @@ export type AuthorizedProjectInput = {
   providers: readonly AgentProviderId[];
   additionalDirectories?: readonly string[];
   permissions: { scopes: readonly string[]; projectId?: string; grantedAt: number };
+  /** The Hubble workspaces it is attached to (Hubble 1.6). The runtime refuses it to any other. */
+  workspaceIds?: readonly string[];
 };
 
 /** What the host made of an `authorize_projects` command. */
@@ -577,6 +594,12 @@ export type RuntimeApprovalView = {
    * approved command runs with the user's own permissions (Codex).
    */
   command?: ApprovalCommandPreview;
+  /**
+   * For a project file action (Hubble 1.6): what the runtime knows about each
+   * file before you answer — whether it is secret-like, and whether it
+   * changed since this session last saw it. Never its contents.
+   */
+  projectFiles?: readonly ApprovalProjectFile[];
   requestedAt: number;
   expiresAt: number;
 };
@@ -619,7 +642,12 @@ export type RuntimeCommandName =
   | "record_workspace_undo"
   /* Hubble 1.4 — explicit agent handoff. The person's, one step at a time. */
   | "prepare_handoff"
-  | "start_handoff";
+  | "start_handoff"
+  /* Hubble 1.6 — project execution. Ids only: no path, no command line. */
+  | "inspect_project"
+  | "run_project_check"
+  | "undo_project_change"
+  | "review_project_change";
 
 export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "get_status",
@@ -648,6 +676,10 @@ export const RUNTIME_COMMAND_NAMES: readonly RuntimeCommandName[] = [
   "record_workspace_undo",
   "prepare_handoff",
   "start_handoff",
+  "inspect_project",
+  "run_project_check",
+  "undo_project_change",
+  "review_project_change",
 ] as const;
 
 export function isRuntimeCommandName(value: unknown): value is RuntimeCommandName {
@@ -822,7 +854,25 @@ export type RuntimeCommand =
       include: HandoffInclude;
       instruction?: string;
       projectId?: string;
-    };
+    }
+  /**
+   * Looks at a project this actor authorized (Hubble 1.6): whether its folder
+   * can be reached, what kind of project it is, its Git branch, the checks it
+   * offers, and — for the project-relative `files` a context names — whether
+   * each is still there and a short hash of it. Local runtimes only. With
+   * `workspaceId`, refused unless the project may be used there.
+   */
+  | { name: "inspect_project"; projectId: string; workspaceId?: string; files?: readonly string[] }
+  /**
+   * Runs one of the project's checks for this session's project (Hubble 1.6).
+   * Named by id; the runtime reads what the id means from the project itself.
+   * Answers at once with the check's id — its start and end arrive as events.
+   */
+  | { name: "run_project_check"; sessionId: string; check: ProjectCheckId }
+  /** Puts back a measured project change of this session — refused unless every file is exactly as the agent left it. */
+  | { name: "undo_project_change"; sessionId: string; changeId: string }
+  /** The changed lines of a measured project change, while the runtime still holds the copies. */
+  | { name: "review_project_change"; sessionId: string; changeId: string };
 
 /** An applied change as the Command Centre reports it. See `AppliedWorkspaceChange`. */
 export type RecordedWorkspaceChange = {
@@ -882,6 +932,10 @@ export type RuntimeCommandResults = {
    * session whenever one exists.
    */
   start_handoff: { handoff: RuntimeHandoffView; session?: RuntimeSessionView; error?: RuntimeError };
+  inspect_project: ProjectInspection;
+  run_project_check: { checkId: string };
+  undo_project_change: Pick<ControlProjectUndoInfo, "outcome" | "reason" | "files">;
+  review_project_change: ProjectChangeReview;
 };
 
 export type RuntimeCommandResult<N extends RuntimeCommandName> = RuntimeResult<
@@ -913,6 +967,10 @@ export const MAX_AUTHORIZED_PROJECTS = 100;
 export const MAX_COMMAND_PATH_LENGTH = 4096;
 /** Per project. A project reaching more directories than this is not a project. */
 export const MAX_ADDITIONAL_DIRECTORIES = 20;
+/** Workspaces one project may be attached to (Hubble 1.6). */
+export const MAX_PROJECT_WORKSPACES = 50;
+/** Files one `inspect_project` may ask about — a Context Pack's file bound. */
+export const MAX_INSPECT_FILES = 20;
 /** Agent history (Hubble 1.3): a page, and what one recorded change may carry. */
 export const MAX_HISTORY_PAGE = 50;
 export const MAX_RECORDED_STEPS = 50;
@@ -1003,6 +1061,16 @@ function authorizedProject(value: unknown): AuthorizedProjectInput | null {
   const grantProjectId = optionalId(grant.projectId);
   if (grantProjectId === null) return null;
 
+  const workspaceIds: string[] = [];
+  if (record.workspaceIds !== undefined) {
+    if (!Array.isArray(record.workspaceIds) || record.workspaceIds.length > MAX_PROJECT_WORKSPACES) return null;
+    for (const entry of record.workspaceIds) {
+      const workspaceId = id(entry);
+      if (!workspaceId) return null;
+      workspaceIds.push(workspaceId);
+    }
+  }
+
   return {
     id: projectId,
     name: record.name.trim(),
@@ -1014,6 +1082,7 @@ function authorizedProject(value: unknown): AuthorizedProjectInput | null {
       ...(grantProjectId !== undefined ? { projectId: grantProjectId } : {}),
       grantedAt: grant.grantedAt,
     },
+    ...(workspaceIds.length > 0 ? { workspaceIds } : {}),
   };
 }
 
@@ -1319,6 +1388,43 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       if (!workspaceId || !sessionId || !changeId) return null;
       if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at < 0) return null;
       return { name: "record_workspace_undo", workspaceId, sessionId, changeId, at: raw.at };
+    }
+
+    case "inspect_project": {
+      const projectId = id(raw.projectId);
+      if (!projectId) return null;
+      const workspaceId = optionalId(raw.workspaceId);
+      if (workspaceId === null) return null;
+      const files: string[] = [];
+      if (raw.files !== undefined && raw.files !== null) {
+        if (!Array.isArray(raw.files) || raw.files.length > MAX_INSPECT_FILES) return null;
+        for (const entry of raw.files) {
+          // Project-relative and inside the project; the runtime re-checks containment on disk.
+          if (typeof entry !== "string" || !entry || entry.length > 300) return null;
+          if (entry.startsWith("/") || entry.includes("\\") || /^[A-Za-z]:/.test(entry) || entry.split("/").includes("..")) return null;
+          files.push(entry);
+        }
+      }
+      return {
+        name: "inspect_project",
+        projectId,
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
+        ...(files.length > 0 ? { files } : {}),
+      };
+    }
+
+    case "run_project_check": {
+      const sessionId = id(raw.sessionId);
+      if (!sessionId || !isProjectCheckId(raw.check)) return null;
+      return { name: "run_project_check", sessionId, check: raw.check };
+    }
+
+    case "undo_project_change":
+    case "review_project_change": {
+      const sessionId = id(raw.sessionId);
+      const changeId = id(raw.changeId);
+      if (!sessionId || !changeId) return null;
+      return { name: raw.name, sessionId, changeId };
     }
 
     case "prepare_handoff":

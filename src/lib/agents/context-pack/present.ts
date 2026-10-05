@@ -1,4 +1,5 @@
 import { CONTEXT_SCOPE_LABEL } from "@/lib/agents/command-centre/working-context";
+import { PROJECT_STATE_COPY, projectCapabilityLabels, projectCapabilitySummary, projectKindLine } from "@/lib/agents/project/present";
 import type { ContextPack } from "./pack";
 
 /**
@@ -39,6 +40,8 @@ export type ContextPackRowKey =
   | "scope"
   | "collections"
   | "tabs"
+  | "project"
+  | "capabilities"
   | "files"
   | "recentChanges"
   | "previousResult"
@@ -107,13 +110,32 @@ export function contextPackRows(pack: ContextPack): ContextPackRow[] {
     );
   }
 
+  // The project (Hubble 1.6): what the agent will actually work on, and what it may do there.
+  const project = pack.project;
+  if (project) {
+    const kind = projectKindLine({ ...(project.type ? { type: project.type } : {}), ...(project.repository ? { repository: project.repository } : {}) });
+    const where = project.location === "local" ? "Local" : "Sandbox";
+    const state = project.state ? (project.state === "ready" ? "Ready" : PROJECT_STATE_COPY[project.state].label) : undefined;
+    rows.push({ key: "project", label: "Project", value: project.name, detail: [kind, where, state].filter(Boolean).join(" · ") });
+    rows.push(
+      project.capabilities.length > 0
+        ? { key: "capabilities", label: "Agent may", ...projectCapabilitySummary(project.capabilities), items: projectCapabilityLabels(project.capabilities) }
+        : { key: "capabilities", label: "Agent may", value: "Nothing in the project", empty: true }
+    );
+  } else {
+    rows.push({ key: "project", label: "Project", value: "None", empty: true });
+  }
+
   rows.push(
     pack.files.length > 0
       ? {
           key: "files",
           label: "Files",
           value: String(pack.files.length),
-          items: pack.files.map((file) => `${file.path}${file.change === "created" ? " · created" : " · edited"}`),
+          items: pack.files.map(
+            (file) =>
+              `${file.path}${file.outside ? " · changed outside this session" : file.change === "created" ? " · created" : " · edited"}${file.state === "missing" ? " · no longer in the project" : ""}`
+          ),
         }
       : { key: "files", label: "Files", value: "None", empty: true }
   );
@@ -155,6 +177,7 @@ export function contextPackOmittedLine(pack: ContextPack): string | undefined {
   }
   if (pack.omitted.duplicates > 0) parts.push(`${plural(pack.omitted.duplicates, "duplicate tab", "duplicate tabs")} left out`);
   if (pack.omitted.truncated > 0) parts.push(`${pack.omitted.truncated} left out to stay within limits`);
+  if (pack.omitted.sensitive) parts.push(`${plural(pack.omitted.sensitive, "file that may hold secrets", "files that may hold secrets")} left out`);
   return parts.length > 0 ? `${parts.join(" · ")}.` : undefined;
 }
 
@@ -169,7 +192,9 @@ export function contextPackOmittedLine(pack: ContextPack): string | undefined {
  */
 export type ContextDeliveryState = "reads" | "pending" | "delivered" | "changed" | "historical";
 
-export function contextDeliveryLine(state: ContextDeliveryState, agentName: string): string {
+export function contextDeliveryLine(state: ContextDeliveryState, agentName: string, changed?: "project"): string {
+  // The project moved under the agent (Hubble 1.6): said as that, so nobody assumes it has the current state.
+  if (state === "changed" && changed === "project") return `Project changed since ${agentName} received it`;
   switch (state) {
     case "reads":
       return `${agentName} reads this workspace when it needs to`;

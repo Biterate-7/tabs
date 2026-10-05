@@ -26,7 +26,7 @@ describe("demo state initialization", () => {
     const state = createDemoState()
     expect(state.view).toBe("workspace")
     expect(currentWorkspace(state).name).toBe("Research")
-    expect(state.store.workspaces.map((w) => w.name)).toEqual(["Research", "Hubble Build", "Semester"])
+    expect(state.store.workspaces.map((w) => w.name)).toEqual(["Research", "Hubble Build", "Semester", "Development"])
     expect(state.selectedSessionId).toBe(CLAUDE_SESSION)
     expect(state.paletteOpen).toBe(false)
     expect(state.contextPanelOpen).toBe(true)

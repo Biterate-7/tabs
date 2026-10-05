@@ -52,6 +52,12 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { cn } from "@/lib/utils"
 import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS, DEMO_SESSION_PROVIDERS } from "./data"
 import { useHubbleDemo } from "./demo-provider"
+import { WorkspaceProjectSection } from "@/components/command-centre/workspace-project"
+import { filesChangedOutside, measuredProjectFiles } from "@/hooks/use-session-context-pack"
+import { workspaceProjectId } from "@/lib/workspace/project"
+import { readGitStatusCounts } from "@/lib/agents/project/checks"
+import { latestGitCountsIn } from "@/lib/agents/project/changes"
+import { DEMO_PROJECT_ID, DEMO_PROJECT_INSPECTION, demoProjectDescriptor } from "./demo-project"
 import { demoKnownApprovals } from "./demo-state"
 
 /**
@@ -148,7 +154,7 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, send, respond, undo, undoHistory, handoff } = useHubbleDemo()
+  const { state, dispatch, world, send, respond, undo, undoHistory, handoff, projectWork } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
   /** The session a handoff was opened for — as the Command Centre holds it. */
@@ -218,14 +224,45 @@ export function DemoCommandCentre({
     () => (selectedId ? state.handoffs.filter((entry) => entry.targetSessionId === selectedId) : []),
     [state.handoffs, selectedId]
   )
-  const { pack, state: packState, brief } = useSessionContextPack({
+  /*
+    The workspace's project (Hubble 1.6), from the demo's deterministic
+    adapter — described, inspected and shown by the product's own code.
+  */
+  const projectWorkspaceId = selected ? sessionWorkspaceId : state.store.currentId
+  const projectWorkspace = projectWorkspaceId ? state.store.workspaces.find((w) => w.id === projectWorkspaceId) : undefined
+  const attachedProjectId = workspaceProjectId(projectWorkspace)
+  const demoProject = attachedProjectId === DEMO_PROJECT_ID
+  const describesProject = selected ? selected.view.projectId === DEMO_PROJECT_ID : demoProject
+  const packProject = useMemo(() => (describesProject ? demoProjectDescriptor() : undefined), [describesProject])
+  const projectSessionId = selected && selected.view.projectId === DEMO_PROJECT_ID ? selected.view.sessionId : null
+  const projectActions = useMemo(() => (projectSessionId ? projectWork(projectSessionId) : undefined), [projectWork, projectSessionId])
+  const { pack, state: packState, change: packChange, brief } = useSessionContextPack({
     world,
     session: selected?.view ?? null,
     workspaceId: selected ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : state.store.currentId,
     events,
     handoffs: sessionHandoffsForPack,
     changes: state.changes,
+    ...(packProject ? { project: packProject } : {}),
   })
+  const hasProjectWorkspace = Boolean(projectWorkspace)
+  const projectGit = readGitStatusCounts(latestGitCountsIn(events))
+  const projectChangedFiles = projectSessionId ? measuredProjectFiles(events, projectSessionId).length : 0
+  const projectSection = (() => {
+    if (!hasProjectWorkspace) return undefined
+    const git = projectGit
+    return (
+      <WorkspaceProjectSection
+        state={demoProject ? "connected" : attachedProjectId ? "removed" : "none"}
+        {...(demoProject ? { project: { name: DEMO_PROJECTS.find((p) => p.id === DEMO_PROJECT_ID)!.name } } : {})}
+        inspection={demoProject ? DEMO_PROJECT_INSPECTION : null}
+        capabilities={packProject?.capabilities ?? []}
+        {...(git ? { git } : {})}
+        agentChangedFiles={projectChangedFiles}
+        {...(projectActions ? { checks: projectActions } : {})}
+      />
+    )
+  })()
   const briefWorkspaceId = selected ? sessionWorkspaceId : state.store.currentId
   const saveBrief = briefWorkspaceId
     ? (next: { description: string; focus: string }) => dispatch({ type: "set-brief", workspaceId: briefWorkspaceId, brief: next })
@@ -244,6 +281,7 @@ export function DemoCommandCentre({
     knownApprovals,
     canUndo,
     collectionName,
+    ...(projectActions ? { projectLive: true } : {}),
   })
   /** "View" — the workspace the change was made in, as the app's View goes there. */
   const viewChange = (change: AppliedWorkspaceChange) => {
@@ -269,6 +307,7 @@ export function DemoCommandCentre({
       now={DEMO_NOW}
       inspect={activity.inspect}
       onUndo={undo}
+      {...(projectActions ? { project: projectActions } : {})}
       onViewChange={viewChangeById}
       {...(canContinue ? { onContinue: () => setHandoffFor({ key: Date.now(), sessionId: selected.view.sessionId, transport: handoff(selected.view.sessionId) }) } : {})}
       onOpenSession={openHandoffSession}
@@ -319,6 +358,7 @@ export function DemoCommandCentre({
         at: Number.MAX_SAFE_INTEGER,
         ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
         collectionName,
+        projectName: (projectId: string) => projectNameOf(projectId),
         agentName: agentDisplayName,
       })
     : undefined
@@ -338,6 +378,7 @@ export function DemoCommandCentre({
       sessionId: selected.view.sessionId,
       changes: state.changes,
       ...(handoffThatStarted(selected.view.sessionId, state.handoffs) ? { handoffFrom: handoffThatStarted(selected.view.sessionId, state.handoffs)! } : {}),
+      ...(packProject ? { project: packProject, projectFiles: filesChangedOutside(measuredProjectFiles(events, selected.view.sessionId), packProject) } : {}),
     })
     if (!built.ok) return
     const attached = contextPackAttachedContext(built.pack, DEMO_NOW)
@@ -380,6 +421,7 @@ export function DemoCommandCentre({
       align={align}
       pack={pack}
       {...(packState ? { packState } : {})}
+      {...(packChange ? { packChange } : {})}
       {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
       {...actions}
     />
@@ -520,6 +562,7 @@ export function DemoCommandCentre({
                     {...(approval.workspaceId && workspaceNameOf(approval.workspaceId)
                       ? { workspaceName: workspaceNameOf(approval.workspaceId) }
                       : {})}
+                    {...(projectNameOf(approval.projectId) ? { projectName: projectNameOf(approval.projectId) } : {})}
                     pending={false}
                     now={DEMO_NOW}
                     // Already on screen when the page loads: taking focus
@@ -575,6 +618,8 @@ export function DemoCommandCentre({
             {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
             {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
             {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
+            {...(packChange ? { packChange } : {})}
+            {...(projectSection ? { project: projectSection } : {})}
           />
         )}
       </div>

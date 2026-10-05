@@ -189,7 +189,10 @@ describe("no arbitrary shell or filesystem surface", () => {
     // Handoff (1.4) added two: a session id, a provider id, a workspace
     // snapshot of that session's own workspace, two booleans, a fingerprint,
     // a project id and the person's instruction — never a path or a sandbox.
-    expect(RUNTIME_COMMAND_NAMES).toHaveLength(26);
+    // Project execution (1.6) added four: a project id with a workspace id and
+    // project-relative file names; a session id with a check id from a closed
+    // set; a session id with a change id, twice — never a path, a command or a sandbox.
+    expect(RUNTIME_COMMAND_NAMES).toHaveLength(30);
     expect(RUNTIME_COMMAND_NAMES.slice(14)).toEqual([
       "detect_providers",
       "connect_provider",
@@ -203,6 +206,10 @@ describe("no arbitrary shell or filesystem surface", () => {
       "record_workspace_undo",
       "prepare_handoff",
       "start_handoff",
+      "inspect_project",
+      "run_project_check",
+      "undo_project_change",
+      "review_project_change",
     ]);
   });
 

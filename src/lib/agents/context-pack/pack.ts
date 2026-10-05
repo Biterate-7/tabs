@@ -11,6 +11,11 @@ import { describeChange } from "@/lib/agents/command-centre/workspace-activity";
 import { readHandoffInstruction } from "@/lib/agents/handoff/handoff";
 import { compareText, describeWorkspaceBrief } from "@/lib/workspace/brief";
 import { scrubSecretShapes } from "@/lib/secret-shapes";
+import { isSecretLikePath } from "@/lib/agents/project/secrets";
+import { readProjectCapabilities } from "@/lib/agents/project/capabilities";
+import type { ProjectCapability } from "@/lib/agents/project/capabilities";
+import type { ProjectDescriptor } from "@/lib/agents/project/describe";
+import type { ProjectAccessState, ProjectTypeId } from "@/lib/agents/project/inspection";
 import type { AgentContextWorld } from "@/lib/agents/context/world";
 import type { ContextResolutionFailure } from "@/lib/agents/context/resolve";
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity";
@@ -27,7 +32,8 @@ import type { HandoffPreviousResult } from "@/lib/agents/handoff/handoff";
  *     ├── collections      the ones selected, by name
  *     ├── tabs             the ones selected — titles and redacted addresses
  *     ├── relationships    between the selected tabs
- *     ├── files            project files the previous result touched
+ *     ├── project          the workspace's project: name, kind, Git, what the agent may do (1.6)
+ *     ├── files            project files the work touched, and whether each changed since
  *     ├── recentChanges    agent changes applied in the workspace
  *     ├── previousResult   what an earlier session did (a handoff)
  *     └── instruction      the person's own words
@@ -90,7 +96,35 @@ export type ContextPackWorkspace = {
 export type ContextPackCollection = { id: string; name: string; tabs: number };
 export type ContextPackTab = { id: string; title: string; domain?: string; url?: string };
 export type ContextPackRelationship = { id: string; label: string };
-export type ContextPackFile = { path: string; change: "created" | "updated" };
+/**
+ * A project file the work touched (project-relative). `state`/`hash` are what
+ * the runtime found when it last looked (Hubble 1.6): a file changed outside
+ * the session changes the hash, and so the pack's fingerprint.
+ */
+export type ContextPackFile = {
+  path: string;
+  change: "created" | "updated";
+  state?: "present" | "missing";
+  hash?: string;
+  /** Changed outside the session since its agent last wrote it (Hubble 1.6). */
+  outside?: true;
+};
+
+/**
+ * The workspace's project, as an agent is told it (Hubble 1.6). Never a path:
+ * a local project's folder never leaves this device, and a remote agent is
+ * never sent one.
+ */
+export type ContextPackProject = {
+  id: string;
+  name: string;
+  location: "local" | "remote";
+  state?: ProjectAccessState;
+  type?: ProjectTypeId;
+  repository?: { branch?: string; head?: string; detached?: boolean };
+  /** What the agent may do there — every one enforced by the runtime. */
+  capabilities: readonly ProjectCapability[];
+};
 export type ContextPackChange = { id: string; text: string; at: number };
 
 export type ContextPack = {
@@ -101,6 +135,8 @@ export type ContextPack = {
   collections: readonly ContextPackCollection[];
   tabs: readonly ContextPackTab[];
   relationships: readonly ContextPackRelationship[];
+  /** The workspace's project (Hubble 1.6). Absent when none is attached. */
+  project?: ContextPackProject;
   files: readonly ContextPackFile[];
   recentChanges: readonly ContextPackChange[];
   previousResult?: HandoffPreviousResult;
@@ -113,6 +149,8 @@ export type ContextPack = {
     duplicates: number;
     /** Left out to stay within the bounds. */
     truncated: number;
+    /** Project files left out because they may hold secrets (Hubble 1.6). Absent when none. */
+    sensitive?: number;
   };
   /** 16 hex characters over everything above except the instruction. */
   fingerprint: string;
@@ -127,8 +165,10 @@ export type ContextPackInput = {
   changes?: readonly AppliedWorkspaceChange[];
   /** A session whose own changes are left out of `recentChanges` — the agent made them, so it knows. */
   excludeChangesOf?: string;
-  /** Project files the previous result touched, project-relative. */
+  /** Project files the work touched, project-relative. */
   files?: readonly ContextPackFile[];
+  /** The workspace's project, as the runtime found it (Hubble 1.6). */
+  project?: ProjectDescriptor;
   previousResult?: HandoffPreviousResult;
   instruction?: string;
 };
@@ -168,20 +208,41 @@ export function readPackPath(value: unknown): string | undefined {
   return normalized;
 }
 
-function normalizeFiles(files: readonly ContextPackFile[] | undefined): { files: ContextPackFile[]; truncated: number } {
+function normalizeFiles(
+  files: readonly ContextPackFile[] | undefined,
+  project: ProjectDescriptor | undefined
+): { files: ContextPackFile[]; truncated: number; sensitive: number } {
   const byPath = new Map<string, ContextPackFile>();
+  let sensitive = 0;
+  const states = new Map((project?.files ?? []).map((file) => [file.path, file]));
   for (const file of files ?? []) {
     const path = readPackPath(file.path);
     if (!path) continue;
+    // Never named to an agent, let alone read: said in `omitted` instead.
+    if (isSecretLikePath(path)) {
+      sensitive += 1;
+      continue;
+    }
     const change = file.change === "created" ? "created" : "updated";
     // Created wins over updated: a file this work made is a file it made, however often it was then edited.
     const existing = byPath.get(path);
-    if (!existing || (existing.change === "updated" && change === "created")) byPath.set(path, { path, change });
+    const outside = file.outside === true || existing?.outside === true;
+    if (!existing || (existing.change === "updated" && change === "created") || outside !== Boolean(existing.outside)) {
+      byPath.set(path, { path, change: existing?.change === "created" ? "created" : change, ...(outside ? { outside: true as const } : {}) });
+    }
   }
   const sorted = [...byPath.values()].sort((a, b) => compareText(a.path, b.path));
+  // How each file is now, from the runtime's last look (Hubble 1.6).
+  const withState = sorted.map((file): ContextPackFile => {
+    const now = states.get(file.path);
+    if (now?.state === "present" && now.hash) return { ...file, state: "present", hash: now.hash };
+    if (now?.state === "missing") return { ...file, state: "missing" };
+    return file;
+  });
   return {
-    files: sorted.slice(0, CONTEXT_PACK_LIMITS.files),
+    files: withState.slice(0, CONTEXT_PACK_LIMITS.files),
     truncated: Math.max(0, sorted.length - CONTEXT_PACK_LIMITS.files),
+    sensitive,
   };
 }
 
@@ -279,8 +340,9 @@ export function buildContextPack(input: ContextPackInput): ContextPackResult {
       .slice(0, CONTEXT_PACK_LIMITS.relationships);
   }
 
-  const files = normalizeFiles(input.files);
+  const files = normalizeFiles(input.files, input.project);
   truncated += files.truncated;
+  const project = packProject(input.project);
   const instruction = readHandoffInstruction(input.instruction);
 
   const body: Omit<ContextPack, "fingerprint"> = {
@@ -297,13 +359,35 @@ export function buildContextPack(input: ContextPackInput): ContextPackResult {
     collections,
     tabs,
     relationships,
+    ...(project ? { project } : {}),
     files: files.files,
     recentChanges: recentChangesOf(input, workspace.id),
     ...(input.previousResult ? { previousResult: input.previousResult } : {}),
     ...(instruction ? { instruction } : {}),
-    omitted: { missing, duplicates, truncated },
+    omitted: { missing, duplicates, truncated, ...(files.sensitive > 0 ? { sensitive: files.sensitive } : {}) },
   };
   return { ok: true, pack: { ...body, fingerprint: contextPackFingerprint(body) } };
+}
+
+/** The pack's project section: the descriptor, minus file states (those ride on `files`). */
+function packProject(descriptor: ProjectDescriptor | undefined): ContextPackProject | undefined {
+  if (!descriptor) return undefined;
+  const repository = descriptor.repository
+    ? {
+        ...(descriptor.repository.branch ? { branch: descriptor.repository.branch } : {}),
+        ...(descriptor.repository.head ? { head: descriptor.repository.head } : {}),
+        ...(descriptor.repository.detached ? { detached: true } : {}),
+      }
+    : undefined;
+  return {
+    id: descriptor.id,
+    name: clean(sanitizeText(descriptor.name, 120) ?? "Untitled project"),
+    location: descriptor.location === "remote" ? "remote" : "local",
+    ...(descriptor.state ? { state: descriptor.state } : {}),
+    ...(descriptor.type ? { type: descriptor.type } : {}),
+    ...(repository ? { repository } : {}),
+    capabilities: readProjectCapabilities(descriptor.capabilities),
+  };
 }
 
 /* ------------------------------------------------------------------ *

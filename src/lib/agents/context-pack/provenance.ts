@@ -42,6 +42,8 @@ export type ContextProvenanceInput = {
   at: number;
   workspaceName?: string;
   collectionName?: (collectionId: string) => string | undefined;
+  /** A project's live name (Hubble 1.6). Absent or unknown: "Its project". */
+  projectName?: (projectId: string) => string | undefined;
   agentName: (provider: AgentProviderId) => string;
 };
 
@@ -78,6 +80,12 @@ export function contextProvenanceOf(input: ContextProvenanceInput): ContextProve
       ...(delivery.tabs > 0 ? [plural(delivery.tabs, "tab", "tabs")] : []),
     ];
     if (selection.length > 0) lines.push(selection.join(" · "));
+    // The project it was told it works in, and the files named to it (Hubble 1.6).
+    if (delivery.projectId) {
+      const name = input.projectName?.(delivery.projectId);
+      const files = delivery.files ?? 0;
+      lines.push(`${name ? `${name} project` : "Its project"}${files > 0 ? ` · ${plural(files, "relevant file", "relevant files")}` : ""}`);
+    }
   } else {
     lines.push(`${workspace} · Whole workspace`);
   }
@@ -130,5 +138,14 @@ export function contextDeliveryOf(context: AgentAttachedContext, workspaceId: st
       .filter((attachment) => attachment.kind === "collection")
       .map((attachment) => attachment.id)
       .slice(0, MAX_DELIVERY_COLLECTION_IDS),
+    ...projectDelivery(context),
   };
+}
+
+/** The project part of a delivery (Hubble 1.6): its id and how many files were named — counts, never names. */
+function projectDelivery(context: AgentAttachedContext): { projectId?: string; files?: number } {
+  const project = context.attachments.find((attachment) => attachment.kind === "project");
+  if (!project) return {};
+  const files = context.attachments.filter((attachment) => attachment.kind === "file").length;
+  return { projectId: project.id.slice(0, 200), ...(files > 0 ? { files } : {}) };
 }

@@ -19,6 +19,7 @@ import { createSessionContextServer } from "@/lib/agents/session-context/http";
 import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
 import { allowDesktopExecution } from "./gate";
 import { createRuntimeHost, LOCAL_ACTOR } from "./host";
+import { createProjectHost } from "@/lib/agents/project-host";
 import { isHandshakeCommand, parseRuntimeRequest, runtimeFailure } from "./protocol";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AcpLauncher } from "@/lib/agents/control/providers/acp/launcher";
@@ -27,6 +28,7 @@ import type { AgentControlAdapter } from "@/lib/agents/control/types";
 import type { NativeLoginState } from "@/lib/agents/launch/native-auth";
 import type { RuntimeHost } from "./host";
 import type { ProviderDetection } from "./protocol";
+import type { ProjectHost } from "@/lib/agents/project/seam";
 
 /**
  * The packaged desktop app's agent runtime (Phase J.1).
@@ -72,6 +74,8 @@ export type DesktopRuntimeOptions = {
   appServerLogin?: (provider: AgentProviderId) => AppServerLogin;
   platform?: NodeJS.Platform;
   detect?: () => readonly ProviderDetection[];
+  /** Project access (Hubble 1.6). Tests supply a fake; the sidecar builds the real one. */
+  projects?: ProjectHost;
   now?: () => number;
 };
 
@@ -161,6 +165,8 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions): DesktopRun
     resolveAdapter: (provider) => resolveAdapter(provider),
     providers: PROVIDERS,
     detect: options.detect ?? (() => detectLocalProviders(options.env)),
+    // Project execution (Hubble 1.6): the sidecar runs on the machine that holds the projects.
+    projects: options.projects ?? createProjectHost(options.env),
     ...(options.runtimeId ? { runtimeId: options.runtimeId } : {}),
     ...(options.now ? { now: options.now } : {}),
   });

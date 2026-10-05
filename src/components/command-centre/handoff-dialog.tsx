@@ -189,7 +189,8 @@ export function HandoffDialog({
    * (Hubble 1.5) — built by the host from the same workspace and focus the
    * runtime builds it from, so the names shown are the ones sent.
    */
-  packFor?: (preview: RuntimeHandoffPreview, include: HandoffInclude) => ContextPack | undefined
+  /** The pack the target would receive — with the project it would work in (Hubble 1.6), described for it. */
+  packFor?: (preview: RuntimeHandoffPreview, include: HandoffInclude, projectId?: string) => ContextPack | undefined
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: "choose" })
   const [include, setInclude] = useState<HandoffInclude>({ workspace: true, previousResult: true })
@@ -336,7 +337,7 @@ export function HandoffDialog({
             projectId={projectId}
             onProject={setProjectId}
             disabled={phase.kind === "starting"}
-            pack={packFor?.(phase.preview, include)}
+            pack={packFor?.(phase.preview, include, projectId || undefined)}
           />
         )}
 

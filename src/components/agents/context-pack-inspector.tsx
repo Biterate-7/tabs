@@ -80,7 +80,10 @@ export function ContextPackInspector({
   onSendUpdate,
   busy = false,
   className,
+  change,
 }: {
+  /** What changed, when `state` is "changed" (Hubble 1.6). */
+  change?: "project"
   /** `null` while there is no pack: loading, or a session with no workspace. */
   pack: ContextPack | null
   agentName: string
@@ -140,7 +143,7 @@ export function ContextPackInspector({
             className={cn("min-w-0 truncate text-meta", state === "changed" ? "text-link" : "text-tertiary")}
             data-context-state={state}
           >
-            {contextDeliveryLine(state, agentName)}
+            {contextDeliveryLine(state, agentName, change)}
           </span>
           {state === "changed" && onSendUpdate && (
             <Button type="button" size="xs" variant="secondary" disabled={busy} onClick={onSendUpdate}>

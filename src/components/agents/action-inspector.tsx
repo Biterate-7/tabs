@@ -11,6 +11,9 @@ import { AGENT_VISUAL_STATE_PRESENTATION } from "@/lib/agents/visual/states"
 import { cn } from "@/lib/utils"
 import type { ActionChainStep, ActionChangeLine, ActionInspection } from "@/lib/agents/activity/inspector"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import { ProjectChangeReviewToggle, ProjectCheckButtons, VerificationList } from "./project-work"
+import type { ProjectWorkActions } from "./project-work"
+import { undoRefusalText, UNDO_PARTIAL } from "@/lib/agents/project/changes"
 
 /**
  * One agent action, opened from the activity timeline: what was asked, who
@@ -86,7 +89,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-type UndoPhase = { kind: "idle" } | { kind: "confirming" } | { kind: "failed" }
+type UndoPhase = { kind: "idle" } | { kind: "confirming" } | { kind: "working" } | { kind: "failed"; reason?: string }
 
 export function ActionInspector({
   inspection,
@@ -95,6 +98,7 @@ export function ActionInspector({
   onView,
   onUndo,
   onOpenSession,
+  project,
   autoFocus = true,
   className,
 }: {
@@ -107,6 +111,8 @@ export function ActionInspector({
   onUndo?: (changeId: string) => boolean
   /** Opens the session on the other end of a handoff. */
   onOpenSession?: (sessionId: string, provider: AgentProviderId) => void
+  /** A live session's project actions (Hubble 1.6). Absent: read-only (a past session, or no project). */
+  project?: ProjectWorkActions
   /** Move focus to the heading on open. Off where taking focus would scroll a host page. */
   autoFocus?: boolean
   className?: string
@@ -125,11 +131,23 @@ export function ActionInspector({
   }
 
   const undo = inspection.undo
-  const canUndo = undo?.kind === "available" && Boolean(onUndo)
+  // A project change is put back by the runtime (Hubble 1.6); a workspace change by its owner.
+  const projectUndo = undo?.kind === "available" && undo.target === "project"
+  const canUndo = undo?.kind === "available" && (projectUndo ? Boolean(project) : Boolean(onUndo))
   const tone = AGENT_VISUAL_STATE_PRESENTATION[ACTION_VISUAL_STATE[inspection.status]].tone
 
   const runUndo = () => {
-    if (undo?.kind !== "available" || !onUndo) return
+    if (undo?.kind !== "available") return
+    if (undo.target === "project") {
+      if (!project) return
+      setPhase({ kind: "working" })
+      void project.undo(undo.changeId).then((result) => {
+        if (result?.outcome === "undone") setPhase({ kind: "idle" })
+        else setPhase({ kind: "failed", reason: result?.outcome === "partial" ? UNDO_PARTIAL : undoRefusalText(result?.reason) })
+      })
+      return
+    }
+    if (!onUndo) return
     let undone = false
     try {
       undone = onUndo(undo.changeId)
@@ -281,7 +299,12 @@ export function ActionInspector({
             )}
           </>
         )}
-        {inspection.file && (
+        {inspection.verification && (
+          <Fact label="Verification">
+            <VerificationList lines={inspection.verification} />
+          </Fact>
+        )}
+        {inspection.file && !inspection.changes && (
           <Fact label="File">
             <span className="break-all">{inspection.file.relativePath}</span>
             {inspection.file.projectName && <span className="block text-meta text-tertiary">In {inspection.file.projectName}</span>}
@@ -312,6 +335,18 @@ export function ActionInspector({
               <Undo2 />
               {undo.label}
             </Button>
+          )}
+        </div>
+      )}
+
+      {inspection.project && project && (
+        <div className="mt-2 flex flex-col gap-2 border-t border-subtle pt-2">
+          {inspection.project.reviewable && <ProjectChangeReviewToggle changeId={inspection.project.changeId} actions={project} />}
+          {inspection.project.verifiable && (
+            <div className="flex flex-col gap-1">
+              <p className="text-meta text-tertiary">Verify</p>
+              <ProjectCheckButtons actions={project} />
+            </div>
           )}
         </div>
       )}
@@ -358,12 +393,12 @@ export function ActionInspector({
       {phase.kind === "failed" && (
         <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
           <p className="text-body-sm text-foreground">Couldn&apos;t undo this change</p>
-          <p className="mt-0.5 text-meta text-tertiary">{UNDO_REFUSED_WORKSPACE_CHANGED} Nothing was changed.</p>
+          <p className="mt-0.5 text-meta text-tertiary">{phase.reason ?? UNDO_REFUSED_WORKSPACE_CHANGED} Nothing was changed.</p>
           <div className="mt-2 flex items-center justify-end gap-1.5">
             <Button type="button" size="sm" variant="ghost" onClick={() => setPhase({ kind: "idle" })}>
               Cancel
             </Button>
-            {canUndo && (
+            {canUndo && !phase.reason && (
               <Button type="button" size="sm" variant="secondary" onClick={runUndo}>
                 Try again
               </Button>

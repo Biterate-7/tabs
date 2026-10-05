@@ -1,5 +1,5 @@
 import { workspaceContext, withinWorkspace } from "@/lib/agents/command-centre/working-context";
-import { buildContextPack, contextPackId, isContextPackId } from "./pack";
+import { buildContextPack, contextPackFingerprint, contextPackId, isContextPackId } from "./pack";
 import { contextPackAttachedContext } from "./attach";
 import type { AgentContextWorld } from "@/lib/agents/context/world";
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity";
@@ -7,7 +7,8 @@ import type { WorkingContext } from "@/lib/agents/command-centre/working-context
 import type { AgentControlEvent } from "@/lib/agents/control/events";
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { RuntimeSessionView } from "@/lib/agents/runtime/protocol";
-import type { ContextPack, ContextPackResult } from "./pack";
+import type { ContextPack, ContextPackFile, ContextPackResult } from "./pack";
+import type { ProjectDescriptor } from "@/lib/agents/project/describe";
 import type { ContextDeliveryState } from "./present";
 
 /**
@@ -33,6 +34,10 @@ export function sessionContextPack(input: {
   handoffFrom?: SessionHandoff;
   /** The person's latest words to the agent. Shown; never part of the fingerprint. */
   instruction?: string;
+  /** The workspace's project, as the runtime found it (Hubble 1.6). */
+  project?: ProjectDescriptor;
+  /** Project files this work changed, as Hubble measured them (Hubble 1.6). */
+  projectFiles?: readonly ContextPackFile[];
 }): ContextPackResult {
   const selection = input.selection && input.selection.workspaceId === input.workspaceId ? input.selection : workspaceContext(input.workspaceId);
   const previousResult = input.handoffFrom?.context.previousResult;
@@ -41,7 +46,9 @@ export function sessionContextPack(input: {
     selection: withinWorkspace(selection, input.world).context,
     changes: input.changes ?? [],
     ...(input.sessionId ? { excludeChangesOf: input.sessionId } : {}),
-    ...(previousResult ? { previousResult, files: previousResult.files ?? [] } : {}),
+    ...(previousResult ? { previousResult } : {}),
+    files: [...(previousResult?.files ?? []), ...(input.projectFiles ?? [])],
+    ...(input.project ? { project: input.project } : {}),
     ...(input.instruction ? { instruction: input.instruction } : {}),
   });
 }
@@ -92,4 +99,26 @@ export function contextDeliveryState(
   if (!isContextPackId(attached)) return view.contextDelivered === false ? "pending" : "delivered";
   if (attached !== contextPackId(pack)) return "changed";
   return view.contextDelivered === false ? "pending" : "delivered";
+}
+
+/**
+ * What changed between the pack an agent received and the current one, when
+ * only the project did (Hubble 1.6): its Git state, or a file it names changed
+ * outside the session. `undefined` when anything else changed too, or when the
+ * delivered pack is not known here (another page built it) — then it is
+ * simply "changed".
+ */
+export function contextChangeOf(delivered: ContextPack | undefined, current: ContextPack): "project" | undefined {
+  if (!delivered || delivered.fingerprint === current.fingerprint) return undefined;
+  const withoutProject = (pack: ContextPack) => {
+    const body: Omit<ContextPack, "fingerprint"> & { fingerprint?: string } = {
+      ...pack,
+      // A file changed outside the session is project drift too.
+      files: pack.files.filter((file) => !file.outside).map((file) => ({ path: file.path, change: file.change })),
+    };
+    delete body.project;
+    delete body.fingerprint;
+    return contextPackFingerprint(body);
+  };
+  return withoutProject(delivered) === withoutProject(current) ? "project" : undefined;
 }

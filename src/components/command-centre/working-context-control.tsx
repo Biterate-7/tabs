@@ -28,6 +28,8 @@ import type { ContextDeliveryState, ContextPackRowKey } from "@/lib/agents/conte
 export type SessionPackProps = {
   pack?: ContextPack | null
   packState?: ContextDeliveryState
+  /** What changed when `packState` is "changed" (Hubble 1.6): the project, said as such. */
+  packChange?: "project"
   onSendUpdate?: () => void
 }
 
@@ -36,6 +38,7 @@ const SELECTION_ROWS: readonly ContextPackRowKey[] = ["scope", "collections", "t
 export function SessionPackFacts({
   pack,
   packState,
+  packChange,
   onSendUpdate,
   agentName,
   busy,
@@ -57,6 +60,7 @@ export function SessionPackFacts({
         pack={pack}
         agentName={agentName}
         {...(packState ? { state: packState } : {})}
+        {...(packChange ? { change: packChange } : {})}
         {...(onSendUpdate ? { onSendUpdate } : {})}
         busy={busy ?? false}
         hide={hide}
@@ -274,6 +278,7 @@ export function WorkingContextChip({
   className,
   pack,
   packState,
+  packChange,
   onSendUpdate,
   ...actions
 }: {
@@ -326,6 +331,7 @@ export function WorkingContextChip({
           <SessionPackFacts
             pack={pack ?? null}
             {...(packState ? { packState } : {})}
+            {...(packChange ? { packChange } : {})}
             {...(onSendUpdate ? { onSendUpdate } : {})}
             agentName={agentName}
             busy={busy ?? false}

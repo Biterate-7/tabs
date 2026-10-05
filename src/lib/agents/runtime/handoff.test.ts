@@ -541,3 +541,48 @@ describe("activity and history", () => {
     });
   });
 });
+
+describe("the project in a handoff (Hubble 1.6)", () => {
+  it("is described to the target under the target's own permissions, never the source's", async () => {
+    // The target can read files and nothing else; the project's grant allows reading too.
+    const r = await rig({ targetCapabilities: capabilitySet("message", "create_session", "stream_events", "read_files", "approvals", "workspace_context") });
+    const sourceId = await r.source();
+    await didWork(r, sourceId);
+    const started = await r.start(await preview(r, sourceId));
+    expect(started.ok).toBe(true);
+
+    const told = r.codex.lastMessage()!;
+    const project = told.context.attachments.find((attachment) => attachment.kind === "project");
+    expect(project).toMatchObject({ kind: "project", id: "p1", label: "Dev" });
+    expect(project!.detail).toContain("You may read files");
+    expect(project!.detail).not.toMatch(/modify files|run commands/);
+    // The file the source wrote travels as a project-relative name, not a path on this machine.
+    expect(told.context.attachments).toContainEqual({ kind: "file", id: "docs/plan.md", label: "docs/plan.md", detail: "created by earlier work" });
+    expect(JSON.stringify(told)).not.toContain("C:/work");
+  });
+
+  it("is refused for a target agent the project was not authorized for", async () => {
+    const r = await rig();
+    const sourceId = await r.source();
+    await didWork(r, sourceId);
+    const refused = await r.start(await preview(r, sourceId), { projectId: "p-claude-only" });
+    expect(refused).toMatchObject({ ok: false, error: { code: "project_scope_violation" } });
+  });
+
+  it("cannot point a session at another project through attached context", async () => {
+    const r = await rig();
+    const sourceId = await r.source();
+    const pointed = await r.send({
+      name: "attach_context",
+      sessionId: sourceId,
+      context: { snapshotId: "snap", capturedAt: T0, attachments: [{ kind: "project", id: "p-claude-only", label: "Claude only" }] },
+    });
+    expect(pointed).toMatchObject({ ok: false, error: { code: "context_invalid" } });
+    const own = await r.send({
+      name: "attach_context",
+      sessionId: sourceId,
+      context: { snapshotId: "snap", capturedAt: T0, attachments: [{ kind: "project", id: "p1", label: "Dev" }, { kind: "file", id: "src/a.ts", label: "src/a.ts" }] },
+    });
+    expect(own.ok).toBe(true);
+  });
+});

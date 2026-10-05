@@ -216,10 +216,19 @@ export function useAgentSession(options: {
 
     if (eventsResult.value.events.length === 0) return
 
-    cursorRef.current = { sessionId, sequence: eventsResult.value.latestSequence }
+    // Never backwards: a slower overlapping read must not rewind a cursor a faster one advanced.
+    cursorRef.current = {
+      sessionId,
+      sequence: Math.max(eventsResult.value.latestSequence, cursorRef.current.sessionId === sessionId ? cursorRef.current.sequence : 0),
+    }
 
     update((previous) => {
-      const next = [...previous.events, ...eventsResult.value.events]
+      // Two reads in flight (the poll, and a refresh after a command) can both
+      // start from the same cursor; only what is newer than what is held is new.
+      const held = previous.events.length > 0 ? previous.events[previous.events.length - 1]!.sequence : 0
+      const fresh = eventsResult.value.events.filter((event) => event.sequence > held)
+      if (fresh.length === 0) return {}
+      const next = [...previous.events, ...fresh]
       return {
         events: next.length > MAX_RETAINED_EVENTS ? next.slice(-MAX_RETAINED_EVENTS) : next,
       }

@@ -198,6 +198,10 @@ export function historyEventOf(event: SequencedControlEvent): SequencedControlEv
   if (event.handoff) kept.handoff = { ...event.handoff };
   // Which context the message delivered (Hubble 1.5): counts and ids, for provenance.
   if (event.delivery) kept.delivery = { ...event.delivery, collectionIds: [...event.delivery.collectionIds] };
+  // Project work (Hubble 1.6): paths, line counts and outcomes - never contents, output or commands.
+  if (event.projectChange) kept.projectChange = { ...event.projectChange, files: event.projectChange.files.map((file) => ({ ...file })) };
+  if (event.projectUndo) kept.projectUndo = { ...event.projectUndo };
+  if (event.verification) kept.verification = { ...event.verification, ...(event.verification.git ? { git: { ...event.verification.git } } : {}) };
   if (event.messageId) kept.messageId = event.messageId;
   if (event.sourceId) kept.sourceId = event.sourceId;
   // `text` is never copied. See the note at the top of this file.

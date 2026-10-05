@@ -107,6 +107,7 @@ export function NewSessionDialog({
   onConnectAgent,
   pickFolder,
   projectScopesFor,
+  workspaceProject,
   defaultProvider,
   contextSummaryFor,
   firstMessage,
@@ -188,6 +189,12 @@ export function NewSessionDialog({
    * would be refused as exceeding its approval.
    */
   projectScopesFor?: (provider: AgentProviderId) => readonly AgentPermissionScope[]
+  /**
+   * The project attached to a workspace, and whether it is ready (Hubble 1.6).
+   * A session in that workspace starts in it by default, and cannot start in
+   * it while it is not ready — with the reason said where the choice is made.
+   */
+  workspaceProject?: (workspaceId: string) => { projectId: string; ready: boolean; notice: string } | undefined
   /** The agent to start with, when the user already chose one (from the empty state or a request). */
   defaultProvider?: AgentProviderId
   /**
@@ -233,7 +240,12 @@ export function NewSessionDialog({
 
   const [provider, setProvider] = useState<AgentProviderId | null>(null)
   const [mode, setMode] = useState<ExecutionMode | null>(null)
-  const [projectId, setProjectId] = useState<string>("")
+  // The workspace's own project (Hubble 1.6) until the person picks another.
+  const [projectChoice, setProjectId] = useState<string | null>(null)
+  const attachedProject = workspaceId ? workspaceProject?.(workspaceId) : undefined
+  const projectId = projectChoice ?? attachedProject?.projectId ?? ""
+  const attachedChosen = Boolean(attachedProject && projectId === attachedProject.projectId)
+  const projectNotReady = attachedChosen && !attachedProject!.ready
   const [remoteProjectId, setRemoteProjectId] = useState<string>("")
   const [title, setTitle] = useState(defaultTitle ?? "")
   /** What the person has chosen so far, handed back if they leave to sign in. */
@@ -535,6 +547,11 @@ export function NewSessionDialog({
                   />
                 )
               )}
+              {attachedChosen && (
+                <p data-project-readiness className={cn("mt-1 text-meta", projectNotReady ? "text-warning" : "text-tertiary")}>
+                  {attachedProject!.notice}
+                </p>
+              )}
             </div>
 
             {addingProject && (
@@ -721,9 +738,9 @@ export function NewSessionDialog({
           </Button>
           <Button
             type="button"
-            disabled={!chosen || creating || blocker !== null || Boolean(connectionIssue)}
+            disabled={!chosen || creating || blocker !== null || Boolean(connectionIssue) || (activeMode !== "remote" && projectNotReady)}
             onClick={() => {
-              if (!chosen || blocker || connectionIssue) return
+              if (!chosen || blocker || connectionIssue || (activeMode !== "remote" && projectNotReady)) return
 
               /*
                 The project the session is scoped to, by **id**, whichever

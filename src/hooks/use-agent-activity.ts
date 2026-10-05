@@ -126,8 +126,10 @@ export function useActivityInspector(options: {
   canUndo?: (change: AppliedWorkspaceChange) => boolean
   /** A collection's live name, for an action's context provenance (Hubble 1.5). */
   collectionName?: (collectionId: string) => string | undefined
+  /** The live session on a runtime that holds its project changes (Hubble 1.6): project undo, review and checks are offered. */
+  projectLive?: boolean
 }): (entryId: string) => ActionInspection | null {
-  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo, collectionName } = options
+  const { entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo, collectionName, projectLive } = options
   return useCallback(
     (entryId: string) => {
       if (!session) return null
@@ -146,6 +148,7 @@ export function useActivityInspector(options: {
           ...(projectName ? { projectName } : {}),
           ...(canUndo ? { canUndo } : {}),
           ...(collectionName ? { collectionName } : {}),
+          ...(projectLive ? { projectLive } : {}),
         })
       } catch (error) {
         // Observational, like the timeline: a record it cannot read closes the inspector, never the Command Centre.
@@ -153,7 +156,7 @@ export function useActivityInspector(options: {
         return null
       }
     },
-    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo, collectionName]
+    [entries, session, events, approvals, changes, agentName, workspaceName, projectName, knownApprovals, planOutcomes, handoffs, canUndo, collectionName, projectLive]
   )
 }
 
@@ -178,12 +181,13 @@ export function useSessionActivity(options: {
   handoffs?: readonly SessionHandoff[]
   canUndo?: (change: AppliedWorkspaceChange) => boolean
   collectionName?: (collectionId: string) => string | undefined
+  projectLive?: boolean
 }): {
   entries: readonly AgentActivityEntry[]
   inspect: (entryId: string) => ActionInspection | null
   waiting: boolean
 } {
-  const { projectName, canUndo, collectionName, ...timeline } = options
+  const { projectName, canUndo, collectionName, projectLive, ...timeline } = options
   const entries = useAgentActivity(timeline)
   const inspect = useActivityInspector({
     entries,
@@ -199,6 +203,7 @@ export function useSessionActivity(options: {
     ...(options.handoffs ? { handoffs: options.handoffs } : {}),
     ...(canUndo ? { canUndo } : {}),
     ...(collectionName ? { collectionName } : {}),
+    ...(projectLive ? { projectLive } : {}),
   })
   const waiting = useMemo(() => entries.some((entry) => entry.status === "waiting"), [entries])
   return { entries, inspect, waiting }

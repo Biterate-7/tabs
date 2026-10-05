@@ -122,6 +122,13 @@ export type AgentProject = {
    */
   additionalDirectories: readonly string[];
   permissions: AgentPermissionGrant;
+  /**
+   * The Hubble workspaces this project is attached to (Hubble 1.6). When any
+   * are named, a session in another workspace may not use the project — the
+   * runtime refuses it. Empty or absent: not attached anywhere, usable as
+   * before by the agents it was authorized for.
+   */
+  workspaceIds?: readonly string[];
   createdAt: number;
   updatedAt: number;
 };
@@ -316,6 +323,8 @@ export type CreateProjectInput = {
   /** Each validated exactly as `path` is. One bad entry rejects the whole project. */
   additionalDirectories?: readonly string[];
   permissions?: AgentPermissionGrant;
+  /** Workspaces it is attached to (Hubble 1.6). Ids only; unusable ones are refused. */
+  workspaceIds?: readonly string[];
 };
 
 export type CreateProjectResult =
@@ -326,7 +335,8 @@ export type CreateProjectResult =
         | ProjectPathRejection
         | "invalid-name"
         | "invalid-permissions"
-        | "invalid-additional-directory";
+        | "invalid-additional-directory"
+        | "invalid-workspace";
     };
 
 /**
@@ -366,6 +376,12 @@ export function createProject(input: CreateProjectInput, now: number): CreatePro
     if (!additionalDirectories.includes(extra.path)) additionalDirectories.push(extra.path);
   }
 
+  const workspaceIds: string[] = [];
+  for (const workspaceId of input.workspaceIds ?? []) {
+    if (typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200) return { ok: false, reason: "invalid-workspace" };
+    if (!workspaceIds.includes(workspaceId)) workspaceIds.push(workspaceId);
+  }
+
   return {
     ok: true,
     project: {
@@ -378,6 +394,7 @@ export function createProject(input: CreateProjectInput, now: number): CreatePro
       providers: input.providers ? [...input.providers] : [],
       additionalDirectories,
       permissions,
+      ...(workspaceIds.length > 0 ? { workspaceIds: workspaceIds.sort() } : {}),
       createdAt: now,
       updatedAt: now,
     },
@@ -424,4 +441,17 @@ export function containsPath(project: AgentProject, candidate: string): Containm
   const result = toProjectRelative(project.path, candidate);
   if (result.ok) return { ok: true, relativePath: result.relativePath };
   return { ok: false, reason: result.reason };
+}
+
+/**
+ * Whether a session in `workspaceId` may use this project (Hubble 1.6).
+ *
+ * A project attached to workspaces belongs to them: a session elsewhere —
+ * or in no workspace at all — is refused. One attached nowhere keeps its
+ * pre-1.6 meaning.
+ */
+export function isWorkspaceAllowed(project: AgentProject, workspaceId: string | undefined): boolean {
+  const bound = project.workspaceIds ?? [];
+  if (bound.length === 0) return true;
+  return workspaceId !== undefined && bound.includes(workspaceId);
 }

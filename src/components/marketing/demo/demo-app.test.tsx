@@ -271,7 +271,7 @@ describe("graph", () => {
   it("scopes to the current workspace and responds to the panel's controls", async () => {
     const { user, frame } = renderGraph()
     // jsdom lays out at width 0, so the panel starts closed, as it does in a narrow window.
-    expect(within(frame()).getByText("20/35")).toBeTruthy()
+    expect(within(frame()).getByText("20/41")).toBeTruthy()
     await user.click(within(frame()).getByRole("button", { name: "Open graph settings" }))
     const local = within(frame()).getByRole("button", { name: "Local" })
     await user.click(local)
@@ -295,7 +295,8 @@ describe("settings", () => {
     expect(within(frame()).getByRole("heading", { name: "Workspaces" })).toBeTruthy()
     const section = within(frame()).getByRole("heading", { name: "Workspaces" }).parentElement!.parentElement!
     expect(within(section).getByText("Semester")).toBeTruthy()
-    expect(within(section).getByText(/6 tabs/)).toBeTruthy()
+    // Semester and Development (Hubble 1.6) both hold six.
+    expect(within(section).getAllByText(/6 tabs/)).toHaveLength(2)
   })
 
   it("lists every connector as the catalog describes it", async () => {

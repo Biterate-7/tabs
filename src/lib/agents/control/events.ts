@@ -1,4 +1,6 @@
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import { isProjectCheckId, isVerificationOutcome, readGitStatusCounts } from "@/lib/agents/project/checks";
+import type { GitStatusCounts, ProjectCheckId, VerificationOutcome } from "@/lib/agents/project/checks";
 
 /**
  * The normalized control event.
@@ -65,7 +67,18 @@ export type AgentControlEventKind =
    */
   | "handoff_sent"
   /** This session was started by a handoff, and received it. Raised by Hubble, on the target session. */
-  | "handoff_received";
+  | "handoff_received"
+  /**
+   * Hubble measured what an approved project write actually changed (Hubble
+   * 1.6), from the copy it took before approving it. Raised by Hubble only.
+   */
+  | "project_changed"
+  /** The person undid a measured project change — or Hubble refused to, and why. Hubble's only. */
+  | "project_change_undone"
+  /** A project check the person asked for started. Hubble's only. */
+  | "verification_started"
+  /** A project check ended — passed, failed, or could not run. Hubble's only. */
+  | "verification_finished";
 
 export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "session_started",
@@ -92,6 +105,10 @@ export const AGENT_CONTROL_EVENT_KINDS: readonly AgentControlEventKind[] = [
   "context_read",
   "handoff_sent",
   "handoff_received",
+  "project_changed",
+  "project_change_undone",
+  "verification_started",
+  "verification_finished",
 ] as const;
 
 export function isAgentControlEventKind(value: unknown): value is AgentControlEventKind {
@@ -142,6 +159,24 @@ export function isContextEventKind(kind: AgentControlEventKind): boolean {
  * work on: handoffs are the person's, and only the runtime records them.
  */
 export const HANDOFF_EVENT_KINDS: readonly AgentControlEventKind[] = ["handoff_sent", "handoff_received"] as const;
+
+/**
+ * Hubble's own record of project work (Hubble 1.6): what an approved write
+ * changed, its undo, and the checks run on it. Raised by the runtime host
+ * only — the service refuses them from any adapter, exactly as it refuses a
+ * handoff — because each is a statement Hubble measured, never one an agent
+ * made.
+ */
+export const PROJECT_EVENT_KINDS: readonly AgentControlEventKind[] = [
+  "project_changed",
+  "project_change_undone",
+  "verification_started",
+  "verification_finished",
+] as const;
+
+export function isProjectEventKind(kind: AgentControlEventKind): boolean {
+  return (PROJECT_EVENT_KINDS as readonly string[]).includes(kind);
+}
 
 export function isHandoffEventKind(kind: AgentControlEventKind): boolean {
   return (HANDOFF_EVENT_KINDS as readonly string[]).includes(kind);
@@ -276,9 +311,139 @@ export type ControlContextDeliveryInfo = {
   workspace: boolean;
   /** The collections sent, bounded. */
   collectionIds: readonly string[];
+  /** The project described to the agent, by id (Hubble 1.6). Never a path. */
+  projectId?: string;
+  /** How many project files were named to it. */
+  files?: number;
 };
 
 export const MAX_DELIVERY_COLLECTION_IDS = 20;
+
+/* ------------------------------------------------------------------ *
+ * Project work (Hubble 1.6)
+ * ------------------------------------------------------------------ */
+
+/** One file of a measured change. Counts and a project-relative path — never contents. */
+export type ControlProjectChangeFile = {
+  path: string;
+  change: "created" | "modified" | "deleted" | "unchanged";
+  /** Lines, as Hubble measured them. Absent when it could not (sensitive, binary, too large, no copy). */
+  added?: number;
+  removed?: number;
+  /** A secret-like file: named, never read. */
+  sensitive?: true;
+  binary?: true;
+  /**
+   * 12 hex characters of the file's SHA-256 as the agent left it — equality,
+   * nothing more — so a later look can tell it changed outside the session.
+   * Absent for a secret-like, unreadable or deleted file.
+   */
+  hash?: string;
+};
+
+/**
+ * Whether Hubble holds what it needs to put a change back, as recorded.
+ *
+ * - `available` — it has the exact previous contents of every file;
+ * - `no_copy` — it never saw the files before they were written (the agent
+ *   named none, or the runtime restarted);
+ * - `sensitive` — a file is secret-like, so no copy was ever taken;
+ * - `too_large` — a file was beyond what Hubble keeps;
+ * - `unsafe` — a file is a link or outside the project's real folder.
+ */
+export type ControlProjectUndoAvailability = "available" | "no_copy" | "sensitive" | "too_large" | "unsafe";
+
+export type ControlProjectChangeInfo = {
+  /** The approval that allowed it — a change and its approval share an id. */
+  changeId: string;
+  projectId: string;
+  /** Every file changed; some did; none did. Measured, never assumed from the approval. */
+  outcome: "applied" | "partial" | "not_applied";
+  files: readonly ControlProjectChangeFile[];
+  undo: ControlProjectUndoAvailability;
+  /** The Context Pack the session held when it was approved (`pack-<fingerprint>`), for provenance. */
+  contextId?: string;
+};
+
+export type ControlProjectUndoInfo = {
+  changeId: string;
+  projectId: string;
+  outcome: "undone" | "refused" | "partial";
+  /** Why it was refused, or what stopped part of it. */
+  reason?: "changed" | "no_copy" | "unavailable" | "sensitive";
+  /** How many files were put back. */
+  files: number;
+};
+
+export type ControlVerificationInfo = {
+  checkId: string;
+  projectId: string;
+  check: ProjectCheckId;
+  outcome: VerificationOutcome;
+  exitCode?: number;
+  durationMs?: number;
+  /** For `git_status`: counts only. */
+  git?: GitStatusCounts;
+  /** The latest measured change in the session when the check started — what it verifies. */
+  changeId?: string;
+};
+
+export const MAX_PROJECT_CHANGE_FILES = 50;
+const MAX_LINE_COUNT = 10_000_000;
+
+function isId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 200;
+}
+
+function isRelativePath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512) return false;
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || value.includes("\\")) return false;
+  return !value.split("/").includes("..");
+}
+
+function isLineCount(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_LINE_COUNT);
+}
+
+export function isWellFormedProjectChangeInfo(info: ControlProjectChangeInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  if (!isId(info.changeId) || !isId(info.projectId)) return false;
+  if (!["applied", "partial", "not_applied"].includes(info.outcome)) return false;
+  if (!["available", "no_copy", "sensitive", "too_large", "unsafe"].includes(info.undo)) return false;
+  if (info.contextId !== undefined && !isId(info.contextId)) return false;
+  if (!Array.isArray(info.files) || info.files.length > MAX_PROJECT_CHANGE_FILES) return false;
+  return info.files.every(
+    (file) =>
+      typeof file === "object" &&
+      file !== null &&
+      isRelativePath(file.path) &&
+      ["created", "modified", "deleted", "unchanged"].includes(file.change) &&
+      isLineCount(file.added) &&
+      isLineCount(file.removed) &&
+      (file.sensitive === undefined || file.sensitive === true) &&
+      (file.binary === undefined || file.binary === true) &&
+      (file.hash === undefined || (typeof file.hash === "string" && /^[0-9a-f]{12}$/.test(file.hash)))
+  );
+}
+
+export function isWellFormedProjectUndoInfo(info: ControlProjectUndoInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  if (!isId(info.changeId) || !isId(info.projectId)) return false;
+  if (!["undone", "refused", "partial"].includes(info.outcome)) return false;
+  if (info.reason !== undefined && !["changed", "no_copy", "unavailable", "sensitive"].includes(info.reason)) return false;
+  return isLineCount(info.files);
+}
+
+export function isWellFormedVerificationInfo(info: ControlVerificationInfo): boolean {
+  if (typeof info !== "object" || info === null) return false;
+  if (!isId(info.checkId) || !isId(info.projectId)) return false;
+  if (!isProjectCheckId(info.check) || !isVerificationOutcome(info.outcome)) return false;
+  if (info.exitCode !== undefined && !(Number.isInteger(info.exitCode) && Math.abs(info.exitCode) < 2 ** 32)) return false;
+  if (!isLineCount(info.durationMs)) return false;
+  if (info.git !== undefined && !readGitStatusCounts(info.git)) return false;
+  if (info.changeId !== undefined && !isId(info.changeId)) return false;
+  return true;
+}
 
 function isWellFormedDeliveryInfo(info: ControlContextDeliveryInfo): boolean {
   if (typeof info !== "object" || info === null) return false;
@@ -292,6 +457,8 @@ function isWellFormedDeliveryInfo(info: ControlContextDeliveryInfo): boolean {
   }
   if (typeof info.workspace !== "boolean") return false;
   if (!Array.isArray(info.collectionIds) || info.collectionIds.length > MAX_DELIVERY_COLLECTION_IDS) return false;
+  if (info.projectId !== undefined && (typeof info.projectId !== "string" || !info.projectId || info.projectId.length > 200)) return false;
+  if (info.files !== undefined && (!Number.isInteger(info.files) || info.files < 0 || info.files > MAX_CONTROL_CONTEXT_COUNT)) return false;
   return info.collectionIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200);
 }
 
@@ -416,6 +583,12 @@ export type AgentControlEvent = {
   handoff?: ControlHandoffInfo;
   /** The context this `message_sent` delivered to the agent (Hubble 1.5). Hubble's alone. */
   delivery?: ControlContextDeliveryInfo;
+  /** On `project_changed` only (Hubble 1.6): what an approved write measurably changed. */
+  projectChange?: ControlProjectChangeInfo;
+  /** On `project_change_undone` only. */
+  projectUndo?: ControlProjectUndoInfo;
+  /** On `verification_started` / `verification_finished` only. */
+  verification?: ControlVerificationInfo;
   /**
    * The message itself, on the three `TEXT_EVENT_KINDS` only.
    *
@@ -501,6 +674,15 @@ export function isWellFormedControlEvent(event: AgentControlEvent): boolean {
     if (event.kind === "handoff_sent" && event.handoff.outcome === undefined) return false;
   }
 
+  // Project work (1.6): each kind carries exactly its own slice, and no other kind carries one.
+  if ((event.kind === "project_changed") !== (event.projectChange !== undefined)) return false;
+  if (event.projectChange && !isWellFormedProjectChangeInfo(event.projectChange)) return false;
+  if ((event.kind === "project_change_undone") !== (event.projectUndo !== undefined)) return false;
+  if (event.projectUndo && !isWellFormedProjectUndoInfo(event.projectUndo)) return false;
+  const verificationKind = event.kind === "verification_started" || event.kind === "verification_finished";
+  if (verificationKind !== (event.verification !== undefined)) return false;
+  if (event.verification && !isWellFormedVerificationInfo(event.verification)) return false;
+
   // Delivered context rides on the message that carried it, and only there.
   if (event.delivery !== undefined) {
     if (event.kind !== "message_sent") return false;
@@ -566,6 +748,11 @@ export function domainEventKindFor(
     // A handoff's durable record is agent history's (lib/agents/handoff).
     case "handoff_sent":
     case "handoff_received":
+    // Project work's durable record is agent history's (Hubble 1.6).
+    case "project_changed":
+    case "project_change_undone":
+    case "verification_started":
+    case "verification_finished":
       // Deliberately dropped from the durable log. See above.
       return null;
   }

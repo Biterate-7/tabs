@@ -7,6 +7,11 @@ import { emptyContextWorld } from "@/lib/agents/context/world"
 import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
 import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
 import { sessionContextPack } from "@/lib/agents/context-pack/session"
+import { projectChangeDetail, projectChangeTitle, projectUndoTitle } from "@/lib/agents/project/changes"
+import { verificationTitle } from "@/lib/agents/project/checks"
+import type { ProjectCheckId } from "@/lib/agents/project/checks"
+import { AUTH_FIX_EDIT, DEMO_PROJECT_ID, demoProjectChange, demoProjectDescriptor } from "./demo-project"
+import type { DemoProjectEdit } from "./demo-project"
 import { setWorkspaceBrief } from "@/lib/workspace/brief"
 import { agentDisplayName, handoffLinksOf } from "@/lib/agents/handoff/handoff"
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
@@ -56,6 +61,8 @@ import {
   DEMO_WORKSPACES,
   RESEARCH_ID,
   SWE_APPROVAL,
+  AUTH_APPROVAL,
+  CODEX_AUTH_SESSION,
   SWE_TAB_IDS,
 } from "./data"
 
@@ -130,6 +137,12 @@ export type DemoState = {
    * asks for. The Command Centre applies it exactly as it applies any other.
    */
   pendingChanges: Record<string, DemoPendingChange>
+  /**
+   * Project edits an approval would make (Hubble 1.6), by approval id: the
+   * demo's deterministic adapter. Measured by the product's own diff when
+   * applied, and recorded as Hubble records it — events, never claims.
+   */
+  projectEdits: Record<string, DemoProjectEditPending>
   /** Approvals raised during the visit, remembered after they are answered — as the Command Centre remembers them. */
   seenApprovals: RuntimeApprovalView[]
   paletteOpen: boolean
@@ -140,6 +153,13 @@ export type DemoState = {
   settingsSection: DemoSettingsSection
   /** How many things the visitor has created, for deterministic ids. */
   created: number
+}
+
+export type DemoProjectEditPending = DemoProjectEdit & {
+  sessionId: string
+  /** The agent's reply once applied, and once declined. */
+  reply: string
+  declined: string
 }
 
 export type DemoPendingChange = {
@@ -217,7 +237,16 @@ function seedContext(
   const nextSessions = sessions.map((entry) => {
     const workspaceId = entry.view.workspaceId
     if (!workspaceId) return entry
-    const built = sessionContextPack({ world: contextWorld, workspaceId, selection: contextOfSession(entry.view), sessionId: entry.view.sessionId, changes: [] })
+    // A session in the project its workspace names is told the project too (Hubble 1.6).
+    const project = entry.view.projectId === DEMO_PROJECT_ID ? demoProjectDescriptor() : undefined
+    const built = sessionContextPack({
+      world: contextWorld,
+      workspaceId,
+      selection: contextOfSession(entry.view),
+      sessionId: entry.view.sessionId,
+      changes: [],
+      ...(project ? { project } : {}),
+    })
     const attached = built.ok ? contextPackAttachedContext(built.pack, DEMO_NOW) : null
     if (!attached) return entry
     const delivery = contextDeliveryOf(attached, workspaceId)
@@ -253,6 +282,15 @@ export function createDemoState(init: DemoInit = {}): DemoState {
     handoffs: [],
     pendingDelivery: {},
     pendingChanges: { [SWE_APPROVAL.approvalId]: SWE_CHANGE },
+    projectEdits: {
+      [AUTH_APPROVAL.approvalId]: {
+        ...AUTH_FIX_EDIT,
+        changeId: AUTH_APPROVAL.approvalId,
+        sessionId: CODEX_AUTH_SESSION,
+        reply: "Done: the route now awaits the password check and validates its input, and the session cookie is httpOnly with an expiry. Tests pass.",
+        declined: "Understood — I left both files as they were.",
+      },
+    },
     seenApprovals: [],
     paletteOpen: false,
     contextPanelOpen: init.contextPanelOpen ?? true,
@@ -297,6 +335,10 @@ export type DemoAction =
   /** The person's brief for a workspace (Hubble 1.5), through the product's own store function. */
   | { type: "set-brief"; workspaceId: string; brief: { description: string; focus: string } }
   | { type: "respond"; approvalId: string; decision: "granted" | "denied" }
+  /** A project check the person ran (Hubble 1.6): started, then its answer. */
+  | { type: "project-check"; sessionId: string; checkId: string; check: ProjectCheckId; phase: "started" | "finished" }
+  /** The person undid a measured project change: exact, as the runtime would. */
+  | { type: "project-undo"; sessionId: string; changeId: string }
   /** The Command Centre applies an approved change, after the approval. */
   | { type: "apply-approved"; approvalId: string }
   /** The agent says what it did and its run ends, after the change is applied. */
@@ -587,7 +629,7 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
               kind: "message_received",
               summary: "Reply",
               messageId: `${approval.approvalId}-denied`,
-              text: state.pendingChanges[approval.approvalId]?.declined ?? SWE_CHANGE.declined,
+              text: state.pendingChanges[approval.approvalId]?.declined ?? state.projectEdits[approval.approvalId]?.declined ?? SWE_CHANGE.declined,
             },
           ]),
         }
@@ -606,6 +648,27 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
     }
 
     case "apply-approved": {
+      // An approval that changes project files (Hubble 1.6): the agent writes,
+      // Hubble measures — the product's own diff over the deterministic
+      // adapter's two versions — and the person's check starts.
+      const edit = state.projectEdits[action.approvalId]
+      if (edit) {
+        const events = state.events[edit.sessionId] ?? []
+        const granted = events.some((event) => event.kind === "approval_granted" && event.approvalId === action.approvalId)
+        if (!granted || events.some((event) => event.projectChange?.changeId === action.approvalId)) return state
+        const info = demoProjectChange(edit)
+        return {
+          ...state,
+          events: appendEvents(state, edit.sessionId, [
+            { kind: "project_changed", summary: [projectChangeTitle(info), projectChangeDetail(info)].filter(Boolean).join(" · "), projectChange: info },
+            {
+              kind: "verification_started",
+              summary: verificationTitle("test", "running"),
+              verification: { checkId: `check-${action.approvalId}`, projectId: info.projectId, check: "test", outcome: "running", changeId: action.approvalId },
+            },
+          ]),
+        }
+      }
       // An approval that changes the workspace: a new collection holding the
       // tabs the card named — Claude Code's, or a handed-off agent's.
       const pending = state.pendingChanges[action.approvalId]
@@ -648,6 +711,25 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
     }
 
     case "finish-approved": {
+      const edit = state.projectEdits[action.approvalId]
+      if (edit) {
+        const events = state.events[edit.sessionId] ?? []
+        const messageId = `${action.approvalId}-granted`
+        if (!events.some((event) => event.projectChange?.changeId === action.approvalId) || events.some((event) => event.messageId === messageId)) return state
+        return {
+          ...state,
+          sessions: patchSession(state.sessions, edit.sessionId, "ready"),
+          events: appendEvents(state, edit.sessionId, [
+            {
+              kind: "verification_finished",
+              summary: verificationTitle("test", "passed"),
+              verification: { checkId: `check-${action.approvalId}`, projectId: DEMO_PROJECT_ID, check: "test", outcome: "passed", exitCode: 0, durationMs: 8_400, changeId: action.approvalId },
+            },
+            { kind: "message_received", summary: "Reply", messageId, text: edit.reply },
+            { kind: "run_completed", summary: "Run completed." },
+          ]),
+        }
+      }
       const change = state.changes.find((candidate) => candidate.approvalId === action.approvalId)
       if (!change) return state
       const messageId = `${action.approvalId}-granted`
@@ -666,6 +748,39 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
           { kind: "run_completed", summary: "Run completed." },
         ]),
       }
+    }
+
+    case "project-check": {
+      const latest = [...(state.events[action.sessionId] ?? [])].reverse().find((event) => event.projectChange && event.projectChange.outcome !== "not_applied")
+      const changeId = latest?.projectChange?.changeId
+      const base = { checkId: action.checkId, projectId: DEMO_PROJECT_ID, check: action.check, ...(changeId ? { changeId } : {}) }
+      return {
+        ...state,
+        events: appendEvents(state, action.sessionId, [
+          action.phase === "started"
+            ? { kind: "verification_started", summary: verificationTitle(action.check, "running"), verification: { ...base, outcome: "running" } }
+            : {
+                kind: "verification_finished",
+                summary: verificationTitle(action.check, "passed"),
+                verification: {
+                  ...base,
+                  outcome: "passed",
+                  exitCode: 0,
+                  durationMs: action.check === "git_status" ? 300 : 6_200,
+                  ...(action.check === "git_status" ? { git: { modified: 2, added: 0, deleted: 0, untracked: 0, renamed: 0 } } : {}),
+                },
+              },
+        ]),
+      }
+    }
+
+    case "project-undo": {
+      const events = state.events[action.sessionId] ?? []
+      const change = events.find((event) => event.projectChange?.changeId === action.changeId)?.projectChange
+      if (!change || events.some((event) => event.projectUndo?.changeId === action.changeId && event.projectUndo.outcome !== "refused")) return state
+      const files = change.files.filter((file) => file.change !== "unchanged").length
+      const info = { changeId: action.changeId, projectId: change.projectId, outcome: "undone" as const, files }
+      return { ...state, events: appendEvents(state, action.sessionId, [{ kind: "project_change_undone", summary: projectUndoTitle(info), projectUndo: info }]) }
     }
 
     case "undo": {

@@ -13,6 +13,8 @@ import { prepareHandoffPreview } from "@/lib/agents/handoff/preview"
 import type { HandoffFailure, SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
+import type { ProjectInspection } from "@/lib/agents/project/inspection"
+import type { ProjectChangeReview } from "@/lib/agents/project/changes"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type {
   ProviderConnectionView,
@@ -70,6 +72,12 @@ export type ScriptedRuntime = {
   readonly handoffs: readonly SessionHandoff[]
   /** Messages sent, with the context each delivered — as the host records it on the message (Hubble 1.5). */
   readonly sentMessages: readonly { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[]
+  /** What `inspect_project` answers for a project (Hubble 1.6). Absent: refused as unknown. */
+  setInspection: (projectId: string, inspection: Omit<ProjectInspection, "projectId" | "inspectedAt"> | null) => void
+  /** What `undo_project_change` answers. Default: undone, one file. */
+  setUndoResult: (result: { outcome: "undone" | "refused" | "partial"; reason?: "changed" | "no_copy" | "unavailable" | "sensitive"; files: number }) => void
+  /** What `review_project_change` answers. Default: refused. */
+  setReview: (review: ProjectChangeReview | null) => void
 }
 
 /** The actor a scripted runtime answers history for — the local actor, as on a Hubble with no accounts. */
@@ -139,6 +147,10 @@ export function createScriptedRuntime(
   const handoffs: SessionHandoff[] = []
   const sentMessages: { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[] = []
   let handoffFailure: HandoffFailure | null = null
+  const inspections = new Map<string, Omit<ProjectInspection, "projectId" | "inspectedAt">>()
+  let undoResult: { outcome: "undone" | "refused" | "partial"; reason?: "changed" | "no_copy" | "unavailable" | "sensitive"; files: number } = { outcome: "undone", files: 1 }
+  let review: ProjectChangeReview | null = null
+  let checkCounter = 0
   /** Each session as the host describes it: with its handoff links, from the records. */
   const linked = (view: RuntimeSessionView): RuntimeSessionView => {
     const links = handoffLinksOf(view.sessionId, handoffs)
@@ -508,6 +520,21 @@ export function createScriptedRuntime(
         })
       }
 
+      /* Project execution (Hubble 1.6), answered as the host answers it. */
+      case "inspect_project": {
+        const found = inspections.get(command.projectId)
+        if (!found) return runtimeFailure<never>("project_scope_violation")
+        return { ok: true, value: { projectId: command.projectId, inspectedAt: 1_700_000_000_000, ...found } }
+      }
+      case "run_project_check":
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: { checkId: `check-${++checkCounter}` } }
+      case "undo_project_change":
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: undoResult }
+      case "review_project_change":
+        return review ? { ok: true, value: review } : runtimeFailure<never>("invalid_request")
+
       default:
         return runtimeFailure<never>("invalid_request")
     }
@@ -560,6 +587,16 @@ export function createScriptedRuntime(
     },
     handoffs,
     sentMessages,
+    setInspection: (projectId, inspection) => {
+      if (inspection) inspections.set(projectId, inspection)
+      else inspections.delete(projectId)
+    },
+    setUndoResult: (next) => {
+      undoResult = next
+    },
+    setReview: (next) => {
+      review = next
+    },
   }
 }
 

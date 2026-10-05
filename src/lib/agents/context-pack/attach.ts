@@ -1,7 +1,9 @@
 import { createAttachment, MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/agents/control/context";
 import { contextPackId } from "./pack";
 import type { AgentAttachedContext, AgentContextAttachment } from "@/lib/agents/control/context";
-import type { ContextPack } from "./pack";
+import { PROJECT_CAPABILITY_AGENT_PHRASES } from "@/lib/agents/project/capabilities";
+import { PROJECT_TYPE_LABELS } from "@/lib/agents/project/inspection";
+import type { ContextPack, ContextPackProject } from "./pack";
 
 /**
  * A Context Pack, as the agent runtime receives it.
@@ -41,6 +43,21 @@ export function workspaceAttachmentDetail(pack: ContextPack): string | undefined
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/**
+ * The project as one line an agent reads (Hubble 1.6): what kind, which Git
+ * branch, where it lives, and exactly what it may do there. Never a path.
+ */
+export function projectAttachmentDetail(project: ContextPackProject): string {
+  const parts: string[] = [];
+  parts.push(project.type ? `${PROJECT_TYPE_LABELS[project.type]} project` : "Project");
+  if (project.repository?.branch) parts.push(`Git branch ${project.repository.branch}${project.repository.head ? ` at ${project.repository.head}` : ""}`);
+  else if (project.repository?.head) parts.push(`Git commit ${project.repository.head}`);
+  parts.push(project.location === "local" ? "on the person's own machine — your working directory" : "in a sandbox Hubble created");
+  const may = project.capabilities.filter((capability) => capability === "read_files" || capability === "write_files" || capability === "run_commands");
+  parts.push(may.length > 0 ? `You may ${may.map((capability) => PROJECT_CAPABILITY_AGENT_PHRASES[capability]).join("; ")}` : "You may not touch its files");
+  return parts.join(" · ");
+}
+
 export function contextPackAttachments(pack: ContextPack): AgentContextAttachment[] {
   const attachments: AgentContextAttachment[] = [];
   const push = (attachment: AgentContextAttachment | null) => {
@@ -66,6 +83,19 @@ export function contextPackAttachments(pack: ContextPack): AgentContextAttachmen
   }
   for (const relationship of pack.relationships) {
     push(createAttachment({ kind: "relationship", id: relationship.id, label: relationship.label, detail: "depends on" }));
+  }
+  // The project and the files the work touched (Hubble 1.6). The runtime refuses a
+  // project reference that is not the session's own, and files without one.
+  if (pack.project) push(createAttachment({ kind: "project", id: pack.project.id, label: pack.project.name, detail: projectAttachmentDetail(pack.project) }));
+  if (pack.project) {
+    for (const file of pack.files) {
+      const how = file.outside
+        ? "changed outside this session since you last edited it"
+        : file.change === "created"
+          ? "created by earlier work"
+          : "edited by earlier work";
+      push(createAttachment({ kind: "file", id: file.path, label: file.path, detail: file.state === "missing" ? `${how} · no longer in the project` : how }));
+    }
   }
   return attachments;
 }

@@ -217,7 +217,8 @@ describe("a handoff passes the canonical pack", () => {
     expect(message.text).toContain("Instruction from the person:\nContinue by fixing the remaining tests.");
     expect(message.text).not.toContain("SOURCE TRANSCRIPT");
     expect(message.text).not.toContain("PRIVATE REASONING");
-    expect(message.context?.attachments.map((entry) => `${entry.kind}:${entry.id}`)).toEqual(["workspace:w-research", "collection:c-pricing"]);
+    // Hubble 1.6: and the project the target works in, described for it.
+    expect(message.context?.attachments.map((entry) => `${entry.kind}:${entry.id}`)).toEqual(["workspace:w-research", "collection:c-pricing", "project:p1"]);
 
     const target = started.value.session!;
     expect(target.contextSnapshotId).toMatch(/^pack-[0-9a-f]{16}$/);
@@ -225,5 +226,58 @@ describe("a handoff passes the canonical pack", () => {
     const delivered = (await r.events(target.sessionId)).find((event) => event.kind === "message_sent")!;
     expect(delivered.handoff?.handoffId).toBe(started.value.handoff.handoffId);
     expect(delivered.delivery).toMatchObject({ workspace: true, collections: 1, collectionIds: ["c-pricing"] });
+  });
+});
+
+describe("the handoff target's pack, with its project (Hubble 1.6)", () => {
+  it("is exactly the pack the Command Centre's recipe builds for that session — so it can tell when it changes", async () => {
+    const { contextOfSession } = await import("@/lib/agents/command-centre/working-context");
+    const { handoffThatStarted, latestInstruction } = await import("@/lib/agents/context-pack/session");
+    const { describeProject } = await import("@/lib/agents/project/describe");
+    const r = await rig();
+    const created = await r.send({ name: "create_session", provider: "claude-code", projectId: "p1", workspaceId: "w-research", contextSnapshot: RESEARCH });
+    if (!created.ok) throw new Error(created.error.code);
+    const sourceId = created.value.sessionId;
+    r.claude.emit({ sessionId: sourceId, kind: "run_completed" });
+    const prepared = await r.send({ name: "prepare_handoff", sourceSessionId: sourceId, targetProvider: "openai-codex", contextSnapshot: RESEARCH });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    const started = await r.send({
+      name: "start_handoff",
+      sourceSessionId: sourceId,
+      targetProvider: "openai-codex",
+      contextSnapshot: RESEARCH,
+      fingerprint: prepared.value.fingerprint,
+      include: { workspace: true, previousResult: true },
+      instruction: "Fix the authentication bug.",
+      projectId: "p1",
+    });
+    if (!started.ok) throw new Error(started.error.code);
+    const target = started.value.session!;
+    const read = await r.send({ name: "get_session", sessionId: target.sessionId });
+    if (!read.ok) throw new Error(read.error.code);
+    const handoffFrom = handoffThatStarted(target.sessionId, read.value.handoffs);
+    const events = await r.events(target.sessionId);
+    const instruction = latestInstruction(events, target.sessionId, handoffFrom);
+
+    // As the Command Centre describes it: the grant, and the target agent's own capabilities as the runtime reports them.
+    const status = await r.send({ name: "get_status" });
+    const providerCapabilities = status.ok ? status.value.providers.find((entry) => entry.provider === "openai-codex")!.capabilities : [];
+    const project = describeProject({
+      project: { id: "p1", name: "Dev", source: "local", permissions: { scopes: ["read_workspace", "read_project", "write_workspace"], projectId: "p1", grantedAt: T0 } },
+      local: false,
+      providerCapabilities,
+    });
+    const built = sessionContextPack({
+      world: contextWorldOfSnapshot(RESEARCH),
+      workspaceId: "w-research",
+      selection: contextOfSession(read.value.session),
+      sessionId: target.sessionId,
+      ...(handoffFrom ? { handoffFrom } : {}),
+      ...(instruction ? { instruction } : {}),
+      project,
+    });
+    if (!built.ok) throw new Error(built.reason);
+    expect(built.pack.project).toMatchObject({ id: "p1", name: "Dev", capabilities: ["read_files"] });
+    expect(contextPackId(built.pack)).toBe(read.value.session.contextSnapshotId);
   });
 });

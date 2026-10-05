@@ -12,6 +12,7 @@ import { platformProvider } from "@/lib/agents/platform/catalog"
 import { cn } from "@/lib/utils"
 import type { ApprovalCommandPreview } from "@/lib/agents/control/command-preview"
 import type { RuntimeApprovalView } from "@/lib/agents/runtime/protocol"
+import type { ApprovalProjectFile } from "@/lib/agents/project/changes"
 import type { WorkspacePlanPreview, WorkspacePlanStep } from "@/lib/agents/session-context/plan"
 
 /**
@@ -152,6 +153,79 @@ function PlanSummary({
  * A working directory outside the project is said in words, because that is
  * the detail most worth noticing and the easiest to miss in a path.
  */
+const FILE_ACTION_VERB: Record<string, string> = { create_files: "create", modify_files: "modify", delete_files: "delete" }
+const fileCount = (count: number) => `${count} ${count === 1 ? "file" : "files"}`
+
+/**
+ * A project change (Hubble 1.6), said truthfully before it happens: which
+ * files, which of them may hold secrets or changed since this session last
+ * saw them — and what Hubble will do. No line counts are shown here, because
+ * none exist yet: the agent has not written anything. Hubble measures the
+ * real change once it is made.
+ */
+function ProjectChangesSummary({
+  approval,
+  agentName,
+  projectName,
+  reviewing,
+  onToggleReview,
+}: {
+  approval: RuntimeApprovalView
+  agentName: string
+  projectName?: string
+  reviewing: boolean
+  onToggleReview: () => void
+}) {
+  const files: readonly ApprovalProjectFile[] = approval.projectFiles ?? approval.targets.map((path) => ({ path }))
+  const flagged = files.filter((file) => file.sensitive || file.changedOutside).length
+  return (
+    <div className="mt-0.5" data-project-changes>
+      <p className="text-body-sm text-muted-foreground">
+        {agentName} wants to {FILE_ACTION_VERB[approval.action] ?? "change"} {fileCount(files.length)}
+        {projectName ? (
+          <>
+            {" "}in <span className="text-foreground">{projectName}</span>
+          </>
+        ) : null}
+      </p>
+      <p className="mt-1.5 text-label text-foreground">Project changes · {fileCount(files.length)}</p>
+      <ul aria-label="Files" className="mt-1 flex flex-col gap-1">
+        {files.map((file) => (
+          <li key={file.path} className="min-w-0">
+            <span className="block truncate font-mono text-meta text-foreground" title={file.path}>
+              {file.path}
+            </span>
+            {(reviewing || file.sensitive || file.changedOutside) && (file.sensitive || file.changedOutside) && (
+              <span className="block text-meta text-warning">
+                {file.sensitive
+                  ? "May hold secrets — Hubble won't read or copy it, so this can't be undone."
+                  : "Changed since this session last saw it — by you or another tool."}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {reviewing && (
+        <p className="mt-1.5 text-meta text-tertiary">
+          Hubble copies {files.length === 1 ? "this file" : "these files"} before {agentName} writes, then measures exactly what changed. You can
+          undo it while nothing else has changed {files.length === 1 ? "it" : "them"}. Line-by-line changes appear once they are made.
+        </p>
+      )}
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        className="mt-1 -ml-2 text-muted-foreground"
+        aria-expanded={reviewing}
+        onClick={onToggleReview}
+      >
+        <ChevronDown className={cn("transition-transform", reviewing && "rotate-180")} />
+        {reviewing ? "Hide details" : flagged > 0 ? `Review · ${flagged} to check` : "Review"}
+      </Button>
+    </div>
+  )
+}
+
 function CommandSummary({ command, agentName }: { command: ApprovalCommandPreview; agentName: string }) {
   return (
     <div className="mt-1">
@@ -213,6 +287,8 @@ export function ApprovalPrompt({
   // person could knowingly allow — so Allow is not offered.
   const commandTrustNotice = approval.action === "run_command" ? provider?.commandTrustNotice : undefined
   const unshowable = Boolean(commandTrustNotice || approval.command) && approval.action === "run_command" && !command
+  // Project file changes (Hubble 1.6), told as such.
+  const projectChanges = Boolean(approval.projectId && FILE_ACTION_VERB[approval.action] && approval.targets.length > 0)
 
   /*
     Focus lands on Deny.
@@ -297,6 +373,14 @@ export function ApprovalPrompt({
             </ul>
           )}
         </div>
+      ) : projectChanges ? (
+        <ProjectChangesSummary
+          approval={approval}
+          agentName={agentName}
+          {...(projectName ? { projectName } : {})}
+          reviewing={reviewing}
+          onToggleReview={() => setReviewing((open) => !open)}
+        />
       ) : command ? (
         <CommandSummary command={command} agentName={agentName} />
       ) : unshowable ? (
@@ -311,7 +395,7 @@ export function ApprovalPrompt({
 
       {commandTrustNotice && <p className="mt-1.5 text-meta text-muted-foreground">{commandTrustNotice}</p>}
 
-      {!approval.change && !approval.plan && !command && !unshowable && approval.targets.length > 0 && (
+      {!approval.change && !approval.plan && !command && !unshowable && !projectChanges && approval.targets.length > 0 && (
         <ul className="mt-1.5 flex flex-col gap-0.5">
           {approval.targets.map((target) => (
             <li key={target} className="truncate font-mono text-meta text-muted-foreground">
@@ -325,7 +409,7 @@ export function ApprovalPrompt({
         <p className="mt-1.5 text-body-sm text-tertiary">{approval.reason}</p>
       )}
 
-      {projectName && (
+      {projectName && !projectChanges && (
         <p className="mt-1.5 text-label text-tertiary">
           In <span className="text-muted-foreground">{projectName}</span>
         </p>
@@ -362,7 +446,7 @@ export function ApprovalPrompt({
             ? { "aria-label": approval.plan.operationCount === 1 ? "Approve this change, once" : `Approve these ${approval.plan.operationCount} changes, once` }
             : {})}
         >
-          {approval.plan ? `Approve ${changeCount(approval.plan.operationCount)}` : "Allow"}
+          {approval.plan ? `Approve ${changeCount(approval.plan.operationCount)}` : projectChanges ? "Approve changes" : "Allow"}
         </Button>
         {expiry.expired && (
           <span className="ml-1 text-body-sm text-tertiary">

@@ -70,7 +70,9 @@ export function ContextPanel({
   onSaveBrief,
   pack,
   packState,
+  packChange,
   onSendUpdate,
+  project,
   ...actions
 }: {
   session: RuntimeSessionView | null
@@ -92,6 +94,8 @@ export function ContextPanel({
   /** The workspace's brief (Hubble 1.5), from live state. Absent: no workspace to describe. */
   brief?: WorkspaceBriefView
   onSaveBrief?: (brief: { description: string; focus: string }) => void
+  /** The workspace's project (Hubble 1.6), rendered by the caller (./workspace-project.tsx). Absent: the session's project name only. */
+  project?: React.ReactNode
 } & WorkingContextActions & SessionPackProps) {
   const change = changeAccessLabel(link)
   const recent = [...changes].reverse().slice(0, 5)
@@ -151,6 +155,7 @@ export function ContextPanel({
             <SessionPackFacts
               pack={pack ?? null}
               {...(packState ? { packState } : {})}
+              {...(packChange ? { packChange } : {})}
               {...(onSendUpdate ? { onSendUpdate } : {})}
               agentName={agentName}
               busy={busy}
@@ -181,7 +186,9 @@ export function ContextPanel({
       )}
 
       <Section title="Project">
-        {projectName ? (
+        {project ? (
+          project
+        ) : projectName ? (
           <Row label="Authorized" value={projectName} />
         ) : (
           <p className="text-body-sm text-tertiary">No project. The agent can read Hubble context but cannot reach files.</p>

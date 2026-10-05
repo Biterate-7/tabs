@@ -377,3 +377,105 @@ describe("the demo's context is the product's Context Pack", () => {
     expect(within(used).getByText("Research workspace · Workspace brief")).toBeTruthy()
   })
 })
+
+/* ------------------------------------------------------------------ *
+ * Project execution (Hubble 1.6)
+ * ------------------------------------------------------------------ */
+
+describe("the demo's project work is the product's", () => {
+  it("is drawn with the app's own project section, change model and check vocabulary", () => {
+    const demo = imports(read("components/marketing/demo/demo-command-centre.tsx"))
+    const app = appImports()
+    for (const [module, name] of [
+      ["@/components/command-centre/workspace-project", "WorkspaceProjectSection"],
+      ["@/hooks/use-session-context-pack", "measuredProjectFiles"],
+    ] as const) {
+      expect(app.get(module)?.has(name), `CommandCentreView should use ${name}`).toBe(true)
+      expect(demo.get(module)?.has(name), `the demo should use ${name}`).toBe(true)
+    }
+    // The deterministic adapter measures with the product's diff and describes with its describer.
+    const adapter = imports(read("components/marketing/demo/demo-project.ts"))
+    expect(adapter.get("@/lib/agents/project/diff")?.has("lineDiff")).toBe(true)
+    expect(adapter.get("@/lib/agents/project/describe")?.has("describeProject")).toBe(true)
+    for (const { path, source } of marketingSources()) {
+      // Every sentence about a project comes from lib/agents/project — never restated here.
+      for (const words of ["Ready for agent work", "Project changes ·", "can't be undone because", "Hubble confirmed", "Typecheck passed", "Tests passed\"", "Agent may"]) {
+        expect(source, `${path} restates "${words}"`).not.toContain(words)
+      }
+    }
+  })
+
+  it("starts Codex's session with the project in its Context Pack — the product's recipe and describer", async () => {
+    const { DEVELOPMENT_ID, CODEX_AUTH_SESSION } = await import("./data")
+    const { demoProjectDescriptor } = await import("./demo-project")
+    const state = createDemoState()
+    const codex = state.sessions.find((entry) => entry.view.sessionId === CODEX_AUTH_SESSION)!.view
+    const built = sessionContextPack({
+      world: { ...emptyContextWorld(null), workspaces: state.store.workspaces, collections: state.collections, dependencies: state.dependencies },
+      workspaceId: DEVELOPMENT_ID,
+      selection: { workspaceId: DEVELOPMENT_ID, tabIds: codex.focus!.tabIds, collectionIds: codex.focus!.collectionIds },
+      sessionId: codex.sessionId,
+      changes: [],
+      project: demoProjectDescriptor(),
+    })
+    expect(built.ok && contextPackId(built.pack)).toBe(codex.contextSnapshotId)
+    expect(built.ok && built.pack.project).toMatchObject({ name: "hubble", type: "nextjs", repository: { branch: "main" } })
+  })
+
+  it("walks the loop: project → approval → measured change → tests → inspector → review → undo", async () => {
+    const { CODEX_AUTH_SESSION } = await import("./data")
+    const { AUTH_FIX_EDIT } = await import("./demo-project")
+    const { lineDiff } = await import("@/lib/agents/project/diff")
+    const { user, frame, activity, titles } = renderWindow({ view: "command-centre", selectedSessionId: CODEX_AUTH_SESSION, contextPanelOpen: true })
+    const panel = within(frame().getByRole("complementary", { name: "Session context" }))
+
+    // The workspace's project, as the app shows it.
+    const project = within(panel.getByRole("region", { name: "Project" }))
+    expect(project.getByText("Connected")).toBeTruthy()
+    expect(project.getByText("Next.js · Git main")).toBeTruthy()
+    // What the agent receives names the project.
+    const receives = within(panel.getByRole("region", { name: "What the agent receives" }))
+    expect(receives.getByText("hubble")).toBeTruthy()
+
+    // The approval card: two files, in the project, no invented line counts.
+    const card = within(frame().getByRole("group", { name: "Approval required" }))
+    expect(card.getByText(/Codex wants to modify 2 files/)).toBeTruthy()
+    expect(card.queryByText(/\+\d+ −\d+/)).toBeNull()
+    await user.click(card.getByRole("button", { name: "Approve changes" }))
+
+    // Hubble's measurement, from the product's diff over the adapter's two versions.
+    const totals = AUTH_FIX_EDIT.files.map((file) => lineDiff(file.before, file.after)).reduce((sum, diff) => ({ added: sum.added + diff.added, removed: sum.removed + diff.removed }), { added: 0, removed: 0 })
+    await waitFor(() => expect(titles()).toContain("Changed 2 files"), { timeout: 3_000 })
+    await waitFor(() => expect(titles()).toContain("Tests passed"), { timeout: 3_000 })
+    await user.click(activity().getByRole("button", { name: /Changed 2 files/ }))
+    const article = activity().getByRole("article")
+    const inspector = within(article)
+    expect(inspector.getByText("Applied — Hubble confirmed 2 files changed in hubble.")).toBeTruthy()
+    const lines = AUTH_FIX_EDIT.files.map((file) => `${file.path} · +${lineDiff(file.before, file.after).added} −${lineDiff(file.before, file.after).removed}`)
+    for (const line of lines) expect(inspector.getByText(line)).toBeTruthy()
+    expect(totals.added).toBeGreaterThan(0)
+    expect(within(inspector.getByRole("list", { name: "Verification" })).getByText("Tests passed")).toBeTruthy()
+
+    await user.click(inspector.getByRole("button", { name: "Review changes" }))
+    expect(await inspector.findByText(/The bug: verifyPassword is async/)).toBeTruthy()
+
+    await user.click(inspector.getByRole("button", { name: "Undo" }))
+    await user.click(inspector.getByRole("button", { name: "Undo change" }))
+    await waitFor(() => expect(article.getAttribute("data-action-status")).toBe("undone"))
+  })
+
+  it("keeps a past project session read-only in history — measured, verified, and no undo", async () => {
+    const { DEVELOPMENT_ID, HISTORY_EXPIRY_SESSION } = await import("./data")
+    const state = createDemoState({ view: "command-centre", currentId: DEVELOPMENT_ID, selectedHistoryId: HISTORY_EXPIRY_SESSION })
+    const detail = state.history.find((entry) => entry.session.sessionId === HISTORY_EXPIRY_SESSION)!
+    expect(detail.records.events.find((event) => event.kind === "project_changed")?.projectChange?.files[0]).toMatchObject({ path: "src/lib/session.test.ts", change: "created" })
+
+    const { user } = renderWindow({ view: "command-centre", currentId: DEVELOPMENT_ID, selectedHistoryId: HISTORY_EXPIRY_SESSION })
+    await user.click(await screen.findByRole("button", { name: /Created src\/lib\/session.test.ts/ }))
+    const inspector = within(screen.getByRole("article"))
+    expect(within(inspector.getByRole("list", { name: "Verification" })).getByText("Tests passed")).toBeTruthy()
+    expect(inspector.queryByRole("button", { name: "Undo" })).toBeNull()
+    expect(inspector.queryByRole("button", { name: "Review changes" })).toBeNull()
+    expect(inspector.getByText("Project changes can be undone only from the live session, while Hubble still holds the earlier version.")).toBeTruthy()
+  })
+})

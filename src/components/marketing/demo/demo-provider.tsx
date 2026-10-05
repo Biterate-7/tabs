@@ -21,6 +21,9 @@ import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { HandoffTransport } from "@/lib/agents/handoff/transport"
 import type { RuntimeResult } from "@/lib/agents/runtime/protocol"
+import type { ProjectWorkActions } from "@/components/agents/project-work"
+import { checkRunningIn } from "@/lib/agents/project/changes"
+import { DEMO_PROJECT_INSPECTION, demoProjectReview } from "./demo-project"
 import { DEMO_NOW, DEMO_SESSION_PROVIDERS, handoffApproval } from "./data"
 import {
   createDemoState,
@@ -58,6 +61,11 @@ type DemoContextValue = {
   undo: (changeId: string) => boolean
   /** Undoes a past session's change exactly, as `undo` does a live one. */
   undoHistory: (sessionId: string, changeId: string) => boolean
+  /**
+   * A session's project actions (Hubble 1.6) — the deterministic adapter
+   * behind the product's own ProjectWorkActions: undo, review and checks.
+   */
+  projectWork: (sessionId: string) => ProjectWorkActions
   /** Opens a saved tab's page in a new browser tab. Never navigates the landing page itself. */
   openUrl: (url: string) => void
   /**
@@ -290,9 +298,41 @@ export function HubbleDemoProvider({
     window.open(url, "_blank", "noopener,noreferrer")
   }, [])
 
+  const projectWork = useCallback(
+    (sessionId: string): ProjectWorkActions => {
+      const events = state.events[sessionId] ?? []
+      return {
+        undo: async (changeId) => {
+          const change = events.find((event) => event.projectChange?.changeId === changeId)?.projectChange
+          if (!change) return null
+          dispatch({ type: "project-undo", sessionId, changeId })
+          return { outcome: "undone", files: change.files.filter((file) => file.change !== "unchanged").length }
+        },
+        review: async (changeId) => {
+          const edit = state.projectEdits[changeId]
+          return edit ? demoProjectReview(edit) : null
+        },
+        checks: DEMO_PROJECT_INSPECTION.checks,
+        runCheck: async (check) => {
+          if (checkRunningIn(events)) return false
+          const checkId = `demo-check-${sessionId}-${events.length}`
+          dispatch({ type: "project-check", sessionId, checkId, check, phase: "started" })
+          const timer = setTimeout(() => {
+            timers.current.delete(timer)
+            dispatch({ type: "project-check", sessionId, checkId, check, phase: "finished" })
+          }, DEMO_STEP_DELAY_MS * 2)
+          timers.current.add(timer)
+          return true
+        },
+        checking: checkRunningIn(events),
+      }
+    },
+    [state.events, state.projectEdits]
+  )
+
   const value = useMemo<DemoContextValue>(
-    () => ({ state, dispatch, world, send, respond, undo, undoHistory, openUrl, handoff, ...(scheme ? { scheme } : {}) }),
-    [state, world, send, respond, undo, undoHistory, openUrl, handoff, scheme]
+    () => ({ state, dispatch, world, send, respond, undo, undoHistory, projectWork, openUrl, handoff, ...(scheme ? { scheme } : {}) }),
+    [state, world, send, respond, undo, undoHistory, projectWork, openUrl, handoff, scheme]
   )
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>

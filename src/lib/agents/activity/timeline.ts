@@ -9,6 +9,8 @@ import {
   toolStage,
 } from "@/lib/agents/command-centre/presentation";
 import { relativePathBasename } from "@/lib/agents/paths";
+import { projectChangeDetail, projectChangeTitle, projectUndoTitle, undoRefusalText } from "@/lib/agents/project/changes";
+import { verificationDetail, verificationTitle } from "@/lib/agents/project/checks";
 import { agentDisplayName, handoffPassedLine } from "@/lib/agents/handoff/handoff";
 import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
@@ -110,6 +112,10 @@ export type AgentActivityKind =
   | "handoff_failed"
   /** This session was started by a handoff. */
   | "handoff_received"
+  /** Hubble measured what an approved project write changed (Hubble 1.6). */
+  | "project_changed"
+  /** A project check the person ran — running, passed, failed, or could not run. */
+  | "verification"
   | "action_failed"
   | "error"
   | "completed"
@@ -178,6 +184,10 @@ export type ActivityRefs = {
   file?: { relativePath: string; projectId: string; operation: "created" | "updated" };
   /** The handoff a handoff entry is about (Hubble 1.4). */
   handoffId?: string;
+  /** The measured project change an entry is about (Hubble 1.6) — the approval's id. */
+  projectChangeId?: string;
+  /** The project check an entry is about. */
+  checkId?: string;
 };
 
 export type AgentActivityInput = {
@@ -470,6 +480,8 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
   const decided = new Set<string>();
   const rejected = new Set<string>();
   const fileEntries = new Map<string, AgentActivityEntry>();
+  /** Measured project changes by approval, with the files each covered (Hubble 1.6). */
+  const projectChanges = new Map<string, Set<string>>();
   let lastEvent: SequencedControlEvent | undefined;
   /**
    * The call that just finished, for the files it reports straight after —
@@ -892,11 +904,117 @@ export function buildAgentActivityTimeline(input: AgentActivityInput): AgentActi
         break;
       }
 
+      /* -------- Project work (Hubble 1.6): Hubble's own measurements. -------- */
+
+      case "project_changed": {
+        const info = event.projectChange;
+        if (!info) break;
+        endReads();
+        const changed = info.files.filter((file) => file.change !== "unchanged").length;
+        const detail = projectChangeDetail(info);
+        push({
+          id: `project-change:${info.changeId}`,
+          kind: "project_changed",
+          status: info.outcome === "not_applied" ? "failed" : "completed",
+          title: projectChangeTitle(info),
+          ...(detail ? { description: detail } : {}),
+          at: event.timestamp,
+          metadata: { files: changed },
+          refs: { sequence: event.sequence, approvalId: info.changeId, projectChangeId: info.changeId },
+        });
+        projectChanges.set(info.changeId, new Set(info.files.map((file) => file.path)));
+        break;
+      }
+
+      case "project_change_undone": {
+        const info = event.projectUndo;
+        if (!info) break;
+        endReads();
+        const done = info.outcome !== "refused";
+        push({
+          id: `project-undo:${info.changeId}:${event.sequence}`,
+          kind: "undone",
+          status: info.outcome === "undone" ? "completed" : "failed",
+          title: projectUndoTitle(info),
+          ...(!done || info.outcome === "partial" ? { description: info.outcome === "partial" ? "Only some files could be put back" : undoRefusalText(info.reason) } : {}),
+          at: event.timestamp,
+          refs: { sequence: event.sequence, approvalId: info.changeId, projectChangeId: info.changeId },
+        });
+        break;
+      }
+
+      case "verification_started":
+      case "verification_finished": {
+        const info = event.verification;
+        if (!info) break;
+        endReads();
+        const id = `check:${info.checkId}`;
+        const existing = byId.get(id);
+        const finished = event.kind === "verification_finished";
+        const status: AgentActivityStatus = !finished
+          ? "active"
+          : info.outcome === "passed"
+            ? "completed"
+            : info.outcome === "failed"
+              ? "failed"
+              : "info";
+        const detail = verificationDetail({
+          outcome: info.outcome,
+          ...(info.exitCode !== undefined ? { exitCode: info.exitCode } : {}),
+          ...(info.durationMs !== undefined ? { durationMs: info.durationMs } : {}),
+          ...(info.git ? { git: info.git } : {}),
+        });
+        if (existing) {
+          existing.status = status;
+          existing.title = verificationTitle(info.check, info.outcome);
+          if (detail) existing.description = detail;
+          existing.completedAt = event.timestamp;
+          break;
+        }
+        push({
+          id,
+          kind: "verification",
+          status,
+          title: verificationTitle(info.check, info.outcome),
+          ...(detail ? { description: detail } : {}),
+          at: event.timestamp,
+          refs: { sequence: event.sequence, checkId: info.checkId, ...(info.changeId ? { projectChangeId: info.changeId } : {}) },
+        });
+        break;
+      }
+
       case "thinking":
       case "message_delta":
         break;
     }
     lastCallKey = undefined;
+  }
+
+  // A check is running only while the session is: one that never reported its end
+  // (a restart, history) is said as unfinished — never as passed.
+  if (!live) {
+    for (const entry of entries) {
+      if (entry.kind !== "verification" || entry.status !== "active") continue;
+      entry.status = "info";
+      entry.title = "Check didn't finish";
+      entry.description = "Hubble lost track of it before it ended";
+    }
+  }
+
+  // One fact, one entry: an agent's own "Edited auth.ts" is superseded by Hubble's
+  // measurement of the same approved change, which says what actually changed.
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!;
+    const file = entry.refs?.file;
+    if (!file || entry.status !== "completed") continue;
+    const approvalId = entry.refs?.approvalId;
+    const superseded = approvalId
+      ? projectChanges.get(approvalId)?.has(file.relativePath)
+      : [...projectChanges.values()].some((paths) => paths.has(file.relativePath));
+    if (superseded) {
+      entries.splice(index, 1);
+      byId.delete(entry.id);
+    }
   }
 
   // A call the person declined, whose failure arrived before the decision did.

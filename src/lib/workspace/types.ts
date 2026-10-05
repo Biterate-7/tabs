@@ -20,6 +20,17 @@ export type WorkspaceBrief = {
   updatedAt: number;
 };
 
+/**
+ * The local project a workspace is about (Hubble 1.6): a reference to an
+ * authorized project by id, never a path. The project itself — its folder and
+ * what agents may do in it — is the control plane's `AgentProject`, kept on
+ * this device; see src/lib/workspace/project.ts.
+ */
+export type WorkspaceProjectLink = {
+  projectId: string;
+  attachedAt: number;
+};
+
 export type Workspace = {
   id: string;
   name: string;
@@ -32,6 +43,8 @@ export type Workspace = {
   logo?: string;
   /** What the workspace is for and what is being worked on now, in the user's words (Hubble 1.5 — see src/lib/workspace/brief.ts). Absent until the user writes one. */
   brief?: WorkspaceBrief;
+  /** The project attached to this workspace (Hubble 1.6 — see src/lib/workspace/project.ts). Absent until one is attached. */
+  project?: WorkspaceProjectLink;
   createdAt: number;
   updatedAt: number;
 };

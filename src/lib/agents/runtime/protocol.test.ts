@@ -91,6 +91,10 @@ describe("what the parser accepts", () => {
         fingerprint: "0123456789abcdef",
         include: { workspace: true, previousResult: true },
       },
+      inspect_project: { name: "inspect_project", projectId: "p1", workspaceId: "w1", files: ["src/auth.ts"] },
+      run_project_check: { name: "run_project_check", sessionId: "s1", check: "typecheck" },
+      undo_project_change: { name: "undo_project_change", sessionId: "s1", changeId: "a1" },
+      review_project_change: { name: "review_project_change", sessionId: "s1", changeId: "a1" },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {

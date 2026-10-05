@@ -1065,7 +1065,8 @@ describe("session workspace context", () => {
     expect(popover.getByText("Can change collections — you approve each change")).toBeTruthy()
     expect(popover.getByText(/Switching workspaces in Hubble doesn.t move it/)).toBeTruthy()
     // Nothing about the machinery.
-    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port|tabdump_[a-z2-7]{16}/i)
+    // Whole words: "Unsupported" (a project state, Hubble 1.6) is not a port.
+    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|\bport\b|tabdump_[a-z2-7]{16}/i)
   })
 
   it("says a read-only session cannot change anything", async () => {

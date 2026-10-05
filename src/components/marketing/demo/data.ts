@@ -13,6 +13,9 @@ import type { TabDependency } from "@/lib/dependencies/types"
 import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
+import { AUTH_FIX_EDIT, DEMO_PROJECT_ID, DEMO_PROJECT_NAME, demoProjectChange } from "./demo-project"
+import { projectChangeTitle } from "@/lib/agents/project/changes"
+import { verificationTitle } from "@/lib/agents/project/checks"
 
 /*
  * The landing page demo's world.
@@ -185,6 +188,30 @@ const BUILD_TABS: Tab[] = [
 
 const SEMESTER_SECTIONS: Section[] = [section("m-math", "Linear algebra"), section("m-writing", "Essays")]
 
+/*
+ * Development (Hubble 1.6): a workspace about one project. Its tabs are what
+ * someone fixing sign-in keeps open; its project is `hubble`, attached.
+ */
+export const DEVELOPMENT_ID = "w-development"
+
+const DEVELOPMENT_SECTIONS: Section[] = [section("d-auth", "Authentication"), section("d-platform", "Platform")]
+
+const DEVELOPMENT_TABS: Tab[] = [
+  tab("d-route-handlers", "https://nextjs.org/docs/app/building-your-application/routing/route-handlers", "Route Handlers — Next.js", { category: "projects", sectionId: "d-auth", lastAccessedAt: DEMO_NOW - 12 * MIN }),
+  tab("d-cookies", "https://nextjs.org/docs/app/api-reference/functions/cookies", "cookies — Next.js", { category: "projects", sectionId: "d-auth" }),
+  tab("d-owasp", "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html", "Session Management Cheat Sheet — OWASP", { category: "projects", sectionId: "d-auth", isFavorite: true }),
+  tab("d-zod", "https://zod.dev/", "Zod — TypeScript-first schema validation", { category: "projects", sectionId: "d-auth" }),
+  tab("d-mdn-cookies", "https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies", "Using HTTP cookies — MDN", { category: "projects", sectionId: "d-auth" }),
+  tab("d-vitest", "https://vitest.dev/guide/", "Getting Started — Vitest", { category: "projects", sectionId: "d-platform" }),
+]
+
+/** Development's brief: the person's own words. */
+export const DEVELOPMENT_BRIEF = {
+  description: "The Hubble web app.",
+  focus: "Authentication: sign-in accepts a wrong password.",
+  updatedAt: DEMO_NOW - 2 * HOUR,
+} as const
+
 const SEMESTER_TABS: Tab[] = [
   tab("m-ocw", "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/", "Linear Algebra — MIT OpenCourseWare", { category: "school", sectionId: "m-math" }),
   tab("m-3b1b", "https://www.3blue1brown.com/topics/linear-algebra", "Essence of linear algebra — 3Blue1Brown", { category: "school", sectionId: "m-math", isFavorite: true }),
@@ -209,6 +236,12 @@ export const DEMO_WORKSPACES: readonly Workspace[] = [
   { ...workspace(RESEARCH_ID, "Research", RESEARCH_TABS, RESEARCH_SECTIONS), brief: { ...RESEARCH_BRIEF } },
   workspace(BUILD_ID, "Hubble Build", BUILD_TABS, BUILD_SECTIONS),
   workspace(SEMESTER_ID, "Semester", SEMESTER_TABS, SEMESTER_SECTIONS),
+  // Hubble 1.6: the workspace's project is attached — a reference by id, as the app stores it.
+  {
+    ...workspace(DEVELOPMENT_ID, "Development", DEVELOPMENT_TABS, DEVELOPMENT_SECTIONS),
+    brief: { ...DEVELOPMENT_BRIEF },
+    project: { projectId: DEMO_PROJECT_ID, attachedAt: DEMO_NOW - 3 * DAY },
+  },
 ]
 
 // --------------------------------------------------------- collections
@@ -228,6 +261,7 @@ export const DEMO_COLLECTIONS: readonly Collection[] = [
   collection("c-school", RESEARCH_ID, "School", ["t-ocw", "t-khan"]),
   collection("c-release", BUILD_ID, "Release checklist", ["b-next", "b-vercel", "b-changelog"]),
   collection("c-essay", SEMESTER_ID, "Essay sources", ["m-scholar", "m-zotero"]),
+  collection("c-api", DEVELOPMENT_ID, "API", ["d-route-handlers", "d-cookies", "d-owasp"]),
 ]
 
 export const DEMO_DEPENDENCIES: readonly TabDependency[] = [
@@ -239,22 +273,22 @@ export const DEMO_DEPENDENCIES: readonly TabDependency[] = [
 // --------------------------------------------------------------- agents
 
 /**
- * Connected agents, as the roster keeps them. Codex is connected and idle:
- * the demo simply shows no Codex session below.
+ * Connected agents, as the roster keeps them. Codex works in Development, on
+ * its project (Hubble 1.6).
  */
 export const DEMO_AGENTS: readonly AgentIdentity[] = (
   [
     ["claude-code", "Claude Code", RESEARCH_ID],
     ["gemini", "Gemini CLI", RESEARCH_ID],
     ["grok", "Grok Build", BUILD_ID],
-    ["openai-codex", "Codex", undefined],
+    ["openai-codex", "Codex", DEVELOPMENT_ID],
   ] as const
 ).map(([provider, name, workspaceId]) => ({
   id: `agent:${provider}`,
   provider,
   name,
   connectedAt: DEMO_NOW - 5 * DAY,
-  approvedScopes: ["read_workspace", "read_project", "write_project", "mcp_tools"],
+  approvedScopes: ["read_workspace", "read_project", "write_project", "mcp_tools", ...(provider === "openai-codex" ? (["run_commands"] as const) : [])],
   approvedAt: DEMO_NOW - 5 * DAY,
   ...(workspaceId ? { workspaceId } : {}),
 }))
@@ -308,7 +342,13 @@ export const GEMINI_SESSION = "session-gemini-ideas"
 export const GROK_SESSION = "session-grok-duplicates"
 export const CLAUDE_RELEASE_SESSION = "session-claude-release"
 
-export const DEMO_PROJECTS = [{ id: "project-hubble-web", name: "hubble-web" }] as const
+export const DEMO_PROJECTS = [
+  { id: "project-hubble-web", name: "hubble-web" },
+  { id: DEMO_PROJECT_ID, name: DEMO_PROJECT_NAME },
+] as const
+
+/** Codex fixing sign-in in Development's project (Hubble 1.6). */
+export const CODEX_AUTH_SESSION = "session-codex-auth"
 
 export const DEMO_SESSIONS: readonly CommandCentreSession[] = [
   session({
@@ -350,6 +390,20 @@ export const DEMO_SESSIONS: readonly CommandCentreSession[] = [
     updatedAt: DEMO_NOW - 5 * HOUR,
     workspaceId: BUILD_ID,
     context: context(BUILD_ID, "Hubble Build", false),
+  }),
+  session({
+    sessionId: CODEX_AUTH_SESSION,
+    provider: "openai-codex",
+    status: "waiting_for_approval",
+    title: "Fix the authentication bug",
+    awaitingApproval: true,
+    cancellable: true,
+    projectId: DEMO_PROJECT_ID,
+    updatedAt: DEMO_NOW - 2 * MIN,
+    workspaceId: DEVELOPMENT_ID,
+    context: context(DEVELOPMENT_ID, "Development", false),
+    // Pointed at the API collection and two more tabs: five tabs in all.
+    focus: { tabIds: ["d-zod", "d-mdn-cookies"], collectionIds: ["c-api"], delivered: true },
   }),
 ]
 
@@ -451,12 +505,30 @@ export const RELEASE_APPROVAL: RuntimeApprovalView = {
 }
 
 /**
+ * Codex asks to change two project files (Hubble 1.6): the approval as the
+ * broker reports it, with the runtime's note on each file.
+ */
+export const AUTH_APPROVAL: RuntimeApprovalView = {
+  approvalId: "approval-auth-fix",
+  sessionId: CODEX_AUTH_SESSION,
+  provider: "openai-codex",
+  action: "modify_files",
+  scope: "write_project",
+  projectId: DEMO_PROJECT_ID,
+  targets: AUTH_FIX_EDIT.files.map((file) => file.path),
+  projectFiles: AUTH_FIX_EDIT.files.map((file) => ({ path: file.path })),
+  reason: "Await the password check and harden the session cookie.",
+  requestedAt: DEMO_NOW - 2 * MIN,
+  expiresAt: DEMO_NOW + 8 * MIN,
+}
+
+/**
  * Approvals the demo's sessions asked for, as the broker reported them —
  * what the Command Centre remembers about an approval once it is answered,
  * so the decision on the timeline can still say what was approved.
  */
 export const DEMO_KNOWN_APPROVALS: ReadonlyMap<string, RuntimeApprovalView> = new Map(
-  [SWE_APPROVAL, RELEASE_APPROVAL].map((approval) => [approval.approvalId, approval])
+  [SWE_APPROVAL, RELEASE_APPROVAL, AUTH_APPROVAL].map((approval) => [approval.approvalId, approval])
 )
 
 export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent[]>> = {
@@ -580,10 +652,34 @@ export const DEMO_EVENTS: Readonly<Record<string, readonly SequencedControlEvent
     ],
     DEMO_NOW - 5 * HOUR - 10 * MIN
   ),
+  [CODEX_AUTH_SESSION]: buildEvents(
+    CODEX_AUTH_SESSION,
+    "openai-codex",
+    [
+      { kind: "session_started", summary: "Session started." },
+      {
+        kind: "message_sent",
+        summary: "Message sent.",
+        messageId: "auth-m1",
+        text: "Fix the authentication bug: sign-in accepts a wrong password.",
+      },
+      { kind: "file_read", summary: "Read src/app/api/auth/route.ts", file: { relativePath: "src/app/api/auth/route.ts", projectId: DEMO_PROJECT_ID } },
+      { kind: "file_read", summary: "Read src/lib/session.ts", file: { relativePath: "src/lib/session.ts", projectId: DEMO_PROJECT_ID } },
+      {
+        kind: "message_received",
+        summary: "Reply",
+        messageId: "auth-m2",
+        text: "verifyPassword is async and the route never awaits it, so every password passes. I'll await it, validate the body, and harden the session cookie.",
+      },
+      { kind: "approval_requested", summary: "Editing files", approvalId: AUTH_APPROVAL.approvalId },
+    ],
+    DEMO_NOW - 6 * MIN
+  ),
 }
 
 export const DEMO_APPROVALS: Readonly<Record<string, readonly RuntimeApprovalView[]>> = {
   [CLAUDE_SESSION]: [SWE_APPROVAL],
+  [CODEX_AUTH_SESSION]: [AUTH_APPROVAL],
 }
 
 // --------------------------------------------------------------- history
@@ -772,7 +868,54 @@ export function handoffApproval(sessionId: string, approvalId: string, requested
   }
 }
 
+/** A past session in Development (Hubble 1.6): a project change Hubble measured and checked, read-only now. */
+export const HISTORY_EXPIRY_SESSION = "session-history-codex-expiry"
+
+const EXPIRY_CHANGE = demoProjectChange({
+  changeId: "approval-history-expiry",
+  files: [{ path: "src/lib/session.test.ts", before: "", after: 'import { describe, it, expect } from "vitest"\n\ndescribe("readSession", () => {\n  it("refuses an expired session", () => {\n    expect(true).toBe(true)\n  })\n})\n' }],
+})
+
+/** A file the agent created: the measured change says so. */
+const EXPIRY_CREATED = { ...EXPIRY_CHANGE, files: EXPIRY_CHANGE.files.map((file) => ({ ...file, change: "created" as const })) }
+
+const expiryEvents = buildEvents(
+  HISTORY_EXPIRY_SESSION,
+  "openai-codex",
+  [
+    { kind: "session_started", summary: "Session started." },
+    { kind: "message_sent", summary: "Message sent.", messageId: "expiry-m1", text: "Add a test that expired sessions are refused." },
+    { kind: "approval_requested", summary: "Creating files", approvalId: "approval-history-expiry" },
+    { kind: "approval_granted", summary: "Approved", approvalId: "approval-history-expiry" },
+    { kind: "project_changed", summary: projectChangeTitle(EXPIRY_CREATED), projectChange: EXPIRY_CREATED },
+    {
+      kind: "verification_finished",
+      summary: verificationTitle("test", "passed"),
+      verification: { checkId: "check-history-expiry", projectId: DEMO_PROJECT_ID, check: "test", outcome: "passed", exitCode: 0, durationMs: 9_000, changeId: "approval-history-expiry" },
+    },
+    { kind: "run_completed", summary: "Run completed." },
+  ],
+  DEMO_NOW - DAY - 2 * HOUR
+)
+
+export const HISTORY_EXPIRY_APPROVAL: RuntimeApprovalView = {
+  approvalId: "approval-history-expiry",
+  sessionId: HISTORY_EXPIRY_SESSION,
+  provider: "openai-codex",
+  action: "create_files",
+  scope: "write_project",
+  projectId: DEMO_PROJECT_ID,
+  targets: ["src/lib/session.test.ts"],
+  requestedAt: expiryEvents[2]!.timestamp,
+  expiresAt: expiryEvents[2]!.timestamp + 10 * MIN,
+}
+
 export const DEMO_HISTORY: readonly AgentHistoryDetail[] = [
+  historyDetail(
+    { sessionId: HISTORY_EXPIRY_SESSION, workspaceId: DEVELOPMENT_ID, provider: "openai-codex", status: "completed", title: "Test session expiry", projectId: DEMO_PROJECT_ID },
+    expiryEvents,
+    { approvals: [HISTORY_EXPIRY_APPROVAL] }
+  ),
   historyDetail(
     { sessionId: HISTORY_IDEAS_SESSION, workspaceId: RESEARCH_ID, provider: "claude-code", status: "completed", title: "Group the product ideas" },
     ideasEvents,

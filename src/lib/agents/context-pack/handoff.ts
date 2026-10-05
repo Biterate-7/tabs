@@ -5,6 +5,7 @@ import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { SessionFocus } from "@/lib/agents/session-context/focus";
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
 import type { ContextPack } from "./pack";
+import type { ProjectDescriptor } from "@/lib/agents/project/describe";
 
 /**
  * The Context Pack a handoff passes (Hubble 1.5) — built by the same
@@ -28,6 +29,11 @@ export function handoffContextPack(input: {
   /** The modes the person kept (`selectHandoffContext`), or everything the preview offered. */
   context: SessionHandoff["context"];
   instruction?: string;
+  /**
+   * The project the target session works in (Hubble 1.6), described for the
+   * target agent: its capabilities are the target's own, never the source's.
+   */
+  project?: ProjectDescriptor;
 }): ContextPack | undefined {
   const share = Boolean(input.context.workspace);
   const result = buildContextPack({
@@ -40,6 +46,7 @@ export function handoffContextPack(input: {
     ...(input.context.previousResult
       ? { previousResult: input.context.previousResult, files: input.context.previousResult.files ?? [] }
       : {}),
+    ...(input.project ? { project: input.project } : {}),
     ...(input.instruction ? { instruction: input.instruction } : {}),
   });
   return result.ok ? result.pack : undefined;

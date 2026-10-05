@@ -56,6 +56,20 @@ describe("the cursor", () => {
     expect(result.current.events).toHaveLength(3)
   })
 
+  it("delivers no event twice when two reads overlap — the poll, and a refresh after a command", async () => {
+    const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
+    runtime.pushEvents([scriptedEvent({ id: "e1" })])
+    const { result } = mount("session-1", runtime)
+    await waitFor(() => expect(result.current.events).toHaveLength(1))
+
+    runtime.pushEvents([scriptedEvent({ id: "e2" }), scriptedEvent({ id: "e3" })])
+    // Both start from the same cursor before either has answered.
+    await act(async () => {
+      await Promise.all([result.current.refresh(), result.current.refresh()])
+    })
+    expect(result.current.events.map((event) => event.id)).toEqual(["e1", "e2", "e3"])
+  })
+
   it("delivers no event twice across repeated reads", async () => {
     const runtime = createScriptedRuntime({ sessions: [scriptedSession()] })
     runtime.pushEvents([scriptedEvent({ id: "e1" })])

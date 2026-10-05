@@ -813,8 +813,9 @@ describe("context", () => {
       },
     });
 
-    expect(started.ok && started.value.projectId).toBeUndefined();
-    expect(started.ok && started.value.contextSnapshotId).toBe("snap-3");
+    // Hubble 1.6: refused outright — a project reference may name only the session's own project.
+    expect(started).toMatchObject({ ok: false, error: { code: "context_invalid" } });
+    expect(adapter.calls).not.toContain("createSession");
   });
 });
 

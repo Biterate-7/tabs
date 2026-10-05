@@ -32,7 +32,16 @@ import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
 import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
 import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
 import { handoffThatStarted, sessionContextPack } from "@/lib/agents/context-pack/session"
-import { useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { filesChangedOutside, measuredProjectFiles, useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { useWorkspaceProject } from "@/hooks/use-workspace-project"
+import { AttachProjectDialog, WorkspaceProjectSection } from "./workspace-project"
+import type { ProjectWorkActions } from "@/components/agents/project-work"
+import { describeProject } from "@/lib/agents/project/describe"
+import { PROJECT_STATE_COPY } from "@/lib/agents/project/present"
+import { readGitStatusCounts } from "@/lib/agents/project/checks"
+import { checkRunningIn, latestGitCountsIn } from "@/lib/agents/project/changes"
+import { workspaceProjectBindings, workspaceProjectId } from "@/lib/workspace/project"
+import type { GitStatusCounts } from "@/lib/agents/project/checks"
 import { selectHandoffContext } from "@/lib/agents/handoff/handoff"
 import type { HandoffInclude } from "@/lib/agents/handoff/handoff"
 import type { RuntimeHandoffPreview } from "@/lib/agents/runtime/protocol"
@@ -155,6 +164,7 @@ export function CommandCentreView({
   onHandoffConsumed,
   onViewWorkspace,
   onUpdateWorkspaceBrief,
+  onAttachWorkspaceProject,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -171,15 +181,20 @@ export function CommandCentreView({
   onViewWorkspace?: (workspaceId: string, collectionId?: string) => void
   /** Saves a workspace's brief (Hubble 1.5) to the app's workspace store. Absent: the brief is read-only here. */
   onUpdateWorkspaceBrief?: (workspaceId: string, brief: { description: string; focus: string }) => void
+  /** Attaches a project to a workspace, or detaches with `null` (Hubble 1.6). Absent: read-only here. */
+  onAttachWorkspaceProject?: (workspaceId: string, projectId: string | null) => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
     ...(poll === undefined ? {} : { poll }),
   })
 
+  // Which workspaces each project belongs to (Hubble 1.6) — the runtime enforces it.
+  const workspaceBindings = useMemo(() => workspaceProjectBindings(world.workspaces), [world.workspaces])
   const projects = useAgentProjects({
     client: runtime.client,
     executable: runtime.executable,
+    workspaceBindings,
     ...(runtime.status?.runtimeId ? { runtimeId: runtime.status.runtimeId } : {}),
   })
 
@@ -226,6 +241,48 @@ export function CommandCentreView({
     const fresh = session.session?.sessionId === selected.view.sessionId ? session.session : null
     return fresh ? { ...selected, view: fresh } : selected
   }, [selected, session.session])
+
+  /*
+    The workspace's project (Hubble 1.6): the on-screen session's workspace,
+    or the one a new session would start in. Inspected by the runtime — which
+    alone holds the path — again whenever an agent's change is measured.
+  */
+  const projectWorkspaceId = current?.view.workspaceId ?? activeWorkspaceId
+  const projectWorkspace = projectWorkspaceId ? world.workspaces.find((workspace) => workspace.id === projectWorkspaceId) : undefined
+  const sessionProjectFiles = useMemo(
+    () => (selectedSessionId ? measuredProjectFiles(session.events, selectedSessionId).map((file) => file.path) : []),
+    [session.events, selectedSessionId]
+  )
+  const projectEventCount = useMemo(
+    () => session.events.filter((event) => event.kind === "project_changed" || event.kind === "project_change_undone").length,
+    [session.events]
+  )
+  const workspaceProject = useWorkspaceProject({
+    client: runtime.client,
+    status: runtime.status,
+    executable: runtime.executable,
+    workspace: projectWorkspace,
+    projects: projects.projects,
+    files: sessionProjectFiles,
+    refreshKey: projectEventCount,
+    rejected: projects.rejected,
+  })
+  /** A project as an agent is told it — its capabilities that agent's own, never another's. */
+  const projectDescriptorFor = useCallback(
+    (projectId: string | undefined, provider?: AgentProviderId) => {
+      const project = projectId ? projects.projects.find((candidate) => candidate.id === projectId) : undefined
+      if (!project) return undefined
+      const providerCapabilities = provider ? runtime.status?.providers.find((entry) => entry.provider === provider)?.capabilities : undefined
+      const inspection = workspaceProject.inspection?.projectId === project.id ? workspaceProject.inspection : undefined
+      return describeProject({
+        project,
+        ...(inspection ? { inspection } : {}),
+        local: Boolean(workspaceProject.supported),
+        ...(providerCapabilities ? { providerCapabilities } : {}),
+      })
+    },
+    [projects.projects, runtime.status, workspaceProject.inspection, workspaceProject.supported]
+  )
 
   /*
     Session workspace context (Phase J.3): the Command Centre's own collection
@@ -477,6 +534,12 @@ export function CommandCentreView({
         sessionId,
         changes: workspaceChanges(),
         ...(sessionId === selectedSessionId ? { handoffFrom: handoffThatStarted(sessionId, session.handoffs) } : {}),
+        // The project it works in (Hubble 1.6), described for its own agent.
+        ...(() => {
+          const target = sessions.sessions.find((entry) => entry.view.sessionId === sessionId)?.view
+          const project = projectDescriptorFor(target?.projectId, target?.provider)
+          return project ? { project, projectFiles: filesChangedOutside(measuredProjectFiles(session.events, sessionId), project) } : {}
+        })(),
       })
       if (!built.ok) {
         setContextError("Hubble couldn't prepare that context. Nothing was sent.")
@@ -501,7 +564,7 @@ export function CommandCentreView({
       if (sessionId === selectedSessionId) await session.refresh()
       return true
     },
-    [contextWorld, runtime.client, selectedSessionId, session, sessions]
+    [contextWorld, runtime.client, selectedSessionId, session, sessions, projectDescriptorFor]
   )
 
   /*
@@ -617,6 +680,8 @@ export function CommandCentreView({
             workspaceId: input.workspaceId,
             selection: draft && input.workspaceId === draft.workspaceId ? draft : null,
             changes: workspaceChanges(),
+            // The project it will work in (Hubble 1.6), told from the start.
+            ...(projectDescriptorFor(input.projectId, input.provider) ? { project: projectDescriptorFor(input.projectId, input.provider)! } : {}),
           })
         : undefined
       const startContext = (brought?.ok ? contextPackAttachedContext(brought.pack, Date.now()) : null) ?? undefined
@@ -650,7 +715,7 @@ export function CommandCentreView({
       setFirstMessage(undefined)
       setDraftText("")
     },
-    [contextWorld, draft, draftText, firstMessage, platform, projects.projects, sessionContext, sessions]
+    [contextWorld, draft, draftText, firstMessage, platform, projects.projects, sessionContext, sessions, projectDescriptorFor]
   )
 
   /*
@@ -700,7 +765,10 @@ export function CommandCentreView({
     session, the pack a new session here would start with.
   */
   const packWorkspaceId = currentView ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : workspaceShown
-  const { pack: sessionPack, state: packState, brief } = useSessionContextPack({
+  const packProjectId = currentView ? currentView.projectId : workspaceProject.project?.id
+  const packProvider = currentView?.provider
+  const packProject = useMemo(() => projectDescriptorFor(packProjectId, packProvider), [projectDescriptorFor, packProjectId, packProvider])
+  const { pack: sessionPack, state: packState, change: packChange, brief } = useSessionContextPack({
     world: contextWorld,
     session: currentView,
     workspaceId: packWorkspaceId,
@@ -708,6 +776,7 @@ export function CommandCentreView({
     handoffs: session.handoffs,
     changes: allChanges,
     draft,
+    ...(packProject ? { project: packProject } : {}),
   })
   const sendContextUpdate = useMemo(() => {
     if (!currentView || !sessionWorkspaceId || packState !== "changed") return undefined
@@ -736,6 +805,43 @@ export function CommandCentreView({
     Built once here and drawn in two places: the context panel, and the
     header popover where that panel is not on screen.
   */
+  /*
+    What the person can do about the session's project work (Hubble 1.6):
+    undo, review and checks — only in a live session on a runtime that holds
+    its changes. A past session is read-only.
+  */
+  const sessionEvents = session.events
+  const checkRunning = useMemo(() => checkRunningIn(sessionEvents), [sessionEvents])
+  const latestGit = useMemo((): GitStatusCounts | undefined => readGitStatusCounts(latestGitCountsIn(sessionEvents)), [sessionEvents])
+  const projectActions = useMemo((): ProjectWorkActions | undefined => {
+    if (!currentView?.projectId || !workspaceProject.supported || !runtime.executable) return undefined
+    const sessionId = currentView.sessionId
+    const described = projectDescriptorFor(currentView.projectId, currentView.provider)
+    const checks =
+      described?.capabilities.includes("run_checks") && workspaceProject.inspection?.projectId === currentView.projectId
+        ? workspaceProject.inspection.checks
+        : []
+    return {
+      undo: async (changeId) => {
+        const result = await runtime.client.send({ name: "undo_project_change", sessionId, changeId })
+        await session.refresh()
+        workspaceProject.refresh()
+        return result.ok ? result.value : null
+      },
+      review: async (changeId) => {
+        const result = await runtime.client.send({ name: "review_project_change", sessionId, changeId })
+        return result.ok ? result.value : null
+      },
+      checks,
+      runCheck: async (check) => {
+        const result = await runtime.client.send({ name: "run_project_check", sessionId, check })
+        await session.refresh()
+        return result.ok
+      },
+      checking: checkRunning,
+    }
+  }, [currentView, workspaceProject, runtime.executable, runtime.client, projectDescriptorFor, session, checkRunning])
+
   const sessionProjectName = projectNameOf(currentView?.projectId)
   const {
     entries: activity,
@@ -753,6 +859,7 @@ export function CommandCentreView({
     now,
     canUndo,
     collectionName,
+    ...(projectActions ? { projectLive: true } : {}),
   })
   const viewActivityChange = useCallback(
     (changeId: string) => {
@@ -841,10 +948,11 @@ export function CommandCentreView({
             at: Number.MAX_SAFE_INTEGER,
             ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
             collectionName,
+            projectName: (projectId: string) => projectNameOf(projectId),
             agentName: agentDisplayName,
           })
         : undefined,
-    [reconstructed, historyWorkspaceName, collectionName]
+    [reconstructed, historyWorkspaceName, collectionName, projectNameOf]
   )
   const { recordUndo: recordHistoryUndo } = historySession
   const undoHistoryChange = useCallback(
@@ -935,16 +1043,19 @@ export function CommandCentreView({
   */
   const handoffSourceId = handoffSource?.sessionId
   const handoffPackFor = useCallback(
-    (preview: RuntimeHandoffPreview, include: HandoffInclude) => {
+    (preview: RuntimeHandoffPreview, include: HandoffInclude, projectId?: string) => {
       const focus = sessions.sessions.find((entry) => entry.view.sessionId === handoffSourceId)?.view.focus
+      // The project as the target agent will be told it (Hubble 1.6) — its own capabilities, as the runtime describes it.
+      const project = include.workspace ? projectDescriptorFor(projectId, preview.targetProvider) : undefined
       return handoffContextPack({
         world: contextWorld,
         workspaceId: preview.workspaceId,
         ...(focus ? { focus: { tabIds: focus.tabIds, collectionIds: focus.collectionIds } } : {}),
         context: selectHandoffContext(preview.context, include),
+        ...(project ? { project } : {}),
       })
     },
-    [contextWorld, handoffSourceId, sessions.sessions]
+    [contextWorld, handoffSourceId, sessions.sessions, projectDescriptorFor]
   )
   const handleHandoffStarted = useCallback(
     async (result: HandoffStartResult) => {
@@ -983,6 +1094,42 @@ export function CommandCentreView({
     [sessions.sessions, sessionWorkspaceId, historySelection?.workspaceId, activeWorkspaceId, history.state]
   )
 
+  /* The workspace's project (Hubble 1.6), in the context panel — and how it is attached. */
+  const [attachOpen, setAttachOpen] = useState(false)
+  const attachTarget = projectWorkspace && link.kind !== "workspace-missing" ? projectWorkspace : undefined
+  const canAttach = Boolean(attachTarget && onAttachWorkspaceProject && workspaceProject.supported)
+  // A session on a project its workspace does not name keeps the plain line it always had.
+  const sessionOnOtherProject = Boolean(currentView?.projectId && currentView.projectId !== workspaceProject.project?.id)
+  const projectSection =
+    attachTarget && !sessionOnOtherProject ? (
+      <WorkspaceProjectSection
+        state={workspaceProject.state}
+        {...(workspaceProject.project ? { project: workspaceProject.project } : {})}
+        inspection={workspaceProject.inspection}
+        capabilities={packProject?.capabilities ?? []}
+        {...(latestGit ? { git: latestGit } : {})}
+        agentChangedFiles={sessionProjectFiles.length}
+        {...(projectActions && projectActions.checks.length > 0 ? { checks: projectActions } : {})}
+        {...(canAttach ? { onAttach: () => setAttachOpen(true) } : {})}
+        {...(canAttach && workspaceProject.attached ? { onDetach: () => onAttachWorkspaceProject!(attachTarget.id, null) } : {})}
+        onRetry={workspaceProject.refresh}
+      />
+    ) : undefined
+  /** What New session says about a workspace's project, and whether it may start there. */
+  const workspaceProjectFor = useCallback(
+    (workspaceId: string) => {
+      const projectId = workspaceProjectId(world.workspaces.find((workspace) => workspace.id === workspaceId))
+      const project = projectId ? projects.projects.find((candidate) => candidate.id === projectId) : undefined
+      if (!projectId || !project) return undefined
+      // Only the workspace on screen has been inspected; the runtime checks any other as the session starts.
+      if (projectId !== workspaceProject.project?.id) return { projectId, ready: true, notice: `${project.name} · Hubble checks it as the session starts` }
+      const copy = PROJECT_STATE_COPY[workspaceProject.state]
+      const ready = workspaceProject.state === "connected"
+      return { projectId, ready, notice: ready ? `${project.name} · ${copy.title}` : `${project.name} · ${copy.title}. ${copy.detail}` }
+    },
+    [world.workspaces, projects.projects, workspaceProject.project?.id, workspaceProject.state]
+  )
+
   const activityTimeline = currentView ? (
     <AgentActivity
       entries={activity}
@@ -993,6 +1140,7 @@ export function CommandCentreView({
       now={now}
       inspect={inspectActivity}
       onUndo={undoActivityChange}
+      {...(projectActions ? { project: projectActions } : {})}
       {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
       {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
       {...(canContinue ? { onContinue: continueWith } : {})}
@@ -1248,6 +1396,7 @@ export function CommandCentreView({
                     busy={contextBusy}
                     pack={sessionPack}
                     {...(packState ? { packState } : {})}
+                    {...(packChange ? { packChange } : {})}
                     {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
                     {...contextActions}
                   />
@@ -1380,12 +1529,30 @@ export function CommandCentreView({
             {...(currentView ? contextActions : draftActions)}
             pack={sessionPack}
             {...(packState ? { packState } : {})}
+            {...(packChange ? { packChange } : {})}
             {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
             {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
             {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
+            {...(projectSection ? { project: projectSection } : {})}
           />
         )}
       </div>
+
+      {attachOpen && attachTarget && (
+        <AttachProjectDialog
+          open
+          onOpenChange={setAttachOpen}
+          workspaceName={attachTarget.name}
+          projects={projects.projects}
+          {...(workspaceProject.project ? { currentProjectId: workspaceProject.project.id } : {})}
+          agents={startableProviders.filter((provider) => canCreateSession(provider)).map((provider) => provider.provider)}
+          scopesFor={projectScopesFor}
+          onAddProject={projects.addProject}
+          {...(pickFolder ? { pickFolder } : {})}
+          inspect={(projectId) => workspaceProject.inspect(projectId)}
+          onAttach={(projectId) => onAttachWorkspaceProject?.(attachTarget.id, projectId)}
+        />
+      )}
 
       <NewSessionDialog
         // Remounted per opening so it starts from the agent it was opened for.
@@ -1404,6 +1571,7 @@ export function CommandCentreView({
         providers={startableProviders}
         projects={projects.projects}
         onAddProject={projects.addProject}
+        workspaceProject={workspaceProjectFor}
         {...(remoteEnabled
           ? {
               remote: {
