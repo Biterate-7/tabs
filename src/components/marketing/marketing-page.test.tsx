@@ -69,17 +69,17 @@ describe("MarketingPage", () => {
     expect(onPasteTabs).toHaveBeenCalledTimes(2)
   })
 
-  it("leads to Hubble Desktop from the header, the closing actions and the footer — without promising a download", () => {
+  it("leads to the download page from the header, the closing actions and the footer", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    const links = screen.getAllByRole("link", { name: "Hubble Desktop" })
-    // Header, closing pair, footer. Nothing is published yet, so none says "Download".
+    // Windows 0.1.0 is published (release.ts), so the links say "Download Hubble".
+    const links = screen.getAllByRole("link", { name: "Download Hubble" })
+    // Header, closing pair, footer — all to the page, never straight to an installer.
     expect(links).toHaveLength(3)
     for (const link of links) expect(link.getAttribute("href")).toBe("/download")
-    expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull()
     // The hero is unchanged: its pair is still Get started and Explore Hubble.
     const hero = screen.getByRole("heading", { level: 1 }).closest("section")!
     expect(within(hero).getByRole("link", { name: "Explore Hubble" })).toBeTruthy()
-    expect(within(hero).queryByRole("link", { name: "Hubble Desktop" })).toBeNull()
+    expect(within(hero).queryByRole("link", { name: "Download Hubble" })).toBeNull()
   })
 
   it("does not offer Hubble Desktop inside Hubble Desktop", () => {
