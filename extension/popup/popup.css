@@ -221,3 +221,38 @@ body {
   font-size: 11px;
   word-break: break-word;
 }
+
+/* Add to a Hubble project (Hubble 2.0) */
+.popup__project {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--popup-border, rgba(127, 127, 127, 0.25));
+}
+.popup__label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+.popup__select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--popup-border, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.popup__row {
+  display: flex;
+  gap: 6px;
+}
+.popup__row .popup__button {
+  flex: 1;
+}
+/* A display rule above would otherwise override the hidden attribute. */
+.popup__project[hidden],
+.popup__button[hidden] {
+  display: none;
+}

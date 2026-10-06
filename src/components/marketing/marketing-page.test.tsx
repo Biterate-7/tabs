@@ -14,7 +14,7 @@ afterEach(() => vi.unstubAllGlobals())
 describe("MarketingPage", () => {
   it("leads with one sentence, the calls to action and a live Hubble window", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    expect(screen.getByRole("heading", { level: 1, name: /structured context for your AI agents/ })).toBeTruthy()
+    expect(screen.getByRole("heading", { level: 1, name: /Your projects\. Your context\. Your agents\./ })).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /Get started/ }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole("link", { name: "Explore Hubble" })[0].getAttribute("href")).toBe("#workspaces")
     expect(screen.getByRole("region", { name: /Interactive Hubble demo/ })).toBeTruthy()

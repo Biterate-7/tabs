@@ -125,7 +125,14 @@ export function WorkspaceView({
   onAssignTabToSection,
   onReorganizeSections,
   focusCollection,
+  projectHome,
 }: {
+  /**
+   * The project's home (Hubble 2.0 — sources, context, where the work was
+   * left), rendered above the tabs. Replaces the Stage 3 work strip, which
+   * remains for surfaces that render no project home.
+   */
+  projectHome?: ReactNode
   tabs: Tab[]
   onTabsChange: (tabs: Tab[]) => void
   onClear: () => void
@@ -1160,7 +1167,8 @@ export function WorkspaceView({
           paddingBlock: "calc(2rem * var(--tabdump-density-scale, 1))",
         }}
       >
-        {currentWorkspace && (
+        {projectHome}
+        {!projectHome && currentWorkspace && (
           <WorkspaceWorkStrip
             workspace={currentWorkspace}
             {...(onOpenCommandCentre ? { onOpenCommandCentre } : {})}
@@ -1176,6 +1184,11 @@ export function WorkspaceView({
             onApply={onApplyAutoOrganize}
             onDismiss={onDismissAutoOrganize}
           />
+        )}
+        {projectHome && (
+          <h2 className="mb-2 text-label text-foreground" data-workspace-tabs-heading>
+            Tabs &amp; collections
+          </h2>
         )}
         <AttentionStrip
           attention={attention}
@@ -1215,6 +1228,7 @@ export function WorkspaceView({
               collections={workspaceCollections.map((c) => ({ id: c.id, name: c.name }))}
               onAddToCollection={handleAddSelectedToCollection}
               onGatherNew={handleGatherSelected}
+              selectedTabs={tabs.filter((tab) => selectedIds.has(tab.id))}
               addToCollectionTarget={
                 addToCollectionTarget
                   ? { name: addToCollectionTarget.name, onConfirm: handleConfirmAddToCollection }

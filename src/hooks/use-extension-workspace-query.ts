@@ -33,10 +33,16 @@ function tryNormalize(url: string): string | null {
  * global `message` listener is only ever attached once, matching the same
  * pattern `useExtensionImport` uses.
  */
-export function useExtensionWorkspaceQuery(tabs: Tab[]) {
+/** A project as the extension popup may list it (Hubble 2.0): an id, a name and how many sources it holds. Nothing else. */
+export type ExtensionProjectOption = { id: string; name: string; sources: number }
+
+export function useExtensionWorkspaceQuery(tabs: Tab[], projects: readonly ExtensionProjectOption[] = []) {
   const tabsRef = useRef(tabs)
+  const projectsRef = useRef(projects)
   // eslint-disable-next-line react-hooks/refs
   tabsRef.current = tabs
+  // eslint-disable-next-line react-hooks/refs
+  projectsRef.current = projects
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -60,7 +66,7 @@ export function useExtensionWorkspaceQuery(tabs: Tab[]) {
       })
 
       window.postMessage(
-        { source: MESSAGE_SOURCE, type: RESULT_TYPE, payload: { requestId, existingUrls } },
+        { source: MESSAGE_SOURCE, type: RESULT_TYPE, payload: { requestId, existingUrls, ...(projectsRef.current.length > 0 ? { projects: projectsRef.current } : {}) } },
         window.location.origin
       )
     }

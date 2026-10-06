@@ -145,7 +145,7 @@ describe("Command Centre", () => {
     expect(within(frame()).queryByRole("group", { name: "Approval required" })).toBeNull()
     // Approved, applied, answered — the app's steps, paced by the demo.
     expect(await within(frame()).findByText(/“SWE-bench” is in Research/, {}, { timeout: 3_000 })).toBeTruthy()
-    await user.click(within(frame()).getByRole("button", { name: "Workspace" }))
+    await user.click(within(frame()).getByRole("button", { name: "Project" }))
     expect(within(frame()).getByText("SWE-bench")).toBeTruthy()
   })
 
@@ -153,7 +153,7 @@ describe("Command Centre", () => {
     const { user, frame } = renderCommandCentre()
     await user.click(buttonByText(within(frame()).getByRole("group", { name: "Approval required" }), "Deny"))
     expect(within(frame()).getByText(/I won't create it/)).toBeTruthy()
-    await user.click(within(frame()).getByRole("button", { name: "Workspace" }))
+    await user.click(within(frame()).getByRole("button", { name: "Project" }))
     expect(within(frame()).queryByText("SWE-bench")).toBeNull()
   })
 
@@ -190,7 +190,7 @@ describe("Command Centre", () => {
   it("says where the session works, and points it at part of that workspace", async () => {
     const { user, frame } = renderCommandCentre({ selectedSessionId: GEMINI_SESSION })
     expect(within(frame()).getByRole("button", { name: /^Working in Research/ })).toBeTruthy()
-    await user.click(within(frame()).getAllByRole("button", { name: "Context: Whole workspace" })[0]!)
+    await user.click(within(frame()).getAllByRole("button", { name: "Context: Whole project" })[0]!)
     // The chip's popover; the context panel beside it offers the same button.
     const popover = await screen.findByRole("dialog")
     await user.click(within(popover).getByRole("button", { name: "Choose tabs and collections…" }))

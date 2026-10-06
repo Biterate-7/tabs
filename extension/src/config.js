@@ -172,3 +172,15 @@ export const DUMP_PHASE = {
   RETRYING_IN_NEW_TAB: "retrying-in-new-tab",
   FINISHED: "finished",
 };
+
+// Popup → background: "add this tab (or the selected tabs) to this Hubble
+// project as sources" (Hubble 2.0). Travels the same delivery path as a dump
+// — find or open the Hubble tab, post TABDUMP_IMPORT, wait for the page's ack
+// — with a `target` naming the project, so the page routes it through its one
+// source-ingestion pipeline instead of the plain tab dump.
+export const MSG_ADD_TO_PROJECT = "TABDUMP_ADD_TO_PROJECT";
+
+// The project the person last chose in the popup, in chrome.storage.local.
+// Only ever written by that explicit choice: the extension never guesses a
+// target project, and a remembered one that no longer exists is ignored.
+export const TARGET_PROJECT_KEY = "hubble_target_project";

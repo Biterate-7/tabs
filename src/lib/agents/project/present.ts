@@ -35,7 +35,7 @@ export type ProjectStateCopy = { label: string; title: string; detail: string; t
 
 export const PROJECT_STATE_COPY: Record<WorkspaceProjectState, ProjectStateCopy> = {
   connected: { label: "Connected", title: "Ready for agent work", detail: "Agents working here can use this project.", tone: "good" },
-  none: { label: "Not connected", title: "No project connected", detail: "Connect a project so agents can work on its files.", tone: "muted" },
+  none: { label: "Not connected", title: "No folder connected", detail: "Connect a folder so agents can work on its files.", tone: "muted" },
   unsupported: {
     label: "Unsupported",
     title: "Project work is available in the Hubble desktop app.",

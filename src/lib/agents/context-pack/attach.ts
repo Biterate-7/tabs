@@ -3,7 +3,8 @@ import { contextPackId } from "./pack";
 import type { AgentAttachedContext, AgentContextAttachment } from "@/lib/agents/control/context";
 import { PROJECT_CAPABILITY_AGENT_PHRASES } from "@/lib/agents/project/capabilities";
 import { PROJECT_TYPE_LABELS } from "@/lib/agents/project/inspection";
-import type { ContextPack, ContextPackProject } from "./pack";
+import type { ContextPack, ContextPackProject, ContextPackSource } from "./pack";
+import { RESOURCE_KIND_LABEL } from "@/lib/resources/types";
 
 /**
  * A Context Pack, as the agent runtime receives it.
@@ -58,6 +59,22 @@ export function projectAttachmentDetail(project: ContextPackProject): string {
   return parts.join(" · ");
 }
 
+/**
+ * A project source as one line (Hubble 2.0): what it is, whether its text can
+ * be read and how, and where it lives. The text itself is never here — the
+ * agent reads it on request, and only from the sources this session was given.
+ */
+export function sourceAttachmentDetail(source: ContextPackSource): string {
+  const parts = [`Project source · ${RESOURCE_KIND_LABEL[source.kind]}`];
+  if (source.pages) parts.push(plural(source.pages, "page", "pages"));
+  if (source.status === "ready") parts.push(`its text is available: read_source ${source.id}`);
+  else if (source.status === "pending" || source.status === "processing") parts.push("Hubble is still reading it");
+  else parts.push(`no readable text${source.note ? ` (${source.note})` : ""}`);
+  if (source.summary) parts.push(`the page describes itself as: ${source.summary}`);
+  if (source.url) parts.push(source.url);
+  return parts.join(" · ");
+}
+
 export function contextPackAttachments(pack: ContextPack): AgentContextAttachment[] {
   const attachments: AgentContextAttachment[] = [];
   const push = (attachment: AgentContextAttachment | null) => {
@@ -71,15 +88,21 @@ export function contextPackAttachments(pack: ContextPack): AgentContextAttachmen
         kind: "workspace",
         id: pack.workspace.id,
         label: pack.workspace.name,
-        detail: `${detail} · ${plural(pack.workspace.tabs, "tab", "tabs")}, ${plural(pack.workspace.collections, "collection", "collections")}`,
+        detail: `${detail} · ${pack.workspace.sources ? `${plural(pack.workspace.sources, "project source", "project sources")}, ` : ""}${plural(pack.workspace.tabs, "tab", "tabs")}, ${plural(pack.workspace.collections, "collection", "collections")}`,
       })
     );
   }
   for (const collection of pack.collections) {
     push(createAttachment({ kind: "collection", id: collection.id, label: collection.name, detail: plural(collection.tabs, "tab", "tabs") }));
   }
+  // A selected tab that is a project source is described once, as a source.
+  const sourceIds = new Set(pack.sources.map((source) => source.id));
   for (const tab of pack.tabs) {
+    if (sourceIds.has(tab.id)) continue;
     push(createAttachment({ kind: "tab", id: tab.id, label: tab.title, ...(tab.url ?? tab.domain ? { detail: tab.url ?? tab.domain } : {}) }));
+  }
+  for (const source of pack.sources) {
+    push(createAttachment({ kind: "tab", id: source.id, label: source.title, detail: sourceAttachmentDetail(source) }));
   }
   for (const relationship of pack.relationships) {
     push(createAttachment({ kind: "relationship", id: relationship.id, label: relationship.label, detail: "depends on" }));

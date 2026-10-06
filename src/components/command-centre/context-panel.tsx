@@ -132,7 +132,7 @@ export function ContextPanel({
         The project is the anchor (Stage 3): what the agent works on, right
         under where — before what it has been doing.
       */}
-      <Section title="Project">
+      <Section title="Folder">
         {project ? (
           project
         ) : projectName ? (

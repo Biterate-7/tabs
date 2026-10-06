@@ -85,7 +85,7 @@ describe("one canonical Context Pack", () => {
       omitted: { missing: 0, duplicates: 0, truncated: 0 },
     });
     expect(whole.fingerprint).toMatch(CONTEXT_PACK_FINGERPRINT_PATTERN);
-    expect(contextPackLine(whole)).toBe("Whole workspace · 5 tabs · 2 collections");
+    expect(contextPackLine(whole)).toBe("Whole project · 5 tabs · 2 collections");
   });
 
   it("describes a collection by name, with its tabs counted", () => {
@@ -191,7 +191,7 @@ describe("duplicates, stale and missing resources", () => {
     expect(empty.ok).toBe(true);
     const value = (empty as { ok: true; pack: ContextPack }).pack;
     expect(value.workspace).toEqual({ id: "w1", name: "Empty", tabs: 0, collections: 0 });
-    expect(contextPackLine(value)).toBe("Whole workspace · 0 tabs · 0 collections");
+    expect(contextPackLine(value)).toBe("Whole project · 0 tabs · 0 collections");
     const rows = contextPackRows(value);
     expect(rows.find((row) => row.key === "tabs")).toMatchObject({ value: "None", empty: true });
     expect(rows.find((row) => row.key === "files")).toMatchObject({ value: "None", empty: true });

@@ -140,3 +140,30 @@ tasks completed, approvals answered, results reviewed, returns — and how many
 tasks went all the way from *submitted* to *reviewed*. A first user can read it
 from the console (`hubbleLoopSummary()`) and paste it into a conversation; it
 is never sent anywhere by Hubble.
+
+## Hubble 2.0: the project loop
+
+The loop above, with the project as the durable object and Chrome as the way
+context gets in:
+
+```
+Chrome → Project → Sources → Context → Agent → Task → Approval → Work → Result
+       → project history → another agent / another task
+```
+
+| Step | Where it lives |
+|---|---|
+| Create a project | *New project* (name, what it is about, goal) — lands inside it |
+| Collect context | Drop links / the address bar onto the project, *Add source*, the extension's *Add to project*, *Add to project* on any saved tab |
+| Context | Project home: sources with honest statuses, search, filters; the Context Pack lists sources; agents read them over MCP |
+| Agent | Command Centre scoped to the project; "Claude Code will use: 4 sources · project brief" before a task; *Use in task* on a source |
+| Switch agent | Session header → *Switch agent* → the handoff preview aimed at that agent, optionally with the previous agent's answer |
+| Result → history | Each task is recorded in the project's history with what it was given |
+| Return | Project home: *Where you left off*, a *Next* step derived from state, *Recent work* by day |
+
+Loop log milestones added: `project_created`, `resource_added`,
+`resource_ready`, `resource_failed`, `context_selected`, `agent_selected`,
+`agent_switched`, `handoff_completed`, `project_returned`.
+
+Architecture, the resource model, ingestion, extraction, context budgeting,
+the extension, browser limitations and testing: [project-context.md](project-context.md).

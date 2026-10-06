@@ -117,8 +117,8 @@ describe("a session works in one workspace, and says so", () => {
     await user.click(row)
 
     expect(await screen.findByRole("button", { name: /^Working in Research/ })).toBeTruthy()
-    expect(await headerChip("Context: Whole workspace")).toBeTruthy()
-    expect(screen.getByLabelText("Message the agent").getAttribute("placeholder")).toBe("Ask Claude Code about Research…")
+    expect(await headerChip("Context: Whole project")).toBeTruthy()
+    expect(screen.getByLabelText("Message the agent").getAttribute("placeholder")).toBe("Work on Research — what should Claude Code do?")
     // The whole workspace is read on request — nothing is attached for it.
     expect(commandsNamed(runtime, "attach_context")).toHaveLength(0)
   })
@@ -153,7 +153,7 @@ describe("choosing context inside the session's workspace", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    await user.click(await headerChip("Context: Whole workspace"))
+    await user.click(await headerChip("Context: Whole project"))
     await user.click((await popover()).getByRole("button", { name: "Choose tabs and collections…" }))
     const dialog = await screen.findByRole("dialog", { name: "Choose context" })
     expect(within(dialog).getByText(/From Research/)).toBeTruthy()
@@ -206,7 +206,7 @@ describe("choosing context inside the session's workspace", () => {
     await user.click(await headerChip(/^Context: Research 0/))
     await user.click((await popover()).getByRole("button", { name: "Use whole workspace" }))
     await waitFor(() => expect(commandsNamed(runtime, "detach_context")).toHaveLength(1))
-    expect(await headerChip("Context: Whole workspace")).toBeTruthy()
+    expect(await headerChip("Context: Whole project")).toBeTruthy()
   })
 
   it("says so when the runtime refuses context, and changes nothing", async () => {
@@ -215,7 +215,7 @@ describe("choosing context inside the session's workspace", () => {
     runtime.failCommand("attach_context", "context_invalid")
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
-    await user.click(await headerChip("Context: Whole workspace"))
+    await user.click(await headerChip("Context: Whole project"))
     await user.click((await popover()).getByRole("button", { name: "Choose tabs and collections…" }))
     const dialog = await screen.findByRole("dialog", { name: "Choose context" })
     await user.click(within(dialog).getByRole("checkbox", { name: /Research 0/ }))
@@ -223,7 +223,7 @@ describe("choosing context inside the session's workspace", () => {
 
     const alert = await screen.findByRole("alert")
     expect(alert.textContent).toMatch(/isn.t in this session.s workspace/)
-    expect(await headerChip("Context: Whole workspace")).toBeTruthy()
+    expect(await headerChip("Context: Whole project")).toBeTruthy()
   })
 })
 
@@ -248,7 +248,7 @@ describe("context never crosses sessions", () => {
 
     await user.click(screen.getByRole("button", { name: /Beta/ }))
     expect(await screen.findByRole("button", { name: /^Working in Personal/ })).toBeTruthy()
-    expect(await headerChip("Context: Whole workspace")).toBeTruthy()
+    expect(await headerChip("Context: Whole project")).toBeTruthy()
 
     await user.type(screen.getByLabelText("Message the agent"), "What's here?{Enter}")
     await waitFor(() => expect(commandsNamed(runtime, "send_message")).toHaveLength(1))
@@ -295,7 +295,7 @@ describe("requests from the workspace", () => {
     })
     renderCentre(runtime, { handoff: selection, activeWorkspaceId: "w1" })
 
-    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
     expect(await screen.findByRole("button", { name: "Context: 2 tabs" })).toBeTruthy()
     expect(commandsNamed(runtime, "attach_context")).toHaveLength(0)
 

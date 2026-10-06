@@ -193,7 +193,7 @@ export function HandoffDialog({
   packFor?: (preview: RuntimeHandoffPreview, include: HandoffInclude, projectId?: string) => ContextPack | undefined
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: "choose" })
-  const [include, setInclude] = useState<HandoffInclude>({ workspace: true, previousResult: true })
+  const [include, setInclude] = useState<HandoffInclude>({ workspace: true, previousResult: true, answer: true })
   const [instruction, setInstruction] = useState("")
   const [projectId, setProjectId] = useState("")
   /** Answers that arrive after the person closed or moved on are dropped. */
@@ -484,6 +484,15 @@ function HandoffPreview({
               }
             : {})}
         >
+          {result?.answer && include.previousResult && (
+            <div className="mt-1 rounded-md border border-subtle p-2" data-handoff-answer>
+              <label className="flex items-center gap-2">
+                <Checkbox checked={include.answer === true} disabled={disabled} onCheckedChange={() => onInclude({ ...include, answer: !include.answer })} />
+                <span className="text-body-sm text-foreground">Include {source.agentName}&apos;s answer</span>
+              </label>
+              <p className="mt-1 line-clamp-4 text-meta whitespace-pre-wrap text-muted-foreground">{result.answer}</p>
+            </div>
+          )}
           {result && include.previousResult && result.lines.length > 0 && (
             <ul className="flex flex-col">
               {result.lines.slice(0, 4).map((line, index) => (

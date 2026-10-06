@@ -12,6 +12,7 @@ import { HubbleDemoProvider } from "./demo/demo-provider"
 import type { DemoInit } from "./demo/demo-state"
 import { DemoThemeStyle } from "./demo/demo-theme"
 import { RevealSection, revealStep } from "./reveal"
+import { ProjectLoopDemo } from "./project-loop-demo"
 import {
   Container,
   FeatureSection,
@@ -75,8 +76,11 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
           <Container>
             <h1 className="m-hero max-w-[640px] text-foreground">
-              Hubble turns your browser into structured context for your AI agents.
+              Your projects. Your context. Your agents.
             </h1>
+            <p className="m-body mt-3 max-w-[600px] text-muted-foreground">
+              Collect sources from Chrome into a project, then let Claude, Gemini, Codex or Grok work from the same context — and hand the work from one to another.
+            </p>
             <div className="mt-[22px]">
               <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" />
             </div>
@@ -99,6 +103,21 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
             </div>
           </Container>
         </section>
+
+        {/* ---- The loop: project → context → agent → work --------------------- */}
+        <RevealSection id="how-it-works" className="m-page pb-[calc(var(--hb-v)*1.5)] scroll-mt-(--hb-header-h)">
+          <Container>
+            <h2 className="m-h2 m-reveal-item max-w-[810px] text-foreground" style={revealStep(0)}>
+              Project → Context → Agent → Work.
+            </h2>
+            <p className="m-body m-reveal-item mt-3 max-w-[640px] text-muted-foreground" style={revealStep(1)}>
+              The project is what lasts. Agents come and go; each one starts from the same sources, the same brief and the work done before it.
+            </p>
+            <div className="m-reveal-item mt-8" style={revealStep(2)}>
+              <ProjectLoopDemo />
+            </div>
+          </Container>
+        </RevealSection>
 
         {/* ---- Works with --------------------------------------------------- */}
         <RevealSection className="m-page pb-[calc(var(--hb-v)*1.5)]">
@@ -124,8 +143,8 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <div className="py-[calc(var(--hb-v)*1)]">
           <FeatureSection
             id="workspaces"
-            title="Your context, structured."
-            body="Hubble for Chrome turns a window of tabs into a workspace — sorted into sections, gathered into collections, duplicates flagged. Search it, filter it, or select tabs and gather them into a collection."
+            title="Collect context from Chrome."
+            body="Drag a link or the address bar into a project, or add the current tab with Hubble for Chrome. Hubble reads web pages and PDFs, keeps a video's details and any transcript you add, says plainly what it couldn't read, and won't add the same source twice. Whole windows of tabs still sort themselves into sections and collections."
             link={
               installAction.href ? (
                 <MoreLink href={installAction.href} external>
@@ -162,7 +181,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
             id="context"
             layout="wide"
             title="Give agents the right context."
-            body="An agent sees only what you attach — workspaces, collections, tabs, related tabs — and the picker previews it with the same resolver that builds what the agent receives. Attach some, and the composer says what went."
+            body="An agent is told what the project holds and reads its sources when it needs them — PDF pages, transcripts, articles — citing where each point came from. It sees only the project you're in and the sources you chose, and a source's text is always treated as material, never as instructions."
             stage={
               <DemoWindow
                 scheme={demoScheme}
@@ -174,8 +193,8 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
           />
           <FeatureSection
             id="agents"
-            title="One interface for your agents."
-            body="Claude Code, Gemini CLI, Grok Build and Codex run sessions in Hubble, asking you before they act, and any MCP agent can read your workspaces. Each one runs on your own account or key."
+            title="Switch agents. Keep the project."
+            body="Claude Code, Gemini CLI, Grok Build and Codex run sessions in Hubble, asking you before they change anything. Hand Claude's work to Gemini and it starts from the same project, the same sources and — if you choose — Claude's answer. Each agent runs on your own account or key."
             link={<MoreLink onClick={onPasteTabs}>Connect an agent</MoreLink>}
             stage={
               <DemoWindow
@@ -293,13 +312,14 @@ const PRINCIPLES: { title: string; body: string; icon: typeof KeyRound }[] = [
   },
   {
     title: "Nothing changes without you",
-    body: "Agents see only the context you attach. Every change to a collection, every edit and every command waits for your approval.",
+    body: "You see what an agent will use before it starts. Every change to a collection, every edit and every command waits for your approval.",
     icon: ShieldCheck,
   },
 ]
 
 // The project's own history, newest first.
 const CHANGELOG = [
+  { date: "Oct 6, 2026", title: "Projects: collect sources from Chrome, and let any agent work from them" },
   { date: "Sep 26, 2026", title: "A new name, Hubble, and a calmer interface" },
   { date: "Sep 25, 2026", title: "Agents that reason about your workspace" },
   { date: "Sep 25, 2026", title: "Workspace plans you approve in one step" },

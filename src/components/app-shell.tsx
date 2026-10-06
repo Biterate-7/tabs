@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { LandingView } from "@/components/landing-view"
 import { FirstRunLanding } from "@/components/marketing/first-run-landing"
 import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
@@ -37,7 +36,22 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { setWorkspaceBrief } from "@/lib/workspace/brief"
-import { setWorkspaceProject } from "@/lib/workspace/project"
+import { setWorkspaceProject, workspaceProjectId } from "@/lib/workspace/project"
+import { describeIngestion, ingestResources } from "@/lib/resources/ingest"
+import type { IngestionPlan, IngestOutcome } from "@/lib/resources/ingest"
+import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
+import { pruneProjectContent } from "@/lib/resources/content-store"
+import { forgetProjectActivity, recordProjectEvent } from "@/lib/projects/activity"
+import { useResourceProcessing } from "@/hooks/use-resource-processing"
+import { ProjectHome, ProjectPage } from "@/components/project/project-home"
+import { ProjectActionsProvider } from "@/components/project/project-actions"
+import type { ProjectActions } from "@/components/project/project-actions"
+import { TabInput } from "@/components/tab-input"
+import { loadAgentRoster } from "@/lib/agents/platform/roster"
+import { loadControlProjects } from "@/lib/agents/control/persistence"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
+import { useNow } from "@/hooks/use-now"
+import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
 import { applyCategoryChange, ensureSectionsSeededInStore, syncSectionsWithCategoriesInStore } from "@/lib/sections/migrate"
 import { organizeTabsCollectively } from "@/lib/sections/ai/pipeline"
@@ -51,6 +65,7 @@ import { loadCollectionState, pruneCollectionState, saveCollectionState } from "
 import { countRelationshipsByWorkspace } from "@/lib/workspace/relationships"
 import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
+import type { ExtensionImportResult, ExtensionImportTarget } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
 import { useAutoOrganize } from "@/hooks/use-auto-organize"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
@@ -76,7 +91,7 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { CommandPalette } from "@/components/command-palette/command-palette"
 import { AgentActionsProvider, type AgentActions } from "@/components/agents/agent-actions"
-import { addToContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
+import { addToContext, tabsContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
 import { createId } from "@/lib/id"
 import type { AgentHandoff } from "@/lib/agents/command-centre/working-context"
 import { CommandPaletteHostContext, type CommandPaletteHost } from "@/components/command-palette/palette-host"
@@ -1119,7 +1134,20 @@ export function AppShell() {
    * used to become a dump the popup happily called a success, so every exit
    * path has to answer with a real number.
    */
-  function handleBrowserImport(entries: BrowserImportEntry[]): number {
+  function handleBrowserImport(entries: BrowserImportEntry[], target?: ExtensionImportTarget): ExtensionImportResult {
+    // "Add to project" from the extension (Hubble 2.0): the same source pipeline as a drop, into the project the person chose.
+    if (target) {
+      if (!storeRef.current?.workspaces.some((workspace) => workspace.id === target.workspaceId)) return 0
+      const outcomes = handleAddSources(
+        target.workspaceId,
+        entries.map((entry) => ({ url: entry.url, ...(entry.title ? { title: entry.title } : {}) })),
+        "extension"
+      )
+      return {
+        accepted: outcomes.filter((outcome) => outcome.status === "added" || outcome.status === "adopted").length,
+        duplicates: outcomes.filter((outcome) => outcome.status === "duplicate").length,
+      }
+    }
     // Defense in depth: useExtensionImport only forwards a batch once
     // `extensionCanIngest` below is true, which already implies a hydrated
     // store. Answering 0 (rather than nothing) keeps even an impossible
@@ -1158,8 +1186,184 @@ export function AppShell() {
   // tab was posted into a document with nothing listening and silently lost.
   // The content script holds the payload until this flips true.
   const extensionCanIngest = hydrated && store !== null && currentWorkspace !== null
+  // The projects the extension popup may offer for "Add to project": names and counts only.
+  const extensionProjects = useMemo(
+    () => (store ? store.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, sources: workspace.tabs.filter((tab) => tab.resource).length })) : []),
+    [store]
+  )
   useExtensionImport(handleBrowserImport, extensionCanIngest)
-  useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [])
+  useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
+
+  /*
+    Project sources (Hubble 2.0): read in the background, written back
+    through the one commit seam against the latest committed store.
+  */
+  const resources = useResourceProcessing({
+    store,
+    getStore: () => storeRef.current,
+    commit: (next) => {
+      commitStore(next)
+    },
+    enabled: hydrated,
+  })
+  const now = useNow(60_000)
+  // The agents a person connected (the roster) — re-read when they come back to a project.
+  const connectedAgents = useMemo(
+    () =>
+      hydrated && typeof window !== "undefined" && view === "workspace"
+        ? loadAgentRoster().agents.map((agent) => ({ provider: agent.provider, name: agent.name || agentDisplayName(agent.provider) }))
+        : [],
+    [hydrated, view]
+  )
+
+  function workspaceNamed(id: string): string {
+    return storeRef.current?.workspaces.find((workspace) => workspace.id === id)?.name.trim() || "this project"
+  }
+
+  /**
+   * The one way sources enter a project — a Chrome drop, the Add source
+   * dialog, the extension's "Add to project", an existing tab. Returns each
+   * input's outcome; says what happened in one toast with an exact undo.
+   */
+  function handleAddSources(workspaceId: string, inputs: ResourceInput[], origin: ResourceOrigin): IngestOutcome[] {
+    const before = storeRef.current
+    if (!before) return []
+    const result = ingestResources(before, workspaceId, inputs, origin, createTimestamp())
+    if (!result) return []
+    const counts = describeIngestion(result.plan)
+    const name = workspaceNamed(workspaceId)
+    if (result.store !== before) {
+      persist(result.store)
+      recordProjectEvent({ workspaceId, kind: "sources_added", count: counts.added, origin })
+      recordLoopMilestone("resource_added")
+    }
+    notifySourcesAdded(workspaceId, name, result.plan, counts)
+    return result.plan.outcomes
+  }
+
+  function notifySourcesAdded(workspaceId: string, name: string, plan: IngestionPlan, counts: ReturnType<typeof describeIngestion>) {
+    const extra = [
+      ...(counts.duplicates > 0 ? [`${counts.duplicates} already in ${name}`] : []),
+      ...(counts.invalid > 0 ? [`${counts.invalid} couldn't be added`] : []),
+    ].join(" · ")
+    if (counts.added > 0) {
+      toast.success(`Added ${counts.added} source${counts.added === 1 ? "" : "s"} to ${name}`, {
+        description: extra || "Hubble is reading them now.",
+        action: { label: "Undo", onClick: () => undoSourcesAdded(workspaceId, plan) },
+      })
+      return
+    }
+    if (counts.duplicates > 0 && counts.invalid === 0) {
+      const duplicate = plan.outcomes.find((outcome) => outcome.status === "duplicate")
+      toast.info(`Already in ${name}`, {
+        description: counts.duplicates === 1 ? "This source is already part of this project." : `These ${counts.duplicates} sources are already part of this project.`,
+        ...(duplicate ? { action: { label: "Open source", onClick: () => openTab(duplicate.input.url) } } : {}),
+      })
+      return
+    }
+    const invalid = plan.outcomes.find((outcome) => outcome.status === "invalid")
+    toast.error(counts.invalid === 1 ? "That item couldn't be added." : `${counts.invalid} items couldn't be added.`, {
+      description:
+        invalid?.status === "invalid" && invalid.reason === "unsupported-scheme"
+          ? "Only web pages, PDFs and videos with a web address can be sources."
+          : "Drop links, tabs or the address bar from Chrome, or paste web addresses.",
+    })
+  }
+
+  /** Exactly what one add did, undone: new sources removed, adopted tabs back to plain tabs. */
+  function undoSourcesAdded(workspaceId: string, plan: IngestionPlan) {
+    const latest = storeRef.current
+    const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!latest || !workspace) return
+    const added = new Set(plan.added.map((tab) => tab.id))
+    const adopted = new Set(plan.adopted)
+    const tabs = workspace.tabs
+      .filter((tab) => !added.has(tab.id))
+      .map((tab) => {
+        if (!adopted.has(tab.id)) return tab
+        const plain = { ...tab }
+        delete plain.resource
+        return plain
+      })
+    persist(updateWorkspaceTabs(latest, workspaceId, tabs))
+    resources.forget(workspaceId, [...added, ...adopted])
+    recordProjectEvent({ workspaceId, kind: "sources_removed", count: added.size + adopted.size })
+  }
+
+  /** Removes sources from a project. The page or file itself is untouched: only Hubble's reference goes. */
+  function handleRemoveSources(workspaceId: string, tabIds: string[]) {
+    const before = storeRef.current
+    const workspace = before?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!before || !workspace) return
+    const ids = new Set(tabIds)
+    const removed = workspace.tabs.filter((tab) => ids.has(tab.id))
+    if (removed.length === 0) return
+    persist(updateWorkspaceTabs(before, workspaceId, workspace.tabs.filter((tab) => !ids.has(tab.id))))
+    recordProjectEvent({ workspaceId, kind: "sources_removed", count: removed.length })
+    let undone = false
+    const forgetUnlessUndone = () => {
+      if (!undone) resources.forget(workspaceId, tabIds)
+    }
+    toast(`Removed ${removed.length === 1 ? (removed[0]!.title?.trim() || removed[0]!.domain) : `${removed.length} sources`} from ${workspace.name}`, {
+      description: "Agents won't use it any more. The original page or file is untouched.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const latest = storeRef.current
+          const target = latest?.workspaces.find((entry) => entry.id === workspaceId)
+          if (!latest || !target) return
+          undone = true
+          const present = new Set(target.tabs.map((tab) => tab.id))
+          persist(updateWorkspaceTabs(latest, workspaceId, [...target.tabs, ...removed.filter((tab) => !present.has(tab.id))]))
+        },
+      },
+      onAutoClose: forgetUnlessUndone,
+      onDismiss: forgetUnlessUndone,
+    })
+  }
+
+  function handleRenameSource(workspaceId: string, tabId: string, title: string) {
+    const latest = storeRef.current
+    const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!latest || !workspace) return
+    persist(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((tab) => (tab.id === tabId ? { ...tab, title } : tab))))
+  }
+
+  function handleOpenSource(workspaceId: string, tabId: string) {
+    const latest = storeRef.current
+    const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+    const tab = workspace?.tabs.find((entry) => entry.id === tabId)
+    if (!latest || !workspace || !tab) return
+    openTab(tab.url)
+    commitStore(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((entry) => (entry.id === tabId ? { ...entry, lastAccessedAt: Date.now() } : entry))))
+  }
+
+  function projectHomeFor(workspace: NonNullable<typeof currentWorkspace>, emptyExtra?: React.ReactNode) {
+    const projectId = workspaceProjectId(workspace)
+    const folderName = projectId && typeof window !== "undefined" ? loadControlProjects().projects.find((project) => project.id === projectId)?.name : undefined
+    return (
+      <ProjectHome
+        key={workspace.id}
+        workspace={workspace}
+        now={now}
+        onAddSources={(inputs, origin) => handleAddSources(workspace.id, inputs, origin)}
+        resources={resources}
+        onRenameSource={(tabId, title) => handleRenameSource(workspace.id, tabId, title)}
+        onRemoveSources={(tabIds) => handleRemoveSources(workspace.id, tabIds)}
+        onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
+        {...(agentActions ? { onUseInTask: (tab: { id: string }) => agentActions.ask(tabsContext(workspace.id, [tab.id])) } : {})}
+        onOpenCommandCentre={() => setView("command-centre")}
+        onOpenTask={(sessionId) => {
+          setAgentTaskSession(sessionId)
+          setView("command-centre")
+        }}
+        onUpdateBrief={(brief) => handleUpdateWorkspaceBrief(workspace.id, brief)}
+        {...(folderName ? { folderName } : {})}
+        agents={connectedAgents}
+        {...(emptyExtra ? { emptyExtra } : {})}
+      />
+    )
+  }
 
   function handleClear() {
     if (!store) return
@@ -1176,11 +1380,18 @@ export function AppShell() {
     if (id !== store.currentId) recordWorkspaceVisit()
   }
 
-  function handleCreateWorkspace(name: string) {
+  /** New project (Hubble 2.0): created, given its brief, and opened — no further setup. */
+  function handleCreateWorkspace(name: string, brief?: NewProjectBrief) {
     if (!store) return
     undoSnapshotRef.current = null
-    persist(createWorkspace(store, name))
+    let next = createWorkspace(store, name)
+    const id = next.currentId
+    if (brief) next = setWorkspaceBrief(next, id, brief)
+    persist(next)
     recordLoopMilestone("workspace_created")
+    recordLoopMilestone("project_created")
+    recordProjectEvent({ workspaceId: id, kind: "project_created" })
+    setView("workspace")
   }
 
   function handleRenameWorkspace(id: string, name: string) {
@@ -1213,6 +1424,9 @@ export function AppShell() {
     undoSnapshotRef.current = null
     persist(deleteWorkspace(store, id))
     forgetLastTask(id)
+    // Its history and the text Hubble read for its sources go with it.
+    forgetProjectActivity(id)
+    void pruneProjectContent(id, new Set()).catch(() => undefined)
   }
 
   function handleImportJson(text: string) {
@@ -1327,7 +1541,8 @@ export function AppShell() {
   // The condition is deliberately conservative on both halves — the onboarding
   // flag AND an entirely empty store — so a returning user who merely cleared a
   // workspace is never sent back to marketing; they fall through to
-  // LandingView's in-shell empty state below, exactly as before.
+  // the project's own empty state below (Hubble 2.0), which still offers the
+  // paste-your-tabs field the old in-shell landing had.
   //
   // AppShell stays mounted around this, so an extension dump arriving mid-scroll
   // still lands in the store and the next render swaps straight through to the
@@ -1534,8 +1749,18 @@ export function AppShell() {
       )
     : []
 
+  // "Add to project" from any tab menu or selection (Hubble 2.0): the same pipeline as a drop.
+  const projectActions: ProjectActions = {
+    currentId: currentWorkspace.id,
+    projects: store.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name.trim() || "Untitled project" })),
+    addTabs: (tabs, projectId) => {
+      handleAddSources(projectId, tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}) })), "import")
+    },
+  }
+
   return (
     <CommandPaletteHostContext.Provider value={paletteHost}>
+    <ProjectActionsProvider value={projectActions}>
     <AgentActionsProvider value={agentActions}>
     <div className="flex min-h-screen">
       <CommandPalette
@@ -1547,8 +1772,8 @@ export function AppShell() {
       <NewWorkspaceDialog
         open={newWorkspaceOpen}
         onOpenChange={setNewWorkspaceOpen}
-        onCreate={(name) => {
-          handleCreateWorkspace(name)
+        onCreate={(name, brief) => {
+          handleCreateWorkspace(name, brief)
           setNewWorkspaceOpen(false)
           setView("workspace")
         }}
@@ -1594,7 +1819,16 @@ export function AppShell() {
         // reference's do.
       >
         {destination ?? (currentWorkspace.tabs.length === 0 ? (
-          <LandingView onDump={handleDump} onOpenSidebar={() => setMobileSidebarOpen(true)} />
+          // An empty project starts by collecting context (Hubble 2.0); dumping every open tab is still one field away.
+          <ProjectPage key={currentWorkspace.id} workspace={currentWorkspace} onOpenSidebar={() => setMobileSidebarOpen(true)}>
+            {projectHomeFor(
+              currentWorkspace,
+              <div className="mt-3 w-full max-w-xl border-t border-subtle pt-3">
+                <p className="mb-2 text-body-sm text-muted-foreground">Or save every tab you have open, to organize later:</p>
+                <TabInput onDump={handleDump} />
+              </div>
+            )}
+          </ProjectPage>
         ) : (
           // Keyed on the workspace id so switching workspaces remounts
           // fresh — search/filter/sort/selection state from the previous
@@ -1649,11 +1883,13 @@ export function AppShell() {
             onAssignTabToSection={handleAssignTabToSection}
             onReorganizeSections={handleReorganizeSections}
             {...(focusCollection ? { focusCollection } : {})}
+            projectHome={projectHomeFor(currentWorkspace)}
           />
         ))}
       </div>
     </div>
     </AgentActionsProvider>
+    </ProjectActionsProvider>
     </CommandPaletteHostContext.Provider>
   )
 }

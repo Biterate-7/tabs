@@ -133,7 +133,7 @@ describe("context provenance", () => {
 
   it("is the whole workspace before anything was delivered, and counts a collection deleted since", () => {
     const events = [{ kind: "message_sent" as const, sessionId: "s1", timestamp: T0 + 10, delivery }];
-    expect(contextProvenanceOf({ ...base, events, at: T0 })!.lines).toEqual(["Research workspace · Whole workspace"]);
+    expect(contextProvenanceOf({ ...base, events, at: T0 })!.lines).toEqual(["Research workspace · Whole project"]);
     expect(contextProvenanceOf({ ...base, events, at: T0 + 20, collectionName: () => undefined })!.lines).toEqual([
       "Research workspace · Workspace brief",
       "1 collection · 1 tab",
@@ -149,7 +149,7 @@ describe("context provenance", () => {
       at: T0 + 1,
     })!.lines;
     expect(lines).toEqual([
-      "Research workspace · Whole workspace",
+      "Research workspace · Whole project",
       "Previous result from Gemini CLI · 1 file",
       "Handed over · 1 collection",
       "Your handoff instruction",

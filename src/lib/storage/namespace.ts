@@ -80,6 +80,10 @@ export const SCOPED_STORAGE_KEYS = [
   // the work loop this person reached, and when. Counts and kinds only, but a
   // record of one person's use, so it partitions with the rest.
   "tabdump:loop-log:v1",
+  // Each project's history (Hubble 2.0 — see src/lib/projects/activity.ts):
+  // sources added and read, and the agent work done there. Scoped: it is
+  // one person's record of their own projects.
+  "tabdump:project-activity:v1",
 ] as const;
 
 /**

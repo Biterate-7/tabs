@@ -129,7 +129,7 @@ export function Composer({
                   projectName
                   ? `Give ${agentName ?? "the agent"} a task in ${projectName}…`
                   : workspaceName
-                    ? `Ask ${agentName ?? "the agent"} about ${workspaceName}…`
+                    ? `Work on ${workspaceName} — what should ${agentName ?? "the agent"} do?`
                     : "Ask the agent to work on this project…"
                 : SESSION_STATUS_DETAIL[status]
             }

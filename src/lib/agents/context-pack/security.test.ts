@@ -116,7 +116,7 @@ describe("a Context Pack never carries a secret", () => {
   it("holds only the pack's own fields — no transcript, reasoning, protocol payload, runtime address or credential field", () => {
     const pack = hostilePack();
     expect(Object.keys(pack).sort()).toEqual(
-      ["collections", "files", "fingerprint", "instruction", "omitted", "previousResult", "recentChanges", "relationships", "scope", "tabs", "version", "workspace"].sort()
+      ["collections", "files", "fingerprint", "instruction", "omitted", "previousResult", "recentChanges", "relationships", "scope", "sources", "tabs", "version", "workspace"].sort()
     );
     const text = JSON.stringify(pack).toLowerCase();
     for (const forbidden of ["transcript", "reasoning", "thinking", "payload", "http://127.0.0.1", "localhost", "/mcp", "credential", "\"token\""]) {

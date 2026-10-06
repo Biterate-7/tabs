@@ -1,4 +1,5 @@
 import { isValidTimestamp } from "@/lib/timestamps";
+import { readTabResource } from "@/lib/resources/read";
 import type { Tab } from "./types";
 
 /**
@@ -63,6 +64,12 @@ export function stripWrongTypedTabFields(tab: Tab): Tab {
   }
   for (const field of TIMESTAMP_TAB_FIELDS) {
     if (field in raw && !isValidTimestamp(raw[field])) delete raw[field];
+  }
+  // A project source (Hubble 2.0): re-read, never trusted. Unreadable drops the field — the tab itself stays.
+  if ("resource" in raw) {
+    const resource = readTabResource(raw.resource);
+    if (resource) raw.resource = resource;
+    else delete raw.resource;
   }
   return tab;
 }

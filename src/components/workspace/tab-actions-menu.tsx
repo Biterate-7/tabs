@@ -19,6 +19,7 @@ import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { AskAgentSubmenu, useAgentActions } from "@/components/agents/agent-actions"
+import { AddToProjectSubmenu } from "@/components/project/project-actions"
 import { tabsContext } from "@/lib/agents/command-centre/working-context"
 
 /**
@@ -105,6 +106,7 @@ export function TabActionsMenu({
           </DropdownMenuItem>
         )}
         {agent && <AskAgentSubmenu subject="tab" context={tabsContext(agent.workspaceId, [tab.id])} />}
+        <AddToProjectSubmenu tabs={[tab]} />
         {onAddDependency && (
           <DropdownMenuItem onClick={() => onAddDependency(tab.id)}>
             <GitBranchPlus /> Add dependency…

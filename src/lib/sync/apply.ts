@@ -232,7 +232,10 @@ export function applyChanges(
           rejected++;
           break;
         }
-        tabs = upsertById<Tab>(tabs, tab);
+        // A project source's reading (Hubble 2.0) is device-local and never on the wire: an edit
+        // from another device to the same page keeps it. A different address is a different source.
+        const local = tabs.find((item) => item.id === tab.id);
+        tabs = upsertById<Tab>(tabs, local?.resource && local.url === tab.url ? { ...tab, resource: local.resource } : tab);
         applied++;
         break;
       }

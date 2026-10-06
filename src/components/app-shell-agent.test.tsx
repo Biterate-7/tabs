@@ -67,7 +67,7 @@ describe("asking an agent from the workspace", () => {
     const input = await openPalette(user)
     await user.type(input, "Ask agent about Research{Enter}")
 
-    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
     expect(screen.getAllByText("Research").length).toBeGreaterThan(0)
   })
 
@@ -118,7 +118,7 @@ describe("asking an agent from the workspace", () => {
     const input = await openPalette(user)
     await user.type(input, "Open Command Centre{Enter}")
 
-    expect(await screen.findByRole("heading", { name: "Work with your Development workspace" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Work on Development" })).toBeTruthy()
     const panel = screen.getByRole("complementary", { name: "Session context" })
     expect(within(panel).queryByRole("region", { name: "Tabs in context" })).toBeNull()
     expect(panel.textContent).not.toContain("Relativity paper")

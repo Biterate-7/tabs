@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useRef } from "react"
 import { isTerminalSession } from "@/lib/agents/command-centre/presentation"
 import { buildSessionContextSnapshot, snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
+import { contextOfSession } from "@/lib/agents/command-centre/working-context"
+import { sessionSources } from "@/lib/resources/context"
+import type { ProjectContents } from "@/hooks/use-project-contents"
+import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { CollectionBatchOperation, CollectionBatchResult } from "@/lib/collections/batch"
 import type { Collection } from "@/lib/collections/types"
@@ -88,29 +92,63 @@ export function useSessionContext(options: {
   applyCollectionBatch: (workspaceId: string, operations: readonly CollectionBatchOperation[]) => CollectionBatchResult
   /** Told once per application, in words — what the activity rows and the notification show. */
   onApplied?: (change: AppliedWorkspaceChange) => void
+  /**
+   * Extracted source content by project (Hubble 2.0). Each session carries the
+   * content of the sources in its own selection only — see lib/resources/context.ts.
+   */
+  contents?: ProjectContents
+  /** The person's latest words to a session, which rank sources when not all of them fit. */
+  instructionFor?: (sessionId: string) => string | undefined
 }): {
-  snapshotFor: (workspaceId: string) => SessionContextSnapshot | undefined
-  freshnessOf: (context: RuntimeSessionContextView) => ContextFreshness
+  snapshotFor: (workspaceId: string, focus?: { selection?: WorkingContext | null; instruction?: string }) => SessionContextSnapshot | undefined
+  freshnessOf: (context: RuntimeSessionContextView, sessionId?: string) => ContextFreshness
 } {
-  const { client, sessions, world, collections, applyCollectionBatch, onApplied } = options
+  const { client, sessions, world, collections, applyCollectionBatch, onApplied, contents, instructionFor } = options
 
   const snapshotFor = useCallback(
-    (workspaceId: string) =>
-      buildSessionContextSnapshot(
+    (workspaceId: string, focus?: { selection?: WorkingContext | null; instruction?: string }) => {
+      const workspace = world.workspaces.find((entry) => entry.id === workspaceId)
+      const projectContents = contents?.get(workspaceId)
+      const selection = focus?.selection && focus.selection.workspaceId === workspaceId ? focus.selection : null
+      const whole = !selection || (selection.tabIds.length === 0 && selection.collectionIds.length === 0)
+      const sources =
+        workspace && projectContents && projectContents.size > 0
+          ? sessionSources({
+              tabs: workspace.tabs,
+              selection: whole ? undefined : { tabIds: selection!.tabIds, collectionIds: selection!.collectionIds },
+              collections: collections.filter((collection) => collection.workspaceId === workspaceId),
+              contents: projectContents,
+              ...(focus?.instruction ? { instruction: focus.instruction } : {}),
+            })
+          : undefined
+      return buildSessionContextSnapshot(
         { workspaces: world.workspaces, collections, dependencies: world.dependencies },
-        workspaceId
-      ),
-    [collections, world.dependencies, world.workspaces]
+        workspaceId,
+        sources
+      )
+    },
+    [collections, contents, world.dependencies, world.workspaces]
+  )
+
+  /** A live session's snapshot: its own workspace, its own selection, ranked by its own latest words. */
+  const snapshotOfSession = useCallback(
+    (view: CommandCentreSession["view"]) => {
+      if (!view.context) return undefined
+      const instruction = instructionFor?.(view.sessionId)
+      return snapshotFor(view.context.workspaceId, { selection: contextOfSession(view), ...(instruction ? { instruction } : {}) })
+    },
+    [instructionFor, snapshotFor]
   )
 
   const freshnessOf = useCallback(
-    (context: RuntimeSessionContextView): ContextFreshness => {
-      const local = snapshotFor(context.workspaceId)
+    (context: RuntimeSessionContextView, sessionId?: string): ContextFreshness => {
+      const view = sessionId ? sessions.find((entry) => entry.view.sessionId === sessionId)?.view : undefined
+      const local = view ? snapshotOfSession(view) : snapshotFor(context.workspaceId)
       // A workspace this window cannot see is not one it can call stale.
       if (!local) return "fresh"
       return snapshotFingerprint(local) === context.fingerprint ? "fresh" : "update_available"
     },
-    [snapshotFor]
+    [sessions, snapshotFor, snapshotOfSession]
   )
 
   /* ---------------- Keep each live session's own workspace current. */
@@ -120,7 +158,7 @@ export function useSessionContext(options: {
     const timer = setTimeout(() => {
       for (const { view } of sessions) {
         if (!view.context || isTerminalSession(view.status)) continue
-        const snapshot = snapshotFor(view.context.workspaceId)
+        const snapshot = snapshotOfSession(view)
         if (!snapshot) continue
         const fingerprint = snapshotFingerprint(snapshot)
         // Already what the runtime holds, or already on its way.
@@ -130,7 +168,7 @@ export function useSessionContext(options: {
       }
     }, SYNC_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [client, sessions, snapshotFor])
+  }, [client, sessions, snapshotOfSession])
 
   /* ---------------- Apply what the user approved, exactly once. */
 

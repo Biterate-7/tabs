@@ -1446,16 +1446,17 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand | null {
       if (raw.name === "prepare_handoff") return { name: "prepare_handoff", ...base };
 
       if (typeof raw.fingerprint !== "string" || !HANDOFF_FINGERPRINT_PATTERN.test(raw.fingerprint)) return null;
-      const include = raw.include as { workspace?: unknown; previousResult?: unknown } | null | undefined;
+      const include = raw.include as { workspace?: unknown; previousResult?: unknown; answer?: unknown } | null | undefined;
       if (!include || typeof include !== "object") return null;
       if (typeof include.workspace !== "boolean" || typeof include.previousResult !== "boolean") return null;
+      if (include.answer !== undefined && typeof include.answer !== "boolean") return null;
       const projectId = optionalId(raw.projectId);
       if (projectId === null) return null;
       const command: Extract<RuntimeCommand, { name: "start_handoff" }> = {
         name: "start_handoff",
         ...base,
         fingerprint: raw.fingerprint,
-        include: { workspace: include.workspace, previousResult: include.previousResult },
+        include: { workspace: include.workspace, previousResult: include.previousResult, ...(include.answer === true ? { answer: true } : {}) },
       };
       if (raw.instruction !== undefined && raw.instruction !== null) {
         if (typeof raw.instruction !== "string" || raw.instruction.length > MAX_HANDOFF_INSTRUCTION_INPUT) return null;

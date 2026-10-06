@@ -1,3 +1,5 @@
+import type { TabResource } from "@/lib/resources/types";
+
 export type Tab = {
   id: string;
   url: string;
@@ -73,6 +75,13 @@ export type Tab = {
   organizationStatus?: "classified" | "uncertain" | "fallback" | "manual";
   /** Short, user-facing explanation of why this tab landed in its current section (e.g. "Discusses the Schwarzschild metric, alongside 3 other physics tabs in this batch.") — the AI's own `reason` field when available, or a synthesized one from the deterministic fallback. Never raw model reasoning/chain-of-thought. Cleared whenever a user manually moves the tab (see assignTabsToSection), since a stale AI-era explanation would be actively misleading once a human decided otherwise. */
   organizationReason?: string;
+  /**
+   * Present when this tab is a project source (Hubble 2.0 — see
+   * src/lib/resources/types.ts): its kind, how it arrived, and whether Hubble
+   * could read it. Absent on every ordinary saved tab, which is unchanged.
+   * Device-local like the workspace brief: sync carries the tab, not this.
+   */
+  resource?: TabResource;
 };
 
 export type ParseResult = {

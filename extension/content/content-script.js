@@ -142,7 +142,13 @@ onPageMessage((event) => {
   if (!pendingImport || data.payload?.importId !== pendingImport.importId) return;
 
   const accepted = Number(data.payload?.accepted);
-  settlePendingImport({ ok: true, accepted: Number.isFinite(accepted) ? accepted : 0 });
+  const duplicates = Number(data.payload?.duplicates);
+  settlePendingImport({
+    ok: true,
+    accepted: Number.isFinite(accepted) ? accepted : 0,
+    // Sources already in the target project (Hubble 2.0) — not a failure, so said separately.
+    ...(Number.isInteger(duplicates) && duplicates > 0 ? { duplicates } : {}),
+  });
 });
 
 // The page announcing it can ingest imports. Re-posting any held payload
@@ -188,7 +194,12 @@ onExtensionMessage((message, _sender, sendResponse) => {
     if (settled) return;
     settled = true;
     cleanup();
-    sendResponse({ ok: true, existingUrls: data.payload.existingUrls ?? [] });
+    sendResponse({
+      ok: true,
+      existingUrls: data.payload.existingUrls ?? [],
+      // The person's projects, for the popup's "Add to project" choice (Hubble 2.0). Names and ids only.
+      ...(Array.isArray(data.payload.projects) ? { projects: data.payload.projects } : {}),
+    });
   }
 
   const timer = setTimeout(() => {

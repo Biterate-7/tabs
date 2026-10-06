@@ -1,5 +1,6 @@
 "use client"
 
+import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, Radio, ScanSearch, ScrollText, Search, Settings, Star, Waypoints } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
@@ -107,7 +108,7 @@ export function AppSidebar({
   mobileOpen: boolean
   onMobileOpenChange: (open: boolean) => void
   onSwitch: (id: string) => void
-  onCreate: (name: string) => void
+  onCreate: (name: string, brief?: NewProjectBrief) => void
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onImportFile: (text: string) => void
@@ -268,7 +269,7 @@ export function AppSidebar({
         <div className={cn("min-h-0 flex-1 overflow-y-auto px-2 pb-2", railCollapsed && "px-1.5")}>
           <nav aria-label="Views" className="flex flex-col gap-px">
             <SidebarItem
-              label="Workspace"
+              label="Project"
               icon={<Boxes />}
               current={activeIs("workspace")}
               collapsed={railCollapsed}
@@ -336,7 +337,7 @@ export function AppSidebar({
           </nav>
 
           <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
-            Workspaces
+            Projects
           </SidebarSectionLabel>
           <div className={cn("flex flex-col gap-px", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
             {workspaces.map((w) => {

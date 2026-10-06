@@ -101,7 +101,7 @@ afterEach(() => {
 async function loadPopup() {
   await import("./popup.js");
   // Let the module's top-level detectTabs() (tabs.query + the
-  // best-effort checkAlreadyImported round trip) settle before a test
+  // best-effort askHubble round trip) settle before a test
   // drives the UI further.
   await vi.waitFor(() => {
     expect(document.getElementById("state-ready").hidden).toBe(false);

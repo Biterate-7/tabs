@@ -141,7 +141,7 @@ describe("Continue with… in the Command Centre", () => {
     await dialog.findByRole("heading", { name: "Continue with Codex" })
     expect(dialog.getByText("Development")).toBeTruthy()
     // The canonical Context Pack's line (Hubble 1.5): scope, what it holds, and the previous result's file.
-    expect(dialog.getByText("Whole workspace · 8 tabs · 1 collection · 1 file")).toBeTruthy()
+    expect(dialog.getByText("Whole project · 8 tabs · 1 collection · 1 file")).toBeTruthy()
     expect(dialog.getByText("Created plan.md")).toBeTruthy()
     // The preview was asked of the runtime, with the source's own workspace.
     const [prepare] = sent(runtime, "prepare_handoff")

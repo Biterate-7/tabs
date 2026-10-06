@@ -45,7 +45,7 @@ describe("ContextPackInspector", () => {
     expect(screen.getByText("Research")).toBeTruthy()
     expect(screen.getByText("Climate policy sources.")).toBeTruthy()
     expect(screen.getByText("Carbon pricing.")).toBeTruthy()
-    expect(screen.getByText("Whole workspace")).toBeTruthy()
+    expect(screen.getByText("Whole project")).toBeTruthy()
     expect(screen.getByText("All 6 · read on request")).toBeTruthy()
     expect(screen.getByText("“Compare the pricing models.”")).toBeTruthy()
     expect(screen.getByText("Claude Code has this")).toBeTruthy()

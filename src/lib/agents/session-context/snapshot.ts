@@ -3,6 +3,9 @@ import type { Collection } from "@/lib/collections/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
+import { readTabResource } from "@/lib/resources/read";
+import { RESOURCE_KINDS } from "@/lib/resources/types";
+import type { ResourceKind, TabResource } from "@/lib/resources/types";
 
 /**
  * The one workspace an agent session can see, as the runtime holds it
@@ -37,9 +40,36 @@ export const SNAPSHOT_LIMITS = {
   /** Notes are the user's own words and can be long; the resolver shows them only when asked. */
   notes: 500,
   name: 200,
-  /** Encoded, so a snapshot always fits the desktop bridge's 1 MB request cap with room to spare. */
-  bytes: 600 * 1024,
+  /**
+   * Encoded, so a snapshot always fits the desktop bridge's 1 MB request cap
+   * with room to spare. Source content (Hubble 2.0) is dropped before any tab
+   * when it does not fit.
+   */
+  bytes: 800 * 1024,
+  /** Sources whose extracted content one session carries (Hubble 2.0), and how much. */
+  sources: 50,
+  sourceChars: 300_000,
+  sourceCharsEach: 100_000,
 } as const;
+
+/**
+ * What Hubble extracted from one project source, for the session's agent to
+ * read through MCP (`read_source`, `search_sources`) — never pasted into a
+ * prompt. Only sources in the session's own context selection are carried,
+ * chosen and cut to `SNAPSHOT_LIMITS.source*` by `sessionSources`
+ * (lib/resources/context.ts); the rest are listed without content and the
+ * agent is told so.
+ */
+export type SessionSource = {
+  tabId: string;
+  kind: ResourceKind;
+  text?: string;
+  /** PDF pages; index 0 is page 1. Page numbers survive truncation because pages are only ever dropped from the end. */
+  pages?: string[];
+  transcript?: { start?: number; text: string }[];
+  /** Cut to fit the session's budget — the agent is told the text is partial. */
+  truncated?: boolean;
+};
 
 export type SessionContextSnapshot = {
   workspace: Workspace;
@@ -47,6 +77,8 @@ export type SessionContextSnapshot = {
   dependencies: TabDependency[];
   /** Tabs were left out to stay within the bounds. The MCP answers say so. */
   truncated: boolean;
+  /** Extracted content of the session's selected sources (Hubble 2.0). Absent: none carried. */
+  sources?: SessionSource[];
 };
 
 /* ------------------------------------------------------------------ *
@@ -88,7 +120,95 @@ function copyTab(raw: unknown): Tab | undefined {
   if (source.pinned === true) tab.pinned = true;
   if (source.isFavorite === true) tab.isFavorite = true;
   if (source.source === "tabs" || source.source === "history") tab.source = source.source;
+  const resource = copyResource(source.resource);
+  if (resource) tab.resource = resource;
   return tab;
+}
+
+/**
+ * A source's description as a session may see it: what it is, whether Hubble
+ * could read it and why not — without the uploaded file's name or size,
+ * which describe the person's disk rather than the source.
+ */
+function copyResource(raw: unknown): TabResource | undefined {
+  const resource = readTabResource(raw);
+  if (!resource) return undefined;
+  const meta = resource.meta;
+  const kept = meta
+    ? Object.fromEntries(
+        Object.entries({ siteName: meta.siteName, author: meta.author, publishedAt: meta.publishedAt, pageCount: meta.pageCount, durationSeconds: meta.durationSeconds, mimeType: meta.mimeType }).filter(([, value]) => value !== undefined)
+      )
+    : undefined;
+  const copy: TabResource = { ...resource };
+  delete copy.meta;
+  if (kept && Object.keys(kept).length > 0) copy.meta = kept;
+  return copy;
+}
+
+function boundedText(value: unknown, budget: { left: number }): { text?: string; cut: boolean } {
+  if (typeof value !== "string" || value.length === 0 || budget.left <= 0) return { cut: typeof value === "string" && value.length > 0 };
+  const text = value.slice(0, budget.left);
+  budget.left -= text.length;
+  return { text, cut: text.length < value.length };
+}
+
+/** Source content, re-read and re-bounded: only sources of tabs in this snapshot, within every limit. */
+function copySources(raw: unknown, sourceTabIds: ReadonlySet<string>): SessionSource[] {
+  if (!Array.isArray(raw)) return [];
+  const total = { left: SNAPSHOT_LIMITS.sourceChars };
+  const out: SessionSource[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (out.length >= SNAPSHOT_LIMITS.sources || total.left <= 0) break;
+    if (!entry || typeof entry !== "object") continue;
+    const source = entry as Record<string, unknown>;
+    const tabId = text(source.tabId, 200);
+    if (!tabId || !sourceTabIds.has(tabId) || seen.has(tabId)) continue;
+    if (!RESOURCE_KINDS.includes(source.kind as ResourceKind)) continue;
+    seen.add(tabId);
+    const each = { left: Math.min(SNAPSHOT_LIMITS.sourceCharsEach, total.left) };
+    const before = each.left;
+    const copy: SessionSource = { tabId, kind: source.kind as ResourceKind };
+    let cut = source.truncated === true;
+    const body = boundedText(source.text, each);
+    if (body.text) copy.text = body.text;
+    cut ||= body.cut;
+    if (Array.isArray(source.pages)) {
+      const pages: string[] = [];
+      for (const page of source.pages) {
+        if (typeof page !== "string") break;
+        if (each.left <= 0) {
+          cut = true;
+          break;
+        }
+        const piece = boundedText(page, each);
+        pages.push(piece.text ?? "");
+        cut ||= piece.cut;
+      }
+      if (pages.length > 0) copy.pages = pages;
+    }
+    if (Array.isArray(source.transcript)) {
+      const lines: { start?: number; text: string }[] = [];
+      for (const line of source.transcript) {
+        if (!line || typeof line !== "object") continue;
+        if (each.left <= 0) {
+          cut = true;
+          break;
+        }
+        const piece = boundedText((line as { text?: unknown }).text, each);
+        if (!piece.text) continue;
+        const start = time((line as { start?: unknown }).start);
+        lines.push({ ...(start !== undefined ? { start } : {}), text: piece.text });
+        cut ||= piece.cut;
+      }
+      if (lines.length > 0) copy.transcript = lines;
+    }
+    if (!copy.text && !copy.pages && !copy.transcript) continue;
+    if (cut) copy.truncated = true;
+    total.left -= before - each.left;
+    out.push(copy);
+  }
+  return out;
 }
 
 const DEPENDENCY_TYPES: readonly DependencyType[] = [
@@ -197,8 +317,14 @@ export function readSessionContextSnapshot(
     dependencies,
     truncated,
   };
+  const sources = copySources(source.sources, new Set(tabs.filter((tab) => tab.resource).map((tab) => tab.id)));
+  if (sources.length > 0) snapshot.sources = sources;
 
-  // The byte budget, applied last: drop tabs from the end until it fits.
+  // The byte budget, applied last: source content goes first, then tabs from the end, until it fits.
+  while (encodedSize(snapshot) > SNAPSHOT_LIMITS.bytes && snapshot.sources && snapshot.sources.length > 0) {
+    snapshot.sources = snapshot.sources.slice(0, -1);
+    if (snapshot.sources.length === 0) delete snapshot.sources;
+  }
   while (encodedSize(snapshot) > SNAPSHOT_LIMITS.bytes && snapshot.workspace.tabs.length > 0) {
     const keep = Math.floor(snapshot.workspace.tabs.length * 0.8);
     snapshot.workspace.tabs = snapshot.workspace.tabs.slice(0, keep);
@@ -250,7 +376,9 @@ export function buildSessionContextSnapshot(
     collections: readonly Collection[];
     dependencies: readonly TabDependency[];
   },
-  workspaceId: string
+  workspaceId: string,
+  /** The extracted content of the session's selected sources (lib/resources/context.ts `sessionSources`). */
+  sources?: readonly SessionSource[]
 ): SessionContextSnapshot | undefined {
   const workspace = world.workspaces.find((entry) => entry.id === workspaceId);
   if (!workspace) return undefined;
@@ -269,6 +397,7 @@ export function buildSessionContextSnapshot(
       dependencies: world.dependencies.filter(
         (dependency) => tabIds.has(dependency.parentTabId) && tabIds.has(dependency.childTabId)
       ),
+      ...(sources && sources.length > 0 ? { sources } : {}),
     },
     workspaceId
   );

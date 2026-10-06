@@ -88,6 +88,10 @@ export const SESSION_TOOL_CAPABILITY = {
   get_topic_group: "tabs.read",
   find_related_tabs: "tabs.read",
   list_domains: "tabs.read",
+  // Project sources (Hubble 2.0): the text Hubble extracted from the sources the user selected. Reading only.
+  list_sources: "tabs.read",
+  read_source: "tabs.read",
+  search_sources: "tabs.read",
   find_relevant_collections: "collections.read",
   list_collections: "collections.read",
   get_collection: "collections.read",
