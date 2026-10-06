@@ -18,6 +18,7 @@ import {
   saveCollectionState,
 } from "@/lib/collections/persistence"
 import { applyCollectionBatch } from "@/lib/collections/batch"
+import { restoreWorkspaceCollections } from "@/lib/collections/restore"
 import { createTimestamp } from "@/lib/timestamps"
 import { publishSyncDirty, subscribeRemoteEntities } from "@/lib/sync/notify"
 import type { CollectionBatchOperation, CollectionBatchResult } from "@/lib/collections/batch"
@@ -244,15 +245,11 @@ export function useCollectionStore(workspaces: Workspace[]) {
         previous: readonly Collection[],
         expected: readonly Collection[]
       ): boolean => {
-        const current = collections.filter((c) => c.workspaceId === workspaceId)
-        if (JSON.stringify(current) !== JSON.stringify(expected)) return false
-        setCollections([...collections.filter((c) => c.workspaceId !== workspaceId), ...previous])
-        const before = new Map(previous.map((c) => [c.id, JSON.stringify(c)]))
-        const now = new Map(current.map((c) => [c.id, JSON.stringify(c)]))
-        const changed = [...before.keys()].filter((id) => before.get(id) !== now.get(id))
-        const removed = [...now.keys()].filter((id) => !before.has(id))
-        publishCollections(changed, workspaceId)
-        publishCollections(removed, workspaceId, true)
+        const restored = restoreWorkspaceCollections(collections, workspaceId, previous, expected)
+        if (!restored) return false
+        setCollections(restored.collections)
+        publishCollections(restored.changed, workspaceId)
+        publishCollections(restored.removed, workspaceId, true)
         return true
       },
     }

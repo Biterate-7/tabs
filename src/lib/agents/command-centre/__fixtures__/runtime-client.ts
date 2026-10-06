@@ -1,9 +1,20 @@
 import { runtimeFailure } from "@/lib/agents/runtime/protocol"
+import { reviveHistoryChange } from "@/lib/agents/activity/history"
+import type { AgentHistoryStore } from "@/lib/agents/activity/history-store"
 import { snapshotFingerprint } from "@/lib/agents/session-context/snapshot"
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus"
 import type { AgentAttachedContext } from "@/lib/agents/control/context"
+import type { ControlContextDeliveryInfo } from "@/lib/agents/control/events"
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { contextWorldOfSnapshot, handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { canHandOffFrom, handoffLinksOf, readHandoffInstruction, selectHandoffContext } from "@/lib/agents/handoff/handoff"
+import { prepareHandoffPreview } from "@/lib/agents/handoff/preview"
+import type { HandoffFailure, SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { SessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
 import type { RuntimeClient } from "@/lib/agents/runtime/client"
+import type { ProjectInspection } from "@/lib/agents/project/inspection"
+import type { ProjectChangeReview } from "@/lib/agents/project/changes"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type {
   ProviderConnectionView,
@@ -55,7 +66,22 @@ export type ScriptedRuntime = {
   setDetections: (detections: readonly ProviderDetection[]) => void
   /** What `connect_provider` answers for a provider; sign-in flips it to authenticated. */
   setConnection: (view: ProviderConnectionView) => void
+  /** Makes the next `start_handoff` end as this failure, as the host reports one (Hubble 1.4). */
+  failHandoff: (failure: HandoffFailure | null) => void
+  /** Handoffs the runtime recorded. */
+  readonly handoffs: readonly SessionHandoff[]
+  /** Messages sent, with the context each delivered — as the host records it on the message (Hubble 1.5). */
+  readonly sentMessages: readonly { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[]
+  /** What `inspect_project` answers for a project (Hubble 1.6). Absent: refused as unknown. */
+  setInspection: (projectId: string, inspection: Omit<ProjectInspection, "projectId" | "inspectedAt"> | null) => void
+  /** What `undo_project_change` answers. Default: undone, one file. */
+  setUndoResult: (result: { outcome: "undone" | "refused" | "partial"; reason?: "changed" | "no_copy" | "unavailable" | "sensitive"; files: number }) => void
+  /** What `review_project_change` answers. Default: refused. */
+  setReview: (review: ProjectChangeReview | null) => void
 }
+
+/** The actor a scripted runtime answers history for — the local actor, as on a Hubble with no accounts. */
+export const FIXTURE_HISTORY_OWNER = "local"
 
 export const FIXTURE_RUNTIME_ID = "runtime-fixture"
 
@@ -97,8 +123,15 @@ export function createScriptedRuntime(
   initial: {
     status?: RuntimeStatus
     sessions?: readonly RuntimeSessionView[]
+    /**
+     * Agent history, answered as the host answers it — owner- and
+     * workspace-scoped through the store. Absent: `history_unavailable`, as a
+     * host with no database says.
+     */
+    history?: AgentHistoryStore
   } = {}
 ): ScriptedRuntime {
+  const history = initial.history
   let status = initial.status ?? scriptedStatus()
   let sessions = initial.sessions ?? []
   let correlations: readonly RuntimeCorrelationView[] = []
@@ -111,8 +144,46 @@ export function createScriptedRuntime(
   const connectionViews = new Map<AgentProviderId, ProviderConnectionView>()
 
   let runtimeId: string | undefined
+  const handoffs: SessionHandoff[] = []
+  const sentMessages: { sessionId: string; text: string; delivery?: ControlContextDeliveryInfo }[] = []
+  let handoffFailure: HandoffFailure | null = null
+  const inspections = new Map<string, Omit<ProjectInspection, "projectId" | "inspectedAt">>()
+  let undoResult: { outcome: "undone" | "refused" | "partial"; reason?: "changed" | "no_copy" | "unavailable" | "sensitive"; files: number } = { outcome: "undone", files: 1 }
+  let review: ProjectChangeReview | null = null
+  let checkCounter = 0
+  /** Each session as the host describes it: with its handoff links, from the records. */
+  const linked = (view: RuntimeSessionView): RuntimeSessionView => {
+    const links = handoffLinksOf(view.sessionId, handoffs)
+    if (!links) return view
+    return { ...view, handoff: links }
+  }
+
+  /** What the host's `handoffCandidate` decides, with the same preview function. */
+  function handoffCandidate(command: Extract<RuntimeCommand, { name: "prepare_handoff" | "start_handoff" }>) {
+    const source = sessions.find((s) => s.sessionId === command.sourceSessionId)
+    if (!source) return runtimeFailure<never>("session_not_found")
+    const workspaceId = source.workspaceId ?? source.context?.workspaceId
+    if (!workspaceId || !canHandOffFrom(source.status)) return runtimeFailure<never>("invalid_session_state")
+    const target = status.providers.find((entry) => entry.provider === command.targetProvider)
+    if (!target?.available || !target.capabilities.includes("create_session")) return runtimeFailure<never>("provider_unavailable")
+    if (command.contextSnapshot && command.contextSnapshot.workspace.id !== workspaceId) return runtimeFailure<never>("context_invalid")
+    const prepared = prepareHandoffPreview({
+      session: source,
+      workspaceId,
+      events: events.filter((event) => event.sessionId === source.sessionId),
+      changes: [],
+      ...(command.contextSnapshot ? { snapshot: command.contextSnapshot } : {}),
+      ...(source.focus ? { focus: source.focus } : {}),
+      targetProvider: command.targetProvider,
+      contextTools: true,
+      now: 1_700_000_000_000,
+    })
+    return { ok: true as const, value: { source, workspaceId, ...prepared } }
+  }
   /** The snapshot each session was started with — what the host would check a focus against. */
   const snapshots = new Map<string, SessionContextSnapshot>()
+  /** The context attached to each session, for what its next message records delivering (Hubble 1.5). */
+  const attachedContexts = new Map<string, AgentAttachedContext>()
 
   /**
    * Context attached to a session, recorded as the host records it: its tab
@@ -128,9 +199,11 @@ export function createScriptedRuntime(
     if (workspaceId && snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined
     const { focus: _previous, ...rest } = view
     void _previous
+    attachedContexts.set(view.sessionId, context)
     return {
       ...rest,
       contextSnapshotId: context.snapshotId,
+      contextDelivered: false,
       ...(isEmptyFocus(focus) ? {} : { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: false } }),
     }
   }
@@ -154,12 +227,82 @@ export function createScriptedRuntime(
         return { ok: true, value: status }
 
       case "list_sessions":
-        return { ok: true, value: { sessions, correlations } }
+        return { ok: true, value: { sessions: sessions.map(linked), correlations } }
 
       case "get_session": {
         const found = sessions.find((s) => s.sessionId === command.sessionId)
         if (!found) return runtimeFailure<never>("session_not_found")
-        return { ok: true, value: { session: found, approvals } }
+        const related = handoffs.filter((h) => h.sourceSessionId === found.sessionId || h.targetSessionId === found.sessionId)
+        return { ok: true, value: { session: linked(found), approvals, ...(related.length > 0 ? { handoffs: related } : {}) } }
+      }
+
+      /* Hubble 1.4 — explicit handoff, as the host answers it. */
+      case "prepare_handoff": {
+        const candidate = handoffCandidate(command)
+        return candidate.ok ? { ok: true, value: candidate.value.preview } : candidate
+      }
+
+      case "start_handoff": {
+        const candidate = handoffCandidate(command)
+        if (!candidate.ok) return candidate
+        const { source, workspaceId, preview, focus } = candidate.value
+        if (preview.fingerprint !== command.fingerprint) return runtimeFailure<never>("context_invalid")
+        const instruction = readHandoffInstruction(command.instruction)
+        const record: SessionHandoff = {
+          handoffId: `handoff-${handoffs.length + 1}`,
+          workspaceId,
+          sourceSessionId: source.sessionId,
+          sourceProvider: source.provider,
+          targetProvider: command.targetProvider,
+          status: "ready",
+          context: selectHandoffContext(preview.context, command.include),
+          ...(instruction ? { instruction } : {}),
+          createdAt: 1_700_000_000_000,
+          updatedAt: 1_700_000_000_000,
+        }
+        if (handoffFailure === "session_not_created") {
+          handoffs.push({ ...record, status: "failed", failure: "session_not_created" })
+          return { ok: true, value: { handoff: handoffs[handoffs.length - 1], error: { code: "provider_error", message: "The agent stopped unexpectedly." } } }
+        }
+        // The canonical Context Pack goes with the envelope, as the host sends it (Hubble 1.5).
+        const pack =
+          record.context.workspace && command.contextSnapshot
+            ? handoffContextPack({
+                world: contextWorldOfSnapshot(command.contextSnapshot),
+                workspaceId,
+                ...(focus ? { focus } : {}),
+                context: record.context,
+                ...(instruction ? { instruction } : {}),
+              })
+            : undefined
+        const packed = pack ? contextPackAttachedContext(pack, 1_700_000_000_000) : null
+        const target = scriptedSession({
+          sessionId: `session-${sessions.length + 1}`,
+          provider: command.targetProvider,
+          status: "running",
+          workspaceId,
+          ...(source.title ? { title: source.title } : {}),
+          ...(command.projectId ? { projectId: command.projectId } : {}),
+          ...(packed ? { contextSnapshotId: packed.snapshotId, contextDelivered: true } : {}),
+          ...(packed && focus && (focus.tabIds.length > 0 || focus.collectionIds.length > 0)
+            ? { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: true } }
+            : {}),
+        })
+        if (packed) attachedContexts.set(target.sessionId, packed)
+        sessions = [...sessions, target]
+        if (handoffFailure === "context_not_delivered") {
+          handoffs.push({ ...record, targetSessionId: target.sessionId, status: "failed", failure: "context_not_delivered" })
+          return { ok: true, value: { handoff: handoffs[handoffs.length - 1], session: target, error: { code: "provider_error", message: "The agent stopped unexpectedly." } } }
+        }
+        handoffs.push({ ...record, targetSessionId: target.sessionId })
+        const info = { handoffId: record.handoffId, workspaceId }
+        for (const event of [
+          { sessionId: target.sessionId, provider: target.provider, kind: "handoff_received" as const, handoff: { ...info, peerProvider: source.provider, peerSessionId: source.sessionId } },
+          { sessionId: source.sessionId, provider: source.provider, kind: "handoff_sent" as const, handoff: { ...info, peerProvider: target.provider, peerSessionId: target.sessionId, outcome: "ready" as const } },
+        ]) {
+          events = [...events, { id: `handoff-event-${events.length + 1}`, timestamp: 1_700_000_000_000, summary: "", ...event, sequence: events.length + 1 }]
+        }
+        return { ok: true, value: { handoff: handoffs[handoffs.length - 1], session: linked(target) } }
       }
 
       case "get_events": {
@@ -226,9 +369,11 @@ export function createScriptedRuntime(
       case "detach_context": {
         const target = sessions.find((s) => s.sessionId === command.sessionId)
         if (!target) return runtimeFailure<never>("session_not_found")
-        const { focus: _focus, contextSnapshotId: _snapshot, ...rest } = target
+        const { focus: _focus, contextSnapshotId: _snapshot, contextDelivered: _delivered, ...rest } = target
         void _focus
         void _snapshot
+        void _delivered
+        attachedContexts.delete(target.sessionId)
         sessions = sessions.map((s) => (s.sessionId === target.sessionId ? rest : s))
         return { ok: true, value: rest }
       }
@@ -236,9 +381,18 @@ export function createScriptedRuntime(
       case "send_message": {
         const target = sessions.find((s) => s.sessionId === command.sessionId)
         if (!target) return runtimeFailure<never>("session_not_found")
-        // Attached context goes with this message, once.
-        const sent = target.focus ? { ...target, focus: { ...target.focus, delivered: true } } : target
+        // Attached context goes with this message, once — and, as the host
+        // does, the message records what it delivered.
+        const owed = target.contextDelivered === false ? attachedContexts.get(target.sessionId) : undefined
+        const workspaceId = target.context?.workspaceId ?? target.workspaceId
+        const delivery = owed && workspaceId ? contextDeliveryOf(owed, workspaceId) : undefined
+        const sent = {
+          ...target,
+          ...(target.focus ? { focus: { ...target.focus, delivered: true } } : {}),
+          ...(target.contextSnapshotId ? { contextDelivered: true } : {}),
+        }
         sessions = sessions.map((s) => (s.sessionId === target.sessionId ? sent : s))
+        sentMessages.push({ sessionId: target.sessionId, text: command.text, ...(delivery ? { delivery } : {}) })
         return { ok: true, value: sent }
       }
 
@@ -309,6 +463,78 @@ export function createScriptedRuntime(
         return { ok: true, value: view }
       }
 
+      case "list_history":
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        return history
+          .listSessions(FIXTURE_HISTORY_OWNER, command.workspaceId, {
+            ...(command.before ? { before: command.before } : {}),
+            ...(command.limit ? { limit: command.limit } : {}),
+          })
+          .then((value) => ({ ok: true, value }))
+
+      case "get_history":
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        return history
+          .readSession(FIXTURE_HISTORY_OWNER, command.workspaceId, command.sessionId)
+          .then((value) => (value ? { ok: true, value } : runtimeFailure<never>("session_not_found")))
+
+      case "record_workspace_change": {
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        const target = sessions.find((s) => s.sessionId === command.sessionId)
+        const workspaceId = target?.workspaceId ?? target?.context?.workspaceId
+        if (!target || !workspaceId) return runtimeFailure<never>("session_not_found")
+        const approvalId = target.context?.pendingActions.find((action) => action.actionId === command.change.id)?.approvalId
+        const change = reviveHistoryChange(
+          { ...command.change, sessionId: target.sessionId, provider: target.provider, workspaceId, ...(approvalId ? { approvalId } : {}) },
+          { sessionId: target.sessionId, workspaceId }
+        )
+        if (!change) return runtimeFailure<never>("invalid_request")
+        return history
+          .write(FIXTURE_HISTORY_OWNER, {
+            sessions: [
+              {
+                sessionId: target.sessionId,
+                workspaceId,
+                provider: target.provider,
+                status: target.status,
+                startedAt: target.createdAt,
+                lastActivityAt: Math.max(target.updatedAt, change.at),
+                ...(target.title ? { title: target.title } : {}),
+              },
+            ],
+            records: [{ sessionId: target.sessionId, kind: "change", key: change.id, at: change.at, data: change }],
+          })
+          .then(() => ({ ok: true, value: { sessionId: target.sessionId } }))
+      }
+
+      case "record_workspace_undo": {
+        if (!history) return runtimeFailure<never>("history_unavailable")
+        const { workspaceId, sessionId, changeId, at } = command
+        return history.hasAppliedChange(FIXTURE_HISTORY_OWNER, workspaceId, sessionId, changeId).then(async (known) => {
+          if (!known) return runtimeFailure<never>("session_not_found")
+          await history.write(FIXTURE_HISTORY_OWNER, {
+            sessions: [],
+            records: [{ sessionId, kind: "undo", key: changeId, at, data: { changeId, at } }],
+          })
+          return { ok: true, value: { sessionId, changeId } }
+        })
+      }
+
+      /* Project execution (Hubble 1.6), answered as the host answers it. */
+      case "inspect_project": {
+        const found = inspections.get(command.projectId)
+        if (!found) return runtimeFailure<never>("project_scope_violation")
+        return { ok: true, value: { projectId: command.projectId, inspectedAt: 1_700_000_000_000, ...found } }
+      }
+      case "run_project_check":
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: { checkId: `check-${++checkCounter}` } }
+      case "undo_project_change":
+        if (!sessions.some((s) => s.sessionId === command.sessionId)) return runtimeFailure<never>("session_not_found")
+        return { ok: true, value: undoResult }
+      case "review_project_change":
+        return review ? { ok: true, value: review } : runtimeFailure<never>("invalid_request")
+
       default:
         return runtimeFailure<never>("invalid_request")
     }
@@ -355,6 +581,21 @@ export function createScriptedRuntime(
     },
     setConnection: (view) => {
       connectionViews.set(view.provider, view)
+    },
+    failHandoff: (failure) => {
+      handoffFailure = failure
+    },
+    handoffs,
+    sentMessages,
+    setInspection: (projectId, inspection) => {
+      if (inspection) inspections.set(projectId, inspection)
+      else inspections.delete(projectId)
+    },
+    setUndoResult: (next) => {
+      undoResult = next
+    },
+    setReview: (next) => {
+      review = next
     },
   }
 }

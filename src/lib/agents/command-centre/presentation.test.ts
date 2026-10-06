@@ -199,3 +199,75 @@ describe("provider rows (Phase J.2)", () => {
     expect(providerRowState({ ...codex, connection: "connected", authentication: "required" }).label).toBe("Sign-in required")
   })
 })
+
+describe("one vocabulary for status, approvals and failures (UX consistency pass)", () => {
+  it("has exactly one label per session status, and keeps the distinctions that matter", async () => {
+    const { SESSION_STATUS_LABEL } = await import("./presentation");
+    const labels = Object.values(SESSION_STATUS_LABEL);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(SESSION_STATUS_LABEL.disconnected).not.toBe(SESSION_STATUS_LABEL.failed);
+    expect(SESSION_STATUS_LABEL.waiting_for_approval).not.toBe(SESSION_STATUS_LABEL.running);
+    for (const [status, words] of [
+      ["connecting", "Connecting"],
+      ["ready", "Ready"],
+      ["running", "Running"],
+      ["waiting_for_approval", "Waiting for approval"],
+      ["completed", "Completed"],
+      ["failed", "Failed"],
+      ["disconnected", "Disconnected"],
+      ["cancelled", "Cancelled"],
+    ] as const) {
+      expect(SESSION_STATUS_LABEL[status]).toBe(words);
+    }
+  });
+
+  it("says an approval the same way in the conversation, the timeline and the inspector", async () => {
+    const { APPROVAL_STATE_LABEL, EVENT_PRESENTATION } = await import("./presentation");
+    const { ACTION_STATUS_LABEL } = await import("@/lib/agents/activity/inspector");
+    expect(EVENT_PRESENTATION.approval_granted.label).toBe(APPROVAL_STATE_LABEL.approved);
+    expect(EVENT_PRESENTATION.approval_denied.label).toBe(APPROVAL_STATE_LABEL.rejected);
+    expect(ACTION_STATUS_LABEL.waiting_for_approval).toBe(APPROVAL_STATE_LABEL.waiting);
+    expect(ACTION_STATUS_LABEL.approved).toBe(APPROVAL_STATE_LABEL.approved);
+    expect(ACTION_STATUS_LABEL.rejected).toBe(APPROVAL_STATE_LABEL.rejected);
+    expect(ACTION_STATUS_LABEL.expired).toBe(APPROVAL_STATE_LABEL.expired);
+    expect(ACTION_STATUS_LABEL.withdrawn).toBe(APPROVAL_STATE_LABEL.withdrawn);
+    // Five different situations, five different words.
+    expect(new Set(Object.values(APPROVAL_STATE_LABEL)).size).toBe(5);
+    // Never "granted"/"denied" next to "approved"/"rejected".
+    expect(Object.values(EVENT_PRESENTATION).map((entry) => entry.label)).not.toEqual(expect.arrayContaining(["Approval granted", "Approval denied"]));
+  });
+
+  it("finishes a run in one word wherever it is told", async () => {
+    const { EVENT_PRESENTATION } = await import("./presentation");
+    expect(EVENT_PRESENTATION.run_completed.label).toBe("Finished");
+    expect(EVENT_PRESENTATION.run_cancelled.label).toBe("Cancelled");
+  });
+
+  it("names the agent in a failure that is the agent's, and never shows a code", async () => {
+    const { RUNTIME_ERROR_PRESENTATION, runtimeErrorTitle } = await import("./presentation");
+    expect(runtimeErrorTitle("provider_error", "Codex")).toBe("Codex stopped unexpectedly");
+    expect(runtimeErrorTitle("timeout", "Codex")).toBe("Codex didn't respond");
+    expect(runtimeErrorTitle("authentication_required", "Codex")).toBe("Codex isn't signed in");
+    expect(runtimeErrorTitle("provider_error", "Codex", { starting: true })).toBe("Couldn't connect to Codex");
+    expect(runtimeErrorTitle("timeout", "Codex", { starting: true })).toBe("Couldn't connect to Codex");
+    expect(runtimeErrorTitle("runtime_disconnected", "Codex")).toBe("Agent runtime disconnected");
+    expect(runtimeErrorTitle("runtime_unavailable")).toBe("Agent runtime unavailable");
+    expect(runtimeErrorTitle("context_invalid")).toBe("Couldn't load workspace context");
+    expect(runtimeErrorTitle("history_unavailable")).toBe("Agent history unavailable");
+    for (const [code, presentation] of Object.entries(RUNTIME_ERROR_PRESENTATION)) {
+      for (const words of [presentation.title, presentation.action, runtimeErrorTitle(code as never, "Codex")]) {
+        expect(words).not.toContain(code);
+        expect(words).not.toMatch(/\b[1-5]\d\d\b|stack|undefined|null|\{|\}/i);
+      }
+    }
+    expect(RUNTIME_ERROR_PRESENTATION.runtime_disconnected.reconnect).toBe(true);
+  });
+});
+
+describe("the conversation and the timeline name a file edit the same way", () => {
+  it("says Edited — never Modified next to the timeline's Edited", async () => {
+    const { EVENT_PRESENTATION } = await import("./presentation");
+    expect(EVENT_PRESENTATION.file_modified.label).toBe("Edited");
+    expect(EVENT_PRESENTATION.file_created.label).toBe("Created");
+  });
+});

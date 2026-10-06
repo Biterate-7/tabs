@@ -7,6 +7,7 @@ import type { RuntimeClient } from "@/lib/agents/runtime/client"
 import type {
   RuntimeApprovalView,
   RuntimeErrorCode,
+  RuntimeHandoffView,
   RuntimeSessionView,
   SequencedControlEvent,
 } from "@/lib/agents/runtime/protocol"
@@ -80,9 +81,13 @@ type SessionData = {
   session: RuntimeSessionView | null
   events: readonly SequencedControlEvent[]
   approvals: readonly RuntimeApprovalView[]
+  /** Handoffs this session was part of (Hubble 1.4), as the runtime reports them. */
+  handoffs: readonly RuntimeHandoffView[]
   loading: boolean
   error: RuntimeErrorCode | null
 }
+
+const NO_HANDOFFS: readonly RuntimeHandoffView[] = []
 
 /** At module scope so its identity is stable and it can be a hook dependency. */
 function emptyData(id: string | null): SessionData {
@@ -91,6 +96,7 @@ function emptyData(id: string | null): SessionData {
     session: null,
     events: [],
     approvals: [],
+    handoffs: NO_HANDOFFS,
     loading: id !== null,
     error: null,
   }
@@ -101,6 +107,7 @@ export type AgentSessionApi = {
   session: RuntimeSessionView | null
   events: readonly SequencedControlEvent[]
   approvals: readonly RuntimeApprovalView[]
+  handoffs: readonly RuntimeHandoffView[]
   loading: boolean
   error: RuntimeErrorCode | null
   /** Set while a user-initiated command is in flight, so controls can disable. */
@@ -189,6 +196,7 @@ export function useAgentSession(options: {
       error: null,
       session: viewResult.value.session,
       approvals: viewResult.value.approvals,
+      handoffs: viewResult.value.handoffs ?? NO_HANDOFFS,
     }))
 
     const cursor =
@@ -208,10 +216,19 @@ export function useAgentSession(options: {
 
     if (eventsResult.value.events.length === 0) return
 
-    cursorRef.current = { sessionId, sequence: eventsResult.value.latestSequence }
+    // Never backwards: a slower overlapping read must not rewind a cursor a faster one advanced.
+    cursorRef.current = {
+      sessionId,
+      sequence: Math.max(eventsResult.value.latestSequence, cursorRef.current.sessionId === sessionId ? cursorRef.current.sequence : 0),
+    }
 
     update((previous) => {
-      const next = [...previous.events, ...eventsResult.value.events]
+      // Two reads in flight (the poll, and a refresh after a command) can both
+      // start from the same cursor; only what is newer than what is held is new.
+      const held = previous.events.length > 0 ? previous.events[previous.events.length - 1]!.sequence : 0
+      const fresh = eventsResult.value.events.filter((event) => event.sequence > held)
+      if (fresh.length === 0) return {}
+      const next = [...previous.events, ...fresh]
       return {
         events: next.length > MAX_RETAINED_EVENTS ? next.slice(-MAX_RETAINED_EVENTS) : next,
       }
@@ -318,6 +335,7 @@ export function useAgentSession(options: {
       session: current.session,
       events: current.events,
       approvals: current.approvals,
+      handoffs: current.handoffs,
       loading: current.loading,
       error: current.error,
       pending,

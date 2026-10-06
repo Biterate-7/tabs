@@ -4,6 +4,7 @@ import { focusFitsSnapshot, isEmptyFocus, normalizeFocus } from "./focus";
 import { mintContextServerName } from "./identity";
 import { canonicalPlan, freezeOperations, planEffect, planStepLine, previewOf, validateWorkspacePlan, verifyWorkspacePlan } from "./plan";
 import { readSessionContextSnapshot, snapshotFingerprint } from "./snapshot";
+import type { ContextActivity } from "./activity";
 import type { ContextAuthority } from "./authorization";
 import type { SessionFocus } from "./focus";
 import type { PlanProblem, PlanVerification, WorkspaceOperation, WorkspacePlanInput, WorkspacePlanPreview } from "./plan";
@@ -324,7 +325,18 @@ export type SessionContextRegistry = {
   activeCount(): number;
   /** Connects the registry to the control service that owns approvals. */
   setApprover(approve: ContextApprover): void;
+  /**
+   * The context server measured an answer it gave a bound session's agent
+   * (./activity.ts). Passed to the activity listener; ignored for a session
+   * that is not bound — a released credential reads nothing.
+   */
+  recordActivity(sessionId: string, activity: ContextActivity): void;
+  /** Connects the registry to whoever turns context activity into session events. */
+  setActivityListener(listener: ContextActivityListener | undefined): void;
 };
+
+/** Told, once per answered read, which session's agent read what. Observational. */
+export type ContextActivityListener = (sessionId: string, binding: SessionContextBinding, activity: ContextActivity) => void;
 
 export type SessionContextRegistryOptions = {
   /** Who puts a change to the user. Set later with `setApprover` when the host is built after the registry. */
@@ -438,6 +450,7 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
   const now = options.now ?? (() => Date.now());
   // No approver means no one can say yes: every change is cancelled.
   let approve: ContextApprover = options.approve ?? (async () => "cancelled");
+  let activityListener: ContextActivityListener | undefined;
   const randomBytes =
     options.randomBytes ??
     ((length: number) => globalThis.crypto.getRandomValues(new Uint8Array(length)));
@@ -1022,6 +1035,20 @@ export function createSessionContextRegistry(options: SessionContextRegistryOpti
 
     setApprover(next) {
       approve = next;
+    },
+
+    recordActivity(sessionId, activity) {
+      const binding = bindings.get(sessionId);
+      if (!binding || !activityListener) return;
+      try {
+        activityListener(sessionId, binding, activity);
+      } catch {
+        // Observational: a listener that fails never reaches the agent's answer.
+      }
+    },
+
+    setActivityListener(listener) {
+      activityListener = listener;
     },
   };
   return api;

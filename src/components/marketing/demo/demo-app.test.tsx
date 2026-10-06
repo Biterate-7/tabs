@@ -129,7 +129,7 @@ describe("Command Centre", () => {
     // Every agent in the roster can run sessions now — none is shown as refused.
     expect(region.queryByText("Signed in · sessions unavailable")).toBeNull()
     // The view bar says what the demo is rather than reporting a runtime.
-    expect(region.getByRole("status").textContent).toMatch(/Demo/)
+    expect(region.getAllByRole("status").some((status) => /Demo/.test(status.textContent ?? ""))).toBe(true)
   })
 
   it("renders the approval card without taking focus on load", () => {
@@ -143,7 +143,8 @@ describe("Command Centre", () => {
     const { user, frame } = renderCommandCentre()
     await user.click(buttonByText(within(frame()).getByRole("group", { name: "Approval required" }), "Allow"))
     expect(within(frame()).queryByRole("group", { name: "Approval required" })).toBeNull()
-    expect(within(frame()).getByText(/“SWE-bench” is in Research/)).toBeTruthy()
+    // Approved, applied, answered — the app's steps, paced by the demo.
+    expect(await within(frame()).findByText(/“SWE-bench” is in Research/, {}, { timeout: 3_000 })).toBeTruthy()
     await user.click(within(frame()).getByRole("button", { name: "Workspace" }))
     expect(within(frame()).getByText("SWE-bench")).toBeTruthy()
   })
@@ -270,7 +271,7 @@ describe("graph", () => {
   it("scopes to the current workspace and responds to the panel's controls", async () => {
     const { user, frame } = renderGraph()
     // jsdom lays out at width 0, so the panel starts closed, as it does in a narrow window.
-    expect(within(frame()).getByText("20/35")).toBeTruthy()
+    expect(within(frame()).getByText("20/41")).toBeTruthy()
     await user.click(within(frame()).getByRole("button", { name: "Open graph settings" }))
     const local = within(frame()).getByRole("button", { name: "Local" })
     await user.click(local)
@@ -294,7 +295,8 @@ describe("settings", () => {
     expect(within(frame()).getByRole("heading", { name: "Workspaces" })).toBeTruthy()
     const section = within(frame()).getByRole("heading", { name: "Workspaces" }).parentElement!.parentElement!
     expect(within(section).getByText("Semester")).toBeTruthy()
-    expect(within(section).getByText(/6 tabs/)).toBeTruthy()
+    // Semester and Development (Hubble 1.6) both hold six.
+    expect(within(section).getAllByText(/6 tabs/)).toHaveLength(2)
   })
 
   it("lists every connector as the catalog describes it", async () => {

@@ -1,3 +1,4 @@
+import { UNKNOWN_AGENT_NAME } from "@/lib/agents/platform/catalog";
 import { GenericAgentMark } from "./marks";
 import type { AgentVisualIdentity } from "./types";
 
@@ -20,7 +21,7 @@ import type { AgentVisualIdentity } from "./types";
  * provider this build does not will arrive here as an unrecognised value.
  * Throwing on it would take down the panel that was trying to render a piece
  * of the user's real history. Instead it resolves to the fallback identity —
- * a plain mark and the provider's own id as its name — and the surrounding UI
+ * a plain mark, named "Unknown agent" — and the surrounding UI
  * carries on. Brief §31: a missing visual identity degrades to a static icon,
  * and agent functionality is unaffected.
  */
@@ -82,11 +83,10 @@ export function getAgentVisualIdentity(provider: string | undefined | null): Age
   const found = identities.get(provider);
   if (found) return found;
 
-  // Carry the id through as the display name so an unrecognised provider is
-  // still *identified* on screen. Falling back to the word "Agent" for
-  // everything would make two unknown providers indistinguishable, which is
-  // worse than showing a raw id.
-  return { ...FALLBACK_VISUAL_IDENTITY, displayName: provider };
+  // A provider id is an internal key — "openai-codex", "cursor-agent" — and is
+  // never printed as a name. An unrecognised provider reads as an unknown
+  // agent, said in the words ./identity.ts uses everywhere else.
+  return { ...FALLBACK_VISUAL_IDENTITY, displayName: UNKNOWN_AGENT_NAME };
 }
 
 /** Whether this build ships an identity for a provider. Used by tests and by the settings legend. */

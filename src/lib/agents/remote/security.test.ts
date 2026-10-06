@@ -183,8 +183,16 @@ describe("no arbitrary shell or filesystem surface", () => {
     // And the vocabulary did not grow a bytes-carrying verb. Phase J added
     // four and Phase J.3 two, pinned by name: none carries a path, a sandbox
     // or a byte. The J.3 pair carry a session id, a workspace snapshot of that
-    // session's own workspace, and an action outcome.
-    expect(RUNTIME_COMMAND_NAMES).toHaveLength(20);
+    // session's own workspace, and an action outcome. Agent history (1.3)
+    // added four: a workspace id, a session id, a page cursor, and an applied
+    // change's names, counts and collection snapshot — never a path or a sandbox.
+    // Handoff (1.4) added two: a session id, a provider id, a workspace
+    // snapshot of that session's own workspace, two booleans, a fingerprint,
+    // a project id and the person's instruction — never a path or a sandbox.
+    // Project execution (1.6) added four: a project id with a workspace id and
+    // project-relative file names; a session id with a check id from a closed
+    // set; a session id with a change id, twice — never a path, a command or a sandbox.
+    expect(RUNTIME_COMMAND_NAMES).toHaveLength(30);
     expect(RUNTIME_COMMAND_NAMES.slice(14)).toEqual([
       "detect_providers",
       "connect_provider",
@@ -192,6 +200,16 @@ describe("no arbitrary shell or filesystem surface", () => {
       "disconnect_provider",
       "sync_session_context",
       "complete_context_action",
+      "list_history",
+      "get_history",
+      "record_workspace_change",
+      "record_workspace_undo",
+      "prepare_handoff",
+      "start_handoff",
+      "inspect_project",
+      "run_project_check",
+      "undo_project_change",
+      "review_project_change",
     ]);
   });
 

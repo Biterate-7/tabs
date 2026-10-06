@@ -4,6 +4,7 @@ import { createFakeCodex, THREAD_ID, TURN_ID } from "@/lib/agents/control/provid
 import type { FakeCodexHandler } from "@/lib/agents/control/providers/codex-app-server/__fixtures__/fake-codex";
 import { createNativeLoginState } from "@/lib/agents/launch/native-auth";
 import { createDesktopRuntime } from "./desktop";
+import { createMemoryProjectHost } from "@/lib/agents/project/__fixtures__/memory-project-host";
 import { handleDesktopLine } from "./desktop-protocol";
 import type { FakeAgent } from "@/lib/agents/control/providers/acp/__fixtures__/fake-agent";
 import type { NativeOperation } from "@/lib/agents/launch/process";
@@ -93,6 +94,8 @@ function build(loggedIn: { value: boolean }, kind: "account" | "subscription" = 
     },
   });
   const runtime = createDesktopRuntime({
+    // The project folder exists (Hubble 1.6 checks before starting an agent in it).
+    projects: createMemoryProjectHost({ [PROJECT_ROOT]: {} }),
     env: { PATH: "C:/Tools", USERPROFILE: "C:/Users/alice", ANTHROPIC_API_KEY: "sk-must-not-pass" },
     claudeExecutable: "C:/Tools/claude.exe",
     claudeLogin: login,
@@ -402,6 +405,8 @@ describe("ACP agents in the desktop runtime (Phase J.2)", () => {
       ...options.codexHandlers,
     });
     const runtime = createDesktopRuntime({
+    // The project folder exists (Hubble 1.6 checks before starting an agent in it).
+    projects: createMemoryProjectHost({ [PROJECT_ROOT]: {} }),
       env: { PATH: "C:/Tools", USERPROFILE: "C:/Users/alice" },
       claudeExecutable: null,
       acpLauncher: (provider) => agentFor(provider).launcher,

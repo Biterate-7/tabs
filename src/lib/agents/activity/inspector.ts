@@ -1,0 +1,758 @@
+import { describeApproval } from "./timeline";
+import { APPROVAL_CLOSED_TITLE, APPROVAL_STATE_LABEL, isLiveSession } from "@/lib/agents/command-centre/presentation";
+import { collectionToView, undoEffects } from "@/lib/agents/command-centre/workspace-activity";
+import { relativePathBasename } from "@/lib/agents/paths";
+import { lineCountsText, PROJECT_UNDO_UNAVAILABLE, projectChangeResult, projectChangeTitle, undoRefusalText } from "@/lib/agents/project/changes";
+import { verificationDetail, verificationTitle } from "@/lib/agents/project/checks";
+import type { ControlProjectChangeInfo, ControlVerificationInfo } from "@/lib/agents/control/events";
+import { agentDisplayName, focusLine, workspaceContextLine } from "@/lib/agents/handoff/handoff";
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff";
+import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance";
+import type { ContextProvenance } from "@/lib/agents/context-pack/provenance";
+import type { ActivityRefs, AgentActivityEntry } from "./timeline";
+import type { AppliedWorkspaceChange, WorkspaceChangeStep } from "@/lib/agents/command-centre/workspace-activity";
+import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { AgentVisualState } from "@/lib/agents/visual/types";
+import type {
+  RuntimeApprovalView,
+  RuntimePlanOutcomeView,
+  RuntimeSessionView,
+  SequencedControlEvent,
+} from "@/lib/agents/runtime/protocol";
+
+/**
+ * The action inspector's model: one action an agent asked for or took, told
+ * from request to result — and, where Hubble knows the exact inverse, how to
+ * take it back.
+ *
+ *     Created collection “Pricing Research”          Completed
+ *     Requested by Claude Code · Approved · Applied
+ *     Action    Create collection
+ *     Changes   + Collection “Pricing Research” · 5 tabs
+ *     [Open collection]  [Undo]
+ *
+ * ## Joined by reference, never by wording
+ *
+ * An activity entry carries the ids of what it came from (`refs`: approval,
+ * applied change, plan, file). Clicking any entry of one action — "Waiting
+ * for approval", "Action approved", "Created …" — resolves the same action
+ * from those ids and the session's own records: the approval as the broker
+ * reported it, the decision event in the journal, the change the Command
+ * Centre applied, the plan's verified outcome. Nothing is reconstructed from
+ * a title, and nothing is inferred: an action is "completed" only once the
+ * record of its result exists, never because it was requested or approved.
+ *
+ * ## Pure, and so persistence-ready
+ *
+ * The same records the timeline reads, in, one inspection out. A future
+ * durable journal that replays those records gives the same answer; nothing
+ * here holds state.
+ *
+ * ## User-facing only
+ *
+ * No ids, tool names, protocol verbs, payloads or paths outside the project
+ * reach the result — only names, counts and project-relative file paths, the
+ * same vocabulary the timeline and the approval card already use.
+ */
+
+export type ActionStatus =
+  | "waiting_for_approval"
+  | "approved"
+  | "running"
+  | "completed"
+  | "failed"
+  | "rejected"
+  | "expired"
+  | "withdrawn"
+  | "undone";
+
+export const ACTION_STATUS_LABEL: Record<ActionStatus, string> = {
+  waiting_for_approval: APPROVAL_STATE_LABEL.waiting,
+  approved: APPROVAL_STATE_LABEL.approved,
+  running: "Running",
+  completed: "Completed",
+  failed: "Failed",
+  rejected: APPROVAL_STATE_LABEL.rejected,
+  expired: APPROVAL_STATE_LABEL.expired,
+  withdrawn: APPROVAL_STATE_LABEL.withdrawn,
+  undone: "Undone",
+};
+
+/**
+ * Each action status in the shared visual vocabulary — the same states, and
+ * so the same tones, a session's own status pill uses. A waiting action looks
+ * like a waiting session; a failed one like a failed session.
+ */
+export const ACTION_VISUAL_STATE: Record<ActionStatus, AgentVisualState> = {
+  waiting_for_approval: "waiting",
+  approved: "idle",
+  running: "working",
+  completed: "success",
+  failed: "error",
+  rejected: "idle",
+  expired: "idle",
+  withdrawn: "idle",
+  undone: "idle",
+};
+
+/** One step of request → approval → result → undo, in order — or, for a handoff, request → session → delivery. */
+export type ActionChainStep = {
+  key: "requested" | "decision" | "running" | "result" | "verification" | "undone" | "session" | "delivered";
+  label: string;
+  at?: number;
+  tone: "done" | "active" | "waiting" | "failed" | "neutral";
+};
+
+export type ActionChangeLine = { sign: "add" | "change" | "remove"; text: string };
+
+export type ActionUndo =
+  /** Hubble knows the exact inverse and the workspace still holds what the change left. */
+  /** `target: "project"` (Hubble 1.6): the runtime puts project files back; otherwise the workspace's owner does. */
+  | { kind: "available"; changeId: string; effects: readonly string[]; label: "Undo" | "Undo all"; target?: "project" }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "done"; at?: number };
+
+export type ActionInspection = {
+  /** Stable for the action whichever of its entries opened it: the approval, else the change, else the entry. */
+  key: string;
+  title: string;
+  status: ActionStatus;
+  agentName: string;
+  provider: AgentProviderId;
+  workspaceName?: string;
+  /** What kind of action, in words: "Create collection", "Edit file". */
+  action?: string;
+  chain: readonly ActionChainStep[];
+  /** What was asked, when an approval stood behind it. */
+  request?: { summary: string; reason?: string; at?: number };
+  result?: { tone: "success" | "warning" | "failure" | "neutral"; text: string };
+  /** What changed — or, before there is a result, what was asked for (`planned`). */
+  changes?: { planned: boolean; lines: readonly ActionChangeLine[] };
+  /** The applied change to show in the workspace, and what to call that. */
+  view?: { changeId: string; label: "Open collection" | "View changes" };
+  /** A file the action is about, project-relative. Hubble cannot open project files, so it is named, not linked. */
+  file?: { relativePath: string; projectName?: string };
+  /** A handoff (Hubble 1.4): who to whom, and exactly what was passed. */
+  handoff?: HandoffInspection;
+  /** What Hubble had given the agent by the time it acted (Hubble 1.5) — resources, never reasoning. */
+  context?: ContextProvenance;
+  undo?: ActionUndo;
+  /**
+   * The checks run on this change (Hubble 1.6), latest first per check — the
+   * project's answer, kept apart from whether the change itself applied.
+   */
+  verification?: readonly VerificationLine[];
+  /** A measured project change that can be checked, and reviewed line by line, now (live sessions only). */
+  project?: { changeId: string; reviewable: boolean; verifiable: boolean };
+};
+
+export type VerificationLine = { checkId: string; title: string; detail?: string; tone: "success" | "failure" | "neutral" | "active" };
+
+/** A handoff, as the inspector tells it. Names, counts, the timeline's result lines, the person's words. */
+export type HandoffInspection = {
+  /** Which end this session is. */
+  direction: "sent" | "received";
+  from: { provider: AgentProviderId; name: string };
+  to: { provider: AgentProviderId; name: string };
+  workspaceName?: string;
+  /** "18 tabs · 3 collections", and what was selected — or that none was passed. */
+  context: readonly string[];
+  /** The source session's results, as passed. Absent when the person left them out. */
+  previousResult?: readonly string[];
+  instruction?: string;
+  createdAt?: number;
+  /** The session on the other end, when there is one. */
+  peer?: { sessionId: string; provider: AgentProviderId; name: string };
+};
+
+export type ActionInspectorInput = {
+  /** The session's timeline, as `buildAgentActivityTimeline` built it from these same records. */
+  entries: readonly AgentActivityEntry[];
+  session: RuntimeSessionView;
+  events: readonly SequencedControlEvent[];
+  approvals?: readonly RuntimeApprovalView[];
+  knownApprovals?: ReadonlyMap<string, RuntimeApprovalView>;
+  /** Plans' verified outcomes; absent means the live session's own. See `AgentActivityInput.planOutcomes`. */
+  planOutcomes?: readonly RuntimePlanOutcomeView[];
+  changes?: readonly AppliedWorkspaceChange[];
+  agentName: string;
+  workspaceName?: string;
+  projectName?: string;
+  /** Handoffs this session was part of (Hubble 1.4). A handoff entry is resolved from these, by id. */
+  handoffs?: readonly SessionHandoff[];
+  /**
+   * Whether an applied change can be undone exactly right now — the workspace
+   * still holds what it left. Decided by the owner of the workspace; absent
+   * means no undo is offered.
+   */
+  canUndo?: (change: AppliedWorkspaceChange) => boolean;
+  /** A collection's live name, for context provenance. Absent or unknown: counted, not named. */
+  collectionName?: (collectionId: string) => string | undefined;
+  /**
+   * Whether this is the live session, on a runtime that holds its project
+   * changes (Hubble 1.6). Only then are project undo, review and checks offered:
+   * a past session is read-only.
+   */
+  projectLive?: boolean;
+};
+
+/** Said where a past session's project change is shown: history is read-only. */
+export const PROJECT_UNDO_ONLY_LIVE = "Project changes can be undone only from the live session, while Hubble still holds the earlier version.";
+
+function verificationLines(events: readonly SequencedControlEvent[], changeId: string): VerificationLine[] {
+  const byCheck = new Map<string, ControlVerificationInfo>();
+  for (const event of events) {
+    if ((event.kind === "verification_started" || event.kind === "verification_finished") && event.verification?.changeId === changeId) {
+      byCheck.set(event.verification.checkId, event.verification);
+    }
+  }
+  return [...byCheck.values()].reverse().map((info) => {
+    const detail = verificationDetail({
+      outcome: info.outcome,
+      ...(info.exitCode !== undefined ? { exitCode: info.exitCode } : {}),
+      ...(info.durationMs !== undefined ? { durationMs: info.durationMs } : {}),
+      ...(info.git ? { git: info.git } : {}),
+    });
+    return {
+      checkId: info.checkId,
+      title: verificationTitle(info.check, info.outcome),
+      ...(detail ? { detail } : {}),
+      tone: info.outcome === "running" ? "active" : info.outcome === "passed" ? "success" : info.outcome === "failed" ? "failure" : "neutral",
+    };
+  });
+}
+
+function projectChangeLines(info: ControlProjectChangeInfo): ActionChangeLine[] {
+  return info.files.map((file) => {
+    const sign: ActionChangeLine["sign"] = file.change === "created" ? "add" : file.change === "deleted" ? "remove" : "change";
+    const note = file.sensitive
+      ? "may hold secrets — not read"
+      : file.change === "unchanged"
+        ? "not changed"
+        : file.binary
+          ? "binary"
+          : lineCountsText(file);
+    return { sign, text: note ? `${file.path} · ${note}` : file.path };
+  });
+}
+
+/** Whether an entry stands for an action there is more to say about. Lifecycle and reads are not. */
+export function isInspectable(entry: AgentActivityEntry): boolean {
+  const refs = entry.refs;
+  return Boolean(refs && (refs.approvalId || refs.changeId || refs.planId || refs.file || refs.handoffId || refs.projectChangeId));
+}
+
+const PREVIOUS_OUTCOME: Record<NonNullable<SessionHandoff["context"]["previousResult"]>["outcome"], string> = {
+  finished: "Finished",
+  stopped: "Cancelled before finishing",
+  failed: "Stopped unexpectedly",
+  waiting: "Waiting on you",
+  idle: "Not started",
+};
+
+/**
+ * A handoff entry, told from the handoff record it names — never from the
+ * entry's words. Without the record (an older page, a handoff kept nowhere)
+ * the events still say who to whom and whether it arrived.
+ */
+function inspectHandoff(entry: AgentActivityEntry, input: ActionInspectorInput): ActionInspection {
+  const handoffId = entry.refs!.handoffId!;
+  const record = input.handoffs?.find((candidate) => candidate.handoffId === handoffId);
+  const { session } = input;
+  const received = entry.kind === "handoff_received";
+  const event = input.events.find(
+    (candidate) =>
+      candidate.sessionId === session.sessionId &&
+      candidate.handoff?.handoffId === handoffId &&
+      (candidate.kind === "handoff_sent" || candidate.kind === "handoff_received")
+  );
+  const peerProvider = event?.handoff?.peerProvider ?? (received ? record?.sourceProvider : record?.targetProvider);
+  const peerSessionId = event?.handoff?.peerSessionId ?? (received ? record?.sourceSessionId : record?.targetSessionId);
+  // Both ends by the same name the session list uses, so "From" and "To" read alike.
+  const self = { provider: session.provider, name: agentDisplayName(session.provider) };
+  const peer = peerProvider ? { provider: peerProvider, name: agentDisplayName(peerProvider) } : undefined;
+  const from = received ? (peer ?? self) : self;
+  const to = received ? self : (peer ?? self);
+  const failed = entry.kind === "handoff_failed" || record?.status === "failed";
+  const failure = record?.failure ?? event?.handoff?.failure;
+
+  const context: string[] = [];
+  if (record) {
+    const workspace = record.context.workspace;
+    if (workspace) {
+      context.push(workspaceContextLine(workspace));
+      const focus = focusLine(workspace);
+      if (focus) context.push(`Selected: ${focus}`);
+    } else {
+      context.push("Workspace context not shared");
+    }
+  }
+  const result = record?.context.previousResult;
+  const previousResult = result
+    ? [
+        PREVIOUS_OUTCOME[result.outcome],
+        ...result.lines.map((line) => (line.description ? `${line.title} · ${line.description}` : line.title)),
+        ...(result.more > 0 ? [`…and ${plural(result.more, "more result", "more results")}`] : []),
+      ]
+    : undefined;
+
+  const createdAt = record?.createdAt ?? event?.timestamp ?? entry.at;
+  const chain: ActionChainStep[] = [{ key: "requested", label: "Handed off by you", at: createdAt, tone: "done" }];
+  if (failed && failure === "session_not_created") {
+    chain.push({ key: "session", label: `${to.name} session couldn't start`, at: record?.updatedAt ?? entry.at, tone: "failed" });
+  } else {
+    chain.push({ key: "session", label: `${to.name} session started`, tone: "done" });
+    chain.push(
+      failed
+        ? { key: "delivered", label: "Context not delivered", at: record?.updatedAt ?? entry.at, tone: "failed" }
+        : { key: "delivered", label: received ? "Received" : "Delivered", at: record?.updatedAt ?? entry.at, tone: "done" }
+    );
+  }
+
+  const where = input.workspaceName ? ` in ${input.workspaceName}` : "";
+  return {
+    key: `handoff:${handoffId}`,
+    title: entry.title,
+    status: failed ? "failed" : "completed",
+    agentName: input.agentName,
+    provider: session.provider,
+    ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+    action: "Handoff",
+    chain,
+    result: failed
+      ? {
+          tone: "failure",
+          text:
+            failure === "context_not_delivered"
+              ? `${to.name}'s session started, but the handoff didn't reach it. It wasn't told anything.`
+              : `${to.name}'s session couldn't be started. Nothing was changed, and ${from.name}'s session is as it was.`,
+        }
+      : received
+        ? { tone: "success", text: `Continuing ${from.name}'s work${where}.` }
+        : { tone: "success", text: `${to.name} received the handoff and continues${where}.` },
+    handoff: {
+      direction: received ? "received" : "sent",
+      from,
+      to,
+      ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+      context,
+      ...(previousResult ? { previousResult } : {}),
+      ...(record?.instruction ? { instruction: record.instruction } : {}),
+      createdAt,
+      ...(peerSessionId && peer ? { peer: { sessionId: peerSessionId, provider: peer.provider, name: peer.name } } : {}),
+    },
+    // A handoff moves no tab and no collection, so there is nothing of its own
+    // to put back; what the next agent changes is undone on its own entry.
+    undo: {
+      kind: "unavailable",
+      reason: "A handoff doesn't change the workspace, so there's nothing to undo. Changes the next agent makes can each be undone on their own.",
+    },
+  };
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * Why an applied change can no longer be undone, in the one sentence every
+ * surface uses — the inspector, its Undo when it is refused, and the toast
+ * the conversation's own Undo shows. Plain words: no snapshot, no hash.
+ */
+export const UNDO_REFUSED_WORKSPACE_CHANGED = "This change can't be undone because the workspace has changed since it was made.";
+
+const APPROVAL_ACTION: Record<string, string> = {
+  create_files: "Create file",
+  modify_files: "Edit file",
+  delete_files: "Delete file",
+  run_command: "Run a command",
+  network_request: "Use the network",
+  use_mcp_tool: "Use a tool",
+  change_workspace: "Change the workspace",
+};
+
+const CHANGE_KIND_ACTION: Record<string, string> = {
+  create_collection: "Create collection",
+  rename_collection: "Rename collection",
+  add_tabs_to_collection: "Add tabs to a collection",
+};
+
+const STEP_ACTION: Record<WorkspaceChangeStep["kind"], string> = {
+  created: "Create collection",
+  renamed: "Rename collection",
+  added: "Add tabs to a collection",
+};
+
+function stepLine(step: WorkspaceChangeStep): ActionChangeLine {
+  switch (step.kind) {
+    case "created":
+      return { sign: "add", text: `Collection “${step.name}” · ${plural(step.tabCount, "tab", "tabs")}` };
+    case "renamed":
+      return { sign: "change", text: step.previousName ? `“${step.previousName}” renamed to “${step.name}”` : `Renamed to “${step.name}”` };
+    case "added":
+      return { sign: "add", text: `${plural(step.tabCount, "tab", "tabs")} added to “${step.name}”` };
+  }
+}
+
+function plannedLine(step: { kind: string; subject: string; to?: string; tabCount?: number }): ActionChangeLine {
+  switch (step.kind) {
+    case "create_collection":
+      return { sign: "add", text: `Collection “${step.subject}”${step.tabCount ? ` · ${plural(step.tabCount, "tab", "tabs")}` : ""}` };
+    case "rename_collection":
+      return { sign: "change", text: `“${step.subject}” renamed to “${step.to ?? ""}”` };
+    default:
+      return { sign: "add", text: `${plural(step.tabCount ?? 0, "tab", "tabs")} added to “${step.subject}”` };
+  }
+}
+
+/** What an approval asked for, line by line, before anything happened. */
+function plannedLines(view: RuntimeApprovalView): ActionChangeLine[] {
+  if (view.plan) return view.plan.steps.map(plannedLine);
+  if (view.change) return [plannedLine(view.change)];
+  if (view.action === "create_files" || view.action === "modify_files" || view.action === "delete_files") {
+    const sign = view.action === "create_files" ? "add" : view.action === "delete_files" ? "remove" : "change";
+    return view.targets.map((target) => ({ sign, text: target }));
+  }
+  return [];
+}
+
+function actionOf(change: AppliedWorkspaceChange | undefined, view: RuntimeApprovalView | undefined, file: ActivityRefs["file"]): string | undefined {
+  if (change?.ok && change.steps.length === 1) return STEP_ACTION[change.steps[0]!.kind];
+  if (change?.ok && change.steps.length > 1) return "Change the workspace";
+  if (view?.plan) return view.plan.steps.length === 1 ? CHANGE_KIND_ACTION[view.plan.steps[0]!.kind] : "Change the workspace";
+  if (view?.change) return CHANGE_KIND_ACTION[view.change.kind];
+  if (view) {
+    const label = APPROVAL_ACTION[view.action];
+    if (label && (view.action === "create_files" || view.action === "modify_files" || view.action === "delete_files") && view.targets.length > 1) {
+      return `${label}s`;
+    }
+    return label;
+  }
+  if (file) return file.operation === "created" ? "Create file" : "Edit file";
+  return undefined;
+}
+
+export function inspectActivityEntry(entryId: string, input: ActionInspectorInput): ActionInspection | null {
+  const entry = input.entries.find((candidate) => candidate.id === entryId);
+  if (!entry || !isInspectable(entry)) return null;
+  const refs = entry.refs!;
+  if (refs.handoffId) return inspectHandoff(entry, input);
+  const { session, agentName } = input;
+  const sessionId = session.sessionId;
+  const workspaceId = session.workspaceId ?? session.context?.workspaceId;
+  const where = input.workspaceName ?? "the workspace";
+
+  // Only this session's records, in this session's workspace — whatever the caller passed.
+  const changes = (input.changes ?? []).filter(
+    (change) => change.sessionId === sessionId && (!workspaceId || change.workspaceId === workspaceId)
+  );
+  const events = input.events.filter((event) => event.sessionId === sessionId);
+  const outcomes = input.planOutcomes ?? session.context?.planOutcomes ?? [];
+
+  /* ---------------- Resolve the action from its references. */
+
+  let change = refs.changeId ? changes.find((candidate) => candidate.id === refs.changeId) : undefined;
+  let approvalId = refs.approvalId ?? refs.projectChangeId ?? change?.approvalId;
+  let outcome: RuntimePlanOutcomeView | undefined =
+    (approvalId ? outcomes.find((candidate) => candidate.approvalId === approvalId) : undefined) ??
+    (refs.planId ? outcomes.find((candidate) => candidate.planId === refs.planId) : undefined) ??
+    (change?.planId ? outcomes.find((candidate) => candidate.planId === change!.planId) : undefined);
+  change ??=
+    (approvalId ? changes.find((candidate) => candidate.approvalId === approvalId) : undefined) ??
+    (outcome ? changes.find((candidate) => candidate.planId === outcome!.planId) : undefined);
+  approvalId ??= outcome?.approvalId;
+  if (!outcome && change?.planId) outcome = outcomes.find((candidate) => candidate.planId === change!.planId);
+
+  const pending = (input.approvals ?? []).find((view) => view.approvalId === approvalId && view.sessionId === sessionId);
+  const remembered = approvalId ? input.knownApprovals?.get(approvalId) : undefined;
+  const view = pending ?? (remembered?.sessionId === sessionId ? remembered : undefined);
+
+  const requestEntry = approvalId ? input.entries.find((candidate) => candidate.id === `approval:${approvalId}`) : undefined;
+  const requestEvent = approvalId
+    ? events.find((event) => event.kind === "approval_requested" && event.approvalId === approvalId)
+    : undefined;
+  const decision = approvalId
+    ? events.find((event) => (event.kind === "approval_granted" || event.kind === "approval_denied") && event.approvalId === approvalId)
+    : undefined;
+
+  const fileEntry = refs.file
+    ? entry
+    : approvalId
+      ? input.entries.find((candidate) => candidate.refs?.file && candidate.refs.approvalId === approvalId)
+      : undefined;
+  const file = fileEntry?.refs?.file;
+  // A command, or a step that failed, that this approval stood behind.
+  const stepEntry =
+    approvalId && !fileEntry
+      ? input.entries.find(
+          (candidate) =>
+            candidate.refs?.approvalId === approvalId &&
+            !candidate.refs.changeId &&
+            !candidate.refs.planId &&
+            (candidate.kind === "command" || candidate.kind === "action_failed")
+        )
+      : undefined;
+  const changeEntry = change ? input.entries.find((candidate) => candidate.id === `change:${change!.id}`) : undefined;
+  const planEntry = outcome ? input.entries.find((candidate) => candidate.id === `plan:${outcome!.planId}`) : undefined;
+  const resultEntry = changeEntry ?? fileEntry ?? stepEntry ?? planEntry;
+
+  /* ---------------- A project change, as Hubble measured it (Hubble 1.6). */
+
+  const projectEvent = approvalId ? events.find((event) => event.kind === "project_changed" && event.projectChange?.changeId === approvalId) : undefined;
+  const projectChange = projectEvent?.projectChange;
+  const projectUndos = approvalId ? events.filter((event) => event.kind === "project_change_undone" && event.projectUndo?.changeId === approvalId) : [];
+  const lastProjectUndo = projectUndos[projectUndos.length - 1];
+  const projectUndone = projectUndos.find((event) => event.projectUndo!.outcome !== "refused");
+
+  /* ---------------- Where it stands — from the records, never assumed. */
+
+  const live = isLiveSession(session.status);
+  const status = ((): ActionStatus => {
+    if (change) return !change.ok ? "failed" : change.undone ? "undone" : "completed";
+    if (projectChange) return projectChange.outcome === "not_applied" ? "failed" : projectUndone ? "undone" : "completed";
+    if (outcome) {
+      switch (outcome.status) {
+        case "applied":
+        case "unverified":
+          return "completed";
+        case "not_applied":
+        case "stale":
+          return "failed";
+        case "denied":
+          return "rejected";
+        case "expired":
+          return "expired";
+        case "cancelled":
+          return "withdrawn";
+      }
+    }
+    if (resultEntry) return resultEntry.status === "failed" ? "failed" : "completed";
+    if (decision?.kind === "approval_denied") return "rejected";
+    if (decision?.kind === "approval_granted") return live && session.status === "running" ? "running" : "approved";
+    if (requestEntry?.kind === "approval_closed") return requestEntry.title === APPROVAL_CLOSED_TITLE.expired ? "expired" : "withdrawn";
+    if (requestEntry?.status === "waiting") return "waiting_for_approval";
+    // Asked, and no longer waiting, with no decision on record: the request ended unanswered.
+    if (requestEntry) return "withdrawn";
+    return entry.status === "failed" ? "failed" : "completed";
+  })();
+
+  /* ---------------- Words. */
+
+  const requestSummary = view ? describeApproval(view) : requestEntry?.description;
+  const finished = status === "completed" || status === "undone" || status === "failed";
+  // A step that failed without saying which file ("A step didn't work") is
+  // named by what was approved instead: the pill already says it failed.
+  const genericFailure = resultEntry === stepEntry && stepEntry?.kind === "action_failed" && requestSummary !== undefined;
+  // A measured project change is titled by what Hubble found, not by what was asked.
+  const title =
+    (finished && projectChange ? projectChangeTitle(projectChange) : undefined) ??
+    (finished && !genericFailure ? resultEntry?.title : undefined) ??
+    requestSummary ??
+    entry.title;
+
+  const request =
+    approvalId && (view || requestEntry || requestEvent)
+      ? {
+          summary: requestSummary ?? "An action that needed your approval",
+          ...(view?.reason ? { reason: view.reason } : {}),
+          // The journal's time first — the same instant the timeline row shows.
+          ...((requestEvent?.timestamp ?? view?.requestedAt ?? requestEntry?.at) !== undefined
+            ? { at: requestEvent?.timestamp ?? view?.requestedAt ?? requestEntry?.at }
+            : {}),
+        }
+      : undefined;
+
+  const resultAt = change?.at ?? outcome?.at ?? projectEvent?.timestamp ?? (resultEntry ? (resultEntry.completedAt ?? resultEntry.at) : undefined);
+  const result = ((): ActionInspection["result"] => {
+    // A measured project change says what Hubble found on disk, never what was asked.
+    if (projectChange && (status === "completed" || status === "undone" || status === "failed")) {
+      return projectChangeResult(projectChange, input.projectName);
+    }
+    switch (status) {
+      case "completed":
+      case "undone": {
+        if (outcome?.status === "unverified") {
+          return {
+            tone: "warning",
+            text: `Only ${outcome.verifiedCount} of ${plural(outcome.operationCount, "change", "changes")} could be confirmed — check the workspace.`,
+          };
+        }
+        if (change?.ok) {
+          const [first] = change.steps;
+          if (change.steps.length === 1 && first?.kind === "created") return { tone: "success", text: `Created “${first.name}” in ${where}.` };
+          return { tone: "success", text: `Applied ${plural(change.steps.length, "change", "changes")} to ${where}.` };
+        }
+        if (file) {
+          const project = input.projectName ? ` in ${input.projectName}` : "";
+          return {
+            tone: "success",
+            text: file.operation === "created" ? `Created ${file.relativePath}${project}.` : `Saved changes to ${file.relativePath}${project}.`,
+          };
+        }
+        if (outcome) return { tone: "success", text: `Applied ${plural(outcome.operationCount, "change", "changes")} to ${where}.` };
+        if (resultEntry?.kind === "command") return { tone: "success", text: "The command finished." };
+        return { tone: "success", text: "Done." };
+      }
+      case "failed": {
+        if (change && !change.ok) return { tone: "failure", text: "Couldn't apply the approved change. Nothing was changed." };
+        if (outcome?.status === "stale") return { tone: "failure", text: "The workspace changed while you were deciding. Nothing was changed." };
+        if (outcome) return { tone: "failure", text: "The approved changes weren't applied. Nothing was changed." };
+        if (file) {
+          const verb = file.operation === "created" ? "create" : "edit";
+          return { tone: "failure", text: `${agentName} couldn't ${verb} ${relativePathBasename(file.relativePath)}.` };
+        }
+        return { tone: "failure", text: `${agentName} reported that it didn't work.` };
+      }
+      case "rejected":
+        return { tone: "neutral", text: "You rejected it. Nothing was changed." };
+      case "expired":
+        return { tone: "neutral", text: "Nobody answered in time, so nothing was changed." };
+      case "withdrawn":
+        return { tone: "neutral", text: "The request was withdrawn before it was answered. Nothing was changed." };
+      case "running":
+        return { tone: "neutral", text: `Approved — ${agentName} is carrying it out.` };
+      case "approved":
+        return { tone: "neutral", text: "Approved. No result has been reported yet." };
+      case "waiting_for_approval":
+        return undefined;
+    }
+  })();
+
+  /* ---------------- What changed, or what was asked to. */
+
+  let changesSection: ActionInspection["changes"];
+  if (projectChange) {
+    changesSection = { planned: false, lines: projectChangeLines(projectChange) };
+  } else if (change?.ok && change.steps.length > 0) {
+    changesSection = { planned: false, lines: change.steps.map(stepLine) };
+  } else if (file && (status === "completed" || status === "undone")) {
+    changesSection = { planned: false, lines: [{ sign: file.operation === "created" ? "add" : "change", text: file.relativePath }] };
+  } else if (!finished && view) {
+    const lines = plannedLines(view);
+    if (lines.length > 0) changesSection = { planned: true, lines };
+  }
+
+  /* ---------------- The chain: request → decision → result → undo. */
+
+  const chain: ActionChainStep[] = [];
+  if (request) chain.push({ key: "requested", label: `Requested by ${agentName}`, ...(request.at !== undefined ? { at: request.at } : {}), tone: "done" });
+  if (approvalId) {
+    if (decision) {
+      const granted = decision.kind === "approval_granted";
+      chain.push({ key: "decision", label: granted ? APPROVAL_STATE_LABEL.approved : APPROVAL_STATE_LABEL.rejected, at: decision.timestamp, tone: granted ? "done" : "neutral" });
+    } else if (status === "waiting_for_approval") {
+      chain.push({ key: "decision", label: APPROVAL_STATE_LABEL.waiting, tone: "waiting" });
+    } else if (status === "expired" || status === "withdrawn" || status === "rejected") {
+      chain.push({ key: "decision", label: ACTION_STATUS_LABEL[status], ...(outcome ? { at: outcome.at } : {}), tone: "neutral" });
+    }
+  }
+  if (status === "running") chain.push({ key: "running", label: "Running", tone: "active" });
+  if (finished) {
+    chain.push({
+      key: "result",
+      label: status === "failed" ? "Failed" : "Completed",
+      ...(resultAt !== undefined ? { at: resultAt } : {}),
+      tone: status === "failed" ? "failed" : "done",
+    });
+  }
+  const verification = approvalId && projectChange ? verificationLines(events, approvalId) : [];
+  const latestCheck = verification[0];
+  if (latestCheck && latestCheck.tone !== "active") {
+    chain.push({ key: "verification", label: latestCheck.title, tone: latestCheck.tone === "failure" ? "failed" : latestCheck.tone === "success" ? "done" : "neutral" });
+  } else if (latestCheck) {
+    chain.push({ key: "verification", label: latestCheck.title, tone: "active" });
+  }
+  if (status === "undone") {
+    const at = change?.undoneAt ?? projectUndone?.timestamp;
+    chain.push({ key: "undone", label: "Undone", ...(at !== undefined ? { at } : {}), tone: "done" });
+  }
+
+  /* ---------------- What can be done with it. */
+
+  const viewTarget: ActionInspection["view"] =
+    change?.ok && !change.undone && change.steps.length > 0
+      ? {
+          changeId: change.id,
+          label: change.steps.length === 1 && change.steps[0]!.kind === "created" && collectionToView(change) ? "Open collection" : "View changes",
+        }
+      : undefined;
+
+  const undo = ((): ActionUndo | undefined => {
+    if (status === "undone") {
+      const at = change?.undoneAt ?? projectUndone?.timestamp;
+      return { kind: "done", ...(at !== undefined ? { at } : {}) };
+    }
+    if (status !== "completed") return undefined;
+    // A project change (Hubble 1.6): undone by the runtime, exactly, or refused with the reason.
+    if (projectChange) {
+      if (lastProjectUndo?.projectUndo?.outcome === "refused") return { kind: "unavailable", reason: undoRefusalText(lastProjectUndo.projectUndo.reason) };
+      if (projectChange.undo !== "available") return { kind: "unavailable", reason: PROJECT_UNDO_UNAVAILABLE[projectChange.undo] };
+      if (!input.projectLive) return { kind: "unavailable", reason: PROJECT_UNDO_ONLY_LIVE };
+      const files = projectChange.files.filter((file) => file.change !== "unchanged").length;
+      return {
+        kind: "available",
+        changeId: projectChange.changeId,
+        effects: [`Puts ${plural(files, "file", "files")} back exactly as they were — only if nothing else has changed ${files === 1 ? "it" : "them"} since`],
+        label: "Undo",
+        target: "project",
+      };
+    }
+    if (change?.ok) {
+      if (!change.before || !change.after) return { kind: "unavailable", reason: "Undo isn't available for this change." };
+      if (!input.canUndo?.(change)) {
+        return {
+          kind: "unavailable",
+          reason: UNDO_REFUSED_WORKSPACE_CHANGED,
+        };
+      }
+      return { kind: "available", changeId: change.id, effects: undoEffects(change), label: change.steps.length > 1 ? "Undo all" : "Undo" };
+    }
+    if (file) {
+      return {
+        kind: "unavailable",
+        reason: "Undo isn't available for this change. Hubble doesn't keep a copy of the files agents write, so it can't safely put them back.",
+      };
+    }
+    if (resultEntry?.kind === "command") return { kind: "unavailable", reason: "Undo isn't available for this change. Hubble can't reverse a command." };
+    return { kind: "unavailable", reason: "Undo isn't available for this change." };
+  })();
+
+  const action = actionOf(change, view, file);
+
+  // What the agent had been given when it asked — or, with no request on
+  // record, when the result arrived.
+  const actedAt = request?.at ?? resultAt ?? entry.at;
+  const context = contextProvenanceOf({
+    session,
+    events,
+    ...(input.handoffs ? { handoffs: input.handoffs } : {}),
+    at: actedAt,
+    ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+    ...(input.collectionName ? { collectionName: input.collectionName } : {}),
+    ...(input.projectName ? { projectName: () => input.projectName } : {}),
+    agentName: agentDisplayName,
+  });
+
+  const projectActions =
+    projectChange && projectChange.outcome !== "not_applied" && input.projectLive
+      ? { changeId: projectChange.changeId, reviewable: status !== "undone", verifiable: status === "completed" }
+      : undefined;
+
+  return {
+    key: approvalId ? `approval:${approvalId}` : change ? `change:${change.id}` : entry.id,
+    title,
+    status,
+    agentName,
+    provider: session.provider,
+    ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+    ...(action ? { action } : {}),
+    chain,
+    ...(request ? { request } : {}),
+    ...(result ? { result } : {}),
+    ...(changesSection ? { changes: changesSection } : {}),
+    ...(viewTarget ? { view: viewTarget } : {}),
+    ...(file ? { file: { relativePath: file.relativePath, ...(input.projectName ? { projectName: input.projectName } : {}) } } : {}),
+    ...(context ? { context } : {}),
+    ...(undo ? { undo } : {}),
+    ...(verification.length > 0 ? { verification } : {}),
+    ...(projectActions ? { project: projectActions } : {}),
+  };
+}

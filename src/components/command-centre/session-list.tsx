@@ -4,7 +4,6 @@ import { useMemo } from "react"
 import { Plus } from "lucide-react"
 import { AgentStatusGlyph } from "@/components/agents/agent-status-glyph"
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
-import { platformProvider } from "@/lib/agents/platform/catalog"
 import {
   SESSION_STATUS_LABEL,
   SESSION_VISUAL_STATE,
@@ -12,8 +11,12 @@ import {
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
 import { workspaceIdOf } from "@/lib/agents/command-centre/working-context"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
+import type { SessionHandoffLinks } from "@/lib/agents/handoff/handoff"
 import { cn } from "@/lib/utils"
+import { formatCompactTime } from "@/lib/time-format"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
+import type { AgentSessionStatus } from "@/lib/agents/control/session"
 
 /**
  * The sessions this runtime is holding.
@@ -31,17 +34,6 @@ import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
  * a permanent "Ended (0)" is a row that never says anything.
  */
 
-function relativeTime(timestamp: number, now: number): string {
-  const elapsed = Math.max(0, now - timestamp)
-  const minutes = Math.floor(elapsed / 60_000)
-
-  if (minutes < 1) return "now"
-  if (minutes < 60) return `${minutes}m`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
-}
 
 function SessionRow({
   session,
@@ -60,10 +52,74 @@ function SessionRow({
   onSelect: () => void
 }) {
   const { view } = session
-  const state = SESSION_VISUAL_STATE[view.status]
+  const agentName = agentDisplayName(view.provider)
 
-  const agentName = platformProvider(view.provider)?.displayName ?? view.provider
-  const title = view.title ?? SESSION_STATUS_LABEL[view.status]
+  return (
+    <SessionListRow
+      status={view.status}
+      // Untitled, it is named by its agent — as the same session is in agent history.
+      title={view.title ?? agentName}
+      agentName={agentName}
+      {...(workspaceName ? { workspaceName } : {})}
+      {...(projectName ? { projectName } : {})}
+      time={formatCompactTime(view.updatedAt, now) ?? ""}
+      {...(view.handoff ? { handoff: view.handoff } : {})}
+      selected={selected}
+      onSelect={onSelect}
+    />
+  )
+}
+
+/**
+ * A session's handoffs in two quiet words — "← Claude Code" for the work it
+ * was handed, "→ Codex" for where it went next — from the runtime's explicit
+ * records. Only handoffs that arrived: a failed one is the source's activity,
+ * not a relationship.
+ */
+export function handoffRelation(links: SessionHandoffLinks | undefined): { from?: string; to?: string } {
+  if (!links) return {}
+  const arrived = (links.to ?? []).filter((link) => link.status === "ready")
+  const last = arrived[arrived.length - 1]
+  return {
+    ...(links.from?.status === "ready" ? { from: agentDisplayName(links.from.provider) } : {}),
+    ...(last ? { to: arrived.length > 1 ? `${agentDisplayName(last.provider)} +${arrived.length - 1}` : agentDisplayName(last.provider) } : {}),
+  }
+}
+
+/**
+ * One row of the session column, from plain values — the live list's rows
+ * and agent history's (./agent-history-list.tsx) are this same row, so a
+ * session reads the same before and after its runtime is gone.
+ */
+export function SessionListRow({
+  status,
+  title,
+  agentName,
+  workspaceName,
+  projectName,
+  time,
+  timeLabel,
+  handoff,
+  selected,
+  onSelect,
+}: {
+  status: AgentSessionStatus
+  title: string
+  agentName: string
+  workspaceName?: string
+  projectName?: string
+  /** The handoffs this session is part of — drawn as "← Claude Code" / "→ Codex". */
+  handoff?: SessionHandoffLinks
+  /** Short, on the right: "4m", or a clock time. */
+  time: string
+  /** The time in full, for assistive technology and the tooltip. */
+  timeLabel?: string
+  selected: boolean
+  onSelect: () => void
+}) {
+  const state = SESSION_VISUAL_STATE[status]
+  const details = [title === agentName ? undefined : agentName, workspaceName, projectName].filter(Boolean)
+  const relation = handoffRelation(handoff)
 
   /*
     The reference's task row: a status glyph in a 16px gutter, the task on
@@ -85,7 +141,7 @@ function SessionRow({
         )}
       >
         <span className="flex h-4 items-center">
-          <AgentStatusGlyph state={state} label={SESSION_STATUS_LABEL[view.status]} />
+          <AgentStatusGlyph state={state} label={SESSION_STATUS_LABEL[status]} />
         </span>
 
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -93,18 +149,37 @@ function SessionRow({
             {title}
           </span>
           <span className="flex min-w-0 items-center gap-1 text-meta text-tertiary">
-            <span className={cn("shrink-0", AGENT_TONE_TEXT_CLASS[sessionStatusTone(view.status)] === "text-destructive" && "text-destructive")}>
-              {SESSION_STATUS_LABEL[view.status]}
+            <span className={cn("shrink-0", AGENT_TONE_TEXT_CLASS[sessionStatusTone(status)] === "text-destructive" && "text-destructive")}>
+              {SESSION_STATUS_LABEL[status]}
             </span>
             <span className="truncate">
-              · {agentName}
-              {workspaceName ? ` · ${workspaceName}` : ""}
-              {projectName ? ` · ${projectName}` : ""}
+              {/* The agent is not named twice when it is the row's title — an untitled past session. */}
+              {details.length > 0 ? `· ${details.join(" · ")}` : null}
             </span>
           </span>
+          {(relation.from || relation.to) && (
+            <span className="flex min-w-0 items-center gap-2 text-meta text-tertiary" data-handoff-relation>
+              {relation.from && (
+                <span className="truncate" title={`Continued from ${relation.from}`}>
+                  <span className="sr-only">Continued from </span>
+                  <span aria-hidden>← </span>
+                  {relation.from}
+                </span>
+              )}
+              {relation.to && (
+                <span className="truncate" title={`Handed off to ${relation.to}`}>
+                  <span className="sr-only">Handed off to </span>
+                  <span aria-hidden>→ </span>
+                  {relation.to}
+                </span>
+              )}
+            </span>
+          )}
         </span>
 
-        <span className="shrink-0 pt-px text-meta text-tertiary">{relativeTime(view.updatedAt, now)}</span>
+        <span className="shrink-0 pt-px text-meta text-tertiary" {...(timeLabel ? { title: timeLabel } : {})}>
+          {time}
+        </span>
       </button>
     </li>
   )
@@ -120,10 +195,13 @@ export function SessionList({
   canCreate,
   now,
   children,
+  history,
   className,
 }: {
   /** Rendered above the sessions — the connected-agents roster (Phase J). */
   children?: React.ReactNode
+  /** Rendered below them — agent history for the workspace on screen (./agent-history-list.tsx). */
+  history?: React.ReactNode
   /** Layout classes from the view — used to make the list full-width master on narrow screens. */
   className?: string
   sessions: readonly CommandCentreSession[]
@@ -213,6 +291,7 @@ export function SessionList({
             )}
           </>
         )}
+        {history}
       </nav>
     </div>
   )

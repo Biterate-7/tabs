@@ -13,6 +13,8 @@ import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
 import { resolveProviderCredential } from "@/lib/agents/credentials/server";
 import { assertExecutionAllowed, denyRemoteExecution } from "./gate";
 import { createRuntimeHost } from "./host";
+import { createProjectHost } from "@/lib/agents/project-host";
+import { agentHistoryOption } from "@/lib/agents/activity/history-server";
 import { createSessionContextServer } from "@/lib/agents/session-context/http";
 import { createSessionContextRegistry } from "@/lib/agents/session-context/registry";
 import type { SessionContextServer } from "@/lib/agents/session-context/http";
@@ -367,6 +369,8 @@ export async function getRuntimeHost(actor: RuntimeActor): Promise<RuntimeHost> 
         remote: createRemoteBindings({ store: resolution.store }),
         providers: REPORTED_PROVIDERS,
         runtimeId: remoteRuntimeId(process.env),
+        // Agent history (Hubble 1.3), on the same database the remote plane requires.
+        ...withHistory(),
       });
     }
 
@@ -422,9 +426,19 @@ function localHostWith(
     // Only a local runtime can say what is installed on the user's machine.
     ...(local ? { detect: local.detect } : {}),
     ...(sessionContext ? { sessionContext } : {}),
+    // Project execution (Hubble 1.6): only a runtime on the machine that holds the projects.
+    ...(local ? { projects: createProjectHost(process.env) } : {}),
+    // Agent history (Hubble 1.3): kept when this server has a database, and
+    // reported unavailable — never faked in memory — when it has none.
+    ...withHistory(),
   });
   registerShutdown();
   return localHost;
+}
+
+function withHistory(): { history?: NonNullable<ReturnType<typeof agentHistoryOption>> } {
+  const history = agentHistoryOption();
+  return history ? { history } : {};
 }
 
 /** Whether a local host has been built. For a caller that wants to avoid building one. */

@@ -302,6 +302,9 @@ describe("who can reach it", () => {
     }
     // The web's local runtime and the desktop app's runtime sidecar (Phase J.1).
     expect(importers.map((file) => file.replace(/\\/g, "/")).sort()).toEqual([
+      // The project check runner (Hubble 1.6) reuses the resolver and the
+      // agents' environment — never the launcher.
+      "lib/agents/project-host/checks.ts",
       "lib/agents/runtime/desktop.ts",
       "lib/agents/runtime/server.ts",
     ]);

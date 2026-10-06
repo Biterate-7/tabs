@@ -2,24 +2,54 @@ import { hasAdapterAuthentication } from "@/lib/agents/control/authentication";
 import { hasConnectSettle, withTimeout } from "@/lib/agents/control/connect-settle";
 import { hasSessionRelease } from "@/lib/agents/control/session-release";
 import { bindRunTo, drainAdapter, providerSessionIdOf } from "@/lib/agents/control/binding";
-import { boundMessageText, normalizeControlSummary } from "@/lib/agents/control/events";
+import { boundMessageText, isWellFormedControlEvent, normalizeControlSummary } from "@/lib/agents/control/events";
 import { NO_PERMISSIONS } from "@/lib/agents/control/permissions";
 import {
   isBlockedSessionStatus,
   isLiveSessionStatus,
   isTerminalSessionStatus,
 } from "@/lib/agents/control/session";
-import { createProject } from "@/lib/agents/control/projects";
+import { createProject, isProviderAuthorized, isWorkspaceAllowed } from "@/lib/agents/control/projects";
+import { isGranted } from "@/lib/agents/control/permissions";
+import { isSecretLikePath } from "@/lib/agents/project/secrets";
+import { projectChangeDetail, projectChangeTitle, projectUndoTitle } from "@/lib/agents/project/changes";
+import { verificationTitle } from "@/lib/agents/project/checks";
+import { createProjectLedger } from "./project-ledger";
+import { describeProject } from "@/lib/agents/project/describe";
+import { AGENT_CAPABILITIES } from "@/lib/agents/control/capabilities";
+import type { ProjectDescriptor } from "@/lib/agents/project/describe";
+import type { ApprovalProjectFile } from "@/lib/agents/project/changes";
+import type { CheckRunResult, ProjectHost } from "@/lib/agents/project/seam";
+import type { ControlProjectChangeInfo, ControlProjectUndoInfo, ControlVerificationInfo } from "@/lib/agents/control/events";
 import { adapterSupports } from "@/lib/agents/control/types";
 import { createControlService } from "@/lib/agents/control/service";
 import { attachmentsStayIn, focusFitsSnapshot, focusFromAttachments, isEmptyFocus } from "@/lib/agents/session-context/focus";
+import { historyApprovalOf, historyEventOf, historyOutcomeOf, eventRecordKey, reviveHistoryChange } from "@/lib/agents/activity/history";
+import { createAgentHistoryRecorder } from "@/lib/agents/activity/history-recorder";
+import {
+  agentDisplayName,
+  buildHandoffEnvelope,
+  canHandOffFrom,
+  handoffLinksOf,
+  readHandoffInstruction,
+  selectHandoffContext,
+} from "@/lib/agents/handoff/handoff";
+import { prepareHandoffPreview } from "@/lib/agents/handoff/preview";
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach";
+import { contextWorldOfSnapshot, handoffContextPack } from "@/lib/agents/context-pack/handoff";
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance";
 import { createCorrelationRegistry, toCorrelationView } from "./correlation";
 import { createEventJournal } from "./journal";
 import { gateFailure } from "./gate";
-import { runtimeFailure } from "./protocol";
+import { runtimeError, runtimeFailure } from "./protocol";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { AgentApproval } from "@/lib/agents/control/approvals";
-import type { AgentControlEvent } from "@/lib/agents/control/events";
+import type { AgentHistoryRecord, AgentHistorySession } from "@/lib/agents/activity/history";
+import type { AgentHistorySeen } from "@/lib/agents/activity/history-recorder";
+import type { AgentHistoryStore } from "@/lib/agents/activity/history-store";
+import type { AgentControlEvent, ControlHandoffInfo } from "@/lib/agents/control/events";
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity";
+import type { HandoffFailure, SessionHandoff } from "@/lib/agents/handoff/handoff";
 import type { AgentProject } from "@/lib/agents/control/projects";
 import type { AgentSession } from "@/lib/agents/control/session";
 import type { SessionContextAccess } from "@/lib/agents/session-context/capabilities";
@@ -50,6 +80,7 @@ import type {
   RuntimeProviderStatus,
   RuntimeResult,
   RuntimeContextActionView,
+  RuntimeHandoffPreview,
   RuntimePlanOperationView,
   RuntimeSessionContextView,
   RuntimeSessionView,
@@ -251,6 +282,22 @@ export type RuntimeHostOptions = {
    * Authentication & Runtime). Injected so tests need not wait the default.
    */
   statusSettleMs?: number;
+  /**
+   * Agent history (Hubble 1.3): where this host keeps its sessions' activity
+   * after it is gone. Absent — no database, the desktop sidecar, a test that
+   * does not care — history commands answer `history_unavailable` and nothing
+   * else changes. `seen` is shared by hosts of one process (a remote host is
+   * built per request) so a replayed event is not offered twice.
+   */
+  history?: { store: AgentHistoryStore; seen?: AgentHistorySeen };
+  /**
+   * Project execution (Hubble 1.6): this machine's access to its projects'
+   * files and checks (lib/agents/project-host). Supplied only by a local
+   * runtime's wiring — the web's opted-in server and the desktop sidecar.
+   * Absent: nothing is inspected, measured, undone or checked, and the
+   * commands that would say `unsupported`.
+   */
+  projects?: ProjectHost;
 };
 
 /** The default bound `get_status` waits for an in-flight connect. */
@@ -293,6 +340,14 @@ export type RuntimeHost = {
 
   /** Tears down every session and releases every provider process. */
   dispose(): Promise<void>;
+
+  /**
+   * Resolves once the agent history offered so far is written, or has failed
+   * to be. Never rejects. A request handler awaits it so that what a command
+   * changed is durable before the response — which matters on a host that
+   * does not outlive the request.
+   */
+  settleHistory(): Promise<void>;
 };
 
 /* ------------------------------------------------------------------ *
@@ -377,6 +432,13 @@ type HostSession = {
    */
   undeliveredContextSnapshotId?: string;
   /**
+   * The session was started with context, which its adapter delivers with
+   * the first message (Hubble 1.5). Until that message is sent the agent has
+   * not been told, and the view says so; the message that carries it records
+   * what it carried.
+   */
+  startContextPending?: true;
+  /**
    * The session was started from a workspace, but its agent cannot prove
    * which of its calls are Hubble's (J.4), so it was not given the context
    * server. Said on the view rather than left to be guessed from an absence.
@@ -389,7 +451,19 @@ type HostSession = {
    * given; the registry holds the same focus for the agent to read.
    */
   focus?: SessionFocus;
+  /**
+   * What the Command Centre reported applying for this session
+   * (`record_workspace_change`), and any undo of it — the session's results,
+   * for a handoff's "previous result" (Hubble 1.4). Bounded; this process only.
+   */
+  changes?: AppliedWorkspaceChange[];
 };
+
+/** Changes remembered per session for a handoff's previous result. Far above a real session. */
+const MAX_REMEMBERED_CHANGES = 200;
+
+/** Handoffs this process remembers for the session views, oldest dropped first. History keeps them all. */
+const MAX_HELD_HANDOFFS = 500;
 
 export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   const now = options.now ?? (() => Date.now());
@@ -412,6 +486,25 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   const hosted = new Map<string, HostSession>();
 
   /**
+   * Agent history: the same events the journal accepts, and the records the
+   * timeline joins them to, kept after this process. See
+   * lib/agents/activity/history.ts for what is and is not kept.
+   */
+  const historyStore = options.history?.store;
+  const history = historyStore
+    ? createAgentHistoryRecorder({ store: historyStore, ...(options.history?.seen ? { seen: options.history.seen } : {}) })
+    : undefined;
+  /** Newest event per session, for the session's last activity. */
+  const lastEventAt = new Map<string, number>();
+
+  /**
+   * Handoffs that ended in this process (Hubble 1.4), by id, with their
+   * owner — what the live session views' "→ Codex" / "← Claude Code" and the
+   * inspector read. History keeps the durable copy.
+   */
+  const handoffs = new Map<string, { ownerId: string; record: SessionHandoff }>();
+
+  /**
    * Projects each actor has synced, by actor id then project id.
    *
    * Partitioned by actor rather than shared, so one account's authorized
@@ -421,6 +514,16 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
    * than merely checked.
    */
   const projectsByActor = new Map<string, Map<string, AgentProject>>();
+
+  /**
+   * Project execution (Hubble 1.6): what approved writes changed, the
+   * per-file notes an approval card shows, and the check each session is
+   * running. See ./project-ledger.ts.
+   */
+  const projectHost = options.projects;
+  const ledger = projectHost ? createProjectLedger({ files: projectHost.files }) : undefined;
+  const approvalFiles = new Map<string, ApprovalProjectFile[]>();
+  const runningChecks = new Map<string, string>();
 
   /**
    * The project this session may use.
@@ -569,6 +672,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       createId: () => `cs-${createId()}`,
       // A session that ends takes its workspace credential with it (J.3).
       onSessionEnded: (sessionId) => releaseContext(sessionId),
+      // Every status it reaches is history's too, said or not by an event.
+      onSessionMoved: (session) => recordSession(session.id),
     });
 
     service.subscribe((event) => onEvent(event));
@@ -609,6 +714,177 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     }
 
     for (const listener of [...listeners]) listener(appended.event);
+
+    // The same canonical event, durably — after the live listeners, and
+    // queued rather than awaited, so history never slows the live stream.
+    recordEvent(appended.event);
+
+    if (session) observeProjectWork(appended.event, session.ownerId);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Project execution (Hubble 1.6)
+   * ---------------------------------------------------------------- */
+
+  const FILE_APPROVAL_ACTIONS = new Set(["modify_files", "create_files", "delete_files"]);
+
+  /** What the agent's own stream says about project work, turned into measurements. */
+  function observeProjectWork(event: AgentControlEvent, ownerId: string): void {
+    if (!ledger) return;
+    if ((event.kind === "file_created" || event.kind === "file_modified") && event.file) {
+      const complete = ledger.noteFile(event.sessionId, event.file.relativePath, event.kind === "file_created" ? "created" : "modified");
+      if (complete) void recordProjectChange(ownerId, complete.changeId);
+      return;
+    }
+    // A turn that ended measures whatever it was allowed to change, reported or not.
+    if (event.kind === "run_completed" || event.kind === "run_cancelled" || event.kind === "error") {
+      for (const entry of ledger.openFor(event.sessionId)) void recordProjectChange(ownerId, entry.changeId);
+      return;
+    }
+    if (event.kind === "approval_requested" && event.approvalId) void annotateApproval(ownerId, event.approvalId);
+  }
+
+  /** Measures a change and says so on its session's stream — once. */
+  async function recordProjectChange(ownerId: string, changeId: string): Promise<void> {
+    if (!ledger) return;
+    const entry = ledger.get(changeId);
+    if (!entry || entry.status !== "open") return;
+    const info = await ledger.finalize(changeId);
+    if (!info) return;
+    const detail = projectChangeDetail(info);
+    raiseProjectEvent(ownerId, entry.sessionId, "project_changed", detail ? `${projectChangeTitle(info)} · ${detail}` : projectChangeTitle(info), {
+      projectChange: info,
+    });
+  }
+
+  /** The notes an approval card adds about its files: secret-like, or changed outside this session. */
+  async function annotateApproval(ownerId: string, approvalId: string): Promise<void> {
+    const approval = serviceFor(ownerId).approvals.get(approvalId);
+    if (!ledger || !approval?.projectId || !FILE_APPROVAL_ACTIONS.has(approval.action)) return;
+    const project = projectFor(ownerId, approval.projectId);
+    if (!project || project.source !== "local") return;
+    approvalFiles.set(approvalId, await ledger.annotate(approval.sessionId, project.path, approval.targets));
+  }
+
+  /** An approval's view, with its per-file notes when it is about project files. */
+  function withProjectFiles(view: RuntimeApprovalView): RuntimeApprovalView {
+    if (!view.projectId || !FILE_APPROVAL_ACTIONS.has(view.action)) return view;
+    const files = approvalFiles.get(view.approvalId) ?? view.targets.map((path) => (isSecretLikePath(path) ? { path, sensitive: true as const } : { path }));
+    return { ...view, projectFiles: files.map((file) => ({ ...file })) };
+  }
+
+  function raiseProjectEvent(
+    ownerId: string,
+    sessionId: string,
+    kind: "project_changed" | "project_change_undone" | "verification_started" | "verification_finished",
+    summary: string,
+    slice: { projectChange?: ControlProjectChangeInfo; projectUndo?: ControlProjectUndoInfo; verification?: ControlVerificationInfo }
+  ): void {
+    const host = hosted.get(sessionId);
+    const session = host?.ownerId === ownerId ? serviceFor(ownerId).session(sessionId) : undefined;
+    if (!host || !session) return;
+    const event: AgentControlEvent = {
+      id: `project-${createId()}`,
+      sessionId,
+      provider: session.provider,
+      kind,
+      timestamp: now(),
+      summary: normalizeControlSummary(summary),
+      ...slice,
+      ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+    };
+    if (isWellFormedControlEvent(event)) onEvent(event);
+  }
+
+  /**
+   * A project described for one agent (Hubble 1.6): the grant intersected with
+   * that agent's own abilities, plus what this runtime finds when it looks.
+   */
+  async function describeProjectFor(actorId: string, projectId: string, provider: AgentProviderId, files: readonly string[]): Promise<ProjectDescriptor | undefined> {
+    const project = projectFor(actorId, projectId);
+    if (!project) return undefined;
+    const adapter = options.resolveAdapter(provider, actorId);
+    const providerCapabilities = adapter ? AGENT_CAPABILITIES.filter((capability) => adapterSupports(adapter, capability)) : [];
+    const local = Boolean(projectHost && !options.remote && project.source === "local");
+    const found = local ? await projectHost!.files.inspect(project.path, files.slice(0, 20)) : undefined;
+    return describeProject({
+      project,
+      ...(found ? { inspection: { projectId: project.id, inspectedAt: now(), ...found } } : {}),
+      providerCapabilities,
+      local,
+    });
+  }
+
+  /** The local project a session works in, when this runtime can reach it. */
+  function localProjectOf(actorId: string, session: AgentSession): AgentProject | undefined {
+    if (!session.projectId) return undefined;
+    const project = projectFor(actorId, session.projectId);
+    return project && project.source === "local" ? project : undefined;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Agent history (Hubble 1.3)
+   * ---------------------------------------------------------------- */
+
+  /** The workspace a session belongs to: its own, or the one its context is bound to. */
+  function workspaceOf(session: AgentSession): string | undefined {
+    return session.workspaceId ?? options.sessionContext?.registry.binding(session.id)?.workspaceId;
+  }
+
+  /**
+   * Offers the session as it now stands — status, title, its approvals and
+   * its plans' outcomes — to history. Cheap when nothing changed (the
+   * recorder skips what it already wrote). A session in no workspace is not
+   * history's: history is a workspace's.
+   */
+  function recordSession(sessionId: string): void {
+    if (!history) return;
+    const host = hosted.get(sessionId);
+    if (!host) return;
+    const actorService = serviceFor(host.ownerId);
+    const session = actorService.session(sessionId);
+    if (!session) return;
+    const workspaceId = workspaceOf(session);
+    if (!workspaceId) return;
+
+    const record: AgentHistorySession = {
+      sessionId,
+      workspaceId,
+      provider: session.provider,
+      status: session.status,
+      ...(session.title ? { title: session.title } : {}),
+      ...(session.projectId ? { projectId: session.projectId } : {}),
+      ...(host.contextUnavailable ? { contextUnavailable: true } : {}),
+      startedAt: session.createdAt,
+      lastActivityAt: Math.max(session.updatedAt, lastEventAt.get(sessionId) ?? 0),
+      ...(session.endedAt !== undefined ? { endedAt: session.endedAt } : {}),
+    };
+    history.session(host.ownerId, record);
+
+    const records: AgentHistoryRecord[] = [];
+    for (const approval of actorService.approvals.forSession(sessionId)) {
+      const view = historyApprovalOf(toApprovalView(approval));
+      records.push({ kind: "approval", key: view.approvalId, at: view.requestedAt, data: view });
+    }
+    for (const outcome of contextViewOf(sessionId)?.planOutcomes ?? []) {
+      const kept = historyOutcomeOf(outcome);
+      records.push({ kind: "plan_outcome", key: kept.planId, at: kept.at, data: kept });
+    }
+    if (records.length > 0) history.records(host.ownerId, sessionId, records);
+  }
+
+  function recordEvent(event: AgentControlEvent & { sequence: number }): void {
+    if (!history) return;
+    const host = hosted.get(event.sessionId);
+    if (!host) return;
+    lastEventAt.set(event.sessionId, Math.max(lastEventAt.get(event.sessionId) ?? 0, event.timestamp));
+    const kept = historyEventOf(event);
+    // Transport — a streamed piece of a reply, a thought — is not kept, and
+    // says nothing about the session either; its time is noted above and is
+    // written with the next event that is.
+    if (!kept) return;
+    recordSession(event.sessionId);
+    history.records(host.ownerId, event.sessionId, [{ kind: "event", key: eventRecordKey(kept), at: kept.timestamp, data: kept }]);
   }
 
   /**
@@ -690,8 +966,35 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       reason: request.reason,
       ...(request.change ? { change: request.change } : {}),
       ...(request.plan ? { plan: request.plan } : {}),
+      actionId: request.actionId,
     });
   });
+
+  // What the context server answered goes onto the session's own stream, as
+  // Hubble's event, for the owner's service to journal like any other. The
+  // binding names the owner and the workspace; the service refuses a
+  // workspace that is not the session's.
+  options.sessionContext?.registry.setActivityListener((sessionId, binding, activity) => {
+    const ownerId = hosted.get(sessionId)?.ownerId ?? binding.ownerId;
+    const { tool, ok, ...counts } = activity;
+    serviceFor(ownerId).recordContextEvent(sessionId, "context_read", {
+      workspaceId: binding.workspaceId,
+      operation: tool,
+      ok,
+      ...counts,
+    });
+  });
+
+  /** Says, once, that a session was started holding its workspace — and how much of it. */
+  function announceContextLoaded(ownerId: string, sessionId: string): void {
+    const binding = options.sessionContext?.registry.binding(sessionId);
+    if (!binding) return;
+    serviceFor(ownerId).recordContextEvent(sessionId, "context_loaded", {
+      workspaceId: binding.workspaceId,
+      tabs: binding.snapshot.workspace.tabs.length,
+      collections: binding.snapshot.collections.length,
+    });
+  }
 
   /** Revokes a session's credential and withdraws its pending workspace approvals. Idempotent. */
   function releaseContext(sessionId: string): void {
@@ -705,6 +1008,12 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     const binding = registry?.binding(sessionId);
     if (!registry || !binding) return undefined;
     const outcomes = registry.planOutcomes(sessionId);
+    // The session owner's approvals: each names the change it authorized, so
+    // what the Command Centre applies — and each plan's outcome — can say
+    // which approval allowed it.
+    const ownerId = hosted.get(sessionId)?.ownerId;
+    const approvals = ownerId === undefined ? [] : serviceFor(ownerId).approvals.forSession(sessionId);
+    const approvalOf = (actionId: string) => approvals.find((approval) => approval.contextActionId === actionId)?.id;
     const view: RuntimeSessionContextView = {
       workspaceId: binding.workspaceId,
       workspaceName: binding.snapshot.workspace.name,
@@ -713,6 +1022,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       syncedAt: binding.syncedAt,
       fingerprint: binding.fingerprint,
       pendingActions: registry.pendingApplications(sessionId).flatMap((action): RuntimeContextActionView[] => {
+        const approvalId = approvalOf(action.id);
+        const approval = approvalId ? { approvalId } : {};
         if (action.plan) {
           // The approved plan, exactly as the registry froze it. The reasons
           // and confidence were the user's to read; applying needs only the
@@ -720,6 +1031,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           return [
             {
               actionId: action.id,
+              ...approval,
               kind: "apply_plan",
               planId: action.plan.planId,
               planHash: action.plan.hash,
@@ -740,19 +1052,17 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!change) return [];
         switch (change.kind) {
           case "create_collection":
-            return [{ actionId: action.id, kind: change.kind, name: change.name, tabIds: [...change.tabIds] }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, name: change.name, tabIds: [...change.tabIds] }];
           case "rename_collection":
-            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, name: change.name }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, collectionId: change.collectionId, name: change.name }];
           case "add_tabs_to_collection":
-            return [{ actionId: action.id, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] }];
+            return [{ actionId: action.id, ...approval, kind: change.kind, collectionId: change.collectionId, tabIds: [...change.tabIds] }];
         }
       }),
     };
     if (outcomes.length > 0) {
       // Each outcome names the approval it answered, so the Command Centre
       // can put the result where the user approved it.
-      const ownerId = hosted.get(sessionId)?.ownerId;
-      const approvals = ownerId === undefined ? [] : serviceFor(ownerId).approvals.forSession(sessionId);
       view.planOutcomes = outcomes.map((outcome) => {
         const approvalId = approvals.find((approval) => approval.plan?.planId === outcome.planId)?.id;
         return { ...outcome, ...(approvalId ? { approvalId } : {}) };
@@ -769,7 +1079,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     return serviceFor(ownerId)
       .approvals.forSession(sessionId)
       .filter((approval) => approval.status === "requested" && approval.expiresAt > at)
-      .map(toApprovalView);
+      .map((approval) => withProjectFiles(toApprovalView(approval)));
   }
 
   function pendingApproval(sessionId: string): boolean {
@@ -791,13 +1101,29 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   function focusWithin(
     context: AgentAttachedContext,
     workspaceId: string | undefined,
-    snapshot: SessionContextSnapshot | undefined
+    snapshot: SessionContextSnapshot | undefined,
+    projectId: string | undefined
   ): SessionFocus | undefined {
     const focus = focusFromAttachments(context.attachments);
+    if (!projectRefsFit(context.attachments, projectId)) return undefined;
     if (!workspaceId) return focus;
     if (!attachmentsStayIn(context.attachments, workspaceId)) return undefined;
     if (snapshot && !focusFitsSnapshot(snapshot, focus)) return undefined;
     return focus;
+  }
+
+  /**
+   * Project references in attached context (Hubble 1.6): a `project` may name
+   * only the session's own project, and `file`s exist only for a session that
+   * has one. Context can describe the project an agent works in; it can never
+   * point it at another.
+   */
+  function projectRefsFit(attachments: AgentAttachedContext["attachments"], projectId: string | undefined): boolean {
+    return attachments.every((attachment) => {
+      if (attachment.kind === "project") return projectId !== undefined && attachment.id === projectId;
+      if (attachment.kind === "file") return projectId !== undefined;
+      return true;
+    });
   }
 
   /** The view a client gets. Assembled here so every command answers with the same shape. */
@@ -845,11 +1171,160 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       view.focus = {
         tabIds: [...host.focus.tabIds],
         collectionIds: [...host.focus.collectionIds],
-        delivered: !host.undeliveredContextSnapshotId,
+        delivered: !host.undeliveredContextSnapshotId && !host.startContextPending,
       };
     }
+    if (session.contextSnapshotId && host) {
+      view.contextDelivered = !host.undeliveredContextSnapshotId && !host.startContextPending;
+    }
+    const links = host ? handoffLinksOf(session.id, handoffsOf(host.ownerId)) : undefined;
+    if (links) view.handoff = links;
 
     return view;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Explicit agent handoff (Hubble 1.4)
+   * ---------------------------------------------------------------- */
+
+  function handoffsOf(ownerId: string): SessionHandoff[] {
+    const list: SessionHandoff[] = [];
+    for (const held of handoffs.values()) if (held.ownerId === ownerId) list.push(held.record);
+    return list;
+  }
+
+  /** Keeps an ended handoff for the live views, and offers it to history. */
+  function keepHandoff(ownerId: string, record: SessionHandoff): SessionHandoff {
+    const kept = structuredClone(record);
+    handoffs.set(kept.handoffId, { ownerId, record: kept });
+    while (handoffs.size > MAX_HELD_HANDOFFS) {
+      const oldest = handoffs.keys().next().value;
+      if (oldest === undefined) break;
+      handoffs.delete(oldest);
+    }
+    if (history) {
+      // The sessions first, so the store has the source the handoff hangs from.
+      recordSession(kept.sourceSessionId);
+      if (kept.targetSessionId) recordSession(kept.targetSessionId);
+      history.handoff(ownerId, kept);
+    }
+    return structuredClone(kept);
+  }
+
+  /**
+   * Says, on a session's own stream, that a handoff happened — Hubble's to
+   * raise, like the context events, and refused for a session the owner does
+   * not hold. Not a status change: the lifecycle ignores it.
+   */
+  function raiseHandoffEvent(
+    ownerId: string,
+    sessionId: string,
+    kind: "handoff_sent" | "handoff_received",
+    handoff: ControlHandoffInfo
+  ): void {
+    const host = hosted.get(sessionId);
+    const session = host?.ownerId === ownerId ? serviceFor(ownerId).session(sessionId) : undefined;
+    if (!host || !session) return;
+    const peer = agentDisplayName(handoff.peerProvider);
+    const summary =
+      kind === "handoff_received"
+        ? `Handoff from ${peer}`
+        : handoff.outcome === "failed"
+          ? `Couldn't hand off to ${peer}`
+          : `Handed off to ${peer}`;
+    const event: AgentControlEvent = {
+      id: `handoff-${createId()}`,
+      sessionId,
+      provider: session.provider,
+      kind,
+      timestamp: now(),
+      summary: normalizeControlSummary(summary),
+      handoff: { ...handoff },
+      ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+    };
+    if (isWellFormedControlEvent(event)) onEvent(event);
+  }
+
+  /** Ends a handoff that did not reach its target, says so on the source, and keeps the record. */
+  function failHandoff(ownerId: string, record: SessionHandoff, failure: HandoffFailure): SessionHandoff {
+    record.status = "failed";
+    record.failure = failure;
+    record.updatedAt = now();
+    raiseHandoffEvent(ownerId, record.sourceSessionId, "handoff_sent", {
+      handoffId: record.handoffId,
+      workspaceId: record.workspaceId,
+      peerProvider: record.targetProvider,
+      ...(record.targetSessionId ? { peerSessionId: record.targetSessionId } : {}),
+      outcome: "failed",
+      failure,
+    });
+    return keepHandoff(ownerId, record);
+  }
+
+  /**
+   * Everything a handoff from this session to this agent could pass — or why
+   * it cannot happen. Decided here, from what this runtime holds, never from
+   * what the browser says: the session must be the caller's, in a workspace,
+   * and done with its turn; the agent must be one this runtime can start; a
+   * snapshot, if sent, must be of the session's own workspace.
+   */
+  function handoffCandidate(
+    actor: RuntimeActor,
+    command: { sourceSessionId: string; targetProvider: AgentProviderId; contextSnapshot?: SessionContextSnapshot }
+  ): RuntimeResult<{
+    source: AgentSession;
+    preview: RuntimeHandoffPreview;
+    snapshot?: SessionContextSnapshot;
+    focus?: SessionFocus;
+  }> {
+    const owned = own(actor, command.sourceSessionId);
+    if (!owned.ok) return owned;
+    const { session, host } = owned.value;
+    const workspaceId = workspaceOf(session);
+    if (!workspaceId) return runtimeFailure("invalid_session_state");
+    if (!canHandOffFrom(session.status)) return runtimeFailure("invalid_session_state");
+
+    // The agent it goes to: one this runtime can start, and signed in in a
+    // way Hubble may use. The person's own connection checks ran in the
+    // browser; these are the runtime's, and they are the ones that hold.
+    const adapter = options.resolveAdapter(command.targetProvider, actor.id);
+    if (!adapter || !adapterSupports(adapter, "create_session") || !adapterSupports(adapter, "message")) {
+      return runtimeFailure("provider_unavailable");
+    }
+    const connection = adapter.getConnectionStatus().kind;
+    if (connection === "unavailable") return runtimeFailure("provider_unavailable");
+    if (connection === "configuration_required") return runtimeFailure("authentication_required");
+    if (hasAdapterAuthentication(adapter)) {
+      const described = adapter.describeAuthentication();
+      if (described.state === "required" || described.issue) return runtimeFailure("authentication_required");
+    }
+
+    // The workspace: the source's own, and nothing else.
+    if (command.contextSnapshot && command.contextSnapshot.workspace.id !== workspaceId) return runtimeFailure("context_invalid");
+    const snapshot = command.contextSnapshot ?? options.sessionContext?.registry.binding(session.id)?.snapshot;
+
+    // What it did: its own timeline, built by the same builder Activity uses,
+    // reduced to its results. Never what it said or thought.
+    const { preview, focus } = prepareHandoffPreview({
+      session: viewOf(session),
+      workspaceId,
+      events: journal.read(session.id).events,
+      knownApprovals: new Map(
+        serviceFor(actor.id)
+          .approvals.forSession(session.id)
+          .map((approval) => [approval.id, toApprovalView(approval)] as const)
+      ),
+      changes: host.changes ?? [],
+      ...(snapshot ? { snapshot } : {}),
+      ...(host.focus ? { focus: host.focus } : {}),
+      targetProvider: command.targetProvider,
+      contextTools: Boolean(options.sessionContext && adapterSupports(adapter, "workspace_context")),
+      now: now(),
+    });
+    return {
+      ok: true,
+      value: { source: session, ...(snapshot ? { snapshot } : {}), ...(focus ? { focus } : {}), preview },
+    };
   }
 
   /** The providers this host reports on, and what is true of each. */
@@ -940,12 +1415,130 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
     };
 
     if (!options.gate.allowed) status.detail = options.gate.detail;
+    // Whether this runtime can work on local projects at all (Hubble 1.6).
+    if (options.gate.allowed && projectHost && !options.remote) status.projects = true;
     return status;
   }
 
   /* ---------------------------------------------------------------- *
    * Commands
    * ---------------------------------------------------------------- */
+
+  /**
+   * Starts a session for an actor: `create_session`, and the target of a
+   * handoff (Hubble 1.4), through exactly the same gates. `focus` is a focus
+   * the runtime already holds (a handoff's source's), checked against the
+   * snapshot like an attached one; `announce: false` defers the
+   * "context loaded" event to the caller, which says it once the handoff is
+   * delivered.
+   */
+  async function startHostedSession(
+    actor: RuntimeActor,
+    command: Omit<Extract<RuntimeCommand, { name: "create_session" }>, "name">,
+    extra: { focus?: SessionFocus; announce?: boolean } = {}
+  ): Promise<RuntimeResult<RuntimeSessionView>> {
+    const actorService = serviceFor(actor.id);
+    const grant = grantFor(actor.id, command.projectId);
+    const access = sessionContextAccessFor(grant, command.projectId);
+    const sessionContext = options.sessionContext;
+    const workspaceId = command.workspaceId;
+    const wantsContext = Boolean(sessionContext && access && workspaceId && command.contextSnapshot);
+    // Only an adapter that can prove which calls are the context server's
+    // is handed one (J.4). Any other still starts — without context, and
+    // the view says so.
+    const providerAdapter = options.resolveAdapter(command.provider, actor.id);
+    const carriesContext = Boolean(providerAdapter && adapterSupports(providerAdapter, "workspace_context"));
+    // Context a session starts with obeys the same boundary as context
+    // attached later: inside its workspace, or refused before anything runs.
+    const startFocus = command.context
+      ? focusWithin(command.context, workspaceId, command.contextSnapshot, command.projectId)
+      : extra.focus && command.contextSnapshot && focusFitsSnapshot(command.contextSnapshot, extra.focus)
+        ? extra.focus
+        : undefined;
+    if (command.context && !startFocus) return runtimeFailure("context_invalid");
+    // A project attached to workspaces is theirs (Hubble 1.6), and one this
+    // runtime can reach must be there before an agent is started in it.
+    if (command.projectId) {
+      const project = projectFor(actor.id, command.projectId);
+      if (project && !isWorkspaceAllowed(project, workspaceId)) return runtimeFailure("project_scope_violation");
+      if (project && project.source === "local" && projectHost && (await projectHost.files.access(project.path)) !== "ready") {
+        return runtimeFailure("project_unavailable");
+      }
+    }
+    const started = await actorService.startSession({
+      ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
+        ? {
+            bindContext: async (sessionId: string) => {
+              const bound = await sessionContext.registry.bind({
+                sessionId,
+                ownerId: actor.id,
+                workspaceId,
+                access,
+                snapshot: command.contextSnapshot,
+              });
+              if (!bound) return "refused" as const;
+              // Handed to the service, which hands it to the one adapter starting
+              // the agent. It goes nowhere else. The capabilities are the
+              // runtime's, from the grant — never the request's.
+              const entry: SessionContextServerEntry = {
+                name: bound.serverName,
+                url: await sessionContext.url(),
+                token: bound.token,
+                workspaceId,
+                capabilities: [...(sessionContext.registry.binding(sessionId)?.capabilities ?? [])],
+              };
+              return entry;
+            },
+          }
+        : {}),
+      provider: command.provider,
+      ...(command.projectId ? { projectId: command.projectId } : {}),
+      ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
+      ...(command.title ? { title: command.title } : {}),
+      // The grant comes from the *project*, never from the request. A
+      // client cannot ask for permissions; it can only name a project the
+      // user already authorized, and the grant is whatever that project
+      // carries. A session with no project gets nothing.
+      permissions: grant,
+      ...(command.context ? { context: command.context } : {}),
+    });
+
+    if (!started.ok) return fromControl(started);
+
+    const correlation = correlations.register(
+      {
+        provider: command.provider,
+        origin: "control",
+        controlSessionId: started.value.id,
+      },
+      now()
+    );
+
+    const host: HostSession = {
+      ownerId: actor.id,
+      provider: command.provider,
+      runIds: [],
+      correlationId: correlation.id,
+      ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
+      ...(startFocus && !isEmptyFocus(startFocus) ? { focus: startFocus } : {}),
+      ...(command.context ? { startContextPending: true as const } : {}),
+    };
+    hosted.set(started.value.id, host);
+    if (startFocus) sessionContext?.registry.setFocus(started.value.id, startFocus);
+
+    // The provider process is live the moment the session is, so the run
+    // that drives it starts here rather than on the first message. A
+    // session that never gets a message still had a run: the process
+    // existed, and the events it emitted belong somewhere.
+    startRun(started.value.id, host);
+    captureProviderSession(started.value.id, host);
+    if (extra.announce !== false) announceContextLoaded(actor.id, started.value.id);
+
+    const session = actorService.session(started.value.id);
+    return session
+      ? { ok: true, value: viewOf(session) }
+      : runtimeFailure("session_not_found");
+  }
 
   async function run(
     actor: RuntimeActor,
@@ -1048,6 +1641,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
               providers: candidate.providers,
               additionalDirectories: candidate.additionalDirectories ?? [],
               permissions: candidate.permissions as AgentProject["permissions"],
+              ...(candidate.workspaceIds ? { workspaceIds: candidate.workspaceIds } : {}),
             },
             now()
           );
@@ -1113,11 +1707,15 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const owned = own(actor, command.sessionId);
         if (!owned.ok) return owned;
         options.sessionContext?.registry.attend(command.sessionId);
+        const related = handoffsOf(actor.id).filter(
+          (handoff) => handoff.sourceSessionId === command.sessionId || handoff.targetSessionId === command.sessionId
+        );
         return {
           ok: true,
           value: {
             session: viewOf(owned.value.session),
             approvals: approvalsFor(command.sessionId),
+            ...(related.length > 0 ? { handoffs: related.map((handoff) => structuredClone(handoff)) } : {}),
           },
         };
       }
@@ -1131,91 +1729,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       }
 
       case "create_session": {
-        const grant = grantFor(actor.id, command.projectId);
-        const access = sessionContextAccessFor(grant, command.projectId);
-        const sessionContext = options.sessionContext;
-        const workspaceId = command.workspaceId;
-        const wantsContext = Boolean(sessionContext && access && workspaceId && command.contextSnapshot);
-        // Only an adapter that can prove which calls are the context server's
-        // is handed one (J.4). Any other still starts — without context, and
-        // the view says so.
-        const providerAdapter = options.resolveAdapter(command.provider, actor.id);
-        const carriesContext = Boolean(providerAdapter && adapterSupports(providerAdapter, "workspace_context"));
-        // Context a session starts with obeys the same boundary as context
-        // attached later: inside its workspace, or refused before anything runs.
-        const startFocus = command.context ? focusWithin(command.context, workspaceId, command.contextSnapshot) : undefined;
-        if (command.context && !startFocus) return runtimeFailure("context_invalid");
-        const started = await actorService.startSession({
-          ...(sessionContext && access && workspaceId && command.contextSnapshot && carriesContext
-            ? {
-                bindContext: async (sessionId: string) => {
-                  const bound = await sessionContext.registry.bind({
-                    sessionId,
-                    ownerId: actor.id,
-                    workspaceId,
-                    access,
-                    snapshot: command.contextSnapshot,
-                  });
-                  if (!bound) return "refused" as const;
-                  // Handed to the service, which hands it to the one adapter starting
-                  // the agent. It goes nowhere else. The capabilities are the
-                  // runtime's, from the grant — never the request's.
-                  const entry: SessionContextServerEntry = {
-                    name: bound.serverName,
-                    url: await sessionContext.url(),
-                    token: bound.token,
-                    workspaceId,
-                    capabilities: [...(sessionContext.registry.binding(sessionId)?.capabilities ?? [])],
-                  };
-                  return entry;
-                },
-              }
-            : {}),
-          provider: command.provider,
-          ...(command.projectId ? { projectId: command.projectId } : {}),
-          ...(command.workspaceId ? { workspaceId: command.workspaceId } : {}),
-          ...(command.title ? { title: command.title } : {}),
-          // The grant comes from the *project*, never from the request. A
-          // client cannot ask for permissions; it can only name a project the
-          // user already authorized, and the grant is whatever that project
-          // carries. A session with no project gets nothing.
-          permissions: grant,
-          ...(command.context ? { context: command.context } : {}),
-        });
-
-        if (!started.ok) return fromControl(started);
-
-        const correlation = correlations.register(
-          {
-            provider: command.provider,
-            origin: "control",
-            controlSessionId: started.value.id,
-          },
-          now()
-        );
-
-        const host: HostSession = {
-          ownerId: actor.id,
-          provider: command.provider,
-          runIds: [],
-          correlationId: correlation.id,
-          ...(wantsContext && !carriesContext ? { contextUnavailable: true as const } : {}),
-          ...(startFocus && !isEmptyFocus(startFocus) ? { focus: startFocus } : {}),
-        };
-        hosted.set(started.value.id, host);
-        if (startFocus) sessionContext?.registry.setFocus(started.value.id, startFocus);
-
-        // The provider process is live the moment the session is, so the run
-        // that drives it starts here rather than on the first message. A
-        // session that never gets a message still had a run: the process
-        // existed, and the events it emitted belong somewhere.
-        startRun(started.value.id, host);
-        captureProviderSession(started.value.id, host);
-
-        const session = actorService.session(started.value.id);
-        return session
-          ? { ok: true, value: viewOf(session) }
-          : runtimeFailure("session_not_found");
+        const { name: _name, ...input } = command;
+        void _name;
+        return startHostedSession(actor, input);
       }
 
       case "resume_session": {
@@ -1260,6 +1776,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         if (!owned.ok) return owned;
 
         const { session, host } = owned.value;
+        if (command.context && !projectRefsFit(command.context.attachments, session.projectId)) return runtimeFailure("context_invalid");
 
         // Explicit serialization rather than unsafe concurrency. One provider
         // process holds one conversation; a second turn pushed into it while
@@ -1279,6 +1796,13 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         const owed = host.undeliveredContextSnapshotId
           ? (actorService.contextFor(command.sessionId)?.attachments ?? [])
           : [];
+        // What this message delivers, for provenance (Hubble 1.5): the context
+        // owed since an attach, or the context the session was started with,
+        // which its adapter sends with the first message.
+        const delivering =
+          host.undeliveredContextSnapshotId || host.startContextPending
+            ? actorService.contextFor(command.sessionId)
+            : undefined;
 
         const sent = await actorService.sendMessage({
           sessionId: command.sessionId,
@@ -1291,6 +1815,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // Cleared after the send rather than before, so a failed send leaves
         // the context still owed instead of silently dropping it.
         delete host.undeliveredContextSnapshotId;
+        delete host.startContextPending;
+        const delivery = delivering && session.workspaceId ? contextDeliveryOf(delivering, session.workspaceId) : undefined;
 
         if (!host.activeRunId) startRun(command.sessionId, host);
 
@@ -1309,6 +1835,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
           summary: normalizeControlSummary(command.text),
           text: boundMessageText(command.text),
           ...(host.activeRunId ? { runId: host.activeRunId } : {}),
+          ...(delivery ? { delivery } : {}),
         });
 
         const after = actorService.session(command.sessionId);
@@ -1348,7 +1875,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // the attachment. Checked before anything is recorded.
         const registry = options.sessionContext?.registry;
         const bound = registry?.binding(command.sessionId);
-        const focus = focusWithin(command.context, owned.value.session.workspaceId, bound?.snapshot);
+        const focus = focusWithin(command.context, owned.value.session.workspaceId, bound?.snapshot, owned.value.session.projectId);
         if (!focus) return runtimeFailure("context_invalid");
 
         const attached = actorService.attachContext(command.sessionId, command.context);
@@ -1373,6 +1900,7 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // told. A snapshot detached before it was ever delivered is simply
         // never said.
         delete owned.value.host.undeliveredContextSnapshotId;
+        delete owned.value.host.startContextPending;
         delete owned.value.host.focus;
         options.sessionContext?.registry.setFocus(command.sessionId, { tabIds: [], collectionIds: [] });
 
@@ -1392,6 +1920,37 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         // on its own to authorize a tool.
         const owned = own(actor, approval.sessionId);
         if (!owned.ok) return owned;
+
+        // Hubble 1.6: the copy is taken now, while the agent is still waiting
+        // on this answer — so it is the file as it was before the agent
+        // touched it. An earlier change still open on the same files is
+        // measured first: its result is this one's starting point.
+        if (
+          command.decision === "granted" &&
+          ledger &&
+          approval.status === "requested" &&
+          approval.scope === "write_project" &&
+          approval.projectId &&
+          FILE_APPROVAL_ACTIONS.has(approval.action)
+        ) {
+          const project = projectFor(actor.id, approval.projectId);
+          if (project && project.source === "local") {
+            for (const entry of ledger.openFor(approval.sessionId, approval.targets)) {
+              await recordProjectChange(actor.id, entry.changeId);
+            }
+            const contextId = actorService.contextFor(approval.sessionId)?.snapshotId;
+            await ledger.open({
+              changeId: approval.id,
+              ownerId: actor.id,
+              sessionId: approval.sessionId,
+              projectId: project.id,
+              root: project.path,
+              targets: approval.targets,
+              ...(contextId ? { contextId } : {}),
+              now: now(),
+            });
+          }
+        }
 
         const answered = await actorService.respondToApproval(
           command.approvalId,
@@ -1417,9 +1976,13 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         }
         releaseAdapterSession(actor.id, command.sessionId);
         releaseContext(command.sessionId);
+        // Its copies of project files go with it (Hubble 1.6).
+        ledger?.forgetSession(command.sessionId);
+        runningChecks.delete(command.sessionId);
 
         hosted.delete(command.sessionId);
         journal.forget(command.sessionId);
+        lastEventAt.delete(command.sessionId);
         correlations.removeControlSession(command.sessionId);
 
         // The durable record goes too, or the next request would rehydrate a
@@ -1540,7 +2103,399 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
         }
         return { ok: true, value: { sessionId: command.sessionId } };
       }
+
+      /* ---------------- Agent history (Hubble 1.3). */
+
+      case "list_history": {
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        // What this process has offered is written first, so a session that
+        // just ended is in the list that is about to be read.
+        await history.flush();
+        try {
+          const page = await historyStore.listSessions(actor.id, command.workspaceId, {
+            ...(command.before ? { before: command.before } : {}),
+            ...(command.limit ? { limit: command.limit } : {}),
+          });
+          return { ok: true, value: page };
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+      }
+
+      case "get_history": {
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        await history.flush();
+        let detail;
+        try {
+          detail = await historyStore.readSession(actor.id, command.workspaceId, command.sessionId);
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+        // Another actor's, another workspace's and a missing one are the same answer.
+        return detail ? { ok: true, value: detail } : runtimeFailure("session_not_found");
+      }
+
+      case "record_workspace_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const session = owned.value.session;
+        const workspaceId = workspaceOf(session);
+        // Remembered whether or not history is kept: it is this session's
+        // result, which a handoff passes on (Hubble 1.4). The same rules as
+        // history's below decide whose, where and which approval.
+        if (workspaceId) rememberChange(owned.value.host, session, workspaceId, command.change);
+        if (!history) return runtimeFailure("history_unavailable");
+        if (!workspaceId) return runtimeFailure("invalid_session_state");
+
+        // Whose, where and which approval are the runtime's to say, not the
+        // caller's: the approval is the one this session's broker issued for
+        // this very action, and a plan id is kept only if one of this
+        // session's approvals was for that plan.
+        const approvals = actorService.approvals.forSession(session.id);
+        const approvalId = approvals.find((approval) => approval.contextActionId === command.change.id)?.id;
+        const planId =
+          command.change.planId && approvals.some((approval) => approval.plan?.planId === command.change.planId)
+            ? command.change.planId
+            : undefined;
+        const change = reviveHistoryChange(
+          {
+            ...command.change,
+            sessionId: session.id,
+            provider: session.provider,
+            workspaceId,
+            at: Math.min(Math.max(command.change.at, session.createdAt), now()),
+            planId,
+            approvalId,
+          },
+          { sessionId: session.id, workspaceId }
+        );
+        if (!change) return runtimeFailure("invalid_request");
+
+        recordSession(session.id);
+        history.records(actor.id, session.id, [{ kind: "change", key: change.id, at: change.at, data: change }]);
+        return { ok: true, value: { sessionId: session.id } };
+      }
+
+      case "record_workspace_undo": {
+        // An undone change is no longer a result a handoff can pass on.
+        const held = hosted.get(command.sessionId);
+        if (held?.ownerId === actor.id && held.changes) {
+          held.changes = held.changes.map((change) =>
+            change.id === command.changeId && change.workspaceId === command.workspaceId && change.ok && !change.undone
+              ? { ...change, undone: true, undoneAt: Math.min(command.at, now()) }
+              : change
+          );
+        }
+        if (!historyStore || !history) return runtimeFailure("history_unavailable");
+        await history.flush();
+        try {
+          // Only a change this actor's session in this workspace recorded as
+          // applied. The change itself is not touched: the undo is a second
+          // record, after it.
+          if (!(await historyStore.hasAppliedChange(actor.id, command.workspaceId, command.sessionId, command.changeId))) {
+            return runtimeFailure("session_not_found");
+          }
+          const at = Math.min(command.at, now());
+          await historyStore.write(actor.id, {
+            sessions: [],
+            records: [{ sessionId: command.sessionId, kind: "undo", key: command.changeId, at, data: { changeId: command.changeId, at } }],
+          });
+        } catch {
+          return runtimeFailure("history_unavailable");
+        }
+        return { ok: true, value: { sessionId: command.sessionId, changeId: command.changeId } };
+      }
+
+      /* ---------------- Explicit agent handoff (Hubble 1.4). */
+
+      /* ------------------------------------------------------------ *
+       * Project execution (Hubble 1.6)
+       * ------------------------------------------------------------ */
+
+      case "inspect_project": {
+        const project = projectFor(actor.id, command.projectId);
+        if (!project) return runtimeFailure("project_scope_violation");
+        if (command.workspaceId !== undefined && !isWorkspaceAllowed(project, command.workspaceId)) {
+          return runtimeFailure("project_scope_violation");
+        }
+        // Only a runtime on the machine that holds the folder can look at it.
+        if (!projectHost || options.remote || project.source !== "local") return runtimeFailure("unsupported");
+        const found = await projectHost.files.inspect(project.path, command.files ?? []);
+        return { ok: true, value: { projectId: project.id, inspectedAt: now(), ...found } };
+      }
+
+      case "run_project_check": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        const project = projectHost && !options.remote ? localProjectOf(actor.id, owned.value.session) : undefined;
+        if (!project || !projectHost) return runtimeFailure("unsupported");
+        // A check runs the project's own code, so it needs what running commands needs.
+        if (!isGranted(project.permissions, "run_commands", project.id)) return runtimeFailure("permission_denied");
+        if (runningChecks.has(command.sessionId)) return runtimeFailure("invalid_session_state");
+
+        const checkId = `check-${createId()}`;
+        const changeId = ledger?.latestRecorded(command.sessionId)?.changeId;
+        const base = { checkId, projectId: project.id, check: command.check, ...(changeId ? { changeId } : {}) };
+        runningChecks.set(command.sessionId, checkId);
+        raiseProjectEvent(actor.id, command.sessionId, "verification_started", verificationTitle(command.check, "running"), {
+          verification: { ...base, outcome: "running" },
+        });
+        void projectHost.checks
+          .run(project.path, command.check)
+          .catch((): CheckRunResult => ({ outcome: "error", durationMs: 0 }))
+          .then((result) => {
+            if (runningChecks.get(command.sessionId) !== checkId) return;
+            runningChecks.delete(command.sessionId);
+            raiseProjectEvent(actor.id, command.sessionId, "verification_finished", verificationTitle(command.check, result.outcome), {
+              verification: {
+                ...base,
+                outcome: result.outcome,
+                durationMs: result.durationMs,
+                ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+                ...(result.git ? { git: result.git } : {}),
+              },
+            });
+          });
+        return { ok: true, value: { checkId } };
+      }
+
+      case "undo_project_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        if (!ledger) return runtimeFailure("unsupported");
+        const result = await ledger.undo(actor.id, command.sessionId, command.changeId);
+        if (!result) return runtimeFailure("invalid_request");
+        const info: ControlProjectUndoInfo = {
+          changeId: command.changeId,
+          projectId: result.projectId ?? owned.value.session.projectId ?? "unknown",
+          outcome: result.outcome,
+          files: result.files,
+          ...(result.reason ? { reason: result.reason } : {}),
+        };
+        raiseProjectEvent(actor.id, command.sessionId, "project_change_undone", projectUndoTitle(info), { projectUndo: info });
+        return { ok: true, value: { outcome: result.outcome, files: result.files, ...(result.reason ? { reason: result.reason } : {}) } };
+      }
+
+      case "review_project_change": {
+        const owned = own(actor, command.sessionId);
+        if (!owned.ok) return owned;
+        if (!ledger) return runtimeFailure("unsupported");
+        const review = ledger.review(actor.id, command.sessionId, command.changeId);
+        return review ? { ok: true, value: review } : runtimeFailure("invalid_request");
+      }
+
+      case "prepare_handoff": {
+        const candidate = handoffCandidate(actor, command);
+        return candidate.ok ? { ok: true, value: candidate.value.preview } : candidate;
+      }
+
+      case "start_handoff": {
+        const candidate = handoffCandidate(actor, command);
+        if (!candidate.ok) return candidate;
+        const { source, snapshot, focus, preview } = candidate.value;
+        // What the person saw is what is sent, or nothing is.
+        if (preview.fingerprint !== command.fingerprint) return runtimeFailure("context_invalid");
+        // A project, if named, is one this actor authorized for that agent — refused
+        // here, before anything is minted, rather than recorded as a handoff that failed.
+        if (command.projectId) {
+          const project = projectFor(actor.id, command.projectId);
+          if (!project || !isProviderAuthorized(project, command.targetProvider)) return runtimeFailure("project_scope_violation");
+        }
+
+        const instruction = readHandoffInstruction(command.instruction);
+        const at = now();
+        const record: SessionHandoff = {
+          handoffId: `ho-${createId()}`,
+          workspaceId: preview.workspaceId,
+          sourceSessionId: source.id,
+          sourceProvider: source.provider,
+          targetProvider: command.targetProvider,
+          status: "creating_session",
+          context: selectHandoffContext(preview.context, command.include),
+          ...(instruction ? { instruction } : {}),
+          createdAt: at,
+          updatedAt: at,
+        };
+        const passWorkspace = Boolean(record.context.workspace && snapshot);
+
+        // 1. The target session — through create_session's own gates, with
+        //    the project's grant and nothing more.
+        const created = await startHostedSession(
+          actor,
+          {
+            provider: command.targetProvider,
+            workspaceId: preview.workspaceId,
+            ...(command.projectId ? { projectId: command.projectId } : {}),
+            ...(source.title ? { title: source.title } : {}),
+            ...(passWorkspace && snapshot ? { contextSnapshot: snapshot } : {}),
+          },
+          { announce: false, ...(passWorkspace && focus ? { focus } : {}) }
+        );
+        if (!created.ok) {
+          // Nothing exists on the other side; the source is untouched.
+          return { ok: true, value: { handoff: failHandoff(actor.id, record, "session_not_created"), error: created.error } };
+        }
+
+        const targetId = created.value.sessionId;
+        const targetHost = hosted.get(targetId)!;
+        record.targetSessionId = targetId;
+        record.status = "sending_context";
+        record.updatedAt = now();
+
+        // 2. The handoff itself, as the target's first message: the envelope,
+        //    and the canonical Context Pack's resources as its attachments
+        //    (Hubble 1.5) — built from the same workspace copy, inside the
+        //    same workspace, so nothing in it can reach outside.
+        // The project, described for the *target* (Hubble 1.6): its capabilities are
+        // that agent's own under the project's grant — never inherited from the source.
+        const targetProject = command.projectId ? await describeProjectFor(actor.id, command.projectId, command.targetProvider, record.context.previousResult?.files?.map((file) => file.path) ?? []) : undefined;
+        const pack =
+          passWorkspace && snapshot
+            ? handoffContextPack({
+                world: contextWorldOfSnapshot(snapshot),
+                workspaceId: preview.workspaceId,
+                ...(focus ? { focus } : {}),
+                context: record.context,
+                ...(instruction ? { instruction } : {}),
+                ...(targetProject ? { project: targetProject } : {}),
+              })
+            : undefined;
+        const packed = pack ? contextPackAttachedContext(pack, now()) : null;
+        const envelope = buildHandoffEnvelope({
+          workspaceName: snapshot?.workspace.name ?? "",
+          sourceProvider: source.provider,
+          ...(source.title ? { sourceTitle: source.title } : {}),
+          context: record.context,
+          contextTools: Boolean(options.sessionContext?.registry.binding(targetId)),
+          ...(instruction ? { instruction } : {}),
+          ...(pack && packed ? { pack } : {}),
+        });
+        // Recorded as the session's attached context, as an attach would be,
+        // so the Command Centre can tell the target has exactly this pack.
+        // Owed until the envelope is sent: a send that fails leaves it owed.
+        if (packed && serviceFor(actor.id).attachContext(targetId, packed).ok) {
+          targetHost.undeliveredContextSnapshotId = packed.snapshotId;
+        }
+        const sent = await serviceFor(actor.id).sendMessage({
+          sessionId: targetId,
+          text: envelope,
+          context: { attachments: packed ? [...packed.attachments] : [] },
+        });
+        if (sent.ok) delete targetHost.undeliveredContextSnapshotId;
+        if (!sent.ok) {
+          // The session exists and holds its workspace — said — but the agent
+          // was told nothing, and the handoff says so.
+          announceContextLoaded(actor.id, targetId);
+          const handoff = failHandoff(actor.id, record, "context_not_delivered");
+          const after = serviceFor(actor.id).session(targetId);
+          return {
+            ok: true,
+            value: { handoff, ...(after ? { session: viewOf(after) } : {}), error: runtimeError(runtimeCodeFor(sent.error)) },
+          };
+        }
+        if (!targetHost.activeRunId) startRun(targetId, targetHost);
+
+        const info = { handoffId: record.handoffId, workspaceId: record.workspaceId };
+        // What the agent was told, into its journal like any message the
+        // person sends — marked as the handoff by reference, not by position.
+        onEvent({
+          id: `sent-${createId()}`,
+          sessionId: targetId,
+          provider: command.targetProvider,
+          kind: "message_sent",
+          timestamp: now(),
+          summary: normalizeControlSummary(`Handoff from ${agentDisplayName(source.provider)}`),
+          text: boundMessageText(envelope),
+          handoff: { ...info, peerProvider: source.provider, peerSessionId: source.id },
+          ...(packed && contextDeliveryOf(packed, record.workspaceId) ? { delivery: contextDeliveryOf(packed, record.workspaceId)! } : {}),
+          ...(targetHost.activeRunId ? { runId: targetHost.activeRunId } : {}),
+        });
+        raiseHandoffEvent(actor.id, targetId, "handoff_received", { ...info, peerProvider: source.provider, peerSessionId: source.id });
+        announceContextLoaded(actor.id, targetId);
+
+        record.status = "ready";
+        record.updatedAt = now();
+        raiseHandoffEvent(actor.id, source.id, "handoff_sent", {
+          ...info,
+          peerProvider: command.targetProvider,
+          peerSessionId: targetId,
+          outcome: "ready",
+        });
+        const handoff = keepHandoff(actor.id, record);
+        const after = serviceFor(actor.id).session(targetId);
+        return { ok: true, value: { handoff, ...(after ? { session: viewOf(after) } : {}) } };
+      }
     }
+  }
+
+  /** Keeps what the Command Centre applied for a session, revalidated as history revalidates it. */
+  function rememberChange(
+    host: HostSession,
+    session: AgentSession,
+    workspaceId: string,
+    reported: Extract<RuntimeCommand, { name: "record_workspace_change" }>["change"]
+  ): void {
+    const approvals = serviceFor(host.ownerId).approvals.forSession(session.id);
+    const change = reviveHistoryChange(
+      {
+        ...reported,
+        sessionId: session.id,
+        provider: session.provider,
+        workspaceId,
+        at: Math.min(Math.max(reported.at, session.createdAt), now()),
+        planId:
+          reported.planId && approvals.some((approval) => approval.plan?.planId === reported.planId) ? reported.planId : undefined,
+        approvalId: approvals.find((approval) => approval.contextActionId === reported.id)?.id,
+      },
+      { sessionId: session.id, workspaceId }
+    );
+    if (!change) return;
+    const changes = (host.changes ?? []).filter((candidate) => candidate.id !== change.id);
+    changes.push(change);
+    host.changes = changes.slice(-MAX_REMEMBERED_CHANGES);
+  }
+
+  /**
+   * Every command, and then whatever it changed about a session offered to
+   * history — a decision, an applied plan, a cancel. Commands that change
+   * nothing offer an unchanged session, which costs nothing.
+   */
+  async function runAndRecord(
+    actor: RuntimeActor,
+    command: RuntimeCommand
+  ): Promise<RuntimeResult<RuntimeCommandResults[RuntimeCommandName]>> {
+    const result = await run(actor, command);
+    if (history) {
+      if (command.name === "create_session" || command.name === "resume_session") {
+        // Events the session raised while it was being created arrived before
+        // the host held it, so `onEvent` could not attribute them; the
+        // journal kept them, and history takes them from there. Idempotent:
+        // an event already recorded is the same record.
+        if (result.ok) {
+          const sessionId = (result.value as RuntimeSessionView).sessionId;
+          recordSession(sessionId);
+          for (const event of journal.read(sessionId).events) recordEvent(event);
+        }
+      } else if (command.name === "start_handoff") {
+        // The target session, and what it raised while it was being started —
+        // as for create_session — and the source, whose stream now says so.
+        if (result.ok) {
+          const value = result.value as RuntimeCommandResults["start_handoff"];
+          recordSession(command.sourceSessionId);
+          if (value.session) {
+            recordSession(value.session.sessionId);
+            for (const event of journal.read(value.session.sessionId).events) recordEvent(event);
+          }
+        }
+      } else if (command.name === "respond_to_approval") {
+        const sessionId = serviceFor(actor.id).approvals.get(command.approvalId)?.sessionId;
+        if (sessionId) recordSession(sessionId);
+      } else {
+        const named = sessionIdOf(command);
+        if (named && hosted.get(named)?.ownerId === actor.id) recordSession(named);
+      }
+    }
+    return result;
   }
 
   /**
@@ -1586,7 +2541,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
   return {
     runtimeId,
 
-    execute: run as RuntimeHost["execute"],
+    execute: runAndRecord as RuntimeHost["execute"],
+
+    settleHistory: () => history?.flush() ?? Promise.resolve(),
 
     subscribe(listener) {
       listeners.add(listener);
@@ -1616,6 +2573,8 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
 
       hosted.clear();
       journal.clear();
+      lastEventAt.clear();
+      handoffs.clear();
       listeners.clear();
       projectsByActor.clear();
 
@@ -1625,6 +2584,9 @@ export function createRuntimeHost(options: RuntimeHostOptions): RuntimeHost {
       // host's sessions in the same process.
       for (const service of services.values()) service.dispose();
       services.clear();
+
+      // What the cancellations above recorded is written before the host is gone.
+      await history?.flush();
     },
   };
 }
@@ -1681,7 +2643,21 @@ function sessionIdOf(command: RuntimeCommand): string | undefined {
     case "link_observation":
     case "sync_session_context":
     case "complete_context_action":
+    case "record_workspace_change":
       return command.sessionId;
+    // A handoff names the session it hands on from; the target does not exist yet.
+    case "prepare_handoff":
+    case "start_handoff":
+      return command.sourceSessionId;
+    // History may name a session this process never held, or no longer does.
+    case "run_project_check":
+    case "undo_project_change":
+    case "review_project_change":
+      return command.sessionId;
+    case "inspect_project":
+    case "list_history":
+    case "get_history":
+    case "record_workspace_undo":
     case "get_status":
     case "list_sessions":
     case "authorize_projects":

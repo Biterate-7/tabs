@@ -169,6 +169,7 @@ export function createSessionContextServer(options: {
         requestChange: (change) => options.registry.requestChange(sessionId, change),
         previewPlan: (plan) => options.registry.previewPlan(sessionId, plan),
         requestPlan: (plan) => options.registry.requestPlan(sessionId, plan),
+        recordActivity: (activity) => options.registry.recordActivity(sessionId, activity),
       },
       ...(options.now ? { now: options.now } : {}),
     });

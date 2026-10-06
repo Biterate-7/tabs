@@ -4,6 +4,7 @@ import { ArrowRight, Check, FileText, Layers, Minus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ContextPackInspector } from "@/components/agents/context-pack-inspector"
 import { READ_CAPABILITIES, SESSION_CONTEXT_ACCESS_LABELS } from "@/lib/agents/session-context/capabilities"
 import {
   CONTEXT_SCOPE_LABEL,
@@ -15,6 +16,58 @@ import { cn } from "@/lib/utils"
 import type { WorkingContextView, WorkspaceLink } from "@/lib/agents/command-centre/working-context"
 import type { RuntimeSessionContextView } from "@/lib/agents/runtime/protocol"
 import type { ContextFreshness } from "@/hooks/use-session-context"
+import type { ContextPack } from "@/lib/agents/context-pack/pack"
+import type { ContextDeliveryState, ContextPackRowKey } from "@/lib/agents/context-pack/present"
+
+/**
+ * The Context Pack's facts beside a selection (Hubble 1.5): what else the
+ * agent receives — files, recent changes, a previous result, the person's
+ * words — and whether it has it. The selection itself is listed above it, so
+ * those rows are not repeated.
+ */
+export type SessionPackProps = {
+  pack?: ContextPack | null
+  packState?: ContextDeliveryState
+  /** What changed when `packState` is "changed" (Hubble 1.6): the project, said as such. */
+  packChange?: "project"
+  onSendUpdate?: () => void
+}
+
+const SELECTION_ROWS: readonly ContextPackRowKey[] = ["scope", "collections", "tabs"]
+
+export function SessionPackFacts({
+  pack,
+  packState,
+  packChange,
+  onSendUpdate,
+  agentName,
+  busy,
+  withWorkspace,
+  withSelection = false,
+}: SessionPackProps & {
+  agentName: string
+  busy?: boolean
+  /** Show the workspace and its brief — when nothing beside this does. */
+  withWorkspace: boolean
+  /** Show the selection too — when no selection list sits above this. */
+  withSelection?: boolean
+}) {
+  if (!pack) return null
+  const hide: ContextPackRowKey[] = [...(withWorkspace ? [] : (["workspace", "focus"] as const)), ...(withSelection ? [] : SELECTION_ROWS)]
+  return (
+    <section aria-label="What the agent receives" className={cn(!withSelection && "border-t border-subtle pt-2")}>
+      <ContextPackInspector
+        pack={pack}
+        agentName={agentName}
+        {...(packState ? { state: packState } : {})}
+        {...(packChange ? { change: packChange } : {})}
+        {...(onSendUpdate ? { onSendUpdate } : {})}
+        busy={busy ?? false}
+        hide={hide}
+      />
+    </section>
+  )
+}
 
 /**
  * The workspace ↔ agent relationship, said where the user works with an agent.
@@ -93,8 +146,8 @@ export function WorkingContextDetails({
       {whole ? (
         <p className="text-body-sm text-muted-foreground">
           {link.kind === "live"
-            ? `${agentName} reads ${workspaceName} when it needs to. Nothing is pasted into its messages.`
-            : `Nothing is sent yet. Choose tabs or collections for ${agentName}.`}
+            ? `${agentName} reads ${workspaceName} when it needs to.`
+            : `${agentName} only knows what Hubble sends it. Choose tabs or collections to add more.`}
         </p>
       ) : (
         <>
@@ -223,6 +276,10 @@ export function WorkingContextChip({
   onOpenChange,
   align = "end",
   className,
+  pack,
+  packState,
+  packChange,
+  onSendUpdate,
   ...actions
 }: {
   view: WorkingContextView | null
@@ -234,7 +291,7 @@ export function WorkingContextChip({
   onOpenChange?: (open: boolean) => void
   align?: "start" | "center" | "end"
   className?: string
-} & WorkingContextActions) {
+} & WorkingContextActions & SessionPackProps) {
   if (!view) {
     return (
       <Popover>
@@ -261,8 +318,26 @@ export function WorkingContextChip({
         <span className="min-w-0 truncate text-foreground">{summary}</span>
         {delivered === false && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-link" />}
       </PopoverTrigger>
-      <PopoverContent align={align} className="w-80">
-        <WorkingContextDetails view={view} link={link} agentName={agentName} {...(delivered !== undefined ? { delivered } : {})} busy={busy ?? false} {...actions} />
+      <PopoverContent align={align} className="max-h-[min(32rem,var(--available-height,80vh))] w-[min(20rem,calc(100vw-2rem))] overflow-y-auto">
+        <div className="flex flex-col gap-2.5">
+          <WorkingContextDetails
+            view={view}
+            link={link}
+            agentName={agentName}
+            {...(delivered !== undefined && !packState ? { delivered } : {})}
+            busy={busy ?? false}
+            {...actions}
+          />
+          <SessionPackFacts
+            pack={pack ?? null}
+            {...(packState ? { packState } : {})}
+            {...(packChange ? { packChange } : {})}
+            {...(onSendUpdate ? { onSendUpdate } : {})}
+            agentName={agentName}
+            busy={busy ?? false}
+            withWorkspace
+          />
+        </div>
       </PopoverContent>
     </Popover>
   )

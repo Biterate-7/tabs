@@ -1,5 +1,20 @@
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
-import type { RuntimeApprovalView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import type { RuntimeApprovalView, RuntimeSessionView, SequencedControlEvent } from "@/lib/agents/runtime/protocol"
+import { contextCountsLine } from "@/lib/agents/control/events"
+import type { ControlContextDeliveryInfo } from "@/lib/agents/control/events"
+import { contextOfSession } from "@/lib/agents/command-centre/working-context"
+import { emptyContextWorld } from "@/lib/agents/context/world"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { contextDeliveryOf } from "@/lib/agents/context-pack/provenance"
+import { sessionContextPack } from "@/lib/agents/context-pack/session"
+import { projectChangeDetail, projectChangeTitle, projectUndoTitle } from "@/lib/agents/project/changes"
+import { verificationTitle } from "@/lib/agents/project/checks"
+import type { ProjectCheckId } from "@/lib/agents/project/checks"
+import { AUTH_FIX_EDIT, DEMO_PROJECT_ID, demoProjectChange, demoProjectDescriptor } from "./demo-project"
+import type { DemoProjectEdit } from "./demo-project"
+import { setWorkspaceBrief } from "@/lib/workspace/brief"
+import { agentDisplayName, handoffLinksOf } from "@/lib/agents/handoff/handoff"
+import type { SessionHandoff } from "@/lib/agents/handoff/handoff"
 import type { AgentSessionStatus } from "@/lib/agents/control/session"
 import {
   addTabsToCollection,
@@ -23,23 +38,32 @@ import {
   updateWorkspaceLogo,
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
+import { restoreWorkspaceCollections } from "@/lib/collections/restore"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
+import type { AgentHistoryDetail } from "@/lib/agents/activity/history"
 import type { Collection } from "@/lib/collections/types"
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 import {
   CLAUDE_SESSION,
+  DEMO_KNOWN_APPROVALS,
+  HANDOFF_PLAN,
+  contextTool,
+  demoSessionContext,
   DEMO_APPROVALS,
   DEMO_COLLECTIONS,
   DEMO_DEPENDENCIES,
   DEMO_EVENTS,
+  DEMO_HISTORY,
   DEMO_NOW,
   DEMO_SESSIONS,
   DEMO_WORKSPACES,
   RESEARCH_ID,
   SWE_APPROVAL,
+  AUTH_APPROVAL,
+  CODEX_AUTH_SESSION,
   SWE_TAB_IDS,
-  contextTool,
 } from "./data"
 
 /*
@@ -57,6 +81,14 @@ import {
  * an approved collection is created in the workspace, a denied one is not —
  * and a message typed into the composer gets a reply that says plainly that
  * no agent is connected to this page.
+ *
+ * An approval plays out in the steps the app goes through, one action each,
+ * so the same states appear in the same order: `respond` (approved — the
+ * session is running), `apply-approved` (the Command Centre applies the
+ * change and records it, as an `AppliedWorkspaceChange`), `finish-approved`
+ * (the agent replies and its run ends). `undo` reverses a recorded change
+ * through the same restore the collection store uses, and records the undo
+ * on the change — never by deleting it.
  */
 
 /** The destinations the demo's rail can open. Mirrors AppShell's `view` union. */
@@ -80,8 +112,39 @@ export type DemoState = {
   sessions: CommandCentreSession[]
   events: Record<string, SequencedControlEvent[]>
   approvals: Record<string, RuntimeApprovalView[]>
+  /** What the demo's "Command Centre" applied for its agents, as the app records it. */
+  changes: AppliedWorkspaceChange[]
   /** The Command Centre's open session. `null` shows the list (master) on phones. */
   selectedSessionId: string | null
+  /**
+   * Agent history: sessions that ended before the visitor arrived, as Hubble
+   * reads them back (lib/agents/activity/history.ts). An undo appends a
+   * record; the session's own records are never rewritten.
+   */
+  history: AgentHistoryDetail[]
+  /** The past session open in the Command Centre, by id. Exclusive with `selectedSessionId`. */
+  selectedHistoryId: string | null
+  /** Handoffs the visitor made (Hubble 1.4), as the runtime records them. */
+  handoffs: SessionHandoff[]
+  /**
+   * Context attached to a session and not yet sent (Hubble 1.5): what its
+   * next message delivers, as the runtime records it on that message.
+   */
+  pendingDelivery: Record<string, ControlContextDeliveryInfo>
+  /**
+   * What each approval in the demo would change once approved, by approval
+   * id — Claude Code's SWE-bench collection, and whatever a handed-off agent
+   * asks for. The Command Centre applies it exactly as it applies any other.
+   */
+  pendingChanges: Record<string, DemoPendingChange>
+  /**
+   * Project edits an approval would make (Hubble 1.6), by approval id: the
+   * demo's deterministic adapter. Measured by the product's own diff when
+   * applied, and recorded as Hubble records it — events, never claims.
+   */
+  projectEdits: Record<string, DemoProjectEditPending>
+  /** Approvals raised during the visit, remembered after they are answered — as the Command Centre remembers them. */
+  seenApprovals: RuntimeApprovalView[]
   paletteOpen: boolean
   /** The Command Centre's context panel (shown from `xl`, as in the app). */
   contextPanelOpen: boolean
@@ -92,26 +155,143 @@ export type DemoState = {
   created: number
 }
 
+export type DemoProjectEditPending = DemoProjectEdit & {
+  sessionId: string
+  /** The agent's reply once applied, and once declined. */
+  reply: string
+  declined: string
+}
+
+export type DemoPendingChange = {
+  sessionId: string
+  workspaceId: string
+  name: string
+  tabIds: readonly string[]
+  /** The agent's reply once it is applied, and once it is declined. */
+  reply: string
+  declined: string
+}
+
+const SWE_CHANGE: DemoPendingChange = {
+  sessionId: CLAUDE_SESSION,
+  workspaceId: SWE_APPROVAL.workspaceId ?? RESEARCH_ID,
+  name: "SWE-bench",
+  tabIds: SWE_TAB_IDS,
+  reply: "Done. “SWE-bench” is in Research with the paper, the leaderboard and the repository. Nothing else changed.",
+  declined: "Understood — I won't create it. The three SWE-bench tabs stay where they are in Research.",
+}
+
+/** Every approval the demo can describe: the fixture's, and those raised during the visit. */
+export function demoKnownApprovals(state: Pick<DemoState, "seenApprovals">): ReadonlyMap<string, RuntimeApprovalView> {
+  if (state.seenApprovals.length === 0) return DEMO_KNOWN_APPROVALS
+  return new Map([...DEMO_KNOWN_APPROVALS, ...state.seenApprovals.map((approval) => [approval.approvalId, approval] as const)])
+}
+
+/**
+ * The session a handoff starts, as the runtime describes it: the target
+ * agent, working in the source's workspace, holding its context only if the
+ * visitor passed it, and linked to the source by the handoff record.
+ */
+export function demoHandoffTarget(handoff: SessionHandoff, title: string | undefined, workspaceName: string): RuntimeSessionView {
+  return {
+    sessionId: handoff.targetSessionId!,
+    provider: handoff.targetProvider,
+    status: "running",
+    runIds: [`${handoff.targetSessionId}-run-1`],
+    awaitingApproval: false,
+    cancellable: true,
+    resumable: false,
+    latestSequence: 0,
+    createdAt: DEMO_NOW,
+    updatedAt: DEMO_NOW,
+    workspaceId: handoff.workspaceId,
+    ...(title ? { title } : {}),
+    ...(handoff.context.workspace ? { context: demoSessionContext(handoff.workspaceId, workspaceName, true) } : {}),
+    handoff: { from: { handoffId: handoff.handoffId, sessionId: handoff.sourceSessionId, provider: handoff.sourceProvider, status: "ready" } },
+  }
+}
+
 export type DemoInit = {
   view?: DemoView
   currentId?: string
   selectedSessionId?: string | null
+  selectedHistoryId?: string | null
   sidebarCollapsed?: boolean
   contextPanelOpen?: boolean
   settingsSection?: DemoSettingsSection
 }
 
+/**
+ * The fixture's sessions as the runtime would hold them (Hubble 1.5): each
+ * was started with its Context Pack — built by the product's own recipe from
+ * the demo's workspaces — and its first message delivered it, which that
+ * message records. A session with nothing to attach reads its workspace.
+ */
+function seedContext(
+  sessions: readonly CommandCentreSession[],
+  events: Record<string, SequencedControlEvent[]>,
+  world: Pick<DemoState, "collections" | "dependencies"> & { workspaces: WorkspaceStore["workspaces"] }
+): { sessions: CommandCentreSession[]; events: Record<string, SequencedControlEvent[]> } {
+  const contextWorld = { ...emptyContextWorld(null), workspaces: world.workspaces, collections: world.collections, dependencies: world.dependencies }
+  const nextEvents = { ...events }
+  const nextSessions = sessions.map((entry) => {
+    const workspaceId = entry.view.workspaceId
+    if (!workspaceId) return entry
+    // A session in the project its workspace names is told the project too (Hubble 1.6).
+    const project = entry.view.projectId === DEMO_PROJECT_ID ? demoProjectDescriptor() : undefined
+    const built = sessionContextPack({
+      world: contextWorld,
+      workspaceId,
+      selection: contextOfSession(entry.view),
+      sessionId: entry.view.sessionId,
+      changes: [],
+      ...(project ? { project } : {}),
+    })
+    const attached = built.ok ? contextPackAttachedContext(built.pack, DEMO_NOW) : null
+    if (!attached) return entry
+    const delivery = contextDeliveryOf(attached, workspaceId)
+    const list = nextEvents[entry.view.sessionId] ?? []
+    const first = list.findIndex((event) => event.kind === "message_sent" && !event.handoff)
+    if (first >= 0 && delivery) nextEvents[entry.view.sessionId] = list.map((event, index) => (index === first ? { ...event, delivery } : event))
+    return { ...entry, view: { ...entry.view, contextSnapshotId: attached.snapshotId, contextDelivered: first >= 0 } }
+  })
+  return { sessions: nextSessions, events: nextEvents }
+}
+
 export function createDemoState(init: DemoInit = {}): DemoState {
   const workspaces = DEMO_WORKSPACES.map((workspace) => ({ ...workspace, tabs: [...workspace.tabs] }))
+  const collections = DEMO_COLLECTIONS.map((c) => ({ ...c, tabIds: [...c.tabIds] }))
+  const dependencies = [...DEMO_DEPENDENCIES]
+  const seeded = seedContext(
+    withSequence([...DEMO_SESSIONS], DEMO_EVENTS as Record<string, SequencedControlEvent[]>),
+    Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
+    { workspaces, collections, dependencies }
+  )
   return {
     view: init.view ?? "workspace",
     store: { version: 1, currentId: init.currentId ?? RESEARCH_ID, workspaces },
-    collections: DEMO_COLLECTIONS.map((c) => ({ ...c, tabIds: [...c.tabIds] })),
-    dependencies: [...DEMO_DEPENDENCIES],
-    sessions: withSequence([...DEMO_SESSIONS], DEMO_EVENTS as Record<string, SequencedControlEvent[]>),
-    events: Object.fromEntries(Object.entries(DEMO_EVENTS).map(([id, list]) => [id, [...list]])),
+    collections,
+    dependencies,
+    sessions: seeded.sessions,
+    events: seeded.events,
     approvals: Object.fromEntries(Object.entries(DEMO_APPROVALS).map(([id, list]) => [id, [...list]])),
-    selectedSessionId: init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
+    changes: [],
+    selectedSessionId: init.selectedHistoryId ? null : init.selectedSessionId === undefined ? CLAUDE_SESSION : init.selectedSessionId,
+    history: [...DEMO_HISTORY],
+    selectedHistoryId: init.selectedHistoryId ?? null,
+    handoffs: [],
+    pendingDelivery: {},
+    pendingChanges: { [SWE_APPROVAL.approvalId]: SWE_CHANGE },
+    projectEdits: {
+      [AUTH_APPROVAL.approvalId]: {
+        ...AUTH_FIX_EDIT,
+        changeId: AUTH_APPROVAL.approvalId,
+        sessionId: CODEX_AUTH_SESSION,
+        reply: "Done: the route now awaits the password check and validates its input, and the session cookie is httpOnly with an expiry. Tests pass.",
+        declined: "Understood — I left both files as they were.",
+      },
+    },
+    seenApprovals: [],
     paletteOpen: false,
     contextPanelOpen: init.contextPanelOpen ?? true,
     sidebarCollapsed: init.sidebarCollapsed ?? false,
@@ -145,8 +325,45 @@ export type DemoAction =
   | { type: "move-to-collection"; tabId: string; id: string }
   | { type: "select-session"; id: string | null }
   /** What a session is pointed at inside its workspace — as the runtime would record it, ids only. */
-  | { type: "set-focus"; sessionId: string; focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null }
+  | {
+      type: "set-focus"
+      sessionId: string
+      focus: { tabIds: readonly string[]; collectionIds: readonly string[] } | null
+      /** The Context Pack attached (Hubble 1.5): its id, and what its next message will record delivering. `null`: detached. */
+      context?: { contextId: string; delivery?: ControlContextDeliveryInfo } | null
+    }
+  /** The person's brief for a workspace (Hubble 1.5), through the product's own store function. */
+  | { type: "set-brief"; workspaceId: string; brief: { description: string; focus: string } }
   | { type: "respond"; approvalId: string; decision: "granted" | "denied" }
+  /** A project check the person ran (Hubble 1.6): started, then its answer. */
+  | { type: "project-check"; sessionId: string; checkId: string; check: ProjectCheckId; phase: "started" | "finished" }
+  /** The person undid a measured project change: exact, as the runtime would. */
+  | { type: "project-undo"; sessionId: string; changeId: string }
+  /** The Command Centre applies an approved change, after the approval. */
+  | { type: "apply-approved"; approvalId: string }
+  /** The agent says what it did and its run ends, after the change is applied. */
+  | { type: "finish-approved"; approvalId: string }
+  | { type: "undo"; changeId: string }
+  /** Opens a past session from agent history, or closes it. */
+  | { type: "select-history"; id: string | null }
+  /** Undoes a past session's change exactly — recorded as its own record after the change. */
+  | { type: "undo-history"; sessionId: string; changeId: string }
+  /**
+   * The visitor continued a session with another agent (Hubble 1.4): the
+   * handoff as the demo's transport recorded it, and the envelope the target
+   * agent is told — built by the product's own functions.
+   */
+  | {
+      type: "handoff-start"
+      handoff: SessionHandoff
+      envelope: string
+      title?: string
+      workspaceName: string
+      /** The Context Pack sent with the envelope (Hubble 1.5), and the source focus it carried. */
+      pack?: { contextId: string; delivery?: ControlContextDeliveryInfo; focus?: { tabIds: readonly string[]; collectionIds: readonly string[] } }
+    }
+  /** The handed-off agent reads the workspace and asks to change it. */
+  | { type: "handoff-work"; sessionId: string; approval: RuntimeApprovalView }
   | { type: "send"; sessionId: string; text: string }
   | { type: "reply"; sessionId: string }
   | { type: "cancel"; sessionId: string }
@@ -334,15 +551,47 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       return { ...state, collections: moveTabToCollection(state.collections, action.tabId, action.id, DEMO_NOW) }
 
     case "select-session":
-      return { ...state, selectedSessionId: action.id }
+      return { ...state, selectedSessionId: action.id, ...(action.id ? { selectedHistoryId: null } : {}) }
 
-    case "set-focus":
+    case "select-history":
+      return { ...state, selectedHistoryId: action.id, ...(action.id ? { selectedSessionId: null } : {}) }
+
+    case "undo-history": {
+      const detail = state.history.find((entry) => entry.session.sessionId === action.sessionId)
+      const change = detail?.records.changes.find((candidate) => candidate.id === action.changeId)
+      if (!detail || !change || !change.ok || !change.before || !change.after) return state
+      if (detail.records.undos.some((undo) => undo.changeId === change.id)) return state
+      // The same restore, the same refusal: nothing moves if the workspace changed since.
+      const restored = restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)
+      if (!restored) return state
+      const at = Math.max(detail.session.lastActivityAt, change.at, DEMO_NOW) + 1_000
       return {
         ...state,
+        collections: restored.collections,
+        history: state.history.map((entry) =>
+          entry === detail ? { ...entry, records: { ...entry.records, undos: [...entry.records.undos, { changeId: change.id, at }] } } : entry
+        ),
+      }
+    }
+
+    case "set-focus": {
+      const pendingDelivery = { ...state.pendingDelivery }
+      if (action.context !== undefined) {
+        delete pendingDelivery[action.sessionId]
+        if (action.context?.delivery) pendingDelivery[action.sessionId] = action.context.delivery
+      }
+      return {
+        ...state,
+        pendingDelivery,
         sessions: state.sessions.map((entry) => {
           if (entry.view.sessionId !== action.sessionId) return entry
           const view = { ...entry.view }
           delete view.focus
+          if (action.context !== undefined) {
+            delete view.contextSnapshotId
+            delete view.contextDelivered
+            if (action.context) Object.assign(view, { contextSnapshotId: action.context.contextId, contextDelivered: false })
+          }
           const empty = !action.focus || (action.focus.tabIds.length === 0 && action.focus.collectionIds.length === 0)
           return {
             ...entry,
@@ -350,6 +599,12 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
           }
         }),
       }
+    }
+
+    case "set-brief": {
+      const store = setWorkspaceBrief(state.store, action.workspaceId, action.brief, DEMO_NOW)
+      return store === state.store ? state : { ...state, store }
+    }
 
     case "respond": {
       const sessionId = Object.keys(state.approvals).find((id) =>
@@ -368,39 +623,272 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
           approvals,
           sessions: patchSession(state.sessions, sessionId, "ready"),
           events: appendEvents(state, sessionId, [
-            { kind: "approval_denied", summary: approval.change?.subject ?? "Denied", approvalId: approval.approvalId },
+            // The control service's own words for a workspace decision.
+            { kind: "approval_denied", summary: approval.workspaceId ? "Workspace change declined" : "Denied", approvalId: approval.approvalId },
             {
               kind: "message_received",
               summary: "Reply",
               messageId: `${approval.approvalId}-denied`,
-              text: "Understood — I won't create it. The three SWE-bench tabs stay where they are in Research.",
+              text: state.pendingChanges[approval.approvalId]?.declined ?? state.projectEdits[approval.approvalId]?.declined ?? SWE_CHANGE.declined,
             },
           ]),
         }
       }
 
-      // Granted. The Command Centre, which owns the workspace, applies the
-      // approved change exactly as a person would — here, the one approval in
-      // the fixture: a new collection holding the three tabs the card named.
-      const isSwe = approval.approvalId === SWE_APPROVAL.approvalId
-      const workspaceId = approval.workspaceId ?? RESEARCH_ID
-      const next = isSwe ? addCollection(state, workspaceId, "SWE-bench", [...SWE_TAB_IDS]) : null
+      // Granted: as in the runtime, the agent's run carries on while the
+      // Command Centre applies the change (`apply-approved`, next).
       return {
         ...state,
         approvals,
-        ...(next ? { collections: next.collections, created: next.created } : {}),
-        // The run is over; the session is not — it waits for the next message.
-        sessions: patchSession(state.sessions, sessionId, "ready"),
+        sessions: patchSession(state.sessions, sessionId, "running"),
         events: appendEvents(state, sessionId, [
-          { kind: "approval_granted", summary: approval.change?.subject ?? "Allowed", approvalId: approval.approvalId },
-          { kind: "tool_finished", summary: "Created “SWE-bench”", tool: { ...contextTool("create_collection"), ok: true } },
+          { kind: "approval_granted", summary: approval.workspaceId ? "Workspace change approved" : "Approved", approvalId: approval.approvalId },
+        ]),
+      }
+    }
+
+    case "apply-approved": {
+      // An approval that changes project files (Hubble 1.6): the agent writes,
+      // Hubble measures — the product's own diff over the deterministic
+      // adapter's two versions — and the person's check starts.
+      const edit = state.projectEdits[action.approvalId]
+      if (edit) {
+        const events = state.events[edit.sessionId] ?? []
+        const granted = events.some((event) => event.kind === "approval_granted" && event.approvalId === action.approvalId)
+        if (!granted || events.some((event) => event.projectChange?.changeId === action.approvalId)) return state
+        const info = demoProjectChange(edit)
+        return {
+          ...state,
+          events: appendEvents(state, edit.sessionId, [
+            { kind: "project_changed", summary: [projectChangeTitle(info), projectChangeDetail(info)].filter(Boolean).join(" · "), projectChange: info },
+            {
+              kind: "verification_started",
+              summary: verificationTitle("test", "running"),
+              verification: { checkId: `check-${action.approvalId}`, projectId: info.projectId, check: "test", outcome: "running", changeId: action.approvalId },
+            },
+          ]),
+        }
+      }
+      // An approval that changes the workspace: a new collection holding the
+      // tabs the card named — Claude Code's, or a handed-off agent's.
+      const pending = state.pendingChanges[action.approvalId]
+      if (!pending) return state
+      const sessionId = pending.sessionId
+      const events = state.events[sessionId] ?? []
+      const granted = events.some((event) => event.kind === "approval_granted" && event.approvalId === action.approvalId)
+      if (!granted || state.changes.some((change) => change.approvalId === action.approvalId)) return state
+      const session = state.sessions.find((entry) => entry.view.sessionId === sessionId)
+      if (!session) return state
+
+      // Applied the way the Command Centre applies it — through the product's
+      // own collection reducer — and recorded with the collections either
+      // side, which is what makes an exact undo possible.
+      const workspaceId = pending.workspaceId
+      const before = state.collections.filter((collection) => collection.workspaceId === workspaceId)
+      const next = addCollection(state, workspaceId, pending.name, [...pending.tabIds])
+      const after = next.collections.filter((collection) => collection.workspaceId === workspaceId)
+      // No event: Claude Code reports no result for a Hubble tool call, so
+      // in Hubble too the change is the Command Centre's record, not the journal's.
+      const last = events[events.length - 1]
+      const change: AppliedWorkspaceChange = {
+        id: `demo-change-${next.created}`,
+        sessionId,
+        provider: session.view.provider,
+        workspaceId,
+        at: Math.max(last?.timestamp ?? DEMO_NOW, DEMO_NOW) + 500,
+        ok: true,
+        approvalId: action.approvalId,
+        steps: [{ kind: "created", collectionId: next.id, name: pending.name, tabCount: pending.tabIds.length }],
+        before,
+        after,
+      }
+      return {
+        ...state,
+        collections: next.collections,
+        created: next.created,
+        changes: [...state.changes, change],
+      }
+    }
+
+    case "finish-approved": {
+      const edit = state.projectEdits[action.approvalId]
+      if (edit) {
+        const events = state.events[edit.sessionId] ?? []
+        const messageId = `${action.approvalId}-granted`
+        if (!events.some((event) => event.projectChange?.changeId === action.approvalId) || events.some((event) => event.messageId === messageId)) return state
+        return {
+          ...state,
+          sessions: patchSession(state.sessions, edit.sessionId, "ready"),
+          events: appendEvents(state, edit.sessionId, [
+            {
+              kind: "verification_finished",
+              summary: verificationTitle("test", "passed"),
+              verification: { checkId: `check-${action.approvalId}`, projectId: DEMO_PROJECT_ID, check: "test", outcome: "passed", exitCode: 0, durationMs: 8_400, changeId: action.approvalId },
+            },
+            { kind: "message_received", summary: "Reply", messageId, text: edit.reply },
+            { kind: "run_completed", summary: "Run completed." },
+          ]),
+        }
+      }
+      const change = state.changes.find((candidate) => candidate.approvalId === action.approvalId)
+      if (!change) return state
+      const messageId = `${action.approvalId}-granted`
+      if ((state.events[change.sessionId] ?? []).some((event) => event.messageId === messageId)) return state
+      return {
+        ...state,
+        // The run is over; the session is not — it waits for the next message.
+        sessions: patchSession(state.sessions, change.sessionId, "ready"),
+        events: appendEvents(state, change.sessionId, [
           {
             kind: "message_received",
             summary: "Reply",
-            messageId: `${approval.approvalId}-granted`,
-            text: "Done. “SWE-bench” is in Research with the paper, the leaderboard and the repository. Nothing else changed.",
+            messageId,
+            text: state.pendingChanges[action.approvalId]?.reply ?? SWE_CHANGE.reply,
           },
           { kind: "run_completed", summary: "Run completed." },
+        ]),
+      }
+    }
+
+    case "project-check": {
+      const latest = [...(state.events[action.sessionId] ?? [])].reverse().find((event) => event.projectChange && event.projectChange.outcome !== "not_applied")
+      const changeId = latest?.projectChange?.changeId
+      const base = { checkId: action.checkId, projectId: DEMO_PROJECT_ID, check: action.check, ...(changeId ? { changeId } : {}) }
+      return {
+        ...state,
+        events: appendEvents(state, action.sessionId, [
+          action.phase === "started"
+            ? { kind: "verification_started", summary: verificationTitle(action.check, "running"), verification: { ...base, outcome: "running" } }
+            : {
+                kind: "verification_finished",
+                summary: verificationTitle(action.check, "passed"),
+                verification: {
+                  ...base,
+                  outcome: "passed",
+                  exitCode: 0,
+                  durationMs: action.check === "git_status" ? 300 : 6_200,
+                  ...(action.check === "git_status" ? { git: { modified: 2, added: 0, deleted: 0, untracked: 0, renamed: 0 } } : {}),
+                },
+              },
+        ]),
+      }
+    }
+
+    case "project-undo": {
+      const events = state.events[action.sessionId] ?? []
+      const change = events.find((event) => event.projectChange?.changeId === action.changeId)?.projectChange
+      if (!change || events.some((event) => event.projectUndo?.changeId === action.changeId && event.projectUndo.outcome !== "refused")) return state
+      const files = change.files.filter((file) => file.change !== "unchanged").length
+      const info = { changeId: action.changeId, projectId: change.projectId, outcome: "undone" as const, files }
+      return { ...state, events: appendEvents(state, action.sessionId, [{ kind: "project_change_undone", summary: projectUndoTitle(info), projectUndo: info }]) }
+    }
+
+    case "undo": {
+      const change = state.changes.find((candidate) => candidate.id === action.changeId)
+      if (!change || !change.ok || change.undone || !change.before || !change.after) return state
+      // Refused, with nothing moved, if the workspace changed since — exactly as in Hubble.
+      const restored = restoreWorkspaceCollections(state.collections, change.workspaceId, change.before, change.after)
+      if (!restored) return state
+      const last = (state.events[change.sessionId] ?? []).at(-1)
+      // The demo's clock, kept moving forward: the undo is told after everything before it.
+      const undoneAt = Math.max(last?.timestamp ?? DEMO_NOW, change.at, DEMO_NOW) + 1_000
+      return {
+        ...state,
+        collections: restored.collections,
+        changes: state.changes.map((candidate) => (candidate.id === change.id ? { ...candidate, undone: true, undoneAt } : candidate)),
+      }
+    }
+
+    case "handoff-start": {
+      const { handoff } = action
+      const targetId = handoff.targetSessionId
+      const source = state.sessions.find((entry) => entry.view.sessionId === handoff.sourceSessionId)
+      if (!targetId || !source || state.sessions.some((entry) => entry.view.sessionId === targetId)) return state
+      const handoffs = [...state.handoffs, handoff]
+      const base = demoHandoffTarget(handoff, action.title, action.workspaceName)
+      const pack = action.pack
+      const focus = pack?.focus && (pack.focus.tabIds.length > 0 || pack.focus.collectionIds.length > 0) ? pack.focus : undefined
+      const target: CommandCentreSession = {
+        origin: "controlled",
+        view: {
+          ...base,
+          ...(pack ? { contextSnapshotId: pack.contextId, contextDelivered: true } : {}),
+          ...(focus ? { focus: { tabIds: [...focus.tabIds], collectionIds: [...focus.collectionIds], delivered: true } } : {}),
+        },
+      }
+      // Both sessions' links, from the records — never from where they sit.
+      const linked = [target, ...state.sessions].map((entry) => {
+        const links = handoffLinksOf(entry.view.sessionId, handoffs)
+        return links ? { ...entry, view: { ...entry.view, handoff: links } } : entry
+      })
+      const withTarget = { ...state, sessions: linked }
+      const received = { handoffId: handoff.handoffId, workspaceId: handoff.workspaceId, peerProvider: handoff.sourceProvider, peerSessionId: handoff.sourceSessionId }
+      const workspace = handoff.context.workspace
+      const targetEvents = appendEvents(withTarget, targetId, [
+        { kind: "session_started", summary: "Session started." },
+        // What the agent was told, marked as the handoff by reference.
+        {
+          kind: "message_sent",
+          summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`,
+          handoff: received,
+          text: action.envelope,
+          ...(pack?.delivery ? { delivery: pack.delivery } : {}),
+        },
+        { kind: "handoff_received", summary: `Handoff from ${agentDisplayName(handoff.sourceProvider)}`, handoff: received },
+        ...(workspace
+          ? [
+              {
+                kind: "context_loaded" as const,
+                summary: contextCountsLine({ workspaceId: handoff.workspaceId, tabs: workspace.tabs, collections: workspace.collections }),
+                context: { workspaceId: handoff.workspaceId, tabs: workspace.tabs, collections: workspace.collections },
+              },
+            ]
+          : []),
+      ])
+      const events = appendEvents({ ...withTarget, events: targetEvents }, handoff.sourceSessionId, [
+        {
+          kind: "handoff_sent",
+          summary: `Handed off to ${agentDisplayName(handoff.targetProvider)}`,
+          handoff: { handoffId: handoff.handoffId, workspaceId: handoff.workspaceId, peerProvider: handoff.targetProvider, peerSessionId: targetId, outcome: "ready" },
+        },
+      ])
+      return { ...withTarget, events, handoffs, selectedSessionId: targetId, selectedHistoryId: null }
+    }
+
+    case "handoff-work": {
+      const session = state.sessions.find((entry) => entry.view.sessionId === action.sessionId)
+      if (!session || session.view.status !== "running" || state.pendingChanges[action.approval.approvalId]) return state
+      const workspaceId = session.view.workspaceId ?? RESEARCH_ID
+      const workspace = state.store.workspaces.find((candidate) => candidate.id === workspaceId)
+      const counts = {
+        workspaceId,
+        operation: "get_workspace_summary",
+        ok: true,
+        tabs: workspace?.tabs.length ?? 0,
+        collections: state.collections.filter((collection) => collection.workspaceId === workspaceId).length,
+      }
+      return {
+        ...state,
+        approvals: { ...state.approvals, [action.sessionId]: [action.approval] },
+        seenApprovals: [...state.seenApprovals, action.approval],
+        pendingChanges: {
+          ...state.pendingChanges,
+          [action.approval.approvalId]: {
+            sessionId: action.sessionId,
+            workspaceId,
+            name: HANDOFF_PLAN.name,
+            tabIds: HANDOFF_PLAN.tabIds,
+            reply: HANDOFF_PLAN.reply,
+            declined: `Understood — I won't create “${HANDOFF_PLAN.name}”. Nothing in ${workspace?.name ?? "the workspace"} changed.`,
+          },
+        },
+        sessions: patchSession(state.sessions, action.sessionId, "waiting_for_approval"),
+        events: appendEvents(state, action.sessionId, [
+          { kind: "tool_started", summary: "Reading the workspace", tool: contextTool("get_workspace_summary", `${action.sessionId}-call-1`) },
+          // Summarised as the control service summarises it.
+          { kind: "context_read", summary: contextCountsLine(counts), context: counts },
+          { kind: "tool_started", summary: `Proposing “${HANDOFF_PLAN.name}”`, tool: contextTool("create_collection", `${action.sessionId}-call-2`) },
+          { kind: "approval_requested", summary: "Wants to change your Hubble workspace", approvalId: action.approval.approvalId },
         ]),
       }
     }
@@ -411,13 +899,30 @@ function reduce(state: DemoState, action: DemoAction): DemoState {
       const messageId = `${action.sessionId}-typed-${(state.events[action.sessionId] ?? []).length + 1}`
       return {
         ...state,
-        // The context rides with this message, as it does in Hubble.
+        // The context rides with this message, as it does in Hubble — and the
+        // message records what it delivered.
         sessions: patchSession(state.sessions, action.sessionId, "running").map((entry) =>
-          entry.view.sessionId === action.sessionId && entry.view.focus
-            ? { ...entry, view: { ...entry.view, focus: { ...entry.view.focus, delivered: true } } }
+          entry.view.sessionId === action.sessionId
+            ? {
+                ...entry,
+                view: {
+                  ...entry.view,
+                  ...(entry.view.focus ? { focus: { ...entry.view.focus, delivered: true } } : {}),
+                  ...(entry.view.contextSnapshotId ? { contextDelivered: true } : {}),
+                },
+              }
             : entry
         ),
-        events: appendEvents(state, action.sessionId, [{ kind: "message_sent", summary: "Message sent.", messageId, text }]),
+        pendingDelivery: Object.fromEntries(Object.entries(state.pendingDelivery).filter(([id]) => id !== action.sessionId)),
+        events: appendEvents(state, action.sessionId, [
+          {
+            kind: "message_sent",
+            summary: "Message sent.",
+            messageId,
+            text,
+            ...(state.pendingDelivery[action.sessionId] ? { delivery: state.pendingDelivery[action.sessionId] } : {}),
+          },
+        ]),
       }
     }
 

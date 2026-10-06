@@ -8,6 +8,9 @@ import type { RuntimeActor } from "@/lib/agents/runtime/host";
 
 export const runtime = "nodejs";
 
+/** The longest a response waits on agent history being written. Not exported: a route file exports only handlers and segment config. */
+const HISTORY_SETTLE_MS = 2_000;
+
 /**
  * The local execution surface.
  *
@@ -93,6 +96,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const result = await host.execute(actor, parsed.command);
+
+  // Agent history this command produced is written before the response — a
+  // remote host does not outlive the request — but never holds the response
+  // hostage: a slow database costs history, not the live session.
+  await Promise.race([host.settleHistory(), new Promise((resolve) => setTimeout(resolve, HISTORY_SETTLE_MS))]);
 
   // Always 200 for a well-formed command, whatever the host decided. The
   // result carries the outcome, and a caller has one shape to read rather

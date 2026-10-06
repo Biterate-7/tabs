@@ -153,7 +153,7 @@ describe("no duplicate sessions", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     const dialog = await screen.findByRole("dialog", { name: /new agent session/i })
     await user.click(within(dialog).getByRole("button", { name: /start session/i }))
-    expect(await within(dialog).findByText(/The agent did not answer/i)).toBeTruthy()
+    expect(await within(dialog).findByText(/Couldn't connect to Claude Code/i)).toBeTruthy()
 
     runtime.clearFailure("create_session")
     await user.click(within(dialog).getByRole("button", { name: /start session/i }))

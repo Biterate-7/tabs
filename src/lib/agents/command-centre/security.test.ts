@@ -30,14 +30,16 @@ const REPO_ROOT = path.resolve(SRC_DIR, "..")
 const COMMAND_CENTRE_DIRS = [
   path.join(SRC_DIR, "components/command-centre"),
   path.join(SRC_DIR, "lib/agents/command-centre"),
+  // The Context Pack (Hubble 1.5) is what the Command Centre attaches.
+  path.join(SRC_DIR, "lib/agents/context-pack"),
 ]
 
 const HOOK_FILES = [
   "use-agent-runtime.ts",
   "use-agent-sessions.ts",
   "use-agent-session.ts",
-  "use-agent-context.ts",
   "use-agent-projects.ts",
+  "use-session-context-pack.ts",
 ].map((name) => path.join(SRC_DIR, "hooks", name))
 
 function walk(dir: string): string[] {
@@ -321,16 +323,29 @@ describe("context can only be produced by the Phase E resolver", () => {
     }
   })
 
-  it("resolves through `resolveContext` and projects through `snapshotToAttachments`", () => {
-    const hook = surfaces.find((entry) => entry.file.includes("use-agent-context.ts"))!
-    expect(hook.code).toContain("resolveContext(")
-    expect(hook.code).toContain("snapshotToAttachments(")
+  it("resolves through `resolveContext`, and only the Context Pack projects what is attached", () => {
+    // One path from a selection to what an agent is sent (Hubble 1.5): the
+    // pack resolves through Phase E, and its projection is the only code in
+    // the Command Centre that makes an attachment.
+    const pack = surfaces.find((entry) => entry.file.includes("context-pack") && entry.file.endsWith("pack.ts"))!
+    expect(pack.code).toContain("resolveContext(")
+    const projection = surfaces.find((entry) => entry.file.includes("context-pack") && entry.file.endsWith("attach.ts"))!
+    expect(projection.code).toContain("createAttachment(")
+    for (const entry of surfaces) {
+      if (entry === projection) continue
+      expect(entry.code, entry.file).not.toMatch(/createAttachment\(|snapshotToAttachments\(/)
+    }
   })
 
-  it("withholds local-only data unless the host allowed it", () => {
-    const view = surfaces.find((entry) => entry.file.includes("command-centre-view"))!
-    // Relayed from the server's own gate decision, never a browser guess.
-    expect(view.code).toMatch(/localRuntimeAllowed:\s*runtime\.executable/)
+  it("withholds local-only data: a Context Pack never asks for it", () => {
+    // The pack (Hubble 1.5) resolves its selection through Phase E with the
+    // resolver's default — local-only data withheld — and names no project,
+    // so there is no browser guess about the host to get wrong.
+    const pack = surfaces.find((entry) => entry.file.includes("context-pack") && entry.file.endsWith("pack.ts"))!
+    expect(pack.code).toContain("resolveContext(")
+    expect(pack.code).toContain("projectIds: []")
+    expect(pack.code).not.toMatch(/localRuntimeAllowed/)
+    for (const entry of surfaces) expect(entry.code, entry.file).not.toMatch(/localRuntimeAllowed:\s*true/)
   })
 })
 

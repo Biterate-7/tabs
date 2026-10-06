@@ -185,7 +185,8 @@ describe("workspace discovery", () => {
 
   /** Bounded: a list endpoint must not become an unbounded response. */
   it("caps how many workspaces it will return", async () => {
-    const { MAX_DISCOVERED_WORKSPACES, GET } = await import("./workspaces/route");
+    const { GET } = await import("./workspaces/route");
+    const { MAX_DISCOVERED_WORKSPACES } = await import("@/lib/sync/http");
     service.listResult = Array.from({ length: MAX_DISCOVERED_WORKSPACES + 5 }, (_, i) => ({
       id: WS,
       name: `W${i}`,

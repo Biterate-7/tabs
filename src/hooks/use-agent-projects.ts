@@ -101,6 +101,8 @@ function messageForRejection(result: Extract<CreateProjectResult, { ok: false }>
       return "Those permissions do not make sense together."
     case "invalid-additional-directory":
       return "One of the additional folders is not a valid path."
+    case "invalid-workspace":
+      return "That workspace can't have a project attached."
     default:
       return PROJECT_PATH_REJECTION_MESSAGES[result.reason]
   }
@@ -114,7 +116,7 @@ function defaultProjectId(): string {
 }
 
 /** The protocol's project shape. Timestamps are the host's to set, so they are not sent. */
-function toAuthorizedInput(project: AgentProject): AuthorizedProjectInput {
+function toAuthorizedInput(project: AgentProject, workspaceIds: readonly string[] | undefined): AuthorizedProjectInput {
   return {
     id: project.id,
     name: project.name,
@@ -126,6 +128,8 @@ function toAuthorizedInput(project: AgentProject): AuthorizedProjectInput {
       ...(project.permissions.projectId ? { projectId: project.permissions.projectId } : {}),
       grantedAt: project.permissions.grantedAt,
     },
+    // The workspaces it is attached to (Hubble 1.6): the runtime refuses it to any other.
+    ...(workspaceIds && workspaceIds.length > 0 ? { workspaceIds } : {}),
   }
 }
 
@@ -142,8 +146,12 @@ export function useAgentProjects(options: {
   runtimeId?: string
   now?: () => number
   createId?: () => string
+  /** Which workspaces each project is attached to (Hubble 1.6, `workspaceProjectBindings`). */
+  workspaceBindings?: ReadonlyMap<string, readonly string[]>
 }): AgentProjectsApi {
   const { client, executable, runtimeId } = options
+  // A string, so a new map with the same bindings does not re-sync.
+  const bindingsKey = JSON.stringify([...(options.workspaceBindings ?? new Map()).entries()].sort())
 
   /*
     Kept as the raw options and resolved inside the callback below.
@@ -175,7 +183,7 @@ export function useAgentProjects(options: {
     setSyncState("syncing")
     const result = await client.send({
       name: "authorize_projects",
-      projects: projects.map(toAuthorizedInput),
+      projects: projects.map((project) => toAuthorizedInput(project, bindingsOf(bindingsKey).get(project.id))),
     })
 
     if (!mountedRef.current) return
@@ -187,7 +195,7 @@ export function useAgentProjects(options: {
 
     setRejected(result.value.rejected)
     setSyncState("synced")
-  }, [client, executable, projects])
+  }, [client, executable, projects, bindingsKey])
 
   /*
     Re-syncs on the two events that invalidate the host's copy: the set
@@ -255,4 +263,12 @@ export function useAgentProjects(options: {
     () => ({ projects, syncState, rejected, addProject, removeProject, sync }),
     [projects, syncState, rejected, addProject, removeProject, sync]
   )
+}
+
+function bindingsOf(key: string): ReadonlyMap<string, readonly string[]> {
+  try {
+    return new Map(JSON.parse(key) as [string, string[]][])
+  } catch {
+    return new Map()
+  }
 }

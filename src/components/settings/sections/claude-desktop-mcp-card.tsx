@@ -5,6 +5,7 @@ import { Copy, MonitorSmartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useMcpTokens } from "@/hooks/use-mcp-tokens"
+import { formatFullDate } from "@/lib/time-format"
 
 /**
  * Claude Desktop (MCP) — lets Claude Desktop read the user's synced Hubble.
@@ -31,9 +32,7 @@ export function claudeDesktopConfigSnippet(token: string, origin: string): strin
   )
 }
 
-function formatDate(epoch: number): string {
-  return new Date(epoch).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
-}
+const formatDate = formatFullDate
 
 export function ClaudeDesktopMcpCard() {
   const mcp = useMcpTokens()

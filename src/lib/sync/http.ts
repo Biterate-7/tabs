@@ -28,6 +28,13 @@ import type { SyncService } from "./service";
 /** Bytes. A workspace upload is large but bounded; an unbounded body is a denial of service with extra steps. */
 export const MAX_SYNC_BODY_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Workspace discovery (/api/sync/workspaces): a ceiling on the answer, not a
+ * page size — see the note in that route. Kept here because a route file may
+ * export only its handlers and segment config.
+ */
+export const MAX_DISCOVERED_WORKSPACES = 200;
+
 export type SyncContext = { user: PublicUser; service: SyncService };
 
 export type GateResult = { ok: true; context: SyncContext } | { ok: false; response: Response };

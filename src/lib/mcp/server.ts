@@ -21,6 +21,8 @@ import { collectionOverlap, findRelatedTabs, rankCollections, recommendPlacement
 import { analyzeTopics, findTopicGroup, TOPIC_GROUP_ID } from "@/lib/agents/session-context/topics";
 import type { ContextAuthority } from "@/lib/agents/session-context/authorization";
 import type { SessionContextTool } from "@/lib/agents/session-context/capabilities";
+import { measureContextAnswer } from "@/lib/agents/session-context/activity";
+import type { ContextActivity } from "@/lib/agents/session-context/activity";
 import { describeFocus } from "@/lib/agents/session-context/focus";
 import type { SessionFocus } from "@/lib/agents/session-context/focus";
 import type { WorkspaceChange } from "@/lib/agents/session-context/changes";
@@ -452,7 +454,35 @@ export type SessionMcpScope = {
   previewPlan(input: WorkspacePlanInput): PlanPreviewResult;
   /** Puts a plan to the user; resolves when it is refused, answered, or applied and verified (J.5). */
   requestPlan(input: WorkspacePlanInput): Promise<ContextPlanResult>;
+  /**
+   * Told what each read answered, in counts, after the answer exists — for
+   * the activity timeline (session-context/activity.ts). Observational: it
+   * cannot change an answer, and anything it throws is swallowed.
+   */
+  recordActivity?(activity: ContextActivity): void;
 };
+
+/**
+ * Wraps every tool the server registers so its answer is measured and
+ * reported once it exists. Done at registration, in one place, rather than
+ * in each handler — a read added later is measured without anyone
+ * remembering to — and it never touches what the agent receives.
+ */
+function observeToolAnswers(server: McpServer, report: (activity: ContextActivity) => void): void {
+  type Handler = (...args: unknown[]) => unknown;
+  const register = server.registerTool.bind(server) as unknown as (name: string, config: unknown, handler: Handler) => unknown;
+  (server as unknown as { registerTool: unknown }).registerTool = (name: string, config: unknown, handler: Handler) =>
+    register(name, config, async (...args: unknown[]) => {
+      const answer = (await handler(...args)) as ToolResult;
+      try {
+        const activity = measureContextAnswer(name, answer);
+        if (activity) report(activity);
+      } catch {
+        // The timeline is observational: an agent's answer is never lost to it.
+      }
+      return answer;
+    });
+}
 
 /**
  * The most instructions a session server gives, in characters. Claude Code
@@ -622,6 +652,8 @@ export function createSessionContextMcpServer(options: { scope: SessionMcpScope;
     { name: TABDUMP_MCP_SERVER_NAME, title: TABDUMP_MCP_SERVER_TITLE, version: TABDUMP_MCP_SERVER_VERSION },
     { instructions: sessionInstructions(workspaceName, has("create_collection")) }
   );
+  const recordActivity = scope.recordActivity?.bind(scope);
+  if (recordActivity) observeToolAnswers(server, recordActivity);
 
   /** The binding, if the one decision allows this tool (and this workspace, when one is named). */
   function guard(

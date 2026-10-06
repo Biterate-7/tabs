@@ -111,7 +111,7 @@ describe("the roster", () => {
 
     const roster = await screen.findByRole("region", { name: /connected agents/i })
     expect(
-      await within(roster).findByRole("button", { name: /claude-code — Waiting for your approval/i })
+      await within(roster).findByRole("button", { name: /Claude Code — Waiting for your approval/i })
     ).toBeTruthy()
     expect(within(roster).getByText(/Launch plan/)).toBeTruthy()
   })
@@ -618,9 +618,10 @@ describe("local-only agents on hosted web (Hubble Desktop)", () => {
       expect(within(entry).getByRole("button").textContent).toMatch(/Unavailable here/)
       const link = within(entry).getByRole("link")
       expect(link.getAttribute("href")).toBe("/download")
-      // Nothing is downloadable yet, so the link does not say "Download".
-      expect(link.textContent).toMatch(/Learn more/)
-      expect(link.getAttribute("aria-label")).toMatch(/About Hubble Desktop/)
+      // A Windows build is published, so the link says what it does: download.
+      // It still goes to the page, which picks the build for the visitor's OS.
+      expect(link.textContent).toMatch(/Download/)
+      expect(link.getAttribute("aria-label")).toMatch(/Download Hubble Desktop — required for/)
     }
   })
 

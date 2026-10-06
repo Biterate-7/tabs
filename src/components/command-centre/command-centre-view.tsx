@@ -6,6 +6,9 @@ import { ArrowUp, Bot, ChevronLeft, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { AgentIcon } from "@/components/agents/agent-icon"
+import { AgentActivity } from "@/components/agents/agent-activity"
+import { ActivityPopover } from "./activity-popover"
+import { AgentHistoryList } from "./agent-history-list"
 import { AgentRoster } from "./agent-roster"
 import { ApprovalPrompt } from "./approval-prompt"
 import { ConnectAgentDialog } from "./connect-agent-dialog"
@@ -13,6 +16,9 @@ import { Composer } from "./composer"
 import { ContextPanel } from "./context-panel"
 import { ContextPicker } from "./context-picker"
 import { EventStream } from "./event-stream"
+import { HandoffDialog, handoffAgentOptions } from "./handoff-dialog"
+import type { HandoffStartResult } from "./handoff-dialog"
+import { HistorySessionView } from "./history-session-view"
 import { NewSessionDialog } from "./new-session-dialog"
 import { SessionHeader } from "./session-header"
 import { SessionList } from "./session-list"
@@ -20,7 +26,25 @@ import { WorkingContextChip } from "./working-context-control"
 import type { WorkingContextActions } from "./working-context-control"
 import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
-import { useAgentContext } from "@/hooks/use-agent-context"
+import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
+import { useAgentHistory, useHistorySession } from "@/hooks/use-agent-history"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
+import { handoffThatStarted, sessionContextPack } from "@/lib/agents/context-pack/session"
+import { filesChangedOutside, measuredProjectFiles, useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { useWorkspaceProject } from "@/hooks/use-workspace-project"
+import { AttachProjectDialog, WorkspaceProjectSection } from "./workspace-project"
+import type { ProjectWorkActions } from "@/components/agents/project-work"
+import { describeProject } from "@/lib/agents/project/describe"
+import { PROJECT_STATE_COPY } from "@/lib/agents/project/present"
+import { readGitStatusCounts } from "@/lib/agents/project/checks"
+import { checkRunningIn, latestGitCountsIn } from "@/lib/agents/project/changes"
+import { workspaceProjectBindings, workspaceProjectId } from "@/lib/workspace/project"
+import type { GitStatusCounts } from "@/lib/agents/project/checks"
+import { selectHandoffContext } from "@/lib/agents/handoff/handoff"
+import type { HandoffInclude } from "@/lib/agents/handoff/handoff"
+import type { RuntimeHandoffPreview } from "@/lib/agents/runtime/protocol"
 import { useAgentProjects } from "@/hooks/use-agent-projects"
 import { useAgentRuntime } from "@/hooks/use-agent-runtime"
 import { useAgentSession } from "@/hooks/use-agent-session"
@@ -39,8 +63,12 @@ import { grantWithinApproval, projectScopesForAgent } from "@/lib/agents/platfor
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
 import {
   RUNTIME_ERROR_PRESENTATION,
+  runtimeErrorTitle,
+  SESSION_STATUS_LABEL,
+  SESSION_VISUAL_STATE,
   canCreateSession,
   canSendMessage,
+  isTerminalSession,
   runtimeBadge,
   runtimeBanner,
 } from "@/lib/agents/command-centre/presentation"
@@ -65,7 +93,13 @@ import {
   subscribeWorkspaceChanges,
   workspaceChanges,
 } from "@/lib/agents/command-centre/workspace-activity"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
+import { collectionsMatch } from "@/lib/collections/restore"
+import { historySessionStatus } from "@/lib/agents/activity/history"
+import { UNDO_REFUSED_WORKSPACE_CHANGED } from "@/lib/agents/activity/inspector"
+import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { runtimeHandoffTransport } from "@/lib/agents/handoff/transport"
+import type { AgentHistorySession } from "@/lib/agents/activity/history"
 import { cn } from "@/lib/utils"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { AgentContextWorld } from "@/lib/agents/context/world"
@@ -129,6 +163,8 @@ export function CommandCentreView({
   handoff,
   onHandoffConsumed,
   onViewWorkspace,
+  onUpdateWorkspaceBrief,
+  onAttachWorkspaceProject,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -143,15 +179,22 @@ export function CommandCentreView({
   onHandoffConsumed?: (id: string) => void
   /** Shows a workspace (and a collection in it) — where "View" on an agent's change goes. */
   onViewWorkspace?: (workspaceId: string, collectionId?: string) => void
+  /** Saves a workspace's brief (Hubble 1.5) to the app's workspace store. Absent: the brief is read-only here. */
+  onUpdateWorkspaceBrief?: (workspaceId: string, brief: { description: string; focus: string }) => void
+  /** Attaches a project to a workspace, or detaches with `null` (Hubble 1.6). Absent: read-only here. */
+  onAttachWorkspaceProject?: (workspaceId: string, projectId: string | null) => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
     ...(poll === undefined ? {} : { poll }),
   })
 
+  // Which workspaces each project belongs to (Hubble 1.6) — the runtime enforces it.
+  const workspaceBindings = useMemo(() => workspaceProjectBindings(world.workspaces), [world.workspaces])
   const projects = useAgentProjects({
     client: runtime.client,
     executable: runtime.executable,
+    workspaceBindings,
     ...(runtime.status?.runtimeId ? { runtimeId: runtime.status.runtimeId } : {}),
   })
 
@@ -168,7 +211,8 @@ export function CommandCentreView({
   const [contextPanelOpen, setContextPanelOpen] = useState(true)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<RuntimeErrorCode | null>(null)
+  /** Why the last start was refused, and for which agent — so it can say "Couldn't connect to Codex". */
+  const [createError, setCreateError] = useState<{ code: RuntimeErrorCode; provider: AgentProviderId } | null>(null)
 
   /*
     Which session is on screen: derived from the runtime's own list, so a
@@ -199,6 +243,61 @@ export function CommandCentreView({
   }, [selected, session.session])
 
   /*
+    The context the next new session starts with — what the user brought from
+    the workspace when no session there could take it. Tied to its workspace:
+    a session started somewhere else starts with the whole of that one.
+  */
+  const [draft, setDraft] = useState<WorkingContext | null>(null)
+
+  /*
+    The workspace the Command Centre is about: the on-screen session's, else
+    the one a new session would start in — the draft's, else the active one.
+    One answer for the brief, the Context Pack, the project and where a
+    project is attached, so they can never describe different workspaces.
+  */
+  const workspaceShown = current ? workspaceIdOf(current.view) : (draft?.workspaceId ?? activeWorkspaceId)
+
+  /*
+    The workspace's project (Hubble 1.6), inspected by the runtime — which
+    alone holds the path — again whenever an agent's change is measured.
+  */
+  const projectWorkspace = workspaceShown ? world.workspaces.find((workspace) => workspace.id === workspaceShown) : undefined
+  const sessionProjectFiles = useMemo(
+    () => (selectedSessionId ? measuredProjectFiles(session.events, selectedSessionId).map((file) => file.path) : []),
+    [session.events, selectedSessionId]
+  )
+  const projectEventCount = useMemo(
+    () => session.events.filter((event) => event.kind === "project_changed" || event.kind === "project_change_undone").length,
+    [session.events]
+  )
+  const workspaceProject = useWorkspaceProject({
+    client: runtime.client,
+    status: runtime.status,
+    executable: runtime.executable,
+    workspace: projectWorkspace,
+    projects: projects.projects,
+    files: sessionProjectFiles,
+    refreshKey: projectEventCount,
+    rejected: projects.rejected,
+  })
+  /** A project as an agent is told it — its capabilities that agent's own, never another's. */
+  const projectDescriptorFor = useCallback(
+    (projectId: string | undefined, provider?: AgentProviderId) => {
+      const project = projectId ? projects.projects.find((candidate) => candidate.id === projectId) : undefined
+      if (!project) return undefined
+      const providerCapabilities = provider ? runtime.status?.providers.find((entry) => entry.provider === provider)?.capabilities : undefined
+      const inspection = workspaceProject.inspection?.projectId === project.id ? workspaceProject.inspection : undefined
+      return describeProject({
+        project,
+        ...(inspection ? { inspection } : {}),
+        local: Boolean(workspaceProject.supported),
+        ...(providerCapabilities ? { providerCapabilities } : {}),
+      })
+    },
+    [projects.projects, runtime.status, workspaceProject.inspection, workspaceProject.supported]
+  )
+
+  /*
     Session workspace context (Phase J.3): the Command Centre's own collection
     store — the same one the workspace view uses — so an approved change is
     made exactly as a person making it would, and names read here are live.
@@ -217,12 +316,6 @@ export function CommandCentreView({
     () => ({ ...world, collections: collectionStore.collections, projects: projects.projects }),
     [world, collectionStore.collections, projects.projects]
   )
-
-  const context = useAgentContext({
-    world: contextWorld,
-    // The server's answer, relayed. Never a guess made in the browser.
-    localRuntimeAllowed: runtime.executable,
-  })
 
   const projectNameOf = useCallback(
     (projectId: string | undefined) =>
@@ -343,7 +436,23 @@ export function CommandCentreView({
   const handleApplied = useCallback(
     (change: AppliedWorkspaceChange) => {
       recordWorkspaceChange(change)
-      const agent = agentVisualIdentity(change.provider).displayName
+      // The same record, durably (agent history): names, counts and the
+      // snapshot either side, for the session's history and its undo. The
+      // runtime adds whose, where and which approval itself. A Hubble that
+      // keeps no history refuses, and nothing else changes.
+      void runtime.client.send({
+        name: "record_workspace_change",
+        sessionId: change.sessionId,
+        change: {
+          id: change.id,
+          at: change.at,
+          ok: change.ok,
+          ...(change.planId ? { planId: change.planId } : {}),
+          steps: change.steps,
+          ...(change.before && change.after ? { before: change.before, after: change.after } : {}),
+        },
+      })
+      const agent = agentDisplayName(change.provider)
       const where = workspaceNameOf(change.workspaceId) ?? "your workspace"
       if (!change.ok) {
         toast.error(`${agent} · Couldn't apply the approved change`, { description: `Nothing was changed in ${where}.` })
@@ -356,7 +465,7 @@ export function CommandCentreView({
           : {}),
       })
     },
-    [onViewWorkspace, workspaceNameOf]
+    [onViewWorkspace, workspaceNameOf, runtime.client]
   )
 
   const sessionContext = useSessionContext({
@@ -374,29 +483,46 @@ export function CommandCentreView({
     render: the surface re-renders every second for its clocks.
   */
   const undoable = useMemo(() => {
-    const now = new Map<string, string>()
     const ids = new Set<string>()
     for (const change of allChanges) {
       if (!change.ok || change.undone || !change.before || !change.after) continue
-      if (!now.has(change.workspaceId)) {
-        now.set(change.workspaceId, JSON.stringify(collectionStore.collections.filter((collection) => collection.workspaceId === change.workspaceId)))
-      }
-      if (now.get(change.workspaceId) === JSON.stringify(change.after)) ids.add(change.id)
+      if (collectionsMatch(collectionStore.collections, change.workspaceId, change.after)) ids.add(change.id)
     }
     return ids
   }, [allChanges, collectionStore.collections])
   const canUndo = useCallback((change: AppliedWorkspaceChange) => undoable.has(change.id), [undoable])
+  /*
+    The one way a change is undone, wherever it is asked for: the store puts
+    the workspace's collections back exactly (refusing, with nothing moved,
+    if anything changed since), and only then is the undo recorded — as its
+    own fact, after the change, which keeps its place in the history.
+  */
+  const tryUndo = useCallback(
+    (change: AppliedWorkspaceChange): boolean => {
+      if (!change.ok || change.undone || !change.before || !change.after) return false
+      if (!collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) return false
+      markWorkspaceChangeUndone(change.id)
+      // Told to agent history as its own fact, after the change.
+      void runtime.client.send({
+        name: "record_workspace_undo",
+        workspaceId: change.workspaceId,
+        sessionId: change.sessionId,
+        changeId: change.id,
+        at: Date.now(),
+      })
+      return true
+    },
+    [collectionStore, runtime.client]
+  )
   const undoChange = useCallback(
     (change: AppliedWorkspaceChange) => {
-      if (!change.before || !change.after) return
-      if (collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) {
-        markWorkspaceChangeUndone(change.id)
+      if (tryUndo(change)) {
         toast(`Undone in ${workspaceNameOf(change.workspaceId) ?? "the workspace"}`)
       } else {
-        toast.info("Can't undo — the workspace has changed since", { description: "Nothing was changed." })
+        toast.info("Couldn't undo this change", { description: `${UNDO_REFUSED_WORKSPACE_CHANGED} Nothing was changed.` })
       }
     },
-    [collectionStore, workspaceNameOf]
+    [tryUndo, workspaceNameOf]
   )
 
   /* ---------------- Context: per session, inside its workspace. */
@@ -405,22 +531,37 @@ export function CommandCentreView({
   const [contextError, setContextError] = useState<string | null>(null)
 
   /**
-   * Points a session at a context: resolved inside the session's workspace by
-   * the Phase E bridge and attached — or, for the whole workspace, detached,
-   * because the session reads its workspace itself. The runtime checks it
-   * again and reports it back as the session's focus.
+   * Points a session at a context: its Context Pack (Hubble 1.5) — the
+   * selection resolved inside the session's workspace by the Phase E bridge,
+   * with the workspace's brief — attached; or, when the pack has nothing to
+   * attach (the whole workspace, no brief), detached, because the session
+   * reads its workspace itself. The runtime checks it again and reports it
+   * back as the session's focus and context id.
    */
   const applyContext = useCallback(
     async (sessionId: string, next: WorkingContext): Promise<boolean> => {
-      const scoped = withinWorkspace(next, liveWorld).context
-      const outcome = context.resolve(scoped)
-      if (!outcome.ok) {
+      const built = sessionContextPack({
+        world: contextWorld,
+        workspaceId: next.workspaceId,
+        selection: next,
+        sessionId,
+        changes: workspaceChanges(),
+        ...(sessionId === selectedSessionId ? { handoffFrom: handoffThatStarted(sessionId, session.handoffs) } : {}),
+        // The project it works in (Hubble 1.6), described for its own agent.
+        ...(() => {
+          const target = sessions.sessions.find((entry) => entry.view.sessionId === sessionId)?.view
+          const project = projectDescriptorFor(target?.projectId, target?.provider)
+          return project ? { project, projectFiles: filesChangedOutside(measuredProjectFiles(session.events, sessionId), project) } : {}
+        })(),
+      })
+      if (!built.ok) {
         setContextError("Hubble couldn't prepare that context. Nothing was sent.")
         return false
       }
+      const attached = contextPackAttachedContext(built.pack, Date.now())
       setContextBusy(true)
-      const result = outcome.attached
-        ? await runtime.client.send({ name: "attach_context", sessionId, context: outcome.attached })
+      const result = attached
+        ? await runtime.client.send({ name: "attach_context", sessionId, context: attached })
         : await runtime.client.send({ name: "detach_context", sessionId })
       setContextBusy(false)
       if (!result.ok) {
@@ -436,15 +577,9 @@ export function CommandCentreView({
       if (sessionId === selectedSessionId) await session.refresh()
       return true
     },
-    [context, liveWorld, runtime.client, selectedSessionId, session, sessions]
+    [contextWorld, runtime.client, selectedSessionId, session, sessions, projectDescriptorFor]
   )
 
-  /*
-    The context the next new session starts with — what the user brought from
-    the workspace when no session there could take it. Tied to its workspace:
-    a session started somewhere else starts with the whole of that one.
-  */
-  const [draft, setDraft] = useState<WorkingContext | null>(null)
   const [draftText, setDraftText] = useState("")
   const [defaultProvider, setDefaultProvider] = useState<AgentProviderId | undefined>(undefined)
   const [firstMessage, setFirstMessage] = useState<string | undefined>(undefined)
@@ -480,7 +615,7 @@ export function CommandCentreView({
       void applyContext(target, next)
       if (prompt) setComposerSeed({ key: handoff.id, sessionId: target, text: prompt })
       if (handoff.mode === "add") {
-        toast(`Added to ${agentVisualIdentity(targetView.provider).displayName}'s context`, {
+        toast(`Added to ${agentDisplayName(targetView.provider)}'s context`, {
           description: summarizeWorkingContext(describeWorkingContext(next, liveWorld)),
         })
       }
@@ -528,7 +663,7 @@ export function CommandCentreView({
         ? projects.projects.find((candidate) => candidate.id === input.projectId)
         : undefined
       if (!agent || (project && !grantWithinApproval(agent, project.permissions.scopes))) {
-        setCreateError("permission_denied")
+        setCreateError({ code: "permission_denied", provider: input.provider })
         return
       }
 
@@ -537,15 +672,26 @@ export function CommandCentreView({
       // to sign in: the dialog shows the action that fixes it.
       const prerequisite = platform.prerequisiteFor(input.provider)
       if (!prerequisite.ok) {
-        setCreateError(refusalFor(prerequisite.phase))
+        setCreateError({ code: refusalFor(prerequisite.phase), provider: input.provider })
         return
       }
 
       // The workspace the session works in goes with it, for the agent to
       // query; the context brought from it, if it is that workspace's.
       const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
-      const brought = draft && input.workspaceId === draft.workspaceId ? context.resolve(withinWorkspace(draft, liveWorld).context) : undefined
-      const startContext = brought?.ok && brought.attached ? brought.attached : undefined
+      // The new session's Context Pack: what was brought from the workspace,
+      // if it is this one's, else the whole workspace — with its brief.
+      const brought = input.workspaceId
+        ? sessionContextPack({
+            world: contextWorld,
+            workspaceId: input.workspaceId,
+            selection: draft && input.workspaceId === draft.workspaceId ? draft : null,
+            changes: workspaceChanges(),
+            // The project it will work in (Hubble 1.6), told from the start.
+            ...(projectDescriptorFor(input.projectId, input.provider) ? { project: projectDescriptorFor(input.projectId, input.provider)! } : {}),
+          })
+        : undefined
+      const startContext = (brought?.ok ? contextPackAttachedContext(brought.pack, Date.now()) : null) ?? undefined
 
       createInFlight.current = true
       setCreating(true)
@@ -562,7 +708,7 @@ export function CommandCentreView({
       }
 
       if (typeof outcome === "string") {
-        setCreateError(outcome)
+        setCreateError({ code: outcome, provider: input.provider })
         return
       }
       setResume(null)
@@ -576,7 +722,7 @@ export function CommandCentreView({
       setFirstMessage(undefined)
       setDraftText("")
     },
-    [context, draft, draftText, firstMessage, liveWorld, platform, projects.projects, sessionContext, sessions]
+    [contextWorld, draft, draftText, firstMessage, platform, projects.projects, sessionContext, sessions, projectDescriptorFor]
   )
 
   /*
@@ -610,14 +756,403 @@ export function CommandCentreView({
   }, [currentView, link.kind, liveWorld])
   const draftView = useMemo(() => (draft ? describeWorkingContext(draft, liveWorld) : null), [draft, liveWorld])
 
-  const agentName = currentView ? agentVisualIdentity(currentView.provider).displayName : "The agent"
-  const workspaceShown = currentView ? sessionWorkspaceId : (draft?.workspaceId ?? activeWorkspaceId)
+  const agentName = currentView ? agentDisplayName(currentView.provider) : "The agent"
   const workspaceName = workspaceNameOf(workspaceShown)
   const delivered = currentView?.focus ? currentView.focus.delivered : undefined
   const sessionChanges = useMemo(
     () => (currentView ? allChanges.filter((change) => change.sessionId === currentView.sessionId) : []),
     [allChanges, currentView]
   )
+
+  /*
+    The Context Pack (Hubble 1.5): what the on-screen session is given — built
+    by the same recipe applyContext attaches with, so comparing its id with
+    the one the runtime reports says whether the agent has it. With no
+    session, the pack a new session here would start with.
+  */
+  const packWorkspaceId = currentView ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : workspaceShown
+  const packProjectId = currentView ? currentView.projectId : workspaceProject.project?.id
+  const packProvider = currentView?.provider
+  const packProject = useMemo(() => projectDescriptorFor(packProjectId, packProvider), [projectDescriptorFor, packProjectId, packProvider])
+  const { pack: sessionPack, state: packState, change: packChange, brief } = useSessionContextPack({
+    world: contextWorld,
+    session: currentView,
+    workspaceId: packWorkspaceId,
+    events: session.events,
+    handoffs: session.handoffs,
+    changes: allChanges,
+    draft,
+    ...(packProject ? { project: packProject } : {}),
+  })
+  const sendContextUpdate = useMemo(() => {
+    if (!currentView || !sessionWorkspaceId || packState !== "changed") return undefined
+    const sessionId = currentView.sessionId
+    const own = contextOfSession(currentView) ?? workspaceContext(sessionWorkspaceId)
+    return () => void applyContext(sessionId, own)
+  }, [applyContext, currentView, packState, sessionWorkspaceId])
+
+  /* The workspace's brief (Hubble 1.5): live, and edited in place. */
+  const briefWorkspace = workspaceShown ? world.workspaces.find((workspace) => workspace.id === workspaceShown) : undefined
+  const saveBrief = useMemo(
+    () =>
+      briefWorkspace && onUpdateWorkspaceBrief
+        ? (next: { description: string; focus: string }) => onUpdateWorkspaceBrief(briefWorkspace.id, next)
+        : undefined,
+    [briefWorkspace, onUpdateWorkspaceBrief]
+  )
+  const collectionName = useCallback(
+    (collectionId: string) => collectionStore.collections.find((collection) => collection.id === collectionId)?.name,
+    [collectionStore.collections]
+  )
+
+  /*
+    What the on-screen agent has been doing, from the same records the
+    stream above reads — its events, its approvals and what was applied for it.
+    Built once here and drawn in two places: the context panel, and the
+    header popover where that panel is not on screen.
+  */
+  /*
+    What the person can do about the session's project work (Hubble 1.6):
+    undo, review and checks — only in a live session on a runtime that holds
+    its changes. A past session is read-only.
+  */
+  const sessionEvents = session.events
+  const checkRunning = useMemo(() => checkRunningIn(sessionEvents), [sessionEvents])
+  const latestGit = useMemo((): GitStatusCounts | undefined => readGitStatusCounts(latestGitCountsIn(sessionEvents)), [sessionEvents])
+  const projectActions = useMemo((): ProjectWorkActions | undefined => {
+    if (!currentView?.projectId || !workspaceProject.supported || !runtime.executable) return undefined
+    const sessionId = currentView.sessionId
+    const described = projectDescriptorFor(currentView.projectId, currentView.provider)
+    const checks =
+      described?.capabilities.includes("run_checks") && workspaceProject.inspection?.projectId === currentView.projectId
+        ? workspaceProject.inspection.checks
+        : []
+    return {
+      undo: async (changeId) => {
+        const result = await runtime.client.send({ name: "undo_project_change", sessionId, changeId })
+        await session.refresh()
+        workspaceProject.refresh()
+        return result.ok ? result.value : null
+      },
+      review: async (changeId) => {
+        const result = await runtime.client.send({ name: "review_project_change", sessionId, changeId })
+        return result.ok ? result.value : null
+      },
+      checks,
+      runCheck: async (check) => {
+        const result = await runtime.client.send({ name: "run_project_check", sessionId, check })
+        await session.refresh()
+        return result.ok
+      },
+      checking: checkRunning,
+    }
+  }, [currentView, workspaceProject, runtime.executable, runtime.client, projectDescriptorFor, session, checkRunning])
+
+  const sessionProjectName = projectNameOf(currentView?.projectId)
+  const {
+    entries: activity,
+    inspect: inspectActivity,
+    waiting: activityWaiting,
+  } = useSessionActivity({
+    session: currentView,
+    events: session.events,
+    approvals: session.approvals,
+    changes: sessionChanges,
+    handoffs: session.handoffs,
+    agentName,
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(sessionProjectName ? { projectName: sessionProjectName } : {}),
+    now,
+    canUndo,
+    collectionName,
+    ...(projectActions ? { projectLive: true } : {}),
+  })
+  const viewActivityChange = useCallback(
+    (changeId: string) => {
+      const change = sessionChanges.find((candidate) => candidate.id === changeId)
+      if (change) viewChange(change)
+    },
+    [sessionChanges, viewChange]
+  )
+  // The inspector's Undo says the outcome itself, in place; no notification on top.
+  const undoActivityChange = useCallback(
+    (changeId: string) => {
+      const change = sessionChanges.find((candidate) => candidate.id === changeId)
+      return change ? tryUndo(change) : false
+    },
+    [sessionChanges, tryUndo]
+  )
+  const currentProvider = currentView?.provider
+  const startAnotherSession = useCallback(() => {
+    if (currentProvider) setDefaultProvider(currentProvider)
+    setNewSessionOpen(true)
+  }, [currentProvider])
+
+
+  /* ---------------- Agent history: this workspace's past sessions. */
+
+  /*
+    Scoped to the workspace on screen, and only that one: the runtime answers
+    for this account and this workspace, and nothing here asks about another.
+    Re-read when the live sessions change shape — one appears, ends or goes —
+    which is when history can have changed; never on a timer.
+  */
+  const historyWorkspaceId = activeWorkspaceId
+  const liveSessionIds = useMemo(() => new Set(sessions.sessions.map((entry) => entry.view.sessionId)), [sessions.sessions])
+  const historyRefreshKey = useMemo(
+    () => sessions.sessions.map((entry) => `${entry.view.sessionId}:${isTerminalSession(entry.view.status) ? 1 : 0}`).join(","),
+    [sessions.sessions]
+  )
+  const history = useAgentHistory({
+    client: runtime.client,
+    workspaceId: historyWorkspaceId,
+    // Only once the runtime has answered the handshake: a command sent before
+    // it carries no runtime id, is refused as `runtime_disconnected`, and that
+    // refusal makes the client forget the id the handshake is about to set.
+    enabled: Boolean(runtime.status?.runtimeId),
+    refreshKey: `${runtime.status?.runtimeId ?? ""}|${historyRefreshKey}`,
+  })
+  const [historySelection, setHistorySelection] = useState<AgentHistorySession | null>(null)
+  // A live session on screen wins; a history session of another workspace is never shown.
+  const shownHistory = !current && historySelection?.workspaceId === historyWorkspaceId ? historySelection : null
+  const historySession = useHistorySession({
+    client: runtime.client,
+    workspaceId: shownHistory?.workspaceId,
+    sessionId: shownHistory?.sessionId ?? null,
+  })
+  const historyDetail = historySession.state.kind === "ready" ? historySession.state.detail : null
+  const historyAgentName = shownHistory ? agentDisplayName(shownHistory.provider) : "The agent"
+  const historyWorkspaceName = workspaceNameOf(shownHistory?.workspaceId)
+  const historyProjectName = projectNameOf(historyDetail?.session.projectId)
+  /*
+    The same undo rule as a live change: offered only while the workspace
+    still holds exactly what the change left. An old change is not undoable
+    because it is old, and not undoable at all without both snapshots.
+  */
+  const canUndoHistory = useCallback(
+    (change: AppliedWorkspaceChange) =>
+      change.ok && !change.undone && Boolean(change.before && change.after) && collectionsMatch(collectionStore.collections, change.workspaceId, change.after!),
+    [collectionStore.collections]
+  )
+  const { entries: historyEntries, inspect: inspectHistory, history: reconstructed } = useHistorySessionActivity({
+    detail: historyDetail,
+    agentName: historyAgentName,
+    ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+    ...(historyProjectName ? { projectName: historyProjectName } : {}),
+    now,
+    canUndo: canUndoHistory,
+    collectionName,
+  })
+  /* What the past session was given (Hubble 1.5), from the records history kept. */
+  const historyContext = useMemo(
+    () =>
+      reconstructed
+        ? contextProvenanceOf({
+            session: reconstructed.session,
+            events: reconstructed.events,
+            handoffs: reconstructed.handoffs,
+            at: Number.MAX_SAFE_INTEGER,
+            ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+            collectionName,
+            projectName: (projectId: string) => projectNameOf(projectId),
+            agentName: agentDisplayName,
+          })
+        : undefined,
+    [reconstructed, historyWorkspaceName, collectionName, projectNameOf]
+  )
+  const { recordUndo: recordHistoryUndo } = historySession
+  const undoHistoryChange = useCallback(
+    (changeId: string): boolean => {
+      const change = reconstructed?.changes.find((candidate) => candidate.id === changeId)
+      if (!change?.ok || change.undone || !change.before || !change.after) return false
+      // The workspace is put back exactly, or not at all…
+      if (!collectionStore.restoreCollections(change.workspaceId, change.before, change.after)) return false
+      // …and only then is the undo told — to this page's record, if it
+      // applied the change, and to history, as a new fact after the change.
+      markWorkspaceChangeUndone(change.id)
+      void recordHistoryUndo(change.id)
+      return true
+    },
+    [reconstructed, collectionStore, recordHistoryUndo]
+  )
+  const viewHistoryChange = useCallback(
+    (changeId: string) => {
+      const change = reconstructed?.changes.find((candidate) => candidate.id === changeId)
+      if (change) viewChange(change)
+    },
+    [reconstructed, viewChange]
+  )
+  const selectHistorySession = useCallback((entry: AgentHistorySession) => {
+    setRequestedSessionId(null)
+    setHistorySelection(entry)
+  }, [])
+  const selectLiveSession = useCallback((sessionId: string) => {
+    setHistorySelection(null)
+    setRequestedSessionId(sessionId)
+  }, [])
+
+  /* ---------------- Explicit handoff (Hubble 1.4): "Continue with…". */
+
+  /*
+    The dialog's source, and the copy of its workspace the preview and the
+    confirmation both carry — taken once, when the person opens it, so the
+    runtime fingerprints exactly what they read.
+  */
+  const [handoffSource, setHandoffSource] = useState<{
+    key: number
+    sessionId: string
+    provider: AgentProviderId
+    title?: string
+    statusLabel: string
+    workspaceId: string
+    projectId?: string
+    transport: ReturnType<typeof runtimeHandoffTransport>
+  } | null>(null)
+  const canContinue = Boolean(currentView && runtime.executable && sessionWorkspaceId && canHandOffFrom(currentView.status))
+  const continueWith = useCallback(() => {
+    if (!currentView || !sessionWorkspaceId) return
+    setHandoffSource({
+      key: Date.now(),
+      sessionId: currentView.sessionId,
+      provider: currentView.provider,
+      ...(currentView.title ? { title: currentView.title } : {}),
+      statusLabel: SESSION_STATUS_LABEL[currentView.status],
+      workspaceId: sessionWorkspaceId,
+      ...(currentView.projectId ? { projectId: currentView.projectId } : {}),
+      transport: runtimeHandoffTransport(runtime.client, currentView.sessionId, sessionContext.snapshotFor(sessionWorkspaceId)),
+    })
+  }, [currentView, runtime.client, sessionContext, sessionWorkspaceId])
+  const handoffAgents = useMemo(
+    () =>
+      handoffAgentOptions(platform, (provider) => {
+        const status = startableProviders.find((entry) => entry.provider === provider)
+        return Boolean(status && canCreateSession(status))
+      }),
+    [platform, startableProviders]
+  )
+  /** Projects the new session may use with that agent: ones it is authorized for, within what it was approved for. */
+  const handoffProjectsFor = useCallback(
+    (provider: AgentProviderId) => {
+      const agent = platform.identity(provider)
+      const options = projects.projects
+        .filter((project) => project.providers.includes(provider) && Boolean(agent && grantWithinApproval(agent, project.permissions.scopes)))
+        .map((project) => ({ id: project.id, name: project.name }))
+      const sourceProject = handoffSource?.projectId
+      return { options, ...(sourceProject && options.some((option) => option.id === sourceProject) ? { defaultId: sourceProject } : {}) }
+    },
+    [platform, projects.projects, handoffSource?.projectId]
+  )
+  /*
+    The Context Pack the handoff would pass (Hubble 1.5): the source's focus
+    as the runtime holds it, in the workspace the preview names, with the
+    modes the person kept — the same recipe the runtime sends it by.
+  */
+  const handoffSourceId = handoffSource?.sessionId
+  const handoffPackFor = useCallback(
+    (preview: RuntimeHandoffPreview, include: HandoffInclude, projectId?: string) => {
+      const focus = sessions.sessions.find((entry) => entry.view.sessionId === handoffSourceId)?.view.focus
+      // The project as the target agent will be told it (Hubble 1.6) — its own capabilities, as the runtime describes it.
+      const project = include.workspace ? projectDescriptorFor(projectId, preview.targetProvider) : undefined
+      return handoffContextPack({
+        world: contextWorld,
+        workspaceId: preview.workspaceId,
+        ...(focus ? { focus: { tabIds: focus.tabIds, collectionIds: focus.collectionIds } } : {}),
+        context: selectHandoffContext(preview.context, include),
+        ...(project ? { project } : {}),
+      })
+    },
+    [contextWorld, handoffSourceId, sessions.sessions, projectDescriptorFor]
+  )
+  const handleHandoffStarted = useCallback(
+    async (result: HandoffStartResult) => {
+      const source = handoffSource
+      setHandoffSource(null)
+      const target = result.session
+      if (!target || !source) return
+      platform.recordSession(target.provider, target.sessionId, source.workspaceId)
+      await sessions.refresh()
+      setHistorySelection(null)
+      setRequestedSessionId(target.sessionId)
+      toast(`${agentDisplayName(target.provider)} received the handoff`, {
+        description: `Continuing ${agentDisplayName(source.provider)}'s work${workspaceNameOf(source.workspaceId) ? ` in ${workspaceNameOf(source.workspaceId)}` : ""}`,
+      })
+    },
+    [handoffSource, platform, sessions, workspaceNameOf]
+  )
+  /*
+    The session on the other end of a handoff: live, if this runtime holds it;
+    otherwise from agent history — always of this workspace, because a
+    handoff never leaves one.
+  */
+  const openHandoffSession = useCallback(
+    (sessionId: string, provider: AgentProviderId) => {
+      if (sessions.sessions.some((entry) => entry.view.sessionId === sessionId)) {
+        setHistorySelection(null)
+        setRequestedSessionId(sessionId)
+        return
+      }
+      const workspaceId = sessionWorkspaceId ?? historySelection?.workspaceId ?? activeWorkspaceId
+      if (!workspaceId) return
+      const listed = history.state.kind === "ready" ? history.state.sessions.find((entry) => entry.sessionId === sessionId) : undefined
+      setRequestedSessionId(null)
+      setHistorySelection(listed ?? { sessionId, workspaceId, provider, status: "disconnected", startedAt: 0, lastActivityAt: 0 })
+    },
+    [sessions.sessions, sessionWorkspaceId, historySelection?.workspaceId, activeWorkspaceId, history.state]
+  )
+
+  /* The workspace's project (Hubble 1.6), in the context panel — and how it is attached. */
+  const [attachOpen, setAttachOpen] = useState(false)
+  const attachTarget = projectWorkspace && link.kind !== "workspace-missing" ? projectWorkspace : undefined
+  const canAttach = Boolean(attachTarget && onAttachWorkspaceProject && workspaceProject.supported)
+  // A session on a project its workspace does not name keeps the plain line it always had.
+  const sessionOnOtherProject = Boolean(currentView?.projectId && currentView.projectId !== workspaceProject.project?.id)
+  const projectSection =
+    attachTarget && !sessionOnOtherProject ? (
+      <WorkspaceProjectSection
+        state={workspaceProject.state}
+        {...(workspaceProject.project ? { project: workspaceProject.project } : {})}
+        inspection={workspaceProject.inspection}
+        capabilities={packProject?.capabilities ?? []}
+        {...(latestGit ? { git: latestGit } : {})}
+        agentChangedFiles={sessionProjectFiles.length}
+        {...(projectActions && projectActions.checks.length > 0 ? { checks: projectActions } : {})}
+        {...(canAttach ? { onAttach: () => setAttachOpen(true) } : {})}
+        {...(canAttach && workspaceProject.attached ? { onDetach: () => onAttachWorkspaceProject!(attachTarget.id, null) } : {})}
+        onRetry={workspaceProject.refresh}
+      />
+    ) : undefined
+  /** What New session says about a workspace's project, and whether it may start there. */
+  const workspaceProjectFor = useCallback(
+    (workspaceId: string) => {
+      const projectId = workspaceProjectId(world.workspaces.find((workspace) => workspace.id === workspaceId))
+      const project = projectId ? projects.projects.find((candidate) => candidate.id === projectId) : undefined
+      if (!projectId || !project) return undefined
+      // Only the workspace on screen has been inspected; the runtime checks any other as the session starts.
+      if (projectId !== workspaceProject.project?.id) return { projectId, ready: true, notice: `${project.name} · Hubble checks it as the session starts` }
+      const copy = PROJECT_STATE_COPY[workspaceProject.state]
+      const ready = workspaceProject.state === "connected"
+      return { projectId, ready, notice: ready ? `${project.name} · ${copy.title}` : `${project.name} · ${copy.title}. ${copy.detail}` }
+    },
+    [world.workspaces, projects.projects, workspaceProject.project?.id, workspaceProject.state]
+  )
+
+  const activityTimeline = currentView ? (
+    <AgentActivity
+      entries={activity}
+      provider={currentView.provider}
+      agentName={agentName}
+      state={SESSION_VISUAL_STATE[currentView.status]}
+      statusLabel={SESSION_STATUS_LABEL[currentView.status]}
+      now={now}
+      inspect={inspectActivity}
+      onUndo={undoActivityChange}
+      {...(projectActions ? { project: projectActions } : {})}
+      {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
+      {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
+      {...(canContinue ? { onContinue: continueWith } : {})}
+      onOpenSession={openHandoffSession}
+    />
+  ) : null
 
   const contextActions = useMemo((): WorkingContextActions => {
     if (!currentView || !sessionWorkspaceId || link.kind === "workspace-missing" || link.kind === "none") return {}
@@ -649,7 +1184,9 @@ export function CommandCentreView({
     ? (currentView ? contextOfSession(currentView) : null) ?? workspaceContext(pickerWorkspaceId)
     : draft ?? workspaceContext(pickerWorkspaceId)
 
-  const errorPresentation = session.error ? RUNTIME_ERROR_PRESENTATION[session.error] : null
+  const errorPresentation = session.error
+    ? { ...RUNTIME_ERROR_PRESENTATION[session.error], title: runtimeErrorTitle(session.error, agentName) }
+    : null
 
   /*
     While it is open, the Command Centre adds its own commands to the shell's
@@ -695,7 +1232,7 @@ export function CommandCentreView({
 
   const startableAgents = useMemo(
     () =>
-      platform.roster.agents.flatMap((agent) => {
+      platform.roster.agents.flatMap((agent): StartableAgent[] => {
         const spec = platformProvider(agent.provider)
         if (!spec?.chat) return []
         // The same gate the start dialog applies: connected and signed in in
@@ -703,7 +1240,17 @@ export function CommandCentreView({
         const status = startableProviders.find((provider) => provider.provider === agent.provider)
         const prerequisite = platform.prerequisiteFor(agent.provider)
         const ready = prerequisite.ok && Boolean(status && canCreateSession(status))
-        return [{ provider: agent.provider, name: agent.name, ready, ...(prerequisite.ok ? {} : { reason: prerequisite.reason }) }]
+        const name = agentDisplayName(agent.provider)
+        if (ready) return [{ provider: agent.provider, name, ready }]
+        // Never a dead end: what is wrong, and — when connecting or signing in
+        // fixes it — the action that does, through the existing Connect flow.
+        if (prerequisite.ok) return [{ provider: agent.provider, name, ready, reason: "Unavailable here" }]
+        const action = prerequisite.action
+          ? prerequisite.phase
+            ? recoveryLabel(prerequisite.phase, prerequisite.action)
+            : "Connect"
+          : undefined
+        return [{ provider: agent.provider, name, ready, reason: prerequisite.reason, ...(action ? { action } : {}) }]
       }),
     [platform, startableProviders]
   )
@@ -715,8 +1262,15 @@ export function CommandCentreView({
         left, the runtime on the right. Quiet when everything is fine.
       */}
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        {selected && (
-          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => setRequestedSessionId(null)}>
+        {(selected || shownHistory) && (
+          <IconButton
+            aria-label="All sessions"
+            className="-ml-1.5 md:hidden"
+            onClick={() => {
+              setRequestedSessionId(null)
+              setHistorySelection(null)
+            }}
+          >
             <ChevronLeft />
           </IconButton>
         )}
@@ -759,15 +1313,30 @@ export function CommandCentreView({
 
       <div className="flex min-h-0 flex-1">
         <SessionList
-          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
+          className={selected || shownHistory ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={sessions.sessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
           workspaceNameOf={workspaceNameOf}
-          onSelect={setRequestedSessionId}
+          onSelect={selectLiveSession}
           onNewSession={() => setNewSessionOpen(true)}
           canCreate={runtime.executable}
           now={now}
+          history={
+            <AgentHistoryList
+              // A runtime that cannot be reached cannot be asked — never "no
+              // activity", and never "doesn't keep history" either. (Across a
+              // runtime restart the hook keeps the list it read while it re-reads.)
+              state={!runtime.loading && !runtime.status && history.state.kind !== "ready" ? { kind: "disconnected" } : history.state}
+              selectedSessionId={shownHistory?.sessionId ?? null}
+              onSelect={selectHistorySession}
+              {...(workspaceNameOf(historyWorkspaceId) ? { workspaceName: workspaceNameOf(historyWorkspaceId) } : {})}
+              now={now}
+              hiddenSessionIds={liveSessionIds}
+              onLoadMore={history.loadMore}
+              onRetry={history.retry}
+            />
+          }
         >
           <AgentRoster
             platform={platform}
@@ -780,7 +1349,7 @@ export function CommandCentreView({
               const chat = platformProvider(agent.provider)?.chat === true
               const startable =
                 chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
-              if (latest) setRequestedSessionId(latest.view.sessionId)
+              if (latest) selectLiveSession(latest.view.sessionId)
               else if (startable) {
                 setDefaultProvider(agent.provider)
                 setNewSessionOpen(true)
@@ -791,8 +1360,32 @@ export function CommandCentreView({
           />
         </SessionList>
 
-        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && "max-md:hidden")}>
-          {current && currentView ? (
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !shownHistory && "max-md:hidden")}>
+          {shownHistory && !current ? (
+            <HistorySessionView
+              session={shownHistory}
+              state={historySession.state}
+              {...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {})}
+              now={now}
+              onClose={() => setHistorySelection(null)}
+              onRetry={historySession.retry}
+              {...(historyContext ? { context: historyContext } : {})}
+            >
+              <AgentActivity
+                entries={historyEntries}
+                provider={shownHistory.provider}
+                agentName={historyAgentName}
+                state={SESSION_VISUAL_STATE[historySessionStatus(historyDetail?.session.status ?? shownHistory.status)]}
+                statusLabel={SESSION_STATUS_LABEL[historySessionStatus(historyDetail?.session.status ?? shownHistory.status)]}
+                now={now}
+                inspect={inspectHistory}
+                onUndo={undoHistoryChange}
+                {...(onViewWorkspace ? { onViewChange: viewHistoryChange } : {})}
+                {...(runtime.executable ? { onNewSession: () => setNewSessionOpen(true) } : {})}
+                onOpenSession={openHandoffSession}
+              />
+            </HistorySessionView>
+          ) : current && currentView ? (
             <>
               <SessionHeader
                 session={current}
@@ -807,12 +1400,21 @@ export function CommandCentreView({
                     agentName={agentName}
                     {...(delivered !== undefined ? { delivered } : {})}
                     busy={contextBusy}
+                    pack={sessionPack}
+                    {...(packState ? { packState } : {})}
+                    {...(packChange ? { packChange } : {})}
+                    {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
                     {...contextActions}
                   />
                 }
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => setContextPanelOpen((open) => !open)}
                 onDispose={() => void sessions.disposeSession(currentView.sessionId)}
+                activityControl={
+                  <ActivityPopover waiting={activityWaiting} className={contextPanelOpen ? "xl:hidden" : undefined}>
+                    {activityTimeline}
+                  </ActivityPopover>
+                }
               />
 
               <EventStream
@@ -843,7 +1445,7 @@ export function CommandCentreView({
                 )}
 
                 {errorPresentation && (
-                  <li className="my-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
+                  <li role="alert" className="my-2 rounded-md border border-destructive/40 bg-surface px-3 py-2">
                     <p className="text-body-sm text-foreground">{errorPresentation.title}</p>
                     <p className="mt-0.5 text-body-sm text-tertiary">{errorPresentation.action}</p>
                     {errorPresentation.reconnect && (
@@ -878,6 +1480,9 @@ export function CommandCentreView({
                     agentName={agentName}
                     {...(delivered !== undefined ? { delivered } : {})}
                     busy={contextBusy}
+                    pack={sessionPack}
+                    {...(packState ? { packState } : {})}
+                    {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
                     align="start"
                     {...contextActions}
                   />
@@ -898,7 +1503,7 @@ export function CommandCentreView({
               initialText={draftText}
               contextControl={
                 draftView ? (
-                  <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" {...draftActions} />
+                  <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" pack={sessionPack} {...draftActions} />
                 ) : undefined
               }
               onStart={(text, provider) => {
@@ -912,7 +1517,8 @@ export function CommandCentreView({
           )}
         </main>
 
-        {contextPanelOpen && (
+        {/* A past session is told whole in its own pane; this panel describes a live one. */}
+        {contextPanelOpen && !shownHistory && (
           <ContextPanel
             session={currentView}
             {...(workspaceName ? { workspaceName } : {})}
@@ -925,10 +1531,34 @@ export function CommandCentreView({
             {...(onViewWorkspace ? { onViewChange: viewChange } : {})}
             {...(currentView && projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
             runtimeStatus={runtime.status}
+            activity={activityTimeline}
             {...(currentView ? contextActions : draftActions)}
+            pack={sessionPack}
+            {...(packState ? { packState } : {})}
+            {...(packChange ? { packChange } : {})}
+            {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
+            {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
+            {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
+            {...(projectSection ? { project: projectSection } : {})}
           />
         )}
       </div>
+
+      {attachOpen && attachTarget && (
+        <AttachProjectDialog
+          open
+          onOpenChange={setAttachOpen}
+          workspaceName={attachTarget.name}
+          projects={projects.projects}
+          {...(workspaceProject.project ? { currentProjectId: workspaceProject.project.id } : {})}
+          agents={startableProviders.filter((provider) => canCreateSession(provider)).map((provider) => provider.provider)}
+          scopesFor={projectScopesFor}
+          onAddProject={projects.addProject}
+          {...(pickFolder ? { pickFolder } : {})}
+          inspect={(projectId) => workspaceProject.inspect(projectId)}
+          onAttach={(projectId) => onAttachWorkspaceProject?.(attachTarget.id, projectId)}
+        />
+      )}
 
       <NewSessionDialog
         // Remounted per opening so it starts from the agent it was opened for.
@@ -947,6 +1577,7 @@ export function CommandCentreView({
         providers={startableProviders}
         projects={projects.projects}
         onAddProject={projects.addProject}
+        workspaceProject={workspaceProjectFor}
         {...(remoteEnabled
           ? {
               remote: {
@@ -964,7 +1595,7 @@ export function CommandCentreView({
         {...(onOpenConnectors || pickFolder ? { onConnectProvider: signInFor } : {})}
         creating={creating}
         now={now}
-        {...(createError ? { error: RUNTIME_ERROR_PRESENTATION[createError].title } : {})}
+        {...(createError ? { error: runtimeErrorTitle(createError.code, agentDisplayName(createError.provider), { starting: true }) } : {})}
         workspaces={workspaceChoices}
         {...((resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId)
           ? { defaultWorkspaceId: resume?.workspaceId ?? draft?.workspaceId ?? activeWorkspaceId }
@@ -978,7 +1609,7 @@ export function CommandCentreView({
         connectionBlocker={(provider) => {
           const prerequisite = platform.prerequisiteFor(provider)
           if (prerequisite.ok) return undefined
-          const name = agentVisualIdentity(provider).displayName
+          const name = agentDisplayName(provider)
           // Nothing to connect or sign in to fixes this one — signed in or not.
           // The exact reason, and no action that would pretend otherwise.
           const sessions = platform.sessionsFor(provider)
@@ -1027,6 +1658,33 @@ export function CommandCentreView({
         }}
       />
 
+      {handoffSource && (
+        <HandoffDialog
+          key={handoffSource.key}
+          open
+          onOpenChange={(open) => {
+            // Closing before Continue is the cancel: nothing was started, and nothing is kept.
+            if (!open) setHandoffSource(null)
+          }}
+          source={{
+            provider: handoffSource.provider,
+            agentName: agentDisplayName(handoffSource.provider),
+            ...(handoffSource.title ? { title: handoffSource.title } : {}),
+            statusLabel: handoffSource.statusLabel,
+          }}
+          {...(workspaceNameOf(handoffSource.workspaceId) ? { workspaceName: workspaceNameOf(handoffSource.workspaceId) } : {})}
+          agents={handoffAgents}
+          onConnect={(provider) => {
+            setHandoffSource(null)
+            openConnect(provider)
+          }}
+          projectsFor={handoffProjectsFor}
+          transport={handoffSource.transport}
+          onStarted={(result) => void handleHandoffStarted(result)}
+          packFor={handoffPackFor}
+        />
+      )}
+
       {pickerFor && (
         <ContextPicker
           key={pickerFor.key}
@@ -1048,6 +1706,9 @@ export function CommandCentreView({
     </div>
   )
 }
+
+/** An agent the empty state offers. `action`: what fixes one that is not ready, through Connect Agent — absent when nothing the person does would. */
+type StartableAgent = { provider: AgentProviderId; name: string; ready: boolean; reason?: string; action?: string }
 
 /**
  * The refusal to show when a session was not started because its agent's
@@ -1095,7 +1756,7 @@ function CommandCentreEmptyState({
   executable: boolean
   loading: boolean
   workspaceName?: string
-  agents: readonly { provider: AgentProviderId; name: string; ready: boolean; reason?: string }[]
+  agents: readonly StartableAgent[]
   defaultProvider?: AgentProviderId
   initialText: string
   contextControl?: React.ReactNode
@@ -1192,15 +1853,18 @@ function CommandCentreEmptyState({
                       <AgentIcon connector={agent.provider} size="sm" />
                       <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{agent.name}</span>
                       {agent.ready ? (
-                        <Button type="button" size="xs" variant="ghost" onClick={() => onStart(text.trim(), agent.provider)}>
+                        <Button type="button" size="xs" variant="ghost" onClick={() => onStart(text.trim(), agent.provider)} aria-label={`Start with ${agent.name}`}>
                           Start
                         </Button>
-                      ) : agent.reason ? (
-                        <span className="shrink-0 text-label text-tertiary">{agent.reason}</span>
                       ) : (
-                        <Button type="button" size="xs" variant="ghost" onClick={() => onConnect(agent.provider)}>
-                          Connect
-                        </Button>
+                        <>
+                          {agent.reason && <span className="min-w-0 shrink truncate text-label text-tertiary">{agent.reason}</span>}
+                          {(agent.action || !agent.reason) && (
+                            <Button type="button" size="xs" variant="outline" onClick={() => onConnect(agent.provider)} aria-label={`${agent.action ?? "Connect"} — ${agent.name}`}>
+                              {agent.action ?? "Connect"}
+                            </Button>
+                          )}
+                        </>
                       )}
                     </li>
                   ))}

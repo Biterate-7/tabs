@@ -11,7 +11,7 @@ import {
   SESSION_VISUAL_STATE,
   sessionStatusTone,
 } from "@/lib/agents/command-centre/presentation"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { ContextFreshness } from "@/hooks/use-session-context"
 import type { WorkspaceLink } from "@/lib/agents/command-centre/working-context"
@@ -46,6 +46,7 @@ export function SessionHeader({
   contextPanelOpen,
   onToggleContextPanel,
   onDispose,
+  activityControl,
 }: {
   session: CommandCentreSession
   projectName?: string
@@ -59,10 +60,16 @@ export function SessionHeader({
   contextPanelOpen: boolean
   onToggleContextPanel: () => void
   onDispose: () => void
+  /**
+   * The activity timeline's own entry point, for where the context panel
+   * (which carries it) is not on screen. Rendered by the caller, which owns
+   * the popover and decides when it shows.
+   */
+  activityControl?: React.ReactNode
 }) {
   const { view } = session
   const state = SESSION_VISUAL_STATE[view.status]
-  const identity = agentVisualIdentity(view.provider)
+  const agentName = agentDisplayName(view.provider)
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
@@ -72,11 +79,11 @@ export function SessionHeader({
 
       <div className="flex min-w-0 flex-col">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-h2 text-foreground">{view.title ?? identity.displayName}</h1>
+          <h1 className="truncate text-h2 text-foreground">{view.title ?? agentName}</h1>
           {projectName && <span className="shrink-0 truncate text-body-sm text-tertiary">{projectName}</span>}
         </div>
         <div className="flex min-w-0 items-center gap-1 text-meta text-tertiary">
-          {view.title && <span className="shrink-0">{identity.displayName} ·</span>}
+          {view.title && <span className="shrink-0">{agentName} ·</span>}
           <WorkingInIndicator
             workspaceName={workspaceName}
             link={link}
@@ -94,6 +101,8 @@ export function SessionHeader({
           {contextControl && <span className="min-w-0 max-w-64">{contextControl}</span>}
           <AgentStatusPill tone={sessionStatusTone(view.status)} label={SESSION_STATUS_LABEL[view.status]} />
         </span>
+
+        {activityControl}
 
         <IconButton aria-label="End session" destructive onClick={onDispose}>
           <Trash2 />

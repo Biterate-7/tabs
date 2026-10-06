@@ -1,18 +1,30 @@
 "use client"
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, X } from "lucide-react"
+import { AgentActivity } from "@/components/agents/agent-activity"
+import { ActivityPopover } from "@/components/command-centre/activity-popover"
+import { AgentHistoryList } from "@/components/command-centre/agent-history-list"
 import { AgentRoster } from "@/components/command-centre/agent-roster"
 import { ApprovalPrompt } from "@/components/command-centre/approval-prompt"
 import { Composer } from "@/components/command-centre/composer"
 import { ContextPanel } from "@/components/command-centre/context-panel"
 import { ContextPicker } from "@/components/command-centre/context-picker"
 import { EventStream } from "@/components/command-centre/event-stream"
+import { HandoffDialog, handoffAgentOptions } from "@/components/command-centre/handoff-dialog"
+import type { HandoffTransport } from "@/lib/agents/handoff/transport"
+import { HistorySessionView } from "@/components/command-centre/history-session-view"
 import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
 import { WorkingContextChip } from "@/components/command-centre/working-context-control"
 import { IconButton } from "@/components/ui/icon-button"
+import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
+import type { AgentHistoryListState } from "@/hooks/use-agent-history"
+import { historySessionStatus } from "@/lib/agents/activity/history"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
+import { SESSION_STATUS_LABEL, SESSION_VISUAL_STATE } from "@/lib/agents/command-centre/presentation"
+import { collectionsMatch } from "@/lib/collections/restore"
+import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import {
   contextOfSession,
   describeWorkingContext,
@@ -22,15 +34,31 @@ import {
   workspaceLinkOf,
 } from "@/lib/agents/command-centre/working-context"
 import { focusFromAttachments } from "@/lib/agents/session-context/focus"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { useSessionContextPack } from "@/hooks/use-session-context-pack"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
+import { contextDeliveryOf, contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
+import { handoffThatStarted, sessionContextPack } from "@/lib/agents/context-pack/session"
+import { selectHandoffContext } from "@/lib/agents/handoff/handoff"
+import type { HandoffInclude } from "@/lib/agents/handoff/handoff"
+import type { RuntimeHandoffPreview } from "@/lib/agents/runtime/protocol"
+import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { phaseSentence, sessionPrerequisite } from "@/lib/agents/platform/lifecycle"
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import { cn } from "@/lib/utils"
-import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS } from "./data"
+import { DEMO_AGENTS, DEMO_NOW, DEMO_PROJECTS, DEMO_SESSION_PROVIDERS } from "./data"
 import { useHubbleDemo } from "./demo-provider"
+import { WorkspaceProjectSection } from "@/components/command-centre/workspace-project"
+import { filesChangedOutside, measuredProjectFiles } from "@/hooks/use-session-context-pack"
+import { workspaceProjectId } from "@/lib/workspace/project"
+import { readGitStatusCounts } from "@/lib/agents/project/checks"
+import { latestGitCountsIn } from "@/lib/agents/project/changes"
+import { DEMO_PROJECT_ID, DEMO_PROJECT_INSPECTION, demoProjectDescriptor } from "./demo-project"
+import { demoKnownApprovals } from "./demo-state"
 
 /**
  * The agents the demo roster shows, as the product's platform hook would
@@ -94,6 +122,9 @@ function demoPlatform(): UseAgentPlatform {
 /** One for every demo window: it holds no state, only the catalog's answers. */
 const DEMO_PLATFORM = demoPlatform()
 
+/** The agents a handoff can go to, from the same roster answers — by the Command Centre's own helper. */
+const DEMO_HANDOFF_AGENTS = handoffAgentOptions(DEMO_PLATFORM, (provider) => DEMO_SESSION_PROVIDERS.has(provider))
+
 /**
  * The Command Centre, laid out as CommandCentreView lays it out: the view
  * bar, then sessions (with the agent roster above them), the open session,
@@ -102,12 +133,18 @@ const DEMO_PLATFORM = demoPlatform()
  * Built from CommandCentreView's own children, because CommandCentreView
  * mounts the control-plane hooks — the runtime client, polling, provider
  * connections, MCP tokens — and the demo must start none of them. A session's
- * context is resolved by the product's own `useAgentContext`, fed the demo's
+ * context is its Context Pack, built by the product's own recipe from the demo's
  * workspaces, and recorded on the session the way the runtime records it —
  * the tab and collection references of what was attached.
  *
  * The view bar says what the demo is instead of reporting a runtime, because
  * there is none: nothing typed here runs anywhere.
+ *
+ * The agent's activity — the timeline, the action inspector, Undo — is the
+ * app's own `AgentActivity`, fed by the product's `useSessionActivity` from
+ * the demo's records (its events, approvals and applied changes) exactly as
+ * CommandCentreView feeds it from the runtime's. Only the data differs; a
+ * structural test keeps it that way (demo-parity.test.tsx).
  */
 export function DemoCommandCentre({
   onClose,
@@ -117,9 +154,13 @@ export function DemoCommandCentre({
   /** False crops the view to the open session and its context — the landing page's context section. */
   showSessions?: boolean
 }) {
-  const { state, dispatch, world, context, send } = useHubbleDemo()
+  const { state, dispatch, world, send, respond, undo, undoHistory, handoff, projectWork } = useHubbleDemo()
   const contextPanelOpen = state.contextPanelOpen
   const [pickerKey, setPickerKey] = useState<number | null>(null)
+  /** The session a handoff was opened for — as the Command Centre holds it. */
+  const [handoffFor, setHandoffFor] = useState<{ key: number; sessionId: string; transport: HandoffTransport } | null>(null)
+  const seenApprovals = state.seenApprovals
+  const knownApprovals = useMemo(() => demoKnownApprovals({ seenApprovals }), [seenApprovals])
 
   const selected = state.sessions.find((entry) => entry.view.sessionId === state.selectedSessionId) ?? null
   const selectedId = selected?.view.sessionId ?? null
@@ -151,21 +192,216 @@ export function DemoCommandCentre({
   )
   const link = selected ? workspaceLinkOf(selected.view, state.store.workspaces) : ({ kind: "none" } as const)
   const sessionWorkspaceId = selected ? workspaceIdOf(selected.view) : undefined
+  // The same rule as the Command Centre: a session in a workspace, done with its turn.
+  const canContinue = Boolean(selected && sessionWorkspaceId && canHandOffFrom(selected.view.status))
   const workspaceName = workspaceNameOf(sessionWorkspaceId)
   const own = selected ? contextOfSession(selected.view) : null
   const contextView = own ? describeWorkingContext(own, liveWorld) : null
-  const agentName = selected ? agentVisualIdentity(selected.view.provider).displayName : "The agent"
+  const agentName = selected ? agentDisplayName(selected.view.provider) : "The agent"
   const delivered = selected?.view.focus?.delivered
 
-  /** Points the open session at a context — resolved by the real bridge, recorded as its focus. */
+  /* ---------------- What the agent did — the app's own derivation, on the demo's records. */
+
+  const sessionChanges = useMemo(
+    () => (selectedId ? state.changes.filter((change) => change.sessionId === selectedId) : []),
+    [state.changes, selectedId]
+  )
+  const collectionName = useCallback(
+    (collectionId: string) => state.collections.find((collection) => collection.id === collectionId)?.name,
+    [state.collections]
+  )
+  const canUndo = useCallback(
+    (change: AppliedWorkspaceChange) =>
+      change.ok && !change.undone && Boolean(change.after) && collectionsMatch(state.collections, change.workspaceId, change.after!),
+    [state.collections]
+  )
+  const sessionHandoffs = useMemo(
+    () => (selectedId ? state.handoffs.filter((entry) => entry.sourceSessionId === selectedId || entry.targetSessionId === selectedId) : []),
+    [state.handoffs, selectedId]
+  )
+  /* The Context Pack (Hubble 1.5) — the Command Centre's own hook, on the demo's records. */
+  const sessionHandoffsForPack = useMemo(
+    () => (selectedId ? state.handoffs.filter((entry) => entry.targetSessionId === selectedId) : []),
+    [state.handoffs, selectedId]
+  )
+  /*
+    The workspace's project (Hubble 1.6), from the demo's deterministic
+    adapter — described, inspected and shown by the product's own code.
+  */
+  const projectWorkspaceId = selected ? sessionWorkspaceId : state.store.currentId
+  const projectWorkspace = projectWorkspaceId ? state.store.workspaces.find((w) => w.id === projectWorkspaceId) : undefined
+  const attachedProjectId = workspaceProjectId(projectWorkspace)
+  const demoProject = attachedProjectId === DEMO_PROJECT_ID
+  const describesProject = selected ? selected.view.projectId === DEMO_PROJECT_ID : demoProject
+  const packProject = useMemo(() => (describesProject ? demoProjectDescriptor() : undefined), [describesProject])
+  const projectSessionId = selected && selected.view.projectId === DEMO_PROJECT_ID ? selected.view.sessionId : null
+  const projectActions = useMemo(() => (projectSessionId ? projectWork(projectSessionId) : undefined), [projectWork, projectSessionId])
+  const { pack, state: packState, change: packChange, brief } = useSessionContextPack({
+    world,
+    session: selected?.view ?? null,
+    workspaceId: selected ? (link.kind === "workspace-missing" ? undefined : sessionWorkspaceId) : state.store.currentId,
+    events,
+    handoffs: sessionHandoffsForPack,
+    changes: state.changes,
+    ...(packProject ? { project: packProject } : {}),
+  })
+  const hasProjectWorkspace = Boolean(projectWorkspace)
+  const projectGit = readGitStatusCounts(latestGitCountsIn(events))
+  const projectChangedFiles = projectSessionId ? measuredProjectFiles(events, projectSessionId).length : 0
+  const projectSection = (() => {
+    if (!hasProjectWorkspace) return undefined
+    const git = projectGit
+    return (
+      <WorkspaceProjectSection
+        state={demoProject ? "connected" : attachedProjectId ? "removed" : "none"}
+        {...(demoProject ? { project: { name: DEMO_PROJECTS.find((p) => p.id === DEMO_PROJECT_ID)!.name } } : {})}
+        inspection={demoProject ? DEMO_PROJECT_INSPECTION : null}
+        capabilities={packProject?.capabilities ?? []}
+        {...(git ? { git } : {})}
+        agentChangedFiles={projectChangedFiles}
+        {...(projectActions ? { checks: projectActions } : {})}
+      />
+    )
+  })()
+  const briefWorkspaceId = selected ? sessionWorkspaceId : state.store.currentId
+  const saveBrief = briefWorkspaceId
+    ? (next: { description: string; focus: string }) => dispatch({ type: "set-brief", workspaceId: briefWorkspaceId, brief: next })
+    : undefined
+
+  const activity = useSessionActivity({
+    session: selected?.view ?? null,
+    events,
+    approvals,
+    changes: sessionChanges,
+    handoffs: sessionHandoffs,
+    agentName,
+    ...(workspaceName ? { workspaceName } : {}),
+    ...(projectName ? { projectName } : {}),
+    now: DEMO_NOW,
+    knownApprovals,
+    canUndo,
+    collectionName,
+    ...(projectActions ? { projectLive: true } : {}),
+  })
+  /** "View" — the workspace the change was made in, as the app's View goes there. */
+  const viewChange = (change: AppliedWorkspaceChange) => {
+    dispatch({ type: "switch-workspace", id: change.workspaceId })
+    dispatch({ type: "navigate", view: "workspace" })
+  }
+  const viewChangeById = (changeId: string) => {
+    const change = sessionChanges.find((candidate) => candidate.id === changeId)
+    if (change) viewChange(change)
+  }
+  /** The other end of a handoff: a live session if the demo holds it, else its history — as in the app. */
+  const openHandoffSession = (sessionId: string) => {
+    if (state.sessions.some((entry) => entry.view.sessionId === sessionId)) dispatch({ type: "select-session", id: sessionId })
+    else if (state.history.some((entry) => entry.session.sessionId === sessionId)) dispatch({ type: "select-history", id: sessionId })
+  }
+  const activityView = selected ? (
+    <AgentActivity
+      entries={activity.entries}
+      provider={selected.view.provider}
+      agentName={agentName}
+      state={SESSION_VISUAL_STATE[selected.view.status]}
+      statusLabel={SESSION_STATUS_LABEL[selected.view.status]}
+      now={DEMO_NOW}
+      inspect={activity.inspect}
+      onUndo={undo}
+      {...(projectActions ? { project: projectActions } : {})}
+      onViewChange={viewChangeById}
+      {...(canContinue ? { onContinue: () => setHandoffFor({ key: Date.now(), sessionId: selected.view.sessionId, transport: handoff(selected.view.sessionId) }) } : {})}
+      onOpenSession={openHandoffSession}
+    />
+  ) : null
+  const handoffSource = handoffFor ? state.sessions.find((entry) => entry.view.sessionId === handoffFor.sessionId)?.view : undefined
+
+  /*
+    Agent history — the app's own list, pane, hook and AgentActivity, fed the
+    demo's past sessions (data.ts) for the workspace on screen, exactly as
+    CommandCentreView feeds them from the runtime's answer.
+  */
+  const historyWorkspaceId = state.store.currentId
+  const historyState = useMemo<AgentHistoryListState>(
+    () => ({
+      kind: "ready",
+      workspaceId: historyWorkspaceId,
+      sessions: state.history
+        .filter((entry) => entry.session.workspaceId === historyWorkspaceId)
+        .map((entry) => entry.session)
+        .sort((a, b) => b.lastActivityAt - a.lastActivityAt),
+      hasMore: false,
+      loadingMore: false,
+    }),
+    [state.history, historyWorkspaceId]
+  )
+  const liveIds = useMemo(() => new Set(state.sessions.map((entry) => entry.view.sessionId)), [state.sessions])
+  const openHistory = !selected
+    ? (state.history.find((entry) => entry.session.sessionId === state.selectedHistoryId && entry.session.workspaceId === historyWorkspaceId) ?? null)
+    : null
+  const historyAgentName = openHistory ? agentDisplayName(openHistory.session.provider) : "The agent"
+  const historyWorkspaceName = workspaceNameOf(openHistory?.session.workspaceId)
+  const historyActivity = useHistorySessionActivity({
+    detail: openHistory,
+    agentName: historyAgentName,
+    ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+    ...(openHistory && projectNameOf(openHistory.session.projectId) ? { projectName: projectNameOf(openHistory.session.projectId) } : {}),
+    now: DEMO_NOW,
+    canUndo,
+    collectionName,
+  })
+  /* What the past session was given (Hubble 1.5), by the product's own provenance, from its records. */
+  const historyContext = historyActivity.history
+    ? contextProvenanceOf({
+        session: historyActivity.history.session,
+        events: historyActivity.history.events,
+        handoffs: historyActivity.history.handoffs,
+        at: Number.MAX_SAFE_INTEGER,
+        ...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {}),
+        collectionName,
+        projectName: (projectId: string) => projectNameOf(projectId),
+        agentName: agentDisplayName,
+      })
+    : undefined
+  const historyStatus = openHistory ? historySessionStatus(openHistory.session.status) : null
+
+  /**
+   * Points the open session at a context — its Context Pack, by the Command
+   * Centre's own recipe, recorded as the runtime records an attach: the focus,
+   * the pack's id, and what the next message will say it delivered.
+   */
   function applyContext(next: WorkingContext) {
     if (!selected) return
-    const outcome = context.resolve(next)
-    if (!outcome.ok) return
+    const built = sessionContextPack({
+      world,
+      workspaceId: next.workspaceId,
+      selection: next,
+      sessionId: selected.view.sessionId,
+      changes: state.changes,
+      ...(handoffThatStarted(selected.view.sessionId, state.handoffs) ? { handoffFrom: handoffThatStarted(selected.view.sessionId, state.handoffs)! } : {}),
+      ...(packProject ? { project: packProject, projectFiles: filesChangedOutside(measuredProjectFiles(events, selected.view.sessionId), packProject) } : {}),
+    })
+    if (!built.ok) return
+    const attached = contextPackAttachedContext(built.pack, DEMO_NOW)
+    const delivery = attached ? contextDeliveryOf(attached, next.workspaceId) : undefined
     dispatch({
       type: "set-focus",
       sessionId: selected.view.sessionId,
-      focus: outcome.attached ? focusFromAttachments(outcome.attached.attachments) : null,
+      focus: attached ? focusFromAttachments(attached.attachments) : null,
+      context: attached ? { contextId: attached.snapshotId, ...(delivery ? { delivery } : {}) } : null,
+    })
+  }
+  const sendContextUpdate =
+    selected && sessionWorkspaceId && packState === "changed"
+      ? () => applyContext(own ?? workspaceContext(sessionWorkspaceId))
+      : undefined
+  /** The pack a handoff would pass — the Command Centre's recipe, on the demo's world. */
+  const handoffPackFor = (preview: RuntimeHandoffPreview, include: HandoffInclude) => {
+    const focus = state.sessions.find((entry) => entry.view.sessionId === handoffFor?.sessionId)?.view.focus
+    return handoffContextPack({
+      world,
+      workspaceId: preview.workspaceId,
+      ...(focus ? { focus: { tabIds: focus.tabIds, collectionIds: focus.collectionIds } } : {}),
+      context: selectHandoffContext(preview.context, include),
     })
   }
   const actions =
@@ -183,6 +419,10 @@ export function DemoCommandCentre({
       agentName={agentName}
       {...(delivered !== undefined ? { delivered } : {})}
       align={align}
+      pack={pack}
+      {...(packState ? { packState } : {})}
+      {...(packChange ? { packChange } : {})}
+      {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
       {...actions}
     />
   )
@@ -190,8 +430,15 @@ export function DemoCommandCentre({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        {selected && showSessions && (
-          <IconButton aria-label="All sessions" className="-ml-1.5 md:hidden" onClick={() => dispatch({ type: "select-session", id: null })}>
+        {(selected || openHistory) && showSessions && (
+          <IconButton
+            aria-label="All sessions"
+            className="-ml-1.5 md:hidden"
+            onClick={() => {
+              dispatch({ type: "select-session", id: null })
+              dispatch({ type: "select-history", id: null })
+            }}
+          >
             <ChevronLeft />
           </IconButton>
         )}
@@ -220,7 +467,7 @@ export function DemoCommandCentre({
       <div className="flex min-h-0 flex-1">
         {showSessions && (
         <SessionList
-          className={selected ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
+          className={selected || openHistory ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
           sessions={state.sessions}
           selectedSessionId={selectedId}
           projectNameOf={projectNameOf}
@@ -230,6 +477,16 @@ export function DemoCommandCentre({
           // Starting a session needs a runtime, and this page has none.
           canCreate={false}
           now={DEMO_NOW}
+          history={
+            <AgentHistoryList
+              state={historyState}
+              selectedSessionId={openHistory?.session.sessionId ?? null}
+              onSelect={(entry) => dispatch({ type: "select-history", id: entry.sessionId })}
+              {...(workspaceNameOf(historyWorkspaceId) ? { workspaceName: workspaceNameOf(historyWorkspaceId) } : {})}
+              now={DEMO_NOW}
+              hiddenSessionIds={liveIds}
+            />
+          }
         >
           <AgentRoster
             platform={DEMO_PLATFORM}
@@ -246,8 +503,33 @@ export function DemoCommandCentre({
         </SessionList>
         )}
 
-        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && showSessions && "max-md:hidden")}>
-          {selected ? (
+        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !openHistory && showSessions && "max-md:hidden")}>
+          {openHistory && historyStatus ? (
+            <HistorySessionView
+              session={openHistory.session}
+              state={{ kind: "ready", detail: openHistory }}
+              {...(historyWorkspaceName ? { workspaceName: historyWorkspaceName } : {})}
+              now={DEMO_NOW}
+              onClose={() => dispatch({ type: "select-history", id: null })}
+              {...(historyContext ? { context: historyContext } : {})}
+            >
+              <AgentActivity
+                entries={historyActivity.entries}
+                provider={openHistory.session.provider}
+                agentName={historyAgentName}
+                state={SESSION_VISUAL_STATE[historyStatus]}
+                statusLabel={SESSION_STATUS_LABEL[historyStatus]}
+                now={DEMO_NOW}
+                inspect={historyActivity.inspect}
+                onUndo={(changeId) => undoHistory(openHistory.session.sessionId, changeId)}
+                onViewChange={(changeId) => {
+                  const change = historyActivity.history?.changes.find((candidate) => candidate.id === changeId)
+                  if (change) viewChange(change)
+                }}
+                onOpenSession={openHandoffSession}
+              />
+            </HistorySessionView>
+          ) : selected ? (
             <>
               <SessionHeader
                 session={selected}
@@ -258,9 +540,21 @@ export function DemoCommandCentre({
                 contextPanelOpen={contextPanelOpen}
                 onToggleContextPanel={() => dispatch({ type: "toggle-context-panel" })}
                 onDispose={() => dispatch({ type: "dispose", sessionId: selected.view.sessionId })}
+                activityControl={
+                  <ActivityPopover waiting={activity.waiting} className={contextPanelOpen ? "xl:hidden" : undefined}>
+                    {activityView}
+                  </ActivityPopover>
+                }
               />
               <div ref={streamRef} className="flex min-h-0 flex-1 flex-col">
-              <EventStream events={events}>
+              <EventStream
+                events={events}
+                changes={sessionChanges}
+                {...(workspaceName ? { workspaceName } : {})}
+                onViewChange={viewChange}
+                onUndoChange={(change) => undo(change.id)}
+                canUndoChange={canUndo}
+              >
                 {approvals.map((approval) => (
                   <ApprovalPrompt
                     key={approval.approvalId}
@@ -268,12 +562,13 @@ export function DemoCommandCentre({
                     {...(approval.workspaceId && workspaceNameOf(approval.workspaceId)
                       ? { workspaceName: workspaceNameOf(approval.workspaceId) }
                       : {})}
+                    {...(projectNameOf(approval.projectId) ? { projectName: projectNameOf(approval.projectId) } : {})}
                     pending={false}
                     now={DEMO_NOW}
                     // Already on screen when the page loads: taking focus
                     // would scroll the visitor to it.
                     autoFocus={false}
-                    onRespond={(approvalId, decision) => dispatch({ type: "respond", approvalId, decision })}
+                    onRespond={respond}
                   />
                 ))}
               </EventStream>
@@ -303,7 +598,8 @@ export function DemoCommandCentre({
           )}
         </main>
 
-        {contextPanelOpen && (
+        {/* A past session is told whole in its own pane; this panel describes a live one — as in the app. */}
+        {contextPanelOpen && !openHistory && (
           <ContextPanel
             session={selected?.view ?? null}
             {...(workspaceName ? { workspaceName } : {})}
@@ -313,10 +609,48 @@ export function DemoCommandCentre({
             agentName={agentName}
             {...(projectName ? { projectName } : {})}
             runtimeStatus={null}
+            changes={sessionChanges}
+            onViewChange={viewChange}
+            {...(activityView ? { activity: activityView } : {})}
             {...actions}
+            pack={pack}
+            {...(packState ? { packState } : {})}
+            {...(sendContextUpdate ? { onSendUpdate: sendContextUpdate } : {})}
+            {...(brief && link.kind !== "workspace-missing" ? { brief } : {})}
+            {...(saveBrief ? { onSaveBrief: saveBrief } : {})}
+            {...(packChange ? { packChange } : {})}
+            {...(projectSection ? { project: projectSection } : {})}
           />
         )}
       </div>
+
+      {handoffFor && handoffSource && (
+        <HandoffDialog
+          key={handoffFor.key}
+          open
+          onOpenChange={(open) => {
+            if (!open) setHandoffFor(null)
+          }}
+          source={{
+            provider: handoffSource.provider,
+            agentName: agentDisplayName(handoffSource.provider),
+            ...(handoffSource.title ? { title: handoffSource.title } : {}),
+            statusLabel: SESSION_STATUS_LABEL[handoffSource.status],
+          }}
+          {...(workspaceNameOf(handoffSource.workspaceId) ? { workspaceName: workspaceNameOf(handoffSource.workspaceId) } : {})}
+          agents={DEMO_HANDOFF_AGENTS}
+          onConnect={() => {
+            setHandoffFor(null)
+            dispatch({ type: "settings-section", section: "agents" })
+          }}
+          transport={handoffFor.transport}
+          onStarted={(result) => {
+            setHandoffFor(null)
+            if (result.session) dispatch({ type: "select-session", id: result.session.sessionId })
+          }}
+          packFor={handoffPackFor}
+        />
+      )}
 
       {pickerKey !== null && own && (
         <ContextPicker

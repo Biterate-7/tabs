@@ -29,7 +29,7 @@ import {
   availableModes,
   startBlocker,
 } from "@/lib/agents/command-centre/remote"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { AUTH_METHOD_LABEL } from "@/lib/agents/credentials/types"
 import { cn } from "@/lib/utils"
 import type { AddProjectInput, AddProjectOutcome } from "@/hooks/use-agent-projects"
@@ -107,6 +107,7 @@ export function NewSessionDialog({
   onConnectAgent,
   pickFolder,
   projectScopesFor,
+  workspaceProject,
   defaultProvider,
   contextSummaryFor,
   firstMessage,
@@ -188,6 +189,12 @@ export function NewSessionDialog({
    * would be refused as exceeding its approval.
    */
   projectScopesFor?: (provider: AgentProviderId) => readonly AgentPermissionScope[]
+  /**
+   * The project attached to a workspace, and whether it is ready (Hubble 1.6).
+   * A session in that workspace starts in it by default, and cannot start in
+   * it while it is not ready — with the reason said where the choice is made.
+   */
+  workspaceProject?: (workspaceId: string) => { projectId: string; ready: boolean; notice: string } | undefined
   /** The agent to start with, when the user already chose one (from the empty state or a request). */
   defaultProvider?: AgentProviderId
   /**
@@ -233,7 +240,12 @@ export function NewSessionDialog({
 
   const [provider, setProvider] = useState<AgentProviderId | null>(null)
   const [mode, setMode] = useState<ExecutionMode | null>(null)
-  const [projectId, setProjectId] = useState<string>("")
+  // The workspace's own project (Hubble 1.6) until the person picks another.
+  const [projectChoice, setProjectId] = useState<string | null>(null)
+  const attachedProject = workspaceId ? workspaceProject?.(workspaceId) : undefined
+  const projectId = projectChoice ?? attachedProject?.projectId ?? ""
+  const attachedChosen = Boolean(attachedProject && projectId === attachedProject.projectId)
+  const projectNotReady = attachedChosen && !attachedProject!.ready
   const [remoteProjectId, setRemoteProjectId] = useState<string>("")
   const [title, setTitle] = useState(defaultTitle ?? "")
   /** What the person has chosen so far, handed back if they leave to sign in. */
@@ -364,7 +376,7 @@ export function NewSessionDialog({
                 providers.map((candidate) => {
                   const unconnected = connectionBlocker?.(candidate.provider)
                   const reason = providerUnavailableReason(candidate) ?? unconnected?.label
-                  const identity = agentVisualIdentity(candidate.provider)
+                  const agentName = agentDisplayName(candidate.provider)
                   const selected = chosen === candidate.provider
 
                   return (
@@ -388,7 +400,7 @@ export function NewSessionDialog({
                       />
                       <AgentIcon connector={candidate.provider} size="sm" />
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-body-sm text-foreground">{identity.displayName}</span>
+                        <span className="truncate text-body-sm text-foreground">{agentName}</span>
                         {unconnected?.detail && (
                           <span className="text-meta text-tertiary">{unconnected.detail}</span>
                         )}
@@ -535,6 +547,11 @@ export function NewSessionDialog({
                   />
                 )
               )}
+              {attachedChosen && (
+                <p data-project-readiness className={cn("mt-1 text-meta", projectNotReady ? "text-warning" : "text-tertiary")}>
+                  {attachedProject!.notice}
+                </p>
+              )}
             </div>
 
             {addingProject && (
@@ -604,7 +621,7 @@ export function NewSessionDialog({
                 {folderGrant && chosen && (
                   <div data-testid="folder-grant" className="flex flex-col gap-0.5">
                     <p className="text-label text-tertiary">
-                      {agentVisualIdentity(chosen).displayName} may, in this folder
+                      {agentDisplayName(chosen)} may, in this folder
                     </p>
                     {folderGrant.length === 0 ? (
                       <p className="text-body-sm text-muted-foreground">
@@ -721,9 +738,9 @@ export function NewSessionDialog({
           </Button>
           <Button
             type="button"
-            disabled={!chosen || creating || blocker !== null || Boolean(connectionIssue)}
+            disabled={!chosen || creating || blocker !== null || Boolean(connectionIssue) || (activeMode !== "remote" && projectNotReady)}
             onClick={() => {
-              if (!chosen || blocker || connectionIssue) return
+              if (!chosen || blocker || connectionIssue || (activeMode !== "remote" && projectNotReady)) return
 
               /*
                 The project the session is scoped to, by **id**, whichever

@@ -1,3 +1,4 @@
+import { readWorkspaceBrief } from "@/lib/workspace/brief";
 import type { Collection } from "@/lib/collections/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import type { Tab } from "@/lib/tabs/types";
@@ -180,11 +181,15 @@ export function readSessionContextSnapshot(
     .filter((entry): entry is TabDependency => entry !== undefined)
     .slice(0, SNAPSHOT_LIMITS.dependencies);
 
+  // The brief (Hubble 1.5) is the user's own two lines, re-read with its own
+  // bounds and credential scrub on this side too.
+  const brief = readWorkspaceBrief(workspaceRaw.brief);
   const snapshot: SessionContextSnapshot = {
     workspace: {
       id: expectedWorkspaceId,
       name: text(workspaceRaw.name, SNAPSHOT_LIMITS.name) ?? "Untitled workspace",
       tabs,
+      ...(brief ? { brief } : {}),
       createdAt,
       updatedAt,
     },
@@ -256,6 +261,7 @@ export function buildSessionContextSnapshot(
         id: workspace.id,
         name: workspace.name,
         tabs: workspace.tabs,
+        ...(workspace.brief ? { brief: workspace.brief } : {}),
         createdAt: workspace.createdAt,
         updatedAt: workspace.updatedAt,
       },

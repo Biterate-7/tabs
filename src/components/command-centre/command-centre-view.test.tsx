@@ -193,7 +193,34 @@ describe("runtime status is reported truthfully", () => {
  * Empty state
  * ------------------------------------------------------------------ */
 
+describe("an untitled live session", () => {
+  it("is named by its agent in the session list, as it will be in history — never 'Ready · Ready'", async () => {
+    const runtime = createScriptedRuntime({ sessions: [scriptedSession({ status: "ready" })] })
+    renderCentre(runtime)
+    const list = within(await screen.findByRole("navigation", { name: "Agent sessions" }))
+    const row = await list.findByRole("button", { name: /Claude Code/ })
+    expect(row.textContent).not.toMatch(/Ready.*Ready/)
+    expect(row.textContent).not.toMatch(/claude-code/)
+  })
+})
+
 describe("the empty state", () => {
+  it("never leaves an agent that is not ready as a dead end: it says why and offers the fix", async () => {
+    const runtime = createScriptedRuntime({
+      status: scriptedStatus({
+        providers: [{ ...scriptedStatus().providers[0]!, connection: "configuration_required", authentication: "required" }],
+      }),
+    })
+    renderCentre(runtime, vi.fn(), undefined, "w1")
+    const agents = within(await screen.findByRole("region", { name: "Agents for this workspace" }))
+    const row = (await agents.findByText("Claude Code")).closest("li")!
+    // Why, in the shared words, and the action that fixes it — never just grey text.
+    expect(within(row).queryByRole("button", { name: /^Start/ })).toBeNull()
+    const fix = within(row).getByRole("button", { name: /— Claude Code$/ })
+    expect(fix.textContent).toMatch(/Sign in|Connect|Try again/)
+    expect(row.textContent).not.toMatch(/claude-code/)
+  })
+
   it("explains the surface without inventing anything", async () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime)
@@ -211,7 +238,7 @@ describe("the empty state", () => {
     expect(screen.getByText(/It sees only this workspace/)).toBeTruthy()
     const agents = screen.getByRole("region", { name: "Agents for this workspace" })
     // The connected agent, drawn with its own mark, ready to start here.
-    expect(await within(agents).findByRole("button", { name: "Start" })).toBeTruthy()
+    expect(await within(agents).findByRole("button", { name: "Start with Claude Code" })).toBeTruthy()
     expect(agents.querySelector('[data-agent-provider="claude-code"]')).not.toBeNull()
     // Nothing invented: no sessions, no activity, no metrics.
     expect(screen.getByText(/no sessions yet/i)).toBeTruthy()
@@ -307,7 +334,8 @@ describe("creating a session", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /start session/i }))
 
-    expect(await screen.findByText(/Agent not signed in/i)).toBeTruthy()
+    // Named: the agent that is not signed in, never a code or a generic failure.
+    expect(await screen.findByText("Claude Code isn't signed in")).toBeTruthy()
   })
 
   it("still says a deployment cannot store credentials when it cannot (503)", async () => {
@@ -603,9 +631,11 @@ describe("the event stream", () => {
     renderCentre(runtime)
     await user.click(await screen.findByRole("button", { name: /ready/i }))
 
-    expect(await screen.findByText("Analyze the project")).toBeTruthy()
-    expect(screen.getByText("I found three files.")).toBeTruthy()
-    expect(screen.getByText("src/analysis.py")).toBeTruthy()
+    // Within the stream: the activity timeline beside it names the file too.
+    const stream = await screen.findByRole("list", { name: /session events/i })
+    expect(await within(stream).findByText("Analyze the project")).toBeTruthy()
+    expect(within(stream).getByText("I found three files.")).toBeTruthy()
+    expect(within(stream).getByText("src/analysis.py")).toBeTruthy()
   })
 
   it("asks only for events past the cursor", async () => {
@@ -1035,7 +1065,8 @@ describe("session workspace context", () => {
     expect(popover.getByText("Can change collections — you approve each change")).toBeTruthy()
     expect(popover.getByText(/Switching workspaces in Hubble doesn.t move it/)).toBeTruthy()
     // Nothing about the machinery.
-    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|port|tabdump_[a-z2-7]{16}/i)
+    // Whole words: "Unsupported" (a project state, Hubble 1.6) is not a port.
+    expect(document.body.textContent).not.toMatch(/MCP|127\.0\.0\.1|token|\bport\b|tabdump_[a-z2-7]{16}/i)
   })
 
   it("says a read-only session cannot change anything", async () => {

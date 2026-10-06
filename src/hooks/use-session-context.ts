@@ -182,6 +182,8 @@ export function useSessionContext(options: {
           workspaceId,
           at: Date.now(),
           ok: result.ok,
+          ...(action.kind === "apply_plan" ? { planId: action.planId } : {}),
+          ...(action.approvalId ? { approvalId: action.approvalId } : {}),
           steps: result.ok ? stepsOf(operations ?? [], result, before) : [],
           ...(result.ok
             ? { before, after: result.collections.filter((collection) => collection.workspaceId === workspaceId) }

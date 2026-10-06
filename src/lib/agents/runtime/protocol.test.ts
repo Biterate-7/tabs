@@ -75,6 +75,26 @@ describe("what the parser accepts", () => {
         methodId: "oauth-personal",
       },
       disconnect_provider: { name: "disconnect_provider", provider: "gemini" },
+      list_history: { name: "list_history", workspaceId: "w1" },
+      get_history: { name: "get_history", workspaceId: "w1", sessionId: "s1" },
+      record_workspace_change: {
+        name: "record_workspace_change",
+        sessionId: "s1",
+        change: { id: "a1", at: T0, ok: true, steps: [{ kind: "created", name: "Pricing", tabCount: 2 }] },
+      },
+      record_workspace_undo: { name: "record_workspace_undo", workspaceId: "w1", sessionId: "s1", changeId: "a1", at: T0 },
+      prepare_handoff: { name: "prepare_handoff", sourceSessionId: "s1", targetProvider: "openai-codex" },
+      start_handoff: {
+        name: "start_handoff",
+        sourceSessionId: "s1",
+        targetProvider: "openai-codex",
+        fingerprint: "0123456789abcdef",
+        include: { workspace: true, previousResult: true },
+      },
+      inspect_project: { name: "inspect_project", projectId: "p1", workspaceId: "w1", files: ["src/auth.ts"] },
+      run_project_check: { name: "run_project_check", sessionId: "s1", check: "typecheck" },
+      undo_project_change: { name: "undo_project_change", sessionId: "s1", changeId: "a1" },
+      review_project_change: { name: "review_project_change", sessionId: "s1", changeId: "a1" },
     };
 
     for (const name of RUNTIME_COMMAND_NAMES) {

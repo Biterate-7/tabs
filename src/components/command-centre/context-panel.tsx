@@ -2,13 +2,15 @@
 
 import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { Button } from "@/components/ui/button"
-import { WorkingContextDetails } from "./working-context-control"
+import { SessionPackFacts, WorkingContextDetails } from "./working-context-control"
+import { WorkspaceBrief } from "./workspace-brief"
 import { providerRowState } from "@/lib/agents/command-centre/presentation"
 import { WORKSPACE_LINK_DETAIL, changeAccessLabel } from "@/lib/agents/command-centre/working-context"
 import { describeStep } from "@/lib/agents/command-centre/workspace-activity"
-import { agentVisualIdentity } from "@/lib/agents/visual/app-identities"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { cn } from "@/lib/utils"
-import type { WorkingContextActions } from "./working-context-control"
+import type { SessionPackProps, WorkingContextActions } from "./working-context-control"
+import type { WorkspaceBriefView } from "@/lib/workspace/brief"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import type { WorkingContextView, WorkspaceLink } from "@/lib/agents/command-centre/working-context"
 import type { RuntimeSessionView, RuntimeStatus } from "@/lib/agents/runtime/protocol"
@@ -63,6 +65,14 @@ export function ContextPanel({
   onViewChange,
   projectName,
   runtimeStatus,
+  activity,
+  brief,
+  onSaveBrief,
+  pack,
+  packState,
+  packChange,
+  onSendUpdate,
+  project,
   ...actions
 }: {
   session: RuntimeSessionView | null
@@ -79,7 +89,14 @@ export function ContextPanel({
   onViewChange?: (change: AppliedWorkspaceChange) => void
   projectName?: string
   runtimeStatus: RuntimeStatus | null
-} & WorkingContextActions) {
+  /** The session's activity timeline, rendered by the caller (components/agents/agent-activity-timeline.tsx). */
+  activity?: React.ReactNode
+  /** The workspace's brief (Hubble 1.5), from live state. Absent: no workspace to describe. */
+  brief?: WorkspaceBriefView
+  onSaveBrief?: (brief: { description: string; focus: string }) => void
+  /** The workspace's project (Hubble 1.6), rendered by the caller (./workspace-project.tsx). Absent: the session's project name only. */
+  project?: React.ReactNode
+} & WorkingContextActions & SessionPackProps) {
   const change = changeAccessLabel(link)
   const recent = [...changes].reverse().slice(0, 5)
 
@@ -101,7 +118,11 @@ export function ContextPanel({
       <Section title="Working in">
         {workspaceName && link.kind !== "none" && link.kind !== "workspace-missing" ? (
           <>
-            <p className="truncate text-body-sm text-foreground">{workspaceName}</p>
+            {brief ? (
+              <WorkspaceBrief view={brief} {...(onSaveBrief ? { onSave: onSaveBrief } : {})} />
+            ) : (
+              <p className="truncate text-body-sm text-foreground">{workspaceName}</p>
+            )}
             <p className="mt-1 text-body-sm text-tertiary">
               {session ? WORKSPACE_LINK_DETAIL[link.kind] : "A new session starts here and stays here."}
             </p>
@@ -112,16 +133,36 @@ export function ContextPanel({
         )}
       </Section>
 
-      {context && (
+      {/*
+        What the agent has been doing, second only to where: the question a
+        person glancing at a working session asks first.
+      */}
+      {session && activity && <Section title="Activity">{activity}</Section>}
+
+      {(context || pack) && (
         <Section title="Context">
-          <WorkingContextDetails
-            view={context}
-            link={link}
-            agentName={agentName}
-            {...(delivered !== undefined ? { delivered } : {})}
-            busy={busy}
-            {...actions}
-          />
+          <div className="flex flex-col gap-2.5">
+            {context && (
+              <WorkingContextDetails
+                view={context}
+                link={link}
+                agentName={agentName}
+                {...(delivered !== undefined && !packState ? { delivered } : {})}
+                busy={busy}
+                {...actions}
+              />
+            )}
+            <SessionPackFacts
+              pack={pack ?? null}
+              {...(packState ? { packState } : {})}
+              {...(packChange ? { packChange } : {})}
+              {...(onSendUpdate ? { onSendUpdate } : {})}
+              agentName={agentName}
+              busy={busy}
+              withWorkspace={!brief}
+              withSelection={!context}
+            />
+          </div>
         </Section>
       )}
 
@@ -145,7 +186,9 @@ export function ContextPanel({
       )}
 
       <Section title="Project">
-        {projectName ? (
+        {project ? (
+          project
+        ) : projectName ? (
           <Row label="Authorized" value={projectName} />
         ) : (
           <p className="text-body-sm text-tertiary">No project. The agent can read Hubble context but cannot reach files.</p>
@@ -177,7 +220,7 @@ export function ContextPanel({
           runtimeStatus.providers.map((provider) => (
             <div key={provider.provider} className="flex items-baseline justify-between gap-3 py-0.5">
               <span className="min-w-0 truncate text-label text-muted-foreground">
-                {agentVisualIdentity(provider.provider).displayName}
+                {agentDisplayName(provider.provider)}
               </span>
               <span className={cn("shrink-0 text-label", AGENT_TONE_TEXT_CLASS[providerRowState(provider).tone])}>
                 {providerRowState(provider).label}

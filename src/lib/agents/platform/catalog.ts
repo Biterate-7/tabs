@@ -162,6 +162,11 @@ export const PLATFORM_FEATURE_LABEL: Record<PlatformFeature, string> = {
 export type PlatformProvider = {
   provider: AgentProviderId;
   displayName: string;
+  /**
+   * The name where only a word fits: a logo strip, a compact chip. The same as
+   * `displayName` unless that is a description rather than a name.
+   */
+  shortName: string;
   vendor: string;
   /**
    * The program that runs the agent and owns its sign-in — "Claude Code",
@@ -229,6 +234,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
   {
     provider: "claude-code",
     displayName: "Claude Code",
+    shortName: "Claude Code",
     vendor: "Anthropic",
     runtimeName: "Claude Code",
     transport: "sdk",
@@ -317,6 +323,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
   {
     provider: "openai-codex",
     displayName: "Codex",
+    shortName: "Codex",
     vendor: "OpenAI",
     runtimeName: "Codex",
     transport: "app-server",
@@ -379,6 +386,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
   {
     provider: "gemini",
     displayName: "Gemini CLI",
+    shortName: "Gemini CLI",
     vendor: "Google",
     runtimeName: "Gemini CLI",
     transport: "acp",
@@ -444,6 +452,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
   {
     provider: "grok",
     displayName: "Grok Build",
+    shortName: "Grok Build",
     vendor: "xAI",
     runtimeName: "Grok Build",
     transport: "acp",
@@ -492,6 +501,7 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
   {
     provider: "custom",
     displayName: "Custom MCP agent",
+    shortName: "MCP",
     vendor: "Any MCP client",
     runtimeName: "Your MCP client",
     transport: "mcp",
@@ -545,4 +555,18 @@ export const PLATFORM_PROVIDERS: readonly PlatformProvider[] = [
 
 export function platformProvider(provider: AgentProviderId): PlatformProvider | undefined {
   return PLATFORM_PROVIDERS.find((entry) => entry.provider === provider);
+}
+
+/** What an agent this build does not ship is called. Its provider id is an internal key and never shown. */
+export const UNKNOWN_AGENT_NAME = "Unknown agent";
+
+/**
+ * The name every product surface shows for a provider — the session list,
+ * the activity timeline, a handoff, agent history, the inspector. Never a
+ * provider id: one this build does not know is an unknown agent. The visual
+ * identity (visual/identity.ts) adds the mark to this same name.
+ */
+export function providerDisplayName(provider: string | undefined | null): string {
+  if (!provider) return UNKNOWN_AGENT_NAME;
+  return PLATFORM_PROVIDERS.find((entry) => entry.provider === provider)?.displayName ?? UNKNOWN_AGENT_NAME;
 }

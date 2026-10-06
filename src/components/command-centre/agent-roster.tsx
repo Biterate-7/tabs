@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import type { CommandCentreSession } from "@/hooks/use-agent-sessions"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import { agentDisplayName } from "@/lib/agents/visual/identity"
 import type { AgentIdentity } from "@/lib/agents/platform/roster"
 import type { SequencedControlEvent } from "@/lib/agents/runtime/protocol"
 
@@ -151,7 +152,7 @@ const AgentRow = memo(function AgentRow({
       <button
         type="button"
         onClick={onOpen}
-        aria-label={`${agent.name} — ${activity}`}
+        aria-label={`${agentDisplayName(agent.provider)} — ${activity}`}
         aria-current={selected ? "true" : undefined}
         className={cn(
           "flex w-full items-start gap-2.5 py-2 pr-3 pl-3.5 text-left transition-colors duration-(--duration-fast) ease-(--ease-color)",
@@ -163,7 +164,7 @@ const AgentRow = memo(function AgentRow({
           <AgentIcon connector={agent.provider} state={state} size="xs" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-body-sm text-foreground">{agent.name}</span>
+          <span className="truncate text-body-sm text-foreground">{agentDisplayName(agent.provider)}</span>
           <span className={cn("truncate text-meta", ready ? "text-tertiary" : "text-link")}>
             {activity}
             {workspaceName ? ` · ${workspaceName}` : ""}

@@ -47,10 +47,12 @@ describe("the shipped catalogue", () => {
     expect(new Set(accents).size).toBe(accents.length);
   });
 
-  it("takes every display name from the connector descriptor rather than restating it", async () => {
+  it("takes every display name from the catalogs rather than restating it", async () => {
     const { CLAUDE_CODE_DESCRIPTOR, GEMINI_DESCRIPTOR } = await import(
       "@/lib/agents/connectors/catalog"
     );
+    const { PLATFORM_PROVIDERS } = await import("@/lib/agents/platform/catalog");
+    for (const spec of PLATFORM_PROVIDERS) expect(agentVisualIdentity(spec.provider).displayName).toBe(spec.displayName);
     expect(agentVisualIdentity("claude-code").displayName).toBe(
       CLAUDE_CODE_DESCRIPTOR.displayName
     );
@@ -83,9 +85,10 @@ describe("looking an identity up", () => {
     expect(identity.icon).toBe(FALLBACK_VISUAL_IDENTITY.icon);
   });
 
-  it("keeps an unknown provider identifiable rather than calling everything 'Agent'", () => {
-    expect(agentVisualIdentity("some-future-agent").displayName).toBe("some-future-agent");
-    expect(agentVisualIdentity("another-one").displayName).toBe("another-one");
+  it("never shows an unknown provider by its internal id", () => {
+    // A provider id is a storage key, not a name a person should read.
+    expect(agentVisualIdentity("some-future-agent").displayName).toBe("Unknown agent");
+    expect(agentVisualIdentity("another-one").displayName).toBe("Unknown agent");
   });
 
   it("falls back for undefined, null and empty ids", () => {
