@@ -94,6 +94,35 @@ states. *Handoff* is kept: developers know the word.
 **Hosted (signed out).** Honest: agents read *Unavailable here* with a reason
 and the project section says project work needs the desktop app.
 
+## What changed (product layer only)
+
+| Loop step | Change |
+|---|---|
+| Project | Fixed the "Checking" stall (re-inspect once the project sync settles). Start screen leads with "Work on *project*" (kind, branch, workspace) and offers *Connect project* when there is none. The header names the project. The panel's Project section sits right under *Working in*. *Attach/Detach* → *Connect/Disconnect*. |
+| Context | Panel ends at *Changes*: the *Session* and *Agents* debugging sections are gone. The pack's "Context" row is "Scope", so the panel no longer reads "Context / Context". |
+| Agent | One state per agent: the list uses the same gate as *Start* (a phase that proves nothing no longer reads "Not checked yet" in the warning colour, and clicking the agent opens a session, not Connect). The selected session's list row uses its fresh state. |
+| Action / Approval | The card names the task it serves and what each answer does — "Hubble keeps a copy … so you can undo. Deny: nothing changes." — and never promises undo for secret-like files. |
+| Supervise / Result / Review | **Task status** above the composer, at every width: *Working · Editing files…*, *Needs you · Approve: …* (with *Show approval*), *Done · Changed 2 files in hubble-app · +17 −6 · Tests passed*, *Failed · Gemini CLI stopped unexpectedly*. *Review changes* shows the measured diff in place; *Run tests* runs the project's own check; *Continue with…* hands off. Composer placeholders are project-first. Edited paths are no longer printed twice in the stream. |
+| Return | Each workspace remembers its last task locally. The workspace shows its project, focus and where the work was left, with *Open*; the Command Centre's start screen shows *Where you left off*. A task last seen in progress says "Last seen working", never "Working". |
+| Demo | `/welcome`'s "Command your agents" window now opens on the project session (Codex fixing sign-in): approval → measured change → checks → review → undo, with the same task status. |
+
+## Architecture
+
+No new runtime verbs, event kinds, stores on the server, or changes to the
+Context Pack, session context, Context Bridge, MCP, history or isolation.
+
+- `lib/agents/activity/outcome.ts` — `taskOutcome`, a pure reduction over the
+  session's existing records (status, events, the activity timeline, pending
+  approvals, handoffs). The same derivation feeds the app and the demo.
+- `lib/agents/command-centre/last-task.ts` — one local record per workspace
+  (`tabdump:agent-last-task:v1`, account-scoped, never synced): state,
+  headline, the one-line instruction, facts. Forgotten with its workspace.
+- `lib/product/loop-log.ts` — the loop log (`tabdump:loop-log:v1`,
+  account-scoped, never sent).
+- Components: `command-centre/task-status.tsx`,
+  `workspace/workspace-work-strip.tsx`; `ProjectChangeDiff` extracted from
+  the Action Inspector's review so both render a change the same way.
+
 ## Product validation: the local loop log
 
 `src/lib/product/loop-log.ts`. A milestone counter that never leaves the
