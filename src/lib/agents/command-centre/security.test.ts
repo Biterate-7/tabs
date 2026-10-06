@@ -38,7 +38,6 @@ const HOOK_FILES = [
   "use-agent-runtime.ts",
   "use-agent-sessions.ts",
   "use-agent-session.ts",
-  "use-agent-context.ts",
   "use-agent-projects.ts",
   "use-session-context-pack.ts",
 ].map((name) => path.join(SRC_DIR, "hooks", name))
@@ -324,10 +323,18 @@ describe("context can only be produced by the Phase E resolver", () => {
     }
   })
 
-  it("resolves through `resolveContext` and projects through `snapshotToAttachments`", () => {
-    const hook = surfaces.find((entry) => entry.file.includes("use-agent-context.ts"))!
-    expect(hook.code).toContain("resolveContext(")
-    expect(hook.code).toContain("snapshotToAttachments(")
+  it("resolves through `resolveContext`, and only the Context Pack projects what is attached", () => {
+    // One path from a selection to what an agent is sent (Hubble 1.5): the
+    // pack resolves through Phase E, and its projection is the only code in
+    // the Command Centre that makes an attachment.
+    const pack = surfaces.find((entry) => entry.file.includes("context-pack") && entry.file.endsWith("pack.ts"))!
+    expect(pack.code).toContain("resolveContext(")
+    const projection = surfaces.find((entry) => entry.file.includes("context-pack") && entry.file.endsWith("attach.ts"))!
+    expect(projection.code).toContain("createAttachment(")
+    for (const entry of surfaces) {
+      if (entry === projection) continue
+      expect(entry.code, entry.file).not.toMatch(/createAttachment\(|snapshotToAttachments\(/)
+    }
   })
 
   it("withholds local-only data: a Context Pack never asks for it", () => {

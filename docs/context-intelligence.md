@@ -174,3 +174,27 @@ itself.
   other devices).
 - A handoff to an agent without Hubble's workspace tools receives the pack's
   resources but cannot read the rest of the workspace.
+
+## With 1.6 — one context architecture
+
+1.6 (`docs/project-execution.md`) extends this design rather than sitting
+beside it: the project is one more section of the same pack, built by the
+same `buildContextPack`, delivered through the same `attach_context` /
+`create_session` gates, and recorded by the same delivery slice. When the
+two were merged for release:
+
+- **One workspace on screen.** The Command Centre derives the workspace it
+  describes once — the on-screen session's, else the one a new session would
+  start in (a request brought from a workspace, else the active one) — and
+  uses it for the brief, the pack, the project section and where a project is
+  attached. Before, the project followed the active workspace while the brief
+  and pack followed a brought request, so a request from one workspace could
+  be shown with another workspace's project.
+- **One path from a selection to an attachment.** The pre-1.5 per-call
+  resolver hook (`use-agent-context.ts`) had no callers left and was removed;
+  `sessionContextPack` → `contextPackAttachedContext` is the only way the
+  Command Centre makes what a session is sent (`command-centre/security.test.ts`
+  pins it).
+- **Kept on purpose:** `contextDeliveryState` still trusts a context id that
+  is not a pack id. `attach_context` is a protocol verb any client may send,
+  so a session can hold context no pack built.

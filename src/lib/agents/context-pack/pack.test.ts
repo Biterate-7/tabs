@@ -175,6 +175,12 @@ describe("duplicates, stale and missing resources", () => {
     expect(reaching.tabs.map((entry) => entry.id)).toEqual(["t-cap"]);
     expect(reaching.omitted.missing).toBe(1);
     expect(JSON.stringify(reaching)).not.toContain("Bank");
+    // Nor is a relationship followed out of the workspace, even from a selected tab.
+    const crossing = { ...world(), dependencies: [...world().dependencies, { id: "d-out", parentTabId: "t-tax", childTabId: "p-1", createdAt: T0 }] };
+    const linked = buildContextPack({ world: crossing, selection: tabsContext("w1", ["t-tax", "t-carbon"]) });
+    if (!linked.ok) throw new Error("expected a pack");
+    expect(linked.pack.relationships.map((relationship) => relationship.id)).toEqual(["d1"]);
+    expect(JSON.stringify(contextPackAttachedContext(linked.pack, T0))).not.toContain("p-1");
   });
 
   it("is honest about an empty workspace, and one with no collections or files", () => {

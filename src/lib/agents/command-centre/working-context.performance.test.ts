@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest"
-import { renderHook } from "@testing-library/react"
-import { useAgentContext } from "@/hooks/use-agent-context"
 import { buildContextWorld } from "./world"
+import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
+import { sessionContextPack } from "@/lib/agents/context-pack/session"
 import { describeWorkingContext, summarizeWorkingContext, tabsContext, withinWorkspace, workspaceContext } from "./working-context"
 import { describeFocus } from "@/lib/agents/session-context/focus"
 import { buildSessionContextSnapshot } from "@/lib/agents/session-context/snapshot"
 import type { Collection } from "@/lib/collections/types"
 import type { TabDependency } from "@/lib/dependencies/types"
 import type { Workspace } from "@/lib/workspace/types"
+import type { WorkingContext } from "./working-context"
 
 /**
  * Large workspaces: context work stays proportional to what was chosen, not
@@ -77,22 +78,26 @@ describe("context in a large workspace", () => {
     expect(scope).toBeLessThan(25)
   })
 
-  it("resolves what is attached by the chosen tabs, bounded whatever the workspace holds", () => {
+  it("builds what is attached for the chosen tabs, bounded whatever the workspace holds", () => {
     const world = buildContextWorld({ ownerId: null, workspaces, collections, dependencies, manualConnections: [], projects: [], agents: [], runs: [] })
-    const { result } = renderHook(() => useAgentContext({ world, localRuntimeAllowed: false }))
+    const attachedFor = (selection: WorkingContext) => {
+      const built = sessionContextPack({ world, workspaceId: "w1", selection })
+      if (!built.ok) throw new Error(`pack refused: ${built.reason}`)
+      return contextPackAttachedContext(built.pack, 0)
+    }
 
     let size = 0
-    const resolve = time(() => {
-      const outcome = result.current.resolve(chosen)
-      if (!outcome.ok || !outcome.attached) throw new Error("expected an attachment")
-      size = JSON.stringify(outcome.attached).length
+    const build = time(() => {
+      const attached = attachedFor(chosen)
+      if (!attached) throw new Error("expected an attachment")
+      size = JSON.stringify(attached).length
     }, 20)
-    expect(resolve).toBeLessThan(60)
+    expect(build).toBeLessThan(60)
     // Fifty tabs, their relationships and nothing else — never the workspace.
     expect(size).toBeLessThan(64 * 1024)
 
     // The whole workspace attaches nothing at all: the session reads it on request.
-    expect(result.current.resolve(workspaceContext("w1"))).toEqual({ ok: true, snapshot: null, attached: null })
+    expect(attachedFor(workspaceContext("w1"))).toBeNull()
   })
 
   it("reads a session's focus from its bound snapshot without walking the workspace per tab", () => {

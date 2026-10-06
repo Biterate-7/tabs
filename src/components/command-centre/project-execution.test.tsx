@@ -171,6 +171,48 @@ describe("the workspace's project", () => {
     expect(onAttachWorkspaceProject).toHaveBeenCalledWith("w-dev", null)
   })
 
+  it("is the project of the workspace on screen — a request brought from another workspace never shows the active one's", async () => {
+    const user = userEvent.setup()
+    const onAttachWorkspaceProject = vi.fn()
+    const twoWorkspaces = buildContextWorld({
+      ownerId: "owner-1",
+      workspaces: [
+        workspace("w-dev", "Development", { brief: { focus: "authentication", updatedAt: 1 }, project: { projectId: "p1", attachedAt: 1 } }),
+        workspace("w-res", "Research", { brief: { focus: "pricing", updatedAt: 1 } }),
+      ],
+      collections: [],
+      dependencies: [],
+      manualConnections: [],
+      projects: [],
+      agents: [],
+      runs: [],
+    })
+    render(
+      <CommandCentreView
+        world={twoWorkspaces}
+        onClose={vi.fn()}
+        client={runtimeWith().client}
+        poll={false}
+        activeWorkspaceId="w-dev"
+        onAttachWorkspaceProject={onAttachWorkspaceProject}
+        handoff={{ id: "h-res", context: { workspaceId: "w-res", tabIds: ["w-res-t"], collectionIds: [] }, mode: "ask", intent: "summarize" }}
+      />
+    )
+
+    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
+    const section = await projectSection()
+    // Research has no project: Development's must not be shown as this context's.
+    await waitFor(() => expect(section.getByText("No project attached")).toBeTruthy())
+    expect(section.queryByText("hubble")).toBeNull()
+    await user.click(section.getByRole("button", { name: "Attach project" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Attach a project" }))
+    await user.click(dialog.getByRole("button", { name: /hubble/ }))
+    const attach = dialog.getByRole("button", { name: "Attach project" })
+    await waitFor(() => expect((attach as HTMLButtonElement).disabled).toBe(false))
+    await user.click(attach)
+    expect(onAttachWorkspaceProject).toHaveBeenCalledWith("w-res", "p1")
+  })
+
   it("is told to the runtime as bound to its workspace", async () => {
     const runtime = runtimeWith()
     renderCentre(runtime)

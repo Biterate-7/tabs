@@ -243,12 +243,25 @@ export function CommandCentreView({
   }, [selected, session.session])
 
   /*
-    The workspace's project (Hubble 1.6): the on-screen session's workspace,
-    or the one a new session would start in. Inspected by the runtime — which
+    The context the next new session starts with — what the user brought from
+    the workspace when no session there could take it. Tied to its workspace:
+    a session started somewhere else starts with the whole of that one.
+  */
+  const [draft, setDraft] = useState<WorkingContext | null>(null)
+
+  /*
+    The workspace the Command Centre is about: the on-screen session's, else
+    the one a new session would start in — the draft's, else the active one.
+    One answer for the brief, the Context Pack, the project and where a
+    project is attached, so they can never describe different workspaces.
+  */
+  const workspaceShown = current ? workspaceIdOf(current.view) : (draft?.workspaceId ?? activeWorkspaceId)
+
+  /*
+    The workspace's project (Hubble 1.6), inspected by the runtime — which
     alone holds the path — again whenever an agent's change is measured.
   */
-  const projectWorkspaceId = current?.view.workspaceId ?? activeWorkspaceId
-  const projectWorkspace = projectWorkspaceId ? world.workspaces.find((workspace) => workspace.id === projectWorkspaceId) : undefined
+  const projectWorkspace = workspaceShown ? world.workspaces.find((workspace) => workspace.id === workspaceShown) : undefined
   const sessionProjectFiles = useMemo(
     () => (selectedSessionId ? measuredProjectFiles(session.events, selectedSessionId).map((file) => file.path) : []),
     [session.events, selectedSessionId]
@@ -567,12 +580,6 @@ export function CommandCentreView({
     [contextWorld, runtime.client, selectedSessionId, session, sessions, projectDescriptorFor]
   )
 
-  /*
-    The context the next new session starts with — what the user brought from
-    the workspace when no session there could take it. Tied to its workspace:
-    a session started somewhere else starts with the whole of that one.
-  */
-  const [draft, setDraft] = useState<WorkingContext | null>(null)
   const [draftText, setDraftText] = useState("")
   const [defaultProvider, setDefaultProvider] = useState<AgentProviderId | undefined>(undefined)
   const [firstMessage, setFirstMessage] = useState<string | undefined>(undefined)
@@ -750,7 +757,6 @@ export function CommandCentreView({
   const draftView = useMemo(() => (draft ? describeWorkingContext(draft, liveWorld) : null), [draft, liveWorld])
 
   const agentName = currentView ? agentDisplayName(currentView.provider) : "The agent"
-  const workspaceShown = currentView ? sessionWorkspaceId : (draft?.workspaceId ?? activeWorkspaceId)
   const workspaceName = workspaceNameOf(workspaceShown)
   const delivered = currentView?.focus ? currentView.focus.delivered : undefined
   const sessionChanges = useMemo(
