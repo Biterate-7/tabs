@@ -125,10 +125,11 @@ export function Composer({
             onKeyDown={handleKeyDown}
             placeholder={
               sendable
-                ? workspaceName
-                  ? `Ask ${agentName ?? "the agent"} about ${workspaceName}…`
-                  : projectName
-                    ? `Ask the agent to work on ${projectName}…`
+                ? // The project first (Stage 3): a session on code is asked for work on that code.
+                  projectName
+                  ? `Give ${agentName ?? "the agent"} a task in ${projectName}…`
+                  : workspaceName
+                    ? `Ask ${agentName ?? "the agent"} about ${workspaceName}…`
                     : "Ask the agent to work on this project…"
                 : SESSION_STATUS_DETAIL[status]
             }

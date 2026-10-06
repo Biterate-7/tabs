@@ -35,10 +35,10 @@ export type ProjectStateCopy = { label: string; title: string; detail: string; t
 
 export const PROJECT_STATE_COPY: Record<WorkspaceProjectState, ProjectStateCopy> = {
   connected: { label: "Connected", title: "Ready for agent work", detail: "Agents working here can use this project.", tone: "good" },
-  none: { label: "Not connected", title: "No project attached", detail: "Attach a project to let agents work on local files.", tone: "muted" },
+  none: { label: "Not connected", title: "No project connected", detail: "Connect a project so agents can work on its files.", tone: "muted" },
   unsupported: {
     label: "Unsupported",
-    title: "Project attachment is available in the Hubble desktop app.",
+    title: "Project work is available in the Hubble desktop app.",
     detail: "This version of Hubble can't reach files on your computer.",
     tone: "muted",
   },
@@ -55,7 +55,7 @@ export const PROJECT_STATE_COPY: Record<WorkspaceProjectState, ProjectStateCopy>
     detail: "This workspace points at a project that is no longer authorized on this device.",
     tone: "warn",
   },
-  missing: { label: "Moved or deleted", title: "Project changed", detail: "This project has moved or been deleted since it was attached.", tone: "bad" },
+  missing: { label: "Moved or deleted", title: "Project changed", detail: "This project has moved or been deleted since it was connected.", tone: "bad" },
   permission_denied: { label: "Permission denied", title: "Permission denied", detail: "Hubble doesn't have permission to access this project.", tone: "bad" },
   not_a_directory: { label: "Not a folder", title: "Project unavailable", detail: "The project's location is no longer a folder.", tone: "bad" },
   unavailable: { label: "Unavailable", title: "Project unavailable", detail: "Hubble can't access this project.", tone: "bad" },

@@ -257,7 +257,10 @@ export function ApprovalPrompt({
   pending,
   now,
   autoFocus = true,
+  task,
 }: {
+  /** The person's instruction this request serves (Stage 3), on one line — so an approval is never out of context. */
+  task?: string
   approval: RuntimeApprovalView
   /** The project's name. Falls back to nothing rather than printing an id at the user. */
   projectName?: string
@@ -310,6 +313,7 @@ export function ApprovalPrompt({
       // is an inline decision inside a stream the user may still scroll. The
       // live region is what makes it announce when it appears.
       role="group"
+      data-approval-id={approval.approvalId}
       aria-live="assertive"
       aria-label="Approval required"
       className={cn(
@@ -341,6 +345,11 @@ export function ApprovalPrompt({
         into debug output. See `permissionScopeLabel`.
       */}
       <p className="mt-2 text-body font-medium text-foreground">{approvalActionLabel(approval.action)}</p>
+      {task && (
+        <p className="mt-0.5 truncate text-meta text-tertiary" title={task}>
+          For your task <span className="text-muted-foreground">“{task}”</span>
+        </p>
+      )}
       {approval.plan ? (
         <PlanSummary
           plan={approval.plan}
@@ -420,12 +429,24 @@ export function ApprovalPrompt({
         </p>
       )}
 
+      {/* What each answer does, said before it is given (Stage 3). */}
+      {!expiry.expired && (projectChanges || command) && (
+        <p className="mt-2 text-meta text-tertiary" data-approval-consequence>
+          {projectChanges
+            ? (approval.projectFiles ?? []).some((file) => file.sensitive)
+              ? "Approve: the agent writes these files. Files that may hold secrets are never copied, so this can't be fully undone. Deny: nothing changes."
+              : `Approve: Hubble keeps a copy of ${approval.targets.length === 1 ? "the file" : "the files"} first, so you can undo the change. Deny: nothing changes.`
+            : "Approve: the command runs once, exactly as shown. Deny: nothing runs."}
+        </p>
+      )}
+
       {/* Wider than the command centre's other buttons: this is the decision
           the whole run is stopped on, and it should not be the same size as
           "Edit" in the context panel. */}
       <div className="mt-3 flex items-center gap-2">
         <Button
           ref={denyRef}
+          data-approval-deny
           type="button"
           size="sm"
           variant="secondary"

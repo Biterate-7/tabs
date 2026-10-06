@@ -83,6 +83,8 @@ import { CommandPaletteHostContext, type CommandPaletteHost } from "@/components
 import { buildGlobalCommands, mergeCommands } from "@/components/command-palette/global-commands"
 import type { Command } from "@/components/command-palette/types"
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
+import { forgetLastTask } from "@/lib/agents/command-centre/last-task"
+import { exposeLoopSummary, recordLoopMilestone, recordWorkspaceVisit } from "@/lib/product/loop-log"
 import { useOptionalAppearanceContext } from "@/components/appearance-provider"
 
 /**
@@ -196,6 +198,13 @@ export function AppShell() {
    * collects into it without leaving the workspace.
    */
   const [agentHandoff, setAgentHandoff] = useState<AgentHandoff | null>(null)
+  /** A session to open in the Command Centre — the workspace’s last task, from its "Open" (Stage 3). Consumed once. */
+  const [agentTaskSession, setAgentTaskSession] = useState<string | null>(null)
+  // The local loop log (Stage 3): coming back to Hubble is a return — counted at most once per half hour, never sent anywhere.
+  useEffect(() => {
+    exposeLoopSummary()
+    recordWorkspaceVisit()
+  }, [])
   /** Where "View" on an agent's change lands: a collection to open and bring into view. */
   const [focusCollection, setFocusCollection] = useState<{ id: string; nonce: number } | null>(null)
 
@@ -1164,12 +1173,14 @@ export function AppShell() {
     // Context collected for an agent belongs to the workspace it came from.
     setAgentHandoff((pending) => (pending && pending.context.workspaceId !== id ? null : pending))
     persist(switchWorkspace(store, id))
+    if (id !== store.currentId) recordWorkspaceVisit()
   }
 
   function handleCreateWorkspace(name: string) {
     if (!store) return
     undoSnapshotRef.current = null
     persist(createWorkspace(store, name))
+    recordLoopMilestone("workspace_created")
   }
 
   function handleRenameWorkspace(id: string, name: string) {
@@ -1192,13 +1203,16 @@ export function AppShell() {
   function handleAttachWorkspaceProject(id: string, projectId: string | null) {
     if (!store) return
     const next = setWorkspaceProject(store, id, projectId)
-    if (next !== store) persist(next)
+    if (next === store) return
+    persist(next)
+    if (projectId) recordLoopMilestone("project_connected")
   }
 
   function handleDeleteWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
     persist(deleteWorkspace(store, id))
+    forgetLastTask(id)
   }
 
   function handleImportJson(text: string) {
@@ -1412,6 +1426,8 @@ export function AppShell() {
         {...(currentWorkspace ? { activeWorkspaceId: currentWorkspace.id } : {})}
         handoff={agentHandoff}
         onHandoffConsumed={(id) => setAgentHandoff((pending) => (pending?.id === id ? null : pending))}
+        {...(agentTaskSession ? { openSessionId: agentTaskSession } : {})}
+        onOpenSessionConsumed={() => setAgentTaskSession(null)}
         onViewWorkspace={(workspaceId, collectionId) => {
           if (store.currentId !== workspaceId && store.workspaces.some((workspace) => workspace.id === workspaceId)) {
             handleSwitchWorkspace(workspaceId)
@@ -1592,6 +1608,10 @@ export function AppShell() {
             allWorkspaces={store.workspaces}
             onOpenGraph={handleOpenGraph}
             onOpenCommandCentre={() => setView("command-centre")}
+            onOpenAgentTask={(sessionId) => {
+              setAgentTaskSession(sessionId)
+              setView("command-centre")
+            }}
             graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
             graphLockedReason={readiness.label}
             organizationStatus={

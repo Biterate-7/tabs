@@ -86,12 +86,12 @@ export function WorkspaceProjectSection({
         <div className="flex shrink-0 items-center gap-1">
           {onAttach && state !== "unsupported" && (
             <Button type="button" size="xs" variant="ghost" onClick={onAttach}>
-              {project ? "Change" : "Attach project"}
+              {project ? "Change" : "Connect project"}
             </Button>
           )}
           {onDetach && project && (
-            <Button type="button" size="xs" variant="ghost" onClick={onDetach} aria-label={`Detach ${project.name} from this workspace`}>
-              Detach
+            <Button type="button" size="xs" variant="ghost" onClick={onDetach} aria-label={`Disconnect ${project.name} from this workspace`}>
+              Disconnect
             </Button>
           )}
         </div>
@@ -231,7 +231,7 @@ export function AttachProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Attach a project</DialogTitle>
+          <DialogTitle>Connect a project</DialogTitle>
           <DialogDescription>
             Agents working in {workspaceName} will work on this project. Hubble asks before any file changes.
           </DialogDescription>
@@ -254,7 +254,7 @@ export function AttachProjectDialog({
                           {project.providers.length > 0 ? project.providers.map(agentDisplayName).join(", ") : "No agents yet"}
                         </span>
                       </span>
-                      {project.id === currentProjectId && <span className="shrink-0 text-meta text-tertiary">Attached</span>}
+                      {project.id === currentProjectId && <span className="shrink-0 text-meta text-tertiary">Connected here</span>}
                     </button>
                   </li>
                 ))}
@@ -367,7 +367,7 @@ export function AttachProjectDialog({
               onOpenChange(false)
             }}
           >
-            Attach project
+            Connect project
           </Button>
         </DialogFooter>
       </DialogContent>

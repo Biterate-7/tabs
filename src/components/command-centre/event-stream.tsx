@@ -69,7 +69,9 @@ const QuietRow = memo(function QuietRow({
     ("Reviewing 12 attached tabs") untouched.
   */
   const restatesLabel =
-    event.summary.replace(/[.\s]+$/, "").toLowerCase() === presentation.label.toLowerCase()
+    event.summary.replace(/[.\s]+$/, "").toLowerCase() === presentation.label.toLowerCase() ||
+    // "Edited src/lib/session.ts … src/lib/session.ts": the path is the trailing detail; said once.
+    (event.file !== undefined && event.summary.replace(/[.\s]+$/, "").endsWith(event.file.relativePath))
 
   /*
     A tool event whose summary is only the tool name says it in words once.

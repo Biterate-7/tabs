@@ -5,7 +5,7 @@ import { Globe, KeyRound, Laptop, MessagesSquare, Monitor, ShieldCheck } from "l
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
-import { CLAUDE_SESSION, GEMINI_SESSION } from "./demo/data"
+import { CLAUDE_SESSION, CODEX_AUTH_SESSION, GEMINI_SESSION } from "./demo/data"
 import { DemoApp } from "./demo/demo-app"
 import { DemoFrame } from "./demo/demo-frame"
 import { HubbleDemoProvider } from "./demo/demo-provider"
@@ -141,13 +141,13 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
             id="command-centre"
             layout="wide"
             title="Command your agents."
-            body="Every session in one place: what you asked, what the agent did, and the one decision it is waiting on. Allow the collection Claude Code proposes, then open it in the activity to see what changed — and undo it."
+            body="Give an agent a task on your project, with the research it needs attached. Approve the exact files it wants to change, see what Hubble measured, review the diff, run the project’s checks — and come back to it tomorrow, or hand it to another agent."
             link={<MoreLink onClick={onPasteTabs}>Open the Command Centre</MoreLink>}
             stage={
               <DemoWindow
                 scheme={demoScheme}
-                label="Interactive Hubble Command Centre with sample agent sessions."
-                init={{ view: "command-centre", sidebarCollapsed: true, selectedSessionId: CLAUDE_SESSION }}
+                label="Interactive Hubble Command Centre: Codex asking to change two files in a sample project."
+                init={{ view: "command-centre", sidebarCollapsed: true, selectedSessionId: CODEX_AUTH_SESSION, contextPanelOpen: false }}
               />
             }
           />

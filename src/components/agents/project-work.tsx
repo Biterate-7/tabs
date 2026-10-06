@@ -111,50 +111,58 @@ export function ProjectChangeReviewToggle({ changeId, actions }: { changeId: str
         {open ? "Hide changes" : "Review changes"}
       </Button>
       {state.kind === "loading" && <p className="text-meta text-tertiary">Loading…</p>}
-      {state.kind === "gone" && <p className="text-meta text-tertiary">Hubble no longer holds this change, so it can&apos;t show it.</p>}
-      {state.kind === "open" && (
-        <div aria-label="Changed lines" className="flex flex-col gap-2">
-          {state.review.files.map((file) => (
-            <div key={file.path} className="min-w-0">
-              <p className="flex min-w-0 items-baseline justify-between gap-2">
-                <span className="truncate font-mono text-meta text-foreground" title={file.path}>
-                  {file.path}
-                </span>
-                {lineCountsText(file) && <span className="shrink-0 font-mono text-meta text-tertiary">{lineCountsText(file)}</span>}
-              </p>
-              {file.note ? (
-                <p className="text-meta text-tertiary">{REVIEW_NOTE_TEXT[file.note]}</p>
-              ) : (
-                <pre className="mt-0.5 max-h-72 overflow-auto rounded-sm border border-subtle bg-surface py-1 font-mono text-code">
-                  {(file.hunks ?? []).map((hunk, index) => (
-                    <div key={index}>
-                      {index > 0 && <div className="px-2 text-tertiary">⋯</div>}
-                      {hunk.lines.map((line, lineIndex) => (
-                        <div
-                          key={lineIndex}
-                          className={cn(
-                            "px-2 whitespace-pre-wrap break-all",
-                            line.sign === "+" && "bg-success/10 text-foreground",
-                            line.sign === "-" && "bg-destructive/10 text-foreground",
-                            line.sign === " " && "text-muted-foreground"
-                          )}
-                        >
-                          <span aria-hidden className="mr-2 select-none text-tertiary">
-                            {line.sign === " " ? " " : line.sign === "-" ? "−" : "+"}
-                          </span>
-                          <span className="sr-only">{line.sign === "+" ? "Added: " : line.sign === "-" ? "Removed: " : ""}</span>
-                          {line.text}
-                        </div>
-                      ))}
+      {state.kind === "gone" && <p className="text-meta text-tertiary">{PROJECT_CHANGE_GONE}</p>}
+      {state.kind === "open" && <ProjectChangeDiff review={state.review} />}
+    </div>
+  )
+}
+
+/** Said when a review is asked for and the runtime no longer holds the change. */
+export const PROJECT_CHANGE_GONE = "Hubble no longer holds this change, so it can't show it."
+
+/** A measured change, line by line — the one renderer the inspector and the task status share. */
+export function ProjectChangeDiff({ review, className }: { review: ProjectChangeReview; className?: string }) {
+  return (
+    <div aria-label="Changed lines" className={cn("flex flex-col gap-2", className)}>
+      {review.files.map((file) => (
+        <div key={file.path} className="min-w-0">
+          <p className="flex min-w-0 items-baseline justify-between gap-2">
+            <span className="truncate font-mono text-meta text-foreground" title={file.path}>
+              {file.path}
+            </span>
+            {lineCountsText(file) && <span className="shrink-0 font-mono text-meta text-tertiary">{lineCountsText(file)}</span>}
+          </p>
+          {file.note ? (
+            <p className="text-meta text-tertiary">{REVIEW_NOTE_TEXT[file.note]}</p>
+          ) : (
+            <pre className="mt-0.5 max-h-72 overflow-auto rounded-sm border border-subtle bg-surface py-1 font-mono text-code">
+              {(file.hunks ?? []).map((hunk, index) => (
+                <div key={index}>
+                  {index > 0 && <div className="px-2 text-tertiary">⋯</div>}
+                  {hunk.lines.map((line, lineIndex) => (
+                    <div
+                      key={lineIndex}
+                      className={cn(
+                        "px-2 whitespace-pre-wrap break-all",
+                        line.sign === "+" && "bg-success/10 text-foreground",
+                        line.sign === "-" && "bg-destructive/10 text-foreground",
+                        line.sign === " " && "text-muted-foreground"
+                      )}
+                    >
+                      <span aria-hidden className="mr-2 select-none text-tertiary">
+                        {line.sign === " " ? " " : line.sign === "-" ? "−" : "+"}
+                      </span>
+                      <span className="sr-only">{line.sign === "+" ? "Added: " : line.sign === "-" ? "Removed: " : ""}</span>
+                      {line.text}
                     </div>
                   ))}
-                  {file.truncated && <div className="px-2 text-tertiary">More changes not shown.</div>}
-                </pre>
-              )}
-            </div>
-          ))}
+                </div>
+              ))}
+              {file.truncated && <div className="px-2 text-tertiary">More changes not shown.</div>}
+            </pre>
+          )}
         </div>
-      )}
+      ))}
     </div>
   )
 }

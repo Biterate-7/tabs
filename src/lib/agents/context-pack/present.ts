@@ -78,7 +78,7 @@ export function contextPackRows(pack: ContextPack): ContextPackRow[] {
     },
   ];
   if (pack.workspace.focus) rows.push({ key: "focus", label: "Focus", value: pack.workspace.focus });
-  rows.push({ key: "scope", label: "Context", value: CONTEXT_SCOPE_LABEL[pack.scope] });
+  rows.push({ key: "scope", label: "Scope", value: CONTEXT_SCOPE_LABEL[pack.scope] });
 
   const whole = pack.scope === "workspace";
   if (whole) {

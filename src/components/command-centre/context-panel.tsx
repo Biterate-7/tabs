@@ -1,27 +1,24 @@
 "use client"
 
-import { AGENT_TONE_TEXT_CLASS } from "@/components/agents/agent-tone"
 import { Button } from "@/components/ui/button"
 import { SessionPackFacts, WorkingContextDetails } from "./working-context-control"
 import { WorkspaceBrief } from "./workspace-brief"
-import { providerRowState } from "@/lib/agents/command-centre/presentation"
 import { WORKSPACE_LINK_DETAIL, changeAccessLabel } from "@/lib/agents/command-centre/working-context"
 import { describeStep } from "@/lib/agents/command-centre/workspace-activity"
-import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { cn } from "@/lib/utils"
 import type { SessionPackProps, WorkingContextActions } from "./working-context-control"
 import type { WorkspaceBriefView } from "@/lib/workspace/brief"
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity"
 import type { WorkingContextView, WorkspaceLink } from "@/lib/agents/command-centre/working-context"
-import type { RuntimeSessionView, RuntimeStatus } from "@/lib/agents/runtime/protocol"
+import type { RuntimeSessionView } from "@/lib/agents/runtime/protocol"
 
 /**
  * What the agent can see, what it changed, and what this machine can do.
  *
  * ## The questions it answers, in order
  *
- * Which workspace is it working in? What is it pointed at there? What did it
- * change? Then the project, the session and the agents. Each answer comes
+ * Which workspace is it working in, and on which project? What has it been
+ * doing? What is it pointed at? What did it change? Each answer comes
  * from the runtime (the session's workspace, its focus, what it may do) or
  * from what the Command Centre itself applied — never from what was merely
  * selected — and every name is Hubble's live one.
@@ -64,7 +61,6 @@ export function ContextPanel({
   changes = [],
   onViewChange,
   projectName,
-  runtimeStatus,
   activity,
   brief,
   onSaveBrief,
@@ -88,7 +84,6 @@ export function ContextPanel({
   changes?: readonly AppliedWorkspaceChange[]
   onViewChange?: (change: AppliedWorkspaceChange) => void
   projectName?: string
-  runtimeStatus: RuntimeStatus | null
   /** The session's activity timeline, rendered by the caller (components/agents/agent-activity-timeline.tsx). */
   activity?: React.ReactNode
   /** The workspace's brief (Hubble 1.5), from live state. Absent: no workspace to describe. */
@@ -134,6 +129,20 @@ export function ContextPanel({
       </Section>
 
       {/*
+        The project is the anchor (Stage 3): what the agent works on, right
+        under where — before what it has been doing.
+      */}
+      <Section title="Project">
+        {project ? (
+          project
+        ) : projectName ? (
+          <Row label="Authorized" value={projectName} />
+        ) : (
+          <p className="text-body-sm text-tertiary">No project. The agent can read Hubble context but cannot reach files.</p>
+        )}
+      </Section>
+
+      {/*
         What the agent has been doing, second only to where: the question a
         person glancing at a working session asks first.
       */}
@@ -149,6 +158,7 @@ export function ContextPanel({
                 agentName={agentName}
                 {...(delivered !== undefined && !packState ? { delivered } : {})}
                 busy={busy}
+                eyebrow={false}
                 {...actions}
               />
             )}
@@ -184,51 +194,6 @@ export function ContextPanel({
           </ul>
         </Section>
       )}
-
-      <Section title="Project">
-        {project ? (
-          project
-        ) : projectName ? (
-          <Row label="Authorized" value={projectName} />
-        ) : (
-          <p className="text-body-sm text-tertiary">No project. The agent can read Hubble context but cannot reach files.</p>
-        )}
-      </Section>
-
-      <Section title="Session">
-        {session ? (
-          <>
-            <Row label="Runs" value={String(session.runIds.length)} />
-            <Row label="Events" value={String(session.latestSequence)} />
-            <Row label="Resumable" value={session.resumable ? "Yes" : "No"} />
-          </>
-        ) : (
-          <p className="text-body-sm text-tertiary">No session selected.</p>
-        )}
-      </Section>
-
-      {/*
-        Providers, as the runtime reports them: available, connected and
-        capable are three facts, and none is collapsed into another.
-      */}
-      <Section title="Agents">
-        {!runtimeStatus ? (
-          <p className="text-body-sm text-tertiary">Runtime not reachable.</p>
-        ) : runtimeStatus.providers.length === 0 ? (
-          <p className="text-body-sm text-tertiary">No agent providers registered here.</p>
-        ) : (
-          runtimeStatus.providers.map((provider) => (
-            <div key={provider.provider} className="flex items-baseline justify-between gap-3 py-0.5">
-              <span className="min-w-0 truncate text-label text-muted-foreground">
-                {agentDisplayName(provider.provider)}
-              </span>
-              <span className={cn("shrink-0 text-label", AGENT_TONE_TEXT_CLASS[providerRowState(provider).tone])}>
-                {providerRowState(provider).label}
-              </span>
-            </div>
-          ))
-        )}
-      </Section>
     </aside>
   )
 }

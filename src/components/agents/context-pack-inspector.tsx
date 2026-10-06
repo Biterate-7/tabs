@@ -19,7 +19,7 @@ import type { ContextDeliveryState, ContextPackRow, ContextPackRowKey } from "@/
  *     Workspace        Research
  *                      Research and organize sources for the climate…
  *     Focus            Comparing carbon-pricing approaches
- *     Context          Custom
+ *     Scope            Custom
  *     Collections      Pricing Research, Competitors
  *     Tabs             8 selected
  *     Files            None

@@ -1,5 +1,6 @@
 "use client"
 
+import { WorkspaceWorkStrip } from "./workspace-work-strip"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import {
@@ -103,6 +104,7 @@ export function WorkspaceView({
   allWorkspaces,
   onOpenGraph,
   onOpenCommandCentre,
+  onOpenAgentTask,
   graphLocked = false,
   graphLockedReason,
   organizationStatus,
@@ -132,6 +134,8 @@ export function WorkspaceView({
   onOpenGraph?: () => void
   /** Opens the agent Command Centre. Optional so surfaces that have no agent context can omit it. */
   onOpenCommandCentre?: () => void
+  /** Opens the Command Centre on an agent session — the workspace’s last task (Stage 3). */
+  onOpenAgentTask?: (sessionId: string) => void
   /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disables every graph affordance this view owns (header button, header dropdown, command palette entry). */
   graphLocked?: boolean
   /** What the graph is waiting on, used as the disabled controls' tooltip. */
@@ -1156,6 +1160,13 @@ export function WorkspaceView({
           paddingBlock: "calc(2rem * var(--tabdump-density-scale, 1))",
         }}
       >
+        {currentWorkspace && (
+          <WorkspaceWorkStrip
+            workspace={currentWorkspace}
+            {...(onOpenCommandCentre ? { onOpenCommandCentre } : {})}
+            {...(onOpenAgentTask ? { onOpenTask: onOpenAgentTask } : {})}
+          />
+        )}
         {organizationStatus}
         {autoOrganizePlan && onApplyAutoOrganize && onDismissAutoOrganize && (
           <AutoOrganizePanel
