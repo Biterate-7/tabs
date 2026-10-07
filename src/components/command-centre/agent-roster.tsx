@@ -87,6 +87,7 @@ export function AgentRoster({
                 key={agent.id}
                 agent={agent}
                 phase={platform.phaseOf(agent.provider)}
+                startable={platform.prerequisiteFor(agent.provider).ok}
                 sessionsAvailable={platform.sessionsFor(agent.provider).available}
                 latest={latest}
                 events={latest && latest.view.sessionId === selectedSessionId ? selectedEvents : []}
@@ -117,6 +118,7 @@ function latestSessionFor(
 const AgentRow = memo(function AgentRow({
   agent,
   phase,
+  startable,
   sessionsAvailable,
   latest,
   events,
@@ -126,6 +128,12 @@ const AgentRow = memo(function AgentRow({
 }: {
   agent: AgentIdentity
   phase: ReturnType<UseAgentPlatform["phaseOf"]>
+  /**
+   * Whether a session can be started with it now — the same gate Start and
+   * New session apply. A phase that proves nothing ("not checked yet") does
+   * not block it, so the row does not say it is in trouble while Start works.
+   */
+  startable: boolean
   /** False for an agent Hubble will not start sessions with; the row says so. */
   sessionsAvailable: boolean
   latest: CommandCentreSession | undefined
@@ -134,7 +142,7 @@ const AgentRow = memo(function AgentRow({
   selected: boolean
   onOpen: () => void
 }) {
-  const ready = isChatReady(phase)
+  const ready = isChatReady(phase) || startable
   // An MCP client is never started by Hubble, so it never has a session to
   // report on; what is true of it is how it reaches Hubble.
   const mcpOnly = platformProvider(agent.provider)?.chat === false

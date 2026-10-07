@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
-import { ArrowUp, Bot, ChevronLeft, RotateCw, X } from "lucide-react"
+import { ArrowUp, Bot, ChevronLeft, FolderGit2, RotateCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { AgentIcon } from "@/components/agents/agent-icon"
@@ -22,12 +22,14 @@ import { HistorySessionView } from "./history-session-view"
 import { NewSessionDialog } from "./new-session-dialog"
 import { SessionHeader } from "./session-header"
 import { SessionList } from "./session-list"
+import { TaskStatus } from "./task-status"
 import { WorkingContextChip } from "./working-context-control"
 import type { WorkingContextActions } from "./working-context-control"
 import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
 import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
 import { useAgentHistory, useHistorySession } from "@/hooks/use-agent-history"
+import { useLastTask } from "@/hooks/use-last-task"
 import { contextPackAttachedContext } from "@/lib/agents/context-pack/attach"
 import { handoffContextPack } from "@/lib/agents/context-pack/handoff"
 import { contextProvenanceOf } from "@/lib/agents/context-pack/provenance"
@@ -37,7 +39,7 @@ import { useWorkspaceProject } from "@/hooks/use-workspace-project"
 import { AttachProjectDialog, WorkspaceProjectSection } from "./workspace-project"
 import type { ProjectWorkActions } from "@/components/agents/project-work"
 import { describeProject } from "@/lib/agents/project/describe"
-import { PROJECT_STATE_COPY } from "@/lib/agents/project/present"
+import { PROJECT_STATE_COPY, projectKindLine } from "@/lib/agents/project/present"
 import { readGitStatusCounts } from "@/lib/agents/project/checks"
 import { checkRunningIn, latestGitCountsIn } from "@/lib/agents/project/changes"
 import { workspaceProjectBindings, workspaceProjectId } from "@/lib/workspace/project"
@@ -57,7 +59,7 @@ import { useCollectionStore } from "@/hooks/use-collection-store"
 import { useSessionContext } from "@/hooks/use-session-context"
 import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
-import { isChatReady, recoveryLabel, signInKind } from "@/lib/agents/platform/lifecycle"
+import { recoveryLabel, signInKind } from "@/lib/agents/platform/lifecycle"
 import type { ConnectionPhase } from "@/lib/agents/platform/lifecycle"
 import { grantWithinApproval, projectScopesForAgent } from "@/lib/agents/platform/roster"
 import { agentConnectorSurface, agentProjectFolderPicker } from "@/lib/platform"
@@ -96,6 +98,11 @@ import {
 import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { collectionsMatch } from "@/lib/collections/restore"
 import { historySessionStatus } from "@/lib/agents/activity/history"
+import { taskOutcome } from "@/lib/agents/activity/outcome"
+import { lastTaskOf, lastTaskStateLabel, rememberLastTask } from "@/lib/agents/command-centre/last-task"
+import type { LastTask } from "@/lib/agents/command-centre/last-task"
+import { formatRelativeTime } from "@/lib/time-format"
+import { recordLoopMilestone } from "@/lib/product/loop-log"
 import { UNDO_REFUSED_WORKSPACE_CHANGED } from "@/lib/agents/activity/inspector"
 import { canHandOffFrom } from "@/lib/agents/handoff/handoff"
 import { runtimeHandoffTransport } from "@/lib/agents/handoff/transport"
@@ -165,6 +172,8 @@ export function CommandCentreView({
   onViewWorkspace,
   onUpdateWorkspaceBrief,
   onAttachWorkspaceProject,
+  openSessionId,
+  onOpenSessionConsumed,
 }: {
   world: AgentContextWorld
   onClose: () => void
@@ -183,6 +192,9 @@ export function CommandCentreView({
   onUpdateWorkspaceBrief?: (workspaceId: string, brief: { description: string; focus: string }) => void
   /** Attaches a project to a workspace, or detaches with `null` (Hubble 1.6). Absent: read-only here. */
   onAttachWorkspaceProject?: (workspaceId: string, projectId: string | null) => void
+  /** A session to open on arrival — the workspace’s last task, from the workspace (Stage 3). Consumed once it is found, or known to be gone. */
+  openSessionId?: string
+  onOpenSessionConsumed?: () => void
 }) {
   const runtime = useAgentRuntime({
     ...(client ? { client } : {}),
@@ -241,6 +253,14 @@ export function CommandCentreView({
     const fresh = session.session?.sessionId === selected.view.sessionId ? session.session : null
     return fresh ? { ...selected, view: fresh } : selected
   }, [selected, session.session])
+  /*
+    The list, with the on-screen session as freshly as it is known — so its
+    row never says "Running" while its header says "Waiting for approval".
+  */
+  const listedSessions = useMemo(
+    () => (current ? sessions.sessions.map((entry) => (entry.view.sessionId === current.view.sessionId ? current : entry)) : sessions.sessions),
+    [current, sessions.sessions]
+  )
 
   /*
     The context the next new session starts with — what the user brought from
@@ -277,7 +297,9 @@ export function CommandCentreView({
     workspace: projectWorkspace,
     projects: projects.projects,
     files: sessionProjectFiles,
-    refreshKey: projectEventCount,
+    // Asked again once the runtime has been told the project: a look that
+    // raced that sync was answered "not known yet" and would stay "Checking".
+    refreshKey: `${projectEventCount}|${projects.syncState}`,
     rejected: projects.rejected,
   })
   /** A project as an agent is told it — its capabilities that agent's own, never another's. */
@@ -573,6 +595,7 @@ export function CommandCentreView({
         return false
       }
       setContextError(null)
+      recordLoopMilestone("context_changed")
       await sessions.refresh()
       if (sessionId === selectedSessionId) await session.refresh()
       return true
@@ -712,6 +735,8 @@ export function CommandCentreView({
         return
       }
       setResume(null)
+      recordLoopMilestone("session_started", { provider: input.provider })
+      if (firstMessage) recordLoopMilestone("task_submitted", { provider: input.provider })
 
       platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
       setRequestedSessionId(outcome.sessionId)
@@ -888,6 +913,71 @@ export function CommandCentreView({
     setNewSessionOpen(true)
   }, [currentProvider])
 
+  /*
+    Where the on-screen session's task stands (Stage 3) — working, needs you,
+    done, what changed, checks — from the records the timeline just read.
+  */
+  const sessionApprovals = session.approvals
+  const sessionHandoffs = session.handoffs
+  const outcome = useMemo(
+    () =>
+      currentView
+        ? taskOutcome({
+            status: currentView.status,
+            sessionId: currentView.sessionId,
+            events: sessionEvents,
+            entries: activity,
+            approvals: sessionApprovals,
+            handoffs: sessionHandoffs,
+            agentName,
+            ...(sessionProjectName ? { projectName: sessionProjectName } : {}),
+          })
+        : null,
+    [currentView, sessionEvents, activity, sessionApprovals, sessionHandoffs, agentName, sessionProjectName]
+  )
+
+  /*
+    Remembered for the workspace (where a returning person is shown it), and
+    counted in the local loop log as the task moves: approvals asked, tasks
+    finished or failed. Each milestone once per session and occurrence.
+  */
+  const outcomeSessionId = currentView?.sessionId
+  const outcomeWorkspaceId = sessionWorkspaceId
+  const outcomeProjectId = currentView?.projectId
+  const checksAvailable = Boolean(projectActions && projectActions.checks.length > 0)
+  useEffect(() => {
+    if (!outcome || !outcomeSessionId || !outcomeWorkspaceId || !currentProvider) return
+    const task = lastTaskOf({
+      workspaceId: outcomeWorkspaceId,
+      sessionId: outcomeSessionId,
+      provider: currentProvider,
+      ...(outcomeProjectId ? { projectId: outcomeProjectId } : {}),
+      outcome,
+      checksAvailable,
+    })
+    if (task) rememberLastTask(task)
+  }, [outcome, outcomeSessionId, outcomeWorkspaceId, outcomeProjectId, currentProvider, checksAvailable])
+  useEffect(() => {
+    if (!outcome || !outcomeSessionId || !currentProvider) return
+    // Counted once per approval and once per task — however often this re-reads, and across reloads.
+    if (outcome.approval) recordLoopMilestone("approval_requested", { provider: currentProvider, once: outcome.approval.approvalId })
+    if (outcome.task && (outcome.state === "done" || outcome.state === "failed")) {
+      recordLoopMilestone(outcome.state === "done" ? "task_completed" : "task_failed", {
+        provider: currentProvider,
+        once: `${outcomeSessionId}:${outcome.taskSequence}`,
+      })
+    }
+  }, [outcome, outcomeSessionId, currentProvider])
+
+  /* Brings the approval the agent is stopped on into view, with Deny — the safe default — focused. */
+  const mainRef = useRef<HTMLElement | null>(null)
+  const showApproval = useCallback((approvalId: string) => {
+    const card = mainRef.current?.querySelector<HTMLElement>(`[data-approval-id="${approvalId.replace(/["\\]/g, "\\$&")}"]`)
+    if (!card) return
+    card.scrollIntoView({ block: "nearest" })
+    card.querySelector<HTMLButtonElement>("[data-approval-deny]")?.focus({ preventScroll: true })
+  }, [])
+
 
   /* ---------------- Agent history: this workspace's past sessions. */
 
@@ -991,6 +1081,37 @@ export function CommandCentreView({
     setRequestedSessionId(sessionId)
   }, [])
 
+  /*
+    Arriving to open a particular session (the workspace’s "Open" on its last
+    task): live if this runtime holds it, else from agent history, else the
+    start screen, which says where the work was left.
+  */
+  useEffect(() => {
+    if (!openSessionId) return
+    if (runtime.loading || (runtime.executable && !sessions.listed)) return
+    /*
+      Synchronizing with an external input — a request handed over by the
+      shell — once, after the sessions it may name are known; as the
+      workspace's requests above.
+    */
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (sessions.sessions.some((entry) => entry.view.sessionId === openSessionId)) {
+      selectLiveSession(openSessionId)
+      onOpenSessionConsumed?.()
+      return
+    }
+    if (history.state.kind === "ready") {
+      const listed = history.state.sessions.find((entry) => entry.sessionId === openSessionId)
+      if (listed) selectHistorySession(listed)
+      onOpenSessionConsumed?.()
+      return
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // Still being asked: wait. Anything else (no history here, a refusal) — the start screen says where it was left.
+    if (runtime.executable && (history.state.kind === "loading" || history.state.kind === "idle")) return
+    onOpenSessionConsumed?.()
+  }, [openSessionId, runtime.loading, runtime.executable, sessions.listed, sessions.sessions, history.state, selectLiveSession, selectHistorySession, onOpenSessionConsumed])
+
   /* ---------------- Explicit handoff (Hubble 1.4): "Continue with…". */
 
   /*
@@ -1069,6 +1190,7 @@ export function CommandCentreView({
       setHandoffSource(null)
       const target = result.session
       if (!target || !source) return
+      recordLoopMilestone("handoff_started", { provider: target.provider })
       platform.recordSession(target.provider, target.sessionId, source.workspaceId)
       await sessions.refresh()
       setHistorySelection(null)
@@ -1135,6 +1257,41 @@ export function CommandCentreView({
     },
     [world.workspaces, projects.projects, workspaceProject.project?.id, workspaceProject.state]
   )
+
+  const headerProject = currentView ? projectNameOf(currentView.projectId) : shownHistory ? undefined : workspaceProject.project?.name
+
+  /* The start screen's project line (Stage 3): what an agent here would work on, and whether it can now. */
+  const startProject = useMemo(() => {
+    const project = workspaceProject.project
+    if (!project) return undefined
+    const inspection = workspaceProject.inspection
+    const detail = inspection ? projectKindLine({ ...(inspection.type ? { type: inspection.type } : {}), ...(inspection.repository ? { repository: inspection.repository } : {}) }) : undefined
+    const ready = workspaceProject.state === "connected"
+    const copy = PROJECT_STATE_COPY[workspaceProject.state]
+    return { name: project.name, ...(detail ? { detail } : {}), ready, ...(ready ? {} : { notice: `${copy.title}. ${copy.detail}` }) }
+  }, [workspaceProject.project, workspaceProject.inspection, workspaceProject.state])
+
+  /*
+    Where the developer left off here (Stage 3): the workspace's last task,
+    with its session's state now when this runtime still holds it, and a way
+    back to it — live, or from agent history.
+  */
+  const lastTask = useLastTask(workspaceShown)
+  const leftOff = useMemo(() => {
+    if (!lastTask) return undefined
+    const live = listedSessions.find((entry) => entry.view.sessionId === lastTask.sessionId)?.view
+    const listed = history.state.kind === "ready" ? history.state.sessions.find((entry) => entry.sessionId === lastTask.sessionId) : undefined
+    const liveLabel =
+      live && (live.status === "running" || live.status === "connecting")
+        ? "Working"
+        : live && (live.status === "waiting_for_approval" || live.status === "waiting_for_input")
+          ? "Needs you"
+          : live && lastTask.state !== "done"
+            ? SESSION_STATUS_LABEL[live.status]
+            : undefined
+    const onOpen = live ? () => selectLiveSession(live.sessionId) : listed ? () => selectHistorySession(listed) : undefined
+    return { task: lastTask, ...(liveLabel ? { live: liveLabel } : {}), ...(onOpen ? { onOpen } : {}) }
+  }, [lastTask, listedSessions, history.state, selectLiveSession, selectHistorySession])
 
   const activityTimeline = currentView ? (
     <AgentActivity
@@ -1283,6 +1440,13 @@ export function CommandCentreView({
             <span className="min-w-0 truncate text-body text-muted-foreground">{workspaceName}</span>
           </>
         )}
+        {/* The project the work is on (Stage 3): the session's, else the workspace's. */}
+        {headerProject && (
+          <span className="flex min-w-0 shrink items-center gap-1 text-body-sm text-tertiary max-sm:hidden" data-header-project>
+            <FolderGit2 aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">{headerProject}</span>
+          </span>
+        )}
 
         {!runtime.loading && (
           <div role="status" className="ml-auto flex min-w-0 items-center gap-2">
@@ -1314,7 +1478,7 @@ export function CommandCentreView({
       <div className="flex min-h-0 flex-1">
         <SessionList
           className={selected || shownHistory ? "max-md:hidden" : "max-md:w-full max-md:border-r-0"}
-          sessions={sessions.sessions}
+          sessions={listedSessions}
           selectedSessionId={selectedSessionId}
           projectNameOf={projectNameOf}
           workspaceNameOf={workspaceNameOf}
@@ -1340,15 +1504,14 @@ export function CommandCentreView({
         >
           <AgentRoster
             platform={platform}
-            sessions={sessions.sessions}
+            sessions={listedSessions}
             selectedSessionId={selectedSessionId}
             selectedEvents={session.events}
             workspaceNameOf={workspaceNameOf}
             onConnect={openConnect}
             onOpenAgent={(agent, latest) => {
-              const chat = platformProvider(agent.provider)?.chat === true
-              const startable =
-                chat && isChatReady(platform.phaseOf(agent.provider)) && platform.sessionsFor(agent.provider).available
+              // The same gate as Start: a phase that proves nothing does not send the person to Connect.
+              const startable = platform.prerequisiteFor(agent.provider).ok
               if (latest) selectLiveSession(latest.view.sessionId)
               else if (startable) {
                 setDefaultProvider(agent.provider)
@@ -1360,7 +1523,7 @@ export function CommandCentreView({
           />
         </SessionList>
 
-        <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !shownHistory && "max-md:hidden")}>
+        <main ref={mainRef} className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && !shownHistory && "max-md:hidden")}>
           {shownHistory && !current ? (
             <HistorySessionView
               session={shownHistory}
@@ -1436,7 +1599,11 @@ export function CommandCentreView({
                       : {})}
                     pending={session.pending}
                     now={now}
-                    onRespond={(approvalId, decision) => void session.respondToApproval(approvalId, decision)}
+                    {...(outcome?.task ? { task: outcome.task } : {})}
+                    onRespond={(approvalId, decision) => {
+                      recordLoopMilestone("approval_answered", { provider: approval.provider, approved: decision === "granted" })
+                      void session.respondToApproval(approvalId, decision)
+                    }}
                   />
                 ))}
 
@@ -1464,6 +1631,18 @@ export function CommandCentreView({
                 )}
               </EventStream>
 
+              {outcome && (
+                <TaskStatus
+                  outcome={outcome}
+                  provider={currentView.provider}
+                  {...(projectActions ? { project: projectActions } : {})}
+                  onShowApproval={() => outcome.approval && showApproval(outcome.approval.approvalId)}
+                  {...(onViewWorkspace ? { onViewWorkspaceChange: viewActivityChange } : {})}
+                  {...(canContinue ? { onContinue: continueWith } : {})}
+                  {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
+                />
+              )}
+
               <Composer
                 key={`${currentView.sessionId}:${composerSeed?.sessionId === currentView.sessionId ? composerSeed.key : ""}`}
                 status={currentView.status}
@@ -1490,7 +1669,10 @@ export function CommandCentreView({
                 onCancel={() => void session.cancelRun()}
                 // Attached context rides with the next message on its own: the
                 // runtime holds it and sends it once. Only the words go here.
-                onSend={(text) => void session.sendMessage(text)}
+                onSend={(text) => {
+                  recordLoopMilestone("task_submitted", { provider: currentView.provider })
+                  void session.sendMessage(text)
+                }}
               />
             </>
           ) : (
@@ -1498,6 +1680,10 @@ export function CommandCentreView({
               executable={runtime.executable}
               loading={runtime.loading}
               {...(workspaceName ? { workspaceName } : {})}
+              {...(startProject ? { project: startProject } : {})}
+              {...(leftOff ? { lastTask: leftOff } : {})}
+              {...(canAttach ? { onConnectProject: () => setAttachOpen(true) } : {})}
+              now={now}
               agents={startableAgents}
               defaultProvider={defaultProvider}
               initialText={draftText}
@@ -1530,7 +1716,6 @@ export function CommandCentreView({
             changes={sessionChanges}
             {...(onViewWorkspace ? { onViewChange: viewChange } : {})}
             {...(currentView && projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
-            runtimeStatus={runtime.status}
             activity={activityTimeline}
             {...(currentView ? contextActions : draftActions)}
             pack={sessionPack}
@@ -1737,14 +1922,19 @@ function refusalFor(phase: ConnectionPhase | undefined): RuntimeErrorCode {
  * The command centre before a session is open: a starting point in the
  * workspace the user came from, not a promotion.
  *
- * Says where a session would work, lets the user start typing straight away,
- * and lists the agents that could take it. It shows no invented metrics, no
- * sample conversation and no placeholder agents.
+ * Says what the work is on — the workspace's project, first, when it has one
+ * (Stage 3) — where the developer left off, lets them start typing straight
+ * away, and lists the agents that could take it. It shows no invented
+ * metrics, no sample conversation and no placeholder agents.
  */
 function CommandCentreEmptyState({
   executable,
   loading,
   workspaceName,
+  project,
+  lastTask,
+  onConnectProject,
+  now,
   agents,
   defaultProvider,
   initialText,
@@ -1756,6 +1946,13 @@ function CommandCentreEmptyState({
   executable: boolean
   loading: boolean
   workspaceName?: string
+  /** The workspace's project: its name, what it is, and whether an agent can work in it now. */
+  project?: { name: string; detail?: string; ready: boolean; notice?: string }
+  /** Where the developer left off in this workspace, with a way back to it when the session can be opened. */
+  lastTask?: { task: LastTask; live?: string; onOpen?: () => void }
+  /** Connects a project to this workspace. Absent: not possible here (and the project line says why). */
+  onConnectProject?: () => void
+  now: number
   agents: readonly StartableAgent[]
   defaultProvider?: AgentProviderId
   initialText: string
@@ -1779,13 +1976,34 @@ function CommandCentreEmptyState({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-24">
       <div className="w-full max-w-[600px]">
         <h1 className="text-statement text-foreground">
-          {workspaceName ? `Work with your ${workspaceName} workspace` : "Command Centre"}
+          {project && workspaceName ? `Work on ${project.name}` : workspaceName ? `Work with your ${workspaceName} workspace` : "Command Centre"}
         </h1>
+        {project && workspaceName && (
+          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-body-sm text-tertiary" data-start-project>
+            <FolderGit2 aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">
+              {[project.detail, `in ${workspaceName}`].filter(Boolean).join(" · ")}
+            </span>
+          </p>
+        )}
         <p className="mt-1.5 text-body text-muted-foreground">
-          {workspaceName
-            ? "Connect an agent and start working with the tabs and collections in this workspace. It sees only this workspace."
-            : "Work with your AI agents inside a Hubble workspace, on the context you choose."}
+          {project && workspaceName
+            ? `Give an agent a task. It works on ${project.name} with what ${workspaceName} holds — its brief, tabs and collections — and asks you before it changes a file.`
+            : workspaceName
+              ? "Give an agent a task with the tabs and collections in this workspace. It sees only this workspace."
+              : "Work with your AI agents inside a Hubble workspace, on the context you choose."}
         </p>
+        {project && !project.ready && project.notice && <p className="mt-1 text-body-sm text-warning">{project.notice}</p>}
+        {!project && workspaceName && onConnectProject && (
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-body-sm text-tertiary">
+            Connect a project to let agents work on its files.
+            <Button type="button" size="xs" variant="outline" onClick={onConnectProject}>
+              Connect project
+            </Button>
+          </p>
+        )}
+
+        {lastTask && <LeftOff {...lastTask} now={now} />}
 
         {loading ? (
           <p className="mt-6 text-body-sm text-tertiary">Checking the agent runtime…</p>
@@ -1813,7 +2031,9 @@ function CommandCentreEmptyState({
                 }}
                 placeholder={
                   chosen
-                    ? `Ask ${chosen.name}${workspaceName ? ` about ${workspaceName}` : ""}…`
+                    ? project
+                      ? `Give ${chosen.name} a task in ${project.name}…`
+                      : `Ask ${chosen.name}${workspaceName ? ` about ${workspaceName}` : ""}…`
                     : "Plan, research or organize anything…"
                 }
                 className="block w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground outline-none placeholder:text-tertiary"
@@ -1883,5 +2103,54 @@ function CommandCentreEmptyState({
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Where the developer left off in this workspace (Stage 3): the last task, the
+ * agent that worked on it, how it ended and what changed — so coming back is
+ * a matter of reading one card, not reopening sessions to find out.
+ */
+function LeftOff({
+  task,
+  live,
+  onOpen,
+  now,
+}: {
+  task: LastTask
+  /** The session's current state in words, when this runtime still holds it. Absent: as it was last seen. */
+  live?: string
+  onOpen?: () => void
+  now: number
+}) {
+  const when = formatRelativeTime(task.at, now)
+  return (
+    <section aria-label="Where you left off" className="mt-5 rounded-md border border-subtle bg-card px-3 py-2.5" data-left-off={task.state}>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-eyebrow text-tertiary">Where you left off</h2>
+        {when && <span className="text-meta text-tertiary">{when}</span>}
+      </div>
+      <div className="mt-1 flex min-w-0 items-center gap-2">
+        <AgentIcon connector={task.provider} size="xs" />
+        <p className="min-w-0 flex-1 truncate text-body-sm text-foreground">
+          <span className="text-muted-foreground">{agentDisplayName(task.provider)} · </span>
+          <span className={cn(task.attention && "text-link")}>{live ?? lastTaskStateLabel(task)}</span>
+          <span className="text-tertiary"> · </span>
+          {task.headline}
+        </p>
+        {onOpen && (
+          <Button type="button" size="xs" variant="secondary" onClick={onOpen}>
+            Open
+          </Button>
+        )}
+      </div>
+      {(task.task || task.facts.length > 0) && (
+        <p className="mt-0.5 truncate text-meta text-tertiary" title={task.task}>
+          {task.task && <span className="text-muted-foreground">“{task.task}”</span>}
+          {task.task && task.facts.length > 0 && " · "}
+          {task.facts.join(" · ")}
+        </p>
+      )}
+    </section>
   )
 }

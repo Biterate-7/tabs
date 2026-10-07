@@ -114,6 +114,7 @@ export function WorkingContextDetails({
   agentName,
   delivered,
   busy = false,
+  eyebrow = true,
   onRemove,
   onUseWholeWorkspace,
   onChoose,
@@ -121,6 +122,8 @@ export function WorkingContextDetails({
   view: WorkingContextView
   link: WorkspaceLink
   agentName: string
+  /** The "Context" label over the scope — off where a heading already says it. */
+  eyebrow?: boolean
   /** `false` — sent with the next message; `true` — the agent has it; absent — not attached yet (a new session). */
   delivered?: boolean
   busy?: boolean
@@ -133,7 +136,7 @@ export function WorkingContextDetails({
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <Eyebrow>Context</Eyebrow>
+          {eyebrow && <Eyebrow>Context</Eyebrow>}
           <p className="truncate text-body-sm text-foreground">{CONTEXT_SCOPE_LABEL[view.scope]}</p>
         </div>
         {!whole && onUseWholeWorkspace && (

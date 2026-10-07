@@ -1,6 +1,8 @@
 # Hubble
 
-Hubble turns a browser full of tabs into an organized workspace — and shows the AI agent runs happening inside it. It ships as a web app, a Chrome extension and a desktop app from this one codebase.
+Hubble is the persistent workspace and control layer for agentic work: the place where a developer's project, its context, the agents working on it, their actions and their results live. It ships as a web app, a Chrome extension and a desktop app from this one codebase.
+
+**The loop it is built around:** create project → establish context → delegate → supervise → review → return. Hubble's success is measured by work completed through that loop — a task given to an agent, approved, reviewed and picked up again later — not by tab count or agent count. See [docs/developer-loop.md](docs/developer-loop.md) for the loop, where each step lives in the product, and the local loop log that measures it.
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 

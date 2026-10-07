@@ -16,6 +16,8 @@ import type { HandoffTransport } from "@/lib/agents/handoff/transport"
 import { HistorySessionView } from "@/components/command-centre/history-session-view"
 import { SessionHeader } from "@/components/command-centre/session-header"
 import { SessionList } from "@/components/command-centre/session-list"
+import { TaskStatus } from "@/components/command-centre/task-status"
+import { taskOutcome } from "@/lib/agents/activity/outcome"
 import { WorkingContextChip } from "@/components/command-centre/working-context-control"
 import { IconButton } from "@/components/ui/icon-button"
 import { useHistorySessionActivity, useSessionActivity } from "@/hooks/use-agent-activity"
@@ -283,6 +285,22 @@ export function DemoCommandCentre({
     collectionName,
     ...(projectActions ? { projectLive: true } : {}),
   })
+  /* Where the task stands (Stage 3) — the Command Centre's own derivation, on the demo's records. */
+  const activityEntries = activity.entries
+  const outcome = useMemo(() => {
+    if (!selected) return null
+    const id = selected.view.sessionId
+    return taskOutcome({
+      status: selected.view.status,
+      sessionId: id,
+      events: state.events[id] ?? [],
+      entries: activityEntries,
+      approvals: state.approvals[id] ?? [],
+      handoffs: sessionHandoffs,
+      agentName,
+      ...(projectName ? { projectName } : {}),
+    })
+  }, [selected, state.events, state.approvals, activityEntries, sessionHandoffs, agentName, projectName])
   /** "View" — the workspace the change was made in, as the app's View goes there. */
   const viewChange = (change: AppliedWorkspaceChange) => {
     dispatch({ type: "switch-workspace", id: change.workspaceId })
@@ -573,6 +591,25 @@ export function DemoCommandCentre({
                 ))}
               </EventStream>
               </div>
+              {outcome && (
+                <TaskStatus
+                  outcome={outcome}
+                  provider={selected.view.provider}
+                  {...(projectActions ? { project: projectActions } : {})}
+                  onShowApproval={() => {
+                    const card = streamRef.current?.querySelector<HTMLElement>("[data-approval-id]")
+                    const scroller = streamRef.current?.firstElementChild
+                    if (!card || !(scroller instanceof HTMLElement)) return
+                    // The stream's own scroller, never scrollIntoView — which would also scroll the page.
+                    scroller.scrollTo({ top: card.offsetTop - scroller.offsetTop })
+                    card.querySelector<HTMLButtonElement>("[data-approval-deny]")?.focus({ preventScroll: true })
+                  }}
+                  onViewWorkspaceChange={viewChangeById}
+                  {...(canContinue
+                    ? { onContinue: () => setHandoffFor({ key: Date.now(), sessionId: selected.view.sessionId, transport: handoff(selected.view.sessionId) }) }
+                    : {})}
+                />
+              )}
               <Composer
                 key={selected.view.sessionId}
                 status={selected.view.status}
@@ -608,7 +645,6 @@ export function DemoCommandCentre({
             {...(delivered !== undefined ? { delivered } : {})}
             agentName={agentName}
             {...(projectName ? { projectName } : {})}
-            runtimeStatus={null}
             changes={sessionChanges}
             onViewChange={viewChange}
             {...(activityView ? { activity: activityView } : {})}

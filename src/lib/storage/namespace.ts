@@ -72,6 +72,14 @@ export const SCOPED_STORAGE_KEYS = [
   // person connected — and what they let each do — is theirs. It holds
   // identities and consent only; no credential of any kind.
   "tabdump:agent-roster:v1",
+  // Each workspace's latest agent task and how it ended (see
+  // src/lib/agents/command-centre/last-task.ts) — what a returning person is
+  // shown. Scoped: it is their instruction and their project's changes.
+  "tabdump:agent-last-task:v1",
+  // The local loop log (see src/lib/product/loop-log.ts): which milestones of
+  // the work loop this person reached, and when. Counts and kinds only, but a
+  // record of one person's use, so it partitions with the rest.
+  "tabdump:loop-log:v1",
 ] as const;
 
 /**
