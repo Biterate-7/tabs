@@ -57,6 +57,10 @@ import { useProviderConnections } from "@/hooks/use-provider-connections"
 import { useAgentPlatform } from "@/hooks/use-agent-platform"
 import { useCollectionStore } from "@/hooks/use-collection-store"
 import { useSessionContext } from "@/hooks/use-session-context"
+import { useProjectContents } from "@/hooks/use-project-contents"
+import { AgentSwitcher } from "./agent-switcher"
+import { recordProjectEvent, recordProjectTask } from "@/lib/projects/activity"
+import { contextSummary } from "@/lib/projects/state"
 import { hasUsableMcpToken, useMcpTokens } from "@/hooks/use-mcp-tokens"
 import { platformProvider } from "@/lib/agents/platform/catalog"
 import { recoveryLabel, signInKind } from "@/lib/agents/platform/lifecycle"
@@ -490,6 +494,19 @@ export function CommandCentreView({
     [onViewWorkspace, workspaceNameOf, runtime.client]
   )
 
+  /*
+    The extracted text of project sources (Hubble 2.0), loaded only for the
+    projects a live session works in and the one on screen: each session's
+    snapshot carries the content of its own selected sources, nothing more.
+  */
+  const contentWorkspaces = useMemo(() => {
+    const ids = new Set<string>()
+    for (const { view } of sessions.sessions) if (view.context && !isTerminalSession(view.status)) ids.add(view.context.workspaceId)
+    if (activeWorkspaceId) ids.add(activeWorkspaceId)
+    return world.workspaces.filter((workspace) => ids.has(workspace.id))
+  }, [sessions.sessions, activeWorkspaceId, world.workspaces])
+  const projectContents = useProjectContents(contentWorkspaces)
+
   const sessionContext = useSessionContext({
     client: runtime.client,
     sessions: sessions.sessions,
@@ -497,6 +514,7 @@ export function CommandCentreView({
     collections: collectionStore.collections,
     applyCollectionBatch: collectionStore.applyBatch,
     onApplied: handleApplied,
+    contents: projectContents,
   })
 
   /*
@@ -596,6 +614,9 @@ export function CommandCentreView({
       }
       setContextError(null)
       recordLoopMilestone("context_changed")
+      // The person chose what a task works from (Hubble 2.0): counted, never named.
+      recordLoopMilestone("context_selected")
+      if (built.pack.sources.length > 0) recordProjectEvent({ workspaceId: built.pack.workspace.id, kind: "context_selected", count: built.pack.sources.length })
       await sessions.refresh()
       if (sessionId === selectedSessionId) await session.refresh()
       return true
@@ -701,7 +722,13 @@ export function CommandCentreView({
 
       // The workspace the session works in goes with it, for the agent to
       // query; the context brought from it, if it is that workspace's.
-      const contextSnapshot = input.workspaceId ? sessionContext.snapshotFor(input.workspaceId) : undefined
+      // With the content of the sources it was given (Hubble 2.0), ranked by the first task when there is one.
+      const contextSnapshot = input.workspaceId
+        ? sessionContext.snapshotFor(input.workspaceId, {
+            selection: draft && input.workspaceId === draft.workspaceId ? draft : null,
+            ...(firstMessage ? { instruction: firstMessage } : {}),
+          })
+        : undefined
       // The new session's Context Pack: what was brought from the workspace,
       // if it is this one's, else the whole workspace — with its brief.
       const brought = input.workspaceId
@@ -736,6 +763,7 @@ export function CommandCentreView({
       }
       setResume(null)
       recordLoopMilestone("session_started", { provider: input.provider })
+      recordLoopMilestone("agent_selected", { provider: input.provider })
       if (firstMessage) recordLoopMilestone("task_submitted", { provider: input.provider })
 
       platform.recordSession(input.provider, outcome.sessionId, input.workspaceId)
@@ -941,6 +969,25 @@ export function CommandCentreView({
     counted in the local loop log as the task moves: approvals asked, tasks
     finished or failed. Each milestone once per session and occurrence.
   */
+  // What the task was given, as counts — never names or text. A string, so the effect below re-runs only when it changes.
+  const outcomeContext = sessionPack
+    ? contextSummary({
+        sources: sessionPack.sources.filter((source) => source.status === "ready").length,
+        files: sessionPack.files.length,
+        brief: Boolean(sessionPack.workspace.description || sessionPack.workspace.focus),
+        previousResult: Boolean(sessionPack.previousResult),
+      }) || undefined
+    : undefined
+  // Before a new session: what its first task would be given (the draft's pack), said on the start screen.
+  const startUsing =
+    !currentView && sessionPack
+      ? contextSummary({
+          sources: sessionPack.sources.filter((source) => source.status === "ready").length,
+          files: sessionPack.files.length,
+          brief: Boolean(sessionPack.workspace.description || sessionPack.workspace.focus),
+          previousResult: Boolean(sessionPack.previousResult),
+        }) || undefined
+      : undefined
   const outcomeSessionId = currentView?.sessionId
   const outcomeWorkspaceId = sessionWorkspaceId
   const outcomeProjectId = currentView?.projectId
@@ -955,8 +1002,12 @@ export function CommandCentreView({
       outcome,
       checksAvailable,
     })
-    if (task) rememberLastTask(task)
-  }, [outcome, outcomeSessionId, outcomeWorkspaceId, outcomeProjectId, currentProvider, checksAvailable])
+    if (task) {
+      rememberLastTask(task)
+      // The project's history (Hubble 2.0): this task, with what it was given, counted.
+      recordProjectTask(task, outcomeContext)
+    }
+  }, [outcome, outcomeSessionId, outcomeWorkspaceId, outcomeProjectId, currentProvider, checksAvailable, outcomeContext])
   useEffect(() => {
     if (!outcome || !outcomeSessionId || !currentProvider) return
     // Counted once per approval and once per task — however often this re-reads, and across reloads.
@@ -1128,11 +1179,14 @@ export function CommandCentreView({
     workspaceId: string
     projectId?: string
     transport: ReturnType<typeof runtimeHandoffTransport>
+    /** "Switch agent → Gemini" (Hubble 2.0): the preview opens already aimed at that agent. */
+    initialProvider?: AgentProviderId
   } | null>(null)
   const canContinue = Boolean(currentView && runtime.executable && sessionWorkspaceId && canHandOffFrom(currentView.status))
-  const continueWith = useCallback(() => {
+  const continueWith = useCallback((initialProvider?: AgentProviderId) => {
     if (!currentView || !sessionWorkspaceId) return
     setHandoffSource({
+      ...(initialProvider ? { initialProvider } : {}),
       key: Date.now(),
       sessionId: currentView.sessionId,
       provider: currentView.provider,
@@ -1140,7 +1194,7 @@ export function CommandCentreView({
       statusLabel: SESSION_STATUS_LABEL[currentView.status],
       workspaceId: sessionWorkspaceId,
       ...(currentView.projectId ? { projectId: currentView.projectId } : {}),
-      transport: runtimeHandoffTransport(runtime.client, currentView.sessionId, sessionContext.snapshotFor(sessionWorkspaceId)),
+      transport: runtimeHandoffTransport(runtime.client, currentView.sessionId, sessionContext.snapshotFor(sessionWorkspaceId, { selection: contextOfSession(currentView) })),
     })
   }, [currentView, runtime.client, sessionContext, sessionWorkspaceId])
   const handoffAgents = useMemo(
@@ -1191,6 +1245,12 @@ export function CommandCentreView({
       const target = result.session
       if (!target || !source) return
       recordLoopMilestone("handoff_started", { provider: target.provider })
+      recordLoopMilestone("handoff_completed", { provider: target.provider })
+      // Same project, another worker: part of the project's own history.
+      if (target.provider !== source.provider) {
+        recordLoopMilestone("agent_switched", { provider: target.provider })
+        recordProjectEvent({ workspaceId: source.workspaceId, kind: "agent_switched", provider: target.provider, fromProvider: source.provider, sessionId: target.sessionId })
+      }
       platform.recordSession(target.provider, target.sessionId, source.workspaceId)
       await sessions.refresh()
       setHistorySelection(null)
@@ -1306,7 +1366,7 @@ export function CommandCentreView({
       {...(projectActions ? { project: projectActions } : {})}
       {...(onViewWorkspace ? { onViewChange: viewActivityChange } : {})}
       {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
-      {...(canContinue ? { onContinue: continueWith } : {})}
+      {...(canContinue ? { onContinue: () => continueWith() } : {})}
       onOpenSession={openHandoffSession}
     />
   ) : null
@@ -1555,7 +1615,7 @@ export function CommandCentreView({
                 {...(projectNameOf(currentView.projectId) ? { projectName: projectNameOf(currentView.projectId) } : {})}
                 {...(workspaceName ? { workspaceName } : {})}
                 link={link}
-                {...(currentView.context ? { contextFreshness: sessionContext.freshnessOf(currentView.context) } : {})}
+                {...(currentView.context ? { contextFreshness: sessionContext.freshnessOf(currentView.context, currentView.sessionId) } : {})}
                 contextControl={
                   <WorkingContextChip
                     view={sessionContextView}
@@ -1578,6 +1638,19 @@ export function CommandCentreView({
                     {activityTimeline}
                   </ActivityPopover>
                 }
+                {...(canContinue
+                  ? {
+                      agentControl: (
+                        <AgentSwitcher
+                          current={currentView.provider}
+                          agents={handoffAgents}
+                          {...(workspaceName ? { projectName: workspaceName } : {})}
+                          onSwitch={(provider) => continueWith(provider)}
+                          onConnect={openConnect}
+                        />
+                      ),
+                    }
+                  : {})}
               />
 
               <EventStream
@@ -1638,7 +1711,7 @@ export function CommandCentreView({
                   {...(projectActions ? { project: projectActions } : {})}
                   onShowApproval={() => outcome.approval && showApproval(outcome.approval.approvalId)}
                   {...(onViewWorkspace ? { onViewWorkspaceChange: viewActivityChange } : {})}
-                  {...(canContinue ? { onContinue: continueWith } : {})}
+                  {...(canContinue ? { onContinue: () => continueWith() } : {})}
                   {...(runtime.executable ? { onNewSession: startAnotherSession } : {})}
                 />
               )}
@@ -1687,6 +1760,7 @@ export function CommandCentreView({
               agents={startableAgents}
               defaultProvider={defaultProvider}
               initialText={draftText}
+              {...(startUsing ? { using: startUsing } : {})}
               contextControl={
                 draftView ? (
                   <WorkingContextChip view={draftView} link={link} agentName="The agent" align="start" pack={sessionPack} {...draftActions} />
@@ -1867,6 +1941,7 @@ export function CommandCentreView({
           transport={handoffSource.transport}
           onStarted={(result) => void handleHandoffStarted(result)}
           packFor={handoffPackFor}
+          {...(handoffSource.initialProvider ? { initialProvider: handoffSource.initialProvider } : {})}
         />
       )}
 
@@ -1939,10 +2014,13 @@ function CommandCentreEmptyState({
   defaultProvider,
   initialText,
   contextControl,
+  using,
   onStart,
   onConnect,
   onNewSession,
 }: {
+  /** What a task started here is given, counted: "5 sources · project brief" (Hubble 2.0). Said before anything is sent. */
+  using?: string
   executable: boolean
   loading: boolean
   workspaceName?: string
@@ -1976,7 +2054,7 @@ function CommandCentreEmptyState({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-24">
       <div className="w-full max-w-[600px]">
         <h1 className="text-statement text-foreground">
-          {project && workspaceName ? `Work on ${project.name}` : workspaceName ? `Work with your ${workspaceName} workspace` : "Command Centre"}
+          {project && workspaceName ? `Work on ${project.name}` : workspaceName ? `Work on ${workspaceName}` : "Command Centre"}
         </h1>
         {project && workspaceName && (
           <p className="mt-1 flex min-w-0 items-center gap-1.5 text-body-sm text-tertiary" data-start-project>
@@ -1990,15 +2068,15 @@ function CommandCentreEmptyState({
           {project && workspaceName
             ? `Give an agent a task. It works on ${project.name} with what ${workspaceName} holds — its brief, tabs and collections — and asks you before it changes a file.`
             : workspaceName
-              ? "Give an agent a task with the tabs and collections in this workspace. It sees only this workspace."
-              : "Work with your AI agents inside a Hubble workspace, on the context you choose."}
+              ? `Give any agent a task. It works from what ${workspaceName} holds — its brief, sources, tabs and earlier results — and sees no other project.`
+              : "Work with your AI agents inside a Hubble project, on the context you choose."}
         </p>
         {project && !project.ready && project.notice && <p className="mt-1 text-body-sm text-warning">{project.notice}</p>}
         {!project && workspaceName && onConnectProject && (
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-body-sm text-tertiary">
-            Connect a project to let agents work on its files.
+            Connect a folder to let agents work on its files.
             <Button type="button" size="xs" variant="outline" onClick={onConnectProject}>
-              Connect project
+              Connect folder
             </Button>
           </p>
         )}
@@ -2033,7 +2111,9 @@ function CommandCentreEmptyState({
                   chosen
                     ? project
                       ? `Give ${chosen.name} a task in ${project.name}…`
-                      : `Ask ${chosen.name}${workspaceName ? ` about ${workspaceName}` : ""}…`
+                      : workspaceName
+                        ? `Work on ${workspaceName} — what should ${chosen.name} do?`
+                        : `Ask ${chosen.name}…`
                     : "Plan, research or organize anything…"
                 }
                 className="block w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground outline-none placeholder:text-tertiary"
@@ -2041,7 +2121,7 @@ function CommandCentreEmptyState({
               <div className="flex items-center gap-1.5 px-2 pb-2">
                 {contextControl ?? (
                   <span className="flex h-6 items-center rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
-                    <span className="text-tertiary">Context&nbsp;</span>Whole workspace
+                    <span className="text-tertiary">Context&nbsp;</span>Whole project
                   </span>
                 )}
                 <span className="min-w-0 flex-1" />
@@ -2056,6 +2136,11 @@ function CommandCentreEmptyState({
                 </Button>
               </div>
             </form>
+            {chosen && using && (
+              <p className="mt-1.5 text-meta text-muted-foreground" data-task-uses>
+                {chosen.name} will use: {using}
+              </p>
+            )}
 
             <section aria-label="Agents for this workspace" className="mt-5">
               <h2 className="text-eyebrow text-tertiary">Agents</h2>

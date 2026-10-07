@@ -43,6 +43,9 @@ const ARGS: Record<string, Record<string, unknown>> = {
   find_related_tabs: { query: "college applications", tabIds: ["p2"] },
   find_relevant_collections: { query: "physics", tabIds: ["p3", "p4"] },
   list_domains: { uncategorizedOnly: true },
+  list_sources: {},
+  read_source: { sourceId: "c1", fromPage: 1, toPage: 2 },
+  search_sources: { query: "college" },
   list_collections: {},
   get_collection: { collectionId: "col-physics" },
   preview_workspace_plan: { basedOnVersion: 1, operations: [{ kind: "create_collection", name: "College", tabIds: ["c1", "c2"] }] },
@@ -55,7 +58,18 @@ const ARGS: Record<string, Record<string, unknown>> = {
 
 async function spiedServer() {
   const registry = createSessionContextRegistry({ approve: async () => "denied" });
-  await registry.bind({ sessionId: "s1", ownerId: "local", workspaceId: "ws-student", access: "read_write", snapshot: STUDENT });
+  // One tab is a project source with extracted text (Hubble 2.0), so the source tools are called for real too.
+  const snapshot = {
+    ...STUDENT,
+    workspace: {
+      ...STUDENT.workspace,
+      tabs: STUDENT.workspace.tabs.map((tab) =>
+        tab.id === "c1" ? { ...tab, resource: { kind: "pdf" as const, origin: "chrome" as const, status: "ready" as const, addedAt: 1, updatedAt: 1, content: { chars: 40, pages: 2, extractedAt: 1 } } } : tab
+      ),
+    },
+    sources: [{ tabId: "c1", kind: "pdf" as const, pages: ["College essay notes", "Deadlines"] }],
+  };
+  await registry.bind({ sessionId: "s1", ownerId: "local", workspaceId: "ws-student", access: "read_write", snapshot });
   const writes: string[] = [];
   const scope: SessionMcpScope = {
     binding: () => registry.binding("s1"),

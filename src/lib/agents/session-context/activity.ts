@@ -90,6 +90,10 @@ export function measureAnswerPayload(payload: unknown): ContextActivityCounts {
   // A list of collections (list_collections, find_relevant_collections).
   if (Array.isArray(answer.collections)) counts.collections = answer.collections.length;
 
+  // Project sources (Hubble 2.0): a list counts its sources; one read is one source.
+  if (Array.isArray(answer.sources)) counts.tabs = answer.sources.length;
+  if (record(answer.source)) counts.tabs = 1;
+
   // Topic analysis: how many tabs it considered.
   const considered = count(answer.tabsConsidered);
   if (considered !== undefined) counts.tabs = considered;

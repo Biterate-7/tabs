@@ -61,7 +61,7 @@ describe("AppSidebar", () => {
     // switcher and onto the rows themselves: the Workspace destination
     // carries the current space's tab count, and each Spaces row carries
     // its own. Same information, attached to the thing it describes.
-    const workspaceRow = screen.getByRole("button", { name: "Workspace" });
+    const workspaceRow = screen.getByRole("button", { name: "Project" });
     expect(workspaceRow.textContent).toContain("1");
   });
 

@@ -23,6 +23,18 @@
           <p id="import-status" class="popup__muted" hidden></p>
           <ul id="tab-preview" class="popup__preview"></ul>
           <button id="dump-button" class="popup__button">Dump tabs →</button>
+
+          <section id="project-section" class="popup__project" aria-label="Add to a Hubble project" hidden>
+            <label class="popup__label" for="project-select">Add to a project</label>
+            <select id="project-select" class="popup__select">
+              <option value="">Choose a project…</option>
+            </select>
+            <div class="popup__row">
+              <button id="add-current-button" class="popup__button popup__button--secondary" disabled>Add this tab</button>
+              <button id="add-selected-button" class="popup__button popup__button--secondary" disabled hidden>Add selected tabs</button>
+            </div>
+          </section>
+          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble in a tab to add this page to one of your projects.</p>
         </div>
 
         <div id="state-dumping" class="popup__state" hidden>
@@ -31,7 +43,8 @@
         </div>
 
         <div id="state-success" class="popup__state" hidden>
-          <p class="popup__success">Dumped <span id="success-count">0</span> tabs</p>
+          <p class="popup__success" id="success-dump">Dumped <span id="success-count">0</span> tabs</p>
+          <p class="popup__success" id="success-project" hidden></p>
           <p class="popup__muted popup__detail" id="success-detail" hidden></p>
           <button id="open-button" class="popup__button">Open Hubble</button>
         </div>

@@ -58,8 +58,25 @@ function isValidEntry(entry: unknown): entry is BrowserImportEntry {
  * acked, so a batch the app silently drops can never be reported to the user
  * as a successful dump.
  */
+/**
+ * Where an import goes (Hubble 2.0): absent for an ordinary dump into the
+ * current workspace; a project for the extension's "Add to project", whose
+ * tabs become that project's sources. The page checks the project is its own.
+ */
+export type ExtensionImportTarget = { workspaceId: string; as: "sources" }
+
+/** What an import took. A bare number is a dump's count; a project add also says how many were already there. */
+export type ExtensionImportResult = number | { accepted: number; duplicates: number }
+
+function readTarget(raw: unknown): ExtensionImportTarget | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const target = raw as Record<string, unknown>
+  if (target.as !== "sources" || typeof target.workspaceId !== "string" || target.workspaceId.length === 0 || target.workspaceId.length > 200) return undefined
+  return { workspaceId: target.workspaceId, as: "sources" }
+}
+
 export function useExtensionImport(
-  onImport: (entries: BrowserImportEntry[]) => number,
+  onImport: (entries: BrowserImportEntry[], target?: ExtensionImportTarget) => ExtensionImportResult,
   ready: boolean = true
 ) {
   const onImportRef = useRef(onImport)
@@ -70,7 +87,7 @@ export function useExtensionImport(
   // must therefore re-ack (in case the first ack was the one that got lost)
   // without importing the same tabs a second time. Keyed by importId rather
   // than by content so a genuine second dump of the same tabs still counts.
-  const handledRef = useRef(new Map<string, number>())
+  const handledRef = useRef(new Map<string, { accepted: number; duplicates: number }>())
   // Deliberate "latest ref" idiom: these writes are same-render snapshot
   // assignments, not state mutations read back during this render, so they
   // can't cause the divergent-render bug the rule guards against.
@@ -89,13 +106,13 @@ export function useExtensionImport(
       if (event.source !== window) return
 
       const data = event.data as
-        | { source?: unknown; type?: unknown; payload?: { tabs?: unknown; importId?: unknown } }
+        | { source?: unknown; type?: unknown; payload?: { tabs?: unknown; importId?: unknown; target?: unknown } }
         | null
       if (!data || data.source !== BROWSER_MESSAGE_SOURCE || data.type !== MSG_TABDUMP_IMPORT) return
 
       const importId = typeof data.payload?.importId === "string" ? data.payload.importId : undefined
 
-      function ack(accepted: number) {
+      function ack({ accepted, duplicates }: { accepted: number; duplicates: number }) {
         // Acked even when nothing was accepted: the extension needs to hear
         // that this page handled the batch and came up with zero, which it
         // reports as a failure. Staying silent would instead look like the
@@ -103,7 +120,7 @@ export function useExtensionImport(
         // retry in a second tab that would come up with the same zero.
         if (importId === undefined) return
         window.postMessage(
-          { source: BROWSER_MESSAGE_SOURCE, type: MSG_TABDUMP_IMPORT_ACK, payload: { importId, accepted } },
+          { source: BROWSER_MESSAGE_SOURCE, type: MSG_TABDUMP_IMPORT_ACK, payload: { importId, accepted, ...(duplicates > 0 ? { duplicates } : {}) } },
           window.location.origin
         )
       }
@@ -128,7 +145,9 @@ export function useExtensionImport(
       // real import actually landed. Recorded here, at the one place it's
       // genuinely true, rather than guessed anywhere else.
       markExtensionConnected()
-      const accepted = entries.length === 0 ? 0 : onImportRef.current(entries) ?? 0
+      const target = readTarget(data.payload?.target)
+      const answer = entries.length === 0 ? 0 : ((target ? onImportRef.current(entries, target) : onImportRef.current(entries)) ?? 0)
+      const result = typeof answer === "number" ? { accepted: answer, duplicates: 0 } : answer
 
       if (importId !== undefined) {
         // One page can only ever see a handful of dumps, but this is a
@@ -137,9 +156,9 @@ export function useExtensionImport(
         if (handledRef.current.size >= MAX_REMEMBERED_IMPORTS) {
           handledRef.current.delete(handledRef.current.keys().next().value!)
         }
-        handledRef.current.set(importId, accepted)
+        handledRef.current.set(importId, result)
       }
-      ack(accepted)
+      ack(result)
     }
 
     window.addEventListener("message", handleMessage)

@@ -170,6 +170,14 @@ async function mountApp() {
   render(<AppShell />)
 }
 
+/**
+ * These two tests boot the whole app shell cold — the dynamic import of
+ * AppShell alone takes several seconds in jsdom, and grows with the product.
+ * They assert what lands and what the extension is told, never how fast, so
+ * they get a budget for booting rather than the 5s default.
+ */
+const COLD_APP_BOOT_MS = 30_000
+
 describe("fresh-profile dump, end to end", () => {
   it("lands the tabs in the workspace even though the page finishes hydrating after the payload was already delivered", async () => {
     const { dumpListener } = await bootExtension()
@@ -210,7 +218,7 @@ describe("fresh-profile dump, end to end", () => {
         "https://b.example/two",
       ])
     })
-  })
+  }, COLD_APP_BOOT_MS)
 
   it("reports a real failure — never a success — when the page never becomes able to ingest", async () => {
     vi.useFakeTimers()
@@ -246,7 +254,7 @@ describe("fresh-profile dump, end to end", () => {
 
     expect(await responsePromise).toMatchObject({ ok: true, accepted: 2 })
     expect(await screen.findByPlaceholderText("Search tabs...")).toBeTruthy()
-  })
+  }, COLD_APP_BOOT_MS)
 
   // The content script re-posts a held batch on every readiness
   // announcement, and readiness can land while the ack for that same batch

@@ -359,7 +359,7 @@ export function NewSessionDialog({
               {workspaceId ? (
                 <p className="text-body-sm text-muted-foreground">
                   <span className="text-tertiary">Context · </span>
-                  {contextSummaryFor?.(workspaceId) ?? "Whole workspace"}
+                  {contextSummaryFor?.(workspaceId) ?? "Whole project"}
                 </p>
               ) : (
                 <p className="text-body-sm text-tertiary">The agent won&apos;t see any of your Hubble workspaces.</p>

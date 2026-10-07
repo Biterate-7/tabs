@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
+import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import { RenameWorkspaceDialog } from "@/components/workspace/rename-workspace-dialog"
 import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-dialog"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
@@ -30,7 +31,7 @@ export function WorkspaceSwitcher({
   workspaces: Workspace[]
   currentId: string
   onSwitch: (id: string) => void
-  onCreate: (name: string) => void
+  onCreate: (name: string, brief?: NewProjectBrief) => void
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   /** Reads and hands off the raw text of a user-picked .json file. */
@@ -96,7 +97,7 @@ export function WorkspaceSwitcher({
           <DropdownMenuSeparator />
 
           <DropdownMenuItem onClick={() => setNewOpen(true)}>
-            <Plus /> New workspace
+            <Plus /> New project
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
             <Upload /> Import from JSON…

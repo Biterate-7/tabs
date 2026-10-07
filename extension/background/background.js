@@ -2,6 +2,7 @@ import {
   TABDUMP_ORIGIN,
   TABDUMP_APP_PATH,
   MSG_DUMP_TABS,
+  MSG_ADD_TO_PROJECT,
   MSG_TABDUMP_IMPORT,
   MSG_CHECK_IMPORTED,
   MSG_BROWSER_COMMAND,
@@ -224,7 +225,10 @@ async function deliverImportToTab(tabId, importId, payload, context = {}) {
       // whole point of the handshake is that "the message was accepted by
       // *something*" is not evidence the app ingested it.
       if (!response) return { delivered: false, reason: "no-ack", detail: "The Hubble page did not confirm the import." };
-      if (response.ok) return { delivered: true, accepted: Number(response.accepted) || 0 };
+      if (response.ok) {
+        const duplicates = Number(response.duplicates) || 0;
+        return { delivered: true, accepted: Number(response.accepted) || 0, ...(duplicates > 0 ? { duplicates } : {}) };
+      }
       return {
         delivered: false,
         reason: response.reason === "page-not-ready" ? "page-not-ready" : "no-ack",
@@ -392,20 +396,42 @@ function windowQuery(windowId) {
   return Number.isInteger(windowId) ? { windowId } : { currentWindow: true };
 }
 
-async function dumpTabs(excludeUrls, windowId) {
+/**
+ * Which tabs a run takes. A dump takes the whole window; "Add to project"
+ * (Hubble 2.0) takes the tab the person is looking at, or the tabs they
+ * selected (ctrl/shift-click in the tab strip — Chrome's `highlighted`).
+ */
+function scopeQuery(scope, windowId) {
+  if (scope === "current") return { ...windowQuery(windowId), active: true };
+  if (scope === "selected") return { ...windowQuery(windowId), highlighted: true };
+  return windowQuery(windowId);
+}
+
+/** A project target as the popup sent it, re-checked: an id and a name, nothing else. */
+function readTarget(target) {
+  if (!target || typeof target !== "object") return undefined;
+  const workspaceId = typeof target.workspaceId === "string" && target.workspaceId.length > 0 && target.workspaceId.length <= 200 ? target.workspaceId : undefined;
+  if (!workspaceId) return undefined;
+  const name = typeof target.name === "string" ? target.name.slice(0, 200) : "";
+  return { workspaceId, name };
+}
+
+async function dumpTabs(excludeUrls, windowId, options = {}) {
   const startedAt = Date.now();
   const importId = newImportId();
-  log("dump-started", { excludeCount: excludeUrls?.length ?? 0, importId });
+  const target = readTarget(options.target);
+  const scope = options.scope === "current" || options.scope === "selected" ? options.scope : "window";
+  log("dump-started", { excludeCount: excludeUrls?.length ?? 0, importId, scope, toProject: Boolean(target) });
 
   async function persist(patch) {
-    await setDumpState({ startedAt, importId, ...patch });
+    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...patch });
   }
 
   await persist({ status: "running", phase: DUMP_PHASE.QUERYING_TABS });
 
   let chromeTabs;
   try {
-    chromeTabs = await chrome.tabs.query(windowQuery(windowId));
+    chromeTabs = await chrome.tabs.query(scopeQuery(scope, windowId));
   } catch (err) {
     const result = { ok: false, status: "error", reason: "tab-query-failed", count: 0, detail: errorMessage(err) };
     log("tab-query-failed", result.detail);
@@ -427,7 +453,8 @@ async function dumpTabs(excludeUrls, windowId) {
     return { result };
   }
 
-  const wire = { tabs: payload.tabs };
+  // A project target travels with the batch; the page checks it names one of its own projects.
+  const wire = { tabs: payload.tabs, ...(target ? { target: { workspaceId: target.workspaceId, as: "sources" } } : {}) };
 
   // Attempt 1: an already-open, app-route Hubble tab, when there is one.
   await persist({ status: "running", phase: DUMP_PHASE.RESOLVING_TAB, ...counts });
@@ -527,14 +554,18 @@ async function dumpTabs(excludeUrls, windowId) {
     // zero usable tabs out of it. That is a failure, not a success with a
     // zero — reporting it as "Dumped 0 tabs" is exactly the kind of
     // false-positive this whole handshake exists to eliminate.
-    const nothingImported = attempt.accepted === 0;
-    const partial = !nothingImported && attempt.accepted < payload.tabs.length;
+    // Into a project, a tab that is already one of its sources is not a failure: it is already there.
+    const duplicates = target ? attempt.duplicates ?? 0 : 0;
+    const nothingImported = attempt.accepted === 0 && duplicates === 0;
+    const partial = !nothingImported && attempt.accepted + duplicates < payload.tabs.length;
 
     const result = {
       ok: !nothingImported,
       status: nothingImported ? "error" : partial ? "partial" : "done",
       ...counts,
       accepted: attempt.accepted,
+      ...(duplicates > 0 ? { alreadyInProject: duplicates } : {}),
+      ...(target ? { target } : {}),
       ...(nothingImported ? { reason: "nothing-imported" } : {}),
       focusTabId: tabId,
       focusWindowId: windowId,
@@ -561,7 +592,7 @@ function safeSendResponse(sendResponse, payload) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== MSG_DUMP_TABS) return undefined;
+  if (message?.type !== MSG_DUMP_TABS && message?.type !== MSG_ADD_TO_PROJECT) return undefined;
 
   if (activeDump) {
     log("dump-rejected-already-running", {});
@@ -569,7 +600,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  const run = dumpTabs(message.payload?.excludeUrls, message.payload?.windowId)
+  // "Add to project" (Hubble 2.0) is the same run with a scope and a target: one delivery path, one ack.
+  if (message.type === MSG_ADD_TO_PROJECT && !readTarget(message.payload?.target)) {
+    safeSendResponse(sendResponse, { ok: false, status: "error", reason: "no-project", count: 0 });
+    return true;
+  }
+  const run = (
+    message.type === MSG_ADD_TO_PROJECT
+      ? dumpTabs(undefined, message.payload?.windowId, { scope: message.payload?.scope, target: message.payload?.target })
+      : dumpTabs(message.payload?.excludeUrls, message.payload?.windowId)
+  )
     .then(({ result }) => {
       // Nothing else happens after this. Activating or focusing the Hubble
       // tab from here would close the popup the instant Chrome noticed the

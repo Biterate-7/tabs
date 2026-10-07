@@ -47,7 +47,10 @@ export function SessionHeader({
   onToggleContextPanel,
   onDispose,
   activityControl,
+  agentControl,
 }: {
+  /** Switching to another agent on the same work (Hubble 2.0). Rendered by the caller, which owns the handoff. */
+  agentControl?: React.ReactNode
   session: CommandCentreSession
   projectName?: string
   /** The session's workspace, by its live name. */
@@ -101,6 +104,8 @@ export function SessionHeader({
           {contextControl && <span className="min-w-0 max-w-64">{contextControl}</span>}
           <AgentStatusPill tone={sessionStatusTone(view.status)} label={SESSION_STATUS_LABEL[view.status]} />
         </span>
+
+        {agentControl}
 
         {activityControl}
 

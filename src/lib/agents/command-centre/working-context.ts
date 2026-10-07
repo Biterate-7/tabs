@@ -83,7 +83,7 @@ export function scopeOf(context: WorkingContext): ContextScope {
 }
 
 export const CONTEXT_SCOPE_LABEL: Record<ContextScope, string> = {
-  workspace: "Whole workspace",
+  workspace: "Whole project",
   resource: "One tab",
   selection: "Selected tabs",
   collection: "Collection",

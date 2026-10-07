@@ -4,6 +4,8 @@ Hubble is the persistent workspace and control layer for agentic work: the place
 
 **The loop it is built around:** create project → establish context → delegate → supervise → review → return. Hubble's success is measured by work completed through that loop — a task given to an agent, approved, reviewed and picked up again later — not by tab count or agent count. See [docs/developer-loop.md](docs/developer-loop.md) for the loop, where each step lives in the product, and the local loop log that measures it.
 
+**Projects (Hubble 2.0).** The project is the durable object: a person collects sources into it from Chrome — dragging a link or the address bar onto it, or using the extension's *Add to project* — and Hubble reads them (web pages, PDFs page by page, a video's details and any transcript the person adds). Any connected agent then works from that same project context, and work moves between agents with the handoff (*Switch agent*), carrying the same sources and, if the person chooses, the previous agent's answer. See [docs/project-context.md](docs/project-context.md) for the resource model, ingestion, extraction, the context flow to agents, the extension, browser limitations and how to test it.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

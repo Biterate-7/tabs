@@ -131,7 +131,7 @@ describe("a Context Pack with a project", () => {
 
   it("is what the Context Inspector shows", () => {
     const rows = contextPackRows(pack());
-    expect(rows.find((row) => row.key === "project")).toEqual({ key: "project", label: "Project", value: "Hubble", detail: "Next.js · Git main · Local · Ready" });
+    expect(rows.find((row) => row.key === "project")).toEqual({ key: "project", label: "Folder", value: "Hubble", detail: "Next.js · Git main · Local · Ready" });
     expect(rows.find((row) => row.key === "capabilities")?.items).toEqual([
       "Read files",
       "Modify files · asks first",

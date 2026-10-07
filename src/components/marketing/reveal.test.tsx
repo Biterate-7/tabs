@@ -8,11 +8,12 @@ import { REVEAL_THRESHOLD } from "./reveal"
 /** Every section below the hero, by what it is about. */
 const SECTION_TEXT = [
   "Works with the agents and tools you already use",
-  "Your context, structured.",
+  "Collect context from Chrome.",
   "Command your agents.",
   "See your work spatially.",
   "Give agents the right context.",
-  "One interface for your agents.",
+  "Project → Context → Agent → Work.",
+  "Switch agents. Keep the project.",
   "A calmer way to work with agents.",
   "Changelog",
   "Try Hubble now.",

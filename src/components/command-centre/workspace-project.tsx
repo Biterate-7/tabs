@@ -86,7 +86,7 @@ export function WorkspaceProjectSection({
         <div className="flex shrink-0 items-center gap-1">
           {onAttach && state !== "unsupported" && (
             <Button type="button" size="xs" variant="ghost" onClick={onAttach}>
-              {project ? "Change" : "Connect project"}
+              {project ? "Change" : "Connect folder"}
             </Button>
           )}
           {onDetach && project && (
@@ -231,7 +231,7 @@ export function AttachProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Connect a project</DialogTitle>
+          <DialogTitle>Connect a folder</DialogTitle>
           <DialogDescription>
             Agents working in {workspaceName} will work on this project. Hubble asks before any file changes.
           </DialogDescription>
@@ -367,7 +367,7 @@ export function AttachProjectDialog({
               onOpenChange(false)
             }}
           >
-            Connect project
+            Connect folder
           </Button>
         </DialogFooter>
       </DialogContent>

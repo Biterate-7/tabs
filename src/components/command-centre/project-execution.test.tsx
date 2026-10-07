@@ -98,7 +98,7 @@ const commandsNamed = <N extends RuntimeCommand["name"]>(runtime: ScriptedRuntim
   runtime.commands.filter((command): command is Extract<RuntimeCommand, { name: N }> => command.name === name)
 
 const panel = async () => within(await screen.findByRole("complementary", { name: "Session context" }))
-const projectSection = async () => within((await panel()).getByRole("region", { name: "Project" }))
+const projectSection = async () => within((await panel()).getByRole("region", { name: "Folder" }))
 
 beforeEach(() => {
   window.localStorage.clear()
@@ -128,7 +128,7 @@ describe("the workspace's project", () => {
     const section = await projectSection()
     await waitFor(() => expect(section.getByText("Unsupported")).toBeTruthy())
     expect(section.getByText("Project work is available in the Hubble desktop app.")).toBeTruthy()
-    expect(section.queryByRole("button", { name: "Connect project" })).toBeNull()
+    expect(section.queryByRole("button", { name: "Connect folder" })).toBeNull()
   })
 
   it("says when the project moved since it was attached, and can check again", async () => {
@@ -148,12 +148,12 @@ describe("the workspace's project", () => {
     const onAttachWorkspaceProject = vi.fn()
     renderCentre(runtimeWith(), { onAttachWorkspaceProject }, false)
     const section = await projectSection()
-    await waitFor(() => expect(section.getByText("No project connected")).toBeTruthy())
-    expect(section.getByText("Connect a project so agents can work on its files.")).toBeTruthy()
-    await user.click(section.getByRole("button", { name: "Connect project" }))
+    await waitFor(() => expect(section.getByText("No folder connected")).toBeTruthy())
+    expect(section.getByText("Connect a folder so agents can work on its files.")).toBeTruthy()
+    await user.click(section.getByRole("button", { name: "Connect folder" }))
 
-    const dialog = within(await screen.findByRole("dialog", { name: "Connect a project" }))
-    const attach = dialog.getByRole("button", { name: "Connect project" })
+    const dialog = within(await screen.findByRole("dialog", { name: "Connect a folder" }))
+    const attach = dialog.getByRole("button", { name: "Connect folder" })
     expect((attach as HTMLButtonElement).disabled).toBe(true)
     await user.click(dialog.getByRole("button", { name: /hubble/ }))
     await waitFor(() => expect(dialog.getByText("Next.js · Git main · 2 checks")).toBeTruthy())
@@ -199,15 +199,15 @@ describe("the workspace's project", () => {
       />
     )
 
-    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
     const section = await projectSection()
     // Research has no project: Development's must not be shown as this context's.
-    await waitFor(() => expect(section.getByText("No project connected")).toBeTruthy())
+    await waitFor(() => expect(section.getByText("No folder connected")).toBeTruthy())
     expect(section.queryByText("hubble")).toBeNull()
-    await user.click(section.getByRole("button", { name: "Connect project" }))
-    const dialog = within(await screen.findByRole("dialog", { name: "Connect a project" }))
+    await user.click(section.getByRole("button", { name: "Connect folder" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Connect a folder" }))
     await user.click(dialog.getByRole("button", { name: /hubble/ }))
-    const attach = dialog.getByRole("button", { name: "Connect project" })
+    const attach = dialog.getByRole("button", { name: "Connect folder" })
     await waitFor(() => expect((attach as HTMLButtonElement).disabled).toBe(false))
     await user.click(attach)
     expect(onAttachWorkspaceProject).toHaveBeenCalledWith("w-res", "p1")

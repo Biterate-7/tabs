@@ -153,7 +153,7 @@ describe("Scenario 1 — a developer opens a project's workspace", () => {
     // The context panel leads with the project, right under where.
     const panel = within(await screen.findByRole("complementary", { name: "Session context" }))
     const headings = panel.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)
-    expect(headings.slice(0, 2)).toEqual(["Working in", "Project"])
+    expect(headings.slice(0, 2)).toEqual(["Working in", "Folder"])
     // The debugging sections are gone.
     expect(headings).not.toContain("Session")
     expect(headings).not.toContain("Agents")
@@ -162,9 +162,9 @@ describe("Scenario 1 — a developer opens a project's workspace", () => {
   it("offers to connect a project when the workspace has none, and keeps the tab-only path", async () => {
     const onAttach = vi.fn()
     renderCentre(runtimeWith(), { onAttachWorkspaceProject: onAttach }, { project: false })
-    expect(await screen.findByRole("heading", { name: "Work with your Development workspace" })).toBeTruthy()
-    expect(screen.getByText(/It sees only this workspace/)).toBeTruthy()
-    const connect = await screen.findAllByRole("button", { name: "Connect project" })
+    expect(await screen.findByRole("heading", { name: "Work on Development" })).toBeTruthy()
+    expect(screen.getByText(/sees no other project/)).toBeTruthy()
+    const connect = await screen.findAllByRole("button", { name: "Connect folder" })
     expect(connect.length).toBeGreaterThan(0)
   })
 
@@ -192,7 +192,7 @@ describe("Scenario 1 — a developer opens a project's workspace", () => {
       }) as RuntimeClient["send"],
     }
     renderCentre(runtime, { client })
-    const project = within(within(await screen.findByRole("complementary", { name: "Session context" })).getByRole("region", { name: "Project" }))
+    const project = within(within(await screen.findByRole("complementary", { name: "Session context" })).getByRole("region", { name: "Folder" }))
     await waitFor(() => expect(project.getByText("Connected")).toBeTruthy())
     expect(screen.queryByText(/Checking the project/)).toBeNull()
   })

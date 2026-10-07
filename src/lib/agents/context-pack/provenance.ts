@@ -87,7 +87,7 @@ export function contextProvenanceOf(input: ContextProvenanceInput): ContextProve
       lines.push(`${name ? `${name} project` : "Its project"}${files > 0 ? ` · ${plural(files, "relevant file", "relevant files")}` : ""}`);
     }
   } else {
-    lines.push(`${workspace} · Whole workspace`);
+    lines.push(`${workspace} · Whole project`);
   }
 
   // A session started by a handoff was given what the handoff passed.

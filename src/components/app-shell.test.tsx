@@ -81,7 +81,7 @@ describe("AppShell first run", () => {
     window.localStorage.clear();
     render(<AppShell />);
 
-    const heading = await screen.findByRole("heading", { level: 1, name: /structured context for your AI agents/ });
+    const heading = await screen.findByRole("heading", { level: 1, name: /Your projects. Your context. Your agents./ });
     expect(heading).toBeTruthy();
     // The app shell itself must not be mounted underneath it — no sidebar, no
     // paste box, nothing for a stray click to reach. The landing page's live
@@ -108,7 +108,7 @@ describe("AppShell first run", () => {
     // persisted: an empty workspace belongs to the app, not to marketing.
     render(<AppShell />);
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /structured context for your AI agents/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Your projects. Your context. Your agents./ })).toBeNull();
   });
 
   it("keeps a visitor who has dumped tabs out of the landing page", async () => {
@@ -120,7 +120,7 @@ describe("AppShell first run", () => {
     render(<AppShell />);
 
     expect(await screen.findByRole("button", { name: "Switch workspace" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /structured context for your AI agents/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Your projects. Your context. Your agents./ })).toBeNull();
   });
 });
 describe("AppShell persistence", () => {
@@ -260,9 +260,9 @@ describe("AppShell workspaces", () => {
     render(<AppShell />);
 
     await openSwitcher(user);
-    await user.click(await screen.findByText("New workspace"));
-    await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.click(await screen.findByText("New project"));
+    await user.type(await screen.findByLabelText("Project name"), "Second");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     expect(await screen.findByPlaceholderText(/Paste your tabs/)).toBeTruthy();
     expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
@@ -302,9 +302,9 @@ describe("AppShell workspaces", () => {
     await dumpOneTab(user, "https://github.com/a");
 
     await openSwitcher(user);
-    await user.click(await screen.findByText("New workspace"));
-    await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.click(await screen.findByText("New project"));
+    await user.type(await screen.findByLabelText("Project name"), "Second");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     await dumpOneTab(user, "https://arxiv.org/abs/1");
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "arxiv");
@@ -323,9 +323,9 @@ describe("AppShell workspaces", () => {
     render(<AppShell />);
 
     await openSwitcher(user);
-    await user.click(await screen.findByText("New workspace"));
-    await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.click(await screen.findByText("New project"));
+    await user.type(await screen.findByLabelText("Project name"), "Second");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
 
     await openSwitcher(user);
@@ -358,9 +358,9 @@ describe("AppShell workspaces", () => {
 
     await dumpOneTab(user);
     await openSwitcher(user);
-    await user.click(await screen.findByText("New workspace"));
-    await user.type(await screen.findByPlaceholderText("Workspace name"), "Second");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.click(await screen.findByText("New project"));
+    await user.type(await screen.findByLabelText("Project name"), "Second");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     unmount();
     render(<AppShell />);

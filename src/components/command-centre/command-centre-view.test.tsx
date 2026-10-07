@@ -226,7 +226,7 @@ describe("the empty state", () => {
     renderCentre(runtime)
 
     expect(await screen.findByRole("heading", { name: /command centre/i })).toBeTruthy()
-    expect(screen.getByText(/inside a Hubble workspace/i)).toBeTruthy()
+    expect(screen.getByText(/inside a Hubble project/i)).toBeTruthy()
     expect(screen.getByText(/no sessions yet/i)).toBeTruthy()
   })
 
@@ -234,8 +234,8 @@ describe("the empty state", () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime, vi.fn(), undefined, "w1")
 
-    expect(await screen.findByRole("heading", { name: "Work with your Research workspace" })).toBeTruthy()
-    expect(screen.getByText(/It sees only this workspace/)).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
+    expect(screen.getByText(/sees no other project/)).toBeTruthy()
     const agents = screen.getByRole("region", { name: "Agents for this workspace" })
     // The connected agent, drawn with its own mark, ready to start here.
     expect(await within(agents).findByRole("button", { name: "Start with Claude Code" })).toBeTruthy()
@@ -470,7 +470,7 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
 
     await user.type(screen.getByLabelText(/^name$/i), "Hubble")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
+    await user.type(within(screen.getByRole("dialog")).getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {
@@ -488,7 +488,7 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
 
     await user.type(screen.getByLabelText(/^name$/i), "Everything")
-    await user.type(screen.getByLabelText(/^folder$/i), "/")
+    await user.type(within(screen.getByRole("dialog")).getByLabelText(/^folder$/i), "/")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     // The project is never created, so nothing can later name its id.
@@ -503,7 +503,7 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: /new agent session/i }))
     await user.click(await screen.findByRole("button", { name: /authorize a folder/i }))
     await user.type(screen.getByLabelText(/^name$/i), "Hubble")
-    await user.type(screen.getByLabelText(/^folder$/i), "/Users/me/code/hubble")
+    await user.type(within(screen.getByRole("dialog")).getByLabelText(/^folder$/i), "/Users/me/code/hubble")
     await user.click(screen.getByRole("button", { name: /^authorize$/i }))
 
     await waitFor(() => {

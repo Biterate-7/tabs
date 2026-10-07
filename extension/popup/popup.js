@@ -1,5 +1,7 @@
 import {
   MSG_DUMP_TABS,
+  MSG_ADD_TO_PROJECT,
+  TARGET_PROJECT_KEY,
   MSG_CHECK_IMPORTED,
   MSG_FOCUS_TABDUMP,
   DUMP_STATE_KEY,
@@ -26,6 +28,13 @@ const els = {
   dumpButton: document.getElementById("dump-button"),
   openButton: document.getElementById("open-button"),
   retryButton: document.getElementById("retry-button"),
+  projectSection: document.getElementById("project-section"),
+  projectSelect: document.getElementById("project-select"),
+  projectUnavailable: document.getElementById("project-unavailable"),
+  addCurrentButton: document.getElementById("add-current-button"),
+  addSelectedButton: document.getElementById("add-selected-button"),
+  successDump: document.getElementById("success-dump"),
+  successProject: document.getElementById("success-project"),
 };
 
 const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error];
@@ -46,7 +55,7 @@ let currentWindowId;
 
 // Populated once detectTabs() has learned which candidate urls are already
 // in the currently selected workspace (undefined until then, or if that
-// couldn't be determined at all — see checkAlreadyImported).
+// couldn't be determined at all — see askHubble).
 let alreadyImportedUrls;
 
 // Where to send the user once they're done reading a result: set from
@@ -83,18 +92,110 @@ function renderPreview(tabs) {
 /**
  * Asks the background worker (which relays through an already-open
  * Hubble tab's content script into the page itself) which of these urls
- * are already in the currently selected workspace. Resolves to `undefined`
- * — rather than throwing or guessing — whenever that genuinely can't be
+ * are already in the currently selected workspace — and, since Hubble 2.0,
+ * the person's projects for "Add to a project". Both are `undefined` —
+ * rather than thrown or guessed — whenever that genuinely can't be
  * determined (no Hubble tab open, or it didn't answer in time), so callers
- * can fall back to the plain "N tabs detected" wording instead of showing a
+ * fall back to the plain "N tabs detected" wording instead of showing a
  * wrong new/existing split.
  */
-async function checkAlreadyImported(urls) {
+async function askHubble(urls) {
   try {
     const response = await chrome.runtime.sendMessage({ type: MSG_CHECK_IMPORTED, payload: { urls } });
-    return response?.ok ? new Set(response.existingUrls) : undefined;
+    if (!response?.ok) return { existing: undefined, projects: undefined };
+    return { existing: new Set(response.existingUrls), projects: readProjects(response.projects) };
+  } catch {
+    return { existing: undefined, projects: undefined };
+  }
+}
+
+/** Projects as the page listed them, re-checked: an id and a name each. */
+export function readProjects(raw) {
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .filter((project) => project && typeof project.id === "string" && project.id && typeof project.name === "string")
+    .slice(0, 100)
+    .map((project) => ({ id: project.id, name: project.name.slice(0, 120) || "Untitled project", sources: Number.isInteger(project.sources) ? project.sources : 0 }));
+}
+
+// The tabs "Add to project" would take: this window's active tab, and the highlighted ones.
+let projectTabs = { current: 0, selected: 0 };
+
+async function rememberedProject() {
+  try {
+    const stored = await chrome.storage?.local?.get(TARGET_PROJECT_KEY);
+    return typeof stored?.[TARGET_PROJECT_KEY] === "string" ? stored[TARGET_PROJECT_KEY] : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function rememberProject(id) {
+  try {
+    void chrome.storage?.local?.set({ [TARGET_PROJECT_KEY]: id });
+  } catch {
+    // Not remembered: the person chooses again next time, nothing else changes.
+  }
+}
+
+async function renderProjects(projects) {
+  if (!els.projectSection) return;
+  if (!projects) {
+    els.projectSection.hidden = true;
+    if (els.projectUnavailable) els.projectUnavailable.hidden = projectTabs.current === 0;
+    return;
+  }
+  if (els.projectUnavailable) els.projectUnavailable.hidden = true;
+  els.projectSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a project…";
+  els.projectSelect.appendChild(placeholder);
+  for (const project of projects) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.sources > 0 ? `${project.name} · ${project.sources} source${project.sources === 1 ? "" : "s"}` : project.name;
+    els.projectSelect.appendChild(option);
+  }
+  // Only a project the person chose before, and that still exists.
+  const remembered = await rememberedProject();
+  els.projectSelect.value = remembered && projects.some((project) => project.id === remembered) ? remembered : "";
+  els.projectSection.hidden = projects.length === 0;
+  updateProjectButtons();
+}
+
+function updateProjectButtons() {
+  const chosen = Boolean(els.projectSelect?.value);
+  els.addCurrentButton.disabled = !chosen || projectTabs.current === 0;
+  els.addSelectedButton.hidden = projectTabs.selected < 2;
+  els.addSelectedButton.disabled = !chosen;
+  els.addSelectedButton.textContent = `Add ${projectTabs.selected} selected tabs`;
+}
+
+function chosenProject() {
+  const option = els.projectSelect?.selectedOptions?.[0];
+  if (!option || !option.value) return undefined;
+  return { workspaceId: option.value, name: option.textContent.replace(/ · \d+ sources?$/, "") };
+}
+
+let addInFlight = false;
+
+async function addToProject(scope) {
+  const target = chosenProject();
+  if (!target || addInFlight) return;
+  addInFlight = true;
+  showDumping(DUMP_PHASE.QUERYING_TABS);
+  const detachPhaseWatch = watchDumpPhase();
+  try {
+    const response = await chrome.runtime.sendMessage({ type: MSG_ADD_TO_PROJECT, payload: { windowId: currentWindowId, scope, target } });
+    detachPhaseWatch();
+    if (response?.reason === "already-running") watchForDumpCompletion(Date.now());
+    else renderDumpOutcome(response ?? {});
+  } catch (err) {
+    detachPhaseWatch();
+    showError({ message: "Lost contact with the Hubble extension. Reopen this popup to see what happened.", detail: err instanceof Error ? err.message : String(err) });
+  } finally {
+    addInFlight = false;
   }
 }
 
@@ -132,18 +233,24 @@ async function detectTabs() {
   const chromeTabs = await chrome.tabs.query({ currentWindow: true });
   currentWindowId = chromeTabs.find((tab) => Number.isInteger(tab.windowId))?.windowId;
   const payload = buildImportPayload(chromeTabs);
+  const readable = new Set(payload.tabs.map((tab) => tab.tabId));
+  projectTabs = {
+    current: chromeTabs.filter((tab) => tab.active && readable.has(tab.id)).length,
+    selected: chromeTabs.filter((tab) => tab.highlighted && readable.has(tab.id)).length,
+  };
 
   updateReadyUi(payload.tabs, undefined);
   showState(els.ready);
 
   if (payload.tabs.length === 0) return;
 
-  const existingUrls = await checkAlreadyImported(payload.tabs.map((t) => t.url));
+  const answer = await askHubble(payload.tabs.map((t) => t.url));
   // The user may have already clicked Dump by the time this resolves;
   // showState(els.ready) again would be wrong if they've moved on.
   if (els.ready.hidden) return;
-  alreadyImportedUrls = existingUrls;
-  updateReadyUi(payload.tabs, existingUrls);
+  alreadyImportedUrls = answer.existing;
+  updateReadyUi(payload.tabs, answer.existing);
+  await renderProjects(answer.projects);
 }
 
 // What the user sees while a dump is in flight, per background.js's
@@ -171,7 +278,7 @@ function showDumping(phase) {
 function describeDumpFailure(response) {
   switch (response?.reason) {
     case "no-importable-tabs":
-      return { message: "No importable tabs in this window." };
+      return { message: response.target ? "This page can't be added — Chrome's own pages aren't readable by extensions." : "No importable tabs in this window." };
     case "tab-query-failed":
       return { message: "Chrome wouldn't let Hubble read this window's tabs.", detail: response.detail };
     case "tab-open-failed":
@@ -203,9 +310,13 @@ function describeDumpFailure(response) {
       };
     case "nothing-imported":
       return {
-        message: "Hubble received the tabs but couldn't import any of them.",
+        message: response.target
+          ? `Hubble couldn't add this to ${response.target.name || "the project"} — only web pages, PDFs and videos with a web address can be sources.`
+          : "Hubble received the tabs but couldn't import any of them.",
         detail: response.detail,
       };
+    case "no-project":
+      return { message: "Choose a project to add to first." };
     case "interrupted":
       return { message: "The previous dump was interrupted before it finished. Please try again." };
     case "already-running":
@@ -284,11 +395,24 @@ function successDetail(state) {
   if (accepted < attempted) notes.push(`${attempted - accepted} couldn't be read as a link`);
   if (state.skippedRestricted) notes.push(`${state.skippedRestricted} browser page${state.skippedRestricted === 1 ? "" : "s"} skipped`);
   if (state.skippedAlreadyImported) notes.push(`${state.skippedAlreadyImported} already imported`);
+  if (state.alreadyInProject && state.accepted > 0) notes.push(`${state.alreadyInProject} already in the project`);
   return notes.join(" · ");
 }
 
 function finishWithSuccess(state) {
   els.successCount.textContent = String(state.accepted ?? state.count ?? 0);
+  // Into a project (Hubble 2.0): say where it went, and what was already there.
+  if (els.successProject && els.successDump) {
+    const toProject = Boolean(state.target);
+    els.successDump.hidden = toProject;
+    els.successProject.hidden = !toProject;
+    if (toProject) {
+      const added = state.accepted ?? 0;
+      const name = state.target.name || "your project";
+      els.successProject.textContent =
+        added > 0 ? `Added ${added} source${added === 1 ? "" : "s"} to ${name}` : `Already in ${name}`;
+    }
+  }
   const detail = successDetail(state);
   els.successDetail.textContent = detail;
   els.successDetail.hidden = !detail;
@@ -467,6 +591,12 @@ function watchDumpPhase() {
 }
 
 els.dumpButton.addEventListener("click", dumpTabs);
+els.projectSelect?.addEventListener("change", () => {
+  if (els.projectSelect.value) rememberProject(els.projectSelect.value);
+  updateProjectButtons();
+});
+els.addCurrentButton?.addEventListener("click", () => addToProject("current"));
+els.addSelectedButton?.addEventListener("click", () => addToProject("selected"));
 els.retryButton.addEventListener("click", detectTabs);
 els.openButton.addEventListener("click", () => {
   focusHubble().finally(() => window.close());

@@ -1,4 +1,4 @@
-import { Bot, Download, ExternalLink, Layers, Tag, Trash2, X } from "lucide-react"
+import { Bot, Download, ExternalLink, FolderInput, Layers, Tag, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import {
@@ -12,6 +12,8 @@ import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
 import { INTENT_LABELS } from "@/components/agents/agent-actions"
 import type { AgentIntent } from "@/lib/agents/command-centre/working-context"
+import { useProjectActions } from "@/components/project/project-actions"
+import type { Tab } from "@/lib/tabs/types"
 
 export function SelectionToolbar({
   count,
@@ -25,6 +27,7 @@ export function SelectionToolbar({
   onGatherNew,
   addToCollectionTarget,
   agentActions,
+  selectedTabs,
 }: {
   count: number
   onRecategorize: (id: CategoryId) => void
@@ -45,7 +48,10 @@ export function SelectionToolbar({
    * them without leaving. Absent outside the shell.
    */
   agentActions?: { onAsk: (intent: AgentIntent) => void; onAdd: () => void }
+  /** The selected tabs, for "Add to project" (Hubble 2.0). */
+  selectedTabs?: readonly Pick<Tab, "url" | "title" | "resource">[]
 }) {
+  const projectActions = useProjectActions()
   if (addToCollectionTarget) {
     return (
       <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-2 border-t border-border bg-popover px-3 py-3 sm:sticky sm:top-0 sm:rounded-lg sm:border sm:border-border sm:bg-primary/[0.08] sm:py-2">
@@ -69,6 +75,24 @@ export function SelectionToolbar({
       </span>
 
       <div className="ml-auto flex items-center gap-0.5 overflow-x-auto">
+        {projectActions && selectedTabs && selectedTabs.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="secondary" size="sm" className="mr-1 shrink-0">
+                  <FolderInput /> Add to project
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end">
+              {projectActions.projects.map((project) => (
+                <DropdownMenuItem key={project.id} onClick={() => projectActions.addTabs(selectedTabs, project.id)}>
+                  {project.id === projectActions.currentId ? `${project.name} — use as sources` : project.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {agentActions && (
           <DropdownMenu>
             <DropdownMenuTrigger

@@ -124,7 +124,7 @@ describe("describing it from live data", () => {
   })
 
   it("says what the chip says: a collection by name, one tab by title, otherwise counts", () => {
-    expect(summarizeWorkingContext(describeWorkingContext(workspaceContext("w1"), WORLD))).toBe("Whole workspace")
+    expect(summarizeWorkingContext(describeWorkingContext(workspaceContext("w1"), WORLD))).toBe("Whole project")
     expect(summarizeWorkingContext(describeWorkingContext(tabsContext("w1", ["w1-t2"]), WORLD))).toBe("CERN article")
     expect(summarizeWorkingContext(describeWorkingContext(tabsContext("w1", ["w1-t0", "w1-t2"]), WORLD))).toBe("2 tabs")
     expect(

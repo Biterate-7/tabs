@@ -21,6 +21,9 @@ import type { ContextResolutionFailure } from "@/lib/agents/context/resolve";
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity";
 import type { ContextScope, WorkingContext } from "@/lib/agents/command-centre/working-context";
 import type { HandoffPreviousResult } from "@/lib/agents/handoff/handoff";
+import { redactUrl } from "@/lib/agents/context/sanitize";
+import { selectedSources } from "@/lib/resources/context";
+import type { ResourceKind, ResourceStatus } from "@/lib/resources/types";
 
 /**
  * The Context Pack (Hubble 1.5): the one canonical answer to "what does
@@ -32,6 +35,7 @@ import type { HandoffPreviousResult } from "@/lib/agents/handoff/handoff";
  *     ├── collections      the ones selected, by name
  *     ├── tabs             the ones selected — titles and redacted addresses
  *     ├── relationships    between the selected tabs
+ *     ├── sources          the project sources in scope: kind, whether Hubble could read them (2.0)
  *     ├── project          the workspace's project: name, kind, Git, what the agent may do (1.6)
  *     ├── files            project files the work touched, and whether each changed since
  *     ├── recentChanges    agent changes applied in the workspace
@@ -77,6 +81,8 @@ export const CONTEXT_PACK_LIMITS = {
   relationships: 20,
   files: 20,
   recentChanges: 5,
+  /** Project sources described to an agent (Hubble 2.0). Their text is read on request, never sent here. */
+  sources: 50,
   /** A project-relative path, as the activity timeline carries it. */
   path: 300,
 } as const;
@@ -91,6 +97,8 @@ export type ContextPackWorkspace = {
   /** How much the workspace holds — what a whole-workspace session can read on request. */
   tabs: number;
   collections: number;
+  /** Project sources (Hubble 2.0). Absent: none. */
+  sources?: number;
 };
 
 export type ContextPackCollection = { id: string; name: string; tabs: number };
@@ -127,6 +135,25 @@ export type ContextPackProject = {
 };
 export type ContextPackChange = { id: string; text: string; at: number };
 
+/**
+ * A project source as an agent is told about it (Hubble 2.0): what it is and
+ * whether its text can be read — never the text itself, which the session
+ * reads on request (`read_source`) from the content its selection carries.
+ */
+export type ContextPackSource = {
+  id: string;
+  title: string;
+  kind: ResourceKind;
+  status: ResourceStatus;
+  domain?: string;
+  url?: string;
+  pages?: number;
+  /** The page's own description, bounded — page-authored, and framed as such where it is shown. */
+  summary?: string;
+  /** Why there is no text, in Hubble's words. */
+  note?: string;
+};
+
 export type ContextPack = {
   version: typeof CONTEXT_PACK_VERSION;
   workspace: ContextPackWorkspace;
@@ -135,6 +162,8 @@ export type ContextPack = {
   collections: readonly ContextPackCollection[];
   tabs: readonly ContextPackTab[];
   relationships: readonly ContextPackRelationship[];
+  /** The project sources in this selection (Hubble 2.0): the whole project's, or the selected ones. */
+  sources: readonly ContextPackSource[];
   /** The workspace's project (Hubble 1.6). Absent when none is attached. */
   project?: ContextPackProject;
   files: readonly ContextPackFile[];
@@ -340,6 +369,35 @@ export function buildContextPack(input: ContextPackInput): ContextPackResult {
       .slice(0, CONTEXT_PACK_LIMITS.relationships);
   }
 
+  // Project sources (Hubble 2.0): the selection decides which, exactly as it decides which tabs.
+  const whole = context.tabIds.length === 0 && context.collectionIds.length === 0;
+  const allSources = selectedSources(
+    workspace.tabs,
+    whole ? undefined : { tabIds: context.tabIds, collectionIds: context.collectionIds },
+    world.collections.filter((collection) => collection.workspaceId === workspace.id)
+  )
+    .map((tab): ContextPackSource => {
+      const resource = tab.resource!;
+      const redacted = redactUrl(tab.url);
+      const summary = resource.meta?.description ? sanitizeText(resource.meta.description, 160) : undefined;
+      const pages = resource.content?.pages ?? resource.meta?.pageCount;
+      return {
+        id: tab.id,
+        title: clean(sanitizeText(tab.title) ?? redacted?.url ?? tab.domain),
+        kind: resource.kind,
+        status: resource.status,
+        ...(tab.domain ? { domain: tab.domain } : {}),
+        ...(redacted ? { url: clean(redacted.url) } : {}),
+        ...(pages ? { pages } : {}),
+        ...(summary ? { summary: clean(summary) } : {}),
+        ...(resource.status !== "ready" && resource.error ? { note: clean(resource.error.message) } : {}),
+      };
+    })
+    .sort((a, b) => compareText(a.title, b.title) || compareText(a.id, b.id));
+  truncated += Math.max(0, allSources.length - CONTEXT_PACK_LIMITS.sources);
+  const sources = allSources.slice(0, CONTEXT_PACK_LIMITS.sources);
+  const sourceCount = workspace.tabs.filter((tab) => tab.resource).length;
+
   const files = normalizeFiles(input.files, input.project);
   truncated += files.truncated;
   const project = packProject(input.project);
@@ -354,11 +412,13 @@ export function buildContextPack(input: ContextPackInput): ContextPackResult {
       ...(brief.focus ? { focus: brief.focus } : {}),
       tabs: brief.tabs,
       collections: brief.collections,
+      ...(sourceCount > 0 ? { sources: sourceCount } : {}),
     },
     scope: scopeOf({ workspaceId: workspace.id, tabIds: tabs.map((tab) => tab.id), collectionIds: collections.map((entry) => entry.id) }),
     collections,
     tabs,
     relationships,
+    sources,
     ...(project ? { project } : {}),
     files: files.files,
     recentChanges: recentChangesOf(input, workspace.id),

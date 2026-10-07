@@ -119,6 +119,17 @@ describe("applied by identity", () => {
     expect(result.state.workspace.tabs.find((t) => t.id === TAB_B)?.title).toBe("Local B");
   });
 
+  it("keeps a project source's local reading when another device edits the same page", () => {
+    const local = state();
+    const resource = { kind: "pdf" as const, origin: "chrome" as const, status: "ready" as const, addedAt: T0, updatedAt: T0, content: { chars: 10, extractedAt: T0 } };
+    local.workspace.tabs[0] = { ...local.workspace.tabs[0]!, resource };
+    const renamed = applyChanges(local, [upsertTab(TAB_A, { title: "Renamed elsewhere" })]);
+    expect(renamed.state.workspace.tabs.find((t) => t.id === TAB_A)).toMatchObject({ title: "Renamed elsewhere", resource });
+    // A different address is a different source: nothing read for the old one carries over.
+    const moved = applyChanges(local, [upsertTab(TAB_A, { url: "https://example.com/elsewhere" })]);
+    expect(moved.state.workspace.tabs.find((t) => t.id === TAB_A)?.resource).toBeUndefined();
+  });
+
   it("adds an entity this device has never seen", () => {
     const fresh = "55555555-5555-4555-8555-555555555555";
     const result = applyChanges(state(), [upsertTab(fresh, { title: "New" })]);

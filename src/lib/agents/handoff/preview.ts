@@ -1,6 +1,6 @@
 import { buildAgentActivityTimeline } from "@/lib/agents/activity/timeline";
 import { focusFitsSnapshot, isEmptyFocus } from "@/lib/agents/session-context/focus";
-import { agentDisplayName, handoffFingerprint, summarizePreviousResult, workspaceContextOf } from "./handoff";
+import { agentDisplayName, finalAnswerOf, handoffFingerprint, summarizePreviousResult, workspaceContextOf } from "./handoff";
 import type { AppliedWorkspaceChange } from "@/lib/agents/command-centre/workspace-activity";
 import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { SessionFocus } from "@/lib/agents/session-context/focus";
@@ -58,7 +58,7 @@ export function prepareHandoffPreview(input: {
   });
   const context: SessionHandoff["context"] = {
     ...(snapshot ? { workspace: workspaceContextOf(snapshot, focus) } : {}),
-    previousResult: summarizePreviousResult(entries, session.status),
+    previousResult: summarizePreviousResult(entries, session.status, finalAnswerOf(input.events, session.sessionId)),
   };
   const fingerprint = handoffFingerprint({
     sourceSessionId: session.sessionId,

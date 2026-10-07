@@ -241,7 +241,7 @@ describe("the demo shows what the product derives", () => {
     expect(titles()).toContain("Created collection “SWE-bench”")
 
     // And the demo's workspace really is back as it was.
-    await user.click(frame().getByRole("button", { name: "Workspace" }))
+    await user.click(frame().getByRole("button", { name: "Project" }))
     expect(frame().queryByText("SWE-bench")).toBeNull()
   })
 
@@ -430,7 +430,7 @@ describe("the demo's project work is the product's", () => {
     const panel = within(frame().getByRole("complementary", { name: "Session context" }))
 
     // The workspace's project, as the app shows it.
-    const project = within(panel.getByRole("region", { name: "Project" }))
+    const project = within(panel.getByRole("region", { name: "Folder" }))
     expect(project.getByText("Connected")).toBeTruthy()
     expect(project.getByText("Next.js · Git main")).toBeTruthy()
     // What the agent receives names the project.

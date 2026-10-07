@@ -1,6 +1,7 @@
 import { CONTEXT_SCOPE_LABEL } from "@/lib/agents/command-centre/working-context";
 import { PROJECT_STATE_COPY, projectCapabilityLabels, projectCapabilitySummary, projectKindLine } from "@/lib/agents/project/present";
 import type { ContextPack } from "./pack";
+import { RESOURCE_KIND_LABEL } from "@/lib/resources/types";
 
 /**
  * A Context Pack in words — the one formatter every surface uses: the
@@ -21,7 +22,10 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  *     Collection · Pricing Research
  */
 export function contextPackLine(pack: ContextPack): string {
-  const parts: string[] = [CONTEXT_SCOPE_LABEL[pack.scope]];
+  const parts: string[] = [];
+  // Project sources first (Hubble 2.0): they are what a project's agent works from.
+  if (pack.sources.length > 0) parts.push(plural(pack.sources.length, "source", "sources"));
+  parts.push(CONTEXT_SCOPE_LABEL[pack.scope]);
   if (pack.scope === "workspace") {
     parts.push(plural(pack.workspace.tabs, "tab", "tabs"), plural(pack.workspace.collections, "collection", "collections"));
   } else {
@@ -35,6 +39,7 @@ export function contextPackLine(pack: ContextPack): string {
 }
 
 export type ContextPackRowKey =
+  | "sources"
   | "workspace"
   | "focus"
   | "scope"
@@ -72,13 +77,30 @@ export function contextPackRows(pack: ContextPack): ContextPackRow[] {
   const rows: ContextPackRow[] = [
     {
       key: "workspace",
-      label: "Workspace",
+      label: "Project",
       value: pack.workspace.name,
       ...(pack.workspace.description ? { detail: pack.workspace.description } : {}),
     },
   ];
-  if (pack.workspace.focus) rows.push({ key: "focus", label: "Focus", value: pack.workspace.focus });
+  if (pack.workspace.focus) rows.push({ key: "focus", label: "Goal", value: pack.workspace.focus });
   rows.push({ key: "scope", label: "Scope", value: CONTEXT_SCOPE_LABEL[pack.scope] });
+  // Project sources (Hubble 2.0): named, with whether the agent can read each one's text.
+  if (pack.sources.length > 0 || pack.workspace.sources) {
+    const readable = pack.sources.filter((source) => source.status === "ready").length;
+    rows.push(
+      pack.sources.length > 0
+        ? {
+            key: "sources",
+            label: "Sources",
+            value: `${pack.sources.length} · ${readable} readable`,
+            items: pack.sources.map(
+              (source) =>
+                `${source.title} · ${RESOURCE_KIND_LABEL[source.kind]}${source.status === "ready" ? (source.pages ? ` · ${plural(source.pages, "page", "pages")}` : " · text") : source.status === "pending" || source.status === "processing" ? " · still reading" : " · no text"}`
+            ),
+          }
+        : { key: "sources", label: "Sources", value: "None selected", empty: true }
+    );
+  }
 
   const whole = pack.scope === "workspace";
   if (whole) {
@@ -116,14 +138,14 @@ export function contextPackRows(pack: ContextPack): ContextPackRow[] {
     const kind = projectKindLine({ ...(project.type ? { type: project.type } : {}), ...(project.repository ? { repository: project.repository } : {}) });
     const where = project.location === "local" ? "Local" : "Sandbox";
     const state = project.state ? (project.state === "ready" ? "Ready" : PROJECT_STATE_COPY[project.state].label) : undefined;
-    rows.push({ key: "project", label: "Project", value: project.name, detail: [kind, where, state].filter(Boolean).join(" · ") });
+    rows.push({ key: "project", label: "Folder", value: project.name, detail: [kind, where, state].filter(Boolean).join(" · ") });
     rows.push(
       project.capabilities.length > 0
         ? { key: "capabilities", label: "Agent may", ...projectCapabilitySummary(project.capabilities), items: projectCapabilityLabels(project.capabilities) }
         : { key: "capabilities", label: "Agent may", value: "Nothing in the project", empty: true }
     );
   } else {
-    rows.push({ key: "project", label: "Project", value: "None", empty: true });
+    rows.push({ key: "project", label: "Folder", value: "None", empty: true });
   }
 
   rows.push(

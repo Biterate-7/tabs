@@ -30,7 +30,17 @@ export type LoopMilestone =
   | "task_failed"
   | "handoff_started"
   | "result_reviewed"
-  | "check_run";
+  | "check_run"
+  // Hubble 2.0 — the project loop: Chrome → project → context → agent.
+  | "project_created"
+  | "resource_added"
+  | "resource_ready"
+  | "resource_failed"
+  | "context_selected"
+  | "agent_selected"
+  | "agent_switched"
+  | "handoff_completed"
+  | "project_returned";
 
 export const LOOP_MILESTONES: readonly LoopMilestone[] = [
   "workspace_created",
@@ -46,6 +56,15 @@ export const LOOP_MILESTONES: readonly LoopMilestone[] = [
   "handoff_started",
   "result_reviewed",
   "check_run",
+  "project_created",
+  "resource_added",
+  "resource_ready",
+  "resource_failed",
+  "context_selected",
+  "agent_selected",
+  "agent_switched",
+  "handoff_completed",
+  "project_returned",
 ];
 
 export type LoopRecord = {
