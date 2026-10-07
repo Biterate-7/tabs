@@ -68,7 +68,7 @@ export type ProjectHomeProps = {
 /**
  * A project's home (Hubble 2.0): what it is about, where the work was left,
  * what the agents have to work from, and its sources — with the whole page a
- * drop target for links and tabs dragged from Chrome.
+ * drop target for links and the address bar dragged from Chrome (Chrome does not expose its tab strip to a page).
  *
  *     History IA
  *     Investigating the Cuban Missile Crisis …     Goal: a strong argument …
@@ -238,7 +238,7 @@ export function ProjectHome(props: ProjectHomeProps) {
             )}
           </div>
         </div>
-        <p className="hidden text-meta text-tertiary md:block">Drag tabs, links or the address bar from Chrome anywhere onto this page to add them.</p>
+        <p className="hidden text-meta text-tertiary md:block">Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs.</p>
         {dropNotice && (
           <p role="alert" className="flex items-center gap-2 text-body-sm text-destructive">
             {dropNotice}
@@ -272,7 +272,7 @@ export function ProjectHome(props: ProjectHomeProps) {
         <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-strong p-5" data-project-empty>
           <p className="text-h2 text-foreground">Start by adding context.</p>
           <p className="max-w-prose text-body text-muted-foreground">
-            Drag tabs or links from Chrome here, or add their addresses. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.
+            Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.
           </p>
           <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
             <Plus /> Add source

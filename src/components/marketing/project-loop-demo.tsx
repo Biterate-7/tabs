@@ -87,7 +87,7 @@ export function ProjectLoopDemo() {
             Context <span className="text-muted-foreground">· {step.sources} sources</span>
           </p>
           {step.sources === 0 ? (
-            <div className="m-small mt-1 rounded-md border border-dashed border-border p-4 text-center text-muted-foreground">Drag tabs from Chrome here</div>
+            <div className="m-small mt-1 rounded-md border border-dashed border-border p-4 text-center text-muted-foreground">Drag a link from Chrome here</div>
           ) : (
             <ul className="flex flex-col gap-1.5">
               {SOURCES.slice(0, step.sources).map((source) => (
