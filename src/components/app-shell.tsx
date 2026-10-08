@@ -68,6 +68,11 @@ import { useExtensionImport } from "@/hooks/use-extension-import"
 import type { ExtensionImportResult, ExtensionImportTarget } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
 import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
+import { useDesktopImport } from "@/hooks/use-desktop-import"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
+import { desktopImport } from "@/lib/platform"
+import { outcomeFromIngestion, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
+import { DesktopImportDialog, type DesktopImportChoice } from "@/components/desktop-import-dialog"
 import { useAutoOrganize } from "@/hooks/use-auto-organize"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
 import { describeOrganizationStage } from "@/lib/organize/lifecycle"
@@ -1196,6 +1201,11 @@ export function AppShell() {
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
   // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
   const quickAdd = useExtensionQuickAdd({ workspaces: store?.workspaces, currentWorkspaceId: currentWorkspace?.id })
+  // Chrome → Hubble Desktop (handleDesktopImport below): batches the extension sent straight to this app.
+  const isDesktopShell = useIsDesktop()
+  const desktopImports = useDesktopImport(isDesktopShell ? desktopImport() : undefined, hydrated && store !== null, () =>
+    toast.info("Tabs from Chrome weren't added", { description: "No project was chosen in time. Add them again from Chrome." })
+  )
 
   /*
     Project sources (Hubble 2.0): read in the background, written back
@@ -1242,6 +1252,40 @@ export function AppShell() {
     }
     notifySourcesAdded(workspaceId, name, result.plan, counts)
     return result.plan.outcomes
+  }
+
+  /*
+    Chrome → Hubble Desktop: tabs the extension sent straight to this app
+    (src-tauri/src/import_bridge.rs). Rust holds each batch until this store
+    can take it; the person picks a project in DesktopImportDialog, and the
+    batch goes through handleAddSources — the same pipeline, duplicate rule,
+    persistence and toast as a drop or the extension's "Add to project" on
+    the web. Nothing on the web: there is no bridge there.
+  */
+  function handleDesktopImport(request: DesktopImportRequest, choice: DesktopImportChoice): boolean {
+    let latest = storeRef.current
+    if (!latest) return false
+    let workspaceId: string
+    if ("newProject" in choice) {
+      latest = persist(createWorkspace(latest, choice.newProject))
+      workspaceId = latest.currentId
+      recordLoopMilestone("project_created")
+      recordProjectEvent({ workspaceId, kind: "project_created" })
+    } else {
+      if (!latest.workspaces.some((workspace) => workspace.id === choice.workspaceId)) return false
+      workspaceId = choice.workspaceId
+    }
+    const outcomes = handleAddSources(workspaceId, request.tabs, "extension")
+    desktopImports.answer(request.requestId, outcomeFromIngestion(request, outcomes, workspaceNamed(workspaceId)))
+    // Land on the project the tabs went to, so they are seen arriving.
+    const after = storeRef.current
+    if (after && after.currentId !== workspaceId) {
+      setAgentHandoff((pending) => (pending && pending.context.workspaceId !== workspaceId ? null : pending))
+      persist(switchWorkspace(after, workspaceId))
+      recordWorkspaceVisit()
+    }
+    setView("workspace")
+    return true
   }
 
   function workspaceTabById(workspaceId: string, tabId: string | undefined): Tab | undefined {
@@ -1545,6 +1589,18 @@ export function AppShell() {
 
   if (!hydrated || !store || !currentWorkspace) return null
 
+  // Chrome → Hubble Desktop: the project choice for a batch the extension sent (see useDesktopImport above).
+  const desktopImportDialog = desktopImports.current ? (
+    <DesktopImportDialog
+      key={desktopImports.current.requestId}
+      request={desktopImports.current}
+      projects={store.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name.trim() || "Untitled project" }))}
+      currentProjectId={store.currentId}
+      onAdd={handleDesktopImport}
+      onCancel={(request) => desktopImports.answer(request.requestId, { status: "cancelled", added: 0, duplicates: 0, failed: 0 })}
+    />
+  ) : null
+
   // A first-time visitor gets Hubble's public landing page, full-bleed: no
   // sidebar, no content-width clamp, none of the workspace chrome that means
   // nothing to someone who has not dumped anything yet.
@@ -1559,7 +1615,13 @@ export function AppShell() {
   // still lands in the store and the next render swaps straight through to the
   // real app without the landing page having to know it happened.
   if (!onboarded && store.workspaces.every((w) => w.tabs.length === 0)) {
-    return <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
+    return (
+      <>
+        <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
+        {/* Tabs sent from Chrome on a first launch still get their choice. */}
+        {desktopImportDialog}
+      </>
+    )
   }
 
   /*
@@ -1780,6 +1842,7 @@ export function AppShell() {
         commands={paletteOpen ? mergeCommands(globalCommands, contributedCommands) : []}
         placeholder="Search tabs, workspaces, agents and commands…"
       />
+      {desktopImportDialog}
       <NewWorkspaceDialog
         open={newWorkspaceOpen}
         onOpenChange={setNewWorkspaceOpen}

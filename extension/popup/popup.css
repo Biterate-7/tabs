@@ -302,3 +302,28 @@ body {
 .popup__state p[hidden] {
   display: none;
 }
+
+/* ---- Hubble Desktop, above Hubble Web once it has been seen ------------ */
+.popup__desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgb(var(--fg-rgb) / 0.1);
+}
+
+.popup__subheading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.popup__subheading .popup__muted {
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.popup__desktop[hidden] {
+  display: none;
+}

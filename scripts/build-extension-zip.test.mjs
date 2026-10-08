@@ -52,7 +52,13 @@ function entryTextIn(entries, name) {
 function bakedOrigin(entries) {
   const manifest = JSON.parse(entryTextIn(entries, "manifest.json"));
   const configOrigin = entryTextIn(entries, "src/config.js").match(/TABDUMP_ORIGIN = "([^"]+)"/)?.[1];
-  expect(manifest.host_permissions).toEqual([`${configOrigin}/*`]);
+  // The Hubble origin, then the Hubble Desktop bridge's loopback ports — which no build ever rewrites.
+  expect(manifest.host_permissions).toEqual([
+    `${configOrigin}/*`,
+    "http://127.0.0.1:41517/*",
+    "http://127.0.0.1:41518/*",
+    "http://127.0.0.1:41519/*",
+  ]);
   expect(manifest.content_scripts[0].matches).toEqual([`${configOrigin}/*`]);
   return configOrigin;
 }
