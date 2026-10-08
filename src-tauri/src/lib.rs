@@ -5,13 +5,18 @@
 //! shared frontend (`src/`), exactly as they do on the web — the desktop
 //! build ships that same code as a static export. What lives here is only
 //! what a webview cannot do for itself: open a saved tab in the real
-//! browser, write an export to a real file, and keep the window from
-//! wandering off the app.
+//! browser, write an export to a real file, keep the window from wandering
+//! off the app, and take tabs straight from the Chrome extension
+//! (src/import_bridge.rs).
 
 mod agent_runtime;
 mod commands;
+mod import_bridge;
+
+use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 /// Origins the app window is allowed to *stay on*.
@@ -32,6 +37,14 @@ fn is_internal(url: &tauri::Url) -> bool {
 
 pub fn run() {
     tauri::Builder::default()
+        // First, so a second launch exits before it builds anything. Opening
+        // `hubble://import` (the Chrome extension starting Hubble) while Hubble
+        // is already open lands here too: the running window comes forward and
+        // no second window is ever made.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            import_bridge::focus_main_window(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -41,10 +54,29 @@ pub fn run() {
             commands::open_external,
             commands::export_text_file,
             agent_runtime::agent_runtime,
-            agent_runtime::agent_pick_project_folder
+            agent_runtime::agent_pick_project_folder,
+            import_bridge::desktop_import_take,
+            import_bridge::desktop_import_finish
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Chrome → Hubble Desktop. The queue exists before the window
+            // does, so a batch the extension sends while Hubble is still
+            // starting waits here until the webview takes it.
+            let bridge = Arc::new(Mutex::new(import_bridge::Bridge::default()));
+            app.manage(import_bridge::ImportBridgeState(Arc::clone(&bridge)));
+            import_bridge::start(app.handle().clone(), bridge);
+
+            // The installer registers `hubble://`; a development build
+            // registers itself so the extension can start it too. A
+            // `hubble://` URL carries nothing but "come forward".
+            #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
+            if let Err(err) = app.deep_link().register_all() {
+                eprintln!("[hubble-import] protocol-registration-failed {err}");
+            }
+            let focus = app.handle().clone();
+            app.deep_link().on_open_url(move |_| import_bridge::focus_main_window(&focus));
 
             // The folders the user has picked for agent projects, kept in the
             // app's own data directory. The sidecar itself starts lazily, on

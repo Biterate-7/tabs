@@ -151,6 +151,33 @@ in the popup — whichever was chosen last. Pure logic lives in
 `src/quick-add.js`; `background/quick-add.test.js` drives the real
 background.js. `contextMenus` and `activeTab` carry no install warning.
 
+## Hubble Desktop: tabs straight into the desktop app
+
+When Hubble Desktop is installed, the extension can hand tabs to it directly —
+no website, no server, nothing leaves the computer:
+
+```
+right-click a tab ─► Hubble ▸ Add to Hubble Desktop | Add all tabs in this window to Hubble Desktop
+popup             ─► Hubble Desktop ▸ Add this tab | Add N selected | Add all N
+   → GET 127.0.0.1:41517-41519/v1/hello          is Hubble Desktop open?
+   → (no) open hubble://import, ask again ≤15 s   starts Hubble (Chrome asks "Open Hubble?" the first time)
+   → POST /v1/sessions, POST …/import (token)     Hubble comes forward: "Add 12 tabs to Hubble — choose a project"
+   → poll GET /v1/sessions/:id                    toast: "Added 9 sources to Research · 3 already there"
+```
+
+Logic lives in `src/desktop.js` (payload, discovery, transfer, wording) and
+`src/desktop-add.js` (one run, browser calls injected); `background.js` wires
+the menus, popup message, protocol launch and toast. Failures are never
+silent: "Hubble Desktop wasn't found — Open Hubble Web instead?" or "Hubble
+Desktop isn't responding" with **Try again** and **Open Hubble Web** (which
+adds the same tabs to the project last open on the web).
+
+The desktop items only appear once Hubble Desktop has answered on this
+computer (`hubble_desktop_seen`), so someone who only uses Hubble Web sees no
+change. The only new permission is `host_permissions` for the three loopback
+bridge ports. See `docs/desktop-import.md` for the protocol and the bridge's
+security model.
+
 ## Changing the Hubble origin
 
 **Production:** usually nothing to edit. A Vercel production build bakes in

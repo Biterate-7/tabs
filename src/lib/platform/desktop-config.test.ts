@@ -168,7 +168,7 @@ describe("the Rust shell", () => {
     expect(commandsRs).not.toMatch(/fn\s+\w+\([^)]*path:\s*String/);
   });
 
-  it("exposes exactly four commands to the frontend", () => {
+  it("exposes exactly six commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
@@ -177,13 +177,25 @@ describe("the Rust shell", () => {
       .filter(Boolean);
     // The two originals, plus the agent runtime bridge (Phase J.1): one relay
     // for the closed runtime protocol, and the native folder picker that is
-    // the only source of a project path. No shell, fs or process command.
+    // the only source of a project path. Then the Chrome import (see
+    // import_bridge.rs): take the batches waiting for the person, and record
+    // their answer. No shell, fs or process command.
     expect(names).toEqual([
       "commands::open_external",
       "commands::export_text_file",
       "agent_runtime::agent_runtime",
       "agent_runtime::agent_pick_project_folder",
+      "import_bridge::desktop_import_take",
+      "import_bridge::desktop_import_finish",
     ]);
+  });
+
+  it("listens for the Chrome extension on loopback only", () => {
+    const bridgeRs = readFileSync(path.join(TAURI_DIR, "src", "import_bridge.rs"), "utf8");
+    expect(bridgeRs).toContain("Ipv4Addr::LOCALHOST");
+    expect(bridgeRs).not.toMatch(/UNSPECIFIED|0\.0\.0\.0"|\[::\]/);
+    // No route reaches the filesystem or a process.
+    expect(bridgeRs).not.toMatch(/std::fs|std::process|Command::new/);
   });
 });
 

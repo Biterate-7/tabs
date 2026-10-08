@@ -209,6 +209,32 @@ export const QUICK_ADD_COMMAND = "add-to-project";
 export const MENU_ADD_TAB = "hubble-add-tab";
 export const MENU_ADD_PAGE = "hubble-add-page";
 
+// ---------------------------------------------------------------------------
+// Hubble Desktop: tabs straight into the desktop app, with no website in
+// between (src/desktop.js, src/desktop-add.js; the desktop half is
+// src-tauri/src/import_bridge.rs). Hubble Web keeps working as above.
+// ---------------------------------------------------------------------------
+
+// Popup → background: "add these tabs to Hubble Desktop" ({ scope, windowId }).
+export const MSG_ADD_TO_DESKTOP = "HUBBLE_ADD_TO_DESKTOP";
+// Popup → background: "is Hubble Desktop open?" → { available, seen }.
+export const MSG_DESKTOP_STATUS = "HUBBLE_DESKTOP_STATUS";
+// A toast or popup button → background: "retry" or "web" (open Hubble Web instead).
+export const MSG_DESKTOP_ACTION = "HUBBLE_DESKTOP_ACTION";
+
+// The current or last desktop add, for the popup (chrome.storage.session).
+export const DESKTOP_STATE_KEY = "hubble_desktop_state";
+// Which tabs the last desktop add took, so Retry and "Open Hubble Web" act on the same ones (chrome.storage.session).
+export const DESKTOP_LAST_KEY = "hubble_desktop_last";
+// Hubble Desktop has answered on this computer at least once (chrome.storage.local).
+// Until then nothing about it is shown, so people who only use Hubble Web see no change.
+export const DESKTOP_SEEN_KEY = "hubble_desktop_seen";
+
+// Context-menu items, shown once Hubble Desktop has been seen.
+export const MENU_DESKTOP_TAB = "hubble-desktop-tab";
+export const MENU_DESKTOP_WINDOW = "hubble-desktop-window";
+export const MENU_DESKTOP_PAGE = "hubble-desktop-page";
+
 // How often, and for how long, quick add asks Hubble how reading is going.
 export const SOURCE_STATUS_POLL_MS = 1200;
 export const SOURCE_STATUS_POLL_LIMIT_MS = 20000;

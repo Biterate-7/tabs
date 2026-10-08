@@ -9,6 +9,10 @@ import {
   DUMP_RUNNING_STALE_MS,
   DUMP_RESULT_FRESH_MS,
   QUICK_ADD_COMMAND,
+  MSG_ADD_TO_DESKTOP,
+  MSG_DESKTOP_STATUS,
+  MSG_DESKTOP_ACTION,
+  DESKTOP_STATE_KEY,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { readStoredTarget } from "../src/quick-add.js";
@@ -39,6 +43,12 @@ const els = {
   successProject: document.getElementById("success-project"),
   quickAddHint: document.getElementById("quick-add-hint"),
   projectName: document.getElementById("project-name"),
+  desktopSection: document.getElementById("desktop-section"),
+  desktopStatus: document.getElementById("desktop-status"),
+  desktopCurrentButton: document.getElementById("desktop-current-button"),
+  desktopSelectedButton: document.getElementById("desktop-selected-button"),
+  desktopWindowButton: document.getElementById("desktop-window-button"),
+  webButton: document.getElementById("web-button"),
 };
 
 const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error];
@@ -294,6 +304,7 @@ async function detectTabs() {
 
   updateReadyUi(payload.tabs, undefined);
   showState(els.ready);
+  void renderDesktop(payload.tabs.length);
 
   if (payload.tabs.length === 0) return;
 
@@ -578,7 +589,90 @@ function showError({ message, detail }) {
   els.errorMessage.textContent = message;
   els.errorDetail.textContent = detail ?? "";
   els.errorDetail.hidden = !detail;
+  // "Open Hubble Web" belongs only to a Hubble Desktop failure, and Try again then retries that.
+  retryAction = detectTabs;
+  if (els.webButton) els.webButton.hidden = true;
   showState(els.error);
+}
+
+/* ---- Hubble Desktop ------------------------------------------------------
+ * Tabs straight into Hubble Desktop on this computer (background.js runs it;
+ * see src/desktop-add.js). Shown once Hubble Desktop has been seen, so a
+ * person who only uses Hubble Web sees no change. The person picks the
+ * project in Hubble Desktop itself, which usually comes to the front and
+ * closes this popup — the toast in the page then carries the outcome.
+ * ------------------------------------------------------------------------- */
+
+let retryAction = detectTabs;
+
+async function renderDesktop(readableCount) {
+  if (!els.desktopSection) return;
+  let status;
+  try {
+    status = await chrome.runtime.sendMessage({ type: MSG_DESKTOP_STATUS });
+  } catch {
+    status = undefined;
+  }
+  if (els.ready.hidden || !(status?.available === true || status?.seen === true)) return;
+  els.desktopStatus.textContent = status.available ? "· open" : "· opens when you add";
+  els.desktopCurrentButton.disabled = projectTabs.current === 0;
+  els.desktopSelectedButton.hidden = projectTabs.selected < 2;
+  els.desktopSelectedButton.textContent = `Add ${projectTabs.selected} selected`;
+  els.desktopWindowButton.disabled = readableCount === 0;
+  els.desktopWindowButton.textContent = `Add all ${readableCount}`;
+  els.desktopSection.hidden = false;
+}
+
+/** Mirrors background.js's live desktop record into the progress state. Returns a detach function. */
+function watchDesktopState() {
+  const onChanged = chrome.storage?.onChanged;
+  if (!onChanged) return () => {};
+  function listener(changes, areaName) {
+    const next = changes?.[DESKTOP_STATE_KEY]?.newValue;
+    if (areaName !== "session" || next?.status !== "running" || !next.toast) return;
+    els.dumpingMessage.textContent = [next.toast.title, next.toast.detail].filter(Boolean).join(" — ");
+  }
+  onChanged.addListener(listener);
+  return () => onChanged.removeListener(listener);
+}
+
+function showDesktopOutcome(outcome, scope) {
+  const toast = outcome?.toast;
+  if (!toast) {
+    showError({ message: "Hubble Desktop isn't responding.", detail: outcome?.detail });
+  } else if (toast.tone === "error") {
+    showError({ message: toast.title, detail: toast.detail });
+    const actions = (toast.actions ?? []).map((action) => (typeof action === "string" ? action : action.action));
+    if (actions.includes("retry")) retryAction = () => addToDesktop(scope);
+    if (els.webButton) els.webButton.hidden = !actions.includes("web");
+  } else {
+    if (els.successDump) els.successDump.hidden = true;
+    els.successProject.hidden = false;
+    els.successProject.textContent = toast.title;
+    els.successDetail.textContent = toast.detail ?? "";
+    els.successDetail.hidden = !toast.detail;
+    els.openButton.hidden = true;
+    showState(els.success);
+  }
+}
+
+let desktopInFlight = false;
+
+async function addToDesktop(scope) {
+  if (desktopInFlight) return;
+  desktopInFlight = true;
+  els.dumpingMessage.textContent = "Connecting to Hubble Desktop…";
+  showState(els.dumping);
+  const detach = watchDesktopState();
+  try {
+    const outcome = await chrome.runtime.sendMessage({ type: MSG_ADD_TO_DESKTOP, payload: { scope, windowId: currentWindowId } });
+    showDesktopOutcome(outcome, scope);
+  } catch (err) {
+    showError({ message: "Lost contact with the Hubble extension. Please try again.", detail: err instanceof Error ? err.message : String(err) });
+  } finally {
+    detach();
+    desktopInFlight = false;
+  }
 }
 
 // Guards against a genuine double-click (two `click` events dispatched in
@@ -654,7 +748,15 @@ els.projectSelect?.addEventListener("change", () => {
 });
 els.addCurrentButton?.addEventListener("click", () => addToProject("current"));
 els.addSelectedButton?.addEventListener("click", () => addToProject("selected"));
-els.retryButton.addEventListener("click", detectTabs);
+els.retryButton.addEventListener("click", () => retryAction());
+els.desktopCurrentButton?.addEventListener("click", () => addToDesktop("current"));
+els.desktopSelectedButton?.addEventListener("click", () => addToDesktop("selected"));
+els.desktopWindowButton?.addEventListener("click", () => addToDesktop("window"));
+els.webButton?.addEventListener("click", () => {
+  // The same tabs, to Hubble Web (background.js decides: the project last open there, or Hubble Web to choose one).
+  void chrome.runtime.sendMessage({ type: MSG_DESKTOP_ACTION, payload: { action: "web" } }).catch(() => {});
+  window.close();
+});
 els.openButton.addEventListener("click", () => {
   focusHubble().finally(() => window.close());
 });

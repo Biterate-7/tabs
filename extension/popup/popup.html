@@ -18,6 +18,15 @@
         </div>
 
         <div id="state-ready" class="popup__state" hidden>
+          <!-- Hubble Desktop on this computer: straight in, you choose the project there. Shown once it has been seen. -->
+          <section id="desktop-section" class="popup__desktop" aria-labelledby="desktop-heading" hidden>
+            <h2 id="desktop-heading" class="popup__subheading">Hubble Desktop <span id="desktop-status" class="popup__muted"></span></h2>
+            <div class="popup__row">
+              <button id="desktop-current-button" class="popup__button">Add this tab</button>
+              <button id="desktop-selected-button" class="popup__button popup__button--secondary" hidden>Add selected tabs</button>
+              <button id="desktop-window-button" class="popup__button popup__button--secondary">Add all tabs</button>
+            </div>
+          </section>
           <!-- The project first: where this tab goes, the two ways to send it, and the quicker way next time. -->
           <section id="project-section" class="popup__project" aria-labelledby="project-heading" hidden>
             <h1 id="project-heading" class="popup__heading">Add to <span id="project-name"></span></h1>
@@ -59,7 +68,10 @@
         <div id="state-error" class="popup__state" hidden>
           <p class="popup__error" id="error-message">Something went wrong.</p>
           <p class="popup__muted popup__detail" id="error-detail" hidden></p>
-          <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
+          <div class="popup__row">
+            <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
+            <button id="web-button" class="popup__button popup__button--secondary" hidden>Open Hubble Web</button>
+          </div>
         </div>
       </div>
     </div>

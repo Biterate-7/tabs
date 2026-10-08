@@ -21,7 +21,18 @@ import {
   MENU_ADD_PAGE,
   SOURCE_STATUS_POLL_MS,
   SOURCE_STATUS_POLL_LIMIT_MS,
+  MSG_ADD_TO_DESKTOP,
+  MSG_DESKTOP_STATUS,
+  MSG_DESKTOP_ACTION,
+  DESKTOP_STATE_KEY,
+  DESKTOP_LAST_KEY,
+  DESKTOP_SEEN_KEY,
+  MENU_DESKTOP_TAB,
+  MENU_DESKTOP_WINDOW,
+  MENU_DESKTOP_PAGE,
 } from "../src/config.js";
+import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
+import { createDesktopAdd } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
@@ -833,19 +844,28 @@ function lastErrorIgnored() {
   void chrome.runtime.lastError;
 }
 
-/** (Re)creates the two menu items, titled with the project they add to. */
+/**
+ * (Re)creates the menu items: "Add to <project>" (Hubble Web), and — once
+ * Hubble Desktop has been seen on this computer — "Add to Hubble Desktop".
+ * With both, Chrome groups them under one "Hubble" entry.
+ */
 async function refreshMenus() {
   if (!chrome.contextMenus) return;
   const title = menuTitle(await storedTarget());
+  const desktop = await desktopSeen();
   await new Promise((resolve) => chrome.contextMenus.removeAll(() => resolve(lastErrorIgnored())));
   chrome.contextMenus.create({ id: MENU_ADD_TAB, title, contexts: ["tab"] }, lastErrorIgnored);
   chrome.contextMenus.create({ id: MENU_ADD_PAGE, title, contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] }, lastErrorIgnored);
+  if (!desktop) return;
+  chrome.contextMenus.create({ id: MENU_DESKTOP_TAB, title: "Add to Hubble Desktop", contexts: ["tab"] }, lastErrorIgnored);
+  chrome.contextMenus.create({ id: MENU_DESKTOP_WINDOW, title: "Add all tabs in this window to Hubble Desktop", contexts: ["tab"] }, lastErrorIgnored);
+  chrome.contextMenus.create({ id: MENU_DESKTOP_PAGE, title: "Add to Hubble Desktop", contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] }, lastErrorIgnored);
 }
 
-chrome.runtime.onInstalled?.addListener(() => void refreshMenus());
-chrome.runtime.onStartup?.addListener(() => void refreshMenus());
+chrome.runtime.onInstalled?.addListener(() => void refreshMenus().then(noticeDesktop));
+chrome.runtime.onStartup?.addListener(() => void refreshMenus().then(noticeDesktop));
 chrome.storage?.onChanged?.addListener((changes, areaName) => {
-  if (areaName === "local" && changes?.[TARGET_PROJECT_KEY]) void refreshMenus();
+  if (areaName === "local" && (changes?.[TARGET_PROJECT_KEY] || changes?.[DESKTOP_SEEN_KEY])) void refreshMenus();
 });
 
 let badgeTimer;
@@ -1004,6 +1024,15 @@ async function activeTabIn(windowId) {
 }
 
 chrome.contextMenus?.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === MENU_DESKTOP_TAB || info.menuItemId === MENU_DESKTOP_WINDOW || info.menuItemId === MENU_DESKTOP_PAGE) {
+    const context = info.menuItemId === MENU_DESKTOP_PAGE ? "page" : "tab";
+    const selection = info.menuItemId === MENU_DESKTOP_WINDOW ? { scope: "window", windowId: tab?.windowId } : menuScope(tab, context);
+    (async () => {
+      const toastTabId = context === "page" ? tab?.id : (await activeTabIn(selection.windowId))?.id;
+      await runDesktopAdd({ ...selection, toastTabId });
+    })().catch((err) => log("desktop-add-failed", errorMessage(err)));
+    return;
+  }
   if (info.menuItemId !== MENU_ADD_TAB && info.menuItemId !== MENU_ADD_PAGE) return;
   const context = info.menuItemId === MENU_ADD_TAB ? "tab" : "page";
   const { scope, tabIds, windowId } = menuScope(tab, context);
@@ -1070,4 +1099,193 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then((response) => safeSendResponse(sendResponse, response))
     .catch((err) => safeSendResponse(sendResponse, { ok: false, reason: "unexpected-error", detail: errorMessage(err) }));
   return true;
+});
+
+// ---------------------------------------------------------------------------
+// Hubble Desktop: tabs straight into the desktop app, with no website in
+// between. Three entry points, one run (src/desktop-add.js):
+//
+//   right-click a tab  → Hubble ▸ Add to Hubble Desktop / Add all tabs in this window…
+//   right-click a page → Hubble ▸ Add to Hubble Desktop
+//   the popup          → Hubble Desktop ▸ Add this tab / selected / all
+//
+// Hubble Desktop open: the batch goes over loopback and Hubble asks which
+// project. Closed: hubble://import opens it, and the run waits for it to
+// start. Not installed or not answering: the toast says so and offers Hubble
+// Web — never a silent nothing. Hubble Web (everything above) is unchanged.
+// ---------------------------------------------------------------------------
+
+const DESKTOP_ACTION_LABELS = { retry: "Try again", web: "Open Hubble Web" };
+
+async function desktopSeen() {
+  try {
+    const stored = await chrome.storage.local.get(DESKTOP_SEEN_KEY);
+    return stored?.[DESKTOP_SEEN_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+async function markDesktopSeen() {
+  if (await desktopSeen()) return;
+  try {
+    // storage.onChanged then adds the Hubble Desktop menu items.
+    await chrome.storage.local.set({ [DESKTOP_SEEN_KEY]: true });
+  } catch {
+    // Not remembered: the menu items wait until the next time.
+  }
+}
+
+/** A quiet look for Hubble Desktop when Chrome starts, so its menu items appear without opening the popup first. */
+async function noticeDesktop() {
+  try {
+    if (await findDesktop()) await markDesktopSeen();
+  } catch {
+    // Not open; nothing to show.
+  }
+}
+
+async function setDesktopState(state) {
+  try {
+    await chrome.storage?.session?.set({ [DESKTOP_STATE_KEY]: state });
+  } catch {
+    // Only the popup's view of it; the toast still says how it went.
+  }
+}
+
+// Where the current desktop add reports, and what it last showed there.
+let desktopToastTabId;
+let desktopShown;
+
+/**
+ * Shows a desktop add's progress or outcome: a toast in the page the person
+ * is on (the badge on Chrome's own pages), and the record the popup reads.
+ * Called on every poll — which is also what keeps this service worker awake
+ * while the person chooses a project — but the toast only changes when its
+ * words do.
+ */
+async function showDesktop(toast) {
+  const { final, actions, ...words } = toast;
+  const view = {
+    ...words,
+    ...(actions?.length ? { actions: actions.map((action) => ({ action, label: DESKTOP_ACTION_LABELS[action] ?? action })) } : {}),
+    ...(final ? { dismissAfterMs: toast.tone === "error" ? 15000 : 6000 } : {}),
+  };
+  await setDesktopState({ status: final ? "finished" : "running", toast: view, updatedAt: Date.now() });
+  const key = JSON.stringify(view);
+  if (key === desktopShown) return;
+  desktopShown = key;
+  await showToast(desktopToastTabId, view);
+}
+
+/**
+ * Opens hubble://import, which Windows hands to Hubble Desktop (registered by
+ * its installer). Navigating the tab the person is on is what typing the
+ * address in the omnibox does: Chrome asks "Open Hubble?" the first time and
+ * the page itself stays where it is. The URL carries nothing.
+ */
+async function launchDesktop() {
+  try {
+    const tab = Number.isInteger(desktopToastTabId) ? await chrome.tabs.get(desktopToastTabId) : await activeTabIn();
+    if (!Number.isInteger(tab?.id)) return false;
+    await chrome.tabs.update(tab.id, { url: DESKTOP_LAUNCH_URL });
+    return true;
+  } catch (err) {
+    log("desktop-launch-failed", errorMessage(err));
+    return false;
+  }
+}
+
+async function collectTabs({ scope, tabIds, windowId }) {
+  return Array.isArray(tabIds) && tabIds.length > 0 ? getTabs(tabIds.filter(Number.isInteger).slice(0, 500)) : chrome.tabs.query(scopeQuery(scope, windowId));
+}
+
+const desktopAdd = createDesktopAdd({
+  collectTabs,
+  launch: launchDesktop,
+  show: showDesktop,
+  markSeen: markDesktopSeen,
+  wasSeen: desktopSeen,
+  fetch: (...args) => globalThis.fetch(...args),
+  sleep,
+  log,
+});
+
+/** Which tabs a run takes, re-checked: a known scope, whole-number ids and a window. */
+function readDesktopSelection(raw) {
+  const scope = ["current", "selected", "window"].includes(raw?.scope) ? raw.scope : "current";
+  const tabIds = Array.isArray(raw?.tabIds) ? raw.tabIds.filter(Number.isInteger).slice(0, 500) : undefined;
+  const windowId = Number.isInteger(raw?.windowId) ? raw.windowId : undefined;
+  return { scope, ...(tabIds?.length ? { tabIds } : {}), ...(windowId !== undefined ? { windowId } : {}) };
+}
+
+async function runDesktopAdd({ toastTabId, ...selection }) {
+  desktopToastTabId = toastTabId;
+  desktopShown = undefined;
+  const last = readDesktopSelection(selection);
+  try {
+    await chrome.storage?.session?.set({ [DESKTOP_LAST_KEY]: last });
+  } catch {
+    // Retry then falls back to the person's current tab.
+  }
+  return desktopAdd(last);
+}
+
+/**
+ * "Open Hubble Web" after Hubble Desktop couldn't be reached: the same tabs,
+ * into the project last open in Hubble on the web (quick add), or — with no
+ * project to send to — Hubble Web itself, to choose one.
+ */
+async function addWithHubbleWeb(last, toastTabId) {
+  if (await storedTarget()) return quickAdd({ ...last, toastTabId });
+  await chrome.tabs.create({ url: TABDUMP_ORIGIN, active: true });
+  return { ok: false, reason: "no-project" };
+}
+
+async function lastDesktopSelection() {
+  try {
+    const stored = await chrome.storage.session.get(DESKTOP_LAST_KEY);
+    return readDesktopSelection(stored?.[DESKTOP_LAST_KEY]);
+  } catch {
+    return readDesktopSelection(undefined);
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === MSG_DESKTOP_STATUS) {
+    (async () => {
+      const found = await findDesktop().catch(() => undefined);
+      if (found) await markDesktopSeen();
+      return { ok: true, available: Boolean(found), seen: Boolean(found) || (await desktopSeen()) };
+    })().then((response) => safeSendResponse(sendResponse, response));
+    return true;
+  }
+
+  if (message?.type === MSG_ADD_TO_DESKTOP) {
+    (async () => {
+      const selection = readDesktopSelection(message.payload);
+      const toastTabId = (await activeTabIn(selection.windowId))?.id;
+      return runDesktopAdd({ ...selection, toastTabId });
+    })()
+      .then((outcome) => safeSendResponse(sendResponse, outcome))
+      .catch((err) => safeSendResponse(sendResponse, { reason: "unexpected-error", detail: errorMessage(err) }));
+    return true;
+  }
+
+  if (message?.type === MSG_DESKTOP_ACTION) {
+    // Only this extension's own toast and popup (a page can't message the extension at all).
+    if (sender?.id !== chrome.runtime.id) return undefined;
+    const action = message.payload?.action;
+    if (action !== "retry" && action !== "web") return undefined;
+    (async () => {
+      const last = await lastDesktopSelection();
+      const toastTabId = Number.isInteger(sender.tab?.id) ? sender.tab.id : (await activeTabIn(last.windowId))?.id;
+      return action === "retry" ? runDesktopAdd({ ...last, toastTabId }) : addWithHubbleWeb(last, toastTabId);
+    })()
+      .then((outcome) => safeSendResponse(sendResponse, outcome ?? { ok: true }))
+      .catch((err) => safeSendResponse(sendResponse, { reason: "unexpected-error", detail: errorMessage(err) }));
+    return true;
+  }
+
+  return undefined;
 });

@@ -1,4 +1,5 @@
 import type { PlatformAdapter } from "./types";
+import { DESKTOP_IMPORT_REQUESTED_EVENT, type DesktopImportOutcome } from "@/lib/desktop/import-protocol";
 
 /**
  * The Tauri implementation.
@@ -46,6 +47,27 @@ export const desktopAgentBridge = {
 
   async pickProjectFolder(): Promise<PickedProjectFolder | null> {
     return invokeCommand<PickedProjectFolder | null>("agent_pick_project_folder", {});
+  },
+};
+
+/**
+ * Chrome → Hubble Desktop: the webview's way to the import bridge
+ * (src-tauri/src/import_bridge.rs). Rust holds the batches the extension
+ * sent; this takes them, says how each one ended, and hears when another
+ * arrives. Desktop-only, like the agent bridge above.
+ */
+export const desktopImportBridge = {
+  async take(): Promise<unknown[]> {
+    return invokeCommand<unknown[]>("desktop_import_take", {});
+  },
+
+  async finish(requestId: string, outcome: DesktopImportOutcome): Promise<void> {
+    await invokeCommand<void>("desktop_import_finish", { requestId, outcome });
+  },
+
+  async onRequested(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen(DESKTOP_IMPORT_REQUESTED_EVENT, () => handler());
   },
 };
 

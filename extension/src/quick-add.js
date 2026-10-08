@@ -226,7 +226,22 @@ export function showQuickAddToast(toast) {
     line.hidden = !text;
   }
   host.__hubbleFocus = toast.focus;
-  root.querySelector(".a").hidden = !toast.focus;
+  root.querySelector(".o").hidden = !toast.focus;
+  // Follow-ups a Hubble Desktop add offers ("Try again", "Open Hubble Web"): each tells the extension which, nothing more.
+  const actions = root.querySelector(".a");
+  for (const old of actions.querySelectorAll("[data-action]")) old.remove();
+  for (const { action, label } of toast.actions ?? []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = action;
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      host.remove();
+      if (globalThis.chrome?.runtime?.sendMessage) chrome.runtime.sendMessage({ type: "HUBBLE_DESKTOP_ACTION", payload: { action } }).catch(() => {});
+    });
+    actions.appendChild(button);
+  }
+  actions.hidden = !toast.focus && !(toast.actions ?? []).length;
   clearTimeout(host.__hubbleTimer);
   if (toast.dismissAfterMs) host.__hubbleTimer = setTimeout(() => host.remove(), toast.dismissAfterMs);
 }

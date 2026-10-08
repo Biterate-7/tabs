@@ -29,6 +29,16 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Registers the `hubble://` scheme (the installer writes it from
+# `plugins.deep-link` in tauri.conf.json), so the Chrome extension can launch
+# Hubble when it isn't running. The URL only wakes the app; no data rides on
+# it — see src/import_bridge.rs.
+tauri-plugin-deep-link = "2"
+# One Hubble, one window: a second launch (a `hubble://` link while Hubble is
+# open, or a second Start-menu click) focuses the running window instead.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# The import bridge's session ids and tokens. Already in the dependency tree.
+getrandom = "0.3"
 
 # The agent runtime sidecar (Phase J.1) is placed in a job object that kills
 # its whole process tree when Hubble exits — see src/agent_runtime.rs. Already

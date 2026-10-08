@@ -7,7 +7,7 @@
  * adapter itself costs a few bytes.
  */
 import { isDesktop, platformKind } from "./detect";
-import { desktopAgentBridge, desktopPlatform } from "./desktop";
+import { desktopAgentBridge, desktopImportBridge, desktopPlatform } from "./desktop";
 import { webPlatform } from "./web";
 import type { PlatformAdapter } from "./types";
 
@@ -57,6 +57,15 @@ export function agentProjectFolderPicker():
   | (() => Promise<{ path: string; name: string } | null>)
   | undefined {
   return isDesktop() ? () => desktopAgentBridge.pickProjectFolder() : undefined;
+}
+
+/**
+ * Tabs sent straight from the Chrome extension to Hubble Desktop
+ * (src-tauri/src/import_bridge.rs). `undefined` on the web, where the
+ * extension delivers through the page instead (useExtensionImport).
+ */
+export function desktopImport(): typeof desktopImportBridge | undefined {
+  return isDesktop() ? desktopImportBridge : undefined;
 }
 
 /**

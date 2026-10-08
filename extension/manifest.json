@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hubble",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Add anything useful from Chrome to your Hubble project, ready for your agents.",
   "minimum_chrome_version": "102",
   "action": {
@@ -25,7 +25,7 @@
       "description": "Add this tab (or the selected tabs) to the project open in Hubble"
     }
   },
-  "host_permissions": ["http://localhost:3000/*"],
+  "host_permissions": ["http://localhost:3000/*", "http://127.0.0.1:41517/*", "http://127.0.0.1:41518/*", "http://127.0.0.1:41519/*"],
   "content_scripts": [
     {
       "matches": ["http://localhost:3000/*"],
