@@ -29,6 +29,18 @@ export const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
 export const MSG_TABDUMP_IMPORT_ACK = "TABDUMP_IMPORT_ACK";
 export const MSG_TABDUMP_PAGE_READY = "TABDUMP_PAGE_READY";
 
+/**
+ * Quick add (Hubble 2.0; see src/hooks/use-extension-quick-add.ts here and
+ * extension/src/quick-add.js there). The page reports the project on screen
+ * (TABDUMP_PROJECT_FOCUS) so the extension's tab-strip menu and shortcut add
+ * to it, and is told the shortcut back (TABDUMP_QUICK_ADD_INFO). The extension
+ * asks how reading is going for sources it just added (TABDUMP_SOURCE_STATUS).
+ */
+export const MSG_PROJECT_FOCUS = "TABDUMP_PROJECT_FOCUS";
+export const MSG_QUICK_ADD_INFO = "TABDUMP_QUICK_ADD_INFO";
+export const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
+export const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
+
 /** Default time to wait for a browser command's result before giving up — see sendBrowserCommand. */
 export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
 

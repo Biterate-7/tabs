@@ -260,6 +260,10 @@ describe("duplicated protocol constants stay in sync", () => {
     ["MSG_BROWSER_COMMAND_RESULT", CONFIG.MSG_BROWSER_COMMAND_RESULT],
     ["MSG_EXTENSION_PING", CONFIG.MSG_EXTENSION_PING],
     ["MSG_EXTENSION_PONG", CONFIG.MSG_EXTENSION_PONG],
+    ["MSG_PROJECT_FOCUS", CONFIG.MSG_PROJECT_FOCUS],
+    ["MSG_QUICK_ADD_INFO", CONFIG.MSG_QUICK_ADD_INFO],
+    ["MSG_SOURCE_STATUS", CONFIG.MSG_SOURCE_STATUS],
+    ["MSG_SOURCE_STATUS_RESULT", CONFIG.MSG_SOURCE_STATUS_RESULT],
   ];
 
   it.each(SHARED)("content-script.js declares %s with the same value as config.js", (name, value) => {
@@ -276,6 +280,10 @@ describe("duplicated protocol constants stay in sync", () => {
       CONFIG.MSG_BROWSER_COMMAND_RESULT,
       CONFIG.MSG_EXTENSION_PING,
       CONFIG.MSG_EXTENSION_PONG,
+      CONFIG.MSG_PROJECT_FOCUS,
+      CONFIG.MSG_QUICK_ADD_INFO,
+      CONFIG.MSG_SOURCE_STATUS,
+      CONFIG.MSG_SOURCE_STATUS_RESULT,
     ]) {
       expect(webProtocol).toContain(JSON.stringify(value));
     }
@@ -339,5 +347,70 @@ describe("a second injected copy in a tab that already has one", () => {
 
     pagePosts(MSG_TABDUMP_IMPORT_ACK, { importId: "imp-dup", accepted: 2 });
     expect(await responsePromise).toEqual({ ok: true, accepted: 2 });
+  });
+});
+
+// Quick add (Hubble 2.0): the relays that let the tab-strip menu and the
+// shortcut add to the project on screen, and show reading progress where the
+// person is. The content script is a transport; background.js decides.
+describe("quick add relays", () => {
+  function nextPagePost(type) {
+    return new Promise((resolve) => {
+      function onMessage(event) {
+        if (event.data?.source === MESSAGE_SOURCE && event.data.type === type) {
+          window.removeEventListener("message", onMessage);
+          resolve(event.data.payload);
+        }
+      }
+      window.addEventListener("message", onMessage);
+    });
+  }
+
+  function askBackground(message) {
+    return new Promise((resolve) => {
+      for (const listener of onMessageListeners) {
+        if (listener(message, {}, resolve) === true) return;
+      }
+      resolve(undefined);
+    });
+  }
+
+  it("passes the project on screen to the background, and the shortcut back to the page", async () => {
+    chrome.runtime.sendMessage.mockResolvedValue({ ok: true, shortcut: "Alt+Shift+H" });
+    await loadContentScript();
+    const info = nextPagePost(CONFIG.MSG_QUICK_ADD_INFO);
+    pagePosts(CONFIG.MSG_PROJECT_FOCUS, { focus: { id: "ws-history" }, projects: [{ id: "ws-history", name: "History IA" }], visible: true });
+    expect(await info).toEqual({ shortcut: "Alt+Shift+H" });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: CONFIG.MSG_PROJECT_FOCUS,
+      payload: { focus: { id: "ws-history" }, projects: [{ id: "ws-history", name: "History IA" }], visible: true },
+    });
+  });
+
+  it("round-trips a reading-status question to the page and back", async () => {
+    await loadContentScript();
+    const asked = nextPagePost(CONFIG.MSG_SOURCE_STATUS);
+    const answer = askBackground({ type: CONFIG.MSG_SOURCE_STATUS, payload: { workspaceId: "ws-history", urls: ["https://a.example"] } });
+    const question = await asked;
+    expect(question).toMatchObject({ workspaceId: "ws-history", urls: ["https://a.example"] });
+    pagePosts(CONFIG.MSG_SOURCE_STATUS_RESULT, { requestId: question.requestId, statuses: [{ url: "https://a.example", status: "ready" }] });
+    expect(await answer).toEqual({ ok: true, statuses: [{ url: "https://a.example", status: "ready" }] });
+  });
+
+  it("answers a reading-status question the page never answers with a timeout, not silence", async () => {
+    vi.useFakeTimers();
+    await loadContentScript();
+    const answer = askBackground({ type: CONFIG.MSG_SOURCE_STATUS, payload: { workspaceId: "ws", urls: [] } });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await answer).toEqual({ ok: false, reason: "timeout" });
+  });
+
+  it("carries a 'project missing' ack through, so the extension can say the project is gone", async () => {
+    await loadContentScript();
+    const posted = nextImportPostedToPage();
+    const response = deliverImport("imp-gone", TABS);
+    await posted;
+    pagePosts(MSG_TABDUMP_IMPORT_ACK, { importId: "imp-gone", accepted: 0, reason: "project-missing" });
+    expect(await response).toEqual({ ok: true, accepted: 0, reason: "project-missing" });
   });
 });

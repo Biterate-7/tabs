@@ -180,7 +180,35 @@ export const DUMP_PHASE = {
 // source-ingestion pipeline instead of the plain tab dump.
 export const MSG_ADD_TO_PROJECT = "TABDUMP_ADD_TO_PROJECT";
 
-// The project the person last chose in the popup, in chrome.storage.local.
-// Only ever written by that explicit choice: the extension never guesses a
-// target project, and a remembered one that no longer exists is ignored.
+// The project "Add to project" and quick add send to, in chrome.storage.local,
+// as `{ id, name }` (an older popup stored a bare id). Written only by an
+// explicit choice: choosing a project in the popup, or opening one in Hubble
+// (reported by the page, MSG_PROJECT_FOCUS). A remembered project that no
+// longer exists is ignored. See quick-add.js's resolveTarget.
 export const TARGET_PROJECT_KEY = "hubble_target_project";
+
+// The project id Hubble last reported as on screen, so a page reload that
+// reports the same project again is not mistaken for a new choice.
+export const HUBBLE_FOCUS_KEY = "hubble_focused_project";
+
+// Page → content script → background: "this project is open in Hubble", with
+// the person's projects (ids and names) so a remembered target can be renamed
+// or found to be gone. Answered with the quick-add shortcut, which the content
+// script posts back to the page as MSG_QUICK_ADD_INFO.
+export const MSG_PROJECT_FOCUS = "TABDUMP_PROJECT_FOCUS";
+export const MSG_QUICK_ADD_INFO = "TABDUMP_QUICK_ADD_INFO";
+
+// Background → content script → page: "how far has Hubble got reading these
+// sources?" — so quick add's toast can show extraction state where the person
+// is, not only in Hubble.
+export const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
+export const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
+
+// Quick add: the manifest's command name and the context-menu item ids.
+export const QUICK_ADD_COMMAND = "add-to-project";
+export const MENU_ADD_TAB = "hubble-add-tab";
+export const MENU_ADD_PAGE = "hubble-add-page";
+
+// How often, and for how long, quick add asks Hubble how reading is going.
+export const SOURCE_STATUS_POLL_MS = 1200;
+export const SOURCE_STATUS_POLL_LIMIT_MS = 20000;

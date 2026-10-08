@@ -136,11 +136,65 @@ cancels. `readDroppedResources` reads, richest first and merged by address:
 **Browser limitation, stated plainly:** Chrome's (and Edge's) own tab strip does
 not take part in HTML drag and drop. Dragging a tab moves it between windows;
 no web page receives a drop event or any data. That cannot be changed from a
-page. The supported Chrome paths are therefore (1) drag the address-bar URL or
-the site-info chip, or any link, onto the project; (2) the extension's *Add
-to project* for the current tab or the **selected (highlighted) tabs** —
-ctrl/shift-click tabs, then *Add N selected tabs*; (3) *Add source*. Firefox
-tab drags (including several tabs at once) are handled natively.
+page — and not from an extension either (see *Why not a real tab drag* below).
+The supported Chrome paths are therefore:
+
+1. **Quick add from the tab itself** (Hubble for Chrome 0.4): right-click any
+   tab in the tab strip → **Add to History IA**. If the tab is part of a
+   selection (ctrl/shift-click), the whole selection goes, as with Chrome's own
+   tab menu. The same item is on the page's right-click menu, and
+   **Alt+Shift+H** (changeable at `chrome://extensions/shortcuts`) adds the
+   current tab or the selected tabs. A small toast in the page you are on
+   always names the project: *Adding to History IA…* with the source's title
+   and *Reading source…* while Hubble reads it, then *Added to History IA* ·
+   title · *Ready · 1,840 words* (or *Saved · why* / *Couldn't read · why*),
+   with *Open in Hubble*. A duplicate says *Already in History IA — This
+   source is already in the project.*; a failure says *Couldn't add to
+   History IA* and why. On Chrome's own pages, where no extension may draw,
+   the toolbar icon's badge and tooltip say it instead.
+2. Drag the address-bar URL or the site-info chip, or any link, onto the
+   project ("Drop into History IA" while dragging, "Added to History IA" after).
+3. The extension popup, which leads with the same project — *Add to History
+   IA*, then *Add this tab* / *Add selected tabs* and *Right-click any tab to
+   add it directly. Alt + Shift + H*. Its project picker is there but quiet;
+   the plain *Dump tabs* stays below it and never targets a project.
+4. *Add source*.
+
+Firefox tab drags (including several tabs at once) are handled natively.
+
+**In Hubble**, once the extension has answered, the project home teaches it
+once — in the empty state until the project has sources, then as one quiet
+line under *Context*: *Add anything useful from Chrome to this project.
+Right-click a tab → Add to History IA. Alt + Shift + H also works.* Without
+the extension it offers only what works without it (links, the address bar,
+*Add source*).
+
+**The target project** is the project you are looking at in Hubble: the page
+reports it (`TABDUMP_PROJECT_FOCUS`, with every project's id and name and
+whether the page is visible) when it loads, when you switch projects and when
+you come back to Hubble, and the menu item is retitled to name it, so you see
+where the tab goes before choosing. Choosing another project in the popup sets
+it until you next look at Hubble. A Hubble tab the extension opened in the
+background to deliver a batch is hidden, so it never overrides anything. A
+remembered project that has been deleted is never sent to — the page acks
+`project-missing` and the toast says the project is gone.
+
+Quick add is not a second ingestion path: it is the popup's `TABDUMP_IMPORT`
+with a project target, through the same delivery, ack and `ingestResources`,
+so duplicate detection, extraction and project isolation are identical.
+
+**Why not a real tab drag (checked 2026-10-07 against the current Extensions
+reference; Chrome 154 accepts the tab-strip menu item).** The Extensions
+API has no tab-drag events: `chrome.tabs` exposes `onDetached`/`onAttached`/
+`onMoved` (a tab *has* moved between or within windows) and only documents the
+drag indirectly, as the error *"Tabs cannot be edited right now (user may be
+dragging a tab)"*. Nothing reports a drag starting, the pointer's position, or
+what it was released over, and no drag payload exists for a page, side panel or
+offscreen document to read. Inferring "dropped on Hubble" from a torn-off
+tab's new window landing over Hubble's window would rest on undocumented
+window-placement behaviour and fire on every ordinary tear-off, so Hubble does
+not do it. The tab strip's own context menu (`chrome.contextMenus`,
+`contexts: ["tab"]`) is the closest documented interaction with an actual tab.
 
 A dropped **file** has no web address, and a source is always openable (sync,
 the opener and the extension all depend on it), so a dropped PDF is attached
@@ -239,10 +293,13 @@ PDF pages, transcripts and previous results.
 
 ## 8. The extension
 
-`extension/` 0.3.0. The popup's existing round trip to the open Hubble page
+`extension/` 0.4.0. The popup's existing round trip to the open Hubble page
 now also returns the projects (ids, names, source counts). *Add to a project*:
-choose a project (remembered only after an explicit choice), then *Add this
-tab* or *Add N selected tabs*. Background sends the same `TABDUMP_IMPORT` with
+choose a project (pre-selected: the project open in Hubble, or the last one
+chosen here), then *Add this tab* or *Add N selected tabs*. Quick add (§4) adds
+`contextMenus` and `activeTab` (no new install warning) and one command;
+`extension/src/quick-add.js` holds its pure parts, `background.js` the wiring,
+`src/hooks/use-extension-quick-add.ts` the page's half. Background sends the same `TABDUMP_IMPORT` with
 `target: { workspaceId, as: "sources" }` through the same hardened delivery
 path as a dump (find or open Hubble, ack handshake); the page routes it to the
 ingestion pipeline and acks `{ accepted, duplicates }` — "Already in History

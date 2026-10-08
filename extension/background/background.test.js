@@ -71,11 +71,12 @@ afterEach(() => {
   vi.resetModules();
 });
 
-// background.js registers four onMessage listeners, in source order:
-// dumpTabs, focusHubble, checkImported, then the browser-command dispatcher.
+// background.js registers five onMessage listeners, in source order:
+// dumpTabs, focusHubble, checkImported, the browser-command dispatcher, then
+// quick add's project-focus listener (covered in quick-add.test.js).
 async function getBrowserCommandListener() {
   await import("./background.js");
-  return registeredListeners[registeredListeners.length - 1];
+  return registeredListeners[3];
 }
 
 async function getDumpTabsListener() {

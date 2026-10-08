@@ -649,3 +649,176 @@ describe("double-click / re-entrant dump protection", () => {
     expect(document.getElementById("success-count").textContent).toBe("3");
   });
 });
+
+// The popup and quick add (the tab's right-click menu, the shortcut) share one
+// remembered project: preselected here, written as { id, name } so the menu
+// can name it, and still read from an older popup's bare id.
+describe("the remembered project", () => {
+  const PROJECTS = [
+    { id: "ws-history", name: "History IA", sources: 3 },
+    { id: "ws-physics", name: "Physics EE", sources: 0 },
+  ];
+
+  const ONE_TAB = [{ id: 1, windowId: 5, url: "https://a.com", title: "A", status: "complete", active: true, highlighted: true }];
+
+  function withProjects(stored, { tabs = ONE_TAB, hubbleOpen = true } = {}) {
+    const local = { hubble_target_project: stored };
+    chrome.tabs.query.mockResolvedValue(tabs);
+    chrome.runtime.sendMessage.mockImplementation(async (message) => {
+      if (message?.type === "TABDUMP_CHECK_IMPORTED") return hubbleOpen ? { ok: true, existingUrls: [], projects: PROJECTS } : { ok: false, reason: "no-tabdump-tab" };
+      if (message?.type === "TABDUMP_ADD_TO_PROJECT") return { ok: true, status: "done", count: 1, accepted: 1, target: message.payload.target };
+      return undefined;
+    });
+    chrome.storage.local = {
+      get: vi.fn(async (key) => ({ [key]: local[key] })),
+      set: vi.fn(async (items) => Object.assign(local, items)),
+    };
+    chrome.commands = { getAll: vi.fn(async () => [{ name: "add-to-project", shortcut: "Alt+Shift+H" }]) };
+    return local;
+  }
+
+  async function projectSectionShown() {
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("project-section").hidden).toBe(false));
+  }
+
+  const heading = () => document.getElementById("project-heading").textContent;
+
+  it("leads with the project quick add will use: Add to <project>, and teaches the right-click", async () => {
+    withProjects({ id: "ws-history", name: "History IA" });
+    await projectSectionShown();
+    expect(heading()).toBe("Add to History IA");
+    expect(document.getElementById("project-select").value).toBe("ws-history");
+    expect(document.getElementById("add-current-button").textContent).toBe("Add this tab");
+    expect(document.getElementById("add-current-button").disabled).toBe(false);
+    await vi.waitFor(() => expect(document.getElementById("quick-add-hint").hidden).toBe(false));
+    expect(document.getElementById("quick-add-hint").textContent).toBe("Right-click any tab to add it directly. Alt + Shift + H");
+  });
+
+  it("says nothing about a shortcut the person cleared", async () => {
+    withProjects({ id: "ws-history", name: "History IA" });
+    chrome.commands = { getAll: vi.fn(async () => [{ name: "add-to-project", shortcut: "" }]) };
+    await projectSectionShown();
+    await vi.waitFor(() => expect(document.getElementById("quick-add-hint").hidden).toBe(false));
+    expect(document.getElementById("quick-add-hint").textContent).toBe("Right-click any tab to add it directly.");
+  });
+
+  it("follows the project Hubble has open, whichever it is", async () => {
+    withProjects({ id: "ws-physics", name: "Physics EE" });
+    await projectSectionShown();
+    expect(heading()).toBe("Add to Physics EE");
+  });
+
+  it("asks for a project when none is open in Hubble yet, and offers nothing to add until there is one", async () => {
+    withProjects(undefined);
+    await projectSectionShown();
+    expect(heading()).toBe("Choose a project to add to");
+    expect(document.getElementById("add-current-button").disabled).toBe(true);
+    expect(document.getElementById("quick-add-hint").hidden).toBe(true);
+  });
+
+  it("still names the project when no Hubble tab is open to ask (Hubble opens to take the tab)", async () => {
+    withProjects({ id: "ws-history", name: "History IA" }, { hubbleOpen: false });
+    await projectSectionShown();
+    expect(heading()).toBe("Add to History IA");
+    expect(document.getElementById("project-unavailable").hidden).toBe(true);
+  });
+
+  it("with no Hubble tab and no project yet, says to open one in Hubble", async () => {
+    withProjects(undefined, { hubbleOpen: false });
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("project-unavailable").hidden).toBe(false));
+    expect(document.getElementById("project-section").hidden).toBe(true);
+    expect(document.getElementById("project-unavailable").textContent).toBe("Open a project in Hubble to add this tab to it.");
+  });
+
+  it("Add this tab sends this tab to the project", async () => {
+    withProjects({ id: "ws-history", name: "History IA" });
+    await projectSectionShown();
+    document.getElementById("add-current-button").click();
+    await vi.waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: "TABDUMP_ADD_TO_PROJECT",
+        payload: { windowId: 5, scope: "current", target: { workspaceId: "ws-history", name: "History IA" } },
+      })
+    );
+    await vi.waitFor(() => expect(document.getElementById("success-project").textContent).toBe("Added 1 source to History IA"));
+  });
+
+  it("Add selected tabs sends the selection to the project", async () => {
+    const tabs = [
+      { id: 1, windowId: 5, url: "https://a.com", title: "A", status: "complete", active: true, highlighted: true },
+      { id: 2, windowId: 5, url: "https://b.com", title: "B", status: "complete", active: false, highlighted: true },
+      { id: 3, windowId: 5, url: "https://c.com", title: "C", status: "complete", active: false, highlighted: false },
+    ];
+    withProjects({ id: "ws-history", name: "History IA" }, { tabs });
+    await projectSectionShown();
+    const button = document.getElementById("add-selected-button");
+    expect(button.hidden).toBe(false);
+    expect(button.textContent).toBe("Add selected tabs");
+    button.click();
+    await vi.waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: "TABDUMP_ADD_TO_PROJECT",
+        payload: { windowId: 5, scope: "selected", target: { workspaceId: "ws-history", name: "History IA" } },
+      })
+    );
+  });
+
+  it("keeps the plain dump, which never names a project", async () => {
+    withProjects({ id: "ws-history", name: "History IA" });
+    await projectSectionShown();
+    document.getElementById("dump-button").click();
+    await vi.waitFor(() => expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "DUMP_TABS" })));
+    const dump = chrome.runtime.sendMessage.mock.calls.find(([message]) => message.type === "DUMP_TABS")[0];
+    expect(dump.payload.target).toBeUndefined();
+  });
+
+  it("never talks about dragging or managing tabs", async () => {
+    withProjects({ id: "ws-history", name: "History IA" });
+    await projectSectionShown();
+    await vi.waitFor(() => expect(document.getElementById("quick-add-hint").hidden).toBe(false));
+    expect(document.body.textContent).not.toMatch(/drag|tab manager|manage your tabs|organi[sz]e (your )?tabs/i);
+  });
+
+  it("still reads an older popup's bare id", async () => {
+    withProjects("ws-physics");
+    await projectSectionShown();
+    expect(document.getElementById("project-select").value).toBe("ws-physics");
+  });
+
+  it("remembers a new choice with its name, so the tab menu can say where tabs go", async () => {
+    const local = withProjects(undefined);
+    await projectSectionShown();
+    const select = document.getElementById("project-select");
+    select.value = "ws-physics";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(local.hubble_target_project).toEqual({ id: "ws-physics", name: "Physics EE" }));
+  });
+});
+
+describe("after a quick add", () => {
+  it("opens normally instead of replaying a result its own toast already showed", async () => {
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, accepted: 1, count: 1, via: "quick-add", target: { workspaceId: "ws", name: "History IA" }, startedAt: Date.now(), finishedAt: Date.now(), focusTabId: 9 };
+    await loadPopup();
+    expect(document.getElementById("state-success").hidden).toBe(true);
+    expect(closed).not.toHaveBeenCalled();
+  });
+
+  it("still replays a fresh result from the popup's own run", async () => {
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, accepted: 1, count: 1, target: { workspaceId: "ws", name: "History IA" }, startedAt: Date.now(), finishedAt: Date.now() };
+    await import("./popup.js");
+    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
+    expect(document.getElementById("success-project").textContent).toBe("Added 1 source to History IA");
+  });
+});
+
+describe("adding selected tabs to a project", () => {
+  it("does not count a tab already in the project as one that couldn't be read", async () => {
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, count: 3, accepted: 2, alreadyInProject: 1, target: { workspaceId: "ws", name: "History IA" }, startedAt: Date.now(), finishedAt: Date.now() };
+    await import("./popup.js");
+    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
+    expect(document.getElementById("success-project").textContent).toBe("Added 2 sources to History IA");
+    expect(document.getElementById("success-detail").textContent).toBe("1 already in the project");
+  });
+});

@@ -67,6 +67,7 @@ import { useTitleResolution } from "@/hooks/use-title-resolution"
 import { useExtensionImport } from "@/hooks/use-extension-import"
 import type { ExtensionImportResult, ExtensionImportTarget } from "@/hooks/use-extension-import"
 import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-query"
+import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useAutoOrganize } from "@/hooks/use-auto-organize"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
 import { describeOrganizationStage } from "@/lib/organize/lifecycle"
@@ -1137,7 +1138,7 @@ export function AppShell() {
   function handleBrowserImport(entries: BrowserImportEntry[], target?: ExtensionImportTarget): ExtensionImportResult {
     // "Add to project" from the extension (Hubble 2.0): the same source pipeline as a drop, into the project the person chose.
     if (target) {
-      if (!storeRef.current?.workspaces.some((workspace) => workspace.id === target.workspaceId)) return 0
+      if (!storeRef.current?.workspaces.some((workspace) => workspace.id === target.workspaceId)) return { accepted: 0, duplicates: 0, projectMissing: true }
       const outcomes = handleAddSources(
         target.workspaceId,
         entries.map((entry) => ({ url: entry.url, ...(entry.title ? { title: entry.title } : {}) })),
@@ -1193,6 +1194,8 @@ export function AppShell() {
   )
   useExtensionImport(handleBrowserImport, extensionCanIngest)
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
+  // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
+  const quickAdd = useExtensionQuickAdd({ workspaces: store?.workspaces, currentWorkspaceId: currentWorkspace?.id })
 
   /*
     Project sources (Hubble 2.0): read in the background, written back
@@ -1241,14 +1244,21 @@ export function AppShell() {
     return result.plan.outcomes
   }
 
+  function workspaceTabById(workspaceId: string, tabId: string | undefined): Tab | undefined {
+    if (!tabId) return undefined
+    return storeRef.current?.workspaces.find((workspace) => workspace.id === workspaceId)?.tabs.find((tab) => tab.id === tabId)
+  }
+
   function notifySourcesAdded(workspaceId: string, name: string, plan: IngestionPlan, counts: ReturnType<typeof describeIngestion>) {
     const extra = [
       ...(counts.duplicates > 0 ? [`${counts.duplicates} already in ${name}`] : []),
       ...(counts.invalid > 0 ? [`${counts.invalid} couldn't be added`] : []),
     ].join(" · ")
     if (counts.added > 0) {
-      toast.success(`Added ${counts.added} source${counts.added === 1 ? "" : "s"} to ${name}`, {
-        description: extra || "Hubble is reading them now.",
+      // One source: say which, so a drop or quick add lands visibly ("Added to History IA · Britannica — Cuban missile crisis").
+      const single = counts.added === 1 ? plan.added[0] ?? workspaceTabById(workspaceId, plan.adopted[0]) : undefined
+      toast.success(counts.added === 1 ? `Added to ${name}` : `Added ${counts.added} sources to ${name}`, {
+        description: extra || (single ? `${single.title?.trim() || single.domain} · Hubble is reading it now.` : "Hubble is reading them now."),
         action: { label: "Undo", onClick: () => undoSourcesAdded(workspaceId, plan) },
       })
       return
@@ -1360,6 +1370,7 @@ export function AppShell() {
         onUpdateBrief={(brief) => handleUpdateWorkspaceBrief(workspace.id, brief)}
         {...(folderName ? { folderName } : {})}
         agents={connectedAgents}
+        {...(quickAdd ? { quickAdd } : {})}
         {...(emptyExtra ? { emptyExtra } : {})}
       />
     )
