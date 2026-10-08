@@ -132,6 +132,7 @@ describe("build-extension-zip.mjs", () => {
         "src/tab-matching.js",
         "src/browser-actions.js",
         "src/browser-commands.js",
+        "src/quick-add.js",
       ])
     );
   });

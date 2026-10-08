@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Hubble",
-  "version": "0.3.0",
-  "description": "Dump your open browser tabs straight into Hubble.",
+  "version": "0.4.0",
+  "description": "Add anything useful from Chrome to your Hubble project, ready for your agents.",
   "minimum_chrome_version": "102",
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Dump tabs into Hubble",
+    "default_title": "Add to your Hubble project",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -18,7 +18,13 @@
     "service_worker": "background/background.js",
     "type": "module"
   },
-  "permissions": ["tabs", "history", "storage", "scripting"],
+  "permissions": ["tabs", "history", "storage", "scripting", "contextMenus", "activeTab"],
+  "commands": {
+    "add-to-project": {
+      "suggested_key": { "default": "Alt+Shift+H" },
+      "description": "Add this tab (or the selected tabs) to the project open in Hubble"
+    }
+  },
   "host_permissions": ["http://localhost:3000/*"],
   "content_scripts": [
     {

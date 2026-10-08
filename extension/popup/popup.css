@@ -75,13 +75,6 @@ body {
   letter-spacing: -0.01em;
 }
 
-.popup__subtitle {
-  margin-left: auto;
-  font-size: 11px;
-  letter-spacing: 0.0044em;
-  color: rgb(var(--fg-rgb) / 0.55);
-}
-
 .popup__body {
   padding: 14px;
 }
@@ -222,37 +215,90 @@ body {
   word-break: break-word;
 }
 
-/* Add to a Hubble project (Hubble 2.0) */
+/* ---- The project first (Hubble 2.0): "Add to History IA" ------------- */
 .popup__project {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--popup-border, rgba(127, 127, 127, 0.25));
+  gap: 8px;
 }
-.popup__label {
-  font-size: 12px;
-  opacity: 0.75;
+
+.popup__state .popup__heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
-.popup__select {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--popup-border, rgba(127, 127, 127, 0.35));
-  background: transparent;
-  color: inherit;
-  font: inherit;
+
+.popup__state .popup__project p {
+  margin: 0;
 }
+
 .popup__row {
   display: flex;
   gap: 6px;
 }
+
 .popup__row .popup__button {
   flex: 1;
 }
+
+.popup__kbd {
+  display: inline-block;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--hover);
+  font: inherit;
+  color: rgb(var(--fg-rgb) / 0.75);
+}
+
+/* Changing the project is there, but quiet: Hubble's open project is the usual answer. */
+.popup__switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgb(var(--fg-rgb) / 0.55);
+}
+
+.popup__switch-label {
+  flex-shrink: 0;
+}
+
+.popup__select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgb(var(--fg-rgb) / 0.15);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ---- The plain dump, below it ------------------------------------------ */
+.popup__project:not([hidden]) ~ .popup__dump {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(var(--fg-rgb) / 0.1);
+}
+
+/* With a project to add to, the window's tab list is noise: the count and the button say enough. */
+.popup__project:not([hidden]) ~ .popup__dump .popup__preview {
+  display: none;
+}
+
+.popup__project:not([hidden]) ~ .popup__dump .popup__count {
+  font-weight: 400;
+  color: rgb(var(--fg-rgb) / 0.6);
+}
+
 /* A display rule above would otherwise override the hidden attribute. */
 .popup__project[hidden],
-.popup__button[hidden] {
+.popup__button[hidden],
+.popup__state p[hidden] {
   display: none;
 }

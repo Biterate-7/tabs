@@ -10,7 +10,6 @@
       <header class="popup__header">
         <img class="popup__brand-mark" src="../icons/icon48.png" alt="" aria-hidden="true" />
         <span class="popup__title">Hubble</span>
-        <span class="popup__subtitle">This window</span>
       </header>
 
       <div class="popup__body">
@@ -19,22 +18,30 @@
         </div>
 
         <div id="state-ready" class="popup__state" hidden>
-          <p class="popup__count"><span id="tab-count">0</span> tabs detected</p>
-          <p id="import-status" class="popup__muted" hidden></p>
-          <ul id="tab-preview" class="popup__preview"></ul>
-          <button id="dump-button" class="popup__button">Dump tabs →</button>
-
-          <section id="project-section" class="popup__project" aria-label="Add to a Hubble project" hidden>
-            <label class="popup__label" for="project-select">Add to a project</label>
-            <select id="project-select" class="popup__select">
-              <option value="">Choose a project…</option>
-            </select>
+          <!-- The project first: where this tab goes, the two ways to send it, and the quicker way next time. -->
+          <section id="project-section" class="popup__project" aria-labelledby="project-heading" hidden>
+            <h1 id="project-heading" class="popup__heading">Add to <span id="project-name"></span></h1>
             <div class="popup__row">
-              <button id="add-current-button" class="popup__button popup__button--secondary" disabled>Add this tab</button>
+              <button id="add-current-button" class="popup__button" disabled>Add this tab</button>
               <button id="add-selected-button" class="popup__button popup__button--secondary" disabled hidden>Add selected tabs</button>
             </div>
+            <p id="quick-add-hint" class="popup__muted popup__detail" hidden></p>
+            <label class="popup__switch">
+              <span class="popup__switch-label">Project</span>
+              <select id="project-select" class="popup__select">
+                <option value="">Choose a project…</option>
+              </select>
+            </label>
           </section>
-          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble in a tab to add this page to one of your projects.</p>
+          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open a project in Hubble to add this tab to it.</p>
+
+          <!-- The plain dump: every tab in this window, into Hubble as it always was. -->
+          <section class="popup__dump" aria-label="Dump this window">
+            <p class="popup__count"><span id="tab-count">0</span> tabs in this window</p>
+            <p id="import-status" class="popup__muted" hidden></p>
+            <ul id="tab-preview" class="popup__preview"></ul>
+            <button id="dump-button" class="popup__button popup__button--secondary">Dump tabs →</button>
+          </section>
         </div>
 
         <div id="state-dumping" class="popup__state" hidden>

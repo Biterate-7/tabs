@@ -14,6 +14,10 @@ const MSG_BROWSER_COMMAND = "TABDUMP_BROWSER_COMMAND";
 const MSG_BROWSER_COMMAND_RESULT = "TABDUMP_BROWSER_COMMAND_RESULT";
 const MSG_EXTENSION_PING = "TABDUMP_EXTENSION_PING";
 const MSG_EXTENSION_PONG = "TABDUMP_EXTENSION_PONG";
+const MSG_PROJECT_FOCUS = "TABDUMP_PROJECT_FOCUS";
+const MSG_QUICK_ADD_INFO = "TABDUMP_QUICK_ADD_INFO";
+const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
+const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
 
 const CHECK_IMPORTED_TIMEOUT_MS = 1500;
 // Mirrors config.js's IMPORT_ACK_TIMEOUT_MS. Duplicated for the same
@@ -148,6 +152,8 @@ onPageMessage((event) => {
     accepted: Number.isFinite(accepted) ? accepted : 0,
     // Sources already in the target project (Hubble 2.0) — not a failure, so said separately.
     ...(Number.isInteger(duplicates) && duplicates > 0 ? { duplicates } : {}),
+    // The target project is gone from this Hubble (deleted since the extension remembered it).
+    ...(data.payload?.reason === "project-missing" ? { reason: "project-missing" } : {}),
   });
 });
 
@@ -212,6 +218,77 @@ onExtensionMessage((message, _sender, sendResponse) => {
   window.addEventListener("message", handleResult);
   window.postMessage(
     { source: MESSAGE_SOURCE, type: MSG_CHECK_IMPORTED, payload: { requestId, urls: message.payload?.urls ?? [] } },
+    window.location.origin
+  );
+
+  return true; // keep the message channel open for the async sendResponse
+});
+
+// Quick add (Hubble 2.0): the page says which project is open; background.js
+// makes it the target for the tab-strip menu and the shortcut, and answers
+// with the shortcut so the page can name the real one. A transport only —
+// background.js re-checks everything and only accepts this from the Hubble
+// origin.
+onPageMessage((event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.source !== window) return;
+
+  const data = event.data;
+  if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_PROJECT_FOCUS) return;
+
+  // Wrapped: sendMessage can throw synchronously (the extension was reloaded) or return no promise at all.
+  Promise.resolve()
+    .then(() =>
+      chrome.runtime.sendMessage({
+        type: MSG_PROJECT_FOCUS,
+        payload: { focus: data.payload?.focus, projects: data.payload?.projects, visible: data.payload?.visible === true },
+      })
+    )
+    .then((response) => {
+      if (!response?.ok) return;
+      window.postMessage(
+        { source: MESSAGE_SOURCE, type: MSG_QUICK_ADD_INFO, payload: { shortcut: typeof response.shortcut === "string" ? response.shortcut : "" } },
+        window.location.origin
+      );
+    })
+    .catch(() => {
+      // The extension is reloading. The page keeps its generic wording; nothing else depends on this.
+    });
+});
+
+// Quick add's toast asks how reading is going for the sources it just added.
+// Same bounded page round trip as the "already imported" query above.
+onExtensionMessage((message, _sender, sendResponse) => {
+  if (message?.type !== MSG_SOURCE_STATUS) return undefined;
+
+  const requestId = `${Date.now()}-${Math.random()}`;
+  let settled = false;
+
+  function finish(response) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    window.removeEventListener("message", handleResult);
+    sendResponse(response);
+  }
+
+  function handleResult(event) {
+    if (event.origin !== window.location.origin) return;
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_SOURCE_STATUS_RESULT) return;
+    if (data.payload?.requestId !== requestId) return;
+    finish({ ok: true, statuses: Array.isArray(data.payload.statuses) ? data.payload.statuses : [] });
+  }
+
+  const timer = setTimeout(() => finish({ ok: false, reason: "timeout" }), CHECK_IMPORTED_TIMEOUT_MS);
+  window.addEventListener("message", handleResult);
+  window.postMessage(
+    {
+      source: MESSAGE_SOURCE,
+      type: MSG_SOURCE_STATUS,
+      payload: { requestId, workspaceId: message.payload?.workspaceId, urls: message.payload?.urls ?? [] },
+    },
     window.location.origin
   );
 

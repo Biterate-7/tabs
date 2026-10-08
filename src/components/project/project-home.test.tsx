@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { ProjectHome } from "./project-home"
 import { ingestResources } from "@/lib/resources/ingest"
@@ -62,6 +62,56 @@ describe("ProjectHome", () => {
     expect(screen.getByText("Your project is ready. Connect an agent to start working.")).toBeTruthy()
     expect(screen.getByText("No work yet. Your first agent task will appear here.")).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /Add source/ }).length).toBeGreaterThan(0)
+  })
+
+  describe("adding from Chrome", () => {
+    const hints = () => [...document.querySelectorAll("[data-add-hint]")].map((node) => node.textContent)
+    const FORBIDDEN = /drag (a |the |chrome )?tabs?|tab manager|manage your tabs|organi[sz]e (your )?tabs/i
+
+    it("without Hubble for Chrome, offers what works without it and never implies the extension is there", () => {
+      renderHome(project())
+      expect(hints()).toEqual([
+        "Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.",
+      ])
+      expect(screen.queryByText(/Right-click a tab/)).toBeNull()
+      expect(screen.queryByText("Add anything useful from Chrome to this project.")).toBeNull()
+      cleanup()
+      renderHome(project(["https://a.example/1"]))
+      expect(hints()).toEqual(["Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs."])
+      expect(screen.queryByText(/Right-click a tab/)).toBeNull()
+    })
+
+    it("with Hubble for Chrome, leads with the project: add anything useful, right-click a tab → Add to <project>", () => {
+      renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
+      expect(hints()).toEqual(["Add anything useful from Chrome to this project.Right-click a tab → Add to History IAAlt + Shift + H also works."])
+      expect(screen.getByText("Add anything useful from Chrome to this project.")).toBeTruthy()
+      expect(document.querySelector("[data-quick-add-target]")!.getAttribute("data-quick-add-target")).toBe("History IA")
+      for (const text of hints()) expect(text).not.toMatch(FORBIDDEN)
+    })
+
+    it("teaches it once: in the empty state until there are sources, then as a quiet line under Context", () => {
+      renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
+      expect(document.querySelectorAll("[data-add-hint]")).toHaveLength(1)
+      expect(document.querySelector("[data-project-empty] [data-add-hint]")).toBeTruthy()
+      cleanup()
+      renderHome(project(["https://a.example/1"]), { quickAdd: { shortcut: "Alt+Shift+H" } })
+      expect(document.querySelectorAll("[data-add-hint]")).toHaveLength(1)
+      expect(document.querySelector("[data-project-context] [data-add-hint]")!.textContent).toContain("Right-click a tab → Add to History IA")
+    })
+
+    it("does not mention a shortcut the person cleared (or Chrome refused)", () => {
+      renderHome(project(), { quickAdd: { shortcut: "" } })
+      expect(hints()).toEqual(["Add anything useful from Chrome to this project.Right-click a tab → Add to History IA"])
+    })
+
+    it("names whichever project is on screen, and nothing else", () => {
+      const props = renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
+      expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to History IA")
+      cleanup()
+      render(<ProjectHome {...props} workspace={{ ...project(), id: "p", name: "Physics EE" }} />)
+      expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to Physics EE")
+      expect(screen.queryByText(/History IA/)).toBeNull()
+    })
   })
 
   it("names the project while a link is dragged over it, and adds what is dropped", () => {

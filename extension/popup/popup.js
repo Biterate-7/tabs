@@ -8,8 +8,10 @@ import {
   DUMP_PHASE,
   DUMP_RUNNING_STALE_MS,
   DUMP_RESULT_FRESH_MS,
+  QUICK_ADD_COMMAND,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
+import { readStoredTarget } from "../src/quick-add.js";
 
 const els = {
   loading: document.getElementById("state-loading"),
@@ -35,6 +37,8 @@ const els = {
   addSelectedButton: document.getElementById("add-selected-button"),
   successDump: document.getElementById("success-dump"),
   successProject: document.getElementById("success-project"),
+  quickAddHint: document.getElementById("quick-add-hint"),
+  projectName: document.getElementById("project-name"),
 };
 
 const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error];
@@ -121,26 +125,63 @@ export function readProjects(raw) {
 // The tabs "Add to project" would take: this window's active tab, and the highlighted ones.
 let projectTabs = { current: 0, selected: 0 };
 
+// The project last opened in Hubble (or chosen here) — the same one quick add (the tab's right-click menu, the shortcut) uses.
 async function rememberedProject() {
   try {
     const stored = await chrome.storage?.local?.get(TARGET_PROJECT_KEY);
-    return typeof stored?.[TARGET_PROJECT_KEY] === "string" ? stored[TARGET_PROJECT_KEY] : undefined;
+    return readStoredTarget(stored?.[TARGET_PROJECT_KEY]);
   } catch {
     return undefined;
   }
 }
 
-function rememberProject(id) {
+function rememberProject(target) {
   try {
-    void chrome.storage?.local?.set({ [TARGET_PROJECT_KEY]: id });
+    void chrome.storage?.local?.set({ [TARGET_PROJECT_KEY]: { id: target.workspaceId, name: target.name } });
   } catch {
     // Not remembered: the person chooses again next time, nothing else changes.
   }
 }
 
-async function renderProjects(projects) {
+/** "Alt+Shift+H" as Chrome reports it → "Alt + Shift + H". */
+function formatShortcut(shortcut) {
+  return shortcut
+    .split("+")
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .join(" + ");
+}
+
+/** Teaches the quicker way in once there is a project: "Right-click any tab to add it directly. Alt + Shift + H". */
+async function renderQuickAddHint() {
+  if (!els.quickAddHint) return;
+  if (!chosenProject()) {
+    els.quickAddHint.hidden = true;
+    return;
+  }
+  let shortcut = "";
+  try {
+    const commands = await chrome.commands?.getAll?.();
+    shortcut = commands?.find((entry) => entry.name === QUICK_ADD_COMMAND)?.shortcut ?? "";
+  } catch {
+    // No shortcut to mention; the menu still works.
+  }
+  els.quickAddHint.textContent = "Right-click any tab to add it directly.";
+  if (shortcut) {
+    const key = document.createElement("kbd");
+    key.className = "popup__kbd";
+    key.textContent = formatShortcut(shortcut);
+    els.quickAddHint.append(" ", key);
+  }
+  els.quickAddHint.hidden = false;
+}
+
+async function renderProjects(listed) {
   if (!els.projectSection) return;
-  if (!projects) {
+  const remembered = await rememberedProject();
+  // No Hubble tab to ask: the project Hubble last had open is still where a tab goes (Hubble opens to take it).
+  const projects = listed ?? (remembered ? [{ id: remembered.id, name: remembered.name || "Your project", sources: 0 }] : undefined);
+  if (!projects || projects.length === 0) {
     els.projectSection.hidden = true;
     if (els.projectUnavailable) els.projectUnavailable.hidden = projectTabs.current === 0;
     return;
@@ -154,28 +195,40 @@ async function renderProjects(projects) {
   for (const project of projects) {
     const option = document.createElement("option");
     option.value = project.id;
-    option.textContent = project.sources > 0 ? `${project.name} · ${project.sources} source${project.sources === 1 ? "" : "s"}` : project.name;
+    option.textContent = project.name;
     els.projectSelect.appendChild(option);
   }
-  // Only a project the person chose before, and that still exists.
-  const remembered = await rememberedProject();
-  els.projectSelect.value = remembered && projects.some((project) => project.id === remembered) ? remembered : "";
-  els.projectSection.hidden = projects.length === 0;
+  // The project open in Hubble (or last chosen here), and only one that still exists.
+  els.projectSelect.value = remembered && projects.some((project) => project.id === remembered.id) ? remembered.id : "";
+  els.projectSection.hidden = false;
   updateProjectButtons();
+  void renderQuickAddHint();
 }
 
 function updateProjectButtons() {
   const chosen = Boolean(els.projectSelect?.value);
+  // "Add to History IA" — or, with nothing open in Hubble yet, a choice to make first.
+  if (els.projectName) {
+    const heading = els.projectName.parentElement;
+    if (chosen) {
+      heading.firstChild.textContent = "Add to ";
+      els.projectName.textContent = chosenProject().name;
+    } else {
+      heading.firstChild.textContent = "Choose a project to add to";
+      els.projectName.textContent = "";
+    }
+  }
   els.addCurrentButton.disabled = !chosen || projectTabs.current === 0;
   els.addSelectedButton.hidden = projectTabs.selected < 2;
   els.addSelectedButton.disabled = !chosen;
-  els.addSelectedButton.textContent = `Add ${projectTabs.selected} selected tabs`;
+  els.addSelectedButton.textContent = "Add selected tabs";
+  els.addSelectedButton.title = `Adds the ${projectTabs.selected} tabs selected in this window`;
 }
 
 function chosenProject() {
   const option = els.projectSelect?.selectedOptions?.[0];
   if (!option || !option.value) return undefined;
-  return { workspaceId: option.value, name: option.textContent.replace(/ · \d+ sources?$/, "") };
+  return { workspaceId: option.value, name: option.textContent };
 }
 
 let addInFlight = false;
@@ -392,7 +445,9 @@ function successDetail(state) {
   const notes = [];
   const attempted = state.count ?? 0;
   const accepted = state.accepted ?? attempted;
-  if (accepted < attempted) notes.push(`${attempted - accepted} couldn't be read as a link`);
+  // Into a project, a tab that was already a source was taken, not lost.
+  const unread = attempted - accepted - (state.alreadyInProject ?? 0);
+  if (unread > 0) notes.push(`${unread} couldn't be read as a link`);
   if (state.skippedRestricted) notes.push(`${state.skippedRestricted} browser page${state.skippedRestricted === 1 ? "" : "s"} skipped`);
   if (state.skippedAlreadyImported) notes.push(`${state.skippedAlreadyImported} already imported`);
   if (state.alreadyInProject && state.accepted > 0) notes.push(`${state.alreadyInProject} already in the project`);
@@ -592,8 +647,10 @@ function watchDumpPhase() {
 
 els.dumpButton.addEventListener("click", dumpTabs);
 els.projectSelect?.addEventListener("change", () => {
-  if (els.projectSelect.value) rememberProject(els.projectSelect.value);
+  const target = chosenProject();
+  if (target) rememberProject(target);
   updateProjectButtons();
+  void renderQuickAddHint();
 });
 els.addCurrentButton?.addEventListener("click", () => addToProject("current"));
 els.addSelectedButton?.addEventListener("click", () => addToProject("selected"));
@@ -624,7 +681,9 @@ async function init() {
     return;
   }
 
-  if (state?.finishedAt !== undefined && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
+  // A quick add (the tab's right-click menu, the shortcut) already said how it went in its own toast:
+  // replaying it here would only bounce the person to Hubble when they opened the popup for something else.
+  if (state?.finishedAt !== undefined && state.via !== "quick-add" && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
     renderDumpOutcome(state);
     return;
   }

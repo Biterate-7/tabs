@@ -129,6 +129,28 @@ No new host permissions, `scripting`, or broader content-script matches were
 added; opening/closing/pinning tabs and creating windows doesn't need to
 read a page's content, only to manage the tab/window objects themselves.
 
+## Quick add: a Chrome tab → your Hubble project
+
+Chrome's tab strip cannot be dragged onto a web page (no drop event, no data)
+and no extension API reports a tab drag, so the closest supported way to put an
+actual tab into a project is the tab's own right-click menu:
+
+```
+right-click a tab ─┐   (contexts: ["tab"]; the whole selection if the tab is in it)
+right-click a page ├─► background.js quickAdd() → dumpTabs({ target })   ← the popup's own run
+Alt+Shift+H ───────┘     → TABDUMP_IMPORT { target: { workspaceId, as: "sources" } }
+                         → the page's one ingestion pipeline → ack { accepted, duplicates | project-missing }
+                         → toast in the tab you're on (activeTab), always naming the project:
+                           Adding to <project>… → Added to / Already in / Couldn't add to <project>
+                         → TABDUMP_SOURCE_STATUS until reading settles: Reading source… → Ready · 1,840 words
+```
+
+The menu item names the target ("Add to History IA"): the project open in
+Hubble, reported by the page (`TABDUMP_PROJECT_FOCUS`), or the one last chosen
+in the popup — whichever was chosen last. Pure logic lives in
+`src/quick-add.js`; `background/quick-add.test.js` drives the real
+background.js. `contextMenus` and `activeTab` carry no install warning.
+
 ## Changing the Hubble origin
 
 **Production:** usually nothing to edit. A Vercel production build bakes in

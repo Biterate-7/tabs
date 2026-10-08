@@ -5,6 +5,7 @@ import { ArrowRight, FolderGit2, PanelLeftOpen, Plus, Radio, Search, X } from "l
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Kbd } from "@/components/ui/kbd"
 import { Textarea } from "@/components/ui/textarea"
 import { ResourceCard } from "./resource-card"
 import { ProjectActivity } from "./project-activity"
@@ -63,12 +64,20 @@ export type ProjectHomeProps = {
   agents: readonly { provider: AgentProviderId; name: string }[]
   /** Shown under the empty state: the older "dump my open tabs" input. */
   emptyExtra?: ReactNode
+  /**
+   * Present once Hubble for Chrome has said it is here: a tab's right-click
+   * menu ("Add to <project>") and the shortcut add Chrome tabs to this
+   * project — the one on screen. Chrome gives pages no way to receive a
+   * dragged tab, so nothing here suggests dragging one.
+   */
+  quickAdd?: { shortcut: string }
 }
 
 /**
  * A project's home (Hubble 2.0): what it is about, where the work was left,
  * what the agents have to work from, and its sources — with the whole page a
- * drop target for links and the address bar dragged from Chrome (Chrome does not expose its tab strip to a page).
+ * drop target for links and the address bar dragged from Chrome (Chrome does not expose its tab strip to a page;
+ * actual tabs come in through the extension's tab right-click menu — see use-extension-quick-add.ts).
  *
  *     History IA
  *     Investigating the Cuban Missile Crisis …     Goal: a strong argument …
@@ -238,7 +247,15 @@ export function ProjectHome(props: ProjectHomeProps) {
             )}
           </div>
         </div>
-        <p className="hidden text-meta text-tertiary md:block">Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs.</p>
+        {/* Taught once: the empty state below carries it until the project has sources. */}
+        {sources.length > 0 &&
+          (props.quickAdd ? (
+            <ChromeQuickAdd projectName={projectName} shortcut={props.quickAdd.shortcut} className="hidden md:flex" />
+          ) : (
+            <p className="hidden text-meta text-tertiary md:block" data-add-hint>
+              Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs.
+            </p>
+          ))}
         {dropNotice && (
           <p role="alert" className="flex items-center gap-2 text-body-sm text-destructive">
             {dropNotice}
@@ -271,9 +288,18 @@ export function ProjectHome(props: ProjectHomeProps) {
       {sources.length === 0 ? (
         <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-strong p-5" data-project-empty>
           <p className="text-h2 text-foreground">Start by adding context.</p>
-          <p className="max-w-prose text-body text-muted-foreground">
-            Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.
-          </p>
+          {props.quickAdd ? (
+            <>
+              <ChromeQuickAdd projectName={projectName} shortcut={props.quickAdd.shortcut} />
+              <p className="max-w-prose text-body-sm text-muted-foreground">
+                Hubble reads each source — web pages, PDFs, YouTube videos — and every agent you choose works from them. Links and the address bar can be dragged here too.
+              </p>
+            </>
+          ) : (
+            <p className="max-w-prose text-body text-muted-foreground" data-add-hint>
+              Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.
+            </p>
+          )}
           <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
             <Plus /> Add source
           </Button>
@@ -436,6 +462,41 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
  * the sidebar needs below `md`. A project with tabs uses the workspace view's
  * own header instead.
  */
+/** "Alt+Shift+H" as Chrome reports it → "Alt + Shift + H". */
+export function formatShortcut(shortcut: string): string {
+  return shortcut
+    .split("+")
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .join(" + ")
+}
+
+/**
+ * How Chrome tabs get into this project, once Hubble for Chrome has said it is
+ * here: the extension's item in a tab's own right-click menu, named for the
+ * project on screen (which is the project it adds to), and its shortcut.
+ *
+ *     Add anything useful from Chrome to this project.
+ *     Right-click a tab → Add to History IA        Alt + Shift + H also works.
+ */
+function ChromeQuickAdd({ projectName, shortcut, className }: { projectName: string; shortcut: string; className?: string }) {
+  return (
+    <div className={cn("flex-col gap-0.5", className ?? "flex")} data-add-hint data-quick-add-target={projectName}>
+      <p className="text-body-sm text-muted-foreground">Add anything useful from Chrome to this project.</p>
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-body-sm text-foreground">
+          Right-click a tab → Add to <span className="font-medium">{projectName}</span>
+        </span>
+        {shortcut && (
+          <span className="flex items-center gap-1.5 text-meta text-tertiary">
+            <Kbd>{formatShortcut(shortcut)}</Kbd> also works.
+          </span>
+        )}
+      </p>
+    </div>
+  )
+}
+
 export function ProjectPage({ workspace, onOpenSidebar, children }: { workspace: Workspace; onOpenSidebar?: () => void; children: ReactNode }) {
   return (
     <div className="min-h-screen">

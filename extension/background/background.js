@@ -12,10 +12,31 @@ import {
   TAB_READY_TIMEOUT_MS,
   SEND_RETRY_DELAYS_MS,
   CONTENT_SCRIPT_FILE,
+  TARGET_PROJECT_KEY,
+  HUBBLE_FOCUS_KEY,
+  MSG_PROJECT_FOCUS,
+  MSG_SOURCE_STATUS,
+  QUICK_ADD_COMMAND,
+  MENU_ADD_TAB,
+  MENU_ADD_PAGE,
+  SOURCE_STATUS_POLL_MS,
+  SOURCE_STATUS_POLL_LIMIT_MS,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
+import {
+  readStoredTarget,
+  resolveTarget,
+  menuTitle,
+  menuScope,
+  describeAdding,
+  isBlankTab,
+  describeOutcome,
+  describeStatuses,
+  statusesSettled,
+  showQuickAddToast,
+} from "../src/quick-add.js";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -227,7 +248,13 @@ async function deliverImportToTab(tabId, importId, payload, context = {}) {
       if (!response) return { delivered: false, reason: "no-ack", detail: "The Hubble page did not confirm the import." };
       if (response.ok) {
         const duplicates = Number(response.duplicates) || 0;
-        return { delivered: true, accepted: Number(response.accepted) || 0, ...(duplicates > 0 ? { duplicates } : {}) };
+        return {
+          delivered: true,
+          accepted: Number(response.accepted) || 0,
+          ...(duplicates > 0 ? { duplicates } : {}),
+          // The page took the batch but has no project with the target id (deleted since it was remembered).
+          ...(response.reason === "project-missing" ? { projectMissing: true } : {}),
+        };
       }
       return {
         delivered: false,
@@ -401,6 +428,12 @@ function windowQuery(windowId) {
  * (Hubble 2.0) takes the tab the person is looking at, or the tabs they
  * selected (ctrl/shift-click in the tab strip — Chrome's `highlighted`).
  */
+/** Exactly these tabs (quick add from a right-clicked tab or page). A tab closed since is simply not there. */
+async function getTabs(tabIds) {
+  const tabs = await Promise.all(tabIds.map((id) => chrome.tabs.get(id).catch(() => undefined)));
+  return tabs.filter(Boolean);
+}
+
 function scopeQuery(scope, windowId) {
   if (scope === "current") return { ...windowQuery(windowId), active: true };
   if (scope === "selected") return { ...windowQuery(windowId), highlighted: true };
@@ -420,18 +453,20 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
   const startedAt = Date.now();
   const importId = newImportId();
   const target = readTarget(options.target);
-  const scope = options.scope === "current" || options.scope === "selected" ? options.scope : "window";
+  const tabIds = Array.isArray(options.tabIds) ? options.tabIds.filter(Number.isInteger).slice(0, 50) : undefined;
+  const scope = tabIds ? "tabs" : options.scope === "current" || options.scope === "selected" ? options.scope : "window";
   log("dump-started", { excludeCount: excludeUrls?.length ?? 0, importId, scope, toProject: Boolean(target) });
 
   async function persist(patch) {
-    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...patch });
+    // `via` lets the popup tell a quick add (already reported by its own toast) from a run it should replay.
+    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...(options.via ? { via: options.via } : {}), ...patch });
   }
 
   await persist({ status: "running", phase: DUMP_PHASE.QUERYING_TABS });
 
   let chromeTabs;
   try {
-    chromeTabs = await chrome.tabs.query(scopeQuery(scope, windowId));
+    chromeTabs = tabIds ? await getTabs(tabIds) : await chrome.tabs.query(scopeQuery(scope, windowId));
   } catch (err) {
     const result = { ok: false, status: "error", reason: "tab-query-failed", count: 0, detail: errorMessage(err) };
     log("tab-query-failed", result.detail);
@@ -448,7 +483,9 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
   log("tabs-detected", { totalOpenTabs: chromeTabs.length, ...counts });
 
   if (payload.tabs.length === 0) {
-    const result = { ok: false, status: "error", reason: "no-importable-tabs", ...counts };
+    // Only blank tabs (a new tab, about:blank): nothing to add, which is not Chrome refusing anything.
+    const blankOnly = chromeTabs.length > 0 && chromeTabs.every(isBlankTab);
+    const result = { ok: false, status: "error", reason: "no-importable-tabs", ...counts, ...(blankOnly ? { blankOnly } : {}) };
     await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
     return { result };
   }
@@ -557,6 +594,7 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
     // Into a project, a tab that is already one of its sources is not a failure: it is already there.
     const duplicates = target ? attempt.duplicates ?? 0 : 0;
     const nothingImported = attempt.accepted === 0 && duplicates === 0;
+    const projectMissing = Boolean(target && attempt.projectMissing);
     const partial = !nothingImported && attempt.accepted + duplicates < payload.tabs.length;
 
     const result = {
@@ -566,13 +604,14 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
       accepted: attempt.accepted,
       ...(duplicates > 0 ? { alreadyInProject: duplicates } : {}),
       ...(target ? { target } : {}),
-      ...(nothingImported ? { reason: "nothing-imported" } : {}),
+      ...(nothingImported ? { reason: projectMissing ? "project-missing" : "nothing-imported" } : {}),
       focusTabId: tabId,
       focusWindowId: windowId,
     };
     await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
     log("dump-finished", result);
-    return { result };
+    // The addresses and titles go back to quick add (to name the source and follow its reading) but never into the persisted record.
+    return { result, urls: payload.tabs.map((tab) => tab.url), titles: payload.tabs.map((tab) => tab.title ?? "") };
   }
 }
 
@@ -607,7 +646,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   const run = (
     message.type === MSG_ADD_TO_PROJECT
-      ? dumpTabs(undefined, message.payload?.windowId, { scope: message.payload?.scope, target: message.payload?.target })
+      ? dumpTabs(undefined, message.payload?.windowId, { scope: message.payload?.scope, tabIds: message.payload?.tabIds, target: message.payload?.target })
       : dumpTabs(message.payload?.excludeUrls, message.payload?.windowId)
   )
     .then(({ result }) => {
@@ -759,4 +798,276 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(() => safeSendResponse(sendResponse, { id: payload.id, ok: false, error: "Unexpected error running browser command." }));
 
   return true; // keep the message channel open for the async sendResponse
+});
+
+// ---------------------------------------------------------------------------
+// Quick add (Hubble 2.0): the tab you are on → your Hubble project, without
+// the popup. Three entry points, one run:
+//
+//   right-click a tab in the tab strip → "Add to History IA"   (contexts: tab)
+//   right-click the page itself        → "Add to History IA"   (contexts: page)
+//   the keyboard shortcut (Alt+Shift+H by default)
+//
+// Each is the same dumpTabs() run the popup's "Add to project" makes — same
+// delivery, same ack, same source-ingestion pipeline in the page, same
+// duplicate detection — with feedback shown where the person is: a small
+// toast in the page they are looking at (allowed there by activeTab, because
+// they just used the menu or the shortcut), falling back to the toolbar
+// badge on pages Chrome does not let extensions touch.
+//
+// This is the closest supported stand-in for dragging a tab out of the tab
+// strip onto Hubble, which Chrome does not expose: see quick-add.js.
+// ---------------------------------------------------------------------------
+
+async function storedTarget() {
+  try {
+    const stored = await chrome.storage.local.get(TARGET_PROJECT_KEY);
+    return readStoredTarget(stored?.[TARGET_PROJECT_KEY]);
+  } catch {
+    return undefined;
+  }
+}
+
+function lastErrorIgnored() {
+  // Reading lastError is what tells Chrome the failure was handled (a menu that already exists, a removed one).
+  void chrome.runtime.lastError;
+}
+
+/** (Re)creates the two menu items, titled with the project they add to. */
+async function refreshMenus() {
+  if (!chrome.contextMenus) return;
+  const title = menuTitle(await storedTarget());
+  await new Promise((resolve) => chrome.contextMenus.removeAll(() => resolve(lastErrorIgnored())));
+  chrome.contextMenus.create({ id: MENU_ADD_TAB, title, contexts: ["tab"] }, lastErrorIgnored);
+  chrome.contextMenus.create({ id: MENU_ADD_PAGE, title, contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] }, lastErrorIgnored);
+}
+
+chrome.runtime.onInstalled?.addListener(() => void refreshMenus());
+chrome.runtime.onStartup?.addListener(() => void refreshMenus());
+chrome.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName === "local" && changes?.[TARGET_PROJECT_KEY]) void refreshMenus();
+});
+
+let badgeTimer;
+
+/** For pages a toast cannot be shown on (chrome://, the Web Store, a PDF viewer): the toolbar icon says it instead. */
+async function showBadge(toast) {
+  if (!chrome.action) return;
+  clearTimeout(badgeTimer);
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: toast.tone === "error" ? "#c62828" : toast.tone === "working" ? "#6b6b6b" : "#1a7f37" });
+    await chrome.action.setBadgeText({ text: toast.tone === "error" ? "!" : toast.tone === "working" ? "…" : "✓" });
+    await chrome.action.setTitle({ title: [toast.title, toast.source, toast.detail, toast.status].filter(Boolean).join(" — ") });
+  } catch {
+    return;
+  }
+  if (toast.tone === "working") return;
+  badgeTimer = setTimeout(() => {
+    chrome.action.setBadgeText({ text: "" }).catch(() => {});
+    chrome.action.setTitle({ title: "Add to your Hubble project" }).catch(() => {});
+  }, 6000);
+}
+
+/** Shows (or updates) the toast in `tabId`. Resolves whether the page could show it. */
+async function showToast(tabId, toast) {
+  if (Number.isInteger(tabId) && chrome.scripting?.executeScript) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, func: showQuickAddToast, args: [toast] });
+      return true;
+    } catch (err) {
+      log("quick-add-toast-unavailable", { tabId, detail: errorMessage(err) });
+    }
+  }
+  await showBadge(toast);
+  return false;
+}
+
+/** Statuses as the page reported them, re-checked: a known status and an optional short reason each. */
+function readStatuses(raw) {
+  if (!Array.isArray(raw)) return undefined;
+  const known = new Set(["pending", "processing", "ready", "partial", "failed"]);
+  return raw
+    .filter((entry) => entry && known.has(entry.status))
+    .slice(0, 50)
+    .map((entry) => ({ status: entry.status, ...(typeof entry.detail === "string" && entry.detail ? { detail: entry.detail.slice(0, 160) } : {}) }));
+}
+
+async function askSourceStatus(hubbleTabId, workspaceId, urls) {
+  try {
+    const response = await chrome.tabs.sendMessage(hubbleTabId, { type: MSG_SOURCE_STATUS, payload: { workspaceId, urls } });
+    return response?.ok ? readStatuses(response.statuses) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Each quick add owns the toast until the next one starts; a stale follow-up stops writing.
+let quickAddGeneration = 0;
+
+/**
+ * Keeps the toast saying how reading is going, in the project home's own
+ * words, until every source has settled or the budget runs out (then Hubble
+ * itself has the rest):
+ *
+ *   ◌ Adding to History IA…        →   ✓ Added to History IA
+ *     Britannica — Cuban crisis           Britannica — Cuban crisis
+ *     Reading source…                     Ready · 1,840 words
+ */
+async function followReading({ generation, toastTabId, hubbleTabId, workspaceId, urls, reading, done }) {
+  const deadline = Date.now() + SOURCE_STATUS_POLL_LIMIT_MS;
+  let shown = reading.status;
+  while (generation === quickAddGeneration) {
+    const statuses = await askSourceStatus(hubbleTabId, workspaceId, urls);
+    if (generation !== quickAddGeneration) return;
+    const line = describeStatuses(statuses);
+    const settled = statusesSettled(statuses);
+    const timedOut = Date.now() >= deadline;
+    // No answer, or Hubble holds none of these addresses as sources: nothing more to follow from here.
+    if (!statuses || statuses.length === 0 || settled || timedOut) {
+      const status = settled
+        ? line
+        : !timedOut
+          ? "Hubble is reading it now."
+          : line && !line.startsWith("Reading")
+            ? `${line} · see the rest in Hubble`
+            : "Still reading. See its status in Hubble.";
+      await showToast(toastTabId, { ...done, status, dismissAfterMs: 6000 });
+      return;
+    }
+    if (line && line !== shown) {
+      shown = line;
+      await showToast(toastTabId, { ...reading, status: line });
+    }
+    await sleep(SOURCE_STATUS_POLL_MS);
+  }
+}
+
+/**
+ * One quick add. `tabIds` names exact tabs; otherwise `scope: "selected"`
+ * takes the window's selected tabs (just the active one when nothing else is
+ * selected). `toastTabId` is the tab the person is looking at.
+ */
+async function quickAdd({ scope, tabIds, windowId, toastTabId }) {
+  const generation = ++quickAddGeneration;
+  const target = await storedTarget();
+  if (!target) {
+    await showToast(toastTabId, { ...describeOutcome({ ok: false, reason: "no-project" }), dismissAfterMs: 7000 });
+    return { ok: false, reason: "no-project" };
+  }
+  const named = { workspaceId: target.id, name: target.name };
+  if (activeDump) {
+    await showToast(toastTabId, { ...describeOutcome({ ok: false, reason: "already-running", target: named }), dismissAfterMs: 5000 });
+    return { ok: false, reason: "already-running" };
+  }
+
+  await showToast(toastTabId, describeAdding(named));
+  const run = dumpTabs(undefined, windowId, { scope, tabIds, target: named, via: "quick-add" });
+  activeDump = run;
+  let outcome;
+  try {
+    outcome = await run;
+  } catch (err) {
+    outcome = { result: { ok: false, status: "error", reason: "unexpected-error", detail: errorMessage(err) } };
+  } finally {
+    activeDump = null;
+  }
+
+  const { result, urls, titles } = outcome;
+  // One source: say which, by the title Chrome showed on its tab.
+  const source = urls?.length === 1 && titles?.[0] ? titles[0].slice(0, 160) : undefined;
+  const focus = Number.isInteger(result.focusTabId) ? { tabId: result.focusTabId, windowId: result.focusWindowId } : undefined;
+  // Every outcome names the project, including failures that happen before the run knows its target.
+  const done = { ...describeOutcome({ ...result, target: result.target ?? named }), ...(source ? { source } : {}), ...(focus ? { focus } : {}) };
+  // Only a new source has reading to follow; a duplicate was read when it first came in.
+  if (done.tone !== "done" || !focus || !urls?.length) {
+    await showToast(toastTabId, { ...done, dismissAfterMs: result.ok ? 6000 : 8000 });
+    return result;
+  }
+  const reading = { ...describeAdding(named), ...(source ? { source } : {}), ...(done.detail ? { detail: done.detail } : {}), status: "Reading source…", focus };
+  const visible = await showToast(toastTabId, reading);
+  // No toast to keep current (a Chrome page): the toolbar icon says it was added, and Hubble shows the reading.
+  if (!visible) {
+    await showToast(toastTabId, { ...done, dismissAfterMs: 6000 });
+    return result;
+  }
+  await followReading({ generation, toastTabId, hubbleTabId: focus.tabId, workspaceId: target.id, urls, reading, done });
+  return result;
+}
+
+async function activeTabIn(windowId) {
+  try {
+    const [tab] = await chrome.tabs.query(Number.isInteger(windowId) ? { active: true, windowId } : { active: true, lastFocusedWindow: true });
+    return tab;
+  } catch {
+    return undefined;
+  }
+}
+
+chrome.contextMenus?.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== MENU_ADD_TAB && info.menuItemId !== MENU_ADD_PAGE) return;
+  const context = info.menuItemId === MENU_ADD_TAB ? "tab" : "page";
+  const { scope, tabIds, windowId } = menuScope(tab, context);
+  (async () => {
+    // The toast goes where the person is looking: the window's active tab (a right-clicked tab may be in the background).
+    const toastTabId = context === "page" ? tab?.id : (await activeTabIn(windowId))?.id;
+    await quickAdd({ scope, tabIds, windowId, toastTabId });
+  })().catch((err) => log("quick-add-failed", errorMessage(err)));
+});
+
+chrome.commands?.onCommand.addListener((command, tab) => {
+  if (command !== QUICK_ADD_COMMAND) return;
+  (async () => {
+    const active = tab ?? (await activeTabIn());
+    await quickAdd({ scope: "selected", windowId: active?.windowId, toastTabId: active?.id });
+  })().catch((err) => log("quick-add-failed", errorMessage(err)));
+});
+
+/** The quick-add shortcut as Chrome has it now (the person can change or clear it at chrome://extensions/shortcuts). */
+async function quickAddShortcut() {
+  try {
+    const commands = await chrome.commands.getAll();
+    return commands.find((entry) => entry.name === QUICK_ADD_COMMAND)?.shortcut ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The Hubble page saying which project is on screen (relayed by the content
+ * script, so only ever from the Hubble origin). The project the person is
+ * looking at in Hubble becomes quick add's target (see resolveTarget).
+ * Answered with the shortcut, so Hubble can show the real one.
+ */
+async function handleProjectFocus(payload) {
+  const stored = await chrome.storage.local.get([TARGET_PROJECT_KEY, HUBBLE_FOCUS_KEY]);
+  const previous = readStoredTarget(stored?.[TARGET_PROJECT_KEY]);
+  const focus = payload?.focus && typeof payload.focus.id === "string" ? { id: payload.focus.id } : undefined;
+  const { target, lastFocusId } = resolveTarget({
+    stored: previous,
+    lastFocusId: typeof stored?.[HUBBLE_FOCUS_KEY] === "string" ? stored[HUBBLE_FOCUS_KEY] : undefined,
+    focus,
+    projects: payload?.projects,
+    visible: payload?.visible === true,
+  });
+  const changed = target?.id !== previous?.id || target?.name !== previous?.name;
+  const writes = {
+    ...(changed && target ? { [TARGET_PROJECT_KEY]: target } : {}),
+    ...(lastFocusId ? { [HUBBLE_FOCUS_KEY]: lastFocusId } : {}),
+  };
+  if (Object.keys(writes).length > 0) await chrome.storage.local.set(writes);
+  if (changed && !target) await chrome.storage.local.remove(TARGET_PROJECT_KEY);
+  return { ok: true, shortcut: await quickAddShortcut(), ...(target ? { target } : {}) };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== MSG_PROJECT_FOCUS) return undefined;
+  // Only the Hubble page itself may say what is open in Hubble.
+  if (typeof sender?.url !== "string" || !sender.url.startsWith(`${TABDUMP_ORIGIN}/`)) {
+    safeSendResponse(sendResponse, { ok: false, reason: "not-hubble" });
+    return undefined;
+  }
+  handleProjectFocus(message.payload)
+    .then((response) => safeSendResponse(sendResponse, response))
+    .catch((err) => safeSendResponse(sendResponse, { ok: false, reason: "unexpected-error", detail: errorMessage(err) }));
+  return true;
 });

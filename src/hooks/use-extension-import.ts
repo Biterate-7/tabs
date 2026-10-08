@@ -65,8 +65,15 @@ function isValidEntry(entry: unknown): entry is BrowserImportEntry {
  */
 export type ExtensionImportTarget = { workspaceId: string; as: "sources" }
 
-/** What an import took. A bare number is a dump's count; a project add also says how many were already there. */
-export type ExtensionImportResult = number | { accepted: number; duplicates: number }
+/**
+ * What an import took. A bare number is a dump's count; a project add also
+ * says how many were already there, and `projectMissing` when the target
+ * names no project here (deleted since the extension remembered it) — so the
+ * extension can say that instead of "only web pages can be sources".
+ */
+export type ExtensionImportResult = number | { accepted: number; duplicates: number; projectMissing?: boolean }
+
+type ImportAck = { accepted: number; duplicates: number; projectMissing?: boolean }
 
 function readTarget(raw: unknown): ExtensionImportTarget | undefined {
   if (!raw || typeof raw !== "object") return undefined
@@ -87,7 +94,7 @@ export function useExtensionImport(
   // must therefore re-ack (in case the first ack was the one that got lost)
   // without importing the same tabs a second time. Keyed by importId rather
   // than by content so a genuine second dump of the same tabs still counts.
-  const handledRef = useRef(new Map<string, { accepted: number; duplicates: number }>())
+  const handledRef = useRef(new Map<string, ImportAck>())
   // Deliberate "latest ref" idiom: these writes are same-render snapshot
   // assignments, not state mutations read back during this render, so they
   // can't cause the divergent-render bug the rule guards against.
@@ -112,7 +119,7 @@ export function useExtensionImport(
 
       const importId = typeof data.payload?.importId === "string" ? data.payload.importId : undefined
 
-      function ack({ accepted, duplicates }: { accepted: number; duplicates: number }) {
+      function ack({ accepted, duplicates, projectMissing }: ImportAck) {
         // Acked even when nothing was accepted: the extension needs to hear
         // that this page handled the batch and came up with zero, which it
         // reports as a failure. Staying silent would instead look like the
@@ -120,7 +127,11 @@ export function useExtensionImport(
         // retry in a second tab that would come up with the same zero.
         if (importId === undefined) return
         window.postMessage(
-          { source: BROWSER_MESSAGE_SOURCE, type: MSG_TABDUMP_IMPORT_ACK, payload: { importId, accepted, ...(duplicates > 0 ? { duplicates } : {}) } },
+          {
+            source: BROWSER_MESSAGE_SOURCE,
+            type: MSG_TABDUMP_IMPORT_ACK,
+            payload: { importId, accepted, ...(duplicates > 0 ? { duplicates } : {}), ...(projectMissing ? { reason: "project-missing" } : {}) },
+          },
           window.location.origin
         )
       }
