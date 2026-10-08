@@ -76,6 +76,9 @@ describe("project state", () => {
   it("suggests only what follows from the state", () => {
     expect(projectState({ workspace: { tabs: [] }, events: [] }).next?.kind).toBe("add_sources")
     expect(projectState({ workspace: { tabs: [source("ready"), source("failed")] }, events: [] }).next).toMatchObject({ kind: "fix_sources", count: 1 })
+    // A site that keeps its content private (ChatGPT, Drive) is saved fine — there is nothing to fix.
+    const unavailable: Tab = { ...source("pending"), id: "blocked", resource: { ...source("pending").resource!, status: "partial", error: { code: "blocked", message: "Content unavailable — this site doesn't allow automated reading.", retryable: false } } }
+    expect(projectState({ workspace: { tabs: [source("ready"), unavailable] }, events: [] }).next?.kind).toBe("first_task")
     expect(projectState({ workspace: { tabs: [source("ready")] }, events: [] }).next?.kind).toBe("first_task")
     expect(projectState({ workspace: { tabs: [source("ready")] }, lastTask: task({ state: "needs_you" }), events: [] }).next?.kind).toBe("answer_agent")
     expect(projectState({ workspace: { tabs: [source("ready")] }, lastTask: task({ state: "done" }), events: [] }).next?.kind).toBe("continue_with_another")

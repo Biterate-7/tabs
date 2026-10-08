@@ -33,7 +33,13 @@ export type ExtractionResponse =
 
 export const EXTRACTION_ERRORS = {
   unreachable: { code: "unreachable", message: "Hubble couldn't reach this page.", retryable: true },
-  blocked: { code: "blocked", message: "The site refused to let Hubble read this page.", retryable: false },
+  /*
+    The source is saved either way: these say only that its *content* can't
+    be read from outside the person's browser — a bot wall, a paywall, a page
+    behind a sign-in. Nothing went wrong, so nothing here sounds like it did.
+  */
+  blocked: { code: "blocked", message: "Content unavailable — this site doesn't allow automated reading.", retryable: false },
+  sign_in: { code: "blocked", message: "Content unavailable — this page is only visible when signed in.", retryable: false },
   not_found: { code: "not_found", message: "The page no longer exists at this address.", retryable: false },
   too_large: { code: "too_large", message: "This file is too large for Hubble to read.", retryable: false },
   unsupported: { code: "unsupported", message: "Hubble can't read this kind of file yet. The address is saved.", retryable: false },
@@ -49,6 +55,9 @@ export const EXTRACTION_ERRORS = {
   offline: { code: "offline", message: "Hubble couldn't reach its reader. Check your connection.", retryable: true },
   interrupted: { code: "interrupted", message: "Reading was interrupted.", retryable: true },
 } as const satisfies Record<string, ResourceError>;
+
+/** What `blocked` said before it was reworded. Sources saved with it are shown the current words (read.ts). */
+export const LEGACY_BLOCKED_MESSAGE = "The site refused to let Hubble read this page.";
 
 export function isExtractionResponse(value: unknown): value is ExtractionResponse {
   if (!value || typeof value !== "object") return false;

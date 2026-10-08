@@ -34,6 +34,29 @@ function fileNameOf(url: string): string | undefined {
   }
 }
 
+const SIGN_IN_HOST = /^(?:accounts|login|signin|auth|sso)\./i;
+const SIGN_IN_PATH = /\/(?:signin|sign-in|sign_in|login|log-in|logon|servicelogin)(?:\/|$)/i;
+
+function isSignInAddress(url: URL): boolean {
+  return SIGN_IN_HOST.test(url.hostname) || SIGN_IN_PATH.test(url.pathname);
+}
+
+/**
+ * Whether asking for `requested` was answered by a redirect to a sign-in
+ * page: the source exists, but only for someone signed in. Asking for a
+ * sign-in page itself is not that.
+ */
+export function landedOnSignIn(requested: string, final: string): boolean {
+  try {
+    const asked = new URL(requested);
+    const landed = new URL(final);
+    if (asked.href === landed.href || isSignInAddress(asked)) return false;
+    return isSignInAddress(landed);
+  } catch {
+    return false;
+  }
+}
+
 async function youtube(url: string, fetcher: Fetcher): Promise<ExtractionResponse> {
   const id = youtubeVideoId(url)!;
   const watch = `https://www.youtube.com/watch?v=${id}`;
@@ -96,6 +119,7 @@ export async function extractSource(url: string, options: { kind?: ResourceKind;
   if (fetched.status === 404 || fetched.status === 410) return partial(EXTRACTION_ERRORS.not_found);
   if (fetched.status === 401 || fetched.status === 403 || fetched.status === 429 || fetched.status >= 500) {
     if (expected === "pdf") return partial(EXTRACTION_ERRORS.pdf_needs_file, undefined, "pdf");
+    if (fetched.status === 401) return partial(EXTRACTION_ERRORS.sign_in);
     return partial(fetched.status >= 500 || fetched.status === 429 ? { ...EXTRACTION_ERRORS.unreachable, message: "Source saved, but the site didn't answer. Try again later." } : EXTRACTION_ERRORS.blocked);
   }
 
@@ -120,6 +144,9 @@ export async function extractSource(url: string, options: { kind?: ResourceKind;
 
   // Expected a PDF and got a page: a login wall or a viewer page in front of the file.
   if (expected === "pdf") return partial(EXTRACTION_ERRORS.pdf_needs_file, undefined, "pdf");
+
+  // Sent to a sign-in page (Google Drive, Microsoft 365, Notion…): its text is a login form, not the source.
+  if (landedOnSignIn(url, finalUrl)) return partial(EXTRACTION_ERRORS.sign_in);
 
   if (mimeType === "text/html" || mimeType === "application/xhtml+xml" || mimeType === "") {
     const html = new TextDecoder().decode(fetched.bytes.subarray(0, EXTRACT_LIMITS.htmlBytes));

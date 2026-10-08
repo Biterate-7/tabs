@@ -191,6 +191,31 @@ describe("ProjectHome", () => {
     expect(screen.getByText("1 source can't be read yet", { exact: false })).toBeTruthy()
   })
 
+  it("shows a source whose site blocks reading as saved — with its icon and a working Open — not as broken", async () => {
+    const user = userEvent.setup()
+    let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [{ ...project(), tabs: [] }] }
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc", title: "ChatGPT", favicon: "data:image/png;base64,iVBORw0KGgo=" }], "extension", NOW)!.store
+    const workspace = store.workspaces[0]!
+    workspace.tabs[0]!.resource = {
+      ...workspace.tabs[0]!.resource!,
+      status: "partial",
+      error: { code: "blocked", message: "Content unavailable — this site doesn't allow automated reading.", retryable: false },
+    }
+    const props = renderHome(workspace)
+    const card = document.querySelector("[data-source-card]")!
+    expect(card.querySelector("[data-source-status]")!.textContent).toBe("Saved · Content unavailable — this site doesn't allow automated reading.")
+    expect(card.querySelector("[data-source-status]")!.className).not.toContain("destructive")
+    expect(card.textContent).not.toMatch(/refused|couldn't read/i)
+    // The site's icon sits where the generic kind glyph was (the letter holds the space until it loads).
+    expect(card.querySelector("[data-source-icon]")!.textContent).toBe("C")
+    await user.click(within(card as HTMLElement).getByRole("button", { name: "Open ChatGPT" }))
+    expect(props.onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ url: "https://chatgpt.com/c/abc" }))
+    // Nothing to fix, so it is not "needing attention" and the project doesn't ask about it.
+    await user.click(screen.getByRole("button", { name: "Needs attention" }))
+    expect(screen.queryAllByRole("listitem").filter((item) => item.hasAttribute("data-source-card"))).toHaveLength(0)
+    expect(screen.queryByText(/can't be read yet/)).toBeNull()
+  })
+
   it("removes a source from the project, and hands Use in task to the Command Centre", async () => {
     const user = userEvent.setup()
     const workspace = project(["https://a.example/one"])

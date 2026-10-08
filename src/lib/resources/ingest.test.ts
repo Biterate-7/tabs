@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { adoptTabsAsSources, describeIngestion, ingestResources, projectSources, sourceCounts } from "./ingest";
+import { adoptTabsAsSources, describeIngestion, ingestResources, isContentUnavailable, needsAttention, projectSources, sourceCounts } from "./ingest";
+import { EXTRACTION_ERRORS, LEGACY_BLOCKED_MESSAGE } from "./extraction";
 import { readTabResource } from "./read";
 import { stripWrongTypedTabFields } from "@/lib/tabs/sanitize";
 import { parseSingleUrl } from "@/lib/tabs/parse";
@@ -105,6 +106,34 @@ describe("ingestResources", () => {
     workspace.tabs[0]!.resource = { ...workspace.tabs[0]!.resource!, status: "ready", content: { chars: 10, extractedAt: NOW } };
     expect(sourceCounts(workspace)).toMatchObject({ total: 2, ready: 1, working: 1, byKind: { pdf: 1, webpage: 1 } });
   });
+
+  it("keeps Chrome's icon on the source it adds (Chrome → project, web or desktop)", () => {
+    const result = ingestResources(
+      store(),
+      "a",
+      [
+        { url: "https://chatgpt.com/c/abc", title: "ChatGPT", favicon: "https://chatgpt.com/cdn/assets/favicon.svg" },
+        { url: "https://drive.google.com/drive/my-drive", favicon: "not an icon" },
+      ],
+      "extension",
+      NOW
+    )!;
+    const [chatgpt, drive] = result.plan.added;
+    expect(chatgpt).toMatchObject({ favicon: "https://chatgpt.com/cdn/assets/favicon.svg", resource: { origin: "extension" } });
+    expect(drive!.favicon).toBeUndefined();
+    expect(result.plan.outcomes.map((outcome) => outcome.status)).toEqual(["added", "added"]);
+  });
+
+  it("never counts a source whose site keeps its content private as needing attention", () => {
+    const result = ingestResources(store(), "a", [{ url: "https://chatgpt.com/" }, { url: "https://a.example/x.pdf" }, { url: "https://a.example/y" }], "extension", NOW)!;
+    const [blocked, pdf, failed] = result.store.workspaces[0]!.tabs;
+    blocked!.resource = { ...blocked!.resource!, status: "partial", error: EXTRACTION_ERRORS.blocked };
+    pdf!.resource = { ...pdf!.resource!, status: "partial", error: EXTRACTION_ERRORS.pdf_needs_file };
+    failed!.resource = { ...failed!.resource!, status: "failed", error: EXTRACTION_ERRORS.unreachable };
+    expect(isContentUnavailable(blocked!.resource)).toBe(true);
+    expect([blocked, pdf, failed].map((tab) => needsAttention(tab!.resource))).toEqual([false, true, true]);
+    expect(sourceCounts(result.store.workspaces[0]!)).toMatchObject({ total: 3, partial: 2, failed: 1, attention: 2 });
+  });
 });
 
 describe("readTabResource (stored data, defensively)", () => {
@@ -127,6 +156,15 @@ describe("readTabResource (stored data, defensively)", () => {
     expect(readTabResource({ ...base, addedAt: "yesterday" })).toBeUndefined();
     expect(readTabResource(null)).toBeUndefined();
     expect(readTabResource({ ...base, secret: "x" })).not.toHaveProperty("secret");
+  });
+
+  it("shows a source saved with the old 'refused' wording the current, non-alarming words", () => {
+    const saved = { ...base, kind: "webpage", status: "partial", content: undefined, error: { code: "blocked", message: LEGACY_BLOCKED_MESSAGE, retryable: false } };
+    expect(readTabResource(saved)).toMatchObject({ status: "partial", error: { code: "blocked", message: EXTRACTION_ERRORS.blocked.message } });
+    expect(EXTRACTION_ERRORS.blocked.message).toMatch(/^Content unavailable/);
+    // Any other stored wording is the source's own and is kept.
+    const other = { ...saved, error: { code: "blocked", message: "Hubble doesn't read addresses on private networks.", retryable: false } };
+    expect(readTabResource(other)!.error!.message).toBe("Hubble doesn't read addresses on private networks.");
   });
 
   it("is applied when a stored tab is loaded, keeping the tab", () => {

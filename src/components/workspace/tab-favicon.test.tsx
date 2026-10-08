@@ -82,3 +82,70 @@ describe("TabFavicon", () => {
     expect(container.textContent).toBe("?")
   })
 })
+
+describe("TabFavicon with the icon Chrome supplied", () => {
+  const CHROME_ICON = "https://chatgpt.com/cdn/assets/favicon.svg"
+  const INLINE_ICON = "data:image/png;base64,iVBORw0KGgo="
+
+  function withImages(outcome: (src: string) => "load" | "error") {
+    net.restore()
+    net = installFakeFaviconNetwork({ service: (host) => service[host] ?? "not-found", image: outcome })
+  }
+
+  afterEach(() => {
+    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  it("draws Chrome's icon and never asks the resolver", async () => {
+    withImages((src) => (src === CHROME_ICON ? "load" : "error"))
+    service["chatgpt.com"] = "icon"
+    const { container } = render(<TabFavicon domain="chatgpt.com" icon={CHROME_ICON} />)
+    await flush()
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(CHROME_ICON)
+    expect(net.fetched).toEqual([])
+  })
+
+  it("falls back to the resolver when Chrome's icon no longer loads", async () => {
+    withImages(() => "error")
+    service["chatgpt.com"] = "icon"
+    const { container } = render(<TabFavicon domain="chatgpt.com" icon={CHROME_ICON} />)
+    await flush()
+    await flush()
+    // Chrome's icon was tried first.
+    expect(net.images[0]).toBe(CHROME_ICON)
+    expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/)
+    expect(net.fetched).toEqual(["/api/favicon?host=chatgpt.com"])
+  })
+
+  it("falls back to the letter when neither loads", async () => {
+    withImages(() => "error")
+    const { container } = render(<TabFavicon domain="chatgpt.com" icon={CHROME_ICON} />)
+    await flush()
+    await flush()
+    expect(container.querySelector("img")).toBeNull()
+    expect(container.textContent).toBe("C")
+  })
+
+  it("on desktop, leaves a remote icon to the resolver (no remote img-src) but draws an inline one", async () => {
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    withImages((src) => (src.startsWith("data:") ? "load" : "error"))
+    service["chatgpt.com"] = "icon"
+    const remote = render(<TabFavicon domain="chatgpt.com" icon={CHROME_ICON} />)
+    await flush()
+    expect(net.images).not.toContain(CHROME_ICON)
+    expect(remote.container.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/)
+    remote.unmount()
+
+    const inline = render(<TabFavicon domain="example.org" icon={INLINE_ICON} />)
+    await flush()
+    expect(inline.container.querySelector("img")?.getAttribute("src")).toBe(INLINE_ICON)
+  })
+
+  it("ignores a stored value that isn't an icon address", async () => {
+    service["example.org"] = "icon"
+    const { container } = render(<TabFavicon domain="example.org" icon="javascript:alert(1)" />)
+    await flush()
+    expect(net.images).not.toContain("javascript:alert(1)")
+    expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/)
+  })
+})

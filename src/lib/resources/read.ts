@@ -1,3 +1,4 @@
+import { EXTRACTION_ERRORS, LEGACY_BLOCKED_MESSAGE } from "./extraction";
 import { RESOURCE_KINDS, RESOURCE_ORIGINS, RESOURCE_STATUSES } from "./types";
 import type { ResourceError, ResourceErrorCode, ResourceMeta, TabResource } from "./types";
 
@@ -59,8 +60,10 @@ function readError(raw: unknown): ResourceError | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const source = raw as Record<string, unknown>;
   if (!ERROR_CODES.includes(source.code as ResourceErrorCode)) return undefined;
-  const message = text(source.message, 300);
-  if (!message) return undefined;
+  const stored = text(source.message, 300);
+  if (!stored) return undefined;
+  // Sources saved before "blocked" was reworded show the current words, not the alarming old ones.
+  const message = source.code === "blocked" && stored === LEGACY_BLOCKED_MESSAGE ? EXTRACTION_ERRORS.blocked.message : stored;
   return { code: source.code as ResourceErrorCode, message, retryable: source.retryable === true };
 }
 

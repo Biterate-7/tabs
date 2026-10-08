@@ -3,7 +3,7 @@ import { makeTestPdf } from "./__fixtures__/pdf";
 import { readHtml } from "./html";
 import { extractPdfText, PdfUnreadableError } from "./pdf";
 import { parseTranscript, formatTimestamp } from "./transcript";
-import { extractSource } from "./server/extract";
+import { extractSource, landedOnSignIn } from "./server/extract";
 import type { FetchedBytes } from "./server/fetch";
 
 const ARTICLE = `<!doctype html><html><head>
@@ -145,6 +145,43 @@ describe("extractSource (server, with a fake network)", () => {
   it("reports a network failure as retryable, and a private address as refused", async () => {
     expect(await extractSource("https://x.example/", { fetcher: async () => ({ ok: false, reason: "timeout" }) })).toMatchObject({ ok: false, error: { code: "timeout", retryable: true } });
     expect(await extractSource("https://x.example/", { fetcher: async () => ({ ok: false, reason: "unsafe" }) })).toMatchObject({ ok: false, error: { code: "blocked", retryable: false } });
+  });
+
+  it("saves a site that refuses automated reading as 'content unavailable', never as a failure", async () => {
+    const result = await extractSource("https://chatgpt.com/c/abc", { fetcher: async () => fetched("<html>Just a moment…</html>", "text/html", 403, "https://chatgpt.com/c/abc") });
+    expect(result).toMatchObject({ ok: true, status: "partial", error: { code: "blocked", retryable: false } });
+    if (result.ok) expect(result.error!.message).toMatch(/^Content unavailable/);
+    if (result.ok) expect(result.error!.message).not.toMatch(/refused/i);
+    expect(await extractSource("https://intranet.example/doc", { fetcher: async () => fetched("", "text/html", 401) })).toMatchObject({
+      ok: true,
+      status: "partial",
+      error: { code: "blocked", message: expect.stringMatching(/signed in/) },
+    });
+  });
+
+  it("treats a redirect to a sign-in page as content unavailable, not as the page's text", async () => {
+    const login = `<html><body><main>${"<p>Sign in to continue to Google Drive. Use your Google Account. Forgot email? Not your computer? Use Guest mode to sign in privately.</p>".repeat(5)}</main></body></html>`;
+    const result = await extractSource("https://drive.google.com/drive/my-drive", {
+      fetcher: async () => fetched(login, "text/html", 200, "https://accounts.google.com/v3/signin/identifier?continue=https://drive.google.com/drive/my-drive"),
+    });
+    expect(result).toMatchObject({ ok: true, status: "partial", error: { code: "blocked", message: expect.stringMatching(/signed in/) } });
+    if (result.ok) expect(result.content).toBeUndefined();
+  });
+
+  it("knows a sign-in redirect from an ordinary one", () => {
+    expect(landedOnSignIn("https://drive.google.com/drive/my-drive", "https://accounts.google.com/v3/signin/identifier?x=1")).toBe(true);
+    expect(landedOnSignIn("https://contoso.sharepoint.com/doc", "https://login.microsoftonline.com/common/oauth2")).toBe(true);
+    expect(landedOnSignIn("https://www.notion.so/page-1", "https://www.notion.so/login")).toBe(true);
+    expect(landedOnSignIn("http://example.com/a", "https://example.com/a")).toBe(false);
+    expect(landedOnSignIn("https://example.com/old", "https://example.com/new-article")).toBe(false);
+    expect(landedOnSignIn("https://example.com/blog/login-tips", "https://example.com/blog/login-tips")).toBe(false);
+    // A sign-in page the person saved on purpose is read like any page.
+    expect(landedOnSignIn("https://accounts.google.com/", "https://accounts.google.com/v3/signin")).toBe(false);
+  });
+
+  it("still reads an ordinary page that redirected", async () => {
+    const page = ARTICLE.replace("</article>", "<p>" + "The quarantine line held while letters crossed between Washington and Moscow. ".repeat(4) + "</p></article>");
+    expect(await extractSource("http://example.com/a", { fetcher: async () => fetched(page, "text/html", 200, "https://example.com/a") })).toMatchObject({ ok: true, status: "ready" });
   });
 
   it("keeps a 404 as a saved source with the reason", async () => {

@@ -28,6 +28,7 @@ function isValidEntry(entry: unknown): entry is BrowserImportEntry {
     typeof e.url === "string" &&
     (e.title === undefined || typeof e.title === "string") &&
     (e.pinned === undefined || typeof e.pinned === "boolean")
+    // `favicon` is not checked here: a bad icon must never cost the tab. readPageIcon drops it where tabs are built.
   )
 }
 

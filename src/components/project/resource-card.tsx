@@ -9,7 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { SourceKindIcon, SourceStatus } from "./source-status"
+import { SourceStatus } from "./source-status"
+import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { formatRelativeTime } from "@/lib/time-format"
 import { RESOURCE_KIND_LABEL } from "@/lib/resources/types"
 import { cn } from "@/lib/utils"
@@ -50,7 +51,10 @@ export function ResourceCard({ tab, now, actions, highlighted = false }: { tab: 
       data-source-kind={resource.kind}
     >
       <div className="flex min-w-0 items-start gap-2.5">
-        <SourceKindIcon kind={resource.kind} className="mt-0.5" />
+        {/* The site's own icon (Chrome's, when the tab came from Chrome); the kind is named in words below. */}
+        <span className="mt-0.5 flex" data-source-icon>
+          <TabFavicon domain={tab.domain} icon={tab.favicon} size={16} />
+        </span>
         <div className="min-w-0 flex-1">
           <button type="button" className="block w-full truncate text-left text-body text-foreground outline-none hover:underline focus-visible:underline" title={title} onClick={() => actions.onDetails(tab)}>
             {title}
