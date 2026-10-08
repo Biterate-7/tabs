@@ -3,7 +3,7 @@
  *
  * The two representations are deliberately different. A local `Tab` carries
  * fields that are derived on the device (`normalizedUrl`, `domain`,
- * `isDuplicate`) or written but never read (`favicon`); Phase 3 decided none
+ * `isDuplicate`) or local to the importing device (`favicon`); Phase 3 decided none
  * of them sync, so they are dropped here rather than sent and ignored. See
  * schema.sql for the per-field reasoning.
  *

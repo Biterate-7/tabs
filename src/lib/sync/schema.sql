@@ -241,10 +241,11 @@ CREATE INDEX IF NOT EXISTS tabdump_groups_changes_idx
 --                   the whole list from normalized_url. It is the same field
 --                   Phase 2 excluded from stampChangedTabs for being churn
 --                   rather than content.
---   favicon         Written by browser-import.ts and never read: every
---                   display path resolves an icon from `domain` through
---                   src/lib/favicon/client.ts. A write-only cache is not state
---                   worth synchronizing.
+--   favicon         Chrome's own icon for the page, written by
+--                   browser-import.ts and drawn first by TabFavicon on the
+--                   device that imported it. Every other device resolves an
+--                   icon from `domain` (src/lib/favicon/client.ts), so it is
+--                   a local nicety, not state worth synchronizing.
 --
 -- `confidence` IS synced despite looking like an AI artifact, because
 -- src/lib/workspace/cleanup.ts reads it to decide which tabs need review —

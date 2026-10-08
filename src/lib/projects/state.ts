@@ -47,11 +47,12 @@ export function projectState(input: {
   else if (last?.state === "failed" || last?.state === "stopped")
     next = { kind: "retry_task", text: `${agentDisplayName(last.provider)}'s last task didn't finish — try again or give it to another agent`, sessionId: last.sessionId };
   else if (sources.total === 0) next = { kind: "add_sources", text: "Add sources from Chrome so agents have something to work from" };
-  else if (sources.failed + sources.partial > 0 && !last)
+  // Sources whose site keeps its content private are fine as they are, and never asked about (isContentUnavailable).
+  else if (sources.attention > 0 && !last)
     next = {
       kind: "fix_sources",
-      text: `${sources.failed + sources.partial} source${sources.failed + sources.partial === 1 ? "" : "s"} can't be read yet — upload the file or add a transcript`,
-      count: sources.failed + sources.partial,
+      text: `${sources.attention} source${sources.attention === 1 ? "" : "s"} can't be read yet — upload the file or add a transcript`,
+      count: sources.attention,
     };
   else if (!last) next = { kind: "first_task", text: `Give an agent its first task with ${sources.total} source${sources.total === 1 ? "" : "s"}` };
   else if (last.state === "done" && last.attention) next = { kind: "review_result", text: `Review ${agentDisplayName(last.provider)}'s result`, sessionId: last.sessionId };

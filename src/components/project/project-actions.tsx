@@ -21,7 +21,7 @@ export type ProjectActions = {
   /** The project on screen. */
   currentId: string
   projects: readonly { id: string; name: string }[]
-  addTabs: (tabs: readonly Pick<Tab, "url" | "title">[], projectId: string) => void
+  addTabs: (tabs: readonly Pick<Tab, "url" | "title" | "favicon">[], projectId: string) => void
 }
 
 const ProjectActionsContext = createContext<ProjectActions | null>(null)
@@ -33,7 +33,7 @@ export function useProjectActions(): ProjectActions | null {
 }
 
 /** The "Add to project" row for a dropdown menu. Nothing when there is no shell to send it to. */
-export function AddToProjectSubmenu({ tabs }: { tabs: readonly Pick<Tab, "url" | "title" | "resource">[] }) {
+export function AddToProjectSubmenu({ tabs }: { tabs: readonly Pick<Tab, "url" | "title" | "favicon" | "resource">[] }) {
   const actions = useProjectActions()
   if (!actions || tabs.length === 0) return null
   const allSources = tabs.every((tab) => tab.resource)

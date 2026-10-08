@@ -19,7 +19,7 @@ import { useProjectContents } from "@/hooks/use-project-contents"
 import { lastTaskStateLabel } from "@/lib/agents/command-centre/last-task"
 import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { describeLocation, searchProject } from "@/lib/resources/search"
-import { projectSources } from "@/lib/resources/ingest"
+import { needsAttention, projectSources } from "@/lib/resources/ingest"
 import { projectState } from "@/lib/projects/state"
 import { recordLoopMilestone } from "@/lib/product/loop-log"
 import { formatRelativeTime } from "@/lib/time-format"
@@ -39,7 +39,7 @@ const FILTERS: { id: Filter; label: string; matches: (tab: Tab) => boolean }[] =
   { id: "webpage", label: "Web pages", matches: (tab) => tab.resource!.kind === "webpage" || tab.resource!.kind === "document" || tab.resource!.kind === "unknown" },
   { id: "pdf", label: "PDFs", matches: (tab) => tab.resource!.kind === "pdf" },
   { id: "video", label: "Videos", matches: (tab) => tab.resource!.kind === "youtube" || tab.resource!.kind === "video" },
-  { id: "attention", label: "Needs attention", matches: (tab) => tab.resource!.status === "failed" || tab.resource!.status === "partial" },
+  { id: "attention", label: "Needs attention", matches: (tab) => needsAttention(tab.resource) },
 ]
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`

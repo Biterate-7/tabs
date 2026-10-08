@@ -45,6 +45,16 @@ describe("buildTabsFromBrowserImport", () => {
     expect(tabs[1].favicon).toBeUndefined();
   });
 
+  it("drops a favicon that isn't a web address or small inline image, keeping the tab", () => {
+    const tabs = buildTabsFromBrowserImport([
+      { url: "https://a.example", favicon: "chrome://theme/IDR_EXTENSIONS_FAVICON" },
+      { url: "https://b.example", favicon: "javascript:alert(1)" },
+      { url: "https://c.example", favicon: 7 as unknown as string },
+      { url: "https://d.example", favicon: "data:image/png;base64,iVBORw0KGgo=" },
+    ]);
+    expect(tabs.map((tab) => tab.favicon)).toEqual([undefined, undefined, undefined, "data:image/png;base64,iVBORw0KGgo="]);
+  });
+
   it("skips malformed URLs instead of throwing", () => {
     const tabs = buildTabsFromBrowserImport([
       { url: "not a url" },

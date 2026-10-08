@@ -1141,7 +1141,7 @@ export function AppShell() {
       if (!storeRef.current?.workspaces.some((workspace) => workspace.id === target.workspaceId)) return { accepted: 0, duplicates: 0, projectMissing: true }
       const outcomes = handleAddSources(
         target.workspaceId,
-        entries.map((entry) => ({ url: entry.url, ...(entry.title ? { title: entry.title } : {}) })),
+        entries.map((entry) => ({ url: entry.url, ...(entry.title ? { title: entry.title } : {}), ...(entry.favicon ? { favicon: entry.favicon } : {}) })),
         "extension"
       )
       return {
@@ -1765,7 +1765,7 @@ export function AppShell() {
     currentId: currentWorkspace.id,
     projects: store.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name.trim() || "Untitled project" })),
     addTabs: (tabs, projectId) => {
-      handleAddSources(projectId, tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}) })), "import")
+      handleAddSources(projectId, tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}), ...(tab.favicon ? { favicon: tab.favicon } : {}) })), "import")
     },
   }
 

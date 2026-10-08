@@ -72,8 +72,9 @@ export type WorkspaceSyncPayload = {
  * A tab as it crosses the wire.
  *
  * Missing on purpose: normalizedUrl and domain (derived from url),
- * isDuplicate (recomputed across the list), favicon (written but never
- * read). A receiving client recomputes all four.
+ * isDuplicate (recomputed across the list), favicon (Chrome's icon, kept
+ * on the importing device only — elsewhere TabFavicon resolves one from the
+ * domain). A receiving client recomputes all four.
  */
 export type TabSyncPayload = {
   id: string;

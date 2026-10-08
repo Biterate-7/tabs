@@ -33,7 +33,7 @@ export function isPrivilegedUrl(url) {
  * Converts raw `chrome.tabs.Tab` objects into the wire payload Hubble's
  * content-script bridge expects. `tabId`/`windowId`/`active` are carried
  * for the extension's own potential future use (e.g. closing tabs after a
- * successful dump) — Hubble's web app only consumes url/title/pinned.
+ * successful dump) — Hubble's web app only consumes url/title/pinned/favicon.
  *
  * `excludeUrls`, when given, drops tabs whose exact raw URL is already
  * known to be in the currently selected workspace (see
@@ -78,6 +78,10 @@ export function buildImportPayload(chromeTabs, excludeUrls) {
     tabs.push({
       url: tab.url,
       title: titleIsLoaded && tab.title ? tab.title : undefined,
+      // The icon Chrome shows for the page — Hubble draws it on the source card
+      // instead of looking one up. Same loading rule as the title: mid-navigation
+      // it may still be the previous page's. Hubble re-checks the value.
+      ...(titleIsLoaded && typeof tab.favIconUrl === "string" && tab.favIconUrl ? { favicon: tab.favIconUrl } : {}),
       pinned: Boolean(tab.pinned),
       active: Boolean(tab.active),
       tabId: tab.id,

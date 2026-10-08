@@ -154,8 +154,23 @@ export function adoptTabsAsSources(store: WorkspaceStore, workspaceId: string, t
 }
 
 /** Counts for the project home and the composer. */
+/**
+ * A source that is saved and fine, whose content the site keeps to people
+ * signed in or browsing themselves (a bot wall, a login). There is nothing
+ * to fix — no file to upload, no transcript to add — so it is never counted
+ * as needing attention.
+ */
+export function isContentUnavailable(resource: Pick<TabResource, "status" | "error"> | undefined): boolean {
+  return resource?.status === "partial" && resource.error?.code === "blocked";
+}
+
+/** Failed, or saved without content for a reason the person can do something about. */
+export function needsAttention(resource: Pick<TabResource, "status" | "error"> | undefined): boolean {
+  return resource?.status === "failed" || (resource?.status === "partial" && !isContentUnavailable(resource));
+}
+
 export function sourceCounts(workspace: Pick<Workspace, "tabs">) {
-  const counts = { total: 0, ready: 0, partial: 0, failed: 0, working: 0, byKind: {} as Partial<Record<ResourceKind, number>> };
+  const counts = { total: 0, ready: 0, partial: 0, failed: 0, working: 0, attention: 0, byKind: {} as Partial<Record<ResourceKind, number>> };
   for (const tab of workspace.tabs) {
     const resource = tab.resource;
     if (!resource) continue;
@@ -165,6 +180,7 @@ export function sourceCounts(workspace: Pick<Workspace, "tabs">) {
     else if (resource.status === "partial") counts.partial += 1;
     else if (resource.status === "failed") counts.failed += 1;
     else counts.working += 1;
+    if (needsAttention(resource)) counts.attention += 1;
   }
   return counts;
 }

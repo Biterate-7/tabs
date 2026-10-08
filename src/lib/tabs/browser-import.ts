@@ -1,6 +1,7 @@
 import { parseSingleUrl } from "./parse";
 import { categorizeTabs } from "@/lib/categories";
 import { isGoogleDocsHostname, stripGoogleDocsSuffix } from "@/lib/titles/google-docs-host";
+import { readPageIcon } from "@/lib/favicon/page-icon";
 import type { Tab } from "./types";
 
 /**
@@ -14,7 +15,7 @@ export type BrowserImportEntry = {
   url: string;
   title?: string;
   pinned?: boolean;
-  /** From chrome.tabs.Tab.favIconUrl, when the caller has it (see src/lib/actions/browser-write.ts's import_browser_tabs_to_workspace) — the original popup-based dump flow doesn't collect this today, so it's commonly absent. */
+  /** From chrome.tabs.Tab.favIconUrl, when the caller has it: the extension's dumps and project adds, Hubble Desktop's import, and src/lib/actions/browser-write.ts's import_browser_tabs_to_workspace. Re-read with readPageIcon (src/lib/favicon/page-icon.ts). */
   favicon?: string;
   /** Set only by History Dump (src/lib/history-dump/) to "history" for a candidate the user selected — omitted entirely (not just "tabs") by the ordinary open-tabs dump flow, since that's still the overwhelmingly common path and every existing Tab predates this field. */
   source?: "tabs" | "history";
@@ -51,11 +52,13 @@ export function buildTabsFromBrowserImport(entries: BrowserImportEntry[]): Tab[]
     const trimmedTitle = entry.title?.trim();
     const title =
       trimmedTitle && isGoogleDocsHostname(tab.domain) ? stripGoogleDocsSuffix(trimmedTitle) : trimmedTitle;
+    // Chrome's own icon for the page, drawn first by TabFavicon. Anything that isn't a web address or a small inline image is dropped, not the tab.
+    const favicon = readPageIcon(entry.favicon);
     tabs.push({
       ...tab,
       ...(title ? { title } : {}),
       ...(entry.pinned !== undefined ? { pinned: entry.pinned } : {}),
-      ...(entry.favicon ? { favicon: entry.favicon } : {}),
+      ...(favicon ? { favicon } : {}),
       ...(entry.source ? { source: entry.source } : {}),
       ...(entry.historyVisitCount !== undefined ? { historyVisitCount: entry.historyVisitCount } : {}),
       ...(entry.historyLastVisitedAt !== undefined ? { historyLastVisitedAt: entry.historyLastVisitedAt } : {}),

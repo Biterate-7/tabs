@@ -53,6 +53,18 @@ describe("buildImportPayload", () => {
     ]);
   });
 
+  it("carries the icon Chrome shows for the page, so Hubble needn't look one up", () => {
+    const { tabs } = buildImportPayload([
+      fakeTab({ id: 1, url: "https://chatgpt.com/", favIconUrl: "https://chatgpt.com/cdn/assets/favicon.svg", status: "complete" }),
+      fakeTab({ id: 2, url: "https://example.com/" }),
+      fakeTab({ id: 3, url: "https://example.com/next", favIconUrl: "https://previous.example/favicon.ico", status: "loading" }),
+      fakeTab({ id: 4, url: "https://example.com/blank", favIconUrl: "" }),
+    ]);
+    expect(tabs.map((tab) => tab.favicon)).toEqual(["https://chatgpt.com/cdn/assets/favicon.svg", undefined, undefined, undefined]);
+    // Absent, not undefined-valued, when there is none: the wire shape stays as it was.
+    expect("favicon" in tabs[1]).toBe(false);
+  });
+
   it("excludes privileged tabs but keeps ordinary ones from the same batch", () => {
     const { tabs } = buildImportPayload([
       fakeTab({ id: 1, url: "chrome://extensions" }),
