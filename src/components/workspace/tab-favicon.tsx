@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useFaviconSrc } from "@/hooks/use-favicon-src"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
@@ -15,8 +15,22 @@ import { avatarFallback } from "@/lib/workspace/favicon"
  * first; if it fails to load, the domain's icon from
  * src/lib/favicon/client.ts takes over, which is only mounted once it has
  * verified it loads — so a broken-image glyph can never appear.
+ *
+ * `fallback` replaces the letter badge for surfaces that show a plain glyph
+ * instead (the command palette's globe) — drawn without the badge colour or
+ * the hairline ring, which belong to the badge.
  */
-export function TabFavicon({ domain, icon, size = 28 }: { domain: string; icon?: string; size?: number }) {
+export function TabFavicon({
+  domain,
+  icon,
+  size = 28,
+  fallback,
+}: {
+  domain: string
+  icon?: string
+  size?: number
+  fallback?: ReactNode
+}) {
   const { letter, colorVar } = avatarFallback(domain)
   const isDesktop = useIsDesktop()
   const [failedIcon, setFailedIcon] = useState<string | null>(null)
@@ -29,7 +43,7 @@ export function TabFavicon({ domain, icon, size = 28 }: { domain: string; icon?:
   return (
     <Avatar
       style={{ width: size, height: size }}
-      className="shrink-0 rounded-md after:rounded-md"
+      className={fallback ? "shrink-0 rounded-md after:hidden" : "shrink-0 rounded-md after:rounded-md"}
     >
       {src && (
         <AvatarImage
@@ -45,12 +59,16 @@ export function TabFavicon({ domain, icon, size = 28 }: { domain: string; icon?:
           }}
         />
       )}
-      <AvatarFallback
-        className="rounded-md text-[0.65rem] font-medium text-white"
-        style={{ backgroundColor: `var(${colorVar})` }}
-      >
-        {letter}
-      </AvatarFallback>
+      {fallback ? (
+        <AvatarFallback className="rounded-md bg-transparent">{fallback}</AvatarFallback>
+      ) : (
+        <AvatarFallback
+          className="rounded-md text-[0.65rem] font-medium text-white"
+          style={{ backgroundColor: `var(${colorVar})` }}
+        >
+          {letter}
+        </AvatarFallback>
+      )}
     </Avatar>
   )
 }

@@ -3,8 +3,11 @@
 import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
 import { Kbd } from "@/components/ui/kbd"
+import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { modKeyLabel } from "@/lib/keyboard"
 import type { Command, CommandGroup } from "./types"
+
+const ICON_CLASS = "size-4 shrink-0 text-muted-foreground group-data-[selected=true]/item:text-foreground"
 
 const GROUP_ORDER: CommandGroup[] = [
   "Ask",
@@ -130,10 +133,16 @@ export function CommandPalette({
                     onSelect={() => run(command)}
                     className="group/item flex min-h-[30px] cursor-default items-center gap-2.5 rounded-xs px-2 py-1 text-body text-foreground data-[selected=true]:bg-surface-active aria-disabled:opacity-40"
                   >
-                    <command.icon
-                      className="size-4 shrink-0 text-muted-foreground group-data-[selected=true]/item:text-foreground"
-                      aria-hidden
-                    />
+                    {command.site ? (
+                      <TabFavicon
+                        domain={command.site.domain}
+                        icon={command.site.favicon}
+                        size={16}
+                        fallback={<command.icon className={ICON_CLASS} aria-hidden />}
+                      />
+                    ) : (
+                      <command.icon className={ICON_CLASS} aria-hidden />
+                    )}
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate">{command.label}</span>
                       {command.hint && <span className="truncate text-meta text-tertiary">{command.hint}</span>}

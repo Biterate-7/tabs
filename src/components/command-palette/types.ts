@@ -28,6 +28,12 @@ export type Command = {
    * under the label and searched along with it.
    */
   hint?: string
+  /**
+   * Set on a result that is a website (a saved tab): the palette draws that
+   * site's favicon in place of `icon`, and falls back to `icon` — the globe —
+   * whenever there is none to show.
+   */
+  site?: { domain: string; favicon?: string }
   /** Extra words the filter should match that are not shown (synonyms). */
   keywords?: string[]
 }

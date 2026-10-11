@@ -118,6 +118,7 @@ export function buildGlobalCommands(
         hint: w.id === data.currentId ? tab.domain : `${tab.domain} · ${w.name}`,
         group: "Tabs",
         icon: Globe,
+        site: { domain: tab.domain, favicon: tab.favicon },
         onSelect: () => actions.openUrl(tab.url),
         keywords: [tab.url],
       })
