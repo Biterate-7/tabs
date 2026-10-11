@@ -199,7 +199,7 @@ describe("the workspace's project", () => {
       />
     )
 
-    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI about Research" })).toBeTruthy()
     const section = await projectSection()
     // Research has no project: Development's must not be shown as this context's.
     await waitFor(() => expect(section.getByText("No folder connected")).toBeTruthy())
@@ -227,7 +227,7 @@ describe("starting work in the project", () => {
     const runtime = runtimeWith()
     renderCentre(runtime)
     await waitFor(async () => expect((await projectSection()).getByText("Connected")).toBeTruthy())
-    await user.click(within(await screen.findByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
+    await user.click(within(await screen.findByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / }))
     const dialog = within(await screen.findByRole("dialog", { name: "New agent session" }))
     expect(dialog.getByText("hubble · Ready for agent work")).toBeTruthy()
     await user.click(dialog.getByRole("button", { name: /start session/i }))
@@ -245,7 +245,7 @@ describe("starting work in the project", () => {
     const user = userEvent.setup()
     renderCentre(runtimeWith({ inspection: { ...READY, state: "permission_denied", checks: [] } }))
     await waitFor(async () => expect((await projectSection()).getByText("Permission denied")).toBeTruthy())
-    await user.click(within(await screen.findByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
+    await user.click(within(await screen.findByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / }))
     const dialog = within(await screen.findByRole("dialog", { name: "New agent session" }))
     expect(dialog.getByText("hubble · Permission denied. Hubble doesn't have permission to access this project.")).toBeTruthy()
     expect((dialog.getByRole("button", { name: /start session/i }) as HTMLButtonElement).disabled).toBe(true)

@@ -272,6 +272,6 @@ describe("what the person is told", () => {
   it("says what is happening while it happens", () => {
     expect(describeDesktopPhase("connecting", 12)).toMatchObject({ tone: "working", title: "Connecting to Hubble Desktop…" });
     expect(describeDesktopPhase("launching", 12)).toMatchObject({ title: "Opening Hubble Desktop…" });
-    expect(describeDesktopPhase("waiting", 12)).toEqual({ tone: "working", title: "Add 12 tabs to Hubble", detail: "Choose a project in Hubble Desktop." });
+    expect(describeDesktopPhase("waiting", 12)).toEqual({ tone: "working", title: "Add 12 tabs to Hubble", detail: "Choose a subject in Hubble Desktop." });
   });
 });

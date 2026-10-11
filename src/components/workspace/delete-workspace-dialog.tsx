@@ -28,14 +28,13 @@ export function DeleteWorkspaceDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete &quot;{workspaceName}&quot;?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes the workspace and its {tabCount} tab{tabCount === 1 ? "" : "s"}, including
-            what&apos;s saved locally. This can&apos;t be undone.
+            This removes the subject and its {tabCount} resource{tabCount === 1 ? "" : "s"}. This can&apos;t be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            Delete workspace
+            Delete subject
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -1,16 +1,33 @@
 "use client"
 
+import { useState } from "react"
 import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
-import { Boxes, Clock, PanelLeftClose, PanelLeftOpen, Radio, ScanSearch, ScrollText, Search, Settings, Star, Waypoints } from "lucide-react"
+import {
+  ChevronRight,
+  Clock,
+  History,
+  House,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Radio,
+  ScrollText,
+  Search,
+  Settings,
+  Sparkles,
+  Star,
+  Waypoints,
+} from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
 import { IconButton } from "@/components/ui/icon-button"
 import { SidebarItem, SidebarSectionLabel } from "@/components/ui/sidebar-item"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher"
+import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { Kbd } from "@/components/ui/kbd"
 import { modKeyLabel } from "@/lib/keyboard"
+import { subjectName } from "@/lib/product/subjects"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -19,6 +36,8 @@ import type { Workspace } from "@/lib/workspace/types"
  * the rail only needs to know enough to light the right row.
  */
 export type SidebarView =
+  | "home"
+  | "ai"
   | "workspace"
   | "graph"
   | "settings"
@@ -29,60 +48,73 @@ export type SidebarView =
   | "agent-history"
   | "agent-session"
 
+/** Destinations that live under "More" — power tools a student never needs to find. */
+const MORE_VIEWS: readonly SidebarView[] = ["command-centre", "agent-history", "agent-session", "graph", "favorites", "recents", "history-dump"]
+
+const MORE_OPEN_KEY = "hubble:sidebar-more:v1"
+
+function loadMoreOpen(): boolean {
+  try {
+    return window.localStorage.getItem(MORE_OPEN_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function saveMoreOpen(open: boolean): void {
+  try {
+    window.localStorage.setItem(MORE_OPEN_KEY, open ? "1" : "0")
+  } catch {
+    // A remembered disclosure is a convenience; nothing to recover.
+  }
+}
+
 /**
  * The persistent left rail.
  *
- * ## What changed, and why
+ *     Hubble
+ *     [Search Hubble]
+ *     Home
+ *     AI
+ *     SUBJECTS                +
+ *       History HL
+ *       Math AA HL
+ *     More ›        AI chats (the Command Centre), AI activity, Graph…
+ *     ─────
+ *     Settings
  *
- * The rail used to put all seven destinations in a footer block pinned
- * below a workspace list that took every remaining pixel — so the nav sat
- * in the last 250px of the column while several hundred px of nothing sat
- * above it, and Settings ended up underneath the floating sync badge.
- * `sidebars.md` › Desktop is explicit about this: "Avoid putting critical
- * information or actions at the bottom of a sidebar. People often relocate
- * a window in a way that hides its bottom edge." Destinations now open the
- * rail and Spaces follow; the only thing left at the foot is the account,
- * which is the one row that genuinely belongs there.
+ * ## Subject-first
  *
- * Rows are `SidebarItem`, not `IconButton`, so each one carries
- * `aria-current="page"` when it is the view on screen. Before this there
- * was exactly one `aria-current` in the entire shell and it was on the
- * workspace list, which meant nothing anywhere said which destination you
- * were looking at.
+ * A student's mental model is subjects → their stuff → AI, so the rail is
+ * exactly that: Home, AI, and the subjects themselves (workspaces, shown as
+ * subjects — see lib/product/subjects.ts). Opening a subject opens it; the
+ * "+" makes one. Nothing else competes for the first glance.
  *
- * Icons are one per destination. "Recent" and "Agent History" both used
- * lucide's `History` glyph, so two unrelated rows were visually identical —
- * `sidebars.md` asks for "familiar symbols to represent items in the
- * sidebar", and two items sharing one symbol is the opposite. Recent keeps
- * a clock, Agent History takes a scroll: a record of what happened, which
- * is what it is.
+ * ## Progressive disclosure
  *
- * ## Workspace rows
+ * Everything that used to sit beside them — the Command Centre, AI activity
+ * (Agent History), the Graph, Favorites, Recent, Import from history — is
+ * kept and one click away under "More", closed by default. The group opens
+ * itself whenever one of its destinations is on screen, so the current row
+ * is never hidden, and remembers being opened by hand.
  *
- * They show the name. They previously showed an avatar and a count with the
- * name only in a tooltip, which made two workspaces whose names began with
- * the same letter indistinguishable — the seeded "Thesis Research" and
- * "Hubble Build" both rendered as a circled "T". The original reason was a
- * test constraint (WorkspaceSwitcher also renders the current name, so a
- * plain `getByText(name)` could match twice), and that is a real constraint
- * but the wrong thing to spend legibility on. It is resolved here by giving
- * the switcher's trigger and these rows distinct accessible names rather
- * than by hiding one of them.
+ * Rows are `SidebarItem`, so the destination on screen carries
+ * `aria-current="page"`. Subject rows carry `aria-current` while that
+ * subject is open.
+ *
+ * Renaming, deleting and importing subjects moved off the rail: to the
+ * subject's own menu and Settings → Subjects.
  */
 export function AppSidebar({
   workspaces,
   currentId,
-  relationshipCounts,
   collapsed,
   onToggleCollapsed,
   mobileOpen,
   onMobileOpenChange,
   onSwitch,
+  onOpenSubject,
   onCreate,
-  onRename,
-  onDelete,
-  onImportFile,
-  onUpdateLogo,
   onOpenFavorites,
   onOpenRecents,
   onOpenHistoryDump,
@@ -93,97 +125,97 @@ export function AppSidebar({
   onOpenAgentHistory,
   onOpenSettings,
   onOpenWorkspace,
+  onOpenHome,
+  onOpenAI,
   currentView = "workspace",
   onOpenSearch,
   embedded = false,
 }: {
   workspaces: Workspace[]
   currentId: string
-  /** Keyed by workspace id — see lib/workspace/relationships.ts. Missing entries treated as zero. */
-  relationshipCounts: Record<string, number>
   /** Desktop-only icon-rail toggle — has no effect below the `md` breakpoint (see mobileOpen). */
   collapsed: boolean
   onToggleCollapsed: () => void
-  /** Below `md`, the sidebar is an off-canvas drawer closed by default (there's no room for a permanent column) — opened via a hamburger button in WorkspaceHeader/LandingView. Has no visual effect at `md` and above, where the sidebar is always in-flow. */
+  /** Below `md`, the sidebar is an off-canvas drawer closed by default — opened via a button in each view's header. Has no visual effect at `md` and above. */
   mobileOpen: boolean
   onMobileOpenChange: (open: boolean) => void
+  /** Makes a workspace the current one. */
   onSwitch: (id: string) => void
+  /** Opens a subject's page. Absent: switching is all a row does (the landing demo). */
+  onOpenSubject?: (id: string) => void
   onCreate: (name: string, brief?: NewProjectBrief) => void
-  onRename: (id: string, name: string) => void
-  onDelete: (id: string) => void
-  onImportFile: (text: string) => void
-  onUpdateLogo: (id: string, logo: string | undefined) => void
   onOpenFavorites: () => void
   onOpenRecents: () => void
   onOpenHistoryDump: () => void
   onOpenGraph: () => void
-  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disabled rather than hidden, so its absence never reads as a missing feature. */
+  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disabled rather than hidden. */
   graphLocked?: boolean
-  /** What the graph is waiting on, used as the disabled button's tooltip. */
+  /** What the graph is waiting on, used as the disabled row's tooltip. */
   graphLockedReason?: string
-  /**
-   * Opens the Agent World.
-   *
-   * Unconditional, unlike the graph above it. The world is worth opening with
-   * nothing running — that is the whole point of the rework — so there is no
-   * readiness gate, no agent-history gate and no connector gate on this row.
-   * The one state that changes what it shows is the world being switched off
-   * in settings, and the view itself says so rather than the rail hiding the
-   * way to find out.
-   */
-  /**
-   * Opens Agent History.
-   *
-   * Unconditional, like the world above it, and for a sharper reason: the
-   * whole point of history is to be reachable when nothing is running. A row
-   * that appeared only once there was recent activity would be missing in
-   * exactly the state someone comes here in - days later, looking for what
-   * an agent did.
-   */
+  /** Agent History, shown as "AI activity". Unconditional: history exists to be reachable when nothing is running. */
   onOpenAgentHistory: () => void
-  /**
-   * The command centre.
-   *
-   * Unconditional for the same reason History is: the surface has to be
-   * reachable in order to say that agents cannot run here, and a row that
-   * appeared only once a runtime was available would be missing in exactly
-   * the state someone needs the explanation.
-   */
+  /** The Command Centre, shown as "AI chats". Unconditional, under More: every AI chat, live and past. */
   onOpenCommandCentre: () => void
   onOpenSettings: () => void
   /** Returns to the current workspace from any other destination. */
   onOpenWorkspace?: () => void
+  /** Home. Absent: no Home row (the landing demo, which has no Home). */
+  onOpenHome?: () => void
+  /** The AI page. Absent: no AI row. */
+  onOpenAI?: () => void
   /** The destination currently on screen, used to mark the active row. */
   currentView?: SidebarView
-  /** Opens the shell's command palette — the rail's search field is its front door. */
+  /** Opens the shell's search — the rail's search field is its front door. */
   onOpenSearch?: () => void
   /**
    * Rendered inside another surface rather than as the window's own rail —
    * the landing page's product demo. Positioned against its container instead
-   * of the viewport (the mobile drawer slides within that container), and
-   * without the account row: a demo must never offer a real sign-in.
+   * of the viewport, and without the account row: a demo must never offer a
+   * real sign-in.
    */
   embedded?: boolean
 }) {
-  const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
   // The desktop icon-rail collapse has no business hiding labels inside the
-  // mobile drawer — that's a different affordance (off-canvas vs. in-flow)
-  // with its own open/closed state. Labels only actually hide when
-  // `collapsed` applies, i.e. on desktop and not inside the mobile drawer.
+  // mobile drawer — that's a different affordance with its own state.
   const showLabels = !collapsed || mobileOpen
   const railCollapsed = !showLabels
-  // Inside the drawer these rows are tapped, and iOS wants 44pt where macOS
-  // is happy with 28 (`accessibility.md` › control sizes). The rail keeps
-  // its pointer-sized rows.
+  // Inside the drawer these rows are tapped, and want 44pt rather than 30px.
   const touch = mobileOpen
+  const [newOpen, setNewOpen] = useState(false)
+  const [moreChosen, setMoreChosen] = useState<boolean | null>(null)
+  // Read lazily so SSR and the first client render agree (closed), then the remembered choice.
+  // Never in the embedded demo, which can render on the server.
+  const moreRemembered = moreChosen ?? (!embedded && typeof window !== "undefined" ? loadMoreOpen() : false)
+  const moreOpen = moreRemembered || MORE_VIEWS.includes(currentView)
 
   /*
-    The Session View belongs to Agent History: it is opened from a row there
-    and its back action returns there, so History stays lit while a session
-    is open rather than leaving no row marked at all.
+    The Session View belongs to AI activity: it is opened from a row there
+    and its back action returns there, so that row stays lit while a
+    session is open.
   */
-  const activeIs = (v: SidebarView) =>
-    currentView === v || (v === "agent-history" && currentView === "agent-session")
+  const activeIs = (v: SidebarView) => currentView === v || (v === "agent-history" && currentView === "agent-session")
+
+  function toggleMore() {
+    const next = !moreOpen
+    setMoreChosen(next)
+    // The landing demo promises to touch no storage: it remembers nothing.
+    if (!embedded) saveMoreOpen(next)
+  }
+
+  function openSubject(id: string) {
+    if (onOpenSubject) onOpenSubject(id)
+    else {
+      onSwitch(id)
+      onOpenWorkspace?.()
+    }
+    if (mobileOpen) onMobileOpenChange(false)
+  }
+
+  // Taps in the drawer navigate and close it, so the destination is what is seen.
+  const go = (open?: () => void) => () => {
+    open?.()
+    if (mobileOpen) onMobileOpenChange(false)
+  }
 
   return (
     <>
@@ -196,22 +228,13 @@ export function AppSidebar({
       )}
       <aside
         className={cn(
-          /*
-            The rail, measured off the reference's navigation column: the card
-            tone, a 5% right hairline, 8px inner inset, 30px rows. It is the
-            quietest thing on screen on purpose — the view beside it is the
-            product.
-          */
           "fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-subtle bg-sidebar transition-transform duration-(--duration-base) ease-(--ease-standard)",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
           "md:sticky md:top-0 md:z-auto md:translate-x-0 md:transition-[width]",
           collapsed ? "md:w-14" : "md:w-60",
           embedded && "absolute h-full md:relative md:top-auto"
         )}
-        // Settings → Appearance → Layout → Sidebar density controls this var
-        // (see resolve.ts). Only applied when the rail is actually showing
-        // its full-width state — the collapsed desktop icon rail keeps its
-        // fixed w-14, which isn't a "density" the appearance system governs.
+        // Settings → Appearance → Layout → Sidebar density controls this var.
         style={!collapsed || mobileOpen ? { width: "var(--tabdump-sidebar-width)" } : undefined}
       >
         {/* Brand row: the mark in the logo's slot, at the logo's size. */}
@@ -230,191 +253,144 @@ export function AppSidebar({
           </IconButton>
         </div>
 
-        <div className={cn("flex shrink-0 flex-col gap-1.5 px-2 pb-2", railCollapsed && "items-center px-0")}>
-          {onOpenSearch &&
-            (railCollapsed ? (
-              <IconButton aria-label="Search" tooltip="Search" shortcut={`${modKeyLabel()} K`} onClick={onOpenSearch}>
+        {onOpenSearch && (
+          <div className={cn("flex shrink-0 flex-col px-2 pb-2", railCollapsed && "items-center px-0")}>
+            {railCollapsed ? (
+              <IconButton aria-label="Search Hubble" tooltip="Search Hubble" shortcut={`${modKeyLabel()} K`} onClick={onOpenSearch}>
                 <Search />
               </IconButton>
             ) : (
               <button
                 type="button"
-                onClick={onOpenSearch}
-                aria-label="Search tabs, workspaces and commands"
+                onClick={go(onOpenSearch)}
+                aria-label="Search Hubble"
                 className="flex h-[30px] w-full items-center gap-2 rounded-md border border-border bg-background px-2 text-left text-body text-tertiary transition-[border-color,color] duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <Search className="size-3.5 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">Search</span>
+                <span className="min-w-0 flex-1 truncate">Search Hubble</span>
                 <Kbd keys={[modKeyLabel(), "K"]} />
               </button>
-            ))}
-          <WorkspaceSwitcher
-            workspaces={workspaces}
-            currentId={currentId}
-            onSwitch={onSwitch}
-            onCreate={onCreate}
-            onRename={onRename}
-            onDelete={onDelete}
-            onImportFile={onImportFile}
-            onUpdateLogo={onUpdateLogo}
-            collapsed={railCollapsed}
-          />
-        </div>
+            )}
+          </div>
+        )}
 
-        {/*
-          Destinations, at the top where they are reachable, and scrollable
-          together with the workspace list so a long list never pushes the
-          nav off the bottom edge.
-        */}
         <div className={cn("min-h-0 flex-1 overflow-y-auto px-2 pb-2", railCollapsed && "px-1.5")}>
-          <nav aria-label="Views" className="flex flex-col gap-px">
-            <SidebarItem
-              label="Project"
-              icon={<Boxes />}
-              current={activeIs("workspace")}
-              collapsed={railCollapsed}
-              touch={touch}
-              trailing={current ? current.tabs.length : undefined}
-              onClick={onOpenWorkspace}
-            />
-            <SidebarItem
-              label="Graph"
-              icon={<Waypoints />}
-              current={activeIs("graph")}
-              collapsed={railCollapsed}
-              touch={touch}
-              disabled={graphLocked}
-              tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : undefined}
-              trailing={relationshipCounts[currentId] || undefined}
-              onClick={onOpenGraph}
-            />
-            <SidebarItem
-              label="Favorites"
-              icon={<Star />}
-              current={activeIs("favorites")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenFavorites}
-            />
-            <SidebarItem
-              label="Recent"
-              icon={<Clock />}
-              current={activeIs("recents")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenRecents}
-            />
-            <SidebarItem
-              label="History Dump"
-              icon={<ScanSearch />}
-              current={activeIs("history-dump")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenHistoryDump}
-            />
-          </nav>
+          {(onOpenHome || onOpenAI) && (
+            <nav aria-label="Main" className="flex flex-col gap-px">
+              {onOpenHome && (
+                <SidebarItem label="Home" icon={<House />} current={activeIs("home")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHome)} />
+              )}
+              {onOpenAI && (
+                <SidebarItem label="AI" icon={<Sparkles />} current={activeIs("ai")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenAI)} />
+              )}
+            </nav>
+          )}
 
-          <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
-            Agents
-          </SidebarSectionLabel>
-          <nav aria-label="Agents" className={cn("flex flex-col gap-px", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
-            <SidebarItem
-              label="Command Centre"
-              icon={<Radio />}
-              current={activeIs("command-centre")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenCommandCentre}
-            />
-            <SidebarItem
-              label="Agent History"
-              icon={<ScrollText />}
-              current={activeIs("agent-history")}
-              collapsed={railCollapsed}
-              touch={touch}
-              onClick={onOpenAgentHistory}
-            />
-          </nav>
-
-          <SidebarSectionLabel collapsed={railCollapsed} className="mt-4">
-            Projects
-          </SidebarSectionLabel>
-          <div className={cn("flex flex-col gap-px", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
+          <div className={cn("mt-4 flex items-center justify-between pr-1", railCollapsed && "mt-3 justify-center border-t border-subtle pt-3 pr-0")}>
+            <SidebarSectionLabel collapsed={railCollapsed}>Subjects</SidebarSectionLabel>
+            <IconButton aria-label="New subject" tooltip="New subject" onClick={() => setNewOpen(true)} className={cn("size-6", railCollapsed && "hidden")}>
+              <Plus />
+            </IconButton>
+          </div>
+          <nav aria-label="Subjects" className="mt-0.5 flex flex-col gap-px">
             {workspaces.map((w) => {
-              const isActive = w.id === currentId
-              const relationships = relationshipCounts[w.id] ?? 0
-              const detail = `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}${
-                relationships > 0
-                  ? ` · ${relationships} relationship${relationships === 1 ? "" : "s"}`
-                  : ""
-              }`
+              const isOpen = w.id === currentId && currentView === "workspace"
+              const isCurrent = w.id === currentId
+              const name = subjectName(w)
               return (
                 <Tooltip key={w.id}>
                   <TooltipTrigger
                     render={
                       <button
                         type="button"
-                        onClick={() => onSwitch(w.id)}
-                        // Distinct from the name alone, so the switcher's
-                        // trigger and this row are separately addressable.
-                        aria-label={`Switch to ${w.name}`}
-                        aria-current={isActive ? "true" : undefined}
+                        onClick={() => openSubject(w.id)}
+                        aria-label={`Open ${name}`}
+                        aria-current={isOpen ? "page" : undefined}
+                        data-current-subject={isCurrent || undefined}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-xs border border-transparent px-2 text-left",
                           "transition-[background-color,color] duration-(--duration-fast) ease-(--ease-color)",
                           "outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                           touch ? "h-11" : "h-[30px]",
                           railCollapsed && "justify-center px-0",
-                          isActive
-                            ? "bg-surface-selected text-foreground"
-                            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                          isOpen ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                         )}
                       >
                         <WorkspaceAvatar workspace={w} size={16} />
-                        {showLabels && <span className="min-w-0 flex-1 truncate text-body">{w.name}</span>}
-                        {showLabels && (
-                          <span
-                            className={cn(
-                              "shrink-0 text-meta tabular-nums",
-                              isActive ? "text-muted-foreground" : "text-tertiary"
-                            )}
-                          >
-                            {w.tabs.length}
-                          </span>
-                        )}
+                        {showLabels && <span className="min-w-0 flex-1 truncate text-body">{name}</span>}
                       </button>
                     }
                   />
-                  <TooltipContent>
-                    {w.name} · {detail}
-                  </TooltipContent>
+                  <TooltipContent>{name}</TooltipContent>
                 </Tooltip>
               )
             })}
+            {showLabels && (
+              <button
+                type="button"
+                onClick={() => setNewOpen(true)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-xs px-2 text-left text-body text-tertiary outline-none hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+                  touch ? "h-11" : "h-[30px]"
+                )}
+              >
+                <Plus className="size-4 shrink-0" aria-hidden />
+                New subject
+              </button>
+            )}
+          </nav>
+
+          {/* More: kept, never in the way. */}
+          <div className={cn("mt-4", railCollapsed && "mt-3 border-t border-subtle pt-3")}>
+            {showLabels ? (
+              <button
+                type="button"
+                onClick={toggleMore}
+                aria-expanded={moreOpen}
+                aria-controls="sidebar-more"
+                className="flex h-[30px] w-full items-center gap-1 rounded-xs px-2 text-left text-body text-tertiary outline-none hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                <ChevronRight aria-hidden className={cn("size-3.5 shrink-0 transition-transform duration-(--duration-fast)", moreOpen && "rotate-90")} />
+                More
+              </button>
+            ) : null}
+            {(moreOpen || railCollapsed) && (
+              <nav id="sidebar-more" aria-label="More" className="flex flex-col gap-px">
+                <SidebarItem label="AI chats" icon={<Radio />} current={activeIs("command-centre")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenCommandCentre)} />
+                <SidebarItem label="AI activity" icon={<ScrollText />} current={activeIs("agent-history")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenAgentHistory)} />
+                <SidebarItem
+                  label="Graph"
+                  icon={<Waypoints />}
+                  current={activeIs("graph")}
+                  collapsed={railCollapsed}
+                  touch={touch}
+                  disabled={graphLocked}
+                  tooltip={graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : undefined}
+                  onClick={go(onOpenGraph)}
+                />
+                <SidebarItem label="Favorites" icon={<Star />} current={activeIs("favorites")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenFavorites)} />
+                <SidebarItem label="Recent" icon={<Clock />} current={activeIs("recents")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenRecents)} />
+                <SidebarItem label="Import from history" icon={<History />} current={activeIs("history-dump")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHistoryDump)} />
+              </nav>
+            )}
           </div>
         </div>
 
-        {/*
-          The foot holds only what belongs at a window's bottom edge: the
-          account, and Settings. Everything a person navigates to is above,
-          out of the way of a dragged window.
-        */}
+        {/* The foot: Settings and the account — what belongs at a window's bottom edge. */}
         <div className={cn("flex flex-col gap-px border-t border-subtle p-2", railCollapsed && "px-1.5")}>
-          <SidebarItem
-            label="Settings"
-            icon={<Settings />}
-            current={activeIs("settings")}
-            collapsed={railCollapsed}
-            touch={touch}
-            onClick={onOpenSettings}
-          />
-          {/* Renders nothing at all when this deployment has no accounts
-              configured, so the rail is unchanged from before accounts
-              existed. See AccountSection. */}
+          <SidebarItem label="Settings" icon={<Settings />} current={activeIs("settings")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenSettings)} />
+          {/* Renders nothing when this deployment has no accounts configured. */}
           {!embedded && <AccountSection showLabels={showLabels} />}
         </div>
       </aside>
+      <NewWorkspaceDialog
+        open={newOpen}
+        onOpenChange={setNewOpen}
+        onCreate={(name, brief) => {
+          onCreate(name, brief)
+          if (mobileOpen) onMobileOpenChange(false)
+        }}
+      />
     </>
   )
 }
-

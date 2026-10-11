@@ -53,7 +53,7 @@ export function httpExtractor(endpoint: string): ProcessDeps["extract"] {
       });
       const data: unknown = await response.json().catch(() => null);
       if (isExtractionResponse(data)) return data;
-      return { ok: false, error: response.status === 429 ? { ...EXTRACTION_ERRORS.unreachable, message: "Too many sources read at once — try again in a minute." } : EXTRACTION_ERRORS.offline };
+      return { ok: false, error: response.status === 429 ? { ...EXTRACTION_ERRORS.unreachable, message: "Too many at once — try again in a minute." } : EXTRACTION_ERRORS.offline };
     } catch (error) {
       return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? EXTRACTION_ERRORS.timeout : EXTRACTION_ERRORS.offline };
     }
@@ -99,7 +99,7 @@ export async function processSource(workspaceId: string, tab: Tab, deps: Process
     try {
       summary = await deps.putContent(workspaceId, tab.id, content);
     } catch {
-      return failed({ code: "interrupted", message: "Hubble read this source but couldn't save its text on this device.", retryable: true });
+      return failed({ code: "interrupted", message: "Hubble read this but couldn't save its text on this device.", retryable: true });
     }
     return { tabId: tab.id, resource: settle(resource, { ...base, status: "ready", content: summary }, deps.now()), ...(title ? { title } : {}) };
   }

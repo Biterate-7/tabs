@@ -22,16 +22,15 @@ export function ClearWorkspaceDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Clear workspace?</AlertDialogTitle>
+          <AlertDialogTitle>Clear this subject?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes every tab from this workspace, including
-            what&apos;s saved locally. This can&apos;t be undone.
+            This removes everything saved in it. This can&apos;t be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={onConfirm}>
-            Clear workspace
+            Clear subject
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -250,7 +250,7 @@ export function contextOfSession(view: RuntimeSessionView): WorkingContext | nul
  * ------------------------------------------------------------------ */
 
 /** What the user asked for when they sent something to an agent. Wording for the composer only. */
-export type AgentIntent = "ask" | "explain" | "summarize" | "compare" | "analyze" | "organize"
+export type AgentIntent = "ask" | "explain" | "summarize" | "compare" | "analyze" | "organize" | "quiz" | "write"
 
 export type AgentHandoff = {
   /** Distinct per request, so the same selection sent twice is two requests. */
@@ -260,6 +260,15 @@ export type AgentHandoff = {
   mode: "ask" | "add"
   intent: AgentIntent
   provider?: AgentProviderId
+  /**
+   * Run it, rather than leave it as a draft: the student chose an action
+   * ("Summarize", "Quiz me") from Ask AI, so the words ARE the request. Only
+   * the Ask AI chooser sets this; every other surface still hands over a
+   * suggestion to edit. A request with no words is never run.
+   */
+  run?: boolean
+  /** Words the person typed themselves (the AI page's ask box), used instead of the intent's wording. */
+  text?: string
 }
 
 /**
@@ -269,7 +278,9 @@ export type AgentHandoff = {
 export function intentPrompt(intent: AgentIntent, view: Pick<WorkingContextView, "tabs" | "collections">): string | undefined {
   const collection = view.collections.length === 1 && view.tabs.length === 0 ? view.collections[0]!.name : undefined
   const single = view.tabs.length === 1 && view.collections.length === 0
-  const these = collection ? `the ${collection} collection` : single ? "this page" : "these tabs"
+  // Nothing picked: the whole subject (workspace) — never "these tabs" about tabs nobody chose.
+  const whole = view.tabs.length === 0 && view.collections.length === 0
+  const these = collection ? `the ${collection} collection` : single ? "this page" : whole ? "my resources for this subject" : "these tabs"
   switch (intent) {
     case "ask":
       return undefined
@@ -283,6 +294,10 @@ export function intentPrompt(intent: AgentIntent, view: Pick<WorkingContextView,
       return collection ? `Analyze the ${collection} collection: what it covers and how the tabs relate.` : `Analyze how ${these} relate.`
     case "organize":
       return collection ? `Suggest how to organize the ${collection} collection.` : `Organize ${these} into collections.`
+    case "quiz":
+      return `Quiz me on ${these}. Ask one question at a time and wait for my answer.`
+    case "write":
+      return `Help me write using ${these}. First ask me what I am writing.`
   }
 }
 

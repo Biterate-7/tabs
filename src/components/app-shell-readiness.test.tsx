@@ -10,7 +10,7 @@
  * state and assert on it, which a real (fast, unobservable) run cannot do.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { AppShell } from "./app-shell";
@@ -71,6 +71,15 @@ function postExtensionImport(urls: string[]) {
   );
 }
 
+/** Hubble opens on Home: open the subject, and the rail's More, where the Graph lives. */
+async function openSubjectWithMore() {
+  const user = userEvent.setup();
+  const rail = await screen.findByRole("navigation", { name: "Subjects" });
+  await user.click(within(rail).getByRole("button", { name: "Open General" }));
+  await screen.findByPlaceholderText("Search tabs...");
+  if (!screen.queryByRole("button", { name: "Graph" })) await user.click(screen.getByRole("button", { name: "More" }));
+}
+
 function graphButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: "Graph" }) as HTMLButtonElement;
 }
@@ -110,7 +119,7 @@ describe("Graph View readiness gate", () => {
     seedStore(3);
     render(<AppShell />);
 
-    await screen.findByPlaceholderText("Search tabs...");
+    await openSubjectWithMore();
     expect(graphButton().disabled).toBe(false);
 
     await user.click(graphButton());
@@ -120,7 +129,7 @@ describe("Graph View readiness gate", () => {
   it("locks the graph for the whole dump — through the \"Other\" stage — and unlocks it only once the layout has settled", async () => {
     seedStore(3);
     render(<AppShell />);
-    await screen.findByPlaceholderText("Search tabs...");
+    await openSubjectWithMore();
 
     postExtensionImport(["https://a.example.com", "https://b.example.com", "https://c.example.com"]);
 
@@ -148,7 +157,7 @@ describe("Graph View readiness gate", () => {
     const user = userEvent.setup();
     seedStore(3);
     render(<AppShell />);
-    await screen.findByPlaceholderText("Search tabs...");
+    await openSubjectWithMore();
 
     postExtensionImport(["https://a.example.com"]);
     await waitFor(() => expect(graphButton().disabled).toBe(true));
@@ -165,7 +174,7 @@ describe("Graph View readiness gate", () => {
   it("never lets a superseded dump's completion unlock the graph", async () => {
     seedStore(3);
     render(<AppShell />);
-    await screen.findByPlaceholderText("Search tabs...");
+    await openSubjectWithMore();
 
     postExtensionImport(["https://a.example.com"]);
     await waitFor(() => expect(pending).toHaveLength(1));
@@ -189,7 +198,7 @@ describe("Graph View readiness gate", () => {
     const user = userEvent.setup();
     seedStore(3);
     render(<AppShell />);
-    await screen.findByPlaceholderText("Search tabs...");
+    await openSubjectWithMore();
 
     postExtensionImport(["https://a.example.com"]);
     await waitFor(() => expect(pending).toHaveLength(1));

@@ -40,7 +40,7 @@ export function AddToProjectSubmenu({ tabs }: { tabs: readonly Pick<Tab, "url" |
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <FolderInput /> Add to project
+        <FolderInput /> Add to subject
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         {actions.projects.map((project) => {
@@ -48,7 +48,7 @@ export function AddToProjectSubmenu({ tabs }: { tabs: readonly Pick<Tab, "url" |
           if (here && allSources) return null
           return (
             <DropdownMenuItem key={project.id} onClick={() => actions.addTabs(tabs, project.id)}>
-              {here ? `${project.name} — use as source` : project.name}
+              {here ? `${project.name} — add as resource` : project.name}
             </DropdownMenuItem>
           )
         })}

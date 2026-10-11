@@ -17,7 +17,7 @@ import type { DemoSettingsSection } from "./demo-state"
 const NAV: { id: DemoSettingsSection; label: string; icon: typeof Bot }[] = [
   { id: "appearance", label: "Appearance", icon: AppWindow },
   { id: "agents", label: "Agents", icon: Bot },
-  { id: "workspaces", label: "Workspaces", icon: Boxes },
+  { id: "workspaces", label: "Subjects", icon: Boxes },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
 ]
 

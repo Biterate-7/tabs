@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { CommandCentreView } from "./command-centre-view"
@@ -53,6 +53,19 @@ function world() {
     runs: [],
   })
 }
+
+/*
+  The clock, pinned to midday local time before any fixture reads it: a
+  session "an hour ago" is then always grouped under Today, in any timezone
+  and whatever hour the suite runs. Unpinned, it was Yesterday between 00:00
+  and 01:00 — which is what the day grouping is right to say. Only Date is
+  faked; timers stay real, so Testing Library's waits behave as before.
+*/
+vi.useFakeTimers({ toFake: ["Date"] })
+vi.setSystemTime(new Date(2026, 9, 8, 12, 0, 0))
+afterAll(() => {
+  vi.useRealTimers()
+})
 
 const T = Date.now() - 60 * 60 * 1000
 

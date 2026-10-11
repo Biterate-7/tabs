@@ -124,7 +124,7 @@ describe("the Context Pack reaches the agent through the existing path", () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime()
     renderCentre(runtime)
-    await user.click(within(await screen.findByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
+    await user.click(within(await screen.findByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / }))
     const dialog = await screen.findByRole("dialog", { name: "New agent session" })
     await user.click(within(dialog).getByRole("button", { name: /start session/i }))
 
@@ -140,7 +140,7 @@ describe("the Context Pack reaches the agent through the existing path", () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime()
     renderCentre(runtime, {}, false)
-    await user.click(within(await screen.findByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
+    await user.click(within(await screen.findByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / }))
     await user.click(within(await screen.findByRole("dialog", { name: "New agent session" })).getByRole("button", { name: /start session/i }))
     await waitFor(() => expect(commandsNamed(runtime, "create_session")).toHaveLength(1))
     expect(commandsNamed(runtime, "create_session")[0]!.context).toBeUndefined()

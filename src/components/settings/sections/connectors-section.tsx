@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils"
 import { ConnectAgentDialog } from "@/components/command-centre/connect-agent-dialog"
 import { SectionHeading, SectionStack } from "./section-ui"
 import { AgentAuthenticationCard, AgentConnectionsPanel, useSettingsAgentPlatform } from "./agent-connections-panel"
+import { AiConnectionsList } from "@/components/ai/ai-connections"
 import type { UseAgentPlatform } from "@/hooks/use-agent-platform"
 import type { PlatformSurface } from "@/lib/agents/platform/catalog"
 import type { ConnectorManager, ConnectorView } from "@/lib/agents/connectors/manager"
@@ -545,7 +546,8 @@ export function ConnectorsSection() {
     the Command Centre — one flow for every provider and every method.
   */
   const agents = useSettingsAgentPlatform(runtime, connections)
-  const [connectFor, setConnectFor] = useState<AgentProviderId | null>(null)
+  // "choose": the Connect flow opened on its chooser ("+ Connect AI").
+  const [connectFor, setConnectFor] = useState<AgentProviderId | "choose" | null>(null)
   const [openProvider, setOpenProvider] = useState<AgentProviderId | null>(null)
   const [busy, setBusy] = useState<AgentProviderId | null>(null)
 
@@ -585,7 +587,7 @@ export function ConnectorsSection() {
         void runtime.refresh()
       }}
       platform={agents.platform}
-      initialProvider={connectFor}
+      initialProvider={connectFor === "choose" ? null : connectFor}
       apiKeys={connections}
     />
   )
@@ -615,11 +617,13 @@ export function ConnectorsSection() {
 
   return (
     <div>
-      <SectionHeading
-        title="Agents"
-        description="Connect the agents you use — Claude Code, Codex, Gemini CLI, Grok Build — and see what each one can do here."
-      />
+      <SectionHeading title="AI Connections" />
 
+      {/* The student's list first: each AI, where it stands, one button. */}
+      <AiConnectionsList className="mb-8" platform={agents.platform} onConnect={(provider) => setConnectFor(provider ?? "choose")} />
+
+      {/* Everything below is the precise, technical picture — kept, under its own heading. */}
+      <h3 className="mb-3 border-t border-subtle pt-6 text-h2 text-foreground">Connection details</h3>
       <AgentConnectionsPanel platform={agents.platform} surface={agents.surface} onOpen={setConnectFor} />
       {connectDialog}
 

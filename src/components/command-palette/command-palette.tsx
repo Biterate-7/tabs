@@ -22,6 +22,13 @@ const GROUP_ORDER: CommandGroup[] = [
   "Help",
 ]
 
+/** What a group is called on screen. The ids predate Subjects and AI, and every command still files under them. */
+const GROUP_LABEL: Partial<Record<CommandGroup, string>> = {
+  Agents: "AI",
+  Workspaces: "Subjects",
+  Workspace: "This subject",
+}
+
 /**
  * Matches by substring and by whole words, never by scattered letters.
  *
@@ -111,7 +118,7 @@ export function CommandPalette({
             return (
               <CommandPrimitive.Group
                 key={group}
-                heading={group}
+                heading={GROUP_LABEL[group] ?? group}
                 className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:text-tertiary"
               >
                 {groupCommands.map((command) => (

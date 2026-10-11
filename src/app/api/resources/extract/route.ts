@@ -41,7 +41,7 @@ export async function POST(request: Request): Promise<Response> {
   const limited = checkAiRateLimit(request, "resources-extract", RATE_LIMIT);
   if (!limited.allowed) {
     return json(
-      { ok: false, error: { code: "unreachable", message: "Too many sources read at once — Hubble will retry shortly.", retryable: true } },
+      { ok: false, error: { code: "unreachable", message: "Too many at once — Hubble will retry shortly.", retryable: true } },
       { status: 429, headers: { "retry-after": String(Math.ceil(limited.retryAfterMs / 1000)) } }
     );
   }

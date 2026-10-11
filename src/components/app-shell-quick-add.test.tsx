@@ -6,7 +6,7 @@
  * following the person from project to project and across a reload.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { AppShell } from "./app-shell"
 import { dismissOnboarding } from "@/lib/onboarding"
@@ -47,6 +47,13 @@ function extensionAnswers(shortcut = "Alt+Shift+H") {
 }
 
 const target = () => document.querySelector("[data-quick-add-target]")?.getAttribute("data-quick-add-target")
+const hint = () => document.querySelector("[data-add-hint]")?.textContent
+
+/** Hubble opens on Home; a subject's page is one click on its row in the rail. */
+async function openSubject(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const rail = await screen.findByRole("navigation", { name: "Subjects" })
+  await user.click(within(rail).getByRole("button", { name: `Open ${name}` }))
+}
 
 const stops: (() => void)[] = []
 
@@ -67,16 +74,15 @@ describe("the project Chrome tabs go to", () => {
     const user = userEvent.setup()
     render(<AppShell />)
     await waitFor(() => expect(reports.at(-1)).toBe("ws-history"))
+    await openSubject(user, "History IA")
     extensionAnswers()
     await waitFor(() => expect(target()).toBe("History IA"))
-    expect(screen.getByText("Add anything useful from Chrome to this project.")).toBeTruthy()
-    expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to History IA")
-    expect(screen.getByText(/also works\./).textContent).toBe("Alt + Shift + H also works.")
+    expect(hint()).toBe("In Chrome: right-click a tab → Add to History IA · Alt + Shift + H")
 
-    await user.click(await screen.findByRole("button", { name: "Switch to Physics EE" }))
+    await openSubject(user, "Physics EE")
     await waitFor(() => expect(target()).toBe("Physics EE"))
     expect(reports.at(-1)).toBe("ws-physics")
-    expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to Physics EE")
+    expect(hint()).toBe("In Chrome: right-click a tab → Add to Physics EE · Alt + Shift + H")
     expect(screen.queryByText(/Add to History IA/)).toBeNull()
   }, 30_000)
 
@@ -84,7 +90,7 @@ describe("the project Chrome tabs go to", () => {
     seed("ws-history")
     const user = userEvent.setup()
     const first = render(<AppShell />)
-    await user.click(await screen.findByRole("button", { name: "Switch to Physics EE" }))
+    await openSubject(user, "Physics EE")
     await waitFor(() => expect(loadWorkspaceStore()?.currentId).toBe("ws-physics"))
     first.unmount()
 
@@ -92,6 +98,7 @@ describe("the project Chrome tabs go to", () => {
     render(<AppShell />)
     await waitFor(() => expect(reports.at(-1)).toBe("ws-physics"))
     expect(reports).not.toContain("ws-history")
+    await openSubject(user, "Physics EE")
     extensionAnswers()
     await waitFor(() => expect(target()).toBe("Physics EE"))
   }, 30_000)
@@ -99,11 +106,13 @@ describe("the project Chrome tabs go to", () => {
   it("without the extension, offers no right-click instructions at all", async () => {
     seed("ws-history")
     render(<AppShell />)
-    await screen.findByRole("region", { name: "History IA project" })
+    await openSubject(userEvent.setup(), "History IA")
+    await screen.findByRole("region", { name: "History IA" })
     // Give a (missing) extension every chance to answer.
     await new Promise((resolve) => setTimeout(resolve, 100))
-    expect(screen.queryByText(/Right-click a tab/)).toBeNull()
-    expect(screen.queryByText("Add anything useful from Chrome to this project.")).toBeNull()
-    expect(document.querySelector("[data-add-hint]")?.textContent ?? "").toMatch(/use Hubble for Chrome to add tabs/)
+    expect(screen.queryByText(/right-click a tab/i)).toBeNull()
+    // Nothing about Chrome at all: + Add is the way in.
+    expect(document.querySelector("[data-add-hint]")).toBeNull()
+    expect(screen.getAllByRole("button", { name: /^Add/ }).length).toBeGreaterThan(0)
   }, 30_000)
 })

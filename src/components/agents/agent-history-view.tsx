@@ -216,9 +216,9 @@ export function AgentHistoryScreen({
           <ChevronLeft />
         </IconButton>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-h2 text-foreground">Agent History</h1>
+          <h1 className="truncate text-h2 text-foreground">AI activity</h1>
           <p className="truncate text-body-sm text-muted-foreground">
-            Every agent session Hubble still holds, however long ago it ran.
+            Every AI chat Hubble still holds, however long ago it ran.
           </p>
         </div>
       </header>

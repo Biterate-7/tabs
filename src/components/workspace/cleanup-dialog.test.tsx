@@ -54,7 +54,7 @@ describe("CleanupDialog — summary stage", () => {
   it("shows the real workspace numbers and offers no removal control", () => {
     renderDialog(twoDuplicates);
 
-    expect(screen.getByText("Your workspace can be cleaned up.")).toBeTruthy();
+    expect(screen.getByText("This subject can be tidied up.")).toBeTruthy();
     expect(screen.getByText("tabs")).toBeTruthy();
     expect(screen.getByText("unique")).toBeTruthy();
     expect(screen.getByText("duplicates")).toBeTruthy();
@@ -173,7 +173,7 @@ describe("CleanupDialog — review stage", () => {
 
     // Header/footer are marked shrink-0 so they don't get squeezed by the
     // scrollable middle region.
-    expect(screen.getByText("Your workspace can be cleaned up.").closest('[data-slot="dialog-header"]')?.className).toMatch(/shrink-0/);
+    expect(screen.getByText("This subject can be tidied up.").closest('[data-slot="dialog-header"]')?.className).toMatch(/shrink-0/);
     expect(
       screen.getByRole("button", { name: "Back" }).closest('[data-slot="dialog-footer"]')?.className
     ).toMatch(/shrink-0/);

@@ -79,7 +79,7 @@ describe("the demo window", () => {
 
   it("renders the real sidebar in its embedded form, without an account row", () => {
     const { frame } = renderDemo()
-    expect(within(frame()).getByRole("navigation", { name: "Views" })).toBeTruthy()
+    expect(within(frame()).getByRole("navigation", { name: "Subjects" })).toBeTruthy()
     expect(within(frame()).queryByRole("button", { name: /Sign in/ })).toBeNull()
   })
 })
@@ -88,14 +88,14 @@ describe("workspace", () => {
   it("renders the Research workspace with its collections", () => {
     const { frame } = renderDemo()
     const region = within(frame())
-    expect(region.getByText("20 tabs")).toBeTruthy()
+    expect(region.getAllByText("Research").length).toBeGreaterThan(0)
     expect(region.getByText("AI Research")).toBeTruthy()
     expect(region.getByText("Product Ideas")).toBeTruthy()
   })
 
   it("switches workspace from the rail", async () => {
     const { user, frame } = renderDemo()
-    await user.click(within(frame()).getByRole("button", { name: "Switch to Hubble Build" }))
+    await user.click(within(frame()).getByRole("button", { name: "Open Hubble Build" }))
     expect(within(frame()).getByText("Release checklist")).toBeTruthy()
     expect(within(frame()).queryByText("AI Research")).toBeNull()
   })
@@ -145,7 +145,7 @@ describe("Command Centre", () => {
     expect(within(frame()).queryByRole("group", { name: "Approval required" })).toBeNull()
     // Approved, applied, answered — the app's steps, paced by the demo.
     expect(await within(frame()).findByText(/“SWE-bench” is in Research/, {}, { timeout: 3_000 })).toBeTruthy()
-    await user.click(within(frame()).getByRole("button", { name: "Project" }))
+    await user.click(within(frame()).getByRole("button", { name: "Open Research" }))
     expect(within(frame()).getByText("SWE-bench")).toBeTruthy()
   })
 
@@ -153,7 +153,7 @@ describe("Command Centre", () => {
     const { user, frame } = renderCommandCentre()
     await user.click(buttonByText(within(frame()).getByRole("group", { name: "Approval required" }), "Deny"))
     expect(within(frame()).getByText(/I won't create it/)).toBeTruthy()
-    await user.click(within(frame()).getByRole("button", { name: "Project" }))
+    await user.click(within(frame()).getByRole("button", { name: "Open Research" }))
     expect(within(frame()).queryByText("SWE-bench")).toBeNull()
   })
 
@@ -216,9 +216,9 @@ describe("Command Centre", () => {
 describe("command palette", () => {
   it("opens from the rail's search field and runs a command", async () => {
     const { user, frame } = renderDemo()
-    await user.click(within(frame()).getByRole("button", { name: "Search tabs, workspaces and commands" }))
+    await user.click(within(frame()).getByRole("button", { name: "Search Hubble" }))
     const input = screen.getByPlaceholderText("Search tabs, workspaces, agents and commands…")
-    await user.type(input, "Open Command Centre{Enter}")
+    await user.type(input, "Open AI chats{Enter}")
     expect(screen.queryByPlaceholderText("Search tabs, workspaces, agents and commands…")).toBeNull()
     expect(within(frame()).getByRole("navigation", { name: "Agent sessions" })).toBeTruthy()
   })
@@ -253,6 +253,7 @@ describe("graph", () => {
 
   it("opens from the rail (loaded on demand)", async () => {
     const { user, frame } = renderDemo()
+    await user.click(within(frame()).getByRole("button", { name: "More" }))
     await user.click(within(frame()).getByRole("button", { name: "Graph" }))
     expect(await within(frame()).findByRole("button", { name: /Explore the graph/ }, { timeout: 5000 })).toBeTruthy()
     expect(frame().querySelector("canvas")).not.toBeNull()
@@ -291,12 +292,12 @@ describe("settings", () => {
     expect(within(frame()).getByRole("heading", { name: "Theme" })).toBeTruthy()
     await user.click(within(frame()).getAllByRole("button").find((b) => b.textContent?.includes("Hubble Dark"))!)
     expect(set).toHaveBeenCalledWith("dark")
-    await user.click(within(frame()).getAllByRole("button", { name: "Workspaces" }).find((b) => b.closest("nav[aria-label='Settings sections']"))!)
-    expect(within(frame()).getByRole("heading", { name: "Workspaces" })).toBeTruthy()
-    const section = within(frame()).getByRole("heading", { name: "Workspaces" }).parentElement!.parentElement!
+    await user.click(within(frame()).getAllByRole("button", { name: "Subjects" }).find((b) => b.closest("nav[aria-label='Settings sections']"))!)
+    expect(within(frame()).getByRole("heading", { name: "Subjects" })).toBeTruthy()
+    const section = within(frame()).getByRole("heading", { name: "Subjects" }).parentElement!.parentElement!
     expect(within(section).getByText("Semester")).toBeTruthy()
     // Semester and Development (Hubble 1.6) both hold six.
-    expect(within(section).getAllByText(/6 tabs/)).toHaveLength(2)
+    expect(within(section).getAllByText(/6 resources/)).toHaveLength(2)
   })
 
   it("lists every connector as the catalog describes it", async () => {
@@ -313,7 +314,8 @@ describe("settings", () => {
 describe("destinations the demo cannot show", () => {
   it("says so in the app's empty-state language instead of faking them", async () => {
     const { user, frame } = renderDemo()
-    await user.click(within(frame()).getByRole("button", { name: "History Dump" }))
+    await user.click(within(frame()).getByRole("button", { name: "More" }))
+    await user.click(within(frame()).getByRole("button", { name: "Import from history" }))
     expect(within(frame()).getByText("Not part of the demo")).toBeTruthy()
     await user.click(within(frame()).getByRole("button", { name: "Back" }))
     expect(within(frame()).getByText("AI Research")).toBeTruthy()

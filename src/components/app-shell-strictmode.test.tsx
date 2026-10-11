@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "./app-shell";
 import { dismissOnboarding } from "@/lib/onboarding";
@@ -89,9 +89,22 @@ async function renderSettled() {
       <AppShell />
     </StrictMode>
   );
+  // Hubble opens on Home: open the subject first.
+  const rail = await screen.findByRole("navigation", { name: "Subjects" });
+  await user.click(within(rail).getByRole("button", { name: "Open General" }));
   await screen.findByPlaceholderText("Search tabs...");
   saveSpy.mockClear();
   return user;
+}
+
+/** From Home's "Start with a subject": a first subject, then "Paste a list of tabs" on its empty page. */
+async function openPasteBox(user: ReturnType<typeof userEvent.setup>) {
+  const start = await screen.findByRole("region", { name: "Get started" });
+  await user.click(within(start).getByRole("button"));
+  await user.type(await screen.findByLabelText("Subject name"), "General");
+  await user.click(screen.getByRole("button", { name: "Create subject" }));
+  await user.click(await screen.findByRole("button", { name: /Paste a list of tabs/ }));
+  return screen.findByPlaceholderText(/Paste your tabs/);
 }
 
 /** One logical mutation: recategorize a single tab. */
@@ -196,7 +209,7 @@ describe("persistence seam under StrictMode", () => {
         <AppShell />
       </StrictMode>
     );
-    await user.type(await screen.findByPlaceholderText(/Paste your tabs/), "https://github.com/a");
+    await user.type(await openPasteBox(user), "https://github.com/a");
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
     await user.click(await screen.findByRole("button", { name: /View workspace/ }));
     await screen.findByPlaceholderText("Search tabs...");
@@ -240,7 +253,7 @@ describe("persistence seam under StrictMode", () => {
         <AppShell />
       </StrictMode>
     );
-    await user.type(await screen.findByPlaceholderText(/Paste your tabs/), "https://github.com/a");
+    await user.type(await openPasteBox(user), "https://github.com/a");
     await user.click(screen.getByRole("button", { name: /Dump 1 tab/ }));
     await user.click(await screen.findByRole("button", { name: /View workspace/ }));
     await screen.findByPlaceholderText("Search tabs...");
@@ -267,7 +280,8 @@ describe("persistence seam under StrictMode", () => {
     const user = await renderSettled();
 
     // "Clear" empties every tab in the workspace in a single action.
-    await user.click(await screen.findByRole("button", { name: "Clear" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Clear" }));
     const confirm = screen.queryByRole("button", { name: /^(Clear|Confirm|Remove|Delete)/ });
     if (confirm) await user.click(confirm);
 

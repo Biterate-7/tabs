@@ -44,8 +44,8 @@ export function GraphCollectionPanel({
         <div className="flex items-center gap-0.5">
           {agent && (
             <IconButton
-              aria-label="Ask agent about this collection"
-              tooltip="Ask agent about this collection"
+              aria-label="Ask AI about this collection"
+              tooltip="Ask AI about this collection"
               className="size-7"
               onClick={() => agent.ask(collectionContext(collection.workspaceId, collection.id), "analyze")}
             >

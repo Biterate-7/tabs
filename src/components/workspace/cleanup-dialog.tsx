@@ -89,13 +89,13 @@ function CleanupBody({
       <DialogHeader className="shrink-0">
         <DialogTitle>
           {hasDuplicates
-            ? "Your workspace can be cleaned up."
+            ? "This subject can be tidied up."
             : "Nothing to clean up."}
         </DialogTitle>
         <DialogDescription>
           {hasDuplicates
             ? `${summary.groupCount} duplicate group${summary.groupCount === 1 ? "" : "s"} found. Nothing is removed until you confirm.`
-            : "No duplicate tabs found in this workspace."}
+            : "No duplicates in this subject."}
         </DialogDescription>
       </DialogHeader>
 

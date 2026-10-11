@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { readFileSync, readdirSync, statSync } from "node:fs"
@@ -22,17 +22,12 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
     <AppSidebar
       workspaces={workspaces}
       currentId="w1"
-      relationshipCounts={{}}
       collapsed={false}
       onToggleCollapsed={vi.fn()}
       mobileOpen={false}
       onMobileOpenChange={vi.fn()}
       onSwitch={vi.fn()}
       onCreate={vi.fn()}
-      onRename={vi.fn()}
-      onDelete={vi.fn()}
-      onImportFile={vi.fn()}
-      onUpdateLogo={vi.fn()}
       onOpenFavorites={vi.fn()}
       onOpenRecents={vi.fn()}
       onOpenHistoryDump={vi.fn()}
@@ -47,17 +42,24 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
 }
 
 describe("the rail", () => {
-  it("offers the command centre under Agents", () => {
+  // The More group remembers being opened; every test starts from a fresh rail.
+  beforeEach(() => window.localStorage.clear())
+
+  // A power surface: kept and one click away under More, out of a student's first glance.
+  it("offers the command centre under More", async () => {
+    const user = userEvent.setup()
     renderSidebar()
-    const agents = screen.getByRole("navigation", { name: /agents/i })
-    expect(agents.textContent).toContain("Command Centre")
+    await user.click(screen.getByRole("button", { name: "More" }))
+    const more = screen.getByRole("navigation", { name: "More" })
+    expect(more.textContent).toContain("AI chats")
   })
 
   it("navigates to it", async () => {
     const user = userEvent.setup()
     const { onOpenCommandCentre } = renderSidebar()
 
-    await user.click(screen.getByRole("button", { name: /command centre/i }))
+    await user.click(screen.getByRole("button", { name: "More" }))
+    await user.click(screen.getByRole("button", { name: "AI chats" }))
     expect(onOpenCommandCentre).toHaveBeenCalled()
   })
 
@@ -66,22 +68,25 @@ describe("the rail", () => {
     // `aria-current` rather than a colour alone: which destination you are on
     // is a navigational fact the rail already states this way.
     expect(
-      screen.getByRole("button", { name: /command centre/i }).getAttribute("aria-current")
+      screen.getByRole("button", { name: "AI chats" }).getAttribute("aria-current")
     ).toBe("page")
   })
 
   it("does not mark it when another destination is on screen", () => {
+    // The Graph also lives under More, so the group is open and the row is there to check.
     renderSidebar({ currentView: "graph" })
     expect(
-      screen.getByRole("button", { name: /command centre/i }).getAttribute("aria-current")
+      screen.getByRole("button", { name: "AI chats" }).getAttribute("aria-current")
     ).toBeNull()
   })
 
-  it("keeps Agent History reachable beside it", () => {
+  it("keeps Agent History reachable beside it, as AI activity", async () => {
+    const user = userEvent.setup()
     renderSidebar()
-    // The command centre is a new destination, not a replacement: history
+    await user.click(screen.getByRole("button", { name: "More" }))
+    // The command centre is a destination, not a replacement: history
     // exists to reach runs no live surface is still drawing.
-    expect(screen.getByRole("button", { name: /agent history/i })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "AI activity" })).toBeTruthy()
   })
 })
 

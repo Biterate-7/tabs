@@ -1,7 +1,8 @@
 "use client"
 
-import { Copy, ExternalLink, FileUp, Info, MessageSquarePlus, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
+import { Copy, ExternalLink, FileUp, Info, MoreHorizontal, Pencil, RotateCw, Trash2, Captions, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +19,7 @@ import type { Tab } from "@/lib/tabs/types"
 
 export type SourceActions = {
   onOpen: (tab: Tab) => void
+  /** "Ask AI" about this one resource. */
   onUseInTask?: (tab: Tab) => void
   onRename: (tab: Tab) => void
   onRemove: (tab: Tab) => void
@@ -27,30 +29,57 @@ export type SourceActions = {
 }
 
 /**
- * One project source:
+ * One resource in a subject:
  *
- *   ▶  Cuban Missile Crisis Explained
- *      youtube.com · YouTube video · Added 4 min ago
- *      ⓘ Saved · Transcript isn't available — add one…
- *      [Open] [Use in task] [•••]
+ *   ☐  ▶  Cuban Missile Crisis Explained
+ *         youtube.com · YouTube video · 4 min ago
+ *         ⓘ Saved · Transcript isn't available — add one…   (only when not simply ready)
+ *         [Open] [Ask AI] [•••]
+ *
+ * A ready resource says nothing about being ready — that is the normal case,
+ * and the student does not need to be told it. Reading, saved-without-text
+ * and couldn't-read still say so, with what fixes them.
+ *
+ * `selection` turns on the checkbox, for "select some → Ask AI".
  */
-export function ResourceCard({ tab, now, actions, highlighted = false }: { tab: Tab; now: number; actions: SourceActions; highlighted?: boolean }) {
+export function ResourceCard({
+  tab,
+  now,
+  actions,
+  highlighted = false,
+  selection,
+}: {
+  tab: Tab
+  now: number
+  actions: SourceActions
+  highlighted?: boolean
+  selection?: { selected: boolean; onToggle: () => void }
+}) {
   const resource = tab.resource!
   const title = tab.title?.trim() || tab.domain
   const canRetry = resource.status === "failed" || resource.status === "partial"
   const needsFile = resource.kind === "pdf" && resource.status !== "ready"
   const needsTranscript = (resource.kind === "youtube" || resource.kind === "video") && resource.status !== "ready"
+  const added = formatRelativeTime(resource.addedAt, now)
   return (
     <li
       className={cn(
         "group flex min-w-0 flex-col gap-2 rounded-md border border-subtle bg-card p-3 transition-[border-color] duration-(--duration-fast)",
         "hover:border-strong",
-        highlighted && "border-ring"
+        (highlighted || selection?.selected) && "border-ring"
       )}
       data-source-card={tab.id}
       data-source-kind={resource.kind}
     >
       <div className="flex min-w-0 items-start gap-2.5">
+        {selection && (
+          <Checkbox
+            checked={selection.selected}
+            onCheckedChange={selection.onToggle}
+            aria-label={`Select ${title}`}
+            className="mt-0.5"
+          />
+        )}
         {/* The site's own icon (Chrome's, when the tab came from Chrome); the kind is named in words below. */}
         <span className="mt-0.5 flex" data-source-icon>
           <TabFavicon domain={tab.domain} icon={tab.favicon} size={16} />
@@ -60,18 +89,19 @@ export function ResourceCard({ tab, now, actions, highlighted = false }: { tab: 
             {title}
           </button>
           <p className="truncate text-meta text-tertiary">
-            {tab.domain} · {RESOURCE_KIND_LABEL[resource.kind]} · Added {formatRelativeTime(resource.addedAt, now)}
+            {tab.domain} · {RESOURCE_KIND_LABEL[resource.kind]}
+            {added ? ` · ${added}` : ""}
           </p>
         </div>
       </div>
-      <SourceStatus resource={resource} />
+      {resource.status !== "ready" && <SourceStatus resource={resource} />}
       <div className="mt-auto flex flex-wrap items-center gap-1">
         <Button type="button" size="xs" variant="secondary" onClick={() => actions.onOpen(tab)} aria-label={`Open ${title}`}>
           <ExternalLink /> Open
         </Button>
         {actions.onUseInTask && (
-          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInTask!(tab)} aria-label={`Use ${title} in a task`}>
-            <MessageSquarePlus /> Use in task
+          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInTask!(tab)} aria-label={`Ask AI about ${title}`}>
+            <Sparkles /> Ask AI
           </Button>
         )}
         {needsFile && (
@@ -96,7 +126,7 @@ export function ResourceCard({ tab, now, actions, highlighted = false }: { tab: 
               <Pencil /> Rename
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => actions.onCopyUrl(tab)}>
-              <Copy /> Copy URL
+              <Copy /> Copy link
             </DropdownMenuItem>
             {canRetry && (
               <DropdownMenuItem onClick={() => actions.onRetry(tab)}>
@@ -105,7 +135,7 @@ export function ResourceCard({ tab, now, actions, highlighted = false }: { tab: 
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => actions.onRemove(tab)}>
-              <Trash2 /> Remove from project
+              <Trash2 /> Remove
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

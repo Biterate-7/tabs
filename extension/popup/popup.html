@@ -36,30 +36,30 @@
             </div>
             <p id="quick-add-hint" class="popup__muted popup__detail" hidden></p>
             <label class="popup__switch">
-              <span class="popup__switch-label">Project</span>
+              <span class="popup__switch-label">Subject</span>
               <select id="project-select" class="popup__select">
-                <option value="">Choose a project…</option>
+                <option value="">Choose a subject…</option>
               </select>
             </label>
           </section>
-          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open a project in Hubble to add this tab to it.</p>
+          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble to add this tab to a subject.</p>
 
           <!-- The plain dump: every tab in this window, into Hubble as it always was. -->
-          <section class="popup__dump" aria-label="Dump this window">
+          <section class="popup__dump" aria-label="Save this window">
             <p class="popup__count"><span id="tab-count">0</span> tabs in this window</p>
             <p id="import-status" class="popup__muted" hidden></p>
             <ul id="tab-preview" class="popup__preview"></ul>
-            <button id="dump-button" class="popup__button popup__button--secondary">Dump tabs →</button>
+            <button id="dump-button" class="popup__button popup__button--secondary">Save all tabs →</button>
           </section>
         </div>
 
         <div id="state-dumping" class="popup__state" hidden>
-          <p class="popup__progress"><span class="popup__spinner" aria-hidden="true"></span><span id="dumping-message">Dumping tabs…</span></p>
-          <p class="popup__muted popup__detail">You can close this popup — the dump keeps running.</p>
+          <p class="popup__progress"><span class="popup__spinner" aria-hidden="true"></span><span id="dumping-message">Saving tabs…</span></p>
+          <p class="popup__muted popup__detail">You can close this — saving keeps going.</p>
         </div>
 
         <div id="state-success" class="popup__state" hidden>
-          <p class="popup__success" id="success-dump">Dumped <span id="success-count">0</span> tabs</p>
+          <p class="popup__success" id="success-dump">Saved <span id="success-count">0</span> tabs</p>
           <p class="popup__success" id="success-project" hidden></p>
           <p class="popup__muted popup__detail" id="success-detail" hidden></p>
           <button id="open-button" class="popup__button">Open Hubble</button>

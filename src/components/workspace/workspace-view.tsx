@@ -23,7 +23,9 @@ import {
   History,
   ScanSearch,
   Bot,
+  ChevronDown,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { WorkspaceHeader } from "@/components/workspace/workspace-header"
+import type { SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { CleanupDialog } from "@/components/workspace/cleanup-dialog"
 import { ClearWorkspaceDialog } from "@/components/workspace/clear-workspace-dialog"
 import { ShortcutsDialog } from "@/components/workspace/shortcuts-dialog"
@@ -126,7 +129,20 @@ export function WorkspaceView({
   onReorganizeSections,
   focusCollection,
   projectHome,
+  onBack,
+  onRenameSubject,
+  onUpdateSubjectLogo,
+  onDeleteSubject,
+  canDeleteSubject = false,
 }: {
+  /** "← Subjects" in the bar. Absent outside the shell. */
+  onBack?: () => void
+  /** Rename this subject from its own ⋯ menu. All three present, or the menu offers none of them. */
+  onRenameSubject?: (name: string) => void
+  onUpdateSubjectLogo?: (logo: string | undefined) => void
+  onDeleteSubject?: () => void
+  /** Deleting is refused for the last subject. */
+  canDeleteSubject?: boolean
   /**
    * The project's home (Hubble 2.0 — sources, context, where the work was
    * left), rendered above the tabs. Replaces the Stage 3 work strip, which
@@ -284,6 +300,16 @@ export function WorkspaceView({
     [allCollections, workspaceId]
   )
   const tabsById = useMemo(() => new Map(tabs.map((t) => [t.id, t])), [tabs])
+  /*
+    On a subject page, a subject whose every tab is a resource already shows
+    them all above (the project home); the full tab view — sections,
+    categories, collections — is then one click away rather than a second
+    copy of the same list. A subject with collections, or with plain tabs
+    the resource list doesn't show, opens with it expanded. A search always
+    shows it, since that is where results land.
+  */
+  const everyTabIsResource = tabs.length > 0 && tabs.every((tab) => Boolean(tab.resource))
+  const [tabsOpenChoice, setTabsOpenChoice] = useState<boolean | null>(null)
   // Tab id → collection name, for the "Collection: X" line shown in search
   // results (progressive disclosure — see tab-card.tsx's collectionName prop).
   const tabCollectionNames = useMemo(() => {
@@ -551,6 +577,7 @@ export function WorkspaceView({
 
   const isBrowsing =
     query.trim() === "" && categoryFilter === "all" && sortKey === "recent" && !duplicatesOnly
+  const tabsOpen = !projectHome || query.trim() !== "" || (tabsOpenChoice ?? (workspaceCollections.length > 0 || !everyTabIsResource))
 
   // Searching a collection's name also surfaces its member tabs, in addition
   // to whatever filterTabs already matches on title/domain/url/category —
@@ -822,7 +849,7 @@ export function WorkspaceView({
       ? [
           {
             id: "nav-open-command-centre",
-            label: "Open Command Centre",
+            label: "Open AI chats",
             group: "Navigation",
             icon: Radio,
             onSelect: onOpenCommandCentre,
@@ -884,7 +911,7 @@ export function WorkspaceView({
           .map(
             (w): Command => ({
               id: `workspace-switch-${w.id}`,
-              label: `Switch to ${w.name}`,
+              label: `Open ${w.name}`,
               group: "Workspace",
               icon: Layers,
               onSelect: () => onSwitchWorkspace(w.id),
@@ -916,17 +943,17 @@ export function WorkspaceView({
     ? [
         {
           id: "agent-ask-selection",
-          label: selectedCount > 0 ? `Ask agent about ${selectedLabel}` : "Ask agent about selected tabs",
-          hint: "Opens the Command Centre with them as context",
+          label: selectedCount > 0 ? `Ask AI about ${selectedLabel}` : "Ask AI about selected tabs",
+          hint: "Starts an AI chat about them",
           group: "Agents",
           icon: Bot,
           disabled: selectedCount === 0,
-          keywords: ["send selection to agent", "claude", "codex", "gemini", "context"],
+          keywords: ["send selection to agent", "ask agent", "claude", "codex", "gemini", "context"],
           onSelect: () => agent.ask(tabsContext(workspaceId, [...selectedIds])),
         },
         {
           id: "agent-add-selection",
-          label: selectedCount > 0 ? `Add ${selectedLabel} to agent context` : "Add selected tabs to agent context",
+          label: selectedCount > 0 ? `Add ${selectedLabel} to the next AI chat` : "Add selected tabs to the next AI chat",
           group: "Agents",
           icon: Bot,
           disabled: selectedCount === 0,
@@ -939,7 +966,7 @@ export function WorkspaceView({
         ...workspaceCollections.map(
           (collection): Command => ({
             id: `agent-ask-collection-${collection.id}`,
-            label: `Ask agent about "${collection.name}"`,
+            label: `Ask AI about "${collection.name}"`,
             group: "Agents",
             icon: Bot,
             keywords: ["collection", "context"],
@@ -1061,7 +1088,7 @@ export function WorkspaceView({
     ),
     {
       id: "action-clear",
-      label: "Clear workspace",
+      label: "Clear this subject",
       group: "Actions",
       icon: Trash2,
       onSelect: () => setClearConfirmOpen(true),
@@ -1154,6 +1181,12 @@ export function WorkspaceView({
         graphLocked={graphLocked}
         graphLockedReason={graphLockedReason}
         onOpenSidebar={onOpenSidebar}
+        {...(onBack ? { onBack } : {})}
+        // Every tab is a resource: the subject's own search (above, full text) is the one search on the page.
+        hideSearch={Boolean(projectHome) && everyTabIsResource && query.trim() === ""}
+        {...(onRenameSubject && onUpdateSubjectLogo && onDeleteSubject
+          ? { subjectMenu: { onRename: onRenameSubject, onUpdateLogo: onUpdateSubjectLogo, onDelete: onDeleteSubject, canDelete: canDeleteSubject } satisfies SubjectMenuActions }
+          : {})}
         currentWorkspace={currentWorkspace}
         allWorkspaces={allWorkspaces}
         dependencies={dependencies}
@@ -1186,18 +1219,31 @@ export function WorkspaceView({
           />
         )}
         {projectHome && (
-          <h2 className="mb-2 text-label text-foreground" data-workspace-tabs-heading>
-            Tabs &amp; collections
+          <h2 className="mt-6 mb-2 text-h2 text-foreground" data-workspace-tabs-heading>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 rounded-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              aria-expanded={tabsOpen}
+              onClick={() => setTabsOpenChoice(!tabsOpen)}
+            >
+              Collections &amp; tabs
+              <ChevronDown aria-hidden className={cn("size-4 text-tertiary transition-transform", tabsOpen && "rotate-180")} />
+            </button>
           </h2>
         )}
+        {tabsOpen && (
+        <>
         <AttentionStrip
           attention={attention}
           onCleanup={() => setCleanupOpen(true)}
           onViewOther={() => handleCategoryFilter("other")}
         />
-        <div className={attention ? "mt-5" : undefined}>
-          <WorkspaceOverview tabs={tabs} />
-        </div>
+        {/* The counts dashboard is for the workspace on its own; a subject page leads with its resources instead. */}
+        {!projectHome && (
+          <div className={attention ? "mt-5" : undefined}>
+            <WorkspaceOverview tabs={tabs} />
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
           <CategoryFilterBar tabs={tabs} value={categoryFilter} onChange={handleCategoryFilter} />
@@ -1338,6 +1384,8 @@ export function WorkspaceView({
             />
           )}
         </div>
+        </>
+        )}
       </main>
 
       <CleanupDialog

@@ -1,22 +1,4 @@
-import {
-  Bot,
-  Boxes,
-  Clock,
-  FolderPlus,
-  Globe,
-  Keyboard,
-  Moon,
-  Palette,
-  PlugZap,
-  Radio,
-  ScanSearch,
-  ScrollText,
-  Settings,
-  Star,
-  Sun,
-  Type,
-  Waypoints,
-} from "lucide-react"
+import { Bot, Boxes, Clock, FolderPlus, Globe, Keyboard, Moon, Palette, PlugZap, Radio, ScanSearch, ScrollText, Settings, Star, Sun, Type, Waypoints, House, Sparkles } from "lucide-react"
 import type { Workspace } from "@/lib/workspace/types"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { Command } from "./types"
@@ -46,6 +28,9 @@ export type GlobalCommandActions = {
   setTheme?: (themeId: "midnight" | "hubble-light") => void
   /** Opens the Command Centre working in the current workspace. Present inside the shell. */
   askAgentAboutWorkspace?: () => void
+  /** Home, and the AI page. Present inside the shell. */
+  goHome?: () => void
+  openAI?: () => void
 }
 
 /** How many saved tabs the palette indexes. Past this, search the workspace itself. */
@@ -58,11 +43,13 @@ export function buildGlobalCommands(
   const current = data.workspaces.find((w) => w.id === data.currentId)
 
   const navigation: Command[] = [
-    { id: "go-workspace", label: "Go to Workspace", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["tabs", "home"] },
+    ...(actions.goHome ? [{ id: "go-home", label: "Go to Home", group: "Navigation" as const, icon: House, onSelect: actions.goHome, keywords: ["subjects", "start"] }] : []),
+    ...(actions.openAI ? [{ id: "go-ai", label: "Open AI", group: "Navigation" as const, icon: Sparkles, onSelect: actions.openAI, keywords: ["ask", "agent", "connections"] }] : []),
+    { id: "go-workspace", label: current ? `Go to ${current.name}` : "Go to subject", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["workspace", "subject", "tabs"] },
     { id: "go-graph", label: "Open graph view", group: "Navigation", icon: Waypoints, onSelect: actions.openGraph, keywords: ["relationships", "map"] },
     { id: "go-favorites", label: "Go to Favorites", group: "Navigation", icon: Star, onSelect: actions.openFavorites },
     { id: "go-recents", label: "Go to Recents", group: "Navigation", icon: Clock, onSelect: actions.openRecents },
-    { id: "go-history-dump", label: "Go to History Dump", group: "Navigation", icon: ScanSearch, onSelect: actions.openHistoryDump },
+    { id: "go-history-dump", label: "Import from history", group: "Navigation", icon: ScanSearch, onSelect: actions.openHistoryDump, keywords: ["history dump"] },
   ]
 
   const agents: Command[] = [
@@ -70,8 +57,8 @@ export function buildGlobalCommands(
       ? [
           {
             id: "agents-ask-workspace",
-            label: `Ask agent about ${current.name}`,
-            hint: "Opens the Command Centre working in this workspace",
+            label: `Ask AI about ${current.name}`,
+            hint: "Starts a chat about this subject",
             group: "Agents" as const,
             icon: Bot,
             onSelect: actions.askAgentAboutWorkspace,
@@ -79,44 +66,44 @@ export function buildGlobalCommands(
           },
         ]
       : []),
-    { id: "agents-command-centre", label: "Open Command Centre", group: "Agents", icon: Radio, onSelect: actions.openCommandCentre, keywords: ["agent", "session"] },
+    { id: "agents-command-centre", label: "Open AI chats", group: "Agents", icon: Radio, onSelect: actions.openCommandCentre, keywords: ["command centre", "agent", "session", "ai"] },
     {
       id: "agents-start",
-      label: "Start an agent session",
-      hint: "Claude Code, Codex, Gemini CLI, Grok Build",
+      label: "Start an AI chat",
+      hint: "Claude, Codex, Gemini, Grok",
       group: "Agents",
       icon: Bot,
       onSelect: actions.openCommandCentre,
-      keywords: ["new", "run", "switch agent"],
+      keywords: ["new", "run", "switch agent", "agent session"],
     },
     {
       id: "agents-connect",
-      label: "Connect an agent",
-      hint: "Providers, permissions and MCP",
+      label: "Connect AI",
+      hint: "AI Connections",
       group: "Agents",
       icon: PlugZap,
       onSelect: () => actions.openSettings("connectors"),
-      keywords: ["provider", "mcp", "claude", "codex", "gemini", "grok"],
+      keywords: ["provider", "mcp", "claude", "codex", "gemini", "grok", "connect an agent"],
     },
-    { id: "agents-history", label: "Agent history", group: "Agents", icon: ScrollText, onSelect: actions.openAgentHistory },
+    { id: "agents-history", label: "AI activity", group: "Agents", icon: ScrollText, onSelect: actions.openAgentHistory, keywords: ["agent history"] },
   ]
 
   const workspaces: Command[] = [
     ...data.workspaces.map(
       (w): Command => ({
         id: `workspace-switch-${w.id}`,
-        label: w.id === data.currentId ? `${w.name}` : `Switch to ${w.name}`,
-        hint: `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}${w.id === data.currentId ? " · current" : ""}`,
+        label: w.id === data.currentId ? `${w.name}` : `Open ${w.name}`,
+        hint: `${w.tabs.length} resource${w.tabs.length === 1 ? "" : "s"}`,
         group: "Workspaces",
         icon: Boxes,
         onSelect: () => {
           actions.switchWorkspace(w.id)
           actions.goWorkspace()
         },
-        keywords: ["open workspace", "workspace"],
+        keywords: ["open workspace", "workspace", "subject", "switch"],
       })
     ),
-    { id: "workspace-new", label: "New workspace", group: "Workspaces", icon: FolderPlus, onSelect: actions.newWorkspace, keywords: ["create"] },
+    { id: "workspace-new", label: "New subject", group: "Workspaces", icon: FolderPlus, onSelect: actions.newWorkspace, keywords: ["create", "workspace"] },
   ]
 
   // Every saved tab, current workspace first, so "search tabs" is just typing.
@@ -139,7 +126,7 @@ export function buildGlobalCommands(
 
   const settings: Command[] = [
     { id: "settings-open", label: "Open settings", group: "Settings", icon: Settings, onSelect: () => actions.openSettings("general"), keywords: ["preferences"] },
-    { id: "settings-agents", label: "Agents and providers", group: "Settings", icon: PlugZap, onSelect: () => actions.openSettings("connectors") },
+    { id: "settings-agents", label: "AI Connections", group: "Settings", icon: PlugZap, onSelect: () => actions.openSettings("connectors"), keywords: ["agents", "providers"] },
     { id: "settings-theme", label: "Change theme", group: "Settings", icon: Palette, onSelect: () => actions.openSettings("theme"), keywords: ["appearance", "color"] },
     { id: "settings-typography", label: "Change typography", group: "Settings", icon: Type, onSelect: () => actions.openSettings("typography"), keywords: ["font"] },
     ...(actions.setTheme
@@ -149,7 +136,7 @@ export function buildGlobalCommands(
             : { id: "settings-light", label: "Use light theme", group: "Settings" as const, icon: Sun, onSelect: () => actions.setTheme?.("hubble-light") },
         ]
       : []),
-    { id: "settings-shortcuts", label: "Keyboard shortcuts", hint: "Ctrl/⌘ K anywhere · / to search the workspace", group: "Help", icon: Keyboard, onSelect: () => actions.openSettings("shortcuts") },
+    { id: "settings-shortcuts", label: "Keyboard shortcuts", hint: "Ctrl/⌘ K anywhere", group: "Help", icon: Keyboard, onSelect: () => actions.openSettings("shortcuts") },
   ]
 
   return [...navigation, ...agents, ...workspaces, ...tabs, ...settings]

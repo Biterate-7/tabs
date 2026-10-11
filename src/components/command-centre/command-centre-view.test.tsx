@@ -152,7 +152,7 @@ describe("runtime status is reported truthfully", () => {
 
     // The honest desktop/hosted story: browsing still works, execution does not.
     expect(
-      await screen.findByText(/still browse workspaces, tabs, collections/i)
+      await screen.findByText(/everything else in hubble works as usual/i)
     ).toBeTruthy()
   })
 
@@ -212,7 +212,7 @@ describe("the empty state", () => {
       }),
     })
     renderCentre(runtime, vi.fn(), undefined, "w1")
-    const agents = within(await screen.findByRole("region", { name: "Agents for this workspace" }))
+    const agents = within(await screen.findByRole("region", { name: "AI for this subject" }))
     const row = (await agents.findByText("Claude Code")).closest("li")!
     // Why, in the shared words, and the action that fixes it — never just grey text.
     expect(within(row).queryByRole("button", { name: /^Start/ })).toBeNull()
@@ -221,12 +221,11 @@ describe("the empty state", () => {
     expect(row.textContent).not.toMatch(/claude-code/)
   })
 
-  it("explains the surface without inventing anything", async () => {
+  it("names the surface — no explanatory paragraph — without inventing anything", async () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime)
 
-    expect(await screen.findByRole("heading", { name: /command centre/i })).toBeTruthy()
-    expect(screen.getByText(/inside a Hubble project/i)).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI" })).toBeTruthy()
     expect(screen.getByText(/no sessions yet/i)).toBeTruthy()
   })
 
@@ -234,9 +233,8 @@ describe("the empty state", () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime, vi.fn(), undefined, "w1")
 
-    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
-    expect(screen.getByText(/sees no other project/)).toBeTruthy()
-    const agents = screen.getByRole("region", { name: "Agents for this workspace" })
+    expect(await screen.findByRole("heading", { name: "Ask AI about Research" })).toBeTruthy()
+    const agents = screen.getByRole("region", { name: "AI for this subject" })
     // The connected agent, drawn with its own mark, ready to start here.
     expect(await within(agents).findByRole("button", { name: "Start with Claude Code" })).toBeTruthy()
     expect(agents.querySelector('[data-agent-provider="claude-code"]')).not.toBeNull()
@@ -250,7 +248,7 @@ describe("the empty state", () => {
     const onClose = vi.fn()
     renderCentre(runtime, onClose)
 
-    await user.click(await screen.findByRole("button", { name: /close command centre/i }))
+    await user.click(await screen.findByRole("button", { name: "Close AI chats" }))
     expect(onClose).toHaveBeenCalled()
   })
 })
@@ -872,7 +870,7 @@ describe("nothing is invented", () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime)
 
-    await screen.findByRole("heading", { name: /command centre/i })
+    await screen.findByRole("heading", { name: "Ask AI" })
 
     // The specific failure this guards is a first-run screen populated with
     // sample agents and sample conversations, which teaches the user to
@@ -949,7 +947,7 @@ describe("the location and runtime bar", () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime)
 
-    const bar = await screen.findByText("Command Centre", { selector: "span" })
+    const bar = await screen.findByText("AI chats", { selector: "span" })
     expect(bar).toBeTruthy()
   })
 })
