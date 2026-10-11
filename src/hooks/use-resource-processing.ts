@@ -43,20 +43,26 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  * another device — and only some of them know about stored content. So the
  * store itself is the authority, watched here:
  *
- *   - a tab that disappears has its content forgotten after a grace period
- *     (every Undo restores the tab well within it; the timer re-checks the
- *     store, and never acts after the account changed);
+ *   - a tab that disappears takes its content out of reach at once: search,
+ *     the reader and agents only ever look at a project's current tabs;
+ *   - the content itself stays until the next page load, because every Undo
+ *     lives in this page — and a toast's Undo can be pressed long after the
+ *     removal (Sonner pauses it while hovered or while the window is
+ *     hidden). Deleting on a timer would lose an uploaded PDF or a pasted
+ *     transcript that Undo then "restores" empty;
  *   - a tab that moves to another project takes its content with it
  *     (content is keyed by project);
- *   - once per page load, after the same grace, content whose tab exists in
- *     no project is pruned — what a refresh mid-grace, a sync, or an older
- *     version left behind.
+ *   - once per page load, after a short grace (for sync to settle), content
+ *     whose tab exists in no project is pruned — no Undo can reach it then.
+ *     The sweep reads keys only, never another account's, and is skipped
+ *     if the account changed meanwhile.
  *
- * All of it is idempotent: deleting what is already gone does nothing.
+ * Paths that know they are final still forget at once: Remove's toast
+ * closing without Undo, and deleting a subject. All of it is idempotent.
  */
 
 const CONCURRENCY = 3
-/** How long a removed tab's content outlives it: longer than any Undo. */
+/** How long after a page load the orphaned-content sweep waits, so sync can settle first. */
 export const CONTENT_GRACE_MS = 60_000
 
 /** Every project's tab ids — what content may be kept for. */
@@ -195,7 +201,7 @@ export function useResourceProcessing(options: {
     }
   }, [store, enabled, finished, apply, deps, getStore, settle])
 
-  // Content follows its tab (see the header): forgotten after removal, carried on a move, swept once per load.
+  // Content follows its tab (see the header): out of reach on removal, carried on a move, swept once per load.
   const seen = useRef<Map<string, Set<string>> | null>(null)
   const moving = useRef<Promise<unknown>>(Promise.resolve())
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
@@ -223,9 +229,18 @@ export function useResourceProcessing(options: {
     const before = seen.current
     seen.current = now
     if (!before) {
+      // Only what was already orphaned when the page loaded: a tab removed since may still be undone.
+      const atLoad = now
       later(async () => {
         const latest = getStore()
-        if (latest) await pruneContentExcept(presentTabs(latest))
+        if (!latest) return
+        const keep = presentTabs(latest)
+        for (const [workspaceId, tabIds] of atLoad) {
+          const kept = keep.get(workspaceId) ?? new Set<string>()
+          for (const tabId of tabIds) kept.add(tabId)
+          keep.set(workspaceId, kept)
+        }
+        await pruneContentExcept(keep)
       })
       return
     }
@@ -236,14 +251,8 @@ export function useResourceProcessing(options: {
       for (const tabId of tabIds) {
         if (still?.has(tabId)) continue
         const to = homeOf.get(tabId)
-        if (to && to !== workspaceId) {
-          moving.current = moving.current.then(() => moveContent(workspaceId, to, tabId)).catch(() => undefined)
-          continue
-        }
-        later(async () => {
-          const back = getStore()?.workspaces.find((entry) => entry.id === workspaceId)?.tabs.some((tab) => tab.id === tabId)
-          if (!back) await deleteContent(workspaceId, [tabId])
-        })
+        // Removed: nothing to do now — out of reach already, and Undo may still bring it back. The next load sweeps it.
+        if (to && to !== workspaceId) moving.current = moving.current.then(() => moveContent(workspaceId, to, tabId)).catch(() => undefined)
       }
     }
   }, [store, enabled, getStore, later])

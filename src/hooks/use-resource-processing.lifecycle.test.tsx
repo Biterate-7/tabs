@@ -75,48 +75,48 @@ beforeEach(async () => {
 afterEach(() => setStorageNamespace(null))
 
 describe("content follows its tab out of a project", () => {
-  it("Remove on a resource card: forgotten after the grace, and no longer searchable", async () => {
+  /** The content of tabs that left: kept for the session (Undo can bring the tab back), gone after the next load. */
+  async function expectKeptThenSwept(view: ReturnType<typeof mount>, gone: [string, string][], kept: [string, string][]) {
+    await sleep(GRACE * 3)
+    for (const [workspaceId, tabId] of gone) expect(await stored(workspaceId, tabId)).toBeDefined()
+    view.unmount()
+    const next = mount() // the next page load
+    await waitFor(async () => {
+      for (const [workspaceId, tabId] of gone) expect(await stored(workspaceId, tabId)).toBeUndefined()
+    })
+    for (const [workspaceId, tabId] of kept) expect(await stored(workspaceId, tabId)).toBeDefined()
+    next.unmount()
+  }
+
+  it("Remove on a resource card: unsearchable at once, kept while Undo is possible, swept on the next load", async () => {
     const { video, pdf, other } = await seed()
     const view = mount()
     view.set(updateWorkspaceTabs(store, "physics", store.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id)))
-    // Search runs over the project's current tabs: gone from results at once.
+    // Search runs over the project's current tabs: gone from results at once, whatever is still stored.
     const contents = new Map([[video.id, (await stored("physics", video.id))!]])
     expect(searchProject({ query: "gravitational", tabs: store.workspaces[0]!.tabs, contents })).toEqual([])
-    await waitFor(async () => expect(await stored("physics", video.id)).toBeUndefined())
-    // Neighbours and other subjects are untouched.
-    expect(await stored("physics", pdf.id)).toBeDefined()
-    expect(await stored("chem", other.id)).toBeDefined()
-    view.unmount()
+    await expectKeptThenSwept(view, [["physics", video.id]], [["physics", pdf.id], ["chem", other.id]])
   })
 
   it("delete selected and Clean up in the tab view, and Delete in the graph (removeTabs)", async () => {
     const { video, pdf, other } = await seed()
     const view = mount()
     view.set(updateWorkspaceTabs(store, "physics", removeTabs(store.workspaces[0]!.tabs, [video.id, pdf.id])))
-    await waitFor(async () => {
-      expect(await stored("physics", video.id)).toBeUndefined()
-      expect(await stored("physics", pdf.id)).toBeUndefined()
-    })
-    expect(await stored("chem", other.id)).toBeDefined()
-    view.unmount()
+    await expectKeptThenSwept(view, [["physics", video.id], ["physics", pdf.id]], [["chem", other.id]])
   })
 
-  it("Clear empties the subject's content too", async () => {
+  it("Clear", async () => {
     const { video, pdf, other } = await seed()
     const view = mount()
     view.set(updateWorkspaceTabs(store, "physics", []))
-    await waitFor(async () => expect([await stored("physics", video.id), await stored("physics", pdf.id)]).toEqual([undefined, undefined]))
-    expect(await stored("chem", other.id)).toBeDefined()
-    view.unmount()
+    await expectKeptThenSwept(view, [["physics", video.id], ["physics", pdf.id]], [["chem", other.id]])
   })
 
-  it("deleting a subject forgets all of its content", async () => {
+  it("deleting a subject (the shell also prunes it at once)", async () => {
     const { video, other } = await seed()
     const view = mount()
     view.set(deleteWorkspace(store, "physics"))
-    await waitFor(async () => expect(await stored("physics", video.id)).toBeUndefined())
-    expect(await stored("chem", other.id)).toBeDefined()
-    view.unmount()
+    await expectKeptThenSwept(view, [["physics", video.id]], [["chem", other.id]])
   })
 
   it("a deletion synced from another device (the whole store replaced)", async () => {
@@ -125,20 +125,23 @@ describe("content follows its tab out of a project", () => {
     const synced = JSON.parse(JSON.stringify(store)) as WorkspaceStore
     synced.workspaces[0]!.tabs = synced.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id)
     view.set(synced)
-    await waitFor(async () => expect(await stored("physics", video.id)).toBeUndefined())
-    expect(await stored("physics", pdf.id)).toBeDefined()
-    view.unmount()
+    await expectKeptThenSwept(view, [["physics", video.id]], [["physics", pdf.id]])
   })
 
-  it("Undo within the grace keeps the content", async () => {
+  it("Undo long after the removal — a toast paused while the window was hidden — still restores the content", async () => {
     const { video } = await seed()
     const view = mount()
     const before = store
     view.set(updateWorkspaceTabs(store, "physics", store.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id)))
+    await sleep(GRACE * 4)
     view.set(before)
+    expect((await stored("physics", video.id))?.transcript).toEqual([{ start: 522, text: "Gravitational potential energy." }])
+    // …and a reload with the tab restored keeps it.
+    view.unmount()
+    const next = mount()
     await sleep(GRACE * 3)
     expect(await stored("physics", video.id)).toBeDefined()
-    view.unmount()
+    next.unmount()
   })
 
   it("moving a video to another subject carries its transcript, so it stays searchable there", async () => {
@@ -153,23 +156,10 @@ describe("content follows its tab out of a project", () => {
     view.unmount()
   })
 
-  it("a refresh mid-grace: the next load sweeps what was left", async () => {
-    const { video, pdf } = await seed()
-    const first = mount()
-    first.set(updateWorkspaceTabs(store, "physics", store.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id)))
-    first.unmount() // the page closed before the grace ran out
-    await sleep(GRACE * 2)
-    expect(await stored("physics", video.id)).toBeDefined()
-    const second = mount()
-    await waitFor(async () => expect(await stored("physics", video.id)).toBeUndefined())
-    expect(await stored("physics", pdf.id)).toBeDefined()
-    second.unmount()
-  })
-
-  it("never acts for an account that is no longer signed in", async () => {
+  it("the load sweep never acts for an account that is no longer signed in", async () => {
     const { video } = await seed()
-    const view = mount()
-    view.set(updateWorkspaceTabs(store, "physics", store.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id)))
+    store = updateWorkspaceTabs(store, "physics", store.workspaces[0]!.tabs.filter((tab) => tab.id !== video.id))
+    const view = mount() // a load with the video already gone: its sweep is pending
     setStorageNamespace("someone-else")
     await sleep(GRACE * 3)
     setStorageNamespace(null)

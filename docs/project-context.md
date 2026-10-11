@@ -90,15 +90,18 @@ between accounts) is read again automatically.
 **Content follows its tab** (`use-resource-processing.ts`). Tabs leave a
 project by many doors (Remove, delete/Clean up in the tab view, the graph,
 Clear, moves, deleting the subject, deletions arriving by sync), and the store
-is the one authority watched: a tab that disappears has its content forgotten
-after `CONTENT_GRACE_MS` (60 s — longer than any Undo, re-checked against the
-store and skipped if the account changed); a tab moved to another subject has
-its content carried to the new key (`moveContent`); and once per page load,
-after the same grace, `pruneContentExcept` removes this account's records for
-tabs that exist in no project (a refresh mid-grace, an older version's
-leftovers). All idempotent; another account's records are never read.
-Search never waits for any of this: it only ever searches the tabs a project
-has now.
+is the one authority watched. A tab that disappears takes its content out of
+reach at once (search, the reader and agents only look at a project's current
+tabs), but the content stays on the device until the **next page load**: every
+Undo lives in the page, and a toast's Undo can come minutes later (Sonner
+pauses toasts while hovered or while the window is hidden) — deleting on a
+timer would let Undo restore an uploaded PDF or pasted transcript empty. A tab
+moved to another subject has its content carried to the new key
+(`moveContent`). Once per page load, after `CONTENT_GRACE_MS` (60 s, for sync
+to settle), `pruneContentExcept` removes this account's records for tabs that
+were already gone at load and still are — keys only, never another account's,
+skipped if the account changed. Remove's toast closing without Undo and
+deleting a subject still forget at once. All idempotent.
 
 Sync carries a tab as before; `resource` is device-local like the brief, and a
 remote edit to the same page keeps the local reading (`lib/sync/apply.ts`).
