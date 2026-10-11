@@ -53,30 +53,38 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function openPalette(user: ReturnType<typeof userEvent.setup>) {
+/** Hubble opens on Home; a subject's page is one click on its row. */
+async function openSubject(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const rail = await screen.findByRole("navigation", { name: "Subjects" })
+  await user.click(within(rail).getByRole("button", { name: `Open ${name}` }))
   await screen.findByPlaceholderText("Search tabs...")
+}
+
+async function openPalette(user: ReturnType<typeof userEvent.setup>) {
   await user.keyboard("{Control>}k{/Control}")
-  return screen.findByPlaceholderText("Search tabs, workspaces, agents and commands…")
+  return screen.findByPlaceholderText("Search Hubble")
 }
 
 describe("asking an agent from the workspace", () => {
   it("opens the Command Centre working in the workspace the user asked from", async () => {
     const user = userEvent.setup()
     render(<AppShell />)
+    await openSubject(user, "Research")
 
     const input = await openPalette(user)
-    await user.type(input, "Ask agent about Research{Enter}")
+    await user.type(input, "Ask AI about Research{Enter}")
 
-    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI about Research" })).toBeTruthy()
     expect(screen.getAllByText("Research").length).toBeGreaterThan(0)
   })
 
   async function addBothToAgentContext(user: ReturnType<typeof userEvent.setup>) {
+    await openSubject(user, "Research")
     await user.type(await screen.findByPlaceholderText("Search tabs..."), "example")
     await user.click(screen.getByRole("button", { name: "Select" }))
     for (const checkbox of screen.getAllByLabelText("Select example.com")) await user.click(checkbox)
-    await user.click(screen.getByRole("button", { name: "Ask agent" }))
-    await user.click(await screen.findByRole("menuitem", { name: "Add to agent context" }))
+    await user.click(screen.getByRole("button", { name: "Ask AI about selected tabs" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Add to next AI chat" }))
   }
 
   it("collects context without leaving the workspace, and brings it to the Command Centre", async () => {
@@ -89,13 +97,13 @@ describe("asking an agent from the workspace", () => {
     )
     await addBothToAgentContext(user)
 
-    expect(await screen.findByText("Added to agent context")).toBeTruthy()
-    expect(screen.getByText(/2 tabs · waiting in the Command Centre/)).toBeTruthy()
+    expect(await screen.findByText("Saved for your next AI chat")).toBeTruthy()
+    expect(screen.getByText("2 tabs")).toBeTruthy()
     // Still in the workspace.
     expect(screen.getByPlaceholderText("Search tabs...")).toBeTruthy()
 
     const input = await openPalette(user)
-    await user.type(input, "Open Command Centre{Enter}")
+    await user.type(input, "Open AI chats{Enter}")
     const panel = await screen.findByRole("complementary", { name: "Session context" })
     await waitFor(() => expect(within(panel).getByRole("region", { name: "Tabs in context" }).textContent).toContain("Relativity paper"))
     expect(within(panel).getByRole("region", { name: "Tabs in context" }).textContent).toContain("CERN article")
@@ -111,14 +119,14 @@ describe("asking an agent from the workspace", () => {
       </>
     )
     await addBothToAgentContext(user)
-    await screen.findByText("Added to agent context")
+    await screen.findByText("Saved for your next AI chat")
 
     const switcher = await openPalette(user)
-    await user.type(switcher, "Switch to Development{Enter}")
+    await user.type(switcher, "Open Development{Enter}")
     const input = await openPalette(user)
-    await user.type(input, "Open Command Centre{Enter}")
+    await user.type(input, "Open AI chats{Enter}")
 
-    expect(await screen.findByRole("heading", { name: "Work on Development" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI about Development" })).toBeTruthy()
     const panel = screen.getByRole("complementary", { name: "Session context" })
     expect(within(panel).queryByRole("region", { name: "Tabs in context" })).toBeNull()
     expect(panel.textContent).not.toContain("Relativity paper")

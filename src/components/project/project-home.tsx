@@ -1,14 +1,17 @@
 "use client"
 
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { ArrowRight, FolderGit2, PanelLeftOpen, Plus, Radio, Search, X } from "lucide-react"
+import { ArrowRight, CheckSquare, ChevronDown, ChevronLeft, PanelLeftOpen, Search, Sparkles, Trash2, X } from "lucide-react"
+import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { AgentIcon } from "@/components/agents/agent-icon"
+import { AskAiMenu } from "@/components/agents/agent-actions"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { Textarea } from "@/components/ui/textarea"
 import { ResourceCard } from "./resource-card"
 import { ProjectActivity } from "./project-activity"
+import { AddMenu } from "./add-menu"
 import { AddSourceDialog } from "./add-source-dialog"
 import { SourceDetailsDialog } from "./source-details-dialog"
 import { ProjectDropOverlay, useExternalDrop } from "./project-drop-zone"
@@ -16,13 +19,14 @@ import { SourceKindIcon } from "./source-status"
 import { useLastTask } from "@/hooks/use-last-task"
 import { useProjectActivity } from "@/hooks/use-project-activity"
 import { useProjectContents } from "@/hooks/use-project-contents"
-import { lastTaskStateLabel } from "@/lib/agents/command-centre/last-task"
+import { tabsContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
 import { agentDisplayName } from "@/lib/agents/visual/identity"
+import { aiName } from "@/lib/product/ai-vocabulary"
+import { subjectName } from "@/lib/product/subjects"
 import { describeLocation, searchProject } from "@/lib/resources/search"
 import { needsAttention, projectSources } from "@/lib/resources/ingest"
 import { projectState } from "@/lib/projects/state"
 import { recordLoopMilestone } from "@/lib/product/loop-log"
-import { formatRelativeTime } from "@/lib/time-format"
 import { cn } from "@/lib/utils"
 import type { DroppedResources } from "@/lib/resources/drop"
 import type { IngestOutcome } from "@/lib/resources/ingest"
@@ -53,39 +57,49 @@ export type ProjectHomeProps = {
   onRenameSource: (tabId: string, title: string) => void
   onRemoveSources: (tabIds: string[]) => void
   onOpenSource: (tab: Tab) => void
-  /** "Use in task": the Command Centre, with this source in the task's context. */
+  /** "Ask AI" on one resource: a chat about it. */
   onUseInTask?: (tab: Tab) => void
-  onOpenCommandCentre?: () => void
   onOpenTask?: (sessionId: string) => void
   onUpdateBrief?: (brief: { description: string; focus: string }) => void
-  /** The connected local folder's name, when the project has one — its files. */
+  /** Where "Connect AI" goes, shown only while no AI is connected. */
+  onConnectAI?: () => void
+  /** The connected local folder's name, when the subject has one — its files. */
   folderName?: string
-  /** Agents connected in Hubble (the roster). */
+  /** AIs connected in Hubble (the roster). */
   agents: readonly { provider: AgentProviderId; name: string }[]
-  /** Shown under the empty state: the older "dump my open tabs" input. */
+  /** Shown under the empty state, behind "Paste a list of tabs": the older dump-everything input. */
   emptyExtra?: ReactNode
   /**
    * Present once Hubble for Chrome has said it is here: a tab's right-click
-   * menu ("Add to <project>") and the shortcut add Chrome tabs to this
-   * project — the one on screen. Chrome gives pages no way to receive a
-   * dragged tab, so nothing here suggests dragging one.
+   * menu ("Add to <subject>") and the shortcut add Chrome tabs to this
+   * subject — the one on screen.
    */
   quickAdd?: { shortcut: string }
 }
 
 /**
- * A project's home (Hubble 2.0): what it is about, where the work was left,
- * what the agents have to work from, and its sources — with the whole page a
- * drop target for links and the address bar dragged from Chrome (Chrome does not expose its tab strip to a page;
- * actual tabs come in through the extension's tab right-click menu — see use-extension-quick-add.ts).
+ * A subject's page.
  *
- *     History IA
- *     Investigating the Cuban Missile Crisis …     Goal: a strong argument …
- *     Where you left off   Gemini · Done · Challenged Claude's arguments  [Continue]
- *     Context   5 sources · 4 readable · 1 folder · 2 notes  [Add source] [Command Centre]
- *     Agents    Claude · Gemini · Codex
- *     Sources   [search] [All | PDFs | Videos | Needs attention]
- *     Recent work
+ *     History HL                                   [+ Add ▾]  [✦ Ask AI ▾]
+ *     The causes and consequences of WW1
+ *
+ *     Continue with Claude · Summary of the Treaty of Versailles   →
+ *
+ *     Resources  12                        [Select]   [Search History HL…]
+ *     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+ *     │ Treaty of …  │ │ JSTOR article│ │ YouTube …    │
+ *     └──────────────┘ └──────────────┘ └──────────────┘
+ *
+ *     Recent activity ▸
+ *
+ * The subject (a workspace — see lib/product/subjects.ts) leads with its
+ * name and the two things to do: put something in, and ask AI about it.
+ * Ask AI uses the selected resources when some are selected, else the
+ * whole subject; which AI, session or context is never asked. Collections
+ * and the rest of the subject's tabs follow below, in the workspace view.
+ *
+ * The whole page is still a drop target for links and the address bar
+ * dragged from Chrome — it just doesn't need a paragraph saying so.
  */
 export function ProjectHome(props: ProjectHomeProps) {
   const { workspace, now, resources } = props
@@ -97,18 +111,21 @@ export function ProjectHome(props: ProjectHomeProps) {
   const [details, setDetails] = useState<{ tabId: string; rename: boolean } | null>(null)
   const [filter, setFilter] = useState<Filter>("all")
   const [query, setQuery] = useState("")
+  const [showActivity, setShowActivity] = useState(false)
   const [showAllActivity, setShowAllActivity] = useState(false)
   const [editingBrief, setEditingBrief] = useState(false)
   const [dropNotice, setDropNotice] = useState<string | null>(null)
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [pasteOpen, setPasteOpen] = useState(false)
 
-  // Coming back to a project with work in it is the return the loop log counts — once a day per project, never sent.
+  // Coming back to a subject with work in it is the return the loop log counts — once a day per subject, never sent.
   const returning = Boolean(lastTask)
   useEffect(() => {
     if (returning) recordLoopMilestone("project_returned", { once: `${workspace.id}:${new Date().toDateString()}` })
   }, [returning, workspace.id])
 
-  const projectName = workspace.name.trim() || "Untitled project"
-  const notes = workspace.tabs.filter((tab) => tab.notes).length
+  const projectName = subjectName(workspace)
   const working = sources.filter((tab) => tab.resource!.status === "pending" || tab.resource!.status === "processing").length
   const searching = query.trim().length > 1
   const contents = useProjectContents(useMemo(() => (searching ? [workspace] : []), [searching, workspace]))
@@ -129,7 +146,7 @@ export function ProjectHome(props: ProjectHomeProps) {
       props.onAddSources(dropped.inputs, "chrome")
       setDropNotice(null)
     } else if (dropped.files.length > 0) {
-      // A file has no address to keep; it belongs to a PDF source waiting for it.
+      // A file has no address to keep; it belongs to a PDF resource waiting for it.
       const waiting = sources.filter((tab) => tab.resource!.kind === "pdf" && tab.resource!.status !== "ready")
       const pdf = dropped.files.find((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))
       const match = pdf ? (waiting.find((tab) => tab.resource!.meta?.fileName === pdf.name || decodeURIComponent(tab.url).toLowerCase().endsWith(`/${pdf.name.toLowerCase()}`)) ?? (waiting.length === 1 ? waiting[0] : undefined)) : undefined
@@ -137,19 +154,18 @@ export function ProjectHome(props: ProjectHomeProps) {
         void resources.attachPdf(workspace.id, match.id, pdf)
         setDropNotice(null)
       } else {
-        setDropNotice(
-          pdf
-            ? "A PDF file needs its source: add the PDF's web address first, then drop or upload the file on it."
-            : "That item couldn't be added. Drop links, tabs or the address bar from Chrome."
-        )
+        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "That couldn't be added. Try a link instead.")
       }
     } else {
-      setDropNotice("That item couldn't be added. Drop links, tabs or the address bar from Chrome.")
+      setDropNotice("That couldn't be added. Try a link instead.")
     }
   }
   const { active } = useExternalDrop({ enabled: true, onDrop: handleDrop })
 
-  const visible = sources.filter(FILTERS.find((entry) => entry.id === filter)!.matches)
+  // Only the filters that would show something different from "All".
+  const kindsPresent = FILTERS.filter((entry) => entry.id !== "all" && sources.some(entry.matches))
+  const filters = kindsPresent.length > 1 || kindsPresent.some((entry) => entry.id === "attention") ? [FILTERS[0]!, ...kindsPresent] : []
+  const visible = sources.filter((FILTERS.find((entry) => entry.id === filter) ?? FILTERS[0]!).matches)
   const detailTab = details ? (tabById.get(details.tabId) ?? null) : null
   const cardActions = {
     onOpen: props.onOpenSource,
@@ -160,199 +176,245 @@ export function ProjectHome(props: ProjectHomeProps) {
     onDetails: (tab: Tab) => setDetails({ tabId: tab.id, rename: false }),
     onCopyUrl: (tab: Tab) => void navigator.clipboard?.writeText(tab.url).catch(() => undefined),
   }
+  // Ask AI works on what is selected, or the whole subject.
+  const chosen = [...selected].filter((id) => tabById.has(id))
+  const askContext = chosen.length > 0 ? tabsContext(workspace.id, chosen) : workspaceContext(workspace.id)
+
+  function stopSelecting() {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+
+  function toggle(id: string) {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const addMenu = (size: "default" | "lg", variant: "default" | "secondary") => (
+    <AddMenu
+      subjectName={projectName}
+      onAdd={(inputs) => props.onAddSources(inputs, "manual")}
+      onOpenLink={() => setAddOpen(true)}
+      size={size}
+      variant={variant}
+      {...(props.quickAdd ? { quickAdd: props.quickAdd } : {})}
+    />
+  )
 
   return (
-    <section aria-label={`${projectName} project`} className="mb-6 flex flex-col gap-4" data-project-home={workspace.id}>
+    <section aria-label={projectName} className="mb-6 flex flex-col gap-8" data-project-home={workspace.id}>
       <ProjectDropOverlay active={active} projectName={projectName} />
 
-      {/* What are you working on? */}
-      {editingBrief && props.onUpdateBrief ? (
-        <BriefForm
-          description={workspace.brief?.description ?? ""}
-          focus={workspace.brief?.focus ?? ""}
-          onCancel={() => setEditingBrief(false)}
-          onSave={(brief) => {
-            props.onUpdateBrief!(brief)
-            setEditingBrief(false)
-          }}
-        />
-      ) : workspace.brief?.description || workspace.brief?.focus ? (
-        <div className="flex min-w-0 flex-col gap-0.5">
-          {workspace.brief.description && <p className="text-body text-foreground">{workspace.brief.description}</p>}
-          {workspace.brief.focus && (
-            <p className="text-body-sm text-muted-foreground">
-              <span className="text-tertiary">Goal </span>
-              {workspace.brief.focus}
-            </p>
-          )}
-          {props.onUpdateBrief && (
-            <Button type="button" size="xs" variant="ghost" className="-ml-1.5 w-fit" onClick={() => setEditingBrief(true)}>
-              Edit brief
-            </Button>
-          )}
-        </div>
-      ) : (
-        props.onUpdateBrief && (
-          <button type="button" className="w-fit text-left text-body-sm text-muted-foreground hover:text-foreground" onClick={() => setEditingBrief(true)}>
-            What are you working on? <span className="text-link">Add a brief</span> so every agent knows.
-          </button>
-        )
-      )}
-
-      {/* Where you left off */}
-      {state.lastTask && (
-        <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-subtle bg-card px-3 py-2" data-project-left-off>
-          <span className="text-eyebrow text-tertiary">Where you left off</span>
-          <AgentIcon connector={state.lastTask.provider} size="xs" />
-          <p className="min-w-0 flex-1 truncate text-body-sm text-muted-foreground" title={state.lastTask.task}>
-            <span className="text-foreground">{agentDisplayName(state.lastTask.provider)}</span>
-            <span className="text-tertiary"> · </span>
-            <span className={state.lastTask.attention ? "text-link" : "text-foreground"}>{lastTaskStateLabel(state.lastTask)}</span>
-            <span className="text-tertiary"> · </span>
-            {state.lastTask.headline}
-            {state.lastTask.task && <span className="text-tertiary"> · “{state.lastTask.task}”</span>}
-            <span className="text-tertiary"> · {formatRelativeTime(state.lastTask.at, now)}</span>
-          </p>
-          {props.onOpenTask && (
-            <Button type="button" size="xs" variant="secondary" onClick={() => props.onOpenTask!(state.lastTask!.sessionId)}>
-              Continue <ArrowRight />
-            </Button>
-          )}
-        </div>
-      )}
-
-      {/* Context */}
-      <div className="flex flex-col gap-3 rounded-md border border-subtle bg-card p-3" data-project-context>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h2 className="text-label text-foreground">Context</h2>
-          <p className="text-body-sm text-muted-foreground" data-project-counts>
-            {plural(sources.length, "source", "sources")}
-            {sources.length > 0 && ` · ${state.sources.ready} readable`}
-            {props.folderName ? ` · folder ${props.folderName}` : ""}
-            {notes > 0 ? ` · ${plural(notes, "note", "notes")}` : ""}
-          </p>
-          {working > 0 && (
-            <p role="status" className="text-meta text-muted-foreground">
-              Reading {plural(working, "source", "sources")}…
-            </p>
-          )}
-          <div className="ml-auto flex items-center gap-1.5">
-            <Button type="button" size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
-              <Plus /> Add source
-            </Button>
-            {props.onOpenCommandCentre && (
-              <Button type="button" size="sm" onClick={props.onOpenCommandCentre}>
-                <Radio /> Command Centre
-              </Button>
-            )}
-          </div>
-        </div>
-        {/* Taught once: the empty state below carries it until the project has sources. */}
-        {sources.length > 0 &&
-          (props.quickAdd ? (
-            <ChromeQuickAdd projectName={projectName} shortcut={props.quickAdd.shortcut} className="hidden md:flex" />
+      {/* The subject, and the two things to do with it. */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="truncate text-statement text-foreground" data-subject-title>
+            {projectName}
+          </h1>
+          {editingBrief && props.onUpdateBrief ? (
+            <BriefForm
+              description={workspace.brief?.description ?? ""}
+              focus={workspace.brief?.focus ?? ""}
+              onCancel={() => setEditingBrief(false)}
+              onSave={(brief) => {
+                props.onUpdateBrief!(brief)
+                setEditingBrief(false)
+              }}
+            />
+          ) : workspace.brief?.description || workspace.brief?.focus ? (
+            <button
+              type="button"
+              className="mt-1 block max-w-prose text-left text-body text-muted-foreground hover:text-foreground disabled:pointer-events-none"
+              disabled={!props.onUpdateBrief}
+              onClick={() => setEditingBrief(true)}
+              title="Edit details"
+            >
+              {workspace.brief.description || workspace.brief.focus}
+              {workspace.brief.description && workspace.brief.focus && <span className="text-tertiary"> · {workspace.brief.focus}</span>}
+            </button>
           ) : (
-            <p className="hidden text-meta text-tertiary md:block" data-add-hint>
-              Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs.
-            </p>
-          ))}
-        {dropNotice && (
-          <p role="alert" className="flex items-center gap-2 text-body-sm text-destructive">
-            {dropNotice}
-            <Button type="button" size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setDropNotice(null)}>
-              <X />
-            </Button>
-          </p>
-        )}
-        <div className="flex flex-wrap items-center gap-2 border-t border-subtle pt-2">
-          <span className="text-meta text-tertiary">Agents</span>
-          {props.agents.length > 0 ? (
-            props.agents.map((agent) => (
-              <span key={agent.provider} className="flex items-center gap-1 text-body-sm text-muted-foreground" data-project-agent={agent.provider}>
-                <AgentIcon connector={agent.provider} size="xs" /> {agent.name}
-              </span>
-            ))
-          ) : (
-            <span className="text-body-sm text-muted-foreground">Your project is ready. Connect an agent to start working.</span>
+            props.onUpdateBrief && (
+              <button type="button" className="mt-1 text-body-sm text-tertiary hover:text-foreground" onClick={() => setEditingBrief(true)}>
+                Add details
+              </button>
+            )
           )}
-          {state.next && (
-            <span className="text-body-sm text-muted-foreground md:ml-auto" data-project-next={state.next.kind}>
-              <span className="text-tertiary">Next · </span>
-              {state.next.text}
-            </span>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {addMenu("lg", "default")}
+          <AskAiMenu context={askContext} variant="secondary" label={chosen.length > 0 ? `Ask AI · ${chosen.length}` : "Ask AI"} />
+          {props.agents.length === 0 && props.onConnectAI && (
+            <Button type="button" size="sm" variant="ghost" onClick={props.onConnectAI}>
+              Connect AI
+            </Button>
           )}
         </div>
       </div>
 
-      {/* Sources */}
-      {sources.length === 0 ? (
-        <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-strong p-5" data-project-empty>
-          <p className="text-h2 text-foreground">Start by adding context.</p>
-          {props.quickAdd ? (
-            <>
-              <ChromeQuickAdd projectName={projectName} shortcut={props.quickAdd.shortcut} />
-              <p className="max-w-prose text-body-sm text-muted-foreground">
-                Hubble reads each source — web pages, PDFs, YouTube videos — and every agent you choose works from them. Links and the address bar can be dragged here too.
-              </p>
-            </>
-          ) : (
-            <p className="max-w-prose text-body text-muted-foreground" data-add-hint>
-              Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.
+      {/* Where the last AI chat was left: one line, one click. */}
+      {state.lastTask && props.onOpenTask && (
+        <button
+          type="button"
+          onClick={() => props.onOpenTask!(state.lastTask!.sessionId)}
+          className="-mt-3 flex min-w-0 items-center gap-2 self-start rounded-md border border-subtle bg-card px-3 py-2 text-left transition-colors hover:border-strong focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+          data-project-left-off
+        >
+          <AgentIcon connector={state.lastTask.provider} size="xs" />
+          <span className="shrink-0 text-body-sm text-foreground">Continue with {aiName(state.lastTask.provider)}</span>
+          <span className="min-w-0 truncate text-body-sm text-tertiary" title={state.lastTask.task}>
+            · {state.lastTask.headline}
+          </span>
+          <ArrowRight aria-hidden className="size-3.5 shrink-0 text-tertiary" />
+        </button>
+      )}
+
+      {dropNotice && (
+        <p role="alert" className="-mt-3 flex items-center gap-2 text-body-sm text-destructive">
+          {dropNotice}
+          <Button type="button" size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setDropNotice(null)}>
+            <X />
+          </Button>
+        </p>
+      )}
+
+      {/* Resources. A subject that only has saved tabs (from before resources) shows them below, not "No resources yet". */}
+      {sources.length === 0 && workspace.tabs.length > 0 ? null : sources.length === 0 ? (
+        <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-strong px-5 py-8" data-project-empty>
+          <p className="text-h2 text-foreground">No resources yet.</p>
+          {addMenu("default", "secondary")}
+          {props.quickAdd && (
+            <p className="hidden text-meta text-tertiary md:block" data-add-hint data-quick-add-target={projectName}>
+              In Chrome: right-click a tab → Add to {projectName}
+              {props.quickAdd.shortcut && (
+                <>
+                  {" "}
+                  · <Kbd>{formatShortcut(props.quickAdd.shortcut)}</Kbd>
+                </>
+              )}
             </p>
           )}
-          <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
-            <Plus /> Add source
-          </Button>
-          {props.emptyExtra}
+          {props.emptyExtra && (
+            <div className="w-full">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-meta text-tertiary hover:text-foreground"
+                aria-expanded={pasteOpen}
+                onClick={() => setPasteOpen((open) => !open)}
+              >
+                Paste a list of tabs <ChevronDown aria-hidden className={cn("size-3 transition-transform", pasteOpen && "rotate-180")} />
+              </button>
+              {pasteOpen && <div className="mt-2 max-w-xl">{props.emptyExtra}</div>}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-label text-foreground">Sources</h2>
-            <div className="flex flex-wrap gap-1" role="group" aria-label="Show sources">
-              {FILTERS.map((entry) => (
-                <Button
-                  key={entry.id}
-                  type="button"
-                  size="xs"
-                  variant={filter === entry.id ? "secondary" : "ghost"}
-                  aria-pressed={filter === entry.id}
-                  onClick={() => setFilter(entry.id)}
-                >
+            <h2 className="text-h2 text-foreground">Resources</h2>
+            <span className="text-meta text-tertiary" data-project-counts>
+              {sources.length}
+            </span>
+            {working > 0 && (
+              <span role="status" className="text-meta text-muted-foreground">
+                · Reading {plural(working, "resource", "resources")}…
+              </span>
+            )}
+            <div className="ml-auto flex w-full items-center gap-1.5 sm:w-auto">
+              {selecting ? (
+                <Button type="button" size="sm" variant="ghost" onClick={stopSelecting}>
+                  <X /> Cancel
+                </Button>
+              ) : (
+                <Button type="button" size="sm" variant="ghost" onClick={() => setSelecting(true)}>
+                  <CheckSquare /> Select
+                </Button>
+              )}
+              <label className="relative flex-1 sm:w-56 sm:flex-none">
+                <span className="sr-only">Search {projectName}</span>
+                <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-tertiary" />
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${projectName}…`} className="pl-7" />
+              </label>
+            </div>
+          </div>
+          {filters.length > 0 && (
+            <div className="-mt-1 flex flex-wrap gap-1" role="group" aria-label="Show resources">
+              {filters.map((entry) => (
+                <Button key={entry.id} type="button" size="xs" variant={filter === entry.id ? "secondary" : "ghost"} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
                   {entry.label}
                 </Button>
               ))}
             </div>
-            <label className="relative ml-auto w-full sm:w-64">
-              <span className="sr-only">Search {projectName}</span>
-              <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-tertiary" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${projectName}…`} className="pl-7" />
-            </label>
-          </div>
+          )}
+          {selecting && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-subtle bg-card px-3 py-2" role="toolbar" aria-label="Selected resources">
+              <span className="text-body-sm text-foreground">{chosen.length > 0 ? `${chosen.length} selected` : "Select resources to ask AI about"}</span>
+              <span className="min-w-0 flex-1" />
+              {chosen.length > 0 && (
+                <>
+                  <AskAiMenu context={askContext} size="sm" />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      props.onRemoveSources(chosen)
+                      stopSelecting()
+                    }}
+                  >
+                    <Trash2 /> Remove
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
           {searching ? (
             <SearchResults hits={hits} titleOf={titleOf} kindOf={(tabId) => tabById.get(tabId)?.resource?.kind} onOpen={(tabId) => setDetails({ tabId, rename: false })} onOpenTask={props.onOpenTask} events={events} />
           ) : visible.length === 0 ? (
-            <p className="text-body-sm text-muted-foreground">No sources here.</p>
+            <p className="text-body-sm text-muted-foreground">Nothing here.</p>
           ) : (
-            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3" aria-label={`Sources in ${projectName}`}>
+            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3" aria-label={`Resources in ${projectName}`}>
               {visible.map((tab) => (
-                <ResourceCard key={tab.id} tab={tab} now={now} actions={cardActions} />
+                <ResourceCard
+                  key={tab.id}
+                  tab={tab}
+                  now={now}
+                  actions={cardActions}
+                  {...(selecting ? { selection: { selected: selected.has(tab.id), onToggle: () => toggle(tab.id) } } : {})}
+                />
               ))}
             </ul>
           )}
         </div>
       )}
 
-      {/* Recent work */}
-      <div className="flex flex-col gap-1.5">
-        <h2 className="text-label text-foreground">Recent work</h2>
-        <ProjectActivity events={events} projectName={projectName} titleOf={titleOf} now={now} limit={showAllActivity ? undefined : 6} {...(props.onOpenTask ? { onOpenTask: props.onOpenTask } : {})} />
-        {events.length > 6 && (
-          <Button type="button" size="xs" variant="ghost" className="-ml-1.5 w-fit" onClick={() => setShowAllActivity((value) => !value)}>
-            {showAllActivity ? "Show less" : "Show all activity"}
-          </Button>
-        )}
-      </div>
+      {/* Recent activity: there when wanted, not in the way — and not at all until there is something in the subject. */}
+      {events.length > 0 && (workspace.tabs.length > 0 || state.lastTask) && (
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            className="flex w-fit items-center gap-1 text-body-sm text-muted-foreground hover:text-foreground"
+            aria-expanded={showActivity}
+            onClick={() => setShowActivity((open) => !open)}
+          >
+            <Sparkles aria-hidden className="size-3.5" /> Recent activity
+            <ChevronDown aria-hidden className={cn("size-3.5 transition-transform", showActivity && "rotate-180")} />
+          </button>
+          {showActivity && (
+            <>
+              <ProjectActivity events={events} projectName={projectName} titleOf={titleOf} now={now} limit={showAllActivity ? undefined : 6} {...(props.onOpenTask ? { onOpenTask: props.onOpenTask } : {})} />
+              {events.length > 6 && (
+                <Button type="button" size="xs" variant="ghost" className="-ml-1.5 w-fit" onClick={() => setShowAllActivity((value) => !value)}>
+                  {showAllActivity ? "Show less" : "Show all activity"}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <AddSourceDialog open={addOpen} onOpenChange={setAddOpen} projectName={projectName} onAdd={(inputs) => props.onAddSources(inputs, "manual")} />
       {detailTab?.resource && (
@@ -436,18 +498,18 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
     onSave(draft)
   }
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 rounded-md border border-subtle p-3" aria-label="Project brief">
+    <form onSubmit={submit} className="mt-2 flex flex-col gap-2 rounded-md border border-subtle p-3" aria-label="Subject details">
       <label className="text-meta text-muted-foreground">
-        What is this project about?
+        What is it about?
         <Textarea className="mt-1 min-h-14 text-body-sm" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} maxLength={280} />
       </label>
       <label className="text-meta text-muted-foreground">
-        Goal or research question
+        Current goal
         <Input className="mt-1" value={draft.focus} onChange={(event) => setDraft({ ...draft, focus: event.target.value })} maxLength={160} />
       </label>
       <div className="flex gap-2">
         <Button type="submit" size="sm">
-          Save brief
+          Save
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
           Cancel
@@ -457,11 +519,6 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
   )
 }
 
-/**
- * The page around an empty project's home: its name, and the drawer button
- * the sidebar needs below `md`. A project with tabs uses the workspace view's
- * own header instead.
- */
 /** "Alt+Shift+H" as Chrome reports it → "Alt + Shift + H". */
 export function formatShortcut(shortcut: string): string {
   return shortcut
@@ -472,32 +529,33 @@ export function formatShortcut(shortcut: string): string {
 }
 
 /**
- * How Chrome tabs get into this project, once Hubble for Chrome has said it is
- * here: the extension's item in a tab's own right-click menu, named for the
- * project on screen (which is the project it adds to), and its shortcut.
- *
- *     Add anything useful from Chrome to this project.
- *     Right-click a tab → Add to History IA        Alt + Shift + H also works.
+ * The page around an empty subject: the way back to Subjects, the subject's
+ * menu, and the drawer button the sidebar needs below `md`. A subject with
+ * things in it uses the workspace view's own bar instead.
  */
-function ChromeQuickAdd({ projectName, shortcut, className }: { projectName: string; shortcut: string; className?: string }) {
-  return (
-    <div className={cn("flex-col gap-0.5", className ?? "flex")} data-add-hint data-quick-add-target={projectName}>
-      <p className="text-body-sm text-muted-foreground">Add anything useful from Chrome to this project.</p>
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-body-sm text-foreground">
-          Right-click a tab → Add to <span className="font-medium">{projectName}</span>
-        </span>
-        {shortcut && (
-          <span className="flex items-center gap-1.5 text-meta text-tertiary">
-            <Kbd>{formatShortcut(shortcut)}</Kbd> also works.
-          </span>
-        )}
-      </p>
-    </div>
-  )
-}
-
-export function ProjectPage({ workspace, onOpenSidebar, children }: { workspace: Workspace; onOpenSidebar?: () => void; children: ReactNode }) {
+export function ProjectPage({
+  workspace,
+  onOpenSidebar,
+  onBack,
+  onRenameSubject,
+  onUpdateSubjectLogo,
+  onDeleteSubject,
+  canDeleteSubject = false,
+  children,
+}: {
+  workspace: Workspace
+  onOpenSidebar?: () => void
+  onBack?: () => void
+  onRenameSubject?: (name: string) => void
+  onUpdateSubjectLogo?: (logo: string | undefined) => void
+  onDeleteSubject?: () => void
+  canDeleteSubject?: boolean
+  children: ReactNode
+}) {
+  const subjectMenu: SubjectMenuActions | undefined =
+    onRenameSubject && onUpdateSubjectLogo && onDeleteSubject
+      ? { onRename: onRenameSubject, onUpdateLogo: onUpdateSubjectLogo, onDelete: onDeleteSubject, canDelete: canDeleteSubject }
+      : undefined
   return (
     <div className="min-h-screen">
       <header className="flex h-12 items-center gap-2 border-b border-subtle px-4">
@@ -506,8 +564,14 @@ export function ProjectPage({ workspace, onOpenSidebar, children }: { workspace:
             <PanelLeftOpen />
           </Button>
         )}
-        <FolderGit2 aria-hidden className="hidden size-4 text-tertiary" />
-        <h1 className="truncate text-h2 text-foreground">{workspace.name.trim() || "Untitled project"}</h1>
+        {onBack ? (
+          <Button type="button" variant="ghost" size="sm" className="-ml-1.5 mr-auto" onClick={onBack}>
+            <ChevronLeft /> Subjects
+          </Button>
+        ) : (
+          <span className="mr-auto truncate text-h2 text-foreground">{subjectName(workspace)}</span>
+        )}
+        {subjectMenu && <SubjectActionsMenu workspace={workspace} subjectMenu={subjectMenu} />}
       </header>
       <main className="mx-auto w-full max-w-(--tabdump-content-max-width) px-4 py-6 sm:px-6">{children}</main>
     </div>

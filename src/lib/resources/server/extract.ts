@@ -120,7 +120,7 @@ export async function extractSource(url: string, options: { kind?: ResourceKind;
   if (fetched.status === 401 || fetched.status === 403 || fetched.status === 429 || fetched.status >= 500) {
     if (expected === "pdf") return partial(EXTRACTION_ERRORS.pdf_needs_file, undefined, "pdf");
     if (fetched.status === 401) return partial(EXTRACTION_ERRORS.sign_in);
-    return partial(fetched.status >= 500 || fetched.status === 429 ? { ...EXTRACTION_ERRORS.unreachable, message: "Source saved, but the site didn't answer. Try again later." } : EXTRACTION_ERRORS.blocked);
+    return partial(fetched.status >= 500 || fetched.status === 429 ? { ...EXTRACTION_ERRORS.unreachable, message: "The site didn't answer. Try again later." } : EXTRACTION_ERRORS.blocked);
   }
 
   if (pdf) {

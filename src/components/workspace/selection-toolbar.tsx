@@ -80,14 +80,14 @@ export function SelectionToolbar({
             <DropdownMenuTrigger
               render={
                 <Button variant="secondary" size="sm" className="mr-1 shrink-0">
-                  <FolderInput /> Add to project
+                  <FolderInput /> Add to subject
                 </Button>
               }
             />
             <DropdownMenuContent align="end">
               {projectActions.projects.map((project) => (
                 <DropdownMenuItem key={project.id} onClick={() => projectActions.addTabs(selectedTabs, project.id)}>
-                  {project.id === projectActions.currentId ? `${project.name} — use as sources` : project.name}
+                  {project.id === projectActions.currentId ? `${project.name} — add as resources` : project.name}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -97,8 +97,8 @@ export function SelectionToolbar({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="secondary" size="sm" className="mr-1 shrink-0">
-                  <Bot /> Ask agent
+                <Button variant="secondary" size="sm" className="mr-1 shrink-0" aria-label="Ask AI about selected tabs">
+                  <Bot /> Ask AI
                 </Button>
               }
             />
@@ -109,7 +109,7 @@ export function SelectionToolbar({
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={agentActions.onAdd}>Add to agent context</DropdownMenuItem>
+              <DropdownMenuItem onClick={agentActions.onAdd}>Add to next AI chat</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

@@ -80,7 +80,7 @@ export function TabInspector({
                         onOpenChange(false)
                       }}
                     >
-                      <Bot /> Ask agent about this
+                      <Bot /> Ask AI about this
                     </Button>
                   )}
                   <IconButton aria-label="Open tab" tooltip="Open in new tab" className="size-7" onClick={() => onOpenTab(node.id)}>

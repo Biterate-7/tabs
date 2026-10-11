@@ -241,7 +241,7 @@ describe("the demo shows what the product derives", () => {
     expect(titles()).toContain("Created collection “SWE-bench”")
 
     // And the demo's workspace really is back as it was.
-    await user.click(frame().getByRole("button", { name: "Project" }))
+    await user.click(frame().getByRole("button", { name: "Open Research" }))
     expect(frame().queryByText("SWE-bench")).toBeNull()
   })
 

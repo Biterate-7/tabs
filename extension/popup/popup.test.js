@@ -712,7 +712,7 @@ describe("the remembered project", () => {
   it("asks for a project when none is open in Hubble yet, and offers nothing to add until there is one", async () => {
     withProjects(undefined);
     await projectSectionShown();
-    expect(heading()).toBe("Choose a project to add to");
+    expect(heading()).toBe("Choose a subject to add to");
     expect(document.getElementById("add-current-button").disabled).toBe(true);
     expect(document.getElementById("quick-add-hint").hidden).toBe(true);
   });
@@ -729,7 +729,7 @@ describe("the remembered project", () => {
     await loadPopup();
     await vi.waitFor(() => expect(document.getElementById("project-unavailable").hidden).toBe(false));
     expect(document.getElementById("project-section").hidden).toBe(true);
-    expect(document.getElementById("project-unavailable").textContent).toBe("Open a project in Hubble to add this tab to it.");
+    expect(document.getElementById("project-unavailable").textContent).toBe("Open Hubble to add this tab to a subject.");
   });
 
   it("Add this tab sends this tab to the project", async () => {
@@ -819,6 +819,6 @@ describe("adding selected tabs to a project", () => {
     await import("./popup.js");
     await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
     expect(document.getElementById("success-project").textContent).toBe("Added 2 sources to History IA");
-    expect(document.getElementById("success-detail").textContent).toBe("1 already in the project");
+    expect(document.getElementById("success-detail").textContent).toBe("1 already in the subject");
   });
 });

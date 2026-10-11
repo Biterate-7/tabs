@@ -202,11 +202,11 @@ export function GraphContextMenu({
         <>
           <div className="-mx-1 my-1 h-px bg-border" />
           <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onAskAgent}>
-            <Bot /> Ask agent about this
+            <Bot /> Ask AI about this
           </button>
           {onAddToAgentContext && (
             <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onAddToAgentContext}>
-              <Bot /> Add to agent context
+              <Bot /> Add to next AI chat
             </button>
           )}
         </>

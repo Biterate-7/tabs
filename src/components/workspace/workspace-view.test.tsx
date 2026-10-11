@@ -203,9 +203,11 @@ describe("WorkspaceView cleanup (Phase 6)", () => {
       <WorkspaceView tabs={withDuplicate} onTabsChange={onTabsChange} onClear={vi.fn()} />
     );
 
-    await user.click(screen.getByRole("button", { name: /Cleanup/ }));
+    // Find duplicates lives in the bar's ⋯ menu now.
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Find duplicates" }));
 
-    expect(await screen.findByText("Your workspace can be cleaned up.")).toBeTruthy();
+    expect(await screen.findByText("This subject can be tidied up.")).toBeTruthy();
     expect(onTabsChange).not.toHaveBeenCalled();
   });
 
@@ -216,7 +218,9 @@ describe("WorkspaceView cleanup (Phase 6)", () => {
       <WorkspaceView tabs={withDuplicate} onTabsChange={onTabsChange} onClear={vi.fn()} />
     );
 
-    await user.click(screen.getByRole("button", { name: /Cleanup/ }));
+    // Find duplicates lives in the bar's ⋯ menu now.
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Find duplicates" }));
     await user.click(await screen.findByRole("button", { name: "Review manually" }));
     await user.click(screen.getByRole("button", { name: "Remove selected (1)" }));
     await user.click(await screen.findByRole("button", { name: "Remove" }));

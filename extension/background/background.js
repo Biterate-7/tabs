@@ -884,7 +884,7 @@ async function showBadge(toast) {
   if (toast.tone === "working") return;
   badgeTimer = setTimeout(() => {
     chrome.action.setBadgeText({ text: "" }).catch(() => {});
-    chrome.action.setTitle({ title: "Add to your Hubble project" }).catch(() => {});
+    chrome.action.setTitle({ title: "Add to Hubble" }).catch(() => {});
   }, 6000);
 }
 

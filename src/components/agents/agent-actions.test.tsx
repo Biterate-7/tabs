@@ -44,13 +44,13 @@ describe("a tab's menu", () => {
     render(inShell(agent, <TabActionsMenu tab={TAB} onCategoryChange={vi.fn()} trigger={<button type="button">More</button>} />))
 
     await user.click(screen.getByRole("button", { name: "More" }))
-    await user.hover(await screen.findByRole("menuitem", { name: /Ask agent/ }))
+    await user.hover(await screen.findByRole("menuitem", { name: /Ask AI/ }))
     fireEvent.click(await screen.findByRole("menuitem", { name: "Summarize" }))
     expect(agent.ask).toHaveBeenCalledWith(tabsContext("w1", ["t1"]), "summarize")
 
     await user.click(screen.getByRole("button", { name: "More" }))
-    await user.hover(await screen.findByRole("menuitem", { name: /Ask agent/ }))
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Add to agent context" }))
+    await user.hover(await screen.findByRole("menuitem", { name: /Ask AI/ }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Add to next AI chat" }))
     expect(agent.add).toHaveBeenCalledWith(tabsContext("w1", ["t1"]))
   })
 
@@ -59,7 +59,7 @@ describe("a tab's menu", () => {
     render(<TabActionsMenu tab={TAB} onCategoryChange={vi.fn()} trigger={<button type="button">More</button>} />)
     await user.click(screen.getByRole("button", { name: "More" }))
     await screen.findByRole("menuitem", { name: "Open" })
-    expect(screen.queryByRole("menuitem", { name: /Ask agent/ })).toBeNull()
+    expect(screen.queryByRole("menuitem", { name: /Ask AI/ })).toBeNull()
   })
 })
 
@@ -79,12 +79,12 @@ describe("a selection", () => {
         agentActions={{ onAsk, onAdd }}
       />
     )
-    await user.click(screen.getByRole("button", { name: "Ask agent" }))
+    await user.click(screen.getByRole("button", { name: "Ask AI about selected tabs" }))
     await user.click(await screen.findByRole("menuitem", { name: "Compare" }))
     expect(onAsk).toHaveBeenCalledWith("compare")
 
-    await user.click(screen.getByRole("button", { name: "Ask agent" }))
-    await user.click(await screen.findByRole("menuitem", { name: "Add to agent context" }))
+    await user.click(screen.getByRole("button", { name: "Ask AI about selected tabs" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Add to next AI chat" }))
     expect(onAdd).toHaveBeenCalled()
   })
 })
@@ -111,7 +111,7 @@ describe("a collection", () => {
       )
     )
     await user.click(screen.getByRole("button", { name: "More actions for Physics" }))
-    await user.hover(await screen.findByRole("menuitem", { name: /Ask agent/ }))
+    await user.hover(await screen.findByRole("menuitem", { name: /Ask AI/ }))
     fireEvent.click(await screen.findByRole("menuitem", { name: "Organize" }))
     expect(agent.ask).toHaveBeenCalledWith(collectionContext("w1", "c-physics"), "organize")
   })
@@ -134,7 +134,7 @@ describe("a collection", () => {
         />
       )
     )
-    await user.click(screen.getByRole("button", { name: "Ask agent about this collection" }))
+    await user.click(screen.getByRole("button", { name: "Ask AI about this collection" }))
     expect(agent.ask).toHaveBeenCalledWith(collectionContext("w1", "c-physics"), "analyze")
   })
 })
@@ -170,12 +170,12 @@ describe("a graph node", () => {
       onClose: vi.fn(),
     }
     const { rerender } = render(<GraphContextMenu {...base} />)
-    expect(screen.queryByRole("menuitem", { name: /Ask agent/ })).toBeNull()
+    expect(screen.queryByRole("menuitem", { name: /Ask AI/ })).toBeNull()
 
     rerender(<GraphContextMenu {...base} onAskAgent={onAskAgent} onAddToAgentContext={vi.fn()} />)
-    await user.click(screen.getByRole("menuitem", { name: /Ask agent about this/ }))
+    await user.click(screen.getByRole("menuitem", { name: /Ask AI about this/ }))
     expect(onAskAgent).toHaveBeenCalled()
-    expect(screen.getByRole("menuitem", { name: /Add to agent context/ })).toBeTruthy()
+    expect(screen.getByRole("menuitem", { name: /Add to next AI chat/ })).toBeTruthy()
   })
 })
 
@@ -223,11 +223,11 @@ describe("from search results in the workspace", () => {
     // The palette offers the same request while there is a selection.
     const commands = contributed.get("workspace")!
     const askSelection = commands.find((command) => command.id === "agent-ask-selection")!
-    expect(askSelection.label).toBe("Ask agent about 2 selected tabs")
+    expect(askSelection.label).toBe("Ask AI about 2 selected tabs")
     expect(askSelection.disabled).toBe(false)
 
     const toolbar = screen.getByText("2 selected").parentElement!
-    await user.click(within(toolbar).getByRole("button", { name: "Ask agent" }))
+    await user.click(within(toolbar).getByRole("button", { name: "Ask AI about selected tabs" }))
     await user.click(await screen.findByRole("menuitem", { name: "Summarize" }))
     expect(agent.ask).toHaveBeenCalledWith(tabsContext("w1", ["g1", "g2"]), "summarize")
     expect(agent.ask.mock.calls[0]![0].tabIds).not.toContain("x1")
@@ -255,7 +255,7 @@ describe("the palette, everywhere", () => {
       { workspaces: [{ id: "w1", name: "Research", tabs: [], createdAt: 0, updatedAt: 0 }], currentId: "w1" }
     )
     const ask = commands.find((command) => command.id === "agents-ask-workspace")!
-    expect(ask.label).toBe("Ask agent about Research")
+    expect(ask.label).toBe("Ask AI about Research")
     ask.onSelect()
     expect(askAgentAboutWorkspace).toHaveBeenCalled()
   })

@@ -31,7 +31,7 @@ describe("readStoredTarget", () => {
 
 describe("readProjectList", () => {
   it("keeps ids and names only, and names an unnamed project", () => {
-    expect(readProjectList([{ id: "a", name: "", secret: "x" }, { id: 4, name: "bad" }, null])).toEqual([{ id: "a", name: "Untitled project" }]);
+    expect(readProjectList([{ id: "a", name: "", secret: "x" }, { id: 4, name: "bad" }, null])).toEqual([{ id: "a", name: "Untitled subject" }]);
     expect(readProjectList("nope")).toEqual([]);
   });
 });
@@ -109,9 +109,9 @@ describe("describeOutcome", () => {
     expect(describeOutcome({ ok: true, accepted: 0, alreadyInProject: 1, target })).toEqual({
       tone: "same",
       title: "Already in History IA",
-      detail: "This source is already in the project.",
+      detail: "This source is already in the subject.",
     });
-    expect(describeOutcome({ ok: true, accepted: 0, alreadyInProject: 3, target }).detail).toBe("These sources are already in the project.");
+    expect(describeOutcome({ ok: true, accepted: 0, alreadyInProject: 3, target }).detail).toBe("These sources are already in the subject.");
   });
 
   it("names the project in every failure, with a reason the person can act on", () => {

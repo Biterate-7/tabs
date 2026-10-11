@@ -84,6 +84,31 @@ describe("paletteFilter", () => {
     expect(paletteFilter("https://arxiv.org/abs/2310.06770 Tabs tab-1", "arxiv", ["arxiv.org"])).toBeGreaterThan(0)
   })
 
+  it("still finds AI chats by its power-user name, Command Centre", async () => {
+    const { paletteFilter } = await import("./command-palette")
+    const { buildGlobalCommands } = await import("./global-commands")
+    const noop = () => {}
+    const commands = buildGlobalCommands(
+      {
+        goWorkspace: noop,
+        openGraph: noop,
+        openFavorites: noop,
+        openRecents: noop,
+        openHistoryDump: noop,
+        openCommandCentre: noop,
+        openAgentHistory: noop,
+        openSettings: noop,
+        switchWorkspace: noop,
+        newWorkspace: noop,
+        openUrl: noop,
+      },
+      { workspaces: [], currentId: "" }
+    )
+    const entry = commands.find((command) => command.id === "agents-command-centre")!
+    expect(entry.label).toBe("Open AI chats")
+    expect(paletteFilter(`${entry.label} ${entry.group} ${entry.id}`, "command centre", entry.keywords ?? [])).toBeGreaterThan(0)
+  })
+
   it("ranks a label prefix above a keyword hit", async () => {
     const { paletteFilter } = await import("./command-palette")
     expect(paletteFilter("New workspace Workspaces", "new work", [])).toBe(1)

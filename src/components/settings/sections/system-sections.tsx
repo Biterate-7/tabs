@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import Link from "next/link"
-import { ArrowUpRight, Download, LogIn, LogOut, RotateCcw } from "lucide-react"
+import { ArrowUpRight, Download, LogIn, LogOut, RotateCcw, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -62,7 +62,7 @@ export function AccountSettingsSection() {
 
   return (
     <div>
-      <SectionHeading title="Account" description="Your Hubble identity and where your workspaces are kept." />
+      <SectionHeading title="Account" description="Your Hubble identity and where your subjects are kept." />
       <SectionStack>
         {user ? (
           <FieldRow label={user.name} description={user.email}>
@@ -181,7 +181,7 @@ export function McpSection() {
         </FieldRow>
         <FieldRow
           label="Workspace changes"
-          description="An agent can propose changes to a workspace. Nothing is applied until you approve it in the Command Centre."
+          description="An AI can propose changes to a subject. Nothing is applied until you approve it in the chat."
         >
           <Badge variant="default">Approval required</Badge>
         </FieldRow>
@@ -229,7 +229,7 @@ export function BrowserSection() {
 export function ExtensionSection() {
   return (
     <div>
-      <SectionHeading title="Extension" description="Hubble for Chrome sends your open tabs to a workspace in one click." />
+      <SectionHeading title="Chrome extension" description="Add tabs from Chrome to any subject in one click." />
       <SectionStack className="mb-6">
         <FieldRow label="Hubble for Chrome" description="Unpacked extension for Chrome and other Chromium browsers">
           <a href={EXTENSION_DOWNLOAD_URL} download className={buttonVariants({ size: "sm" })}>
@@ -259,9 +259,13 @@ export type WorkspaceSettingsProps = {
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onUpdateLogo: (id: string, logo: string | undefined) => void
+  /** Imports subjects from a Hubble export (.json). Moved here from the old rail switcher. */
+  onImportFile?: (text: string) => void
 }
 
-export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, onDelete, onUpdateLogo }: WorkspaceSettingsProps) {
+/** Settings → Subjects: every subject (workspace) on this device — open, rename, remove, import. */
+export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, onDelete, onUpdateLogo, onImportFile }: WorkspaceSettingsProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [renameId, setRenameId] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const renaming = workspaces.find((w) => w.id === renameId)
@@ -269,7 +273,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
 
   return (
     <div>
-      <SectionHeading title="Workspaces" description="Every workspace on this device. Switch, rename or remove one here." />
+      <SectionHeading title="Subjects" description="Rename, remove or import subjects." />
       <SectionStack>
         {workspaces.map((w) => (
           <div key={w.id} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
@@ -277,8 +281,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
             <div className="min-w-0 flex-1">
               <p className="truncate text-body text-foreground">{w.name}</p>
               <p className="text-meta text-tertiary">
-                {w.tabs.length} tab{w.tabs.length === 1 ? "" : "s"}
-                {w.id === currentId ? " · current" : ""}
+                {w.tabs.length} resource{w.tabs.length === 1 ? "" : "s"}
               </p>
             </div>
             {w.id !== currentId && (
@@ -301,6 +304,25 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
           </div>
         ))}
       </SectionStack>
+      {onImportFile && (
+        <>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => fileInputRef.current?.click()}>
+            <Upload /> Import subjects…
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            aria-label="Import subjects from a Hubble export file"
+            onChange={async (event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ""
+              if (file) onImportFile(await file.text())
+            }}
+          />
+        </>
+      )}
       {renaming && (
         <RenameWorkspaceDialog
           key={renaming.id}
@@ -351,7 +373,7 @@ export function ShortcutsSection() {
       ],
     },
     {
-      label: "Command Centre",
+      label: "AI chats",
       items: [{ keys: ["Enter"], description: "Send the message in the composer" }],
     },
   ]
@@ -385,7 +407,7 @@ export function DesktopSection() {
   const desktop = isDesktop()
   return (
     <div>
-      <SectionHeading title="Desktop" description="Hubble Desktop is the same app with a local agent runtime built in." />
+      <SectionHeading title="Desktop app" description="Hubble on your computer, where your AI tools connect in one click." />
       <SectionStack>
         <FieldRow
           label="This install"
@@ -463,7 +485,7 @@ export function AdvancedSection() {
   const { resetAllAppearance } = useAppearanceContext()
   return (
     <div>
-      <SectionHeading title="Advanced" description="Resets and diagnostics." />
+      <SectionHeading title="Diagnostics" description="Resets and diagnostics." />
       <SectionStack>
         <FieldRow
           label="Reset appearance"

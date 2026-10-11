@@ -67,13 +67,13 @@ export function DesktopImportDialog({
   const creating = selected === NEW_PROJECT
   const chosen = projects.find((project) => project.id === selected)
   const canAdd = count > 0 && (creating ? newName.trim().length > 0 : Boolean(chosen))
-  const target = creating ? newName.trim() || "new project" : chosen?.name
+  const target = creating ? newName.trim() || "a new subject" : chosen?.name
 
   function submit(event: FormEvent) {
     event.preventDefault()
     if (!canAdd) return
     const ok = onAdd(request, creating ? { newProject: newName.trim() } : { workspaceId: selected })
-    if (!ok) setError("That project isn't in Hubble any more. Choose another.")
+    if (!ok) setError("That subject isn't in Hubble any more. Choose another.")
   }
 
   return (
@@ -88,8 +88,8 @@ export function DesktopImportDialog({
           </DialogHeader>
 
           <fieldset className="mt-4 flex flex-col gap-1">
-            <legend className="mb-1.5 text-meta text-muted-foreground">Choose a project</legend>
-            <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto" role="radiogroup" aria-label="Project">
+            <legend className="mb-1.5 text-meta text-muted-foreground">Add to</legend>
+            <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto" role="radiogroup" aria-label="Subject">
               {projects.map((project) => (
                 <label
                   key={project.id}
@@ -123,7 +123,7 @@ export function DesktopImportDialog({
                   className="accent-foreground"
                 />
                 <Plus aria-hidden className="size-3.5 text-muted-foreground" />
-                <span className="text-foreground">New project</span>
+                <span className="text-foreground">New subject</span>
               </label>
             </div>
             {creating ? (
@@ -132,8 +132,8 @@ export function DesktopImportDialog({
                 value={newName}
                 onChange={(event) => setNewName(event.target.value)}
                 maxLength={120}
-                placeholder="Project name"
-                aria-label="New project name"
+                placeholder="Subject name"
+                aria-label="New subject name"
                 className="mt-2"
               />
             ) : null}

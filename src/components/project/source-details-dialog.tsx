@@ -127,7 +127,7 @@ export function SourceDetailsDialog({
     if (result.error) setMessage(result.error)
     else {
       setTranscript("")
-      setMessage("Transcript added. Agents can read it now.")
+      setMessage("Transcript added. AI can read it now.")
     }
   }
 

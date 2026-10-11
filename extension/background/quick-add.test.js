@@ -215,7 +215,7 @@ describe("the tab-strip menu", () => {
     await load();
     handlers.menuClicked({ menuItemId: MENU_ADD_PAGE }, WINDOW[2]);
     await until(() => finalToast());
-    expect(finalToast()).toMatchObject({ tone: "same", title: "Already in History IA", source: "Other", detail: "This source is already in the project." });
+    expect(finalToast()).toMatchObject({ tone: "same", title: "Already in History IA", source: "Other", detail: "This source is already in the subject." });
     // A duplicate was read when it first came in: nothing to follow.
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(42, expect.objectContaining({ type: MSG_SOURCE_STATUS }));
   });

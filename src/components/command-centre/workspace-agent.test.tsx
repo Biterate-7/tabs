@@ -288,6 +288,45 @@ describe("requests from the workspace", () => {
     expect(commandsNamed(runtime, "send_message")).toHaveLength(0)
   })
 
+  /*
+    Ask AI's actions (Summarize, Explain, Quiz me, Help me write) are the
+    request itself, so they run — the one case that sends on the student's
+    behalf, and only because they chose that action.
+  */
+  it("Ask AI's actions run: to the live session, once it is pointed at what was asked about", async () => {
+    const runtime = createScriptedRuntime({ sessions: [researchSession()] })
+    renderCentre(runtime, { handoff: { ...selection, id: "h-run", intent: "quiz", run: true }, activeWorkspaceId: "w1" })
+
+    await waitFor(() => expect(commandsNamed(runtime, "send_message")).toHaveLength(1))
+    expect(commandsNamed(runtime, "attach_context")).toHaveLength(1)
+    const order = runtime.commands.map((command) => command.name).filter((name) => name === "attach_context" || name === "send_message")
+    expect(order).toEqual(["attach_context", "send_message"])
+    expect(commandsNamed(runtime, "send_message")[0]!.text).toBe("Quiz me on these tabs. Ask one question at a time and wait for my answer.")
+  })
+
+  it("Ask AI's actions run with no session to go to: one starts, with the selection, and the request goes", async () => {
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, { handoff: { ...selection, id: "h-run-new", run: true }, activeWorkspaceId: "w1" })
+
+    await waitFor(() => expect(commandsNamed(runtime, "create_session")).toHaveLength(1))
+    expect(screen.queryByRole("dialog", { name: "New agent session" })).toBeNull()
+    const created = commandsNamed(runtime, "create_session")[0]!
+    expect(created.workspaceId).toBe("w1")
+    expect(created.context?.attachments.filter((a) => a.kind === "tab").map((a) => a.id).sort()).toEqual(["w1-tab-0", "w1-tab-2"])
+    await waitFor(() => expect(commandsNamed(runtime, "send_message")).toHaveLength(1))
+    expect(commandsNamed(runtime, "send_message")[0]).toMatchObject({ text: "Summarize these tabs." })
+  })
+
+  it("never runs a request with no words: Ask anything opens the chat, empty", async () => {
+    const runtime = createScriptedRuntime()
+    renderCentre(runtime, { handoff: { ...selection, id: "h-ask", intent: "ask", run: true }, activeWorkspaceId: "w1" })
+
+    expect(await screen.findByRole("heading", { name: "Ask AI about Research" })).toBeTruthy()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(commandsNamed(runtime, "create_session")).toHaveLength(0)
+    expect((screen.getByLabelText("Ask AI") as HTMLTextAreaElement).value).toBe("")
+  })
+
   it("never go to a session working in another workspace — they become the next session's context", async () => {
     const user = userEvent.setup()
     const runtime = createScriptedRuntime({
@@ -295,14 +334,13 @@ describe("requests from the workspace", () => {
     })
     renderCentre(runtime, { handoff: selection, activeWorkspaceId: "w1" })
 
-    expect(await screen.findByRole("heading", { name: "Work on Research" })).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI about Research" })).toBeTruthy()
     expect(await screen.findByRole("button", { name: "Context: 2 tabs" })).toBeTruthy()
     expect(commandsNamed(runtime, "attach_context")).toHaveLength(0)
 
-    await user.click(within(screen.getByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / }))
-    const dialog = await screen.findByRole("dialog", { name: "New agent session" })
-    expect(within(dialog).getByText("2 tabs")).toBeTruthy()
-    await user.click(within(dialog).getByRole("button", { name: /start session/i }))
+    // Words to send and a ready AI, no folder attached: it starts straight away (no New session dialog).
+    await user.click(within(screen.getByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / }))
+    expect(screen.queryByRole("dialog", { name: "New agent session" })).toBeNull()
 
     await waitFor(() => expect(commandsNamed(runtime, "create_session")).toHaveLength(1))
     const created = commandsNamed(runtime, "create_session")[0]!
@@ -328,10 +366,9 @@ describe("requests from the workspace", () => {
     const runtime = createScriptedRuntime()
     renderCentre(runtime, { activeWorkspaceId: "w1" })
 
-    await user.type(await screen.findByLabelText("Ask an agent"), "Compare these sources{Enter}")
-    const dialog = await screen.findByRole("dialog", { name: "New agent session" })
-    expect(within(dialog).getByText("Compare these sources")).toBeTruthy()
-    await user.click(within(dialog).getByRole("button", { name: /start session/i }))
+    // "Ask AI → run": typed and sent with a ready AI, the session starts without the New session dialog.
+    await user.type(await screen.findByLabelText("Ask AI"), "Compare these sources{Enter}")
+    expect(screen.queryByRole("dialog", { name: "New agent session" })).toBeNull()
 
     await waitFor(() => expect(commandsNamed(runtime, "send_message")).toHaveLength(1))
     expect(commandsNamed(runtime, "send_message")[0]).toMatchObject({ sessionId: "session-1", text: "Compare these sources" })

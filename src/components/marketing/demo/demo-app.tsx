@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import dynamic from "next/dynamic"
 import { ChevronLeft, ScanSearch, ScrollText, Waypoints, type LucideIcon } from "lucide-react"
@@ -15,8 +15,6 @@ import { FavoritesView } from "@/components/workspace/favorites-view"
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { applyCategoryChange } from "@/lib/sections/migrate"
-import { parseWorkspaceExport } from "@/lib/workspace/json-import"
-import { countRelationshipsByWorkspace } from "@/lib/workspace/relationships"
 import type { Tab } from "@/lib/tabs/types"
 import { DemoCommandCentre } from "./demo-command-centre"
 import { useHubbleDemo } from "./demo-provider"
@@ -78,10 +76,6 @@ export function DemoApp({
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
   const portal = usePortalContainer()
   const workspace = currentWorkspace(state)
-  const relationshipCounts = useMemo(
-    () => countRelationshipsByWorkspace(state.store.workspaces, state.dependencies),
-    [state.store.workspaces, state.dependencies]
-  )
 
   // After mount, not in the initial state: the server cannot know the width,
   // and the first render has to match what it sent.
@@ -175,7 +169,6 @@ export function DemoApp({
         onOpenSearch={() => dispatch({ type: "palette", open: true })}
         workspaces={state.store.workspaces}
         currentId={state.store.currentId}
-        relationshipCounts={relationshipCounts}
         collapsed={state.sidebarCollapsed}
         onToggleCollapsed={() => dispatch({ type: "toggle-sidebar" })}
         mobileOpen={state.mobileSidebarOpen}
@@ -184,16 +177,10 @@ export function DemoApp({
           dispatch({ type: "switch-workspace", id })
           toWorkspace()
         }}
-        onCreate={(name) => dispatch({ type: "create-workspace", name })}
-        onRename={(id, name) => dispatch({ type: "rename-workspace", id, name })}
-        onDelete={(id) => dispatch({ type: "delete-workspace", id })}
-        onImportFile={(text) => {
-          // The product's own parser, into the demo's memory only. The file
-          // was picked by the visitor, is read in this tab, and is gone on reload.
-          const result = parseWorkspaceExport(text)
-          if (result.ok) dispatch({ type: "import-workspaces", store: result.workspaces, collections: result.collections })
+        onCreate={(name) => {
+          dispatch({ type: "create-workspace", name })
+          toWorkspace()
         }}
-        onUpdateLogo={(id, logo) => dispatch({ type: "update-logo", id, logo })}
         onOpenFavorites={() => go("favorites")}
         onOpenRecents={() => go("recents")}
         onOpenHistoryDump={() => go("history-dump")}

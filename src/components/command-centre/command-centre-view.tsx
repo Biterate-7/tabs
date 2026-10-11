@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
-import { ArrowUp, Bot, ChevronLeft, FolderGit2, RotateCw, X } from "lucide-react"
+import { ArrowUp, Bot, ChevronDown, ChevronLeft, FolderGit2, RotateCw, X } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { AgentIcon } from "@/components/agents/agent-icon"
@@ -626,9 +627,11 @@ export function CommandCentreView({
 
   const [draftText, setDraftText] = useState("")
   const [defaultProvider, setDefaultProvider] = useState<AgentProviderId | undefined>(undefined)
-  const [firstMessage, setFirstMessage] = useState<string | undefined>(undefined)
+  const [firstMessageDraft, setFirstMessage] = useState<string | undefined>(undefined)
   const [composerSeed, setComposerSeed] = useState<{ key: string; sessionId: string; text: string } | null>(null)
   const [queued, setQueued] = useState<{ sessionId: string; text: string } | null>(null)
+  /** An Ask AI action waiting to start a session once it is known which AI is ready (see quickStart below). */
+  const [pendingRun, setPendingRun] = useState<{ key: string; text: string; provider?: AgentProviderId } | null>(null)
   const [pickerFor, setPickerFor] = useState<{ sessionId: string | null; key: number } | null>(null)
 
   /* ---------------- Requests from the workspace. */
@@ -643,7 +646,9 @@ export function CommandCentreView({
     onHandoffConsumed?.(handoff.id)
 
     const scoped = withinWorkspace(handoff.context, liveWorld).context
-    const prompt = intentPrompt(handoff.intent, describeWorkingContext(scoped, liveWorld)) ?? ""
+    const prompt = handoff.text?.trim() || (intentPrompt(handoff.intent, describeWorkingContext(scoped, liveWorld)) ?? "")
+    // Ask AI's actions run; everything else is a suggestion to edit. Never a run with no words.
+    const run = Boolean(handoff.run && prompt)
     const target = runtime.executable ? handoffTarget(sessions.sessions, handoff, selectedSessionId) : null
     /*
       Synchronizing with an external input — a request handed over by the
@@ -656,8 +661,13 @@ export function CommandCentreView({
       const existing = contextOfSession(targetView) ?? workspaceContext(scoped.workspaceId)
       const next = handoff.mode === "add" ? (addToContext(existing, scoped) ?? scoped) : scoped
       setRequestedSessionId(target)
-      void applyContext(target, next)
-      if (prompt) setComposerSeed({ key: handoff.id, sessionId: target, text: prompt })
+      if (run) {
+        // Pointed at what was asked about first, then asked — so the answer is about it.
+        void applyContext(target, next).then(() => setQueued({ sessionId: target, text: prompt }))
+      } else {
+        void applyContext(target, next)
+        if (prompt) setComposerSeed({ key: handoff.id, sessionId: target, text: prompt })
+      }
       if (handoff.mode === "add") {
         toast(`Added to ${agentDisplayName(targetView.provider)}'s context`, {
           description: summarizeWorkingContext(describeWorkingContext(next, liveWorld)),
@@ -670,6 +680,7 @@ export function CommandCentreView({
       )
       setDraftText(prompt)
       setDefaultProvider(handoff.provider)
+      if (run) setPendingRun({ key: handoff.id, text: prompt, ...(handoff.provider ? { provider: handoff.provider } : {}) })
     }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [
@@ -696,9 +707,11 @@ export function CommandCentreView({
   const createInFlight = useRef(false)
 
   const handleCreate = useCallback(
-    async (input: Parameters<typeof sessions.createSession>[0]) => {
+    async (input: Parameters<typeof sessions.createSession>[0], options?: { firstMessage?: string }) => {
       if (createInFlight.current) return
       setCreateError(null)
+      // A start that skipped the dialog (quickStart) brings its first message with it.
+      const firstMessage = options?.firstMessage ?? firstMessageDraft
 
       // Only an agent the user connected and approved, and never on a project
       // that grants it more than they approved it for.
@@ -775,7 +788,7 @@ export function CommandCentreView({
       setFirstMessage(undefined)
       setDraftText("")
     },
-    [contextWorld, draft, draftText, firstMessage, platform, projects.projects, sessionContext, sessions, projectDescriptorFor]
+    [contextWorld, draft, draftText, firstMessageDraft, platform, projects.projects, sessionContext, sessions, projectDescriptorFor]
   )
 
   /*
@@ -1472,6 +1485,41 @@ export function CommandCentreView({
     [platform, startableProviders]
   )
 
+  /*
+    Starting without the New session dialog — "Ask AI → choose action → run".
+
+    Everything the dialog would ask is already known: the workspace (the
+    draft's, else the one the person came from), the AI (the one asked for,
+    else the first ready one), no title, and no project. A workspace with a
+    project attached still goes through the dialog, where the project, its
+    readiness and its permissions are shown before anything runs. Returns
+    false when it could not start, and the caller falls back to the dialog.
+  */
+  const quickStart = useCallback(
+    (text: string, provider?: AgentProviderId): boolean => {
+      const workspaceId = draft?.workspaceId ?? activeWorkspaceId
+      const workspace = workspaceId ? world.workspaces.find((candidate) => candidate.id === workspaceId) : undefined
+      if (!text || !workspace || workspaceProjectId(workspace) || !runtime.executable) return false
+      const ready = startableAgents.filter((agent) => agent.ready)
+      const agent = ready.find((candidate) => candidate.provider === provider) ?? ready[0]
+      if (!agent) return false
+      setDefaultProvider(agent.provider)
+      void handleCreate({ provider: agent.provider, workspaceId: workspace.id }, { firstMessage: text })
+      return true
+    },
+    [activeWorkspaceId, draft?.workspaceId, handleCreate, runtime.executable, startableAgents, world.workspaces]
+  )
+
+  // An Ask AI action that found no session to go to: start one, once the AIs are known. Otherwise it stays a draft.
+  useEffect(() => {
+    if (!pendingRun || runtime.loading) return
+    // Consumed exactly once, whichever way it goes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPendingRun(null)
+    if (!quickStart(pendingRun.text, pendingRun.provider)) return
+    setDraftText("")
+  }, [pendingRun, quickStart, runtime.loading])
+
   return (
     <div className="flex h-screen max-h-screen min-h-0 min-w-0 flex-1 flex-col">
       {/*
@@ -1491,7 +1539,8 @@ export function CommandCentreView({
             <ChevronLeft />
           </IconButton>
         )}
-        <span className="text-h2 text-foreground">Command Centre</span>
+        {/* "AI chats" to the person; CommandCentreView in the code. Every AI chat, live and past, is here. */}
+        <span className="text-h2 text-foreground">AI chats</span>
         {workspaceName && (
           <>
             <span aria-hidden className="text-tertiary">
@@ -1530,7 +1579,7 @@ export function CommandCentreView({
           </div>
         )}
 
-        <IconButton aria-label="Close command centre" className={cn("shrink-0", runtime.loading && "ml-auto")} onClick={onClose}>
+        <IconButton aria-label="Close AI chats" className={cn("shrink-0", runtime.loading && "ml-auto")} onClick={onClose}>
           <X />
         </IconButton>
       </div>
@@ -1767,6 +1816,8 @@ export function CommandCentreView({
                 ) : undefined
               }
               onStart={(text, provider) => {
+                // Typed something, an AI is ready: just start. Otherwise, the dialog.
+                if (quickStart(text, provider)) return
                 setFirstMessage(text || undefined)
                 setDefaultProvider(provider)
                 setNewSessionOpen(true)
@@ -1864,7 +1915,7 @@ export function CommandCentreView({
         contextSummaryFor={(workspaceId) =>
           draftView && draft?.workspaceId === workspaceId && draftView.scope !== "workspace" ? summarizeWorkingContext(draftView) : undefined
         }
-        {...(firstMessage ? { firstMessage } : {})}
+        {...(firstMessageDraft ? { firstMessage: firstMessageDraft } : {})}
         connectionBlocker={(provider) => {
           const prerequisite = platform.prerequisiteFor(provider)
           if (prerequisite.ok) return undefined
@@ -2047,14 +2098,16 @@ function CommandCentreEmptyState({
     setText(initialText)
   }
   const ready = agents.filter((agent) => agent.ready)
-  const chosen = ready.find((agent) => agent.provider === defaultProvider) ?? ready[0]
+  // Which AI: inferred, and changeable from the small "Using Claude ▾" beside Send — never a step of its own.
+  const [picked, setPicked] = useState<AgentProviderId | undefined>(undefined)
+  const chosen = ready.find((agent) => agent.provider === (picked ?? defaultProvider)) ?? ready[0]
 
   return (
     /* A little above centre — where the conversation would start. */
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-24">
       <div className="w-full max-w-[600px]">
         <h1 className="text-statement text-foreground">
-          {project && workspaceName ? `Work on ${project.name}` : workspaceName ? `Work on ${workspaceName}` : "Command Centre"}
+          {project && workspaceName ? `Work on ${project.name}` : workspaceName ? `Ask AI about ${workspaceName}` : "Ask AI"}
         </h1>
         {project && workspaceName && (
           <p className="mt-1 flex min-w-0 items-center gap-1.5 text-body-sm text-tertiary" data-start-project>
@@ -2064,13 +2117,12 @@ function CommandCentreEmptyState({
             </span>
           </p>
         )}
-        <p className="mt-1.5 text-body text-muted-foreground">
-          {project && workspaceName
-            ? `Give an agent a task. It works on ${project.name} with what ${workspaceName} holds — its brief, tabs and collections — and asks you before it changes a file.`
-            : workspaceName
-              ? `Give any agent a task. It works from what ${workspaceName} holds — its brief, sources, tabs and earlier results — and sees no other project.`
-              : "Work with your AI agents inside a Hubble project, on the context you choose."}
-        </p>
+        {/* The developer's start (a folder attached) says what will happen to their files; a student's needs no paragraph. */}
+        {project && workspaceName && (
+          <p className="mt-1.5 text-body text-muted-foreground">
+            {`Give an agent a task. It works on ${project.name} with what ${workspaceName} holds — its brief, tabs and collections — and asks you before it changes a file.`}
+          </p>
+        )}
         {project && !project.ready && project.notice && <p className="mt-1 text-body-sm text-warning">{project.notice}</p>}
         {!project && workspaceName && onConnectProject && (
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-body-sm text-tertiary">
@@ -2084,7 +2136,7 @@ function CommandCentreEmptyState({
         {lastTask && <LeftOff {...lastTask} now={now} />}
 
         {loading ? (
-          <p className="mt-6 text-body-sm text-tertiary">Checking the agent runtime…</p>
+          <p className="mt-6 text-body-sm text-tertiary">Checking your AI…</p>
         ) : executable ? (
           <>
             <form
@@ -2095,7 +2147,7 @@ function CommandCentreEmptyState({
               }}
             >
               <label className="sr-only" htmlFor="command-centre-first-message">
-                Ask an agent
+                Ask AI
               </label>
               <textarea
                 id="command-centre-first-message"
@@ -2112,7 +2164,7 @@ function CommandCentreEmptyState({
                     ? project
                       ? `Give ${chosen.name} a task in ${project.name}…`
                       : workspaceName
-                        ? `Work on ${workspaceName} — what should ${chosen.name} do?`
+                        ? `Ask anything about ${workspaceName}…`
                         : `Ask ${chosen.name}…`
                     : "Plan, research or organize anything…"
                 }
@@ -2121,16 +2173,42 @@ function CommandCentreEmptyState({
               <div className="flex items-center gap-1.5 px-2 pb-2">
                 {contextControl ?? (
                   <span className="flex h-6 items-center rounded-full bg-surface-hover px-2 text-body-sm text-muted-foreground">
-                    <span className="text-tertiary">Context&nbsp;</span>Whole project
+                    <span className="text-tertiary">Using&nbsp;</span>Whole subject
                   </span>
                 )}
                 <span className="min-w-0 flex-1" />
-                {chosen && (
-                  <span className="flex min-w-0 items-center gap-1 text-body-sm text-muted-foreground">
-                    <AgentIcon connector={chosen.provider} size="xs" />
-                    <span className="truncate">{chosen.name}</span>
-                  </span>
-                )}
+                {chosen &&
+                  (ready.length > 1 ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="flex min-w-0 items-center gap-1 rounded-xs px-1 text-body-sm text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                            aria-label={`Using ${chosen.name}. Change`}
+                          >
+                            <span className="text-tertiary">Using</span>
+                            <AgentIcon connector={chosen.provider} size="xs" />
+                            <span className="truncate">{chosen.name}</span>
+                            <ChevronDown aria-hidden className="size-3 opacity-60" />
+                          </button>
+                        }
+                      />
+                      <DropdownMenuContent align="end">
+                        {ready.map((agent) => (
+                          <DropdownMenuItem key={agent.provider} onClick={() => setPicked(agent.provider)}>
+                            <AgentIcon connector={agent.provider} size="xs" /> {agent.name}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-1 text-body-sm text-muted-foreground">
+                      <span className="text-tertiary">Using</span>
+                      <AgentIcon connector={chosen.provider} size="xs" />
+                      <span className="truncate">{chosen.name}</span>
+                    </span>
+                  ))}
                 <Button type="submit" size="icon-sm" shape="pill" aria-label="Start with this message">
                   <ArrowUp />
                 </Button>
@@ -2142,13 +2220,13 @@ function CommandCentreEmptyState({
               </p>
             )}
 
-            <section aria-label="Agents for this workspace" className="mt-5">
-              <h2 className="text-eyebrow text-tertiary">Agents</h2>
+            <section aria-label="AI for this subject" className="mt-5">
+              <h2 className="text-eyebrow text-tertiary">AI</h2>
               {agents.length === 0 ? (
                 <div className="mt-1.5 flex items-center justify-between gap-2">
-                  <p className="text-body-sm text-tertiary">No agents connected yet.</p>
+                  <p className="text-body-sm text-tertiary">No AI connected yet.</p>
                   <Button type="button" size="xs" variant="outline" onClick={() => onConnect()}>
-                    Connect an agent
+                    Connect AI
                   </Button>
                 </div>
               ) : (
@@ -2181,10 +2259,7 @@ function CommandCentreEmptyState({
             </section>
           </>
         ) : (
-          <p className="mt-6 text-body-sm text-tertiary">
-            Agents cannot run in this build. You can still browse workspaces, tabs, collections and
-            the relationship graph.
-          </p>
+          <p className="mt-6 text-body-sm text-tertiary">AI can&apos;t run here. Everything else in Hubble works as usual.</p>
         )}
       </div>
     </div>

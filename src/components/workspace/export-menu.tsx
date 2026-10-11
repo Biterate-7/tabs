@@ -64,24 +64,24 @@ export function ExportMenu({
 
   async function handleExportTxt() {
     const ok = await downloadTextFile("hubble-export.txt", buildExportText(tabs))
-    if (ok) toast.success("Workspace exported")
-    else toast.error("Couldn't export workspace")
+    if (ok) toast.success("Subject exported")
+    else toast.error("Couldn't export this subject")
   }
 
   async function handleExportWorkspaceJson() {
     if (!currentWorkspace) return
     const text = serializeWorkspaceExport(buildWorkspaceExport([currentWorkspace], dependencies, collections))
     const ok = await downloadJsonFile(jsonFilename(currentWorkspace.name.toLowerCase().replace(/\s+/g, "-")), text)
-    if (ok) toast.success("Workspace exported as JSON")
-    else toast.error("Couldn't export workspace")
+    if (ok) toast.success("Subject exported as JSON")
+    else toast.error("Couldn't export this subject")
   }
 
   async function handleExportAllJson() {
     if (!allWorkspaces) return
     const text = serializeWorkspaceExport(buildWorkspaceExport(allWorkspaces, dependencies, collections))
     const ok = await downloadJsonFile(jsonFilename("all-workspaces"), text)
-    if (ok) toast.success("All workspaces exported as JSON")
-    else toast.error("Couldn't export workspaces")
+    if (ok) toast.success("All subjects exported as JSON")
+    else toast.error("Couldn't export your subjects")
   }
 
   return (

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "./app-sidebar";
@@ -14,28 +14,24 @@ function makeWorkspace(over: Partial<Workspace> & { id: string; name: string }):
 }
 
 const workspaces: Workspace[] = [
-  makeWorkspace({ id: "w1", name: "General", tabs: [{ id: "t1", url: "https://a.com", normalizedUrl: "https://a.com", domain: "a.com" }] }),
-  makeWorkspace({ id: "w2", name: "Research" }),
+  makeWorkspace({ id: "w1", name: "History HL", tabs: [{ id: "t1", url: "https://a.com", normalizedUrl: "https://a.com", domain: "a.com" }] }),
+  makeWorkspace({ id: "w2", name: "Math AA HL" }),
 ];
 
 function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar>> = {}) {
   const onSwitch = vi.fn();
   const onToggleCollapsed = vi.fn();
+  const onCreate = vi.fn();
   render(
     <AppSidebar
       workspaces={workspaces}
       currentId="w1"
-      relationshipCounts={{}}
       collapsed={false}
       onToggleCollapsed={onToggleCollapsed}
       mobileOpen={false}
       onMobileOpenChange={vi.fn()}
       onSwitch={onSwitch}
-      onCreate={vi.fn()}
-      onRename={vi.fn()}
-      onDelete={vi.fn()}
-      onImportFile={vi.fn()}
-      onUpdateLogo={vi.fn()}
+      onCreate={onCreate}
       onOpenFavorites={vi.fn()}
       onOpenRecents={vi.fn()}
       onOpenHistoryDump={vi.fn()}
@@ -46,32 +42,90 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       {...overrides}
     />
   );
-  return { onSwitch, onToggleCollapsed };
+  return { onSwitch, onToggleCollapsed, onCreate };
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 describe("AppSidebar", () => {
-  it("keeps the existing workspace switcher reachable by its established label", () => {
-    renderSidebar();
-    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeTruthy();
+  it("leads with Home, AI and the subjects themselves", () => {
+    renderSidebar({ onOpenHome: vi.fn(), onOpenAI: vi.fn() });
+
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "AI" })).toBeTruthy();
+    const subjects = screen.getByRole("navigation", { name: "Subjects" });
+    expect(subjects.textContent).toContain("History HL");
+    expect(subjects.textContent).toContain("Math AA HL");
   });
 
-  it("shows the current workspace's tab count", () => {
-    renderSidebar();
-    // The count moved out of a "1 tab · N relationships" line under the
-    // switcher and onto the rows themselves: the Workspace destination
-    // carries the current space's tab count, and each Spaces row carries
-    // its own. Same information, attached to the thing it describes.
-    const workspaceRow = screen.getByRole("button", { name: "Project" });
-    expect(workspaceRow.textContent).toContain("1");
-  });
-
-  it("switches workspace when a space row is clicked", async () => {
+  it("opens a subject when its row is clicked", async () => {
     const user = userEvent.setup();
-    const { onSwitch } = renderSidebar();
+    const onOpenSubject = vi.fn();
+    renderSidebar({ onOpenSubject });
 
-    await user.click(screen.getByRole("button", { name: "Switch to Research" }));
+    await user.click(screen.getByRole("button", { name: "Open Math AA HL" }));
+
+    expect(onOpenSubject).toHaveBeenCalledWith("w2");
+  });
+
+  it("without onOpenSubject, a row switches and opens the workspace (the landing demo)", async () => {
+    const user = userEvent.setup();
+    const onOpenWorkspace = vi.fn();
+    const { onSwitch } = renderSidebar({ onOpenWorkspace });
+
+    await user.click(screen.getByRole("button", { name: "Open Math AA HL" }));
 
     expect(onSwitch).toHaveBeenCalledWith("w2");
+    expect(onOpenWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("marks the open subject as the current page only while its page is on screen", () => {
+    renderSidebar({ currentView: "workspace" });
+    expect(screen.getByRole("button", { name: "Open History HL" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("does not mark a subject current while Home is on screen", () => {
+    renderSidebar({ currentView: "home", onOpenHome: vi.fn() });
+    expect(screen.getByRole("button", { name: "Open History HL" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("makes a new subject from the rail's + and its dialog", async () => {
+    const user = userEvent.setup();
+    const { onCreate } = renderSidebar();
+
+    // The section's "+" (the row beneath it opens the same dialog).
+    await user.click(screen.getAllByRole("button", { name: "New subject" })[0]!);
+    await user.type(await screen.findByLabelText("Subject name"), "Physics SL");
+    await user.click(screen.getByRole("button", { name: "Create subject" }));
+
+    expect(onCreate).toHaveBeenCalledWith("Physics SL", undefined);
+  });
+
+  it("keeps power tools under More, closed by default", async () => {
+    const user = userEvent.setup();
+    const onOpenCommandCentre = vi.fn();
+    renderSidebar({ onOpenCommandCentre });
+
+    expect(screen.queryByRole("button", { name: "AI chats" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "AI chats" }));
+
+    expect(onOpenCommandCentre).toHaveBeenCalledOnce();
+  });
+
+  it("opens More on its own while one of its destinations is on screen", () => {
+    renderSidebar({ currentView: "agent-history" });
+    expect(screen.getByRole("button", { name: "AI activity" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("remembers More being opened", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(window.localStorage.getItem("hubble:sidebar-more:v1")).toBe("1");
   });
 
   it("toggles collapsed state via the collapse button", async () => {
@@ -83,44 +137,34 @@ describe("AppSidebar", () => {
     expect(onToggleCollapsed).toHaveBeenCalledOnce();
   });
 
-  it("hides the brand label and metadata line while collapsed but keeps the switcher reachable", () => {
+  it("hides labels while collapsed but keeps every destination reachable by name", () => {
     renderSidebar({ collapsed: true });
 
     expect(screen.queryByText("Hubble")).toBeNull();
-    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeTruthy();
+    expect(screen.queryByText("History HL")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open History HL" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Graph" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
   });
 
-  it("renders the current workspace name in the switcher when expanded", () => {
-    renderSidebar({ collapsed: false });
-
-    expect(screen.getAllByText("General").length).toBeGreaterThan(0);
-  });
-
-  it("removes the workspace name from the switcher (not just clips it) when collapsed", () => {
-    renderSidebar({ collapsed: true });
-
-    expect(screen.queryByText("General")).toBeNull();
-    expect(screen.queryByText(/Gen/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeTruthy();
-  });
-
-  it("opens Graph View from the sidebar", async () => {
+  it("opens Graph View from More", async () => {
     const user = userEvent.setup();
     const onOpenGraph = vi.fn();
     renderSidebar({ onOpenGraph });
 
+    await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(screen.getByRole("button", { name: "Graph" }));
 
     expect(onOpenGraph).toHaveBeenCalledOnce();
   });
 
-  it("opens History Dump from the sidebar", async () => {
+  it("opens Import from history (History Dump) from More", async () => {
     const user = userEvent.setup();
     const onOpenHistoryDump = vi.fn();
     renderSidebar({ onOpenHistoryDump });
 
-    await user.click(screen.getByRole("button", { name: "History Dump" }));
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "Import from history" }));
 
     expect(onOpenHistoryDump).toHaveBeenCalledOnce();
   });
@@ -140,6 +184,18 @@ describe("AppSidebar", () => {
 
     expect(screen.getByText("Hubble")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close sidebar" })).toBeTruthy();
+  });
+
+  it("closes the mobile drawer after navigating from it", async () => {
+    const user = userEvent.setup();
+    const onMobileOpenChange = vi.fn();
+    const onOpenHome = vi.fn();
+    renderSidebar({ mobileOpen: true, onMobileOpenChange, onOpenHome });
+
+    await user.click(screen.getByRole("button", { name: "Home" }));
+
+    expect(onOpenHome).toHaveBeenCalledOnce();
+    expect(onMobileOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("closes the mobile drawer via its own close control without touching the desktop collapse toggle", async () => {

@@ -1,13 +1,17 @@
 "use client"
 
 import { createContext, useContext } from "react"
-import { Bot } from "lucide-react"
+import { BookOpenCheck, Bot, ChevronDown, FileText, Lightbulb, MessageSquare, PenLine, Sparkles } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { AgentIntent, WorkingContext } from "@/lib/agents/command-centre/working-context"
 
@@ -31,7 +35,8 @@ import type { AgentIntent, WorkingContext } from "@/lib/agents/command-centre/wo
 export type AgentActions = {
   /** The workspace on screen: where anything asked about here lives. */
   workspaceId: string
-  ask: (context: WorkingContext, intent?: AgentIntent) => void
+  /** `run`: the Ask AI chooser — start it, don't just draft it (see AgentHandoff.run). `text`: the person's own words. */
+  ask: (context: WorkingContext, intent?: AgentIntent, options?: { run?: boolean; text?: string }) => void
   add: (context: WorkingContext) => void
 }
 
@@ -63,7 +68,7 @@ export function AskAgentSubmenu({ subject, context }: { subject: AgentSubject; c
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <Bot /> Ask agent
+        <Bot /> Ask AI
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         {(Object.keys(labels) as AgentIntent[]).map((intent) => (
@@ -72,8 +77,68 @@ export function AskAgentSubmenu({ subject, context }: { subject: AgentSubject; c
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => agent.add(context)}>Add to agent context</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => agent.add(context)}>Add to next AI chat</DropdownMenuItem>
       </DropdownMenuSubContent>
     </DropdownMenuSub>
+  )
+}
+
+/**
+ * The student's Ask AI: what to do, nothing about how.
+ *
+ *     Ask AI ▾
+ *       Summarize
+ *       Explain
+ *       Quiz me
+ *       Help me write
+ *       ─────
+ *       Ask anything
+ *
+ * The four actions run straight away (`run`), on the context given — the
+ * resources the student selected, or the whole subject. "Ask anything"
+ * opens the chat with nothing typed. Which AI, which session, which context:
+ * all inferred (see AgentHandoff and the Command Centre's handoff effect).
+ */
+export const ASK_AI_ACTIONS = [
+  { intent: "summarize", label: "Summarize", icon: FileText },
+  { intent: "explain", label: "Explain", icon: Lightbulb },
+  { intent: "quiz", label: "Quiz me", icon: BookOpenCheck },
+  { intent: "write", label: "Help me write", icon: PenLine },
+] as const satisfies readonly { intent: AgentIntent; label: string; icon: typeof Bot }[]
+
+export function AskAiMenu({
+  context,
+  size = "lg",
+  variant = "default",
+  label = "Ask AI",
+}: {
+  context: WorkingContext
+  size?: "sm" | "default" | "lg"
+  variant?: "default" | "secondary" | "outline"
+  label?: string
+}) {
+  const agent = useAgentActions()
+  if (!agent) return null
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button type="button" size={size} variant={variant} data-ask-ai>
+            <Sparkles /> {label} <ChevronDown className="opacity-60" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="min-w-44">
+        {ASK_AI_ACTIONS.map((action) => (
+          <DropdownMenuItem key={action.intent} onClick={() => agent.ask(context, action.intent, { run: true })}>
+            <action.icon /> {action.label}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => agent.ask(context, "ask")}>
+          <MessageSquare /> Ask anything
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

@@ -31,7 +31,7 @@ function renderHome(workspace: Workspace, overrides: Partial<Parameters<typeof P
     onRemoveSources: vi.fn(),
     onOpenSource: vi.fn(),
     onUseInTask: vi.fn(),
-    onOpenCommandCentre: vi.fn(),
+    onConnectAI: vi.fn(),
     onUpdateBrief: vi.fn(),
     agents: [],
     ...overrides,
@@ -55,61 +55,65 @@ function dragFromChrome(data: Record<string, string>, files: File[] = []) {
 afterEach(() => localStorage.clear())
 
 describe("ProjectHome", () => {
-  it("starts an empty project with context, and offers a way in that needs no dragging", () => {
+  it("starts an empty subject with its name, one short line, and Add — no tutorial", () => {
     renderHome(project())
-    expect(screen.getByText("Start by adding context.")).toBeTruthy()
-    expect(screen.getByText("Cuban Missile Crisis.")).toBeTruthy()
-    expect(screen.getByText("Your project is ready. Connect an agent to start working.")).toBeTruthy()
-    expect(screen.getByText("No work yet. Your first agent task will appear here.")).toBeTruthy()
-    expect(screen.getAllByRole("button", { name: /Add source/ }).length).toBeGreaterThan(0)
+    expect(screen.getByRole("heading", { name: "History IA", level: 1 })).toBeTruthy()
+    expect(screen.getByText("No resources yet.")).toBeTruthy()
+    expect(screen.getByText("Cuban Missile Crisis.", { exact: false })).toBeTruthy()
+    expect(screen.getAllByRole("button", { name: /^Add/ }).length).toBeGreaterThan(0)
+    // With no AI connected, a quiet way to connect one — never a wall in front of the subject.
+    expect(screen.getByRole("button", { name: "Connect AI" })).toBeTruthy()
+    // An empty subject has no activity to show yet.
+    expect(screen.queryByRole("button", { name: /Recent activity/ })).toBeNull()
+    // No explanatory paragraphs.
+    expect(document.body.textContent).not.toMatch(/Hubble reads each source|any agent you choose|Connect an agent/)
+  })
+
+  it("leaves out Connect AI once an AI is connected", () => {
+    renderHome(project(), { agents: [{ provider: "claude-code", name: "Claude Code" }] })
+    expect(screen.queryByRole("button", { name: "Connect AI" })).toBeNull()
   })
 
   describe("adding from Chrome", () => {
     const hints = () => [...document.querySelectorAll("[data-add-hint]")].map((node) => node.textContent)
     const FORBIDDEN = /drag (a |the |chrome )?tabs?|tab manager|manage your tabs|organi[sz]e (your )?tabs/i
 
-    it("without Hubble for Chrome, offers what works without it and never implies the extension is there", () => {
+    it("without Hubble for Chrome, says nothing about it — Add is the way in", () => {
       renderHome(project())
-      expect(hints()).toEqual([
-        "Drag a link or the address bar from Chrome here, add addresses, or use Hubble for Chrome to add tabs. Hubble reads each source — web pages, PDFs, YouTube videos — and then any agent you choose can work from them.",
-      ])
-      expect(screen.queryByText(/Right-click a tab/)).toBeNull()
-      expect(screen.queryByText("Add anything useful from Chrome to this project.")).toBeNull()
+      expect(hints()).toEqual([])
+      expect(screen.queryByText(/right-click a tab/i)).toBeNull()
       cleanup()
       renderHome(project(["https://a.example/1"]))
-      expect(hints()).toEqual(["Drag a link or the address bar from Chrome onto this page, or use Hubble for Chrome to add tabs."])
-      expect(screen.queryByText(/Right-click a tab/)).toBeNull()
+      expect(hints()).toEqual([])
     })
 
-    it("with Hubble for Chrome, leads with the project: add anything useful, right-click a tab → Add to <project>", () => {
+    it("with Hubble for Chrome, names the subject: right-click a tab → Add to <subject>", () => {
       renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
-      expect(hints()).toEqual(["Add anything useful from Chrome to this project.Right-click a tab → Add to History IAAlt + Shift + H also works."])
-      expect(screen.getByText("Add anything useful from Chrome to this project.")).toBeTruthy()
+      expect(hints()).toEqual(["In Chrome: right-click a tab → Add to History IA · Alt + Shift + H"])
       expect(document.querySelector("[data-quick-add-target]")!.getAttribute("data-quick-add-target")).toBe("History IA")
       for (const text of hints()) expect(text).not.toMatch(FORBIDDEN)
     })
 
-    it("teaches it once: in the empty state until there are sources, then as a quiet line under Context", () => {
+    it("teaches it once: in the empty state only", () => {
       renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
       expect(document.querySelectorAll("[data-add-hint]")).toHaveLength(1)
       expect(document.querySelector("[data-project-empty] [data-add-hint]")).toBeTruthy()
       cleanup()
       renderHome(project(["https://a.example/1"]), { quickAdd: { shortcut: "Alt+Shift+H" } })
-      expect(document.querySelectorAll("[data-add-hint]")).toHaveLength(1)
-      expect(document.querySelector("[data-project-context] [data-add-hint]")!.textContent).toContain("Right-click a tab → Add to History IA")
+      expect(document.querySelectorAll("[data-add-hint]")).toHaveLength(0)
     })
 
     it("does not mention a shortcut the person cleared (or Chrome refused)", () => {
       renderHome(project(), { quickAdd: { shortcut: "" } })
-      expect(hints()).toEqual(["Add anything useful from Chrome to this project.Right-click a tab → Add to History IA"])
+      expect(hints()).toEqual(["In Chrome: right-click a tab → Add to History IA"])
     })
 
-    it("names whichever project is on screen, and nothing else", () => {
+    it("names whichever subject is on screen, and nothing else", () => {
       const props = renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
-      expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to History IA")
+      expect(document.querySelector("[data-add-hint]")!.textContent).toContain("Add to History IA")
       cleanup()
       render(<ProjectHome {...props} workspace={{ ...project(), id: "p", name: "Physics EE" }} />)
-      expect(screen.getByText(/Right-click a tab → Add to/).textContent).toBe("Right-click a tab → Add to Physics EE")
+      expect(document.querySelector("[data-add-hint]")!.textContent).toContain("Add to Physics EE")
       expect(screen.queryByText(/History IA/)).toBeNull()
     })
   })
@@ -166,29 +170,31 @@ describe("ProjectHome", () => {
         { status: "duplicate" as const, input: inputs[1]!, tabId: "b" },
       ]),
     })
-    await user.click(screen.getAllByRole("button", { name: /Add source/ })[0]!)
+    // + Add → Link
+    await user.click(screen.getAllByRole("button", { name: /^Add/ })[0]!)
+    await user.click(await screen.findByRole("menuitem", { name: "Link" }))
     await user.type(screen.getByLabelText("Addresses to add"), "https://a.example{Enter}https://b.example")
-    await user.click(screen.getByRole("button", { name: "Add 2 sources" }))
+    await user.click(screen.getByRole("button", { name: "Add 2 links" }))
     expect(props.onAddSources).toHaveBeenCalledWith([{ url: "https://a.example" }, { url: "https://b.example" }], "manual")
     const results = await screen.findByRole("list", { name: "What happened to each address" })
     expect(within(results).getByText("Already in History IA")).toBeTruthy()
   })
 
-  it("shows each source's state in words, and filters to what needs attention", async () => {
+  it("says a resource's state in words only when it is not simply ready, and filters to what needs attention", async () => {
     const user = userEvent.setup()
     const workspace = project(["https://a.example/one", "https://b.example/two.pdf", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"])
     workspace.tabs[0]!.resource = { ...workspace.tabs[0]!.resource!, status: "ready", content: { chars: 6000, extractedAt: NOW } }
     workspace.tabs[1]!.resource = { ...workspace.tabs[1]!.resource!, status: "failed", error: { code: "unreachable", message: "Hubble couldn't reach this page.", retryable: true } }
     renderHome(workspace)
     const cards = screen.getAllByRole("listitem").filter((item) => item.hasAttribute("data-source-card"))
-    expect(cards.map((card) => card.querySelector("[data-source-status]")!.textContent)).toEqual([
-      expect.stringContaining("Ready · 1,000 words"),
+    expect(cards.map((card) => card.querySelector("[data-source-status]")?.textContent ?? null)).toEqual([
+      // Ready is the normal case: nothing to say.
+      null,
       expect.stringContaining("Couldn't read · Hubble couldn't reach this page."),
       expect.stringContaining("Waiting"),
     ])
     await user.click(screen.getByRole("button", { name: "Needs attention" }))
     expect(screen.getAllByRole("listitem").filter((item) => item.hasAttribute("data-source-card"))).toHaveLength(1)
-    expect(screen.getByText("1 source can't be read yet", { exact: false })).toBeTruthy()
   })
 
   it("shows a source whose site blocks reading as saved — with its icon and a working Open — not as broken", async () => {
@@ -210,20 +216,31 @@ describe("ProjectHome", () => {
     expect(card.querySelector("[data-source-icon]")!.textContent).toBe("C")
     await user.click(within(card as HTMLElement).getByRole("button", { name: "Open ChatGPT" }))
     expect(props.onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ url: "https://chatgpt.com/c/abc" }))
-    // Nothing to fix, so it is not "needing attention" and the project doesn't ask about it.
-    await user.click(screen.getByRole("button", { name: "Needs attention" }))
-    expect(screen.queryAllByRole("listitem").filter((item) => item.hasAttribute("data-source-card"))).toHaveLength(0)
+    // Nothing to fix, so it is not "needing attention": there is no such filter to offer.
+    expect(screen.queryByRole("button", { name: "Needs attention" })).toBeNull()
     expect(screen.queryByText(/can't be read yet/)).toBeNull()
   })
 
-  it("removes a source from the project, and hands Use in task to the Command Centre", async () => {
+  it("removes a resource from the subject, and hands Ask AI on it to the shell", async () => {
     const user = userEvent.setup()
     const workspace = project(["https://a.example/one"])
     const props = renderHome(workspace)
-    await user.click(screen.getByRole("button", { name: /Use .* in a task/ }))
+    await user.click(screen.getByRole("button", { name: /^Ask AI about / }))
     expect(props.onUseInTask).toHaveBeenCalledWith(expect.objectContaining({ id: workspace.tabs[0]!.id }))
     await user.click(screen.getByRole("button", { name: /More actions for/ }))
-    await user.click(await screen.findByRole("menuitem", { name: /Remove from project/ }))
+    await user.click(await screen.findByRole("menuitem", { name: /^Remove/ }))
     expect(props.onRemoveSources).toHaveBeenCalledWith([workspace.tabs[0]!.id])
+  })
+
+  it("selects resources and removes them together", async () => {
+    const user = userEvent.setup()
+    const workspace = project(["https://a.example/one", "https://b.example/two"])
+    const props = renderHome(workspace)
+    await user.click(screen.getByRole("button", { name: "Select" }))
+    for (const box of screen.getAllByRole("checkbox", { name: /^Select / })) await user.click(box)
+    const toolbar = screen.getByRole("toolbar", { name: "Selected resources" })
+    expect(toolbar.textContent).toContain("2 selected")
+    await user.click(within(toolbar).getByRole("button", { name: "Remove" }))
+    expect(props.onRemoveSources).toHaveBeenCalledWith(expect.arrayContaining(workspace.tabs.map((tab) => tab.id)))
   })
 })

@@ -59,7 +59,7 @@ export type SettingsSection =
   | "motion"
   | "accent"
   | "account"
-  /** "Agents" in the nav. The id predates the name and deep links use it. */
+  /** "AI Connections" in the nav. The id predates the name and deep links use it. */
   | "connectors"
   | "providers"
   | "mcp"
@@ -87,16 +87,19 @@ const APPEARANCE_IDS = new Set(APPEARANCE.map((item) => item.id))
 const BEFORE: NavItem[] = [{ id: "general", label: "General", icon: Settings2 }]
 const AFTER: NavItem[] = [
   { id: "account", label: "Account", icon: UserRound },
-  { id: "connectors", label: "Agents", icon: Bot },
-  { id: "providers", label: "Providers", icon: KeyRound },
+  { id: "connectors", label: "AI Connections", icon: Bot },
+  { id: "workspaces", label: "Subjects", icon: Boxes },
+  { id: "extension", label: "Chrome extension", icon: Puzzle },
+  { id: "desktop", label: "Desktop app", icon: Monitor },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+  { id: "privacy", label: "Privacy", icon: Shield },
+]
+/** Technical settings, kept and labelled as such: API keys, MCP, browser control, developer options. */
+const ADVANCED: NavItem[] = [
+  { id: "providers", label: "API keys", icon: KeyRound },
   { id: "mcp", label: "MCP", icon: PlugZap },
   { id: "browser", label: "Browser", icon: Globe },
-  { id: "workspaces", label: "Workspaces", icon: Boxes },
-  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
-  { id: "desktop", label: "Desktop", icon: Monitor },
-  { id: "extension", label: "Extension", icon: Puzzle },
-  { id: "privacy", label: "Privacy", icon: Shield },
-  { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
+  { id: "advanced", label: "Diagnostics", icon: SlidersHorizontal },
 ]
 
 /**
@@ -183,11 +186,13 @@ export function AppearanceSettingsView({
           </button>
           {APPEARANCE.map((item) => row(item, true))}
           {AFTER.map((item) => row(item))}
+          <p className="mt-4 px-2 pb-1 text-meta text-tertiary">Advanced</p>
+          {ADVANCED.map((item) => row(item))}
         </nav>
 
         {/* Below `sm` the section list becomes one horizontal strip. */}
         <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 sm:hidden">
-          {[...BEFORE, ...APPEARANCE, ...AFTER].map((item) => (
+          {[...BEFORE, ...APPEARANCE, ...AFTER, ...ADVANCED].map((item) => (
             <button
               key={item.id}
               type="button"

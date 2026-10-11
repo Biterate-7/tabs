@@ -155,12 +155,8 @@ export function ConnectAgentDialog({
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{spec ? `Connect ${spec.displayName}` : "Connect an agent"}</DialogTitle>
-          <DialogDescription>
-            {spec
-              ? spec.pitch
-              : "Bring an AI agent into Hubble. It works in projects you authorize, with the workspace context you choose, and asks before it changes anything."}
-          </DialogDescription>
+          <DialogTitle>{spec ? `Connect ${spec.displayName}` : "Connect AI"}</DialogTitle>
+          <DialogDescription>{spec ? spec.pitch : "Choose the AI you use."}</DialogDescription>
         </DialogHeader>
 
         {chosen && (
@@ -252,6 +248,11 @@ export function ConnectAgentDialog({
             {sessionsBlocked && sessions && !sessions.available && (
               <p role="note" className="text-body-sm text-warning">
                 Sessions are unavailable. {sessions.reason}
+              </p>
+            )}
+            {spec.installCommand && (phase === "not_installed" || phase === "needs_adapter") && (
+              <p className="text-body-sm text-foreground">
+                One step: copy this, run it once in a terminal, then press Check again.
               </p>
             )}
             {spec.installCommand && (phase === "not_installed" || phase === "needs_adapter") && (
@@ -568,7 +569,7 @@ export function ConnectAgentDialog({
  * there is nothing to download. Opens beside the app, leaving the workspace
  * where it is.
  */
-function DesktopLink({ provider, compact = false }: { provider: PlatformProvider; compact?: boolean }) {
+export function DesktopLink({ provider, compact = false }: { provider: PlatformProvider; compact?: boolean }) {
   const published = anyDesktopBuildPublished()
   const label = compact ? (published ? "Download" : "Learn more") : published ? "Download Hubble" : "About Hubble Desktop"
   return (
@@ -610,9 +611,9 @@ function DesktopNote({ provider }: { provider: PlatformProvider }) {
 }
 
 const STEP_LABEL: Record<Exclude<ConnectStep, "choose">, string> = {
-  detect: "Detect",
+  detect: "Find",
   sign_in: "Sign in",
-  approve: "Approve",
+  approve: "Allow",
   done: "Connected",
 }
 

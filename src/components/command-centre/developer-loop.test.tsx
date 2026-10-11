@@ -149,7 +149,7 @@ describe("Scenario 1 — a developer opens a project's workspace", () => {
     // The header names the project beside the workspace.
     expect(document.querySelector("[data-header-project]")?.textContent).toBe("hubble-app")
     // And how to start: an agent that can take a task.
-    expect(within(screen.getByRole("region", { name: "Agents for this workspace" })).getByRole("button", { name: /^Start with / })).toBeTruthy()
+    expect(within(screen.getByRole("region", { name: "AI for this subject" })).getByRole("button", { name: /^Start with / })).toBeTruthy()
     // The context panel leads with the project, right under where.
     const panel = within(await screen.findByRole("complementary", { name: "Session context" }))
     const headings = panel.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)
@@ -162,8 +162,7 @@ describe("Scenario 1 — a developer opens a project's workspace", () => {
   it("offers to connect a project when the workspace has none, and keeps the tab-only path", async () => {
     const onAttach = vi.fn()
     renderCentre(runtimeWith(), { onAttachWorkspaceProject: onAttach }, { project: false })
-    expect(await screen.findByRole("heading", { name: "Work on Development" })).toBeTruthy()
-    expect(screen.getByText(/sees no other project/)).toBeTruthy()
+    expect(await screen.findByRole("heading", { name: "Ask AI about Development" })).toBeTruthy()
     const connect = await screen.findAllByRole("button", { name: "Connect folder" })
     expect(connect.length).toBeGreaterThan(0)
   })
@@ -204,7 +203,7 @@ describe("Scenario 2 — a task that needs project files and research", () => {
     const runtime = runtimeWith()
     renderCentre(runtime)
     await screen.findByRole("heading", { name: "Work on hubble-app" })
-    await user.type(await screen.findByLabelText("Ask an agent"), "Fix the authentication bug{Enter}")
+    await user.type(await screen.findByLabelText("Ask AI"), "Fix the authentication bug{Enter}")
     const dialog = within(await screen.findByRole("dialog", { name: "New agent session" }))
     await waitFor(() => expect((dialog.getByRole("button", { name: "Start session" }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(dialog.getByRole("button", { name: "Start session" }))

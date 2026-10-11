@@ -31,13 +31,13 @@ export function outcomeWords(outcome: IngestOutcome, projectName: string): strin
     case "duplicate":
       return `Already in ${projectName}`
     case "invalid":
-      return outcome.reason === "unsupported-scheme" ? "This kind of address can't be a source (only web pages, PDFs and videos online)" : "That isn't a web address"
+      return outcome.reason === "unsupported-scheme" ? "Only web pages, PDFs and videos online can be added" : "That isn't a web address"
   }
 }
 
 /**
- * "Add source" — the way in that needs no dragging: paste one address or
- * many, see what happened to each. Goes through the same ingestion as a drop.
+ * Add → Link — paste one address or many, see what happened to each. Goes
+ * through the same ingestion as a drop.
  */
 export function AddSourceDialog({
   open,
@@ -79,7 +79,7 @@ export function AddSourceDialog({
               <DialogTitle>
                 {outcomes.length - failed.length} of {outcomes.length} added to {projectName}
               </DialogTitle>
-              <DialogDescription>Hubble is reading the new sources now. Each card shows when it is ready.</DialogDescription>
+              <DialogDescription>Hubble is reading them now.</DialogDescription>
             </DialogHeader>
             <ul className="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto" aria-label="What happened to each address">
               {outcomes.map((outcome, index) => {
@@ -107,10 +107,8 @@ export function AddSourceDialog({
         ) : (
           <form onSubmit={submit}>
             <DialogHeader>
-              <DialogTitle>Add sources to {projectName}</DialogTitle>
-              <DialogDescription>
-                Paste web pages, PDFs or YouTube videos — one per line. You can also drag a link or the address bar from Chrome straight onto the project.
-              </DialogDescription>
+              <DialogTitle>Add a link</DialogTitle>
+              <DialogDescription>Web pages, PDFs or YouTube videos — one per line.</DialogDescription>
             </DialogHeader>
             <label htmlFor="add-source-urls" className="sr-only">
               Addresses to add
@@ -125,7 +123,7 @@ export function AddSourceDialog({
             />
             <DialogFooter>
               <Button type="submit" disabled={inputsFromText(text).length === 0}>
-                Add {inputsFromText(text).length > 1 ? `${inputsFromText(text).length} sources` : "source"}
+                Add {inputsFromText(text).length > 1 ? `${inputsFromText(text).length} links` : "link"}
               </Button>
             </DialogFooter>
           </form>
