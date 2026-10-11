@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { getProjectContents, putContent, deleteContent } from "@/lib/resources/content-store"
+import { getProjectContents, putContent, deleteContent, moveContent, pruneContentExcept } from "@/lib/resources/content-store"
+import { getStorageNamespace } from "@/lib/storage/namespace"
 import {
   attachPdfFile,
   attachTranscript,
@@ -34,9 +35,34 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  * Once per project per page load it also checks that every "ready" source
  * really has its content on this device (IndexedDB can be cleared, or an
  * account's data copied without it), and reads again any that do not.
+ *
+ * ## Content follows its tab
+ *
+ * A tab leaves a project by many doors — Remove on a resource, delete or
+ * clean up in the tab view, the graph, Clear, a move, a deletion synced from
+ * another device — and only some of them know about stored content. So the
+ * store itself is the authority, watched here:
+ *
+ *   - a tab that disappears has its content forgotten after a grace period
+ *     (every Undo restores the tab well within it; the timer re-checks the
+ *     store, and never acts after the account changed);
+ *   - a tab that moves to another project takes its content with it
+ *     (content is keyed by project);
+ *   - once per page load, after the same grace, content whose tab exists in
+ *     no project is pruned — what a refresh mid-grace, a sync, or an older
+ *     version left behind.
+ *
+ * All of it is idempotent: deleting what is already gone does nothing.
  */
 
 const CONCURRENCY = 3
+/** How long a removed tab's content outlives it: longer than any Undo. */
+export const CONTENT_GRACE_MS = 60_000
+
+/** Every project's tab ids — what content may be kept for. */
+function presentTabs(store: WorkspaceStore): Map<string, Set<string>> {
+  return new Map(store.workspaces.map((workspace) => [workspace.id, new Set(workspace.tabs.map((tab) => tab.id))]))
+}
 
 export type ResourceActions = {
   retry: (workspaceId: string, tabId: string) => void
@@ -70,6 +96,8 @@ export function useResourceProcessing(options: {
   enabled: boolean
   /** Injected in tests. */
   deps?: Partial<ProcessDeps>
+  /** Injected in tests. */
+  graceMs?: number
 }): ResourceActions {
   const { store, enabled } = options
   const running = useRef(new Set<string>())
@@ -167,6 +195,59 @@ export function useResourceProcessing(options: {
     }
   }, [store, enabled, finished, apply, deps, getStore, settle])
 
+  // Content follows its tab (see the header): forgotten after removal, carried on a move, swept once per load.
+  const seen = useRef<Map<string, Set<string>> | null>(null)
+  const moving = useRef<Promise<unknown>>(Promise.resolve())
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
+  useEffect(() => {
+    const pending = timers.current
+    return () => {
+      for (const timer of pending) clearTimeout(timer)
+      pending.clear()
+    }
+  }, [])
+  const later = useCallback((work: () => Promise<unknown>) => {
+    const namespace = getStorageNamespace()
+    const timer = setTimeout(() => {
+      timers.current.delete(timer)
+      // Another account is on screen now: this project's content is not ours to touch.
+      if (getStorageNamespace() !== namespace) return
+      void work().catch(() => undefined)
+    }, optionsRef.current.graceMs ?? CONTENT_GRACE_MS)
+    timers.current.add(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!enabled || !store) return
+    const now = presentTabs(store)
+    const before = seen.current
+    seen.current = now
+    if (!before) {
+      later(async () => {
+        const latest = getStore()
+        if (latest) await pruneContentExcept(presentTabs(latest))
+      })
+      return
+    }
+    const homeOf = new Map<string, string>()
+    for (const [workspaceId, tabIds] of now) for (const tabId of tabIds) homeOf.set(tabId, workspaceId)
+    for (const [workspaceId, tabIds] of before) {
+      const still = now.get(workspaceId)
+      for (const tabId of tabIds) {
+        if (still?.has(tabId)) continue
+        const to = homeOf.get(tabId)
+        if (to && to !== workspaceId) {
+          moving.current = moving.current.then(() => moveContent(workspaceId, to, tabId)).catch(() => undefined)
+          continue
+        }
+        later(async () => {
+          const back = getStore()?.workspaces.find((entry) => entry.id === workspaceId)?.tabs.some((tab) => tab.id === tabId)
+          if (!back) await deleteContent(workspaceId, [tabId])
+        })
+      }
+    }
+  }, [store, enabled, getStore, later])
+
   // A "ready" source whose content is gone from this device is read again.
   useEffect(() => {
     if (!enabled || !store) return
@@ -175,7 +256,9 @@ export function useResourceProcessing(options: {
       const ready = workspace.tabs.filter((tab) => tab.resource?.status === "ready")
       if (ready.length === 0) continue
       verified.current.add(workspace.id)
-      void getProjectContents(workspace.id)
+      // After any move in flight, so a moved source's content is found where it now lives.
+      void moving.current
+        .then(() => getProjectContents(workspace.id))
         .then((contents) => {
           for (const tab of ready) {
             if (contents.has(tab.id)) continue

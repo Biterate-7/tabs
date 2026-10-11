@@ -239,6 +239,53 @@ export async function pruneProjectContent(workspaceId: string, keepTabIds: Reado
   return stale.length;
 }
 
+/**
+ * Carries a source's content to another project, for a tab moved between
+ * subjects — content is keyed by project, so without this the moved source
+ * would claim content it can no longer reach. Nothing stored: nothing to do.
+ */
+export async function moveContent(fromWorkspaceId: string, toWorkspaceId: string, tabId: string): Promise<boolean> {
+  if (fromWorkspaceId === toWorkspaceId) return false;
+  const content = await getContent(fromWorkspaceId, tabId);
+  if (!content) return false;
+  await putContent(toWorkspaceId, tabId, content);
+  await deleteContent(fromWorkspaceId, [tabId]);
+  return true;
+}
+
+/**
+ * Removes everything this account stored for tabs that no longer exist —
+ * in any project, including projects that are gone. `present` is every
+ * project's current tabs. Reads keys only, never content. Idempotent.
+ *
+ * Only the active account's records are considered: another account's
+ * content on the same device is never touched.
+ */
+export async function pruneContentExcept(present: ReadonlyMap<string, ReadonlySet<string>>): Promise<number> {
+  const prefix = `${owner()}|`;
+  const keep = new Set<string>();
+  for (const [workspaceId, tabIds] of present) for (const tabId of tabIds) keep.add(contentKey(workspaceId, tabId));
+  if (!contentStorePersistent()) {
+    let removed = 0;
+    for (const key of [...memory.keys()]) {
+      if (key.startsWith(prefix) && !keep.has(key)) {
+        memory.delete(key);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+  const keys = ((await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))) ?? []).filter(
+    (key): key is string => typeof key === "string" && !keep.has(key)
+  );
+  if (keys.length > 0) {
+    await run("readwrite", (store) => {
+      for (const key of keys) store.delete(key);
+    });
+  }
+  return keys.length;
+}
+
 /** For tests: forget the memory fallback and the open connection. */
 export function resetContentStoreForTests(): void {
   memory.clear();

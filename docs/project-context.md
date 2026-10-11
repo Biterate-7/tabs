@@ -87,6 +87,19 @@ details, live sessions), bounded per source (`CONTENT_LIMITS`). A "ready"
 source whose content is missing on this device (cleared storage, data copied
 between accounts) is read again automatically.
 
+**Content follows its tab** (`use-resource-processing.ts`). Tabs leave a
+project by many doors (Remove, delete/Clean up in the tab view, the graph,
+Clear, moves, deleting the subject, deletions arriving by sync), and the store
+is the one authority watched: a tab that disappears has its content forgotten
+after `CONTENT_GRACE_MS` (60 s — longer than any Undo, re-checked against the
+store and skipped if the account changed); a tab moved to another subject has
+its content carried to the new key (`moveContent`); and once per page load,
+after the same grace, `pruneContentExcept` removes this account's records for
+tabs that exist in no project (a refresh mid-grace, an older version's
+leftovers). All idempotent; another account's records are never read.
+Search never waits for any of this: it only ever searches the tabs a project
+has now.
+
 Sync carries a tab as before; `resource` is device-local like the brief, and a
 remote edit to the same page keeps the local reading (`lib/sync/apply.ts`).
 Stored data is re-read defensively on load (`stripWrongTypedTabFields` →
