@@ -1,6 +1,6 @@
 "use client"
 
-import { Copy, ExternalLink, FileUp, Info, MoreHorizontal, Pencil, RotateCw, Trash2, Captions, Sparkles } from "lucide-react"
+import { Copy, ExternalLink, FileUp, Info, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -101,7 +101,7 @@ export function ResourceCard({
         </Button>
         {actions.onUseInTask && (
           <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInTask!(tab)} aria-label={`Ask AI about ${title}`}>
-            <Sparkles /> Ask AI
+            Ask AI
           </Button>
         )}
         {needsFile && (

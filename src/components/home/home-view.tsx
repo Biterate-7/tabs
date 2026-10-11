@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowRight, PanelLeftOpen, Plus, Sparkles } from "lucide-react"
+import { ArrowRight, PanelLeftOpen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { BrandMark } from "@/components/brand-mark"
@@ -135,7 +135,7 @@ export function HomeView({
 
             {!aiConnected && (
               <Button type="button" variant="ghost" size="sm" className="mt-10 -ml-2" onClick={onConnectAI}>
-                <Sparkles /> Connect AI
+                Connect AI
               </Button>
             )}
           </>

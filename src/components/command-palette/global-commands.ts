@@ -1,4 +1,4 @@
-import { Bot, Boxes, Clock, FolderPlus, Globe, Keyboard, Moon, Palette, PlugZap, Radio, ScanSearch, ScrollText, Settings, Star, Sun, Type, Waypoints, House, Sparkles } from "lucide-react"
+import { Bot, Boxes, Clock, FolderPlus, Globe, Keyboard, Moon, Palette, PlugZap, Radio, ScanSearch, ScrollText, Settings, Star, Sun, Type, Waypoints, House } from "lucide-react"
 import type { Workspace } from "@/lib/workspace/types"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { Command } from "./types"
@@ -44,7 +44,7 @@ export function buildGlobalCommands(
 
   const navigation: Command[] = [
     ...(actions.goHome ? [{ id: "go-home", label: "Go to Home", group: "Navigation" as const, icon: House, onSelect: actions.goHome, keywords: ["subjects", "start"] }] : []),
-    ...(actions.openAI ? [{ id: "go-ai", label: "Open AI", group: "Navigation" as const, icon: Sparkles, onSelect: actions.openAI, keywords: ["ask", "agent", "connections"] }] : []),
+    ...(actions.openAI ? [{ id: "go-ai", label: "Open AI", group: "Navigation" as const, icon: Bot, onSelect: actions.openAI, keywords: ["ask", "agent", "connections"] }] : []),
     { id: "go-workspace", label: current ? `Go to ${current.name}` : "Go to subject", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["workspace", "subject", "tabs"] },
     { id: "go-graph", label: "Open graph view", group: "Navigation", icon: Waypoints, onSelect: actions.openGraph, keywords: ["relationships", "map"] },
     { id: "go-favorites", label: "Go to Favorites", group: "Navigation", icon: Star, onSelect: actions.openFavorites },

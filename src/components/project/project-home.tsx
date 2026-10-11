@@ -80,7 +80,7 @@ export type ProjectHomeProps = {
 /**
  * A subject's page.
  *
- *     History HL                                   [+ Add ▾]  [✦ Ask AI ▾]
+ *     History HL                                   [+ Add ▾]  [Ask AI ▾]
  *     The causes and consequences of WW1
  *
  *     Continue with Claude · Summary of the Treaty of Versailles   →
