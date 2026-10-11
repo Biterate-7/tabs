@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext } from "react"
-import { BookOpenCheck, Bot, ChevronDown, FileText, Lightbulb, MessageSquare, PenLine, Sparkles } from "lucide-react"
+import { BookOpenCheck, Bot, ChevronDown, FileText, Lightbulb, MessageSquare, PenLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -124,7 +124,7 @@ export function AskAiMenu({
       <DropdownMenuTrigger
         render={
           <Button type="button" size={size} variant={variant} data-ask-ai>
-            <Sparkles /> {label} <ChevronDown className="opacity-60" />
+            {label} <ChevronDown className="opacity-60" />
           </Button>
         }
       />

@@ -3,6 +3,7 @@
 import { useState } from "react"
 import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import {
+  Bot,
   ChevronRight,
   Clock,
   History,
@@ -14,7 +15,6 @@ import {
   ScrollText,
   Search,
   Settings,
-  Sparkles,
   Star,
   Waypoints,
 } from "lucide-react"
@@ -281,7 +281,7 @@ export function AppSidebar({
                 <SidebarItem label="Home" icon={<House />} current={activeIs("home")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHome)} />
               )}
               {onOpenAI && (
-                <SidebarItem label="AI" icon={<Sparkles />} current={activeIs("ai")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenAI)} />
+                <SidebarItem label="AI" icon={<Bot />} current={activeIs("ai")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenAI)} />
               )}
             </nav>
           )}
