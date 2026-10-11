@@ -5,6 +5,7 @@ import { getProjectContents, putContent, deleteContent } from "@/lib/resources/c
 import {
   attachPdfFile,
   attachTranscript,
+  browserLanguage,
   extractionEndpoint,
   httpExtractor,
   markProcessing,
@@ -87,6 +88,7 @@ export function useResourceProcessing(options: {
         extract: httpExtractor(extractionEndpoint(isDesktop() ? "desktop" : "web")),
         putContent,
         now: () => Date.now(),
+        language: browserLanguage,
         ...optionsRef.current.deps,
       }
     }

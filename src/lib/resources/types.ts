@@ -69,6 +69,8 @@ export type ResourceContentSummary = {
   pages?: number;
   /** Transcript lines. */
   transcriptLines?: number;
+  /** The transcript's language (BCP 47, e.g. "en"), when the source said. */
+  language?: string;
   /** Cut to the storage bound. */
   truncated?: boolean;
   extractedAt: number;
@@ -117,6 +119,23 @@ export type ResourceInput = {
   favicon?: string;
 };
 
+/** One line of a video transcript: what is said, from `start` (seconds) until `end` when known. */
+export type TranscriptSegment = { start?: number; end?: number; text: string };
+
+/**
+ * Where a transcript came from, so a reader can say so and a retry knows
+ * what it would replace:
+ *   captions  the video's own captions, fetched by Hubble's reader
+ *   supplied  pasted or uploaded by the person
+ */
+export type TranscriptInfo = {
+  source: "captions" | "supplied";
+  /** BCP 47 language tag, when known. */
+  language?: string;
+  /** Which reader service fetched captions — for troubleshooting, never shown as the author. */
+  provider?: string;
+};
+
 /** Extracted content, as the content store keeps it. */
 export type ResourceContent = {
   kind: ResourceKind;
@@ -124,8 +143,9 @@ export type ResourceContent = {
   text?: string;
   /** A PDF's text, page by page — index 0 is page 1. */
   pages?: string[];
-  /** A video transcript, line by line, with a start time in seconds when known. */
-  transcript?: { start?: number; text: string }[];
+  /** A video transcript, line by line in playback order, with times in seconds when known. */
+  transcript?: TranscriptSegment[];
+  transcriptInfo?: TranscriptInfo;
   extractedAt: number;
   truncated?: boolean;
 };

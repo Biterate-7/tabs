@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <LegalPage title="Privacy Policy" lastUpdated="October 1, 2026">
+    <LegalPage title="Privacy Policy" lastUpdated="October 11, 2026">
       <section>
         <h2>Introduction</h2>
         <p>
@@ -66,6 +66,17 @@ export default function PrivacyPolicyPage() {
             resolve a readable title, since not every pasted URL comes with one. Only the URL you provided is
             sent for this lookup, and requests to private, local, or internal network addresses are blocked
             before any fetch happens.
+          </li>
+          <li id="youtube-transcripts">
+            <strong>YouTube transcripts, on deployments that enable them.</strong> When you add a YouTube video
+            to a subject, Hubble&apos;s server may ask a transcript service (currently Supadata) for that
+            video&apos;s existing captions, so you can read and search what is said. Only the video&apos;s
+            public YouTube address and your browser&apos;s preferred language are sent — nothing about you,
+            your account, or your other resources. The transcript comes back to your browser and is stored on
+            your device; the server keeps a copy in memory for up to a day so the same video is not requested
+            twice, and stores nothing. Hubble never downloads a video&apos;s audio or runs speech recognition.
+            When you press Play on a video inside Hubble, the player is YouTube&apos;s own privacy-enhanced
+            embed (youtube-nocookie.com), and opening a video&apos;s details loads its thumbnail from YouTube.
           </li>
           <li>
             <strong>IP address, transiently, for abuse prevention.</strong> The server uses your

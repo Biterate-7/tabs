@@ -1,13 +1,16 @@
 "use client"
 
+import { useDeferredValue, useMemo, useState } from "react"
 import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
 import { Kbd } from "@/components/ui/kbd"
 import { modKeyLabel } from "@/lib/keyboard"
+import { markMatches } from "@/lib/resources/search"
 import type { Command, CommandGroup } from "./types"
 
 const GROUP_ORDER: CommandGroup[] = [
   "Ask",
+  "Moments",
   "Navigation",
   "Agents",
   "Workspaces",
@@ -27,6 +30,7 @@ const GROUP_LABEL: Partial<Record<CommandGroup, string>> = {
   Agents: "AI",
   Workspaces: "Subjects",
   Workspace: "This subject",
+  Moments: "Said in your videos",
 }
 
 /**
@@ -67,13 +71,39 @@ export function CommandPalette({
   onOpenChange,
   commands,
   placeholder = "Type a command or search…",
+  searchContent,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   commands: Command[]
   placeholder?: string
+  /**
+   * Results that depend on what is typed — moments in saved videos. Asked
+   * on every keystroke, so it must be synchronous and cheap; its rows are
+   * already matched, so the palette's own filter never hides them.
+   */
+  searchContent?: (query: string) => Command[]
 }) {
   if (!open) return null
+  return <PaletteBody onOpenChange={onOpenChange} commands={commands} placeholder={placeholder} {...(searchContent ? { searchContent } : {})} />
+}
+
+function PaletteBody({
+  onOpenChange,
+  commands: staticCommands,
+  placeholder,
+  searchContent,
+}: {
+  onOpenChange: (open: boolean) => void
+  commands: Command[]
+  placeholder: string
+  searchContent?: (query: string) => Command[]
+}) {
+  const [search, setSearch] = useState("")
+  // Typing stays immediate; searching what was said follows a beat behind on a large library.
+  const deferred = useDeferredValue(search)
+  const found = useMemo(() => (searchContent && deferred.trim().length > 1 ? searchContent(deferred) : []), [searchContent, deferred])
+  const commands = found.length > 0 ? [...found, ...staticCommands] : staticCommands
 
   function run(command: Command) {
     onOpenChange(false)
@@ -103,15 +133,19 @@ export function CommandPalette({
           <Search className="size-4 shrink-0 text-tertiary" aria-hidden />
           <CommandPrimitive.Input
             autoFocus
+            value={search}
+            onValueChange={setSearch}
             placeholder={placeholder}
             className="h-full w-full bg-transparent text-[length:calc(var(--hb-text-14)*var(--tabdump-font-scale))] text-foreground placeholder:text-tertiary outline-none focus-visible:outline-none"
           />
           <Kbd className="shrink-0">esc</Kbd>
         </div>
         <CommandPrimitive.List className="max-h-none flex-1 overflow-y-auto p-1.5 sm:max-h-[min(60vh,440px)]">
-          <CommandPrimitive.Empty className="py-8 text-center text-body-sm text-tertiary">
-            No matching commands.
-          </CommandPrimitive.Empty>
+          {found.length === 0 && (
+            <CommandPrimitive.Empty className="py-8 text-center text-body-sm text-tertiary">
+              No matching commands.
+            </CommandPrimitive.Empty>
+          )}
           {GROUP_ORDER.map((group) => {
             const groupCommands = commands.filter((c) => c.group === group)
             if (groupCommands.length === 0) return null
@@ -119,6 +153,8 @@ export function CommandPalette({
               <CommandPrimitive.Group
                 key={group}
                 heading={GROUP_LABEL[group] ?? group}
+                // cmdk hides a group with no items its filter kept; already-matched rows keep theirs.
+                {...(groupCommands.some((command) => command.forceMount) ? { forceMount: true } : {})}
                 className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:text-tertiary"
               >
                 {groupCommands.map((command) => (
@@ -127,6 +163,7 @@ export function CommandPalette({
                     value={`${command.label} ${command.group} ${command.id}`}
                     keywords={[...(command.keywords ?? []), ...(command.hint ? [command.hint] : [])]}
                     disabled={command.disabled}
+                    {...(command.forceMount ? { forceMount: true } : {})}
                     onSelect={() => run(command)}
                     className="group/item flex min-h-[30px] cursor-default items-center gap-2.5 rounded-xs px-2 py-1 text-body text-foreground data-[selected=true]:bg-surface-active aria-disabled:opacity-40"
                   >
@@ -136,7 +173,21 @@ export function CommandPalette({
                     />
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate">{command.label}</span>
-                      {command.hint && <span className="truncate text-meta text-tertiary">{command.hint}</span>}
+                      {command.hint && (
+                        <span className={command.highlight ? "line-clamp-2 text-meta text-tertiary" : "truncate text-meta text-tertiary"}>
+                          {command.highlight
+                            ? markMatches(command.hint, command.highlight).map((part, index) =>
+                                part.match ? (
+                                  <mark key={index} className="bg-transparent font-medium text-foreground">
+                                    {part.text}
+                                  </mark>
+                                ) : (
+                                  <span key={index}>{part.text}</span>
+                                )
+                              )
+                            : command.hint}
+                        </span>
+                      )}
                     </span>
                     {command.shortcut && <Kbd keys={command.shortcut} />}
                   </CommandPrimitive.Item>

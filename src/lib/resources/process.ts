@@ -2,7 +2,7 @@ import { apiOrigin } from "@/lib/platform/api-base";
 import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs";
 import { EXTRACTION_ERRORS, isExtractionResponse } from "./extraction";
 import { extractPdfText, PdfUnreadableError } from "./pdf";
-import { parseTranscript } from "./transcript";
+import { cleanLanguageTag, normalizeTranscript, parseTranscript } from "./transcript";
 import type { ExtractionRequest, ExtractionResponse } from "./extraction";
 import type { Tab } from "@/lib/tabs/types";
 import type { ResourceContent, ResourceContentSummary, ResourceError, ResourceMeta, TabResource } from "./types";
@@ -26,7 +26,38 @@ export type ProcessDeps = {
   extract: (request: ExtractionRequest) => Promise<ExtractionResponse>;
   putContent: (workspaceId: string, tabId: string, content: ResourceContent) => Promise<ResourceContentSummary>;
   now: () => number;
+  /** The reader's preferred transcript language — the browser's, when it says. */
+  language?: () => string | undefined;
 };
+
+/** The browser's language, as a hint for which captions to prefer. */
+export function browserLanguage(): string | undefined {
+  return typeof navigator === "undefined" ? undefined : cleanLanguageTag(navigator.language);
+}
+
+/**
+ * What the reader sent, made safe to store: a transcript is cleaned and
+ * re-ordered here too (the desktop app reads a deployment it did not ship
+ * with), and one that comes back empty is no transcript at all.
+ */
+function receivedContent(content: NonNullable<Extract<ExtractionResponse, { ok: true }>["content"]>): typeof content | undefined {
+  if (!content.transcript) return content;
+  const transcript = normalizeTranscript(content.transcript);
+  if (transcript.length === 0) {
+    if (!content.text && !content.pages) return undefined;
+    const rest = { ...content };
+    delete rest.transcript;
+    delete rest.transcriptInfo;
+    return rest;
+  }
+  const language = cleanLanguageTag(content.transcriptInfo?.language);
+  const provider = typeof content.transcriptInfo?.provider === "string" ? content.transcriptInfo.provider.slice(0, 40) : undefined;
+  return {
+    ...content,
+    transcript,
+    transcriptInfo: { source: "captions", ...(language ? { language } : {}), ...(provider ? { provider } : {}) },
+  };
+}
 
 export type ProcessResult = {
   tabId: string;
@@ -83,7 +114,8 @@ export async function processSource(workspaceId: string, tab: Tab, deps: Process
 
   let response: ExtractionResponse;
   try {
-    response = await deps.extract({ url: tab.url, kind: resource.kind });
+    const language = resource.kind === "youtube" ? deps.language?.() : undefined;
+    response = await deps.extract({ url: tab.url, kind: resource.kind, ...(language ? { language } : {}) });
   } catch {
     return failed(EXTRACTION_ERRORS.offline);
   }
@@ -93,8 +125,9 @@ export async function processSource(workspaceId: string, tab: Tab, deps: Process
   const title = response.title && needsTitle(tab) ? response.title : undefined;
   const base = { kind: response.kind, ...(meta ? { meta } : {}) };
 
-  if (response.status === "ready" && response.content) {
-    const content: ResourceContent = { kind: response.kind, ...response.content, extractedAt: deps.now() };
+  const received = response.status === "ready" && response.content ? receivedContent(response.content) : undefined;
+  if (received) {
+    const content: ResourceContent = { kind: response.kind, ...received, extractedAt: deps.now() };
     let summary: ResourceContentSummary;
     try {
       summary = await deps.putContent(workspaceId, tab.id, content);
@@ -108,7 +141,7 @@ export async function processSource(workspaceId: string, tab: Tab, deps: Process
   if (resource.content) {
     return { tabId: tab.id, resource: settle(resource, { ...base, status: "ready" }, deps.now()), ...(title ? { title } : {}) };
   }
-  const error = response.error ?? EXTRACTION_ERRORS.no_text;
+  const error = response.error ?? (response.kind === "youtube" ? EXTRACTION_ERRORS.transcript_unavailable : EXTRACTION_ERRORS.no_text);
   return { tabId: tab.id, resource: settle(resource, { ...base, status: "partial", error }, deps.now()), ...(title ? { title } : {}) };
 }
 
@@ -150,7 +183,7 @@ export async function attachTranscript(
   const lines = parseTranscript(text);
   if (lines.length === 0) return { error: "That doesn't look like a transcript — paste the text or choose a .vtt, .srt or .txt file." };
   const resource = tab.resource!;
-  const summary = await deps.putContent(workspaceId, tab.id, { kind: resource.kind, transcript: lines, extractedAt: deps.now() });
+  const summary = await deps.putContent(workspaceId, tab.id, { kind: resource.kind, transcript: lines, transcriptInfo: { source: "supplied" }, extractedAt: deps.now() });
   return { tabId: tab.id, resource: settle(resource, { status: "ready", content: summary }, deps.now()) };
 }
 

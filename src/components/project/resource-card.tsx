@@ -59,7 +59,8 @@ export function ResourceCard({
   const title = tab.title?.trim() || tab.domain
   const canRetry = resource.status === "failed" || resource.status === "partial"
   const needsFile = resource.kind === "pdf" && resource.status !== "ready"
-  const needsTranscript = (resource.kind === "youtube" || resource.kind === "video") && resource.status !== "ready"
+  // Not while Hubble is still getting one itself.
+  const needsTranscript = (resource.kind === "youtube" || resource.kind === "video") && (resource.status === "partial" || resource.status === "failed")
   const added = formatRelativeTime(resource.addedAt, now)
   return (
     <li

@@ -15,7 +15,8 @@ import type { ResourceContent, ResourceError, ResourceKind, ResourceMeta } from 
  * A source the server could not reach at all is `{ ok: false }`.
  */
 
-export type ExtractionRequest = { url: string; kind?: ResourceKind };
+/** `language`: the reader's preferred transcript language (BCP 47), a hint the server may ignore. */
+export type ExtractionRequest = { url: string; kind?: ResourceKind; language?: string };
 
 export type ExtractionResponse =
   | {
@@ -46,15 +47,38 @@ export const EXTRACTION_ERRORS = {
   no_text: { code: "no_text", message: "Hubble couldn't find readable text on the page.", retryable: true },
   pdf_needs_file: { code: "pdf_needs_file", message: "PDF detected. Hubble needs the file itself to read its contents.", retryable: true },
   pdf_unreadable: { code: "pdf_unreadable", message: "PDF saved. Text extraction failed.", retryable: true },
+  /*
+    A video is always saved and playable; these say only why Hubble has no
+    transcript of it. Only the ones a later attempt could change are retryable.
+  */
   transcript_unavailable: {
     code: "transcript_unavailable",
-    message: "Video saved. Transcript isn't available — add one so AI can read what's said.",
+    message: "Video saved. It has no captions Hubble can read — you can add a transcript yourself.",
     retryable: false,
   },
+  transcripts_off: {
+    code: "transcript_unavailable",
+    message: "Video saved. Automatic transcripts aren't set up for this Hubble — you can add one yourself.",
+    retryable: false,
+  },
+  video_unavailable: {
+    code: "not_found",
+    message: "Video saved. It's private, removed or restricted, so Hubble can't read its transcript.",
+    retryable: false,
+  },
+  transcript_busy: { code: "unreachable", message: "Video saved. Hubble couldn't get its transcript just now — try again in a few minutes.", retryable: true },
+  transcript_failed: { code: "unreachable", message: "Video saved. The transcript service didn't answer properly — try again.", retryable: true },
+  transcript_timeout: { code: "timeout", message: "Video saved. Getting its transcript took too long — try again.", retryable: true },
   timeout: { code: "timeout", message: "The page took too long to respond.", retryable: true },
   offline: { code: "offline", message: "Hubble couldn't reach its reader. Check your connection.", retryable: true },
   interrupted: { code: "interrupted", message: "Reading was interrupted.", retryable: true },
 } as const satisfies Record<string, ResourceError>;
+
+/**
+ * What a video said before Hubble could fetch transcripts. A video saved
+ * with it was never asked for one, so it is read again once (read.ts).
+ */
+export const LEGACY_TRANSCRIPT_MESSAGE = "Video saved. Transcript isn't available — add one so AI can read what's said.";
 
 /** What `blocked` said before it was reworded. Sources saved with it are shown the current words (read.ts). */
 export const LEGACY_BLOCKED_MESSAGE = "The site refused to let Hubble read this page.";

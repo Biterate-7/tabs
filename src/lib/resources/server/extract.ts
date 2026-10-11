@@ -3,7 +3,10 @@ import { detectResourceType, youtubeVideoId } from "@/lib/resources/detect";
 import { EXTRACTION_ERRORS } from "@/lib/resources/extraction";
 import { readHtml } from "@/lib/resources/html";
 import { extractPdfText, isPdfBytes, PdfUnreadableError } from "@/lib/resources/pdf";
+import { youtubeMomentUrl } from "@/lib/resources/youtube";
 import { fetchBytes } from "./fetch";
+import { configuredTranscriptProvider, getTranscript } from "./transcripts";
+import type { TranscriptFetch, TranscriptProvider } from "./transcripts";
 import type { ExtractionResponse } from "@/lib/resources/extraction";
 import type { ResourceError, ResourceKind, ResourceMeta } from "@/lib/resources/types";
 
@@ -57,39 +60,87 @@ export function landedOnSignIn(requested: string, final: string): boolean {
   }
 }
 
-async function youtube(url: string, fetcher: Fetcher): Promise<ExtractionResponse> {
-  const id = youtubeVideoId(url)!;
-  const watch = `https://www.youtube.com/watch?v=${id}`;
-  const oembed = `https://www.youtube.com/oembed?url=${encodeURIComponent(watch)}&format=json`;
-  const fetched = await fetcher(oembed, { accept: "application/json", maxBytes: 64 * 1024, timeoutMs: 8_000 });
-  if (!fetched.ok) return { ok: false, error: fetched.reason === "timeout" ? EXTRACTION_ERRORS.timeout : EXTRACTION_ERRORS.unreachable };
-  if (fetched.status === 404 || fetched.status === 401 || fetched.status === 403) {
-    // Private, removed or embedding disabled: the link is still the person's to keep.
-    return { ok: true, kind: "youtube", status: "partial", finalUrl: watch, meta: { siteName: "YouTube" }, error: EXTRACTION_ERRORS.transcript_unavailable };
-  }
-  let data: { title?: unknown; author_name?: unknown } = {};
-  try {
-    data = JSON.parse(new TextDecoder().decode(fetched.bytes)) as typeof data;
-  } catch {
-    data = {};
-  }
-  const meta: ResourceMeta = { siteName: "YouTube" };
-  if (typeof data.author_name === "string" && data.author_name.trim()) meta.author = data.author_name.trim().slice(0, 200);
-  return {
-    ok: true,
-    kind: "youtube",
-    status: "partial",
-    finalUrl: watch,
-    ...(typeof data.title === "string" && data.title.trim() ? { title: data.title.trim().slice(0, 300) } : {}),
-    meta,
-    error: EXTRACTION_ERRORS.transcript_unavailable,
-  };
+/** What a YouTube read may do about captions; the route decides (a configured provider, and the caller's allowance). */
+export type TranscriptOptions = {
+  provider: TranscriptProvider | null;
+  /** The reader's preferred language; the provider falls back to the video's own. */
+  language?: string;
+  /** False once this caller has used its transcript allowance: the video is still saved, without asking. */
+  allowed?: boolean;
+};
+
+function transcriptError(reason: Extract<TranscriptFetch, { ok: false }>["reason"], videoGone: boolean): ResourceError {
+  if (videoGone || reason === "not_found") return EXTRACTION_ERRORS.video_unavailable;
+  if (reason === "not_configured") return EXTRACTION_ERRORS.transcripts_off;
+  if (reason === "no_captions") return EXTRACTION_ERRORS.transcript_unavailable;
+  if (reason === "timeout") return EXTRACTION_ERRORS.transcript_timeout;
+  if (reason === "malformed") return EXTRACTION_ERRORS.transcript_failed;
+  return EXTRACTION_ERRORS.transcript_busy;
 }
 
-export async function extractSource(url: string, options: { kind?: ResourceKind; fetcher?: Fetcher } = {}): Promise<ExtractionResponse> {
+/**
+ * A YouTube video: its public metadata from oEmbed and, when this server
+ * has a transcript provider, its existing captions (server/transcripts.ts)
+ * — asked at the same time, so a video costs one round trip.
+ *
+ * Ready only with a transcript in hand. Without one the video is still a
+ * source — saved, playable, searchable by title — and says why.
+ */
+async function youtube(url: string, fetcher: Fetcher, transcripts: TranscriptOptions): Promise<ExtractionResponse> {
+  const id = youtubeVideoId(url)!;
+  const watch = youtubeMomentUrl(id);
+  const oembed = `https://www.youtube.com/oembed?url=${encodeURIComponent(watch)}&format=json`;
+  const [fetched, transcript] = await Promise.all([
+    fetcher(oembed, { accept: "application/json", maxBytes: 64 * 1024, timeoutMs: 8_000 }),
+    transcripts.allowed === false
+      ? Promise.resolve<TranscriptFetch>({ ok: false, reason: "rate_limited" })
+      : getTranscript(id, { provider: transcripts.provider, ...(transcripts.language ? { language: transcripts.language } : {}) }),
+  ]);
+
+  const meta: ResourceMeta = { siteName: "YouTube" };
+  let title: string | undefined;
+  // 400 (an id that resolves to nothing — what oEmbed answers in practice) and 404 are "no such video";
+  // 401/403 are private or embedding turned off — the video may still have captions.
+  const videoGone = fetched.ok && (fetched.status === 400 || fetched.status === 404);
+  if (fetched.ok && fetched.status === 200) {
+    let data: { title?: unknown; author_name?: unknown } = {};
+    try {
+      data = JSON.parse(new TextDecoder().decode(fetched.bytes)) as typeof data;
+    } catch {
+      data = {};
+    }
+    if (typeof data.author_name === "string" && data.author_name.trim()) meta.author = data.author_name.trim().slice(0, 200);
+    if (typeof data.title === "string" && data.title.trim()) title = data.title.trim().slice(0, 300);
+  }
+
+  if (transcript.ok) {
+    return {
+      ok: true,
+      kind: "youtube",
+      status: "ready",
+      finalUrl: watch,
+      ...(title ? { title } : {}),
+      meta,
+      content: {
+        transcript: transcript.segments,
+        transcriptInfo: { source: "captions", provider: transcript.provider, ...(transcript.language ? { language: transcript.language } : {}) },
+      },
+    };
+  }
+  // Neither answered: nothing was learned, so it is a failure to retry, not a saved video without a transcript.
+  if (!fetched.ok && transcript.reason !== "no_captions" && transcript.reason !== "not_found") {
+    return { ok: false, error: fetched.reason === "timeout" ? EXTRACTION_ERRORS.timeout : EXTRACTION_ERRORS.unreachable };
+  }
+  return { ok: true, kind: "youtube", status: "partial", finalUrl: watch, ...(title ? { title } : {}), meta, error: transcriptError(transcript.reason, videoGone) };
+}
+
+export async function extractSource(
+  url: string,
+  options: { kind?: ResourceKind; fetcher?: Fetcher; transcripts?: TranscriptOptions } = {}
+): Promise<ExtractionResponse> {
   const fetcher = options.fetcher ?? fetchBytes;
   const expected = options.kind ?? detectResourceType({ url });
-  if (expected === "youtube" && youtubeVideoId(url)) return youtube(url, fetcher);
+  if (expected === "youtube" && youtubeVideoId(url)) return youtube(url, fetcher, options.transcripts ?? { provider: configuredTranscriptProvider() });
 
   const fetched = await fetcher(url, {
     accept: "text/html,application/xhtml+xml,application/pdf;q=0.9,text/plain;q=0.8,*/*;q=0.5",
