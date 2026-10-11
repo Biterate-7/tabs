@@ -1,4 +1,5 @@
-import { EXTRACTION_ERRORS, LEGACY_BLOCKED_MESSAGE } from "./extraction";
+import { EXTRACTION_ERRORS, LEGACY_BLOCKED_MESSAGE, LEGACY_TRANSCRIPT_MESSAGE } from "./extraction";
+import { cleanLanguageTag } from "./transcript";
 import { RESOURCE_KINDS, RESOURCE_ORIGINS, RESOURCE_STATUSES } from "./types";
 import type { ResourceError, ResourceErrorCode, ResourceMeta, TabResource } from "./types";
 
@@ -12,6 +13,11 @@ import type { ResourceError, ResourceErrorCode, ResourceMeta, TabResource } from
  * "processing" when the page closed comes back as "pending" — the run that
  * was reading it no longer exists, and saying otherwise would be a spinner
  * that never ends.
+ *
+ * One upgrade happens here too: a YouTube video saved before Hubble could
+ * fetch transcripts (it carries that era's "Transcript isn't available"
+ * words and no content) goes back to pending, so it is asked for one once.
+ * Its next answer replaces those words, so this never repeats.
  */
 
 const ERROR_CODES: readonly ResourceErrorCode[] = [
@@ -90,12 +96,15 @@ export function readTabResource(raw: unknown): TabResource | undefined {
       const lines = count(summary.transcriptLines);
       if (pages !== undefined) content.pages = pages;
       if (lines !== undefined) content.transcriptLines = lines;
+      const language = cleanLanguageTag(summary.language);
+      if (language) content.language = language;
       if (summary.truncated === true) content.truncated = true;
     }
   }
   // "Ready" is a claim that content exists; without a summary of it, it is not ready.
-  const honestStatus = status === "ready" && !content ? "pending" : status;
-  const attempts = count(source.attempts);
+  const neverAsked = source.kind === "youtube" && status === "partial" && !content && error?.code === "transcript_unavailable" && error.message === LEGACY_TRANSCRIPT_MESSAGE;
+  const honestStatus = (status === "ready" && !content) || neverAsked ? "pending" : status;
+  const attempts = neverAsked ? 0 : count(source.attempts);
 
   return {
     kind: source.kind as TabResource["kind"],

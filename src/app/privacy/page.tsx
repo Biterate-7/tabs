@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <LegalPage title="Privacy Policy" lastUpdated="October 1, 2026">
+    <LegalPage title="Privacy Policy" lastUpdated="October 11, 2026">
       <section>
         <h2>Introduction</h2>
         <p>
@@ -67,10 +67,26 @@ export default function PrivacyPolicyPage() {
             sent for this lookup, and requests to private, local, or internal network addresses are blocked
             before any fetch happens.
           </li>
+          <li id="youtube-transcripts">
+            <strong>YouTube transcripts, on deployments that enable them.</strong> Automatic transcripts are
+            optional: they work only where the operator has configured a transcript service (currently
+            Supadata). There, when you add a YouTube video to a subject, Hubble&apos;s server asks that service
+            for the video&apos;s existing captions, so you can read and search what is said. The request comes
+            from Hubble&apos;s server, not your browser, and carries only the video&apos;s public YouTube address
+            and a short language code (such as &quot;en&quot;) from your browser&apos;s settings — nothing about you, your account,
+            your IP address, or your other resources. Supadata handles that request under its own privacy
+            policy; it keeps request logs and may cache results for public videos. The transcript comes back
+            to your browser and is stored on your device; Hubble&apos;s server keeps a copy in memory for up to
+            a day so the same video is not requested twice, and writes nothing to disk. Hubble never downloads
+            a video&apos;s audio or runs speech recognition. Without a transcript service, videos are saved
+            as usual and you can add a transcript yourself; it is read on your device and never sent anywhere.
+            When you press Play on a video inside Hubble, the player is YouTube&apos;s own privacy-enhanced
+            embed (youtube-nocookie.com), and opening a video&apos;s details loads its thumbnail from YouTube.
+          </li>
           <li>
             <strong>IP address, transiently, for abuse prevention.</strong> The server uses your
-            request&apos;s IP address to apply a simple rate limit per address on the sign-in, sync, and
-            optional AI endpoints, so one caller cannot exhaust a shared quota or flood the service. This is
+            request&apos;s IP address to apply a simple rate limit per address on the sign-in, sync, resource
+            reader, and optional AI endpoints, so one caller cannot exhaust a shared quota or flood the service. This is
             held in server memory only, is never written to a file or database, and is cleared whenever the
             server process restarts.
           </li>

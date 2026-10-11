@@ -1,6 +1,7 @@
 import { redactUrl, sanitizeText } from "@/lib/agents/context/sanitize";
 import { describeLocation, searchProject } from "@/lib/resources/search";
 import { formatTimestamp } from "@/lib/resources/transcript";
+import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube";
 import { RESOURCE_KIND_LABEL } from "@/lib/resources/types";
 import type { ResourceContent } from "@/lib/resources/types";
 import type { Tab } from "@/lib/tabs/types";
@@ -84,7 +85,7 @@ export function listSourcesAnswer(snapshot: SessionContextSnapshot) {
     total: tabs.length,
     loaded: tabs.filter((tab) => contentOf(snapshot, tab.id)).length,
     sources: tabs.map((tab) => describe(tab, snapshot)),
-    howToRead: "read_source with a sourceId (and a page range for PDFs); search_sources to find which source says something. Cite sources by title and page.",
+    howToRead: "read_source with a sourceId (and a page range for PDFs); search_sources to find which source says something. Cite sources by title and page, or a video by title, timestamp and its link.",
   };
 }
 
@@ -166,6 +167,12 @@ export function readSourceAnswer(snapshot: SessionContextSnapshot, args: ReadSou
   };
 }
 
+/** A transcript hit's place: seconds, and for a YouTube video the link that opens it there — rebuilt from the video id, never the saved address. */
+function momentOf(url: string, start: number): { seconds: number; link?: string } {
+  const video = parseYouTubeUrl(url);
+  return { seconds: Math.floor(start), ...(video ? { link: youtubeMomentUrl(video.videoId, start) } : {}) };
+}
+
 export function searchSourcesAnswer(snapshot: SessionContextSnapshot, query: string) {
   const contents = new Map<string, ResourceContent>(
     (snapshot.sources ?? []).map((source) => [source.tabId, { kind: source.kind, extractedAt: 0, ...(source.text ? { text: source.text } : {}), ...(source.pages ? { pages: source.pages } : {}), ...(source.transcript ? { transcript: source.transcript } : {}) }])
@@ -183,6 +190,7 @@ export function searchSourcesAnswer(snapshot: SessionContextSnapshot, query: str
         title: sanitizeText(tab.title) ?? tab.domain,
         ...(where ? { where } : {}),
         ...(hit.location.kind === "page" ? { page: hit.location.page } : {}),
+        ...(hit.location.kind === "transcript" && hit.location.start !== undefined ? momentOf(tab.url, hit.location.start) : {}),
         matchedIn: hit.location.kind,
         snippet: clean(hit.snippet),
       },

@@ -44,6 +44,12 @@ import { describeIngestion, ingestResources } from "@/lib/resources/ingest"
 import type { IngestionPlan, IngestOutcome } from "@/lib/resources/ingest"
 import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
 import { pruneProjectContent } from "@/lib/resources/content-store"
+import { sameResource } from "@/lib/resources/url"
+import { searchTerms } from "@/lib/resources/search"
+import { formatTimestamp } from "@/lib/resources/transcript"
+import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube"
+import { useTranscriptSearch } from "@/hooks/use-transcript-search"
+import { PlayCircle } from "lucide-react"
 import { forgetProjectActivity, recordProjectEvent } from "@/lib/projects/activity"
 import { useResourceProcessing } from "@/hooks/use-resource-processing"
 import { ProjectHome, ProjectPage } from "@/components/project/project-home"
@@ -95,7 +101,7 @@ import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
-import type { WorkspaceStore } from "@/lib/workspace/types"
+import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { CommandPalette } from "@/components/command-palette/command-palette"
 import { AgentActionsProvider, type AgentActions } from "@/components/agents/agent-actions"
@@ -122,6 +128,8 @@ type CommitOrigin = "local" | "remote"
 
 const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
 const RECENTLY_ADDED_DURATION_MS = 6000
+/** Stable while the store loads, so the transcript search's memo holds. */
+const NO_WORKSPACES: Workspace[] = []
 
 /**
  * How many physics ticks the layout precompute runs per macrotask. Small
@@ -288,6 +296,8 @@ export function AppShell() {
   const [contributedCommands, setContributedCommands] = useState<Command[][]>([])
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
   const contributedCommandsRef = useRef(new Map<string, Command[]>())
+  // What was said in every subject's videos, loaded only while the palette is open.
+  const searchMoments = useTranscriptSearch(store?.workspaces ?? NO_WORKSPACES, paletteOpen)
   const paletteHost = useMemo<CommandPaletteHost>(
     () => ({
       open: () => {
@@ -1405,12 +1415,13 @@ export function AppShell() {
     persist(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((tab) => (tab.id === tabId ? { ...tab, title } : tab))))
   }
 
-  function handleOpenSource(workspaceId: string, tabId: string) {
+  /** `at`: an address Hubble built for this resource (a video at a moment) — opened instead of the saved one. */
+  function handleOpenSource(workspaceId: string, tabId: string, at?: string) {
     const latest = storeRef.current
     const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
     const tab = workspace?.tabs.find((entry) => entry.id === tabId)
     if (!latest || !workspace || !tab) return
-    openTab(tab.url)
+    openTab(at && sameResource(at, tab.url) ? at : tab.url)
     commitStore(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((entry) => (entry.id === tabId ? { ...entry, lastAccessedAt: Date.now() } : entry))))
   }
 
@@ -1427,6 +1438,7 @@ export function AppShell() {
         onRenameSource={(tabId, title) => handleRenameSource(workspace.id, tabId, title)}
         onRemoveSources={(tabIds) => handleRemoveSources(workspace.id, tabIds)}
         onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
+        onOpenSourceAt={(tab, url) => handleOpenSource(workspace.id, tab.id, url)}
         {...(agentActions ? { onUseInTask: (tab: { id: string }) => agentActions.ask(tabsContext(workspace.id, [tab.id])) } : {})}
         onConnectAI={() => setView("ai")}
         onOpenTask={(sessionId) => {
@@ -1873,6 +1885,32 @@ export function AppShell() {
     return null
   })()
 
+  // ⌘K over transcripts: a moment opens the video at the time it is said.
+  const momentCommands = (query: string): Command[] => {
+    const terms = searchTerms(query)
+    return searchMoments(query).flatMap((hit): Command[] => {
+      const workspace = store.workspaces.find((entry) => entry.id === hit.workspaceId)
+      const tab = workspace?.tabs.find((entry) => entry.id === hit.tabId)
+      if (!workspace || !tab) return []
+      const at = hit.location.start
+      const video = parseYouTubeUrl(tab.url)
+      const url = video ? youtubeMomentUrl(video.videoId, at) : tab.url
+      const where = [workspace.id === store.currentId ? undefined : subjectName(workspace), at !== undefined ? formatTimestamp(at) : undefined].filter(Boolean).join(" · ")
+      return [
+        {
+          id: `moment-${workspace.id}-${tab.id}-${hit.location.line}`,
+          label: tab.title?.trim() || tab.domain,
+          hint: `${where ? `${where} · ` : ""}${hit.snippet}`,
+          highlight: terms,
+          forceMount: true,
+          group: "Moments",
+          icon: PlayCircle,
+          onSelect: () => handleOpenSource(workspace.id, tab.id, url),
+        },
+      ]
+    })
+  }
+
   const globalCommands = paletteOpen
     ? buildGlobalCommands(
         {
@@ -1915,6 +1953,7 @@ export function AppShell() {
         onOpenChange={setPaletteOpen}
         commands={paletteOpen ? mergeCommands(globalCommands, contributedCommands) : []}
         placeholder="Search Hubble"
+        searchContent={momentCommands}
       />
       {desktopImportDialog}
       <NewWorkspaceDialog

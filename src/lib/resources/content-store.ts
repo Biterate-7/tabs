@@ -1,4 +1,5 @@
 import { getStorageNamespace } from "@/lib/storage/namespace";
+import { cleanLanguageTag } from "./transcript";
 import { CONTENT_LIMITS } from "./types";
 import type { ResourceContent, ResourceContentSummary } from "./types";
 
@@ -125,8 +126,14 @@ export function boundContent(content: ResourceContent): ResourceContent {
     if (content.transcript.length > CONTENT_LIMITS.transcriptLines) truncated = true;
     out.transcript = content.transcript.slice(0, CONTENT_LIMITS.transcriptLines).map((line) => ({
       ...(line.start !== undefined ? { start: line.start } : {}),
+      ...(line.end !== undefined ? { end: line.end } : {}),
       text: line.text.slice(0, CONTENT_LIMITS.transcriptLine),
     }));
+    if (content.transcriptInfo) {
+      const language = cleanLanguageTag(content.transcriptInfo.language);
+      const provider = content.transcriptInfo.provider?.slice(0, 40);
+      out.transcriptInfo = { source: content.transcriptInfo.source === "captions" ? "captions" : "supplied", ...(language ? { language } : {}), ...(provider ? { provider } : {}) };
+    }
   }
   if (truncated) out.truncated = true;
   return out;
@@ -143,6 +150,7 @@ export function summarizeContent(content: ResourceContent): ResourceContentSumma
     extractedAt: content.extractedAt,
     ...(content.pages ? { pages: content.pages.length } : {}),
     ...(content.transcript ? { transcriptLines: content.transcript.length } : {}),
+    ...(content.transcriptInfo?.language ? { language: content.transcriptInfo.language } : {}),
     ...(content.truncated ? { truncated: true } : {}),
   };
 }
@@ -168,6 +176,7 @@ function strip(record: StoredContent): ResourceContent {
     ...(record.text !== undefined ? { text: record.text } : {}),
     ...(record.pages ? { pages: record.pages } : {}),
     ...(record.transcript ? { transcript: record.transcript } : {}),
+    ...(record.transcriptInfo ? { transcriptInfo: record.transcriptInfo } : {}),
     ...(record.truncated ? { truncated: true } : {}),
   };
 }
@@ -179,6 +188,35 @@ export async function getProjectContents(workspaceId: string): Promise<Map<strin
     ? ((await run<StoredContent[]>("readonly", (store) => store.index(PROJECT_INDEX).getAll(IDBKeyRange.only(project)) as IDBRequest<StoredContent[]>)) ?? [])
     : [...memory.values()].filter((record) => record.project === project);
   return new Map(records.map((record) => [record.tabId, strip(record)]));
+}
+
+/**
+ * Some sources of one project, by tab id — one transaction, and only the
+ * records asked for (search across subjects needs transcripts, not every
+ * PDF's pages). Tabs with nothing stored are simply absent.
+ */
+export async function getContents(workspaceId: string, tabIds: readonly string[]): Promise<Map<string, ResourceContent>> {
+  const out = new Map<string, ResourceContent>();
+  if (tabIds.length === 0) return out;
+  const keys = tabIds.map((tabId) => contentKey(workspaceId, tabId));
+  if (!contentStorePersistent()) {
+    for (const key of keys) {
+      const record = memory.get(key);
+      if (record) out.set(record.tabId, strip(record));
+    }
+    return out;
+  }
+  const found: StoredContent[] = [];
+  await run("readonly", (store) => {
+    for (const key of keys) {
+      const request = store.get(key) as IDBRequest<StoredContent | undefined>;
+      request.onsuccess = () => {
+        if (request.result) found.push(request.result);
+      };
+    }
+  });
+  for (const record of found) out.set(record.tabId, strip(record));
+  return out;
 }
 
 export async function deleteContent(workspaceId: string, tabIds: readonly string[]): Promise<void> {
@@ -199,6 +237,53 @@ export async function pruneProjectContent(workspaceId: string, keepTabIds: Reado
   const stale = [...stored.keys()].filter((tabId) => !keepTabIds.has(tabId));
   await deleteContent(workspaceId, stale);
   return stale.length;
+}
+
+/**
+ * Carries a source's content to another project, for a tab moved between
+ * subjects — content is keyed by project, so without this the moved source
+ * would claim content it can no longer reach. Nothing stored: nothing to do.
+ */
+export async function moveContent(fromWorkspaceId: string, toWorkspaceId: string, tabId: string): Promise<boolean> {
+  if (fromWorkspaceId === toWorkspaceId) return false;
+  const content = await getContent(fromWorkspaceId, tabId);
+  if (!content) return false;
+  await putContent(toWorkspaceId, tabId, content);
+  await deleteContent(fromWorkspaceId, [tabId]);
+  return true;
+}
+
+/**
+ * Removes everything this account stored for tabs that no longer exist —
+ * in any project, including projects that are gone. `present` is every
+ * project's current tabs. Reads keys only, never content. Idempotent.
+ *
+ * Only the active account's records are considered: another account's
+ * content on the same device is never touched.
+ */
+export async function pruneContentExcept(present: ReadonlyMap<string, ReadonlySet<string>>): Promise<number> {
+  const prefix = `${owner()}|`;
+  const keep = new Set<string>();
+  for (const [workspaceId, tabIds] of present) for (const tabId of tabIds) keep.add(contentKey(workspaceId, tabId));
+  if (!contentStorePersistent()) {
+    let removed = 0;
+    for (const key of [...memory.keys()]) {
+      if (key.startsWith(prefix) && !keep.has(key)) {
+        memory.delete(key);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+  const keys = ((await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))) ?? []).filter(
+    (key): key is string => typeof key === "string" && !keep.has(key)
+  );
+  if (keys.length > 0) {
+    await run("readwrite", (store) => {
+      for (const key of keys) store.delete(key);
+    });
+  }
+  return keys.length;
 }
 
 /** For tests: forget the memory fallback and the open connection. */

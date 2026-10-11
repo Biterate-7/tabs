@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { SourceKindIcon, SourceStatus } from "./source-status"
+import { VideoTranscript, type TranscriptSeek } from "./video-transcript"
+import { isDesktop } from "@/lib/platform/detect"
 import { getContent } from "@/lib/resources/content-store"
 import { formatTimestamp } from "@/lib/resources/transcript"
 import { RESOURCE_KIND_LABEL } from "@/lib/resources/types"
@@ -44,10 +46,16 @@ export function SourceDetailsDialog({
   onOpen,
   onAttachPdf,
   onAttachTranscript,
+  onOpenAt,
+  seek,
 }: {
   tab: Tab | null
   workspaceId: string
   focusRename?: boolean
+  /** Open the resource at an address Hubble built for it — a video at a moment. Falls back to Open. */
+  onOpenAt?: (tab: Tab, url: string) => void
+  /** Open a video's transcript at a moment (from search). */
+  seek?: TranscriptSeek
   onOpenChange: (open: boolean) => void
   onRename: (tab: Tab, title: string) => void
   onRetry: (tab: Tab) => void
@@ -102,6 +110,7 @@ export function SourceDetailsDialog({
   ].filter(Boolean)
   const isPdf = resource.kind === "pdf"
   const isVideo = resource.kind === "youtube" || resource.kind === "video"
+  const isYouTube = resource.kind === "youtube"
 
   function rename(event: FormEvent) {
     event.preventDefault()
@@ -127,13 +136,13 @@ export function SourceDetailsDialog({
     if (result.error) setMessage(result.error)
     else {
       setTranscript("")
-      setMessage("Transcript added. AI can read it now.")
+      setMessage("Transcript added. You can search it, and AI can read it.")
     }
   }
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className={isYouTube ? "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl" : "sm:max-w-xl"}>
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-center gap-2">
             <SourceKindIcon kind={resource.kind} />
@@ -161,7 +170,19 @@ export function SourceDetailsDialog({
             <SourceStatus resource={resource} />
           </div>
 
-          {preview && (
+          {isYouTube && (
+            <VideoTranscript
+              tab={tab}
+              resource={resource}
+              content={resource.content ? loaded : null}
+              {...(seek ? { seek } : {})}
+              embeddable={!isDesktop()}
+              onOpenAt={(url) => (onOpenAt ? onOpenAt(tab, url) : onOpen(tab))}
+              onRetry={() => onRetry(tab)}
+            />
+          )}
+
+          {preview && !isYouTube && (
             <section aria-label="What Hubble read">
               <p className="text-meta text-tertiary">What Hubble read — {preview.label}. Written by the source, shown as it is.</p>
               <pre className="mt-1 max-h-48 overflow-y-auto rounded-md border border-subtle bg-background p-2 font-sans text-body-sm whitespace-pre-wrap text-muted-foreground">{preview.text || "(This page of the document has no text.)"}</pre>
@@ -181,9 +202,9 @@ export function SourceDetailsDialog({
 
           {isVideo && resource.status !== "ready" && (
             <section aria-label="Add a transcript" className="rounded-md border border-subtle p-3">
-              <p className="text-body-sm text-foreground">Add a transcript so agents can read what is said.</p>
+              <p className="text-body-sm text-foreground">Add a transcript yourself to search what is said.</p>
               <p className="text-meta text-muted-foreground">
-                On YouTube, open the video&apos;s description and choose “Show transcript”, then copy it here — or choose a .vtt, .srt or .txt caption file. Hubble doesn&apos;t download transcripts itself.
+                On YouTube, open the video&apos;s description and choose “Show transcript”, then copy it here — or choose a .vtt, .srt or .txt caption file. It stays on this device.
               </p>
               <Textarea className="mt-2 min-h-20 text-body-sm" value={transcript} onChange={(event) => setTranscript(event.target.value)} aria-label="Transcript text" placeholder={"0:00\nIn October 1962…"} />
               <div className="mt-2 flex gap-2">
@@ -215,7 +236,8 @@ export function SourceDetailsDialog({
         </div>
 
         <DialogFooter>
-          {(resource.status === "failed" || resource.status === "partial") && (
+          {/* A video's reader offers its own "Try again" for errors a retry could fix. */}
+          {(resource.status === "failed" || resource.status === "partial") && !(isYouTube && resource.error?.retryable) && (
             <Button type="button" variant="ghost" onClick={() => onRetry(tab)}>
               <RotateCw /> Read again
             </Button>

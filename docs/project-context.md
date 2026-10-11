@@ -87,6 +87,22 @@ details, live sessions), bounded per source (`CONTENT_LIMITS`). A "ready"
 source whose content is missing on this device (cleared storage, data copied
 between accounts) is read again automatically.
 
+**Content follows its tab** (`use-resource-processing.ts`). Tabs leave a
+project by many doors (Remove, delete/Clean up in the tab view, the graph,
+Clear, moves, deleting the subject, deletions arriving by sync), and the store
+is the one authority watched. A tab that disappears takes its content out of
+reach at once (search, the reader and agents only look at a project's current
+tabs), but the content stays on the device until the **next page load**: every
+Undo lives in the page, and a toast's Undo can come minutes later (Sonner
+pauses toasts while hovered or while the window is hidden) — deleting on a
+timer would let Undo restore an uploaded PDF or pasted transcript empty. A tab
+moved to another subject has its content carried to the new key
+(`moveContent`). Once per page load, after `CONTENT_GRACE_MS` (60 s, for sync
+to settle), `pruneContentExcept` removes this account's records for tabs that
+were already gone at load and still are — keys only, never another account's,
+skipped if the account changed. Remove's toast closing without Undo and
+deleting a subject still forget at once. All idempotent.
+
 Sync carries a tab as before; `resource` is device-local like the brief, and a
 remote edit to the same page keeps the local reading (`lib/sync/apply.ts`).
 Stored data is re-read defensively on load (`stripWrongTypedTabFields` →
@@ -215,11 +231,30 @@ one source per request:
   title/author. Behind a login or 403 → `pdf_needs_file`; *Upload PDF* reads
   the file **in the browser** (it never leaves the device). A scan with no text
   layer says so.
-- **YouTube:** the public oEmbed endpoint for title and channel. Hubble does
-  **not** download captions: YouTube's terms forbid automated access outside
-  its APIs and the captions API only serves a video's owner. The person can add
-  a transcript (paste from YouTube's *Show transcript*, or a .vtt/.srt/.txt
-  file); it is parsed with timestamps. Never fabricated.
+- **YouTube:** the public oEmbed endpoint for title and channel, and — in the
+  same round trip — the video's **existing captions** from a transcript
+  provider (`server/transcripts.ts`), when the server has `SUPADATA_API_KEY`.
+  YouTube's own captions API only serves a video's owner, and Hubble does not
+  scrape watch pages or get past YouTube's bot checks itself, so without a
+  key a video is saved `partial` with "Automatic transcripts aren't set up".
+  `mode=native` only: never speech recognition, never the audio. Only the
+  watch URL rebuilt from the validated 11-character id is sent, to one fixed
+  host, redirects refused; answers ≤ 8 MB, 20 s timeout; found transcripts
+  cached in memory a day and "no captions" six hours (transient failures not
+  at all), concurrent requests for one video share one call; a separate
+  allowance of 60 transcripts per IP per 10 minutes, past which the video is
+  still saved and says "try again in a few minutes". The person can always
+  add a transcript themselves (paste from YouTube's *Show transcript*, or a
+  .vtt/.srt/.txt file); it is parsed with timestamps and labelled `supplied`.
+  Never fabricated: an empty or malformed answer is never `ready`. Videos saved
+  before this (with the old "Transcript isn't available" words) are read once
+  more on load (`read.ts`).
+- **Transcripts** are `TranscriptSegment[]` (`start`, `end` in seconds, `text`)
+  in playback order, plus `transcriptInfo` (`captions`|`supplied`, language,
+  provider); the tab's summary gains `language`. All fields optional, so stored
+  records from before still read. `normalizeTranscript` cleans entities and
+  markup, drops empty lines and bad times, restores order and collapses
+  rolling repeats — on the server and again in the browser.
 - **Safety:** no cookies or credentials are forwarded; redirects are followed
   by hand and **every hop and its DNS answer** is checked against private
   addresses (the title resolver only checked the first URL); per-IP rate limit;
@@ -289,7 +324,32 @@ shows **Where you left off** (the last task, *Continue*), a **Next** step
 derived only from state (add sources / fix unreadable sources / first task /
 answer the agent / review / continue with another agent), and **Recent work**
 grouped by day. Search covers source titles, addresses, notes, extracted text,
-PDF pages, transcripts and previous results.
+PDF pages, transcripts and previous results, and respects the kind filter.
+
+**Timestamped transcript search** (`search.ts` — the one engine; there is no
+separate index). A transcript is searched as passages (a line and the two
+after it, within 20 s) anchored on a line that says a query word, so a phrase
+split across caption lines matches and "at 8:42" is when it is said. Every
+word must be in the passage; the words in the order typed score a bonus;
+overlapping or back-to-back hits (≤ 15 s apart, ≤ 90 s total) are one
+result; at most five moments per video. Normalized lines are cached per
+stored transcript (a `WeakMap`), so typing re-scans but never re-processes.
+Surfaces: the subject's search (row → the video's reader at that line;
+*▶ 8:42* → YouTube at `&t=522s`), ⌘K's **Said in your videos** group across
+all subjects (`useTranscriptSearch` loads only transcript records, only while
+the palette is open), and the agents' `search_sources` (matches gain
+`seconds` and a timestamped `link`). A moment's link is always rebuilt from
+the video id — never the saved address — so a saved `?t=30` never shifts a
+result, and `handleOpenSource` only opens an override that `sameResource`
+confirms is the same video.
+
+**The reader** (`video-transcript.tsx`, inside the source details dialog):
+the privacy-enhanced embed, loaded only on Play, seeked through YouTube's
+iframe messaging (`seekTo`; `infoDelivery` marks the line being said, from
+the player's origin only); in-transcript search with marked words; states for
+extracting, loading, ready, unavailable (with *Try again* only when a retry
+could help), and missing from this device. Desktop has no frames and no
+remote images (Tauri CSP), so there a time opens YouTube instead.
 
 ## 8. The extension
 

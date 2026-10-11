@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { ArrowRight, CheckSquare, ChevronDown, ChevronLeft, PanelLeftOpen, Search, Sparkles, Trash2, X } from "lucide-react"
+import { ArrowRight, CheckSquare, ChevronDown, ChevronLeft, PanelLeftOpen, Play, Search, Sparkles, Trash2, X } from "lucide-react"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { AgentIcon } from "@/components/agents/agent-icon"
 import { AskAiMenu } from "@/components/agents/agent-actions"
@@ -14,6 +14,7 @@ import { ProjectActivity } from "./project-activity"
 import { AddMenu } from "./add-menu"
 import { AddSourceDialog } from "./add-source-dialog"
 import { SourceDetailsDialog } from "./source-details-dialog"
+import type { TranscriptSeek } from "./video-transcript"
 import { ProjectDropOverlay, useExternalDrop } from "./project-drop-zone"
 import { SourceKindIcon } from "./source-status"
 import { useLastTask } from "@/hooks/use-last-task"
@@ -23,14 +24,16 @@ import { tabsContext, workspaceContext } from "@/lib/agents/command-centre/worki
 import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { aiName } from "@/lib/product/ai-vocabulary"
 import { subjectName } from "@/lib/product/subjects"
-import { describeLocation, searchProject } from "@/lib/resources/search"
+import { describeLocation, markMatches, searchProject, searchTerms } from "@/lib/resources/search"
+import { formatTimestamp } from "@/lib/resources/transcript"
+import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube"
 import { needsAttention, projectSources } from "@/lib/resources/ingest"
 import { projectState } from "@/lib/projects/state"
 import { recordLoopMilestone } from "@/lib/product/loop-log"
 import { cn } from "@/lib/utils"
 import type { DroppedResources } from "@/lib/resources/drop"
 import type { IngestOutcome } from "@/lib/resources/ingest"
-import type { ResourceInput, ResourceKind, ResourceOrigin } from "@/lib/resources/types"
+import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
 import type { AgentProviderId } from "@/lib/agents/connectors/types"
 import type { Tab } from "@/lib/tabs/types"
@@ -57,6 +60,8 @@ export type ProjectHomeProps = {
   onRenameSource: (tabId: string, title: string) => void
   onRemoveSources: (tabIds: string[]) => void
   onOpenSource: (tab: Tab) => void
+  /** Open a resource at an address Hubble built for it — a video at a moment. */
+  onOpenSourceAt?: (tab: Tab, url: string) => void
   /** "Ask AI" on one resource: a chat about it. */
   onUseInTask?: (tab: Tab) => void
   onOpenTask?: (sessionId: string) => void
@@ -108,7 +113,7 @@ export function ProjectHome(props: ProjectHomeProps) {
   const events = useProjectActivity(workspace.id)
   const state = useMemo(() => projectState({ workspace, ...(lastTask ? { lastTask } : {}), events }), [workspace, lastTask, events])
   const [addOpen, setAddOpen] = useState(false)
-  const [details, setDetails] = useState<{ tabId: string; rename: boolean } | null>(null)
+  const [details, setDetails] = useState<{ tabId: string; rename: boolean; seek?: TranscriptSeek } | null>(null)
   const [filter, setFilter] = useState<Filter>("all")
   const [query, setQuery] = useState("")
   const [showActivity, setShowActivity] = useState(false)
@@ -138,8 +143,10 @@ export function ProjectHome(props: ProjectHomeProps) {
   const hits = useMemo(() => {
     if (!searching) return []
     const results = events.filter((event) => event.kind === "task").map((event) => ({ id: event.id, text: `${agentDisplayName(event.provider)} ${event.headline ?? ""} ${event.task ?? ""}` }))
-    return searchProject({ query, tabs: workspace.tabs, contents: contents.get(workspace.id) ?? new Map(), results, limit: 30 })
-  }, [searching, query, workspace.tabs, workspace.id, contents, events])
+    // A kind filter narrows search too; agent work is only "All".
+    const shown = filter === "all" ? workspace.tabs : workspace.tabs.filter((tab) => tab.resource && (FILTERS.find((entry) => entry.id === filter) ?? FILTERS[0]!).matches(tab))
+    return searchProject({ query, tabs: shown, contents: contents.get(workspace.id) ?? new Map(), ...(filter === "all" ? { results } : {}), limit: 30 })
+  }, [searching, query, filter, workspace.tabs, workspace.id, contents, events])
 
   const handleDrop = (dropped: DroppedResources) => {
     if (dropped.inputs.length > 0) {
@@ -372,7 +379,17 @@ export function ProjectHome(props: ProjectHomeProps) {
             </div>
           )}
           {searching ? (
-            <SearchResults hits={hits} titleOf={titleOf} kindOf={(tabId) => tabById.get(tabId)?.resource?.kind} onOpen={(tabId) => setDetails({ tabId, rename: false })} onOpenTask={props.onOpenTask} events={events} />
+            <SearchResults
+              hits={hits}
+              terms={searchTerms(query)}
+              titleOf={titleOf}
+              tabOf={(tabId) => tabById.get(tabId)}
+              onOpen={(tabId, seek) => setDetails({ tabId, rename: false, ...(seek ? { seek } : {}) })}
+              {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
+              onOpenTask={props.onOpenTask}
+              events={events}
+              working={working}
+            />
           ) : visible.length === 0 ? (
             <p className="text-body-sm text-muted-foreground">Nothing here.</p>
           ) : (
@@ -428,29 +445,70 @@ export function ProjectHome(props: ProjectHomeProps) {
           onOpen={props.onOpenSource}
           onAttachPdf={async (tab, file) => void (await resources.attachPdf(workspace.id, tab.id, file))}
           onAttachTranscript={(tab, text) => resources.attachTranscript(workspace.id, tab.id, text)}
+          {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
+          {...(details?.seek ? { seek: details.seek } : {})}
         />
       )}
     </section>
   )
 }
 
+/** Search words marked in a snippet — as text, never markup. */
+export function Highlighted({ text, terms }: { text: string; terms: readonly string[] }) {
+  return (
+    <>
+      {markMatches(text, terms).map((part, index) =>
+        part.match ? (
+          <mark key={index} className="rounded-xs bg-surface-active px-0.5 text-foreground">
+            {part.text}
+          </mark>
+        ) : (
+          <span key={index}>{part.text}</span>
+        )
+      )}
+    </>
+  )
+}
+
+let seekNonce = 0
+
 function SearchResults({
   hits,
+  terms,
   titleOf,
-  kindOf,
+  tabOf,
   onOpen,
+  onOpenAt,
   onOpenTask,
   events,
+  working,
 }: {
   hits: ReturnType<typeof searchProject>
+  terms: readonly string[]
   titleOf: (tabId: string) => string | undefined
-  kindOf: (tabId: string) => ResourceKind | undefined
-  onOpen: (tabId: string) => void
+  tabOf: (tabId: string) => Tab | undefined
+  onOpen: (tabId: string, seek?: TranscriptSeek) => void
+  onOpenAt?: (tab: Tab, url: string) => void
   onOpenTask?: (sessionId: string) => void
   events: ReturnType<typeof useProjectActivity>
+  /** Resources still being read: their content can't be searched yet. */
+  working: number
 }) {
-  if (hits.length === 0) return <p className="text-body-sm text-muted-foreground">Nothing in this project mentions that.</p>
+  const stillReading = working > 0 && (
+    <p className="text-meta text-tertiary">
+      Still reading {working === 1 ? "1 resource" : `${working} resources`} — {working === 1 ? "it" : "they"} can be searched once ready.
+    </p>
+  )
+  if (hits.length === 0)
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="text-body-sm text-muted-foreground">Nothing in this project mentions that.</p>
+        {stillReading}
+      </div>
+    )
   return (
+    <div className="flex flex-col gap-1.5">
+    {stillReading}
     <ul className="flex flex-col divide-y divide-subtle rounded-md border border-subtle" aria-label="Search results">
       {hits.map((hit, index) => {
         if (hit.type === "result") {
@@ -470,24 +528,49 @@ function SearchResults({
             </li>
           )
         }
-        const where = describeLocation(hit.location)
-        const kind = kindOf(hit.tabId)
+        const tab = tabOf(hit.tabId)
+        const kind = tab?.resource?.kind
+        const location = hit.location
+        const moment = location.kind === "transcript" ? location : undefined
+        const at = moment?.start
+        const video = at !== undefined && tab ? parseYouTubeUrl(tab.url) : undefined
+        const where = moment ? undefined : describeLocation(location)
         return (
-          <li key={`s-${hit.tabId}-${index}`}>
-            <button type="button" className="flex w-full items-start gap-2 p-2 text-left hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:outline-none" onClick={() => onOpen(hit.tabId)}>
+          <li key={`s-${hit.tabId}-${index}`} className="flex items-start gap-1 pr-2 hover:bg-surface-hover" data-search-hit={location.kind}>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none"
+              onClick={() => onOpen(hit.tabId, moment ? { line: moment.line, ...(at !== undefined ? { seconds: at } : {}), nonce: ++seekNonce } : undefined)}
+            >
               {kind && <SourceKindIcon kind={kind} className="mt-0.5" />}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-body-sm text-foreground">
                   {titleOf(hit.tabId)}
                   {where && <span className="text-tertiary"> — {where}</span>}
                 </span>
-                <span className={cn("block text-meta text-muted-foreground")}>{hit.snippet}</span>
+                <span className="block text-meta text-muted-foreground">
+                  {at !== undefined && <span className="mr-1.5 text-tertiary tabular-nums">{formatTimestamp(at)}</span>}
+                  <Highlighted text={hit.snippet} terms={terms} />
+                </span>
               </span>
             </button>
+            {video && tab && onOpenAt && at !== undefined && (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="mt-1.5 shrink-0"
+                aria-label={`Watch ${titleOf(hit.tabId) ?? "the video"} on YouTube from ${formatTimestamp(at)}`}
+                onClick={() => onOpenAt(tab, youtubeMomentUrl(video.videoId, at))}
+              >
+                <Play /> {formatTimestamp(at)}
+              </Button>
+            )}
           </li>
         )
       })}
     </ul>
+    </div>
   )
 }
 

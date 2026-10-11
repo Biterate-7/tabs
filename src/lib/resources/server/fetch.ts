@@ -44,7 +44,8 @@ export async function resolvesPublicly(url: string): Promise<boolean> {
   }
 }
 
-async function readCapped(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+/** A response body read up to `maxBytes`, then cancelled — never buffered past the bound. */
+export async function readCapped(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
   if (!response.body) return { bytes: new Uint8Array(), truncated: false };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

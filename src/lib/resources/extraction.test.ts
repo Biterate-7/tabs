@@ -72,15 +72,15 @@ describe("parseTranscript", () => {
   it("reads WebVTT cues with times, dropping markup and rolling repeats", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<c>In October 1962</c>\n\n00:00:04.000 --> 00:00:06.000\nIn October 1962\n\n00:01:05.500 --> 00:01:08.000\nKennedy spoke to the nation.";
     expect(parseTranscript(vtt)).toEqual([
-      { start: 1, text: "In October 1962" },
-      { start: 65, text: "Kennedy spoke to the nation." },
+      { start: 1, end: 4, text: "In October 1962" },
+      { start: 65, end: 68, text: "Kennedy spoke to the nation." },
     ]);
   });
 
   it("reads SubRip", () => {
     expect(parseTranscript("1\n00:00:02,000 --> 00:00:03,000\nHello\n\n2\n01:00:00,000 --> 01:00:01,000\nLater")).toEqual([
-      { start: 2, text: "Hello" },
-      { start: 3600, text: "Later" },
+      { start: 2, end: 3, text: "Hello" },
+      { start: 3600, end: 3601, text: "Later" },
     ]);
   });
 
@@ -92,6 +92,9 @@ describe("parseTranscript", () => {
     ]);
     expect(formatTimestamp(725)).toBe("12:05");
     expect(formatTimestamp(3725)).toBe("1:02:05");
+    // One format through a long lecture.
+    expect(formatTimestamp(522, 4000)).toBe("0:08:42");
+    expect(formatTimestamp(522, 1200)).toBe("8:42");
   });
 });
 
