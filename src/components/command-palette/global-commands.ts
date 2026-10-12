@@ -1,4 +1,4 @@
-import { Bot, Boxes, Clock, FolderPlus, Globe, Keyboard, Moon, Palette, PlugZap, Radio, ScanSearch, ScrollText, Settings, Star, Sun, Type, Waypoints, House } from "lucide-react"
+import { Bot, Boxes, Clock, FolderPlus, Globe, Group, Keyboard, Moon, Palette, PlugZap, Radio, ScanSearch, ScrollText, Settings, Star, Sun, Type, Waypoints, House } from "lucide-react"
 import type { Workspace } from "@/lib/workspace/types"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { Command } from "./types"
@@ -31,6 +31,8 @@ export type GlobalCommandActions = {
   /** Home, and the AI page. Present inside the shell. */
   goHome?: () => void
   openAI?: () => void
+  /** Smart Organize for the tabs open in Chrome. Present inside the shell. */
+  organizeOpenTabs?: () => void
 }
 
 /** How many saved tabs the palette indexes. Past this, search the workspace itself. */
@@ -104,6 +106,19 @@ export function buildGlobalCommands(
       })
     ),
     { id: "workspace-new", label: "New subject", group: "Workspaces", icon: FolderPlus, onSelect: actions.newWorkspace, keywords: ["create", "workspace"] },
+    ...(actions.organizeOpenTabs
+      ? [
+          {
+            id: "organize-open-tabs",
+            label: "Organize open tabs",
+            hint: "Group the tabs open in Chrome into subjects",
+            group: "Workspaces" as const,
+            icon: Group,
+            onSelect: actions.organizeOpenTabs,
+            keywords: ["smart organize", "sort", "group", "tidy", "chrome", "duplicates"],
+          },
+        ]
+      : []),
   ]
 
   // Every saved tab, current workspace first, so "search tabs" is just typing.

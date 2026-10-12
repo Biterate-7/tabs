@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowRight, PanelLeftOpen, Plus } from "lucide-react"
+import { ArrowRight, Group, PanelLeftOpen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { BrandMark } from "@/components/brand-mark"
@@ -25,7 +25,8 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  *
  * No metrics, no onboarding copy, no agent status. The page answers "where
  * do I put my stuff?" by being a list of places to put it, with one button
- * to make another. AI is offered once, quietly, and only while none is
+ * to make another — and one to sort the tabs already open in Chrome into
+ * them (Smart Organize; see components/organize/open-tabs-organize.tsx). AI is offered once, quietly, and only while none is
  * connected — Hubble works without it.
  */
 export function HomeView({
@@ -34,6 +35,7 @@ export function HomeView({
   now,
   onOpenSubject,
   onNewSubject,
+  onOrganizeOpenTabs,
   onOpenResource,
   aiConnected,
   onConnectAI,
@@ -46,6 +48,8 @@ export function HomeView({
   now: number
   onOpenSubject: (id: string) => void
   onNewSubject: () => void
+  /** Smart Organize for the tabs open in Chrome. Omitted where the shell does not offer it. */
+  onOrganizeOpenTabs?: () => void
   onOpenResource: (workspaceId: string, tabId: string) => void
   /** Whether any AI is connected. Unknown counts as connected — never nag on a guess. */
   aiConnected: boolean
@@ -67,6 +71,7 @@ export function HomeView({
           <section aria-label="Get started" className="flex flex-col items-start gap-5 pt-6 sm:pt-12">
             <BrandMark className="size-7 text-foreground" />
             <h1 className="text-statement text-foreground">{firstRun ? "Welcome to Hubble" : "Start with a subject"}</h1>
+            {/* One line and one button: organizing open tabs joins it once there are subjects (and is in ⌘K throughout). */}
             <Button type="button" size="lg" onClick={onNewSubject}>
               <Plus /> {firstRun ? "Create your first subject" : "New subject"}
             </Button>
@@ -75,9 +80,16 @@ export function HomeView({
           <>
             <p className="text-body text-muted-foreground">{greeting(new Date(now).getHours())}</p>
             <h1 className="mt-1 text-statement text-foreground">What are you working on?</h1>
-            <Button type="button" size="lg" className="mt-5" onClick={onNewSubject}>
-              <Plus /> New subject
-            </Button>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button type="button" size="lg" onClick={onNewSubject}>
+                <Plus /> New subject
+              </Button>
+              {onOrganizeOpenTabs && (
+                <Button type="button" size="lg" variant="secondary" onClick={onOrganizeOpenTabs}>
+                  <Group /> Organize open tabs
+                </Button>
+              )}
+            </div>
 
             <section aria-labelledby="home-subjects" className="mt-12">
               <h2 id="home-subjects" className="text-eyebrow text-tertiary">
