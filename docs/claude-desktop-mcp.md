@@ -1,5 +1,16 @@
 # Claude Desktop ↔ Hubble (MCP)
 
+> **Superseded in part by [AI Integrations](./ai-integrations.md).** Since then
+> Hubble has its own OAuth 2.1 authorization server, so Claude Desktop (and
+> claude.ai, ChatGPT, Gemini and Grok) can add Hubble as a *custom connector*
+> with no bridge and no pasted token; connections are scoped to chosen
+> workspaces; and a connection may be granted Read and save. What follows
+> describes the original read-only `tdmcp_` token and stdio bridge, which
+> keep working: the bridge now also accepts the `hbpat_` personal tokens
+> minted in Settings → AI Integrations, and older tokens are listed and
+> revocable there. Sections 3 and 7 below describe that original state.
+
+
 Hubble is an MCP server. Claude Desktop can connect to it and **read** your
 Hubble context — synced workspaces, tabs, collections, tab relationships, and
 the status of your Hubble remote agent projects. It cannot change anything in

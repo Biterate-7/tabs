@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { createHubbleMcpServer, TABDUMP_MCP_TOOLS } from "./server";
+import { createHubbleMcpServer, TABDUMP_MCP_TOOLS, TABDUMP_MCP_WRITE_TOOLS } from "./server";
 import { createFixtureData, ALICE } from "./__fixtures__/accounts";
 
 /**
@@ -87,7 +87,48 @@ describe("the tool vocabulary", () => {
       "get_tab_graph",
       "list_agent_projects",
       "list_agent_sessions",
+      // AI integrations (src/lib/integrations): read tools for every grant.
+      "get_connection_info",
+      "list_collections",
+      "search_workspace",
+      "get_resource",
+      "get_project_context",
+      "get_recent_activity",
     ]);
+  });
+
+  it("pins the write tools, none of which deletes, executes, fetches or approves", () => {
+    expect([...TABDUMP_MCP_WRITE_TOOLS]).toEqual([
+      "save_workspace_note",
+      "create_collection",
+      "add_resource_to_collection",
+      "propose_organization",
+      "apply_organization",
+      "save_project_context",
+    ]);
+    const FORBIDDEN = /(^|_)(delete|remove|run|exec|execute|spawn|fetch|download|upload|approve|authorize|install|open)(_|$)/;
+    for (const name of TABDUMP_MCP_WRITE_TOOLS) expect(FORBIDDEN.test(name), name).toBe(false);
+  });
+
+  it("write tools accept no argument that could name a path, a command, a URL, an owner or a permission", async () => {
+    const grant = {
+      userId: ALICE,
+      connectionId: "conn_test",
+      credentialId: "cred_test",
+      client: "claude" as const,
+      label: "test",
+      method: "token" as const,
+      actor: "ai_client" as const,
+      scopes: ["hubble.read", "hubble.write"] as const,
+      workspaces: { kind: "listed" as const, ids: [] },
+    };
+    const server = createHubbleMcpServer({ data: await createFixtureData(), userId: ALICE, grant: { ...grant, scopes: [...grant.scopes] } });
+    const registered = (server as unknown as { _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } }> })._registeredTools;
+    expect(Object.keys(registered)).toEqual(expect.arrayContaining([...TABDUMP_MCP_WRITE_TOOLS]));
+    const FORBIDDEN_ARGS = /^(path|paths|file|files|dir|directory|cwd|root|command|cmd|args|shell|script|url|uri|href|endpoint|owner|ownerId|user|userId|account|accountId|token|secret|scope|scopes|permission|permissions|grant|approved|approval|env)$/i;
+    for (const [name, tool] of Object.entries(registered)) {
+      for (const arg of Object.keys(tool.inputSchema?.shape ?? {})) expect(FORBIDDEN_ARGS.test(arg), `${name}(${arg})`).toBe(false);
+    }
   });
 
   it("contains no verb that writes, executes or controls", () => {
@@ -115,7 +156,25 @@ describe("the tool vocabulary", () => {
     }
     // Not vacuous: the schemas were really inspected, and this is their whole vocabulary.
     expect([...seen].sort()).toEqual(
-      ["collectionId", "depth", "includeNotes", "maxTabs", "tabId", "tabIds", "workspaceId"].sort()
+      [
+        "collectionId",
+        "depth",
+        "includeNotes",
+        "maxTabs",
+        "tabId",
+        "tabIds",
+        "workspaceId",
+        // AI integrations' read tools.
+        "before",
+        "domain",
+        "limit",
+        "notesLimit",
+        "notesOffset",
+        "offset",
+        "query",
+        "resourceId",
+        "unfiledOnly",
+      ].sort()
     );
   });
 });

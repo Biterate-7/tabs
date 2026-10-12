@@ -7,11 +7,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Hubble's MCP server (Streamable HTTP, stateless).
+ * Hubble's MCP server (Streamable HTTP, stateless) — what ChatGPT, Claude,
+ * Gemini, Grok and other MCP clients connect to.
  *
- * Read-only access to the token owner's account-synced Hubble context. See
- * src/lib/mcp/http.ts for the request rules and src/lib/mcp/server.ts for
- * the tool list, and docs/claude-desktop-mcp.md for connecting Claude Desktop.
+ * Access to the credential owner's account-synced Hubble, scoped by that
+ * connection's grant: read-only by default, Read and save when the person
+ * chose it. See src/lib/mcp/http.ts for the request rules,
+ * src/lib/mcp/server.ts and src/lib/mcp/integration-tools.ts for the tools, and
+ * docs/ai-integrations.md for setup per client.
  *
  * Like every route.ts, this is absent from the desktop static export
  * (next.config.ts `pageExtensions`), so the packaged app gains nothing here.

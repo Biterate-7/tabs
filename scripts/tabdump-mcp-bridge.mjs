@@ -16,8 +16,8 @@
  *
  * ## Configuration (environment only)
  *
- *   TABDUMP_MCP_TOKEN  required. A token from Hubble → Settings → AI Agent
- *                      Connectors → Claude Desktop. Sent only as an
+ *   TABDUMP_MCP_TOKEN  required. A token from Hubble → Settings → AI
+ *                      Integrations → Claude Desktop config. Sent only as an
  *                      `Authorization: Bearer` header to TABDUMP_MCP_URL.
  *   TABDUMP_MCP_URL    optional. Defaults to /api/mcp on Hubble's production
  *                      origin (src/lib/production-origin.mjs).
@@ -35,7 +35,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { CANONICAL_PRODUCTION_ORIGIN } from "../src/lib/production-origin.mjs";
 
 const DEFAULT_URL = `${CANONICAL_PRODUCTION_ORIGIN}/api/mcp`;
-const TOKEN_PATTERN = /^tdmcp_[A-Za-z0-9_-]{43}$/;
+// A personal token from Settings → AI Integrations (hbpat_), or an older read-only one (tdmcp_).
+const TOKEN_PATTERN = /^(tdmcp|hbpat)_[A-Za-z0-9_-]{43}$/;
 
 function log(message) {
   process.stderr.write(`[tabdump-mcp] ${message}\n`);
@@ -58,7 +59,7 @@ function endpoint() {
 async function main() {
   const token = process.env.TABDUMP_MCP_TOKEN?.trim();
   if (!token || !TOKEN_PATTERN.test(token)) {
-    log("TABDUMP_MCP_TOKEN is missing or is not a Hubble MCP token. Create one in Hubble → Settings → AI Agent Connectors.");
+    log("TABDUMP_MCP_TOKEN is missing or is not a Hubble MCP token. Create one in Hubble → Settings → AI Integrations.");
     process.exitCode = 1;
     return;
   }

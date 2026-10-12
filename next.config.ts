@@ -45,6 +45,22 @@ const nextConfig: NextConfig = isDesktopBuild
       async redirects() {
         return [{ source: "/tabdump-extension.zip", destination: "/hubble-extension.zip", permanent: true }];
       },
+      // The OAuth consent page grants an AI client access to a person's
+      // workspaces, so no other site may frame it (clickjacking), and it is
+      // never cached.
+      async headers() {
+        return [
+          {
+            source: "/oauth/:path*",
+            headers: [
+              { key: "X-Frame-Options", value: "DENY" },
+              { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+              { key: "Cache-Control", value: "no-store" },
+              { key: "Referrer-Policy", value: "no-referrer" },
+            ],
+          },
+        ];
+      },
     };
 
 export default nextConfig;
