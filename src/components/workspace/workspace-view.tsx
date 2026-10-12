@@ -24,6 +24,7 @@ import {
   ScanSearch,
   Bot,
   ChevronDown,
+  Group,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -58,7 +59,7 @@ import { FilteredTabList } from "@/components/workspace/filtered-tab-list"
 import { CommandPalette } from "@/components/command-palette/command-palette"
 import { useCommandPaletteHost } from "@/components/command-palette/palette-host"
 import type { Command } from "@/components/command-palette/types"
-import { AutoOrganizePanel } from "@/components/workspace/auto-organize-panel"
+import { SubjectOrganize, SubjectOrganizeOffer } from "@/components/organize/subject-organize"
 import { filterTabs, sortTabs, categoryCounts } from "@/lib/workspace/search"
 import type { SortKey } from "@/lib/workspace/search"
 import { copyText, urlsText } from "@/lib/workspace/export"
@@ -70,7 +71,6 @@ import { applyCategoryChange } from "@/lib/sections/migrate"
 import type { Section } from "@/lib/sections/types"
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts"
 import { useDependencyStore } from "@/hooks/use-dependency-store"
-import type { OrganizationPlan } from "@/lib/organize/types"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
@@ -117,11 +117,8 @@ export function WorkspaceView({
   onSwitchWorkspace,
   recentlyAddedIds,
   onOpenSidebar,
-  autoOrganizePlan,
-  autoOrganizeApplying,
-  onApplyAutoOrganize,
-  onDismissAutoOrganize,
-  onRequestOrganize,
+  organizeOffer,
+  onDismissOrganizeOffer,
   onCreateSection,
   onRenameSection,
   onDeleteSection,
@@ -183,13 +180,9 @@ export function WorkspaceView({
   recentlyAddedIds?: Set<string>
   /** Opens the mobile sidebar drawer — omitted in standalone/test contexts that don't render a shell around this view. */
   onOpenSidebar?: () => void
-  /** A just-analyzed Auto-Organize plan awaiting review — see use-auto-organize.ts. Omitted/undefined when nothing is ready to show. */
-  autoOrganizePlan?: OrganizationPlan | null
-  autoOrganizeApplying?: boolean
-  onApplyAutoOrganize?: (plan: OrganizationPlan) => void
-  onDismissAutoOrganize?: () => void
-  /** Manually re-runs Auto-Organize analysis on demand — backs the header's "Organize" button. */
-  onRequestOrganize?: () => void
+  /** A bulk import just landed here: offer Smart Organize once (see components/organize/subject-organize.tsx). A token per import, so the next one offers afresh. */
+  organizeOffer?: number
+  onDismissOrganizeOffer?: () => void
   /**
    * Section CRUD + manual tab assignment — all omitted in standalone/test
    * contexts that don't wire up section persistence, in which case the
@@ -219,6 +212,7 @@ export function WorkspaceView({
   // selected any time the list re-renders.
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
   const [cleanupOpen, setCleanupOpen] = useState(false)
+  const [organizeOpen, setOrganizeOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   // Inside AppShell the palette is the shell's; this view contributes its
@@ -294,6 +288,8 @@ export function WorkspaceView({
     addTabsToCollection: addTabsToCollectionStore,
     removeTabFromCollection: removeTabFromCollectionStore,
     moveTabToCollection: moveTabToCollectionStore,
+    applyBatch: applyCollectionBatch,
+    restoreCollections,
   } = useCollectionStore(depScopeWorkspaces)
   const workspaceCollections = useMemo(
     () => getCollectionsForWorkspace(allCollections, workspaceId),
@@ -778,14 +774,17 @@ export function WorkspaceView({
     else toast.error("Couldn't copy to clipboard")
   }
 
-  const organizeCommands: Command[] = onRequestOrganize
+  // Smart Organize for this subject's own tabs — the header's ⋯ → Organize tabs, and here.
+  const organizeCommands: Command[] = currentWorkspace
     ? [
         {
           id: "organize-run",
           label: "Organize tabs",
+          hint: "Sort this subject's loose tabs into collections",
           group: "Actions",
-          icon: Sparkles,
-          onSelect: onRequestOrganize,
+          icon: Group,
+          onSelect: () => setOrganizeOpen(true),
+          keywords: ["smart organize", "group", "collections", "sort", "duplicates"],
         },
       ]
     : []
@@ -1176,7 +1175,7 @@ export function WorkspaceView({
         onCleanup={() => setCleanupOpen(true)}
         onRequestClear={() => setClearConfirmOpen(true)}
         onOpenPalette={openPalette}
-        onOrganize={onRequestOrganize}
+        {...(currentWorkspace ? { onOrganize: () => setOrganizeOpen(true) } : {})}
         onOpenGraph={onOpenGraph}
         graphLocked={graphLocked}
         graphLockedReason={graphLockedReason}
@@ -1209,13 +1208,16 @@ export function WorkspaceView({
           />
         )}
         {organizationStatus}
-        {autoOrganizePlan && onApplyAutoOrganize && onDismissAutoOrganize && (
-          <AutoOrganizePanel
-            plan={autoOrganizePlan}
-            tabsById={tabsById}
-            isApplying={Boolean(autoOrganizeApplying)}
-            onApply={onApplyAutoOrganize}
-            onDismiss={onDismissAutoOrganize}
+        {organizeOffer !== undefined && currentWorkspace && (
+          <SubjectOrganizeOffer
+            key={organizeOffer}
+            workspace={currentWorkspace}
+            collections={allCollections}
+            onReview={() => {
+              onDismissOrganizeOffer?.()
+              setOrganizeOpen(true)
+            }}
+            onDismiss={() => onDismissOrganizeOffer?.()}
           />
         )}
         {projectHome && (
@@ -1387,6 +1389,17 @@ export function WorkspaceView({
         </>
         )}
       </main>
+
+      {currentWorkspace && (
+        <SubjectOrganize
+          open={organizeOpen}
+          onOpenChange={setOrganizeOpen}
+          workspace={currentWorkspace}
+          collections={allCollections}
+          store={{ applyBatch: applyCollectionBatch, restoreCollections }}
+          onReviewDuplicates={() => setCleanupOpen(true)}
+        />
+      )}
 
       <CleanupDialog
         open={cleanupOpen}

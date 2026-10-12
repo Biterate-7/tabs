@@ -81,7 +81,6 @@ import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { desktopImport } from "@/lib/platform"
 import { outcomeFromIngestion, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
 import { DesktopImportDialog, type DesktopImportChoice } from "@/components/desktop-import-dialog"
-import { useAutoOrganize } from "@/hooks/use-auto-organize"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
 import { describeOrganizationStage } from "@/lib/organize/lifecycle"
 import { OrganizationPreparationView, OrganizationStatusBar } from "@/components/organization-preparation"
@@ -95,8 +94,9 @@ import { markDuplicates } from "@/lib/tabs"
 import { stampChangedTabs } from "@/lib/tabs/touch"
 import { createTimestamp } from "@/lib/timestamps"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
-import { applyOrganizationPlan } from "@/lib/organize/apply"
-import type { OrganizationPlan } from "@/lib/organize/types"
+import { applySmartToSubjects, describeApplied, undoSmartToSubjects } from "@/lib/organize/smart/apply"
+import type { SmartProposal } from "@/lib/organize/smart/types"
+import { OpenTabsOrganize } from "@/components/organize/open-tabs-organize"
 import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
@@ -335,13 +335,16 @@ export function AppShell() {
   // equality against this ref is how "only the latest import is undoable"
   // is enforced — see notifyImported.
   const undoSnapshotRef = useRef<WorkspaceStore | null>(null)
-  // Snapshot immediately before an Auto-Organize apply — separate from
-  // undoSnapshotRef (the import undo) since the two are independent
-  // operations a user might want to undo separately, e.g. keep the import
-  // but undo just the reorganization.
-  const organizeUndoSnapshotRef = useRef<WorkspaceStore | null>(null)
-  const [applyingOrganize, setApplyingOrganize] = useState(false)
-  const autoOrganize = useAutoOrganize()
+  // Smart Organize for the tabs open in Chrome (Home, ⌘K).
+  const [organizeOpenTabs, setOrganizeOpenTabs] = useState(false)
+  // The subject a bulk import just landed in: it offers Smart Organize once,
+  // as a quiet line the person can take or dismiss (see WorkspaceView).
+  // `token` tells one import from the next, so a second import into the same subject offers afresh.
+  const [organizeOfferFor, setOrganizeOfferFor] = useState<{ workspaceId: string; token: number } | null>(null)
+  // Sources the person gave content to this session (an uploaded PDF, a pasted
+  // transcript). Nothing on the tab record says so, and an Undo of Smart
+  // Organize must never take that content away (see undoSmartToSubjects).
+  const suppliedContentRef = useRef<Set<string>>(new Set())
   // The dump → classify → "Other" → layout → settle lifecycle, and the only
   // thing that decides whether the Graph View can be entered. See
   // lib/organize/lifecycle.ts.
@@ -564,7 +567,7 @@ export function AppShell() {
     const synced = persist(next)
     markRecentlyAdded(tabs.map((t) => t.id))
     notifyImported(tabs.length)
-    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    setOrganizeOfferFor({ workspaceId: getCurrentWorkspace(next).id, token: Date.now() })
     const nextWorkspace = getCurrentWorkspace(synced)
     // Snapshot from `nextWorkspace.tabs` (post-persist/post-sync), not the
     // raw `tabs` param — syncSectionsWithCategoriesInStore inside persist()
@@ -1147,7 +1150,7 @@ export function AppShell() {
     const synced = persist(next)
     markRecentlyAdded(fresh.map((t) => t.id))
     notifyHistoryDumped(fresh.length, skipped)
-    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    setOrganizeOfferFor({ workspaceId: getCurrentWorkspace(next).id, token: Date.now() })
     const nextWorkspace = getCurrentWorkspace(synced)
     // Re-resolve the just-dumped tabs from the post-merge workspace (not the
     // pre-merge `fresh` array) so their markDuplicates-assigned `isDuplicate`
@@ -1198,7 +1201,7 @@ export function AppShell() {
     const synced = persist(next)
     markRecentlyAdded(incoming.map((t) => t.id))
     notifyImported(incoming.length)
-    autoOrganize.analyze(getCurrentWorkspace(next), next.workspaces)
+    setOrganizeOfferFor({ workspaceId: getCurrentWorkspace(next).id, token: Date.now() })
     const nextWorkspace = getCurrentWorkspace(synced)
     const incomingIds = new Set(incoming.map((t) => t.id))
     const imported = nextWorkspace.tabs.filter((t) => incomingIds.has(t.id))
@@ -1248,6 +1251,18 @@ export function AppShell() {
     },
     enabled: hydrated,
   })
+  // What the subject page gets: the same actions, noting which sources the person supplied content for.
+  const sourceActions: typeof resources = {
+    ...resources,
+    attachPdf: (workspaceId, tabId, file) => {
+      suppliedContentRef.current.add(tabId)
+      return resources.attachPdf(workspaceId, tabId, file)
+    },
+    attachTranscript: (workspaceId, tabId, text) => {
+      suppliedContentRef.current.add(tabId)
+      return resources.attachTranscript(workspaceId, tabId, text)
+    },
+  }
   const now = useNow(60_000)
   // The agents a person connected (the roster) — re-read when they come back to a project.
   const connectedAgents = useMemo(
@@ -1434,7 +1449,7 @@ export function AppShell() {
         workspace={workspace}
         now={now}
         onAddSources={(inputs, origin) => handleAddSources(workspace.id, inputs, origin)}
-        resources={resources}
+        resources={sourceActions}
         onRenameSource={(tabId, title) => handleRenameSource(workspace.id, tabId, title)}
         onRemoveSources={(tabIds) => handleRemoveSources(workspace.id, tabIds)}
         onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
@@ -1600,31 +1615,70 @@ export function AppShell() {
     })
   }
 
-  function handleRequestOrganize() {
-    if (!store || !currentWorkspace) return
-    autoOrganize.analyze(currentWorkspace, store.workspaces)
-  }
-
-  function handleApplyAutoOrganize(plan: OrganizationPlan) {
-    if (!store) return
-    organizeUndoSnapshotRef.current = store
-    setApplyingOrganize(true)
-    const result = applyOrganizationPlan(plan, store)
-    setApplyingOrganize(false)
-    autoOrganize.dismiss()
-    if (!result.storeChanged) {
-      toast.error("Couldn't organize these tabs automatically", { description: result.text })
+  /*
+    Smart Organize, open tabs: the confirmed proposal goes through the same
+    source pipeline as every other add (applySmartToSubjects → ingestResources),
+    against the live store, in one commit. Undo takes back exactly what this
+    added — never anything done since — and new subjects only while still empty.
+  */
+  function handleApplySmartOpenTabs(proposal: SmartProposal) {
+    const before = storeRef.current
+    if (!before) return
+    let applied: ReturnType<typeof applySmartToSubjects>
+    try {
+      applied = applySmartToSubjects(before, proposal, { now: createTimestamp(), subjectsStarted, origin: "extension" })
+    } catch {
+      toast.error("Couldn't organize these tabs", { description: "Nothing was changed. Try again." })
       return
     }
-    const before = organizeUndoSnapshotRef.current
-    persist(result.store)
-    toast(result.text, {
+    setOrganizeOpenTabs(false)
+    const { title, details } = describeApplied(applied.results, "open-tabs")
+    if (!applied.changed) {
+      toast(title, details.length > 0 ? { description: details.join(" · ") } : undefined)
+      return
+    }
+    persist(applied.store)
+    const { receipt } = applied
+    if (receipt.createdSubjects.length > 0 || receipt.renamedDefault) {
+      markSubjectsStarted()
+      setSubjectsStarted(true)
+      recordLoopMilestone("project_created")
+      for (const workspaceId of [...receipt.createdSubjects.map((created) => created.workspaceId), ...(receipt.renamedDefault ? [receipt.renamedDefault.workspaceId] : [])]) {
+        recordProjectEvent({ workspaceId, kind: "project_created" })
+      }
+    }
+    for (const result of applied.results) {
+      if (result.targetId && result.added > 0) recordProjectEvent({ workspaceId: result.targetId, kind: "sources_added", count: result.added, origin: "extension" })
+    }
+    if (applied.results.some((result) => result.added > 0)) recordLoopMilestone("resource_added")
+    let undone = false
+    const notify = applied.results.some((result) => result.error) ? toast.warning : toast
+    notify(title, {
+      ...(details.length > 0 ? { description: details.join(" · ") } : {}),
       action: {
         label: "Undo",
         onClick: () => {
-          if (!before || organizeUndoSnapshotRef.current !== before) return
-          persist(before)
-          organizeUndoSnapshotRef.current = null
+          const latest = storeRef.current
+          if (undone || !latest) return
+          undone = true
+          // Tabs the person has made theirs in ways the tab record cannot show: filed in a collection, given content.
+          const filed = loadCollectionState().collections.flatMap((collection) => collection.tabIds)
+          const reverted = undoSmartToSubjects(latest, receipt, { protect: new Set([...filed, ...suppliedContentRef.current]) })
+          if (!reverted.changed) {
+            toast("Nothing left to undo", { description: "Everything it added has been changed or removed since." })
+            return
+          }
+          persist(reverted.store)
+          // Only the tabs actually taken back: a kept one's stored content is still its own.
+          for (const entry of reverted.removedTabs) {
+            resources.forget(entry.workspaceId, entry.tabIds)
+            recordProjectEvent({ workspaceId: entry.workspaceId, kind: "sources_removed", count: entry.tabIds.length })
+          }
+          const kept = [
+            ...(reverted.keptSubjects.length > 0 ? [`kept ${reverted.keptSubjects.join(", ")}`] : []),
+            ...(reverted.keptTabs > 0 ? [`kept ${reverted.keptTabs} you've changed since`] : []),
+          ]
+          if (kept.length > 0) toast("Undid the organization", { description: `Mostly — ${kept.join("; ")}.` })
         },
       },
     })
@@ -1701,6 +1755,7 @@ export function AppShell() {
         now={now}
         onOpenSubject={openSubject}
         onNewSubject={() => setNewWorkspaceOpen(true)}
+        onOrganizeOpenTabs={() => setOrganizeOpenTabs(true)}
         onOpenResource={(workspaceId, tabId) => handleOpenSource(workspaceId, tabId)}
         aiConnected={connectedAgents.length > 0}
         onConnectAI={() => setView("ai")}
@@ -1927,6 +1982,7 @@ export function AppShell() {
           switchWorkspace: handleSwitchWorkspace,
           newWorkspace: () => setNewWorkspaceOpen(true),
           openUrl: (url) => void openTab(url),
+          organizeOpenTabs: () => setOrganizeOpenTabs(true),
           ...(agentActions ? { askAgentAboutWorkspace: () => agentActions.ask(workspaceContext(agentActions.workspaceId)) } : {}),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
@@ -1956,6 +2012,13 @@ export function AppShell() {
         searchContent={momentCommands}
       />
       {desktopImportDialog}
+      <OpenTabsOrganize
+        open={organizeOpenTabs}
+        onOpenChange={setOrganizeOpenTabs}
+        workspaces={store.workspaces}
+        subjects={subjects}
+        onApply={handleApplySmartOpenTabs}
+      />
       <NewWorkspaceDialog
         open={newWorkspaceOpen}
         onOpenChange={setNewWorkspaceOpen}
@@ -2064,11 +2127,8 @@ export function AppShell() {
             onSwitchWorkspace={handleSwitchWorkspace}
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
-            autoOrganizePlan={autoOrganize.plan}
-            autoOrganizeApplying={applyingOrganize}
-            onApplyAutoOrganize={handleApplyAutoOrganize}
-            onDismissAutoOrganize={autoOrganize.dismiss}
-            onRequestOrganize={handleRequestOrganize}
+            {...(organizeOfferFor?.workspaceId === currentWorkspace.id ? { organizeOffer: organizeOfferFor.token } : {})}
+            onDismissOrganizeOffer={() => setOrganizeOfferFor(null)}
             onCreateSection={handleCreateSection}
             onRenameSection={handleRenameSection}
             onDeleteSection={handleDeleteSection}

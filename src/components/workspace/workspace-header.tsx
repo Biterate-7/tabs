@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
-import { ChevronLeft, MoreHorizontal, Pencil, Sparkles, Trash2, Wand2, Waypoints, PanelLeftOpen, Eraser } from "lucide-react"
+import { ChevronLeft, Group, MoreHorizontal, Pencil, Sparkles, Trash2, Waypoints, PanelLeftOpen, Eraser } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import {
@@ -73,7 +73,7 @@ export function WorkspaceHeader({
   onRequestClear: () => void
   /** Kept for callers that pass it; the palette is the rail's Search now. */
   onOpenPalette?: () => void
-  /** Manually re-runs Auto-Organize analysis on demand — omitted in standalone/test contexts. */
+  /** Opens Smart Organize for this subject's tabs — omitted in standalone/test contexts. */
   onOrganize?: () => void
   onOpenGraph?: () => void
   /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. */
@@ -140,7 +140,7 @@ export function WorkspaceHeader({
           >
               {onOrganize && (
                 <DropdownMenuItem onClick={onOrganize}>
-                  <Wand2 /> Organize tabs
+                  <Group /> Organize tabs
                 </DropdownMenuItem>
               )}
               {onOpenGraph && (

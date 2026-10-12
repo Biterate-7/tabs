@@ -80,6 +80,18 @@ describe("Home", () => {
     expect(props.onConnectAI).toHaveBeenCalledOnce()
   })
 
+  it("keeps the first-run screen to one button, even where organizing open tabs is offered", () => {
+    renderHome({ onOrganizeOpenTabs: vi.fn() })
+    expect(screen.getAllByRole("button")).toHaveLength(1)
+  })
+
+  it("offers to organize open tabs beside New subject once there are subjects", async () => {
+    const user = userEvent.setup()
+    const props = renderHome({ subjects: [subject("h", "History HL", 1)], onOrganizeOpenTabs: vi.fn() })
+    await user.click(screen.getByRole("button", { name: /Organize open tabs/ }))
+    expect(props.onOrganizeOpenTabs).toHaveBeenCalledOnce()
+  })
+
   it("has no dashboard numbers or agent talk", () => {
     renderHome({ subjects: [subject("h", "History HL", 3)], aiConnected: false })
     expect(document.body.textContent).not.toMatch(/agent|runtime|workspace|session|context/i)
