@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { PLATFORM_PROVIDERS, platformProvider } from "./catalog";
 import { connectionPhase, phaseSentence, sessionAvailability, stepFor } from "./lifecycle";
 import { PROVIDER_LAUNCH_TABLE } from "@/lib/agents/launch/allowlist";
-import { TABDUMP_MCP_TOOLS } from "@/lib/mcp/server";
+import { createHubbleMcpServer, TABDUMP_MCP_TOOLS, TABDUMP_MCP_WRITE_TOOLS } from "@/lib/mcp/server";
+import { ALICE, createFixtureData } from "@/lib/mcp/__fixtures__/accounts";
 import type { ProviderConnectionView, ProviderDetection } from "@/lib/agents/runtime/protocol";
 
 /**
@@ -75,8 +76,11 @@ describe("the custom agent explains exactly what it connects", () => {
     expect(custom.unavailableOn?.desktop).toMatch(/desktop app does not run one/);
   });
 
-  it("describes the MCP server's actual tools, all of which are read-only", () => {
+  it("describes the MCP server's actual tools, all of which are read-only", async () => {
     // If a tool is added to the server, this sentence has to be revisited.
+    // The custom agent holds a legacy tdmcp_ token, whose grant is read-only:
+    // the AI Integrations write tools (src/lib/integrations) exist only for a
+    // connection the person granted "Read and save", which this card never mints.
     expect([...TABDUMP_MCP_TOOLS]).toEqual([
       "list_workspaces",
       "get_workspace",
@@ -85,17 +89,24 @@ describe("the custom agent explains exactly what it connects", () => {
       "get_tab_graph",
       "list_agent_projects",
       "list_agent_sessions",
+      "get_connection_info",
+      "list_collections",
+      "search_workspace",
+      "get_resource",
+      "get_project_context",
+      "get_recent_activity",
     ]);
     const fullSource = readFileSync(path.resolve(__dirname, "../../mcp/server.ts"), "utf8");
     // Account mode — what a custom agent connects to — is everything before
     // the session-mode section (Phase J.3), which a custom agent never reaches.
     const marker = fullSource.indexOf("Session mode (Phase J.3)");
     expect(marker).toBeGreaterThan(0);
-    const serverSource = fullSource.slice(0, marker);
-    const registrations = serverSource.match(/registerTool\(/g) ?? [];
-    const readOnly = serverSource.match(/annotations:\s*READ_ONLY/g) ?? [];
-    expect(registrations.length).toBe(TABDUMP_MCP_TOOLS.length);
-    expect(readOnly.length).toBe(registrations.length);
+    // What a legacy token is actually given: every tool read-only, none of the writes.
+    const server = createHubbleMcpServer({ data: await createFixtureData(), userId: ALICE });
+    const registered = (server as unknown as { _registeredTools: Record<string, { annotations?: { readOnlyHint?: boolean } }> })._registeredTools;
+    expect(Object.keys(registered).sort()).toEqual([...TABDUMP_MCP_TOOLS].sort());
+    for (const [name, tool] of Object.entries(registered)) expect(tool.annotations?.readOnlyHint, name).toBe(true);
+    for (const write of TABDUMP_MCP_WRITE_TOOLS) expect(registered[write], write).toBeUndefined();
 
     // Session mode has exactly four tools that are not read-only: create,
     // rename and add tabs to a collection (J.4), and propose a plan of those

@@ -528,6 +528,17 @@ export class SyncService {
     return this.repository.listWorkspaces(userId);
   }
 
+  /**
+   * The workspace's current cursor, or null when this user does not own it.
+   *
+   * What a server-side writer (src/lib/integrations/writer.ts) reads *before*
+   * hydrating, so the push it then makes is gated on exactly the state it
+   * read: anything committed in between makes that push `stale-base`.
+   */
+  async cursorOf(workspaceId: string, userId: string): Promise<SyncCursor | null> {
+    return this.repository.getCursor(workspaceId, userId);
+  }
+
   /** Changes since `cursor`, or null when this user does not own the workspace. */
   async pull(
     workspaceId: string,

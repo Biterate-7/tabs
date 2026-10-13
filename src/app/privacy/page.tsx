@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <LegalPage title="Privacy Policy" lastUpdated="October 11, 2026">
+    <LegalPage title="Privacy Policy" lastUpdated="October 12, 2026">
       <section>
         <h2>Introduction</h2>
         <p>
@@ -166,6 +166,38 @@ export default function PrivacyPolicyPage() {
         <p>
           Deleting a workspace in Hubble while signed in is synced too: the server marks it deleted so your
           other devices remove it as well, and keeps a record that the deletion happened.
+        </p>
+      </section>
+
+      <section id="ai-integrations">
+        <h2>AI Integrations</h2>
+        <p>
+          You can connect an AI assistant you already use — such as ChatGPT, Claude, Gemini or Grok — to your
+          Hubble account in Settings → AI Integrations. Nothing in this section applies unless you do.
+        </p>
+        <p>
+          <strong>What the assistant can see.</strong> Only the synced workspaces you choose for that
+          connection. Workspaces kept only on a device are never visible to it. By default a connection is
+          read-only; it can save notes, project context or collections only if you choose &ldquo;Read and
+          save&rdquo;, and reorganizing several collections waits for your approval in Hubble.
+        </p>
+        <p>
+          <strong>What is sent to the AI provider.</strong> Whatever the assistant reads from Hubble — such as
+          tab titles, addresses with secrets removed, collection names and notes it was allowed to see — is
+          sent to that provider and handled under its own privacy terms, not ours.
+        </p>
+        <p>
+          <strong>What Hubble stores.</strong> The connection (which assistant, its permission and the
+          workspaces you chose), one-way hashes of its access tokens, any notes and project context you asked
+          the assistant to save, proposals awaiting your decision, and an activity record of what each
+          assistant did (what kind of action, when, on which workspace, and whether it succeeded). The activity
+          record never contains your conversations, search terms, note text or page content, and is kept for 90
+          days. Hubble cannot read your conversations with the assistant.
+        </p>
+        <p>
+          <strong>Disconnecting.</strong> You can disconnect an assistant at any time in Settings → AI
+          Integrations; it loses access on its next request. You can delete saved notes and project context
+          there too.
         </p>
       </section>
 

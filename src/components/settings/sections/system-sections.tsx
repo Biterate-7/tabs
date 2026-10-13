@@ -33,7 +33,6 @@ import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { useProviderConnections } from "@/hooks/use-provider-connections"
 import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { Workspace } from "@/lib/workspace/types"
-import { ClaudeDesktopMcpCard } from "./claude-desktop-mcp-card"
 import { ProviderConnectionCard } from "./provider-connection-card"
 import { FieldRow, GroupBlock, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
 
@@ -75,7 +74,7 @@ export function AccountSettingsSection() {
             label="Not signed in"
             description={
               configured
-                ? "Sign in to sync workspaces between devices and connect Claude Desktop."
+                ? "Sign in to sync workspaces between devices and use them from ChatGPT, Claude, Gemini or Grok."
                 : "This deployment has no accounts configured. Everything stays on this device."
             }
           >
@@ -186,8 +185,15 @@ export function McpSection() {
           <Badge variant="default">Approval required</Badge>
         </FieldRow>
       </SectionStack>
-      <GroupLabel>Use Hubble from Claude Desktop</GroupLabel>
-      <ClaudeDesktopMcpCard />
+      <GroupLabel>Use Hubble from ChatGPT, Claude, Gemini and Grok</GroupLabel>
+      <SectionStack>
+        <FieldRow
+          label="Hubble MCP server"
+          description="Hubble is itself an MCP server for AI clients you already use. Connections, tokens, permissions and their activity are managed in Settings → AI Integrations."
+        >
+          <Badge variant="default">AI Integrations</Badge>
+        </FieldRow>
+      </SectionStack>
     </div>
   )
 }

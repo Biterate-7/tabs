@@ -278,6 +278,23 @@ export function AppShell() {
     if (view !== "settings") setSettingsReturn(view)
     setView("settings")
   }
+  /*
+    `/?settings=ai-integrations` — the link an AI client is given when it
+    proposes a change, so the person lands on the approval. Read once on
+    mount and removed from the address bar; only that one section is
+    honoured, and opening it changes nothing by itself.
+  */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("settings") !== "ai-integrations") return
+    params.delete("settings")
+    const rest = params.toString()
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`)
+    // A one-shot read of the address the person arrived at.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSettingsSection("ai-integrations")
+    setView("settings")
+  }, [])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Below the `md` breakpoint the sidebar is an off-canvas drawer, closed by
   // default — distinct from `sidebarCollapsed` (the desktop icon-rail

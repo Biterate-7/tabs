@@ -23,6 +23,7 @@ import {
   Type,
   UserRound,
   Boxes,
+  Cable,
 } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
@@ -35,6 +36,7 @@ import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
 import { ConnectorsSection } from "./sections/connectors-section"
+import { AiIntegrationsSection } from "./sections/ai-integrations-section"
 import {
   AccountSettingsSection,
   AdvancedSection,
@@ -61,6 +63,8 @@ export type SettingsSection =
   | "account"
   /** "AI Connections" in the nav. The id predates the name and deep links use it. */
   | "connectors"
+  /** Using Hubble from ChatGPT, Claude, Gemini and Grok (src/lib/integrations). */
+  | "ai-integrations"
   | "providers"
   | "mcp"
   | "browser"
@@ -88,6 +92,7 @@ const BEFORE: NavItem[] = [{ id: "general", label: "General", icon: Settings2 }]
 const AFTER: NavItem[] = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "connectors", label: "AI Connections", icon: Bot },
+  { id: "ai-integrations", label: "AI Integrations", icon: Cable },
   { id: "workspaces", label: "Subjects", icon: Boxes },
   { id: "extension", label: "Chrome extension", icon: Puzzle },
   { id: "desktop", label: "Desktop app", icon: Monitor },
@@ -220,6 +225,7 @@ export function AppearanceSettingsView({
             {active === "accent" && <AccentSection />}
             {active === "account" && <AccountSettingsSection />}
             {active === "connectors" && <ConnectorsSection />}
+            {active === "ai-integrations" && <AiIntegrationsSection />}
             {active === "providers" && <ProvidersSection />}
             {active === "mcp" && <McpSection />}
             {active === "browser" && <BrowserSection />}
