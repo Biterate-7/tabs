@@ -41,7 +41,8 @@ export type PlatformSurfaceId =
   | "gemini-cli"
   | "antigravity"
   | "grok-app"
-  | "grok-api";
+  | "grok-api"
+  | "grok-cli";
 
 /** How the product reaches Hubble. */
 export type ConnectionMode =
@@ -75,6 +76,34 @@ export type PlatformSurface = {
   verifiedOn: string;
   hubble: "ready" | "not-supported";
   verification: "protocol" | "client" | "none";
+  /**
+   * What happened when the vendor's own product was connected, capability by
+   * capability. Absent until someone has tried. "client" verification means
+   * at least the read test passed here; each other capability says its own
+   * result, so a product verified for reads is never shown as verified for writes.
+   */
+  clientTests?: ClientTestRecord;
+};
+
+export type ClientTestStatus = "pass" | "fail" | "blocked" | "not_run";
+
+export type ClientTestRecord = {
+  date: string;
+  /** The vendor product and version actually used, and how it connected. */
+  setup: string;
+  read: ClientTestStatus;
+  write: ClientTestStatus;
+  approval: ClientTestStatus;
+  revocation: ClientTestStatus;
+  /** Why anything is blocked or failed, in the vendor's words where possible. */
+  note?: string;
+};
+
+export const CLIENT_TEST_LABEL: Record<ClientTestStatus, string> = {
+  pass: "passed",
+  fail: "failed",
+  blocked: "blocked by the vendor",
+  not_run: "not tested",
 };
 
 export const PLATFORM_SURFACES: readonly PlatformSurface[] = [
@@ -161,11 +190,20 @@ export const PLATFORM_SURFACES: readonly PlatformSurface[] = [
     write: { supported: true, note: "Claude Code asks before each tool call unless you allow it." },
     requirements: ["Claude Code installed on this computer."],
     limitations: ["Configured per machine (or per project with --scope project)."],
-    steps: ["Create a token connection below.", "Run the command shown, then /mcp in Claude Code to check it."],
+    steps: ["Create a token connection below.", "Run the command shown, or point Claude Code at the JSON config shown, then /mcp in Claude Code to check it."],
     docs: "https://docs.claude.com/en/docs/claude-code/mcp",
     verifiedOn: VERIFIED_ON,
     hubble: "ready",
-    verification: "protocol",
+    verification: "client",
+    clientTests: {
+      date: "2026-10-13",
+      setup: "Claude Code 2.1.229 (claude.ai Pro account), personal token through an MCP JSON config (--mcp-config), against Hubble on a local server with a throwaway database",
+      read: "pass",
+      write: "pass",
+      approval: "pass",
+      revocation: "pass",
+      note: "The claude mcp add command shown is from Claude Code's documentation; the test used the equivalent JSON config.",
+    },
   },
   {
     id: "claude-desktop-config",
@@ -249,6 +287,15 @@ export const PLATFORM_SURFACES: readonly PlatformSurface[] = [
     verifiedOn: VERIFIED_ON,
     hubble: "ready",
     verification: "protocol",
+    clientTests: {
+      date: "2026-10-13",
+      setup: "Gemini CLI 0.63.0 signed in with a personal Google account",
+      read: "blocked",
+      write: "blocked",
+      approval: "blocked",
+      revocation: "blocked",
+      note: "Google refused the account before any tool ran: \u201cThis client is no longer supported for Gemini Code Assist for individuals\u201d. A Gemini API key or a Workspace account may still work; not tested.",
+    },
   },
   {
     id: "antigravity",
@@ -316,6 +363,37 @@ export const PLATFORM_SURFACES: readonly PlatformSurface[] = [
     verifiedOn: VERIFIED_ON,
     hubble: "ready",
     verification: "protocol",
+  },
+  {
+    id: "grok-cli",
+    client: "grok",
+    product: "Grok CLI (Grok Build)",
+    kind: "developer-tool",
+    modes: ["remote-token"],
+    recommended: "remote-token",
+    transport: "Streamable HTTP",
+    authentication: "A Hubble token as an HTTP header (grok mcp add … -H).",
+    read: true,
+    write: { supported: true, note: "Grok CLI asks before running a tool unless a permission rule allows it." },
+    requirements: ["Grok CLI installed and signed in to xAI.", "Free accounts have a usage limit; SuperGrok raises it."],
+    limitations: [
+      "A server added with --scope project only starts in a folder Grok trusts (grok --trust, or trust the folder).",
+      "Grok CLI's built-in file and terminal tools stay available alongside Hubble; restrict them with --disallowed-tools if you want Hubble only.",
+    ],
+    steps: ["Create a token connection below.", "Run the command shown, then grok mcp doctor to check it."],
+    docs: "https://docs.x.ai/developers/tools/remote-mcp",
+    verifiedOn: "2026-10-13",
+    hubble: "ready",
+    verification: "client",
+    clientTests: {
+      date: "2026-10-13",
+      setup: "Grok CLI 1.0.46 (grok-4.7, free account), personal token through grok mcp add --scope project, against Hubble on a local server with a throwaway database",
+      read: "pass",
+      write: "blocked",
+      approval: "blocked",
+      revocation: "blocked",
+      note: "After the read test, xAI stopped the account: \u201cYou\u2019ve reached your free Grok Build usage limit for now\u201d. Write, approval and revocation were not reached.",
+    },
   },
 ] as const;
 

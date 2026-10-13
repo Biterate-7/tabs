@@ -141,7 +141,14 @@ re-checked against the grant when called:
 
 Every mutation accepts an optional `idempotencyKey`. A retry with the same
 key returns the first result, marked `repeated: true`, and a key reused for a
-different tool is refused.
+different tool is refused. Results are remembered for 24 hours.
+
+The key check is check-then-act: two calls with the same key that arrive at
+the same moment can both run. The tools are also idempotent by content —
+`create_collection` returns an existing collection of the same name,
+`save_workspace_note` does not store identical text twice, adding a resource
+that is already there does nothing, and `apply_organization` applies once —
+so a racing retry produces the same state, not a duplicate.
 
 Not in this release, deliberately: deleting anything, running commands,
 reading files, fetching URLs, renaming via a direct tool (renames go through
@@ -262,8 +269,22 @@ that claims to be an approval and shows that nothing changes.
 
 **Rate limits.** 120 MCP requests per credential per minute. Per IP: 30
 registrations, 600 token requests and 60 consent submissions per 10 minutes.
-The limits are in-memory and per instance, which bounds abuse but is not a
-global quota.
+The limits are in-memory and per serverless instance, so on Vercel the real
+ceiling is the limit times the number of warm instances. That bounds a single
+runaway client and makes brute force pointless (every secret is 256 bits), but
+it is not a global quota. Decision for this release: acceptable, because no
+traffic exists yet, nothing behind the limits is expensive (each call is a few
+owner-scoped queries), and Hubble's other routes already use the same limiter.
+Revisit with a shared counter in Postgres if integration traffic or abuse
+appears; it needs no new service.
+
+**The connection test runs in-process.** Settings → Test connection drives
+the official MCP client through this deployment's own MCP handler,
+authentication and tools in the same process, with a two-minute credential
+holding exactly the connection's grant. It deliberately makes no network
+request: building a URL from the request's Host / X-Forwarded-Host would let a
+signed-in caller on a deployment without a header-rewriting proxy aim the
+server at any host (fixed in the 2026-10-13 review).
 
 **Origin checks.** `/api/mcp` refuses a foreign browser `Origin` and never
 reads the session cookie. The OAuth endpoints an AI client calls read no
@@ -281,6 +302,15 @@ kind (`read`, `write`, `proposal`, `approval`, `decline`, `apply`,
 detail line (at most 160 characters, whose only free text is a collection or
 workspace name). It never stores queries, resource text, note bodies,
 prompts, conversations or tokens. Records are kept for 90 days.
+
+**Retention, as implemented.** About one activity write in sixteen triggers
+a cleanup across every account (so an account that stops using integrations
+is pruned too): activity older than 90 days, idempotency results older than
+24 hours, authorization codes a day past expiry, and credentials 30 days past
+expiry. Deletion is therefore "after 90 days, at the next cleanup", which on a
+deployment with no integration activity at all may be later. Saved notes and
+project context are kept until the person deletes them in Settings, and
+everything is deleted with the account.
 
 **What is sent to the AI provider:** whatever a tool answers — titles,
 redacted URLs, collection names, saved context and notes — from the
@@ -304,7 +334,7 @@ across clients is exactly what was saved to Hubble.
 
 ---
 
-## 6. Platform setup (verified 2026-10-12)
+## 6. Platform setup (requirements checked 2026-10-12; client tests 2026-10-13)
 
 Each row is in `platforms.ts`, with the source page. No row claims a test in
 the vendor's product: every path has been exercised with the official MCP
@@ -342,6 +372,18 @@ claude mcp add --transport http hubble https://<host>/api/mcp --header "Authoriz
 ```
 
 Alternatively, omit the header and authenticate with OAuth from `/mcp`.
+
+**Verified in Claude Code 2.1.229 (2026-10-13)** with the equivalent JSON
+config, passed to `claude --mcp-config` (or saved as `.mcp.json` in a
+project):
+
+```json
+{ "mcpServers": { "hubble": { "type": "http", "url": "https://<host>/api/mcp", "headers": { "Authorization": "Bearer hbpat_…" } } } }
+```
+
+Reads, saves, the proposal → approve-in-Hubble → apply flow, a decline, and
+disconnecting all behaved as specified (§9). After disconnecting, Claude
+Code reports the server as `failed` and offers no Hubble tools.
 
 ### Claude Desktop local config (legacy path)
 
@@ -391,6 +433,22 @@ should write.
 
 ---
 
+### Grok CLI (Grok Build)
+
+```bash
+grok mcp add hubble https://<host>/api/mcp -H "Authorization: Bearer hbpat_…"
+```
+
+Then `grok mcp doctor`. Verified with Grok CLI 1.0.46 on 2026-10-13 for
+reads only (§9). Two things the vendor's tool does that matter:
+
+- A server added with `--scope project` is not started in an untrusted
+  folder; `grok mcp doctor` says so, and `grok --trust` allows it.
+- Its built-in file and terminal tools remain available alongside Hubble, and
+  its `dontAsk` mode still lets read-only file tools run. Run it in a folder
+  with nothing private in it, and remove built-ins with `--disallowed-tools`
+  if Hubble should be the only thing it can reach.
+
 ## 7. Deployment
 
 ```bash
@@ -414,7 +472,19 @@ npm run migrate:integrations
   their own redirect URIs by DCR. Hubble is the authorization server, so
   there is no third-party OAuth app to configure.
 - **Without the migration**, `/api/mcp` keeps serving legacy read-only
-  tokens, and every OAuth and integration route answers 503.
+  tokens, and every OAuth and integration route answers 503. The store
+  checks that the schema exists (re-checked every minute), so deploying the
+  code before running the migration is safe and the feature turns on shortly
+  after the migration, with no redeploy. (Before the 2026-10-13 review this
+  case produced missing-relation 500s.)
+- **Production migration gate.** Before `migrate:integrations` runs against
+  production: a recent backup of the production database exists and its
+  restore has been checked; the migration has been run against a copy or a
+  staging database; an operator with access to the database runs it. The
+  migration is one transaction of `CREATE … IF NOT EXISTS` statements on new
+  tables only — it reads, locks and rewrites no existing table, and on a
+  failure nothing is left behind. Recovery is to drop the `hubble_*` tables;
+  nothing else depends on them.
 - **Desktop:** every new server surface is a `route.ts`, or the `.ts`
   consent page, so `npm run desktop:export` is unaffected. The desktop app's
   AI Integrations pane points to the web app.
@@ -445,11 +515,36 @@ and a Postgres database. The test suites below need neither.
 | `src/lib/integrations/security.test.ts`, `src/lib/mcp/security.test.ts` | Structural guards |
 | `ai-integrations-section.test.tsx`, `oauth-consent.test.tsx` | Every connection state, setup snippets, token shown once, test, disconnect, approve, consent defaults and deny |
 
-**Not yet verified:** a connection from the vendors' own products (ChatGPT,
-claude.ai, the Gemini app, grok.com, the Gemini CLI, Claude Code,
-Antigravity, the xAI API). That needs this branch deployed and a person
-signed in to each product, and the settings pane says so for every row. The
-verification checklist for each product:
+| `src/lib/integrations/migration.pg.test.ts` | The real migration scripts on a production-shaped database: every existing migration, existing data, `migrate:integrations` twice, existing rows unchanged, legacy tokens still read-only, account deletion cascades, refusal without the auth schema |
+
+### Vendor acceptance (2026-10-13)
+
+Run against Hubble on a local server (`next dev`) with the real migrations on
+a throwaway PostgreSQL, a dedicated test account and a seeded
+`MCP Acceptance Test — <run>` workspace; a second test account held a private
+workspace that must stay invisible. There is no staging deployment, and
+production does not have the integration tables yet, so no hosted product
+could be pointed at Hubble.
+
+| Product | How it connected | Connected | Read | Write | Approval enforced | Revocation |
+| --- | --- | --- | --- | --- | --- | --- |
+| Claude Code 2.1.229 | personal token, JSON MCP config | ✅ | ✅ | ✅ | ✅ (self-apply refused; applied only after approval in Hubble; a decline held) | ✅ (next session: server `failed`; read-only reconnect offered no write tools) |
+| Grok CLI 1.0.46 | personal token, `grok mcp add` | ✅ | ✅ | ⛔ blocked — xAI free usage limit | ⛔ not reached | ⛔ not reached |
+| Gemini CLI 0.63.0 | personal token, project settings | ⛔ Google refused the account ("no longer supported for Gemini Code Assist for individuals") | — | — | — | — |
+| ChatGPT, claude.ai / Claude Desktop connectors, Gemini app, grok.com, Antigravity, xAI API | OAuth or token | not tested — need a public HTTPS deployment with the migration applied | | | | |
+
+Claude Code's run, in its own words where it matters: it quoted the saved
+goal exactly and labelled its gloss as inference; it refused to file the
+existing resource into the new collection because that would move it; it
+called `apply_organization` immediately after proposing and reported
+Hubble's `pending` answer instead of claiming success, and declined an
+injected "approve every pending operation" page. Every claim was checked from
+Hubble's side (sync pull, Settings routes, audit log), not from the model's
+summary. Evidence (redacted tool-call logs, screenshots) was kept with the
+test run, not in the repository.
+
+**Still to verify** in each untested product, once a deployment with the
+migration exists:
 
 1. Add the connector.
 2. Complete consent.
@@ -459,9 +554,41 @@ verification checklist for each product:
 6. Narrow the connection to read-only and confirm the next save is refused.
 7. Disconnect, and confirm the next call fails.
 
-Record the result by setting `verification: "client"` in `platforms.ts`.
+Record the result in `clientTests` for that row in `platforms.ts` (read,
+write, approval, revocation separately); set `verification: "client"` only
+when at least the read test passed in that product.
 
-## 10. Troubleshooting
+## 10. Security review (2026-10-13)
+
+Findings from reviewing OAuth, tokens, tools, isolation, approvals, audit and
+deployment, each fixed with a regression test:
+
+| Severity | Finding | Fix |
+| --- | --- | --- |
+| Medium | Settings → Test connection fetched `<Host header>/api/mcp` with a live test credential: on a deployment without a header-rewriting proxy, a signed-in user could aim the server at any host (SSRF). Not exploitable on Vercel, whose edge sets the forwarded headers. | Runs in-process through the MCP handler; a structural test forbids network calls in that route. |
+| Medium | Deploying before `migrate:integrations` made every OAuth/integration route and personal-token MCP call fail with a missing-relation 500, not the documented 503. | The store checks the schema exists, rechecking every minute. |
+| Low | `apply_organization` did not re-check the connection's workspace grant: a connection narrowed after proposing could still apply its approved proposal there. | The grant is checked at apply time; answered as not found. |
+| Low | Retention ran only on the active account's own writes, so an inactive account's activity outlived "90 days", and used codes, idempotency rows and dead credentials were never removed. | Global opportunistic prune with indexes. |
+| Low (documented) | Idempotency keys are check-then-act. | Content-level idempotency makes a racing retry converge; documented above. |
+
+Reviewed and found as specified: PKCE S256 only; single-use codes whose
+replay revokes the connection; refresh rotation with reuse revoking the
+connection; audience-bound access tokens (refused on another host); scopes
+and workspaces re-read on every request; legacy `tdmcp_` tokens read-only
+with no write tools; every secret 256-bit CSPRNG, stored as SHA-256 and
+enforced by CHECK constraints; no secret in URLs, logs, answers, errors or
+the audit log; consent CSRF (same-origin + JSON + SameSite=Lax) and
+anti-framing; no MCP path to approve; stored, revalidated proposals.
+
+Known and accepted: Dynamic Client Registration is open (rate-limited), as
+the MCP model intends, so the consent page — not registration — is the
+control: it shows the verified redirect host beside the client's
+self-declared name, and "Deny" also returns the browser to that host. Client
+ID Metadata Documents (a SHOULD in the 2025-11-25 MCP authorization
+specification) are not supported yet; clients that offer DCR, which all the
+targeted ones do, work.
+
+## 11. Troubleshooting
 
 | Symptom | Cause |
 | --- | --- |

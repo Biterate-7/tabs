@@ -890,6 +890,13 @@ export function registerIntegrationTools(
     async ({ proposalId }) => {
       const blocked = writeGuard();
       if (blocked) return blocked;
+      // The grant is re-checked at the moment of applying, not only when the
+      // proposal was made: a connection narrowed since then no longer reaches
+      // that workspace, and is told so exactly as if the proposal did not exist.
+      const pending = await deps.store!.getProposal(userId, proposalId).catch(() => undefined);
+      if (!pending || pending.connectionId !== grant.connectionId || !canSeeWorkspace(grant, pending.workspaceId)) {
+        return refuse("not_found", "No proposal with that id from this connection.");
+      }
       const outcome = await applyProposal({ store: deps.store!, data, sync: deps.sync!, now }, userId, proposalId, {
         connectionId: grant.connectionId!,
       }).catch(() => undefined);

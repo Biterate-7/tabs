@@ -53,6 +53,12 @@ export function setupSnippets(surface: PlatformSurfaceId, origin: string, token?
           text: `claude mcp add --transport http hubble ${url} --header "Authorization: ${bearer}"`,
           where: "Run in a terminal. Add --scope user to use it in every project.",
         },
+        {
+          label: "Or an MCP config file (claude --mcp-config, or .mcp.json in a project)",
+          language: "json",
+          text: json({ mcpServers: { hubble: { type: "http", url, headers: { Authorization: bearer } } } }),
+          where: "The form tested with Claude Code 2.1.229.",
+        },
       ];
     case "claude-desktop-config":
       return [
@@ -93,6 +99,15 @@ export function setupSnippets(surface: PlatformSurfaceId, origin: string, token?
           language: "json",
           text: json({ mcpServers: { hubble: { serverUrl: url, headers: { Authorization: bearer } } } }),
           where: "Antigravity → MCP settings → edit the raw config. Antigravity reads serverUrl, not url.",
+        },
+      ];
+    case "grok-cli":
+      return [
+        {
+          label: "Grok CLI",
+          language: "bash",
+          text: `grok mcp add hubble ${url} -H "Authorization: ${bearer}"`,
+          where: "Adds Hubble for every project (--scope project for one folder, which Grok must trust). Check it with grok mcp doctor.",
         },
       ];
     case "grok-api":

@@ -1,7 +1,7 @@
 import { mintRecordId } from "./credentials";
 import type { ActivityKind, ActivityOutcome, ActivityRecord } from "./records";
 import type { IntegrationGrant } from "./grants";
-import type { IntegrationStore } from "./store";
+import type { IntegrationStore, RetentionCutoffs } from "./store";
 import type { ActivityView } from "./activity-labels";
 
 export { ACTIVITY_KIND_LABEL, ACTIVITY_OUTCOME_LABEL } from "./activity-labels";
@@ -32,6 +32,23 @@ export type { ActivityView } from "./activity-labels";
 
 /** Kept for 90 days. */
 export const ACTIVITY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Retention, in one place. Activity: 90 days. A remembered mutation result:
+ * 24 hours, long enough for any retry. An authorization code: a day past its
+ * 5-minute expiry, kept briefly so a replay is still recognised as one. A
+ * credential: 30 days past expiry, so "Authentication expired" is shown for a
+ * while before the connection reads as having none.
+ */
+export function retentionCutoffs(now: number): RetentionCutoffs {
+  return {
+    activityBefore: now - ACTIVITY_RETENTION_MS,
+    idempotencyBefore: now - DAY,
+    codesExpiredBefore: now - DAY,
+    credentialsExpiredBefore: now - 30 * DAY,
+  };
+}
 const MAX_TARGETS = 20;
 const MAX_DETAIL = 160;
 
@@ -87,9 +104,10 @@ export async function recordActivity(store: IntegrationStore | undefined, record
   if (!store) return;
   try {
     await store.appendActivity(record);
-    // Prune occasionally rather than on every write.
+    // Prune occasionally rather than on every write: about one write in
+    // sixteen, chosen by the random last character of the record id.
     if (record.id.charCodeAt(record.id.length - 1) % 16 === 0) {
-      await store.pruneActivity(record.userId, record.at - ACTIVITY_RETENTION_MS);
+      await store.pruneExpired(retentionCutoffs(record.at));
     }
   } catch {
     // Observational.

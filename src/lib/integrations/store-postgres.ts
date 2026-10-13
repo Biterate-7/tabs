@@ -500,8 +500,12 @@ export function createPostgresIntegrationStore(pool: Pool): IntegrationStore {
       );
       return result.rows.map(activityFromRow);
     },
-    async pruneActivity(userId, olderThan) {
-      await pool.query(`DELETE FROM hubble_integration_activity WHERE user_id = $1 AND at < $2`, [userId, olderThan]);
+    async pruneExpired(cutoffs) {
+      // Four independent deletes, each on its own index; none holds a lock a live request waits on for long.
+      await pool.query(`DELETE FROM hubble_integration_activity WHERE at < $1`, [cutoffs.activityBefore]);
+      await pool.query(`DELETE FROM hubble_integration_idempotency WHERE created_at < $1`, [cutoffs.idempotencyBefore]);
+      await pool.query(`DELETE FROM hubble_oauth_codes WHERE expires_at < $1`, [cutoffs.codesExpiredBefore]);
+      await pool.query(`DELETE FROM hubble_integration_credentials WHERE expires_at < $1`, [cutoffs.credentialsExpiredBefore]);
     },
 
     async getIdempotent(connectionId, key) {
@@ -587,18 +591,42 @@ export function createPostgresIntegrationStore(pool: Pool): IntegrationStore {
   return store;
 }
 
-let resolved: Promise<IntegrationStore | undefined> | undefined;
+/**
+ * Whether `npm run migrate:integrations` has been applied to this database.
+ *
+ * The schema is applied in one transaction, so its last table existing means
+ * all of it does.
+ */
+export async function integrationSchemaPresent(pool: Pool): Promise<boolean> {
+  const { rows } = await pool.query<{ present: boolean }>(`SELECT to_regclass('public.hubble_workspace_notes') IS NOT NULL AS present`);
+  return rows[0]?.present === true;
+}
 
-/** The deployment's integration store, or `undefined` with no database — in which case AI integrations are off. */
+/** How long a "not migrated yet" answer is trusted before the database is asked again. */
+const SCHEMA_RECHECK_MS = 60 * 1000;
+
+let cached: { store?: IntegrationStore; checkedAt: number } | undefined;
+
+/**
+ * The deployment's integration store, or `undefined` when AI integrations
+ * cannot run here: no database, or a database the integration migration has
+ * not been applied to yet.
+ *
+ * The second case matters on the first deploy. The code can reach production
+ * before `migrate:integrations` runs; without this check every OAuth and
+ * integration route would fail with a missing-relation 500 instead of the
+ * documented 503, and personal-token MCP requests with it. A missing schema
+ * is re-checked every minute, so the feature turns on shortly after the
+ * migration without a redeploy. A present one is cached for the process.
+ */
 export async function getIntegrationStore(): Promise<IntegrationStore | undefined> {
-  resolved ??= (async () => {
-    const connectionString = postgresConnectionString();
-    if (!connectionString) return undefined;
-    return createPostgresIntegrationStore(await getPool(connectionString));
-  })().catch((error) => {
-    resolved = undefined;
-    throw error;
-  });
-  return resolved;
+  const connectionString = postgresConnectionString();
+  if (!connectionString) return undefined;
+  if (cached?.store) return cached.store;
+  if (cached && Date.now() - cached.checkedAt < SCHEMA_RECHECK_MS) return undefined;
+  const pool = await getPool(connectionString);
+  const present = await integrationSchemaPresent(pool);
+  cached = present ? { store: createPostgresIntegrationStore(pool), checkedAt: Date.now() } : { checkedAt: Date.now() };
+  return cached.store;
 }
 

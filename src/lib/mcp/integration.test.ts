@@ -441,6 +441,21 @@ describe("propose_organization → approval in Hubble → apply_organization", (
     expect(world.sync.pushes).toHaveLength(0);
   });
 
+  it("re-checks the workspace grant when applying, not only when proposing (regression)", async () => {
+    const { client, world, alice } = await setup("write", [PHYSICS, HISTORY]);
+    const proposed = await call(client, "propose_organization", {
+      workspaceId: PHYSICS,
+      basedOnVersion: PHYSICS_VERSION,
+      operations: [{ kind: "create_collection", name: "Optics", tabIds: [TAB_OPTICS] }],
+    });
+    await decideProposal(world.store, ALICE, proposed.json!.proposalId, "approve", Date.now());
+    // The person narrows the connection to another workspace after approving.
+    await world.store.updateConnection(ALICE, alice.connection.id, { workspaceIds: [HISTORY] }, Date.now());
+    const applied = await call(client, "apply_organization", { proposalId: proposed.json!.proposalId });
+    expect(applied.structured?.error?.code).toBe("not_found");
+    expect(world.sync.pushes).toHaveLength(0);
+  });
+
   it("does not let one connection apply another connection's proposal", async () => {
     const { client, world } = await setup("write");
     const proposed = await call(client, "propose_organization", {

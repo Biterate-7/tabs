@@ -156,6 +156,18 @@ describePostgres("AI integrations against real PostgreSQL", () => {
     expect(rows.map((r) => `${r.operation}:${r.outcome}`)).toEqual(expect.arrayContaining(["create_collection:ok", "save_workspace_note:ok", "save_project_context:ok", "create_collection:failed"]));
   });
 
+  it("retention prunes every account in SQL, not only the active one", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    for (const [id, user, at] of [["act_old_bob", bob, now - 91 * day], ["act_new_alice", alice, now - day]] as const) {
+      await pool.query(`INSERT INTO hubble_integration_activity (id, user_id, actor, kind, operation, outcome, at) VALUES ($1, $2, 'ai_client', 'read', 'list_workspaces', 'ok', $3)`, [id, user, at]);
+    }
+    const { retentionCutoffs } = await import("./activity");
+    await store.pruneExpired(retentionCutoffs(now));
+    const { rows } = await pool.query("SELECT id FROM hubble_integration_activity ORDER BY id");
+    expect(rows.map((r) => r.id)).toEqual(["act_new_alice"]);
+  });
+
   it("a proposal applies once, after approval, through one sync push", async () => {
     const created = await createTokenConnection(store, { userId: alice, client: "chatgpt", label: "ChatGPT", permission: "write", workspaceIds: [workspace], grantable: new Set([workspace]), now: Date.now() });
     if (!created.ok) throw new Error(created.problem);

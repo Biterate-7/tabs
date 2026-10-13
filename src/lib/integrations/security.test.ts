@@ -118,6 +118,15 @@ describe("only the person, in Hubble, approves", () => {
     expect(consent).toContain("hasJsonContentType(request)");
   });
 
+  it("the connection test never makes a network request (regression: SSRF via forwarded host)", () => {
+    // Its target was built from Host / X-Forwarded-Host, so a signed-in caller
+    // on a deployment without a header-rewriting proxy could aim the server,
+    // and the test credential, at any host. It now runs through the handler in-process.
+    const code = codeOf(read("src/app/api/integrations/test/route.ts"));
+    expect(code).toContain("handleMcpHttpRequest(new Request(input, init), deps)");
+    expect(code).not.toMatch(/(^|[^.\w])fetch\(/m);
+  });
+
   it("the OAuth endpoints an AI client calls read no cookie at all", () => {
     for (const file of ["src/app/api/oauth/register/route.ts", "src/app/api/oauth/token/route.ts", "src/app/api/oauth/revoke/route.ts"]) {
       expect(codeOf(read(file)), file).not.toMatch(/getSession|cookie/i);

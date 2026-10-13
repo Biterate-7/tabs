@@ -27,13 +27,13 @@ import { isDesktop } from "@/lib/platform/detect"
 import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs"
 import { formatRelativeTime } from "@/lib/time-format"
 import { ACTIVITY_KIND_LABEL, ACTIVITY_OUTCOME_LABEL } from "@/lib/integrations/activity-labels"
-import { PLATFORM_SURFACES, VERIFICATION_LABEL, VERIFIED_ON } from "@/lib/integrations/platforms"
+import { CLIENT_TEST_LABEL, PLATFORM_SURFACES, VERIFICATION_LABEL, VERIFIED_ON } from "@/lib/integrations/platforms"
 import { CLIENT_NAME, NEVER_ALLOWED, PERMISSION_DESCRIPTION, PERMISSION_LABEL } from "@/lib/integrations/scopes"
 import { setupSnippets } from "@/lib/integrations/setup"
 import { GroupBlock, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
 import type { ConnectionTestResult, ConnectionView } from "@/lib/integrations/service"
 import type { ActivityView } from "@/lib/integrations/activity-labels"
-import type { PlatformSurface } from "@/lib/integrations/platforms"
+import type { ClientTestRecord, PlatformSurface } from "@/lib/integrations/platforms"
 import type { IntegrationClient, PermissionLevel } from "@/lib/integrations/scopes"
 import type { IntegrationsData, UseIntegrations } from "@/hooks/use-integrations"
 
@@ -222,6 +222,31 @@ function TokenSetup({ surface, integrations, data }: { surface: PlatformSurface;
   )
 }
 
+/** What happened in the vendor's own product, capability by capability — never one blanket tick. */
+function ClientTests({ record }: { record: ClientTestRecord }) {
+  const rows = [
+    ["Read", record.read],
+    ["Save", record.write],
+    ["Approval in Hubble", record.approval],
+    ["Disconnect", record.revocation],
+  ] as const
+  return (
+    <div className="rounded-xs border border-border p-2" data-testid="client-tests">
+      <p className="text-body-sm text-foreground">Tested in this product on {record.date}</p>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        {rows.map(([label, status]) => (
+          <li key={label} className={`flex items-center gap-1 text-body-sm ${status === "pass" ? "text-foreground" : "text-muted-foreground"}`}>
+            {status === "pass" ? <Check className="size-3.5 text-success" aria-hidden /> : <X className="size-3.5" aria-hidden />}
+            {label}: {CLIENT_TEST_LABEL[status]}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-meta text-tertiary">{record.setup}.</p>
+      {record.note && <p className="mt-1 text-meta text-tertiary">{record.note}</p>}
+    </div>
+  )
+}
+
 function SurfaceGuide({ surface, integrations, data }: { surface: PlatformSurface; integrations: UseIntegrations; data: IntegrationsData }) {
   const [open, setOpen] = useState(surface.kind === "app")
   const origin = data.mcpUrl.replace(/\/api\/mcp$/, "")
@@ -240,7 +265,9 @@ function SurfaceGuide({ surface, integrations, data }: { surface: PlatformSurfac
             {surface.hubble === "ready" ? (usesToken ? "Connect with a Hubble token" : "Connect by signing in to Hubble (OAuth)") : "Not supported"}
           </span>
         </span>
-        <Badge variant={surface.verification === "client" ? "success" : "outline"}>{surface.verification === "client" ? "Tested" : "Not yet tested in this app"}</Badge>
+        <Badge variant={surface.verification === "client" ? "success" : surface.clientTests ? "warning" : "outline"}>
+          {surface.verification === "client" ? "Tested in this app" : surface.clientTests ? "Blocked by the vendor" : "Not yet tested in this app"}
+        </Badge>
       </button>
       {open && (
         <div className="mt-3 flex flex-col gap-2">
@@ -249,6 +276,7 @@ function SurfaceGuide({ surface, integrations, data }: { surface: PlatformSurfac
               <li key={step}>{step}</li>
             ))}
           </ol>
+          {surface.clientTests && <ClientTests record={surface.clientTests} />}
           {!usesToken && setupSnippets(surface.id, origin).map((snippet) => <Snippet key={snippet.label} {...snippet} />)}
           {usesToken && <TokenSetup surface={surface} integrations={integrations} data={data} />}
           <div className="mt-1 rounded-xs bg-surface-hover p-2">

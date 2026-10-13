@@ -12,6 +12,17 @@ import type {
 } from "./records";
 import type { HubbleScope } from "./scopes";
 
+export type RetentionCutoffs = {
+  /** Activity recorded before this. */
+  activityBefore: number;
+  /** Idempotency results stored before this. */
+  idempotencyBefore: number;
+  /** Authorization codes that expired before this. */
+  codesExpiredBefore: number;
+  /** Credentials that expired before this. */
+  credentialsExpiredBefore: number;
+};
+
 /**
  * Where the integration layer keeps its records.
  *
@@ -85,7 +96,12 @@ export type IntegrationStore = {
     userId: string,
     options: { workspaceId?: string; connectionId?: string; before?: number; limit: number }
   ): Promise<ActivityRecord[]>;
-  pruneActivity(userId: string, olderThan: number): Promise<void>;
+  /**
+   * Deletes what has outlived its retention, for every account at once — so a
+   * person who stops using integrations is not kept forever by never
+   * triggering a per-account prune. See `retentionCutoffs` in ./activity.ts.
+   */
+  pruneExpired(cutoffs: RetentionCutoffs): Promise<void>;
 
   getIdempotent(connectionId: string, key: string): Promise<IdempotencyRecord | undefined>;
   /** Stores a result unless one is already stored for the key; returns whichever is stored. */
@@ -256,10 +272,14 @@ export function createMemoryIntegrationStore(): IntegrationStore & {
         .slice(0, options.limit)
         .map(clone);
     },
-    async pruneActivity(userId, olderThan) {
-      for (let i = activity.length - 1; i >= 0; i -= 1) {
-        if (activity[i].userId === userId && activity[i].at < olderThan) activity.splice(i, 1);
-      }
+    async pruneExpired(cutoffs) {
+      const keep = <T,>(list: T[], keepIf: (item: T) => boolean) => {
+        for (let i = list.length - 1; i >= 0; i -= 1) if (!keepIf(list[i])) list.splice(i, 1);
+      };
+      keep(activity, (a) => a.at >= cutoffs.activityBefore);
+      keep(idempotency, (r) => r.createdAt >= cutoffs.idempotencyBefore);
+      keep(codes, (c) => c.expiresAt >= cutoffs.codesExpiredBefore);
+      keep(credentials, (c) => c.expiresAt >= cutoffs.credentialsExpiredBefore);
     },
 
     async getIdempotent(connectionId, key) {

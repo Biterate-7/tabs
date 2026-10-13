@@ -93,6 +93,26 @@ describe("AiIntegrationsSection", () => {
     expect(within(guide).getByText("Not yet tested in this app")).toBeTruthy()
   })
 
+  it("shows per-capability vendor results: Claude Code passed, Grok CLI read only, Gemini CLI blocked", async () => {
+    mockServer()
+    const user = userEvent.setup()
+    render(<AiIntegrationsSection />)
+    await screen.findByText(/Not connected/)
+    await user.click(screen.getByRole("radio", { name: "Claude" }))
+    const code = screen.getByTestId("surface-claude-code")
+    await user.click(within(code).getByRole("button", { name: /Claude Code/ }))
+    expect(within(code).getByText("Tested in this app")).toBeTruthy()
+    for (const line of ["Read: passed", "Save: passed", "Approval in Hubble: passed", "Disconnect: passed"]) expect(within(code).getByText(new RegExp(line))).toBeTruthy()
+    await user.click(screen.getByRole("radio", { name: "Grok" }))
+    const grok = screen.getByTestId("surface-grok-cli")
+    await user.click(within(grok).getByRole("button", { name: /Grok CLI/ }))
+    expect(within(grok).getByText(/Read: passed/)).toBeTruthy()
+    expect(within(grok).getByText(/Save: blocked by the vendor/)).toBeTruthy()
+    await user.click(screen.getByRole("radio", { name: "Gemini" }))
+    const gemini = screen.getByTestId("surface-gemini-cli")
+    expect(within(gemini).getByText("Blocked by the vendor")).toBeTruthy()
+  })
+
   it("creates a token for the Gemini CLI, shows it once in the snippet, and forgets it on Done", async () => {
     const calls = mockServer()
     const user = userEvent.setup()
@@ -175,7 +195,9 @@ describe("setup snippets", () => {
       expect(surface.steps.length, surface.id).toBeGreaterThan(0)
       expect(setupSnippets(surface.id, ORIGIN, TOKEN).length, surface.id).toBeGreaterThan(0)
       expect(surface.docs, surface.id).toMatch(/^https:\/\//)
-      expect(surface.verification, surface.id).not.toBe("client")
+      // "Tested" only where the vendor product itself passed at least the read test, and every capability says its own result.
+      if (surface.verification === "client") expect(surface.clientTests?.read, surface.id).toBe("pass")
+      if (surface.clientTests) for (const key of ["read", "write", "approval", "revocation"] as const) expect(surface.clientTests[key], surface.id).toMatch(/^(pass|fail|blocked|not_run)$/)
     }
   })
 

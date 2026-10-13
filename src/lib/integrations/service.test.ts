@@ -134,6 +134,35 @@ describe("the connection test", () => {
   });
 });
 
+describe("retention (regression: inactive accounts were never pruned)", () => {
+  it("prunes old activity for every account, plus stale idempotency, codes and credentials", async () => {
+    const { createMemoryIntegrationStore } = await import("./store");
+    const { recordActivity, retentionCutoffs, activityRecord } = await import("./activity");
+    const store = createMemoryIntegrationStore();
+    const day = 24 * 60 * 60 * 1000;
+    const old = NOW - 91 * day;
+    // Bob has not used an integration in 91 days; only Alice is active.
+    store.activity.push(activityRecord({ userId: BOB, client: "grok", actor: "ai_client" }, { kind: "read", operation: "list_workspaces", outcome: "ok" }, old));
+    store.activity.push(activityRecord({ userId: ALICE, client: "claude", actor: "ai_client" }, { kind: "read", operation: "list_workspaces", outcome: "ok" }, NOW - day));
+    await store.putIdempotent({ connectionId: "c", key: "key-12345678", operation: "create_collection", result: {}, createdAt: NOW - 2 * day });
+    await store.putIdempotent({ connectionId: "c", key: "key-fresh-123", operation: "create_collection", result: {}, createdAt: NOW });
+    store.credentials.push({ id: "dead", connectionId: "c", kind: "access", tokenHash: "1".repeat(64), hint: "AAAA", createdAt: old, expiresAt: old + 1000 });
+
+    await store.pruneExpired(retentionCutoffs(NOW));
+    expect(store.activity.map((a) => a.userId)).toEqual([ALICE]);
+    expect(await store.getIdempotent("c", "key-12345678")).toBeUndefined();
+    expect(await store.getIdempotent("c", "key-fresh-123")).toBeDefined();
+    expect(store.credentials.find((c) => c.id === "dead")).toBeUndefined();
+
+    // And it is actually reached from ordinary activity recording.
+    store.activity.push(activityRecord({ userId: BOB, client: "grok", actor: "ai_client" }, { kind: "read", operation: "x", outcome: "ok" }, old));
+    for (let i = 0; i < 200 && store.activity.some((a) => a.userId === BOB); i += 1) {
+      await recordActivity(store, activityRecord({ userId: ALICE, client: "claude", actor: "ai_client" }, { kind: "read", operation: "y", outcome: "ok" }, NOW));
+    }
+    expect(store.activity.some((a) => a.userId === BOB)).toBe(false);
+  });
+});
+
 describe("project context patches", () => {
   const source = { kind: "integration", client: "claude", connectionId: "conn_x" } as const;
   const tabs = new Set([TAB_THERMO]);

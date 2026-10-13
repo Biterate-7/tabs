@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS hubble_integration_activity (
 CREATE INDEX IF NOT EXISTS hubble_integration_activity_user_idx
   ON hubble_integration_activity (user_id, at DESC);
 
+
 -- A retried mutation answered from its first result.
 CREATE TABLE IF NOT EXISTS hubble_integration_idempotency (
   connection_id  TEXT NOT NULL REFERENCES hubble_integration_connections(id) ON DELETE CASCADE,
@@ -167,3 +168,14 @@ CREATE TABLE IF NOT EXISTS hubble_workspace_notes (
 
 CREATE INDEX IF NOT EXISTS hubble_workspace_notes_workspace_idx
   ON hubble_workspace_notes (user_id, workspace_id, created_at DESC);
+
+-- Retention (src/lib/integrations/activity.ts, retentionCutoffs): pruning
+-- runs across every account, so each prune is a range delete on one of these.
+CREATE INDEX IF NOT EXISTS hubble_integration_activity_at_idx
+  ON hubble_integration_activity (at);
+CREATE INDEX IF NOT EXISTS hubble_integration_credentials_expires_idx
+  ON hubble_integration_credentials (expires_at);
+CREATE INDEX IF NOT EXISTS hubble_oauth_codes_expires_idx
+  ON hubble_oauth_codes (expires_at);
+CREATE INDEX IF NOT EXISTS hubble_integration_idempotency_created_idx
+  ON hubble_integration_idempotency (created_at);
