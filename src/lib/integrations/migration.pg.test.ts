@@ -39,7 +39,9 @@ const BASELINE = ["auth", "sync", "mcp", "downloads"] as const;
 const LEGACY_AGENT_SCHEMAS = readFileSync(path.join(__dirname, "__fixtures__", "legacy-agent-schemas.sql"), "utf8");
 
 async function migrate(name: string, url: string) {
-  return run(process.execPath, [path.join(REPO_ROOT, "scripts", `migrate-${name}.mjs`)], {
+  // migrate:integrations names its target explicitly; the older scripts take no arguments.
+  const args = name === "integrations" ? [`--expect-host=${new URL(url).hostname}`] : [];
+  return run(process.execPath, [path.join(REPO_ROOT, "scripts", `migrate-${name}.mjs`), ...args], {
     cwd: REPO_ROOT,
     // Never a developer's real database: the scripts read .env files only for unset variables.
     env: { ...process.env, POSTGRES_URL: url, DATABASE_URL: "" },

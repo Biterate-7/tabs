@@ -5,7 +5,7 @@
 --
 -- Additive and idempotent, like every schema in this project: IF NOT EXISTS
 -- throughout, so applying it twice is a no-op and applying it to a populated
--- database touches nothing else. Apply with `npm run migrate:integrations`.
+-- database touches nothing else. Apply with scripts/migrate-integrations.mjs, which requires --expect-host.
 --
 -- Depends on tabdump_users (src/lib/auth/store/schema.sql).
 --
