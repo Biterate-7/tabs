@@ -2,7 +2,7 @@
 /**
  * Applies the AI integrations schema (src/lib/integrations/schema.sql).
  *
- *   npm run migrate:integrations
+ *   node --env-file=<file holding POSTGRES_URL> scripts/migrate-integrations.mjs --expect-host=<endpoint>
  *
  * Required before a deployment can connect ChatGPT, Claude, Gemini or Grok
  * to Hubble: OAuth clients, connections, credentials, proposals, saved
@@ -14,40 +14,26 @@
  * Additive and idempotent: every statement is IF NOT EXISTS, so this creates
  * what is missing and touches nothing else, and running it twice is a no-op.
  *
- * Reads the connection string from POSTGRES_URL or DATABASE_URL. The variable
- * NAME is printed; its value never is.
+ * The target is never implied. Unlike the older migrate:* scripts, this one
+ * does not read .env.local or .env: a `vercel env pull` writes the
+ * Development database there, so the file a developer happens to have would
+ * silently become the target. The connection string must be in the real
+ * environment (POSTGRES_URL, else DATABASE_URL) — supply it on purpose, e.g.
+ * with `node --env-file=<file>` — and --expect-host must name the database
+ * host it points at: the endpoint label (`ep-…`, with or without `-pooler`)
+ * or the full host name. A mismatch stops before connecting.
+ *
+ * Prints the variable NAME, the host and the database name. Never the
+ * connection string, the user or the password.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMA_PATH = path.join(ROOT, "src", "lib", "integrations", "schema.sql");
 const CONNECTION_ENV_VARS = ["POSTGRES_URL", "DATABASE_URL"];
-
-/**
- * A deliberately minimal .env reader: enough for `KEY=value` and
- * `KEY="value"` lines, which is all a connection string needs. Never
- * overrides a variable already present in the real environment, so a
- * deliberate `POSTGRES_URL=… npm run migrate:auth` still wins.
- */
-function loadEnvFile(file) {
-  if (!existsSync(file)) return;
-  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (process.env[key] !== undefined) continue;
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
-  }
-}
 
 function connectionString() {
   for (const name of CONNECTION_ENV_VARS) {
@@ -57,17 +43,58 @@ function connectionString() {
   return null;
 }
 
-async function main() {
-  loadEnvFile(path.join(ROOT, ".env.local"));
-  loadEnvFile(path.join(ROOT, ".env"));
+/** `--expect-host=x` or `--expect-host x`. */
+function expectedHost(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith("--expect-host=")) return argv[i].slice("--expect-host=".length).trim();
+    if (argv[i] === "--expect-host") return (argv[i + 1] ?? "").trim();
+  }
+  return "";
+}
 
+/** The parts of a connection string that are safe to print and to match on. */
+function describeTarget(value) {
+  const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  const endpoint = host.split(".")[0].replace(/-pooler$/, "");
+  return { host, endpoint, database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "(default)" };
+}
+
+function matchesTarget(target, expected) {
+  const want = expected.toLowerCase().replace(/-pooler$/, "");
+  return want === target.host || want === target.endpoint;
+}
+
+async function main() {
   const connection = connectionString();
   if (!connection) {
     console.error(
-      `No database configured. Set one of ${CONNECTION_ENV_VARS.join(" or ")} to a Postgres ` +
-        `connection string (in .env.local for local development, or in your hosting provider's ` +
-        `environment settings) and run this again.`
+      `No database configured. Set ${CONNECTION_ENV_VARS.join(" or ")} in the environment of this command ` +
+        `(for example \`node --env-file=<file> scripts/migrate-integrations.mjs --expect-host=<host>\`). ` +
+        `.env.local and .env are not read: name the target explicitly.`
     );
+    process.exitCode = 1;
+    return;
+  }
+
+  let target;
+  try {
+    target = describeTarget(connection.value);
+  } catch {
+    console.error(`${connection.name} is not a valid connection URL.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const expected = expectedHost(process.argv.slice(2));
+  console.log(`Target (via ${connection.name}): host ${target.host}, database ${target.database}.`);
+  if (!expected) {
+    console.error(`Refusing to run without --expect-host. Pass the host above (or its ${target.endpoint} label) once you have confirmed it is the database you mean.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!matchesTarget(target, expected)) {
+    console.error(`Refusing to run: --expect-host is ${expected}, but ${connection.name} points at ${target.host}. Nothing was changed.`);
     process.exitCode = 1;
     return;
   }
@@ -85,9 +112,7 @@ async function main() {
     await client.query("BEGIN");
     await client.query(schema);
     await client.query("COMMIT");
-    // The variable NAME is safe to print; its value is a credential, so it
-    // never is.
-    console.log(`AI integrations schema applied (via ${connection.name}).`);
+    console.log(`AI integrations schema applied to ${target.host}/${target.database} (via ${connection.name}).`);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -97,6 +122,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("Migration failed:", error instanceof Error ? error.message : error);
+  // A driver message can quote the connection string; never print one.
+  const message = error instanceof Error ? error.message : String(error);
+  console.error("Migration failed:", message.replace(/postgres(ql)?:\/\/\S+/gi, "<connection string>"));
   process.exitCode = 1;
 });

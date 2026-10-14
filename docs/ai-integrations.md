@@ -464,9 +464,19 @@ npm run migrate:sync
 ```
 
 ```bash
-npm run migrate:integrations
+node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-integrations.mjs --expect-host=<ep-… endpoint or host>
 ```
 
+- **Naming the target:** unlike the other `migrate:*` scripts,
+  `migrate:integrations` never reads `.env.local` or `.env` — `vercel env
+  pull` writes the Development database there, so it would silently become
+  the target. The connection string must be in the command's environment,
+  and `--expect-host` must name the host it points at (the Neon endpoint
+  label, with or without `-pooler`, or the full host name). The script
+  prints the host and database name, refuses a missing or mismatched
+  `--expect-host` before connecting, and never prints the connection string
+  (`src/lib/integrations/migration-target.test.ts`). Keep the file passed to
+  `--env-file` outside the repository and delete it afterwards.
 - **Environment:** no new variable. The integration store uses the existing
   `POSTGRES_URL` / `DATABASE_URL`. Accounts need the existing Google sign-in
   configuration (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`).
@@ -520,6 +530,7 @@ and a Postgres database. The test suites below need neither.
 | `ai-integrations-section.test.tsx`, `oauth-consent.test.tsx` | Every connection state, setup snippets, token shown once, test, disconnect, approve, consent defaults and deny |
 
 | `src/lib/integrations/migration.pg.test.ts` | The real migration scripts on a production-shaped database: every existing migration, existing data, `migrate:integrations` twice, existing rows unchanged, legacy tokens still read-only, account deletion cascades, refusal without the auth schema |
+| `src/lib/integrations/migration-target.test.ts` | `migrate:integrations` never reads `.env.local` / `.env`, refuses a missing or mismatched `--expect-host` before connecting, matches the endpoint with or without `-pooler`, and prints no credential |
 
 ### Vendor acceptance (2026-10-13)
 
