@@ -1,10 +1,10 @@
 import { applyCollectionBatch } from "@/lib/collections/batch";
-import { planEffect, planStepLine, PLAN_LIMITS, validateWorkspacePlan, verifyWorkspacePlan } from "@/lib/agents/session-context/plan";
-import { analyzeTopics } from "@/lib/agents/session-context/topics";
-import { recommendPlacement } from "@/lib/agents/session-context/relevance";
+import { planEffect, planStepLine, PLAN_LIMITS, validateWorkspacePlan, verifyWorkspacePlan } from "@/lib/knowledge/workspace/plan";
+import { analyzeTopics } from "@/lib/knowledge/workspace/topics";
+import { recommendPlacement } from "@/lib/knowledge/workspace/relevance";
 import { mintRecordId } from "./credentials";
 import { loadBasis, writeCollections } from "./writer";
-import type { PlanProblem, ValidatedWorkspacePlan, WorkspaceOperation } from "@/lib/agents/session-context/plan";
+import type { PlanProblem, ValidatedWorkspacePlan, WorkspaceOperation } from "@/lib/knowledge/workspace/plan";
 import type { HubbleMcpData } from "@/lib/mcp/data";
 import type { IntegrationGrant } from "./grants";
 import type { ProposalOperation, ProposalRecord, ProposalResult, ProposalStep } from "./records";
@@ -21,7 +21,7 @@ import type { SyncWriterBackend, WriteBasis } from "./writer";
  *                                 └──▶ declined / expired           └──▶ expired
  *
  * A proposal is a plan in J.5's vocabulary — create, rename, add tabs —
- * validated by the same `validateWorkspacePlan` an agent session's plan goes
+ * validated by the same `validateWorkspacePlan` every workspace plan goes
  * through, with the same problem codes, against the workspace as the server
  * holds it. When the client gives no operations, Hubble drafts them from its
  * own topic analysis (`analyzeTopics` + `recommendPlacement`), which only
@@ -122,7 +122,7 @@ export async function proposeOrganization(
   const validation = validateWorkspacePlan(
     basis.loaded,
     // A drafted plan is by construction against this version. A client's plan
-    // must say which version it read, exactly as an agent session's must.
+    // must say which version it read.
     { basedOnVersion: drafted ? basis.version : (input.basedOnVersion ?? basis.version), workspaceId: input.workspaceId, operations },
     { workspaceId: input.workspaceId, version: basis.version }
   );

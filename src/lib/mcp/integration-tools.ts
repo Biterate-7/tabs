@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { resolveContext } from "@/lib/agents/context/resolve";
-import { sanitizeText } from "@/lib/agents/context/sanitize";
-import { collectionIndex, searchWorkspaceTabs, tabRow } from "@/lib/agents/session-context/insight";
-import { cleanCollectionName } from "@/lib/agents/session-context/changes";
-import { OPERATION_CONFIDENCES, PLAN_LIMITS, PLAN_PROBLEM_MESSAGES } from "@/lib/agents/session-context/plan";
+import { resolveContext } from "@/lib/context/resolve";
+import { sanitizeText } from "@/lib/context/sanitize";
+import { collectionIndex, searchWorkspaceTabs, tabRow } from "@/lib/knowledge/workspace/insight";
+import { cleanCollectionName } from "@/lib/knowledge/workspace/changes";
+import { OPERATION_CONFIDENCES, PLAN_LIMITS, PLAN_PROBLEM_MESSAGES } from "@/lib/knowledge/workspace/plan";
 import { applyCollectionBatch } from "@/lib/collections/batch";
 import { createCollection } from "@/lib/collections/relations";
 import { activityRecord, boundedName, recordActivity } from "@/lib/integrations/activity";
@@ -14,7 +14,7 @@ import { applyContextPatch, buildNote, cleanText, CONTEXT_LIMITS, emptyContext, 
 import { applyProposal, proposalView, proposeOrganization } from "@/lib/integrations/proposals";
 import { CLIENT_NAME, levelOf, PERMISSION_LABEL } from "@/lib/integrations/scopes";
 import { versionOf, writeCollections } from "@/lib/integrations/writer";
-import type { AgentContextWorld } from "@/lib/agents/context/world";
+import type { ContextWorld } from "@/lib/context/world";
 import type { ActivityKind, ActivityOutcome, ContextSource } from "@/lib/integrations/records";
 import type { IntegrationGrant } from "@/lib/integrations/grants";
 import type { IntegrationStore } from "@/lib/integrations/store";
@@ -27,9 +27,9 @@ import type { HubbleMcpData, McpLoadedWorkspace } from "./data";
  *
  * ## Every tool is the app's own operation
  *
- *   search_workspace         session-context `searchWorkspaceTabs` (the same
- *                            ranking an agent session's search_tabs uses)
- *   get_resource             the Phase E context resolver, so URL redaction,
+ *   search_workspace         `searchWorkspaceTabs` (lib/knowledge/workspace/insight.ts,
+ *                            Hubble's own term ranking)
+ *   get_resource             the context resolver (lib/context), so URL redaction,
  *                            bounds and notes-off-by-default are its rules
  *   list_collections         the synced collection model, hydrated by the
  *                            client's own `applyChanges`
@@ -261,28 +261,25 @@ export function registerIntegrationTools(
     return sanitizeText(loaded.workspace.name) ?? "Untitled workspace";
   }
 
-  /** One resolution through the Phase E resolver, for the tabs named. */
+  /** One resolution through the context resolver, for the tabs named. */
   function resolveTabs(loaded: McpLoadedWorkspace, tabIds: string[], includeNotes: boolean) {
-    const world: AgentContextWorld = {
+    const world: ContextWorld = {
       ownerId,
       workspaces: [loaded.workspace],
       collections: loaded.collections,
       dependencies: loaded.dependencies,
       manualConnections: [],
-      projects: [],
-      agents: [],
-      runs: [],
     };
     return resolveContext(
       {
         sources: ["tab"],
         tabIds,
         includeNotes,
-        scope: { ownerId, workspaceIds: [loaded.workspace.id], projectIds: [] },
+        scope: { ownerId, workspaceIds: [loaded.workspace.id] },
         limits: { maxTabs: Math.max(1, tabIds.length) },
       },
       world,
-      { now, localRuntimeAllowed: false }
+      { now }
     );
   }
 

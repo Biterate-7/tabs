@@ -60,20 +60,17 @@ describe("the MCP layer is not a second control plane", () => {
     });
   }
 
-  it("reads the remote agent plane through its store's types only", () => {
-    // Status is read from the owner-scoped store; nothing that dispatches.
-    const data = MODULES.find((m) => m.file === "data.ts")!;
-    const remoteImports = importsOf(data.code).filter((s) => s.startsWith("@/lib/agents/remote/"));
-    expect(remoteImports).toEqual(["@/lib/agents/remote/store"]);
-    expect(data.code).toMatch(/import type \{ RemoteStore \} from "@\/lib\/agents\/remote\/store"/);
+  it("knows nothing of the removed agent product", () => {
+    for (const { file, code } of [...MODULES, ...ROUTES]) {
+      expect(importsOf(code).filter((specifier) => specifier.startsWith("@/lib/agents")), file).toEqual([]);
+      expect(code, file).not.toMatch(/list_agent_|RemoteStore|agentStore/);
+    }
   });
 
-  it("builds workspace answers through the Phase E context resolver", () => {
+  it("builds workspace answers through the context resolver", () => {
     const server = MODULES.find((m) => m.file === "server.ts")!;
-    expect(server.code).toContain('from "@/lib/agents/context/resolve"');
+    expect(server.code).toContain('from "@/lib/context/resolve"');
     expect(server.code).toContain("resolveContext(");
-    // And withholds project roots, as a hosted deployment must.
-    expect(server.code).toContain("localRuntimeAllowed: false");
   });
 });
 
@@ -85,8 +82,6 @@ describe("the tool vocabulary", () => {
       "get_tabs",
       "get_collection",
       "get_tab_graph",
-      "list_agent_projects",
-      "list_agent_sessions",
       // AI integrations (src/lib/integrations): read tools for every grant.
       "get_connection_info",
       "list_collections",

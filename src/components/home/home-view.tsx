@@ -1,33 +1,42 @@
 "use client"
 
-import { ArrowRight, Group, PanelLeftOpen, Plus } from "lucide-react"
+import { useMemo } from "react"
+import { ArrowRight, Group, MessageSquareShare, MessagesSquare, PanelLeftOpen, Plus, Search, Sparkles, Waypoints } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { BrandMark } from "@/components/brand-mark"
-import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { ProviderBadge } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
-import { greeting, recentResources, subjectName, subjectUpdatedAt } from "@/lib/product/subjects"
+import { greeting, subjectName, subjectUpdatedAt } from "@/lib/product/subjects"
+import { KNOWLEDGE_TYPE_LABEL, knowledgeCounts, knowledgeItemsOf } from "@/lib/memory/items"
 import { formatRelativeTime } from "@/lib/time-format"
+import type { KnowledgeItem, KnowledgeItemRef } from "@/lib/memory/items"
 import type { Workspace } from "@/lib/workspace/types"
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
+const LOOP = [
+  { icon: MessagesSquare, title: "Capture", text: "Save conversations from ChatGPT, Claude, Gemini or Perplexity, plus pages, PDFs and notes." },
+  { icon: Waypoints, title: "Connect", text: "Keep them in projects, where related ideas, sources and conversations sit together." },
+  { icon: Search, title: "Find", text: "Search everything later, whichever AI app it came from." },
+  { icon: MessageSquareShare, title: "Reuse", text: "Bring the parts you choose into your next AI chat, with where they came from." },
+] as const
+
 /**
- * Home: where a student's school stuff lives.
+ * Projects: where everything you learn with AI lives.
  *
  *     Good evening
  *     What are you working on?
- *     [+ New subject]
+ *     [+ New project]  [Search]  [Organize open tabs]
  *
- *     History HL      Math AA HL      Physics SL
+ *     History HL · 4 AI conversations · 6 sources     Math AA HL …
  *
- *     Recent
+ *     Recently saved
+ *       ◇ Causes of WW1 — ChatGPT · History HL
  *
- * No metrics, no onboarding copy, no agent status. The page answers "where
- * do I put my stuff?" by being a list of places to put it, with one button
- * to make another — and one to sort the tabs already open in Chrome into
- * them (Smart Organize; see components/organize/open-tabs-organize.tsx). AI is offered once, quietly, and only while none is
- * connected — Hubble works without it.
+ * The first visit says what Hubble is for, in four steps, and offers one
+ * button. Nothing here asks for an AI to be connected: Hubble works without
+ * any, and is most useful beside the AI apps a person already uses.
  */
 export function HomeView({
   subjects,
@@ -36,27 +45,29 @@ export function HomeView({
   onOpenSubject,
   onNewSubject,
   onOrganizeOpenTabs,
-  onOpenResource,
-  aiConnected,
-  onConnectAI,
+  onOpenItem,
+  onOpenSearch,
   onOpenSidebar,
 }: {
-  /** The student's subjects (workspaces), excluding an untouched default. */
+  /** The person's projects (workspaces), excluding an untouched default. */
   subjects: readonly Workspace[]
-  /** Nothing has ever been made here: say hello once instead of "no subjects". */
+  /** Nothing has ever been made here: say what Hubble is for instead of "no projects". */
   firstRun: boolean
   now: number
   onOpenSubject: (id: string) => void
   onNewSubject: () => void
   /** Smart Organize for the tabs open in Chrome. Omitted where the shell does not offer it. */
   onOrganizeOpenTabs?: () => void
-  onOpenResource: (workspaceId: string, tabId: string) => void
-  /** Whether any AI is connected. Unknown counts as connected — never nag on a guess. */
-  aiConnected: boolean
-  onConnectAI: () => void
+  onOpenItem: (workspaceId: string, ref: KnowledgeItemRef) => void
+  onOpenSearch?: () => void
   onOpenSidebar?: () => void
 }) {
-  const recent = recentResources(subjects, 6)
+  const recent = useMemo(() => {
+    const all: { workspace: Workspace; item: KnowledgeItem }[] = []
+    for (const workspace of subjects) for (const item of knowledgeItemsOf(workspace)) all.push({ workspace, item })
+    return all.sort((a, b) => b.item.addedAt - a.item.addedAt).slice(0, 8)
+  }, [subjects])
+
   return (
     <div className="min-h-screen" data-home>
       {onOpenSidebar && (
@@ -70,11 +81,27 @@ export function HomeView({
         {subjects.length === 0 ? (
           <section aria-label="Get started" className="flex flex-col items-start gap-5 pt-6 sm:pt-12">
             <BrandMark className="size-7 text-foreground" />
-            <h1 className="text-statement text-foreground">{firstRun ? "Welcome to Hubble" : "Start with a subject"}</h1>
-            {/* One line and one button: organizing open tabs joins it once there are subjects (and is in ⌘K throughout). */}
+            <div>
+              <h1 className="text-statement text-foreground">{firstRun ? "Welcome to Hubble" : "Start with a project"}</h1>
+              <p className="mt-2 max-w-xl text-body text-muted-foreground">One connected workspace for everything you learn and create with AI.</p>
+            </div>
+            <ol className="grid w-full gap-2 sm:grid-cols-2" aria-label="How Hubble works">
+              {LOOP.map(({ icon: Icon, title, text }, index) => (
+                <li key={title} className="flex gap-3 rounded-md border border-subtle bg-card p-3">
+                  <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <p className="text-body-sm text-foreground">
+                      <span className="text-tertiary tabular-nums">{index + 1}.</span> {title}
+                    </p>
+                    <p className="text-meta text-muted-foreground">{text}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
             <Button type="button" size="lg" onClick={onNewSubject}>
-              <Plus /> {firstRun ? "Create your first subject" : "New subject"}
+              <Plus /> {firstRun ? "Create your first project" : "New project"}
             </Button>
+            <p className="text-meta text-tertiary">No AI connection, API key or sign-in needed. Everything stays in this browser until you choose otherwise.</p>
           </section>
         ) : (
           <>
@@ -82,10 +109,15 @@ export function HomeView({
             <h1 className="mt-1 text-statement text-foreground">What are you working on?</h1>
             <div className="mt-5 flex flex-wrap gap-2">
               <Button type="button" size="lg" onClick={onNewSubject}>
-                <Plus /> New subject
+                <Plus /> New project
               </Button>
+              {onOpenSearch && (
+                <Button type="button" size="lg" variant="secondary" onClick={onOpenSearch}>
+                  <Search /> Search your knowledge
+                </Button>
+              )}
               {onOrganizeOpenTabs && (
-                <Button type="button" size="lg" variant="secondary" onClick={onOrganizeOpenTabs}>
+                <Button type="button" size="lg" variant="ghost" onClick={onOrganizeOpenTabs}>
                   <Group /> Organize open tabs
                 </Button>
               )}
@@ -93,11 +125,19 @@ export function HomeView({
 
             <section aria-labelledby="home-subjects" className="mt-12">
               <h2 id="home-subjects" className="text-eyebrow text-tertiary">
-                Your subjects
+                Your projects
               </h2>
               <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {subjects.map((subject) => {
+                  const counts = knowledgeCounts(knowledgeItemsOf(subject))
                   const updated = formatRelativeTime(subjectUpdatedAt(subject), now)
+                  const parts = [
+                    counts.conversations > 0 ? plural(counts.conversations, "AI conversation", "AI conversations") : "",
+                    counts.sources > 0 ? plural(counts.sources, "source", "sources") : "",
+                    counts.notes > 0 ? plural(counts.notes, "note", "notes") : "",
+                  ].filter(Boolean)
+                  const savedTabs = subject.tabs.filter((tab) => !tab.resource).length
+                  if (parts.length === 0 && savedTabs > 0) parts.push(plural(savedTabs, "saved tab", "saved tabs"))
                   return (
                     <li key={subject.id}>
                       <button
@@ -110,8 +150,8 @@ export function HomeView({
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-h2 text-foreground">{subjectName(subject)}</span>
                           <span className="block truncate text-meta text-tertiary">
-                            {subject.tabs.length === 0 ? "Empty" : plural(subject.tabs.length, "resource", "resources")}
-                            {updated && subject.tabs.length > 0 ? ` · ${updated}` : ""}
+                            {parts.length === 0 ? "Empty" : parts.join(" · ")}
+                            {updated && parts.length > 0 ? ` · ${updated}` : ""}
                           </span>
                         </span>
                         <ArrowRight aria-hidden className="size-4 shrink-0 text-tertiary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
@@ -122,33 +162,32 @@ export function HomeView({
               </ul>
             </section>
 
-            {recent.length > 0 && (
+            {recent.length > 0 ? (
               <section aria-labelledby="home-recent" className="mt-10">
                 <h2 id="home-recent" className="text-eyebrow text-tertiary">
-                  Recent
+                  Recently saved
                 </h2>
                 <ul className="mt-2 flex flex-col">
-                  {recent.map(({ workspace, tab }) => (
-                    <li key={`${workspace.id}:${tab.id}`}>
+                  {recent.map(({ workspace, item }) => (
+                    <li key={`${workspace.id}:${item.id}`}>
                       <button
                         type="button"
-                        onClick={() => onOpenResource(workspace.id, tab.id)}
+                        onClick={() => onOpenItem(workspace.id, item.ref)}
                         className="flex w-full min-w-0 items-center gap-3 rounded-xs px-2 py-1.5 text-left outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60"
                       >
-                        <TabFavicon domain={tab.domain} icon={tab.favicon} size={16} />
-                        <span className="min-w-0 flex-1 truncate text-body text-foreground">{tab.title?.trim() || tab.domain}</span>
+                        <span className="min-w-0 flex-1 truncate text-body text-foreground">{item.title}</span>
+                        {item.provider ? <ProviderBadge provider={item.provider} className="shrink-0" /> : <span className="shrink-0 text-meta text-tertiary">{KNOWLEDGE_TYPE_LABEL[item.type]}</span>}
                         <span className="shrink-0 truncate text-meta text-tertiary max-sm:hidden">{subjectName(workspace)}</span>
                       </button>
                     </li>
                   ))}
                 </ul>
               </section>
-            )}
-
-            {!aiConnected && (
-              <Button type="button" variant="ghost" size="sm" className="mt-10 -ml-2" onClick={onConnectAI}>
-                Connect AI
-              </Button>
+            ) : (
+              <p className="mt-10 flex items-start gap-2 text-body-sm text-muted-foreground">
+                <Sparkles aria-hidden className="mt-0.5 size-4 shrink-0" />
+                Open a project and choose Add to paste a conversation, write a note or import a ChatGPT or Claude export — or use Save to Hubble in Hubble for Chrome on an AI app.
+              </p>
             )}
           </>
         )}

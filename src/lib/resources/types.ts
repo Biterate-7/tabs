@@ -1,6 +1,8 @@
+import type { AiProviderId } from "@/lib/providers/registry";
+
 /**
- * Project sources (Hubble 2.0): what a project knows, collected from the
- * browser.
+ * Knowledge items with an address: what a project knows, collected from the
+ * browser and from AI apps.
  *
  * ## Not a second model
  *
@@ -26,7 +28,7 @@
  *
  *   pending     added; Hubble has not looked at it yet
  *   processing  Hubble is reading it now
- *   ready       Hubble holds readable content an agent can use
+ *   ready       Hubble holds readable content (searchable, reusable)
  *   partial     saved, but only its address and metadata are usable
  *               (a PDF Hubble could not fetch, a video with no transcript)
  *   failed      Hubble could not process it at all — retryable unless said
@@ -35,9 +37,16 @@
  * "processing" across a reload: an interrupted run goes back to pending.
  */
 
-export type ResourceKind = "webpage" | "pdf" | "youtube" | "video" | "document" | "unknown";
+/**
+ * `conversation`: a conversation in an AI app (ChatGPT, Claude, Gemini,
+ * Perplexity), saved with its turns — or, when only its address was given,
+ * saved as a link that says its text is not in Hubble. Never confused with a
+ * web page: its content is someone's exchange with an AI, and is shown and
+ * reused as such.
+ */
+export type ResourceKind = "webpage" | "pdf" | "youtube" | "video" | "document" | "conversation" | "unknown";
 
-export const RESOURCE_KINDS: readonly ResourceKind[] = ["webpage", "pdf", "youtube", "video", "document", "unknown"] as const;
+export const RESOURCE_KINDS: readonly ResourceKind[] = ["webpage", "pdf", "youtube", "video", "document", "conversation", "unknown"] as const;
 
 export type ResourceStatus = "pending" | "processing" | "ready" | "partial" | "failed";
 
@@ -59,7 +68,24 @@ export type ResourceMeta = {
   /** An uploaded file's own name. */
   fileName?: string;
   fileSize?: number;
+  /** A conversation's AI app. */
+  provider?: AiProviderId;
+  /** The AI app's own id for the conversation, from its address or export. */
+  conversationId?: string;
+  /** How many turns the saved copy holds. */
+  turnCount?: number;
+  /** Over the saved turns (see lib/conversations/hash.ts): what tells an unchanged re-save from an update. */
+  contentHash?: string;
+  /** How the conversation's text arrived: saved from the open page, an export file, or pasted. */
+  capture?: ConversationCaptureMethod;
+  /** When the conversation itself was created and last changed, when the provider said (export files do). */
+  conversationCreatedAt?: number;
+  conversationUpdatedAt?: number;
 };
+
+export type ConversationCaptureMethod = "page" | "export" | "paste";
+
+export const CONVERSATION_CAPTURE_METHODS: readonly ConversationCaptureMethod[] = ["page", "export", "paste"] as const;
 
 /** What the content store holds for a source — counts, never the content. */
 export type ResourceContentSummary = {
@@ -69,6 +95,8 @@ export type ResourceContentSummary = {
   pages?: number;
   /** Transcript lines. */
   transcriptLines?: number;
+  /** Conversation turns. */
+  turns?: number;
   /** The transcript's language (BCP 47, e.g. "en"), when the source said. */
   language?: string;
   /** Cut to the storage bound. */
@@ -86,6 +114,8 @@ export type ResourceErrorCode =
   | "pdf_needs_file"
   | "pdf_unreadable"
   | "transcript_unavailable"
+  /** An AI conversation known only by its address: its text has to be saved from the page or pasted. */
+  | "needs_capture"
   | "timeout"
   | "offline"
   | "interrupted";
@@ -136,9 +166,15 @@ export type TranscriptInfo = {
   provider?: string;
 };
 
-/** Extracted content, as the content store keeps it. */
+/** Who said a conversation turn. `user` is the person; `assistant` is the AI. */
+export type ConversationRole = "user" | "assistant";
+
+/** One turn of a saved AI conversation. Text is the turn as the page or export showed it — data, never instructions. */
+export type ConversationTurn = { role: ConversationRole; text: string; at?: number };
+
+/** Extracted content, as the content store keeps it. `note` is a project note's body (lib/notes). */
 export type ResourceContent = {
-  kind: ResourceKind;
+  kind: ResourceKind | "note";
   /** Readable text of a web page or document. */
   text?: string;
   /** A PDF's text, page by page — index 0 is page 1. */
@@ -146,6 +182,8 @@ export type ResourceContent = {
   /** A video transcript, line by line in playback order, with times in seconds when known. */
   transcript?: TranscriptSegment[];
   transcriptInfo?: TranscriptInfo;
+  /** A conversation's turns, in order. */
+  turns?: ConversationTurn[];
   extractedAt: number;
   truncated?: boolean;
 };
@@ -157,6 +195,8 @@ export const CONTENT_LIMITS = {
   pageText: 40_000,
   transcriptLines: 20_000,
   transcriptLine: 2_000,
+  turns: 4_000,
+  turnText: 100_000,
 } as const;
 
 export const RESOURCE_KIND_LABEL: Record<ResourceKind, string> = {
@@ -165,6 +205,7 @@ export const RESOURCE_KIND_LABEL: Record<ResourceKind, string> = {
   youtube: "YouTube video",
   video: "Video",
   document: "Document",
+  conversation: "AI conversation",
   unknown: "Link",
 };
 

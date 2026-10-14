@@ -1,12 +1,12 @@
 "use client"
 
-import { AlertCircle, Check, CheckCircle2, Circle, FileText, Globe, Link2, Loader2, PlayCircle, Film, FileType2 } from "lucide-react"
+import { AlertCircle, Check, CheckCircle2, Circle, FileText, Globe, Link2, Loader2, MessagesSquare, PlayCircle, Film, FileType2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ResourceKind, TabResource } from "@/lib/resources/types"
 
 /** One glyph per kind, so a list of sources reads at a glance. */
 export function SourceKindIcon({ kind, className }: { kind: ResourceKind; className?: string }) {
-  const Icon = { webpage: Globe, pdf: FileText, youtube: PlayCircle, video: Film, document: FileType2, unknown: Link2 }[kind]
+  const Icon = { webpage: Globe, pdf: FileText, youtube: PlayCircle, video: Film, document: FileType2, conversation: MessagesSquare, unknown: Link2 }[kind]
   return <Icon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", className)} />
 }
 
@@ -18,6 +18,7 @@ export function contentLine(resource: TabResource): string | undefined {
   if (!content) return undefined
   if (content.pages) return `${plural(content.pages, "page", "pages")} of text${content.truncated ? " (first part)" : ""}`
   if (content.transcriptLines) return `Transcript · ${plural(content.transcriptLines, "line", "lines")}`
+  if (content.turns) return `${plural(content.turns, "turn", "turns")}${content.truncated ? " (first part)" : ""}`
   const words = Math.max(1, Math.round(content.chars / 6))
   return `${plural(words, "word", "words")}${content.truncated ? " (first part)" : ""}`
 }
@@ -27,7 +28,7 @@ export function contentLine(resource: TabResource): string | undefined {
  *
  *   ○ Waiting           · added, not read yet
  *   ◌ Reading…          · Hubble is reading it now
- *   ✓ Ready · 12 pages  · agents can read its text
+ *   ✓ Ready · 12 pages  · Hubble holds its text: searchable, reusable
  *   ✓ Saved · <why>     · kept by address and metadata only — saved fine,
  *                         its content just isn’t readable ("Content unavailable — …")
  *   ⚠ Couldn't read     · nothing usable yet — retry, or bring the file

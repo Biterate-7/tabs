@@ -1,6 +1,7 @@
 import { saveTextFile } from "@/lib/platform";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Collection } from "@/lib/collections/types";
+import type { ResourceContent } from "@/lib/resources/types";
 import type { Workspace } from "./types";
 
 export const EXPORT_VERSION = 1;
@@ -13,6 +14,13 @@ export type WorkspaceExport = {
   dependencies: TabDependency[];
   /** Scoped to `workspaces` the same way `dependencies` is — see buildWorkspaceExport. Always present (possibly empty); an older file simply lacks the field, which json-import.ts treats as zero collections. */
   collections: Collection[];
+  /**
+   * The text Hubble holds for each project's items — saved conversations,
+   * notes, pages, PDFs, transcripts — by project id, then item id. Present
+   * only when the person chose to include it; an older file lacks it and
+   * imports as titles, links and notes' records only.
+   */
+  contents?: Record<string, Record<string, ResourceContent>>;
 };
 
 /**
@@ -26,7 +34,9 @@ export type WorkspaceExport = {
 export function buildWorkspaceExport(
   workspaces: Workspace[],
   dependencies: TabDependency[] = [],
-  collections: Collection[] = []
+  collections: Collection[] = [],
+  /** Stored text by project, then item — only that of the projects and items exported is written. */
+  contents?: ReadonlyMap<string, ReadonlyMap<string, ResourceContent>>
 ): WorkspaceExport {
   const includedWorkspaceIds = new Set(workspaces.map((w) => w.id));
   const includedTabIds = new Set(workspaces.flatMap((w) => w.tabs.map((t) => t.id)));
@@ -39,12 +49,25 @@ export function buildWorkspaceExport(
       const tabIds = c.tabIds.filter((id) => includedTabIds.has(id));
       return tabIds.length === c.tabIds.length ? c : { ...c, tabIds };
     });
+  let scopedContents: Record<string, Record<string, ResourceContent>> | undefined;
+  if (contents) {
+    scopedContents = {};
+    for (const workspace of workspaces) {
+      const stored = contents.get(workspace.id);
+      if (!stored) continue;
+      const items = new Set([...workspace.tabs.map((tab) => tab.id), ...(workspace.notes ?? []).map((note) => note.id)]);
+      const kept: Record<string, ResourceContent> = {};
+      for (const [itemId, content] of stored) if (items.has(itemId)) kept[itemId] = content;
+      if (Object.keys(kept).length > 0) scopedContents[workspace.id] = kept;
+    }
+  }
   return {
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     workspaces,
     dependencies: scopedDependencies,
     collections: scopedCollections,
+    ...(scopedContents ? { contents: scopedContents } : {}),
   };
 }
 

@@ -3,18 +3,19 @@ import type { Tab } from "@/lib/tabs/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 /**
- * Subjects: the student-facing name for a workspace.
+ * Projects: the name a person sees for a workspace.
  *
- * A presentation layer only. A subject IS a `Workspace` — same id, same
- * store, same sync, same agent context — and nothing here is persisted. The
- * word changes; the model does not. Storage ids, protocol names and the
- * agent tools keep saying "workspace", on purpose.
+ * A presentation layer only. A project IS a `Workspace` — same id, same
+ * store, same sync — and nothing here is persisted. The word changes; the
+ * model does not. Storage ids, protocol names and the MCP tools keep saying
+ * "workspace", on purpose. (These helpers are still named for "subjects",
+ * the word an earlier version used.)
  *
- *     Workspace ── shown as ──▶ Subject
- *     Tab.resource ─────────▶ Resource
+ *     Workspace ── shown as ──▶ Project
+ *     Tab.resource / ProjectNote ──▶ its knowledge
  */
 
-export const UNTITLED_SUBJECT = "Untitled subject"
+export const UNTITLED_SUBJECT = "Untitled project"
 
 export function subjectName(workspace: Pick<Workspace, "name">): string {
   return workspace.name.trim() || UNTITLED_SUBJECT
@@ -22,18 +23,22 @@ export function subjectName(workspace: Pick<Workspace, "name">): string {
 
 /**
  * The workspace every install starts with, untouched: the default name, no
- * tabs, no brief, no attached folder. A store holding only this has no
- * subjects yet as far as a student is concerned — Home shows "Start with a
- * subject", and the first subject they create takes this workspace's place
- * rather than sitting beside an empty "General".
+ * tabs, no notes, no brief. A store holding only this has no projects yet as
+ * far as a person is concerned — Home shows "Start with a project", and the
+ * first project they create takes this workspace's place rather than sitting
+ * beside an empty "General".
+ *
+ * A folder an earlier version let them attach (`project`, no longer part of
+ * the type but still in their stored data) also counts as "touched".
  */
 export function isPristineDefault(workspace: Workspace): boolean {
   return (
     workspace.name === DEFAULT_WORKSPACE_NAME &&
     workspace.tabs.length === 0 &&
+    (workspace.notes?.length ?? 0) === 0 &&
     !workspace.brief?.description &&
     !workspace.brief?.focus &&
-    !workspace.project &&
+    !(workspace as { project?: unknown }).project &&
     !workspace.logo
   )
 }
@@ -77,19 +82,20 @@ export function greeting(hour: number): string {
   return "Good evening"
 }
 
-/** When anything in a subject last changed: its newest tab, or the subject itself. */
+/** When anything in a project last changed: its newest item, or the project itself. */
 export function subjectUpdatedAt(workspace: Workspace): number {
   let latest = workspace.updatedAt
   for (const tab of workspace.tabs) {
-    const at = tab.resource?.addedAt ?? tab.createdAt
+    const at = tab.resource?.updatedAt ?? tab.createdAt
     if (at && at > latest) latest = at
   }
+  for (const note of workspace.notes ?? []) if (note.updatedAt > latest) latest = note.updatedAt
   return latest
 }
 
 export type RecentResource = { workspace: Workspace; tab: Tab; at: number }
 
-/** The newest things added across every subject, newest first. */
+/** The newest things added across every project, newest first. */
 export function recentResources(workspaces: readonly Workspace[], limit: number): RecentResource[] {
   const all: RecentResource[] = []
   for (const workspace of workspaces) {

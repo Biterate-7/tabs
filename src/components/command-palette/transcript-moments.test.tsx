@@ -29,7 +29,7 @@ function workspace(id: string, name: string, tabs: Tab[]): Workspace {
 beforeEach(() => resetContentStoreForTests())
 
 describe("useTranscriptSearch", () => {
-  it("finds moments across subjects, and nothing until it is enabled", async () => {
+  it("finds moments across projects, and nothing until it is enabled", async () => {
     await putContent("physics", "p1", { kind: "youtube", extractedAt: 1, transcript: [{ start: 522, text: "Gravitational potential energy is mgh." }] })
     await putContent("chem", "c1", { kind: "youtube", extractedAt: 1, transcript: [{ start: 75, text: "Bond energy is released." }] })
     const workspaces = [workspace("physics", "Physics", [videoTab("p1", "Physics revision", 1)]), workspace("chem", "Chemistry", [videoTab("c1", "Energetics", 1)])]
@@ -46,7 +46,7 @@ describe("useTranscriptSearch", () => {
     expect(result.current("potential energy")[0]).toMatchObject({ workspaceId: "physics", tabId: "p1", location: { start: 522 } })
   })
 
-  it("never returns a video that has been removed from its subject", async () => {
+  it("never returns a video that has been removed from its project", async () => {
     await putContent("physics", "p1", { kind: "youtube", extractedAt: 1, transcript: [{ start: 522, text: "Gravitational potential energy." }] })
     const before = [workspace("physics", "Physics", [videoTab("p1", "Physics revision", 1)])]
     const { result, rerender } = renderHook(({ list }) => useTranscriptSearch(list, true), { initialProps: { list: before } })

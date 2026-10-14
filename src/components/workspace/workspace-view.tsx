@@ -1,6 +1,5 @@
 "use client"
 
-import { WorkspaceWorkStrip } from "./workspace-work-strip"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import {
@@ -15,14 +14,13 @@ import {
   CheckSquare,
   X,
   Waypoints,
-  Radio,
   Layers,
   Pencil,
   ExternalLink as OpenAllIcon,
   Star,
   History,
   ScanSearch,
-  Bot,
+  MessageSquareShare,
   ChevronDown,
   Group,
 } from "lucide-react"
@@ -89,8 +87,7 @@ import { CollectionsSection } from "@/components/workspace/collections-section"
 import { GatherDialog } from "@/components/workspace/gather-dialog"
 import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
 import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
-import { useAgentActions } from "@/components/agents/agent-actions"
-import { collectionContext, tabsContext } from "@/lib/agents/command-centre/working-context"
+import { useMemoryActions } from "@/components/memory/memory-actions"
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: "recently added",
@@ -106,8 +103,6 @@ export function WorkspaceView({
   currentWorkspace,
   allWorkspaces,
   onOpenGraph,
-  onOpenCommandCentre,
-  onOpenAgentTask,
   graphLocked = false,
   graphLockedReason,
   organizationStatus,
@@ -124,7 +119,6 @@ export function WorkspaceView({
   onDeleteSection,
   onAssignTabToSection,
   onReorganizeSections,
-  focusCollection,
   projectHome,
   onBack,
   onRenameSubject,
@@ -132,7 +126,7 @@ export function WorkspaceView({
   onDeleteSubject,
   canDeleteSubject = false,
 }: {
-  /** "← Subjects" in the bar. Absent outside the shell. */
+  /** "← Projects" in the bar. Absent outside the shell. */
   onBack?: () => void
   /** Rename this subject from its own ⋯ menu. All three present, or the menu offers none of them. */
   onRenameSubject?: (name: string) => void
@@ -152,10 +146,6 @@ export function WorkspaceView({
   currentWorkspace?: Workspace
   allWorkspaces?: Workspace[]
   onOpenGraph?: () => void
-  /** Opens the agent Command Centre. Optional so surfaces that have no agent context can omit it. */
-  onOpenCommandCentre?: () => void
-  /** Opens the Command Centre on an agent session — the workspace’s last task (Stage 3). */
-  onOpenAgentTask?: (sessionId: string) => void
   /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disables every graph affordance this view owns (header button, header dropdown, command palette entry). */
   graphLocked?: boolean
   /** What the graph is waiting on, used as the disabled controls' tooltip. */
@@ -166,14 +156,6 @@ export function WorkspaceView({
   onOpenFavorites?: () => void
   onOpenRecents?: () => void
   onOpenHistoryDump?: () => void
-  /**
-   * Backs the command palette's "Open Agent World" entry.
-   *
-   * Unconditional where it is supplied: unlike the graph, the world is worth
-   * opening with nothing running, so there is no lock to check before listing
-   * it. A keyboard user reaches the feature the same way they reach every
-   * other view in this product.
-   */
   /** Backs the command palette's "Switch to <space>" entries — omitted in standalone/test contexts that don't wire up a store. */
   onSwitchWorkspace?: (id: string) => void
   /** Ids from the most recently completed dump/import — drives TabCard's "recently added" highlight. Omitted (not just empty) outside AppShell. */
@@ -196,11 +178,6 @@ export function WorkspaceView({
   onAssignTabToSection?: (tabId: string, sectionId: string) => void
   /** Reruns the AI section-organization engine over every unlocked tab in the workspace on demand (spec §31) — backs the command palette's "Reorganize into sections". */
   onReorganizeSections?: () => void
-  /**
-   * A collection to bring into view on arrival — "View" on a change an agent
-   * made. `nonce` makes the same collection shown twice two arrivals.
-   */
-  focusCollection?: { id: string; nonce: number }
 }) {
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all")
@@ -330,39 +307,9 @@ export function WorkspaceView({
     ? (workspaceCollections.find((c) => c.id === openAllCollectionId) ?? null)
     : null
 
-  // "Ask agent" from this workspace — present only inside the shell.
-  const agent = useAgentActions()
+  // "Use in AI chat" from this workspace — present only inside the shell.
+  const memory = useMemoryActions()
 
-  /*
-    Arriving from "View" on an agent's change: the collection it made or
-    changed, opened and brought into view, its tabs briefly marked as the
-    ones that just moved. Once per arrival.
-  */
-  const handledFocus = useRef<number | null>(null)
-  useEffect(() => {
-    if (!focusCollection || handledFocus.current === focusCollection.nonce) return
-    const target = workspaceCollections.find((collection) => collection.id === focusCollection.id)
-    if (!target) return
-    handledFocus.current = focusCollection.nonce
-    // Arrival is an external event handed in by the shell; opening the group is its effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCollapsedCollectionIds((previous) => {
-      if (!previous.has(target.id)) return previous
-      const next = new Set(previous)
-      next.delete(target.id)
-      return next
-    })
-    markRecentlyGathered(target.tabIds)
-    const reduced =
-      document.documentElement.dataset.motion === "off" ||
-      (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-    const frame = requestAnimationFrame(() => {
-      document
-        .querySelector(`[data-collection-id="${CSS.escape(target.id)}"]`)
-        ?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [focusCollection, workspaceCollections])
 
   function handleToggleCollectionExpanded(id: string) {
     setCollapsedCollectionIds((prev) => {
@@ -780,7 +727,7 @@ export function WorkspaceView({
         {
           id: "organize-run",
           label: "Organize tabs",
-          hint: "Sort this subject's loose tabs into collections",
+          hint: "Sort this project's loose tabs into collections",
           group: "Actions",
           icon: Group,
           onSelect: () => setOrganizeOpen(true),
@@ -841,17 +788,6 @@ export function WorkspaceView({
             group: "Navigation",
             icon: Waypoints,
             onSelect: onOpenGraph,
-          } satisfies Command,
-        ]
-      : []),
-    ...(onOpenCommandCentre
-      ? [
-          {
-            id: "nav-open-command-centre",
-            label: "Open AI chats",
-            group: "Navigation",
-            icon: Radio,
-            onSelect: onOpenCommandCentre,
           } satisfies Command,
         ]
       : []),
@@ -938,38 +874,26 @@ export function WorkspaceView({
 
   const selectedCount = selectionMode ? selectedIds.size : 0
   const selectedLabel = selectedCount === 1 ? "1 selected tab" : `${selectedCount} selected tabs`
-  const agentCommands: Command[] = agent
+  const memoryCommands: Command[] = memory
     ? [
         {
-          id: "agent-ask-selection",
-          label: selectedCount > 0 ? `Ask AI about ${selectedLabel}` : "Ask AI about selected tabs",
-          hint: "Starts an AI chat about them",
-          group: "Agents",
-          icon: Bot,
+          id: "memory-use-selection",
+          label: selectedCount > 0 ? `Use ${selectedLabel} in an AI chat` : "Use selected tabs in an AI chat",
+          hint: "Choose context to copy into ChatGPT, Claude, Gemini…",
+          group: "Memory",
+          icon: MessageSquareShare,
           disabled: selectedCount === 0,
-          keywords: ["send selection to agent", "ask agent", "claude", "codex", "gemini", "context"],
-          onSelect: () => agent.ask(tabsContext(workspaceId, [...selectedIds])),
-        },
-        {
-          id: "agent-add-selection",
-          label: selectedCount > 0 ? `Add ${selectedLabel} to the next AI chat` : "Add selected tabs to the next AI chat",
-          group: "Agents",
-          icon: Bot,
-          disabled: selectedCount === 0,
-          keywords: ["context", "agent"],
-          onSelect: () => {
-            agent.add(tabsContext(workspaceId, [...selectedIds]))
-            exitSelectionMode()
-          },
+          keywords: ["context", "memory", "chatgpt", "claude", "gemini", "perplexity", "reuse"],
+          onSelect: () => memory.reuse({ workspaceId, tabIds: [...selectedIds] }),
         },
         ...workspaceCollections.map(
           (collection): Command => ({
-            id: `agent-ask-collection-${collection.id}`,
-            label: `Ask AI about "${collection.name}"`,
-            group: "Agents",
-            icon: Bot,
-            keywords: ["collection", "context"],
-            onSelect: () => agent.ask(collectionContext(workspaceId, collection.id)),
+            id: `memory-use-collection-${collection.id}`,
+            label: `Use "${collection.name}" in an AI chat`,
+            group: "Memory",
+            icon: MessageSquareShare,
+            keywords: ["collection", "context", "memory"],
+            onSelect: () => memory.reuse({ workspaceId, collectionIds: [collection.id] }),
           })
         ),
       ]
@@ -1087,7 +1011,7 @@ export function WorkspaceView({
     ),
     {
       id: "action-clear",
-      label: "Clear this subject",
+      label: "Clear this project",
       group: "Actions",
       icon: Trash2,
       onSelect: () => setClearConfirmOpen(true),
@@ -1121,7 +1045,7 @@ export function WorkspaceView({
     ...navigationCommands,
     ...workspaceCommands,
     ...selectionCommands,
-    ...agentCommands,
+    ...memoryCommands,
     ...collectionCommands,
     ...sectionCommands,
     ...actionCommands,
@@ -1200,13 +1124,6 @@ export function WorkspaceView({
         }}
       >
         {projectHome}
-        {!projectHome && currentWorkspace && (
-          <WorkspaceWorkStrip
-            workspace={currentWorkspace}
-            {...(onOpenCommandCentre ? { onOpenCommandCentre } : {})}
-            {...(onOpenAgentTask ? { onOpenTask: onOpenAgentTask } : {})}
-          />
-        )}
         {organizationStatus}
         {organizeOffer !== undefined && currentWorkspace && (
           <SubjectOrganizeOffer
@@ -1282,17 +1199,7 @@ export function WorkspaceView({
                   ? { name: addToCollectionTarget.name, onConfirm: handleConfirmAddToCollection }
                   : undefined
               }
-              {...(agent
-                ? {
-                    agentActions: {
-                      onAsk: (intent) => agent.ask(tabsContext(workspaceId, [...selectedIds]), intent),
-                      onAdd: () => {
-                        agent.add(tabsContext(workspaceId, [...selectedIds]))
-                        exitSelectionMode()
-                      },
-                    },
-                  }
-                : {})}
+              {...(memory ? { onUseInAi: () => memory.reuse({ workspaceId, tabIds: [...selectedIds] }) } : {})}
             />
           </div>
         )}

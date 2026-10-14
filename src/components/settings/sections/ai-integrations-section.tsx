@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { AlertTriangle, Check, Copy, ExternalLink, Loader2, ShieldCheck, X } from "lucide-react"
+import { AlertTriangle, Check, Copy, ExternalLink, Loader2, ShieldCheck, X, Cable } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { AgentIcon } from "@/components/agents/agent-icon"
+import { ProviderMark } from "@/components/memory/provider-mark"
 import { useOptionalAuth } from "@/components/auth/auth-provider"
 import { SignInDialog } from "@/components/auth/sign-in-dialog"
 import { useIntegrations, useProjectMemory } from "@/hooks/use-integrations"
@@ -38,11 +38,12 @@ import type { IntegrationClient, PermissionLevel } from "@/lib/integrations/scop
 import type { IntegrationsData, UseIntegrations } from "@/hooks/use-integrations"
 
 /**
- * Settings → AI Integrations: using Hubble from inside ChatGPT, Claude,
+ * Settings → AI connectors: using Hubble from inside ChatGPT, Claude,
  * Gemini and Grok.
  *
- * The other direction from AI Connections (where Hubble starts an agent):
- * here an AI client the person already uses reaches *into* Hubble. One pane
+ * The other half of cross-AI memory: instead of copying context out of
+ * Hubble, an AI app the person already uses reaches *into* their synced
+ * Hubble through an MCP connector. One pane
  * for every client, because there is one integration underneath — one MCP
  * endpoint, one grant model, one audit log — and what differs per product
  * is only how it is set up, which comes from the verified platform registry
@@ -53,12 +54,10 @@ import type { IntegrationsData, UseIntegrations } from "@/hooks/use-integrations
  * incomplete" until then; a test passes only when each of its checks did.
  */
 
-const CLIENT_ICON: Record<IntegrationClient, string> = {
-  chatgpt: "openai-codex",
-  claude: "claude-code",
-  gemini: "gemini",
-  grok: "grok",
-  other: "custom",
+/** The client's mark: an AI app Hubble knows, or a neutral one. */
+function ClientMark({ client }: { client: IntegrationClient }) {
+  if (client === "chatgpt" || client === "claude" || client === "gemini") return <ProviderMark provider={client} size={16} className="text-muted-foreground" />
+  return <Cable aria-hidden className="size-4 shrink-0 text-muted-foreground" />
 }
 
 const CLIENTS: { value: Exclude<IntegrationClient, "other">; label: string }[] = [
@@ -329,7 +328,7 @@ function ConnectionRow({
     <li className="px-4 py-3" data-testid={`connection-${connection.id}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2">
-          <AgentIcon connector={CLIENT_ICON[connection.client]} size="sm" />
+          <ClientMark client={connection.client} />
           <div className="min-w-0">
             <p className="truncate text-body text-foreground">
               {connection.label} <span className="text-body-sm text-muted-foreground">· {connection.clientName}</span>
@@ -646,8 +645,8 @@ export function AiIntegrationsSection() {
 
   const heading = (
     <SectionHeading
-      title="AI Integrations"
-      description="Use Hubble inside ChatGPT, Claude, Gemini and Grok. They do the thinking; Hubble supplies your saved workspaces and keeps what you ask them to save."
+      title="AI connectors"
+      description="Use Hubble inside ChatGPT, Claude, Gemini and Grok. They read the projects you sync — names, links, titles and collections — and keep what you ask them to save. Saved conversation text and notes stay on this device, so a connector can't see them."
     />
   )
 
@@ -658,7 +657,7 @@ export function AiIntegrationsSection() {
         <SectionStack>
           <GroupBlock>
             <p className="text-body-sm text-muted-foreground">
-              AI clients connect to your account on the web, where synced workspaces live. Open Hubble at{" "}
+              AI clients connect to your account on the web, where synced projects live. Open Hubble at{" "}
               <a className="text-link underline-offset-4 hover:underline" href={CANONICAL_PRODUCTION_ORIGIN} target="_blank" rel="noreferrer">
                 {CANONICAL_PRODUCTION_ORIGIN.replace(/^https:\/\//, "")}
               </a>
@@ -681,7 +680,7 @@ export function AiIntegrationsSection() {
         <SectionStack>
           <GroupBlock>
             <p className="text-body text-foreground">Setup required: sign in</p>
-            <p className="mt-1 text-body-sm text-muted-foreground">AI clients connect to your Hubble account and see the workspaces you sync to it.</p>
+            <p className="mt-1 text-body-sm text-muted-foreground">AI clients connect to your Hubble account and see the projects you sync to it.</p>
             {auth?.configured && (
               <Button type="button" size="sm" className="mt-3" onClick={() => setSignInOpen(true)}>
                 Sign in
@@ -735,7 +734,7 @@ export function AiIntegrationsSection() {
             <GroupBlock>
               <SegmentedControl value={client} onValueChange={setClient} options={CLIENTS} />
               <p className="mt-2 flex items-center gap-2 text-body-sm text-muted-foreground">
-                <AgentIcon connector={CLIENT_ICON[client]} size="sm" />
+                <ClientMark client={client} />
                 {state.data.connections.some((connection) => connection.client === client)
                   ? `${CLIENT_NAME[client]} is connected — you can add another product below.`
                   : `${CLIENT_NAME[client]}: not connected.`}{" "}

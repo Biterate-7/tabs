@@ -7,6 +7,10 @@ import { DEPENDENCY_TYPE_ORDER } from "@/lib/dependencies/types";
 import type { DependencyType, TabDependency } from "@/lib/dependencies/types";
 import { EXPORT_VERSION } from "./json-export";
 import { isValidLogoDataUrl } from "./logo";
+import { readWorkspaceBrief } from "./brief";
+import { readProjectNotes } from "@/lib/notes/notes";
+import { readResourceContent } from "@/lib/resources/read";
+import type { ResourceContent } from "@/lib/resources/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Collection } from "@/lib/collections/types";
 import type { Section, SectionSource } from "@/lib/sections/types";
@@ -22,6 +26,8 @@ export type ImportResult =
       skippedDependencies: number;
       collections: Collection[];
       skippedCollections: number;
+      /** Stored text for imported items, keyed by the ids they were given here. Empty for a file without it. */
+      contents: { workspaceId: string; itemId: string; content: ResourceContent }[];
     }
   | { ok: false; reason: "invalid-json" | "invalid-schema" | "unsupported-version" };
 
@@ -244,6 +250,9 @@ function sanitizeWorkspace(
   // oversized, or pre-feature-missing `logo` just means no logo, never a
   // rejected import.
   const logo = typeof raw.logo === "string" && isValidLogoDataUrl(raw.logo) ? raw.logo : undefined;
+  // The project's brief and notes are the person's own words: kept, each re-read like everything else.
+  const brief = readWorkspaceBrief(raw.brief);
+  const notes = readProjectNotes(raw.notes);
 
   const workspace: Workspace = {
     id: createId(),
@@ -252,6 +261,8 @@ function sanitizeWorkspace(
     ...(groups !== undefined ? { groups } : {}),
     ...(sections !== undefined ? { sections } : {}),
     ...(logo !== undefined ? { logo } : {}),
+    ...(brief ? { brief } : {}),
+    ...(notes.length > 0 ? { notes } : {}),
     createdAt: isValidTimestamp(raw.createdAt) ? raw.createdAt : now,
     updatedAt: isValidTimestamp(raw.updatedAt) ? raw.updatedAt : now,
   };
@@ -419,6 +430,8 @@ export function parseWorkspaceExport(raw: string): ImportResult {
   }
 
   const workspaces: Workspace[] = [];
+  const contents: { workspaceId: string; itemId: string; content: ResourceContent }[] = [];
+  const rawContents = isPlainObject(parsed.contents) ? parsed.contents : {};
   let skippedWorkspaces = 0;
   let skippedTabs = 0;
   // Combined across every workspace in this file — a dependency (or
@@ -435,6 +448,16 @@ export function parseWorkspaceExport(raw: string): ImportResult {
     }
     workspaces.push(sanitized.workspace);
     skippedTabs += sanitized.skippedTabs;
+    // This project's stored text, moved to the ids its items have now. Only items that came through.
+    const stored = sanitized.rawWorkspaceId ? rawContents[sanitized.rawWorkspaceId] : undefined;
+    if (isPlainObject(stored)) {
+      const noteIds = new Set((sanitized.workspace.notes ?? []).map((note) => note.id));
+      for (const [rawItemId, value] of Object.entries(stored)) {
+        const itemId = sanitized.tabIdMap.get(rawItemId) ?? (noteIds.has(rawItemId) ? rawItemId : undefined);
+        const content = itemId ? readResourceContent(value) : undefined;
+        if (itemId && content) contents.push({ workspaceId: sanitized.workspace.id, itemId, content });
+      }
+    }
     for (const [rawId, finalId] of sanitized.tabIdMap) {
       if (!combinedTabIdMap.has(rawId)) combinedTabIdMap.set(rawId, finalId);
     }
@@ -462,5 +485,6 @@ export function parseWorkspaceExport(raw: string): ImportResult {
     skippedDependencies,
     collections,
     skippedCollections,
+    contents,
   };
 }

@@ -11,7 +11,7 @@ import type { Tab } from "@/lib/tabs/types"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 /**
- * A subject with saved lectures, searched from its own page: transcript
+ * A project with saved lectures, searched from its own page: transcript
  * matches come back with the time they are said, the time opens YouTube
  * there, and the result opens the video's reader at that line.
  */
@@ -64,7 +64,8 @@ function renderHome(workspace: Workspace, overrides: Partial<Parameters<typeof P
     onRemoveSources: vi.fn(),
     onOpenSource: vi.fn(),
     onOpenSourceAt: vi.fn(),
-    agents: [],
+    onCapture: vi.fn(),
+    notes: { update: vi.fn(), saveText: vi.fn(async () => true), remove: vi.fn() },
     ...overrides,
   }
   const view = render(<ProjectHome {...props} />)
@@ -78,7 +79,7 @@ async function search(text: string) {
 beforeEach(() => resetContentStoreForTests())
 afterEach(() => localStorage.clear())
 
-describe("searching a subject's videos", () => {
+describe("searching a project's videos", () => {
   it("returns the moment it is said, with its time and a faithful excerpt", async () => {
     renderHome(await subject())
     await search("gravitational potential energy")
@@ -121,13 +122,27 @@ describe("searching a subject's videos", () => {
     expect(within(dialog).getByRole("button", { name: "Open on YouTube at 8:42" })).toBeTruthy()
   })
 
-  it("respects the kind filter: Videos leaves the web page out", async () => {
-    renderHome(await subject())
-    await userEvent.click(screen.getByRole("button", { name: "Videos" }))
+  it("respects the kind filter: AI conversations leaves the videos and the web page out", async () => {
+    const workspace = await subject()
+    let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [workspace] }
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/energy-chat-1", title: "Energy questions" }], "manual", NOW)!.store
+    const chat = store.workspaces[0]!.tabs.at(-1)!
+    const summary = await putContent("w", chat.id, {
+      kind: "conversation",
+      extractedAt: 13,
+      turns: [
+        { role: "user", text: "Why is energy conserved?" },
+        { role: "assistant", text: "Because the laws of physics do not change over time." },
+      ],
+    })
+    const tabs = store.workspaces[0]!.tabs.map((tab) => (tab.id === chat.id ? { ...tab, resource: { ...tab.resource!, status: "ready" as const, content: summary } } : tab))
+    renderHome({ ...store.workspaces[0]!, tabs })
+    await userEvent.click(screen.getByRole("button", { name: "AI conversations" }))
     await search("energy")
     const results = await screen.findByRole("list", { name: "Search results" })
-    await within(results).findByRole("button", { name: "Watch Chemistry: energetics on YouTube from 1:15" })
+    expect((await within(results).findAllByText("Energy questions", { exact: false })).length).toBeGreaterThan(0)
     expect(results.textContent).not.toContain("Revision notes")
+    expect(results.textContent).not.toContain("Physics revision")
   })
 
   it("a removed video is not found, even with its transcript still on the device", async () => {
@@ -142,7 +157,7 @@ describe("searching a subject's videos", () => {
     const reading = { ...workspace, tabs: workspace.tabs.map((tab) => (tab.title === "Chemistry: energetics" ? { ...tab, resource: { ...tab.resource!, status: "processing" as const } } : tab)) }
     renderHome(reading)
     await search("photosynthesis")
-    expect(await screen.findByText(/Still reading 1 resource/)).toBeTruthy()
+    expect(await screen.findByText(/Still reading 1 item/)).toBeTruthy()
   })
 })
 

@@ -182,9 +182,9 @@ export type SmartSubjectUndo = {
   keptSubjects: string[];
 };
 
-/** A subject someone has given more than its name and the tabs organizing put there. */
+/** A project someone has given more than its name and the tabs organizing put there (a folder an earlier version attached counts too). */
 function personalized(workspace: Workspace): boolean {
-  return Boolean(workspace.brief?.description || workspace.brief?.focus || workspace.logo || workspace.project);
+  return Boolean(workspace.brief?.description || workspace.brief?.focus || workspace.logo || (workspace.notes?.length ?? 0) > 0 || (workspace as { project?: unknown }).project);
 }
 
 /**
@@ -380,13 +380,13 @@ export function smartCollectionOperations(
   return { operations, results };
 }
 
-/** "Organized 9 tabs into 3 subjects (2 new)." — the line a completed apply reports. */
+/** "Organized 9 tabs into 3 projects (2 new)." — the line a completed apply reports. */
 export function describeApplied(results: readonly SmartGroupResult[], mode: SmartProposal["mode"]): { title: string; details: string[] } {
   const applied = results.filter((result) => !result.error && result.added + result.alreadyThere > 0);
   const added = applied.reduce((sum, result) => sum + result.added, 0);
   const targets = new Set(applied.filter((result) => result.added > 0).map((result) => result.targetId ?? `new:${result.targetName}`));
   const createdTargets = new Set(applied.filter((result) => result.created && result.added > 0).map((result) => result.targetName));
-  const place = mode === "open-tabs" ? ["subject", "subjects"] : ["collection", "collections"];
+  const place = mode === "open-tabs" ? ["project", "projects"] : ["collection", "collections"];
   const what = mode === "open-tabs" ? ["page", "pages"] : ["tab", "tabs"];
   const title =
     added === 0

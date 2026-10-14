@@ -29,7 +29,7 @@ export function DeleteCollectionDialog({
           <AlertDialogTitle>Delete &quot;{collectionName}&quot;?</AlertDialogTitle>
           <AlertDialogDescription>
             This removes the collection grouping. {tabCount > 0
-              ? `Its ${tabCount} tab${tabCount === 1 ? "" : "s"} stay in the subject, ungrouped.`
+              ? `Its ${tabCount} tab${tabCount === 1 ? "" : "s"} stay in the project, ungrouped.`
               : "It has no tabs, so nothing else is affected."}
           </AlertDialogDescription>
         </AlertDialogHeader>

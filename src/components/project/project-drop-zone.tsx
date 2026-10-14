@@ -104,7 +104,7 @@ export function ProjectDropOverlay({ active, projectName }: { active: boolean; p
       <div className="relative flex flex-col items-center gap-1 text-center">
         <p className="text-h2 text-foreground">Drop into {projectName}</p>
         <p className="flex items-center gap-1 text-body text-muted-foreground">
-          <Plus aria-hidden className="size-4" /> Add to subject
+          <Plus aria-hidden className="size-4" /> Add to project
         </p>
       </div>
     </div>

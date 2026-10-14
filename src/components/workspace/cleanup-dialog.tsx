@@ -89,13 +89,13 @@ function CleanupBody({
       <DialogHeader className="shrink-0">
         <DialogTitle>
           {hasDuplicates
-            ? "This subject can be tidied up."
+            ? "This project can be tidied up."
             : "Nothing to clean up."}
         </DialogTitle>
         <DialogDescription>
           {hasDuplicates
             ? `${summary.groupCount} duplicate group${summary.groupCount === 1 ? "" : "s"} found. Nothing is removed until you confirm.`
-            : "No duplicates in this subject."}
+            : "No duplicates in this project."}
         </DialogDescription>
       </DialogHeader>
 

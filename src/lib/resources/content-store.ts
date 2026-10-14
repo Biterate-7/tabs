@@ -6,11 +6,12 @@ import type { ResourceContent, ResourceContentSummary } from "./types";
 /**
  * Where extracted source content lives: IndexedDB, on this device only.
  *
- * Page text, PDF pages and transcripts are far too large for the workspace
- * store (localStorage, synchronous, a few megabytes for everything), and most
- * screens never need them. So the tab carries a summary of what was
- * extracted, and the content itself is written here and read lazily — by the
- * source details view, project search, and the session context a task sends.
+ * Page text, PDF pages, transcripts, saved AI conversations and notes are far
+ * too large for the workspace store (localStorage, synchronous, a few
+ * megabytes for everything), and most screens never need them. So the item
+ * carries a summary of what is stored, and the content itself is written
+ * here and read lazily — by the reader, search, and the context a person
+ * chooses to reuse.
  *
  * ## Partitioned like everything else that is personal
  *
@@ -26,6 +27,9 @@ import type { ResourceContent, ResourceContentSummary } from "./types";
  * Without IndexedDB (a private window in some browsers, a test without the
  * polyfill) this falls back to memory for the life of the page, and says so
  * through `contentStorePersistent()` rather than pretending to persist.
+ *
+ * Keys are item ids: a source's tab id, or a project note's id (both minted
+ * by lib/id.ts, so they never collide).
  */
 
 const DB_NAME = "hubble-resources";
@@ -135,6 +139,13 @@ export function boundContent(content: ResourceContent): ResourceContent {
       out.transcriptInfo = { source: content.transcriptInfo.source === "captions" ? "captions" : "supplied", ...(language ? { language } : {}), ...(provider ? { provider } : {}) };
     }
   }
+  if (content.turns) {
+    if (content.turns.length > CONTENT_LIMITS.turns) truncated = true;
+    out.turns = content.turns.slice(0, CONTENT_LIMITS.turns).map((turn) => {
+      if (turn.text.length > CONTENT_LIMITS.turnText) truncated = true;
+      return { role: turn.role === "user" ? "user" : "assistant", text: turn.text.slice(0, CONTENT_LIMITS.turnText), ...(turn.at !== undefined ? { at: turn.at } : {}) };
+    });
+  }
   if (truncated) out.truncated = true;
   return out;
 }
@@ -144,12 +155,14 @@ export function summarizeContent(content: ResourceContent): ResourceContentSumma
   const chars =
     (content.text?.length ?? 0) +
     (content.pages ?? []).reduce((sum, page) => sum + page.length, 0) +
-    (content.transcript ?? []).reduce((sum, line) => sum + line.text.length, 0);
+    (content.transcript ?? []).reduce((sum, line) => sum + line.text.length, 0) +
+    (content.turns ?? []).reduce((sum, turn) => sum + turn.text.length, 0);
   return {
     chars,
     extractedAt: content.extractedAt,
     ...(content.pages ? { pages: content.pages.length } : {}),
     ...(content.transcript ? { transcriptLines: content.transcript.length } : {}),
+    ...(content.turns ? { turns: content.turns.length } : {}),
     ...(content.transcriptInfo?.language ? { language: content.transcriptInfo.language } : {}),
     ...(content.truncated ? { truncated: true } : {}),
   };
@@ -177,6 +190,7 @@ function strip(record: StoredContent): ResourceContent {
     ...(record.pages ? { pages: record.pages } : {}),
     ...(record.transcript ? { transcript: record.transcript } : {}),
     ...(record.transcriptInfo ? { transcriptInfo: record.transcriptInfo } : {}),
+    ...(record.turns ? { turns: record.turns } : {}),
     ...(record.truncated ? { truncated: true } : {}),
   };
 }

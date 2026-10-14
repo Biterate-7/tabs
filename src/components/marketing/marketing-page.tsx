@@ -1,32 +1,14 @@
 "use client"
 
-import { useMemo, type ReactNode } from "react"
-import { Globe, KeyRound, Laptop, MessagesSquare, Monitor, ShieldCheck } from "lucide-react"
-import { AgentIcon } from "@/components/agents/agent-icon"
+import type { ReactNode } from "react"
+import { Globe, Laptop, MessageSquareShare, MessagesSquare, Monitor, Search, ShieldCheck, Waypoints, Eye } from "lucide-react"
+import { ProviderMark } from "@/components/memory/provider-mark"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
-import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
-import { CLAUDE_SESSION, CODEX_AUTH_SESSION, GEMINI_SESSION } from "./demo/data"
-import { DemoApp } from "./demo/demo-app"
-import { DemoFrame } from "./demo/demo-frame"
-import { HubbleDemoProvider } from "./demo/demo-provider"
-import type { DemoInit } from "./demo/demo-state"
-import { DemoThemeStyle } from "./demo/demo-theme"
+import { AI_PROVIDERS, AI_PROVIDER_IDS } from "@/lib/providers/registry"
+import { AppThemeStyle } from "./app-theme"
+import { CaptureIllustration, KnowledgeIllustration, ReuseIllustration, SearchIllustration } from "./memory-illustrations"
 import { RevealSection, revealStep } from "./reveal"
-import { ProjectLoopDemo } from "./project-loop-demo"
-import {
-  Container,
-  FeatureSection,
-  HeroActions,
-  MoreLink,
-  SiteFooter,
-  SiteHeader,
-  Stage,
-  WhenNear,
-  useDesktopLink,
-  useMarketingScheme,
-  type PrimaryAction,
-  type Scheme,
-} from "./site"
+import { Container, FeatureSection, HeroActions, MoreLink, SiteFooter, SiteHeader, Stage, useDesktopLink, useMarketingScheme, type PrimaryAction } from "./site"
 
 export type MarketingPageProps = {
   /** Opens the in-page install guide when the extension is a download. */
@@ -37,85 +19,80 @@ export type MarketingPageProps = {
 
 const ROOT_ID = "hubble-marketing"
 
-/** Window heights, per breakpoint, shared by each window and the space it holds before it mounts. */
-const HERO_HEIGHT = "h-[600px] md:h-[640px] lg:h-[720px]"
-const WINDOW_HEIGHT = "h-[560px] md:h-[600px] xl:h-[640px]"
+const LOOP = [
+  { icon: MessagesSquare, title: "Capture", body: "Save conversations from ChatGPT, Claude, Gemini and Perplexity, and the pages, PDFs, videos and notes behind them." },
+  { icon: Waypoints, title: "Connect", body: "Keep them in projects. See what relates to what, and where every piece came from." },
+  { icon: Search, title: "Find", body: "Search everything you saved, whichever AI app it came from." },
+  { icon: MessageSquareShare, title: "Reuse", body: "Bring the parts you choose into your next AI chat — quoted, with their sources." },
+] as const
 
 /**
- * Hubble's public page: the product, presented as the product.
+ * Hubble's public page: one connected workspace for everything a person
+ * learns and creates with AI.
  *
- * The reference's composition — one sentence over one very large window, a
- * row of what it works with, then sections that each pair two sentences with
- * a screen — with one difference that matters: every screen is a live Hubble.
- * Each window is the app's own interface (see demo/), running on its own
- * isolated, deterministic demo state. Nothing on the page connects to an
- * agent, a runtime, the visitor's browser or their saved Hubble data.
- *
- * Nothing is claimed that the product does not do. The integration row reads
- * the connector catalog, and every agent it names runs sessions that ask
- * before acting; the changelog is the project's own history.
+ * Nothing is claimed that the product does not do. The "works with" row reads
+ * the provider registry, so it says exactly what Hubble can do with each AI
+ * app; the illustrations run the product's own search and context code over
+ * a fixed sample project and touch no one's data.
  */
 export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPageProps) {
   const install = getExtensionInstallInfo()
   const installAction: PrimaryAction =
-    install.mode === "store"
-      ? { label: "Hubble for Chrome", href: install.url }
-      : { label: "Hubble for Chrome", onClick: onInstallExtension }
+    install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", onClick: onInstallExtension }
   const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
-  const demoScheme = useMemo(() => ({ value: scheme, set: setScheme }), [scheme, setScheme])
   // Hubble Desktop, closing the page — absent inside the desktop app itself.
   const desktopLink = useDesktopLink()
+  const extensionLink = installAction.href ? (
+    <MoreLink href={installAction.href} external>
+      Get Hubble for Chrome
+    </MoreLink>
+  ) : (
+    <MoreLink onClick={onInstallExtension}>Get Hubble for Chrome</MoreLink>
+  )
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
-      <DemoThemeStyle />
+      <AppThemeStyle />
       <SiteHeader install={installAction} onOpenApp={onPasteTabs} />
 
       <main>
         {/* ---- Hero -------------------------------------------------------- */}
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
           <Container>
-            <h1 className="m-hero max-w-[640px] text-foreground">
-              Your projects. Your context. Your agents.
-            </h1>
-            <p className="m-body mt-3 max-w-[600px] text-muted-foreground">
-              Collect sources from Chrome into a project, then let Claude, Gemini, Codex or Grok work from the same context — and hand the work from one to another.
+            <h1 className="m-hero max-w-[680px] text-foreground">One connected workspace for everything you learn with AI.</h1>
+            <p className="m-body mt-3 max-w-[620px] text-muted-foreground">
+              Save what you work out in ChatGPT, Claude, Gemini and Perplexity — with the pages and notes behind it. Find it later, and bring the right parts into your next AI chat, whichever app you use.
             </p>
             <div className="mt-[22px]">
-              <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" />
+              <HeroActions onOpenApp={onPasteTabs} exploreHref="#capture" />
             </div>
             <div className="mt-12 sm:mt-14">
               <Stage className="m-bleed">
-                <HubbleDemoProvider scheme={demoScheme}>
-                  <DemoFrame
-                    palette
-                    label="Interactive Hubble demo with sample data. Use the sidebar to move between Workspace, Graph, the Command Centre and Settings."
-                    className={HERO_HEIGHT}
-                  >
-                    <DemoApp compactRailBelow={1024} />
-                  </DemoFrame>
-                </HubbleDemoProvider>
+                <KnowledgeIllustration className="h-[440px] md:h-[480px]" />
               </Stage>
-              <p className="m-small mt-3 text-muted-foreground">
-                A live Hubble with sample data. Nothing you do here leaves this page.
-                <span className="hidden sm:inline"> Press ⌘K or Ctrl K inside it for the command palette.</span>
-              </p>
+              <p className="m-small mt-3 text-muted-foreground">A sample project. Nothing on this page reads or stores your data.</p>
             </div>
           </Container>
         </section>
 
-        {/* ---- The loop: project → context → agent → work --------------------- */}
+        {/* ---- The loop ------------------------------------------------------ */}
         <RevealSection id="how-it-works" className="m-page pb-[calc(var(--hb-v)*1.5)] scroll-mt-(--hb-header-h)">
           <Container>
             <h2 className="m-h2 m-reveal-item max-w-[810px] text-foreground" style={revealStep(0)}>
-              Project → Context → Agent → Work.
+              Capture → Connect → Find → Reuse.
             </h2>
             <p className="m-body m-reveal-item mt-3 max-w-[640px] text-muted-foreground" style={revealStep(1)}>
-              The project is what lasts. Agents come and go; each one starts from the same sources, the same brief and the work done before it.
+              Your AI conversations stop being scattered across apps and tabs. The project is what lasts; each new chat can start from what you already know.
             </p>
-            <div className="m-reveal-item mt-8" style={revealStep(2)}>
-              <ProjectLoopDemo />
-            </div>
+            <ol className="m-reveal-item mt-8 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4" style={revealStep(2)}>
+              {LOOP.map(({ icon: Icon, title, body }) => (
+                <li key={title} className="m-card flex flex-col gap-2 px-[17.5px] pt-[15.9px] pb-5">
+                  <Icon aria-hidden className="size-4 text-muted-foreground" />
+                  <p className="m-body text-foreground">{title}</p>
+                  <p className="m-small text-muted-foreground">{body}</p>
+                </li>
+              ))}
+            </ol>
           </Container>
         </RevealSection>
 
@@ -123,10 +100,10 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <RevealSection className="m-page pb-[calc(var(--hb-v)*1.5)]">
           <Container>
             <h2 className="m-small m-reveal-item text-center text-foreground" style={revealStep(0)}>
-              Works with the agents and tools you already use
+              Works beside the AI apps you already use
             </h2>
-            <ul className="m-reveal-item mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-8" style={revealStep(1)}>
-              {INTEGRATIONS.map((item) => (
+            <ul className="m-reveal-item mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6" style={revealStep(1)}>
+              {[...WORKS_WITH, ...TOOLS].map((item) => (
                 <li key={item.name} className="m-card flex h-[100px] flex-col items-center justify-center gap-2 px-2 text-center">
                   <span className="flex items-center gap-2 text-foreground">
                     {item.mark}
@@ -142,66 +119,37 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         {/* ---- Features ------------------------------------------------------ */}
         <div className="py-[calc(var(--hb-v)*1)]">
           <FeatureSection
-            id="workspaces"
-            title="Collect context from Chrome."
-            body="Drag a link or the address bar into a project, or add the current tab with Hubble for Chrome. Hubble reads web pages and PDFs, keeps a video's details and any transcript you add, says plainly what it couldn't read, and won't add the same source twice. Whole windows of tabs still sort themselves into sections and collections."
-            link={
-              installAction.href ? (
-                <MoreLink href={installAction.href} external>
-                  Get Hubble for Chrome
-                </MoreLink>
-              ) : (
-                <MoreLink onClick={onInstallExtension}>Get Hubble for Chrome</MoreLink>
-              )
-            }
-            stage={<DemoWindow scheme={demoScheme} label="Interactive Hubble workspace with sample tabs, sections and collections." init={{ view: "workspace", sidebarCollapsed: true }} />}
-          />
-          <FeatureSection
-            id="command-centre"
-            layout="wide"
-            title="Command your agents."
-            body="Give an agent a task on your project, with the research it needs attached. Approve the exact files it wants to change, see what Hubble measured, review the diff, run the project’s checks — and come back to it tomorrow, or hand it to another agent."
-            link={<MoreLink onClick={onPasteTabs}>Open the Command Centre</MoreLink>}
+            id="capture"
+            title="Save the conversation, not just the link."
+            body="On ChatGPT, Claude, Gemini or Perplexity, open Hubble for Chrome and choose Save to Hubble: the conversation on screen goes into the project you pick, with its link and where it came from. Save it again later and Hubble updates it instead of adding a copy. Prefer not to install anything? Paste a conversation, or import your ChatGPT or Claude export."
+            link={extensionLink}
             stage={
-              <DemoWindow
-                scheme={demoScheme}
-                label="Interactive Hubble Command Centre: Codex asking to change two files in a sample project."
-                init={{ view: "command-centre", sidebarCollapsed: true, selectedSessionId: CODEX_AUTH_SESSION, contextPanelOpen: false }}
-              />
+              <Stage>
+                <CaptureIllustration className="h-[360px]" />
+              </Stage>
             }
           />
           <FeatureSection
-            id="graph"
+            id="find"
             reverse
-            title="See your work spatially."
-            body="The graph draws how your tabs relate — shared sites, sections, collections and dependencies — clustered by category. Search it, filter the connections, or focus on one tab and its neighbours."
-            stage={<DemoWindow scheme={demoScheme} label="Interactive Hubble graph of sample tabs." init={{ view: "graph", sidebarCollapsed: true }} />}
-          />
-          <FeatureSection
-            id="context"
-            layout="wide"
-            title="Give agents the right context."
-            body="An agent is told what the project holds and reads its sources when it needs them — PDF pages, transcripts, articles — citing where each point came from. It sees only the project you're in and the sources you chose, and a source's text is always treated as material, never as instructions."
+            title="Find it, whichever AI said it."
+            body="Search every project at once: your conversations, notes, and the pages, PDFs and video transcripts Hubble read. A result opens at the turn of the conversation that matched — and always says which app it came from."
             stage={
-              <DemoWindow
-                scheme={demoScheme}
-                label="Interactive Hubble session with its context panel and context picker."
-                init={{ view: "command-centre", sidebarCollapsed: true, selectedSessionId: CLAUDE_SESSION, contextPanelOpen: true }}
-                showSessions={false}
-              />
+              <Stage>
+                <SearchIllustration className="h-[420px]" />
+              </Stage>
             }
           />
           <FeatureSection
-            id="agents"
-            title="Switch agents. Keep the project."
-            body="Claude Code, Gemini CLI, Grok Build and Codex run sessions in Hubble, asking you before they change anything. Hand Claude's work to Gemini and it starts from the same project, the same sources and — if you choose — Claude's answer. Each agent runs on your own account or key."
-            link={<MoreLink onClick={onPasteTabs}>Connect an agent</MoreLink>}
+            id="reuse"
+            layout="wide"
+            title="Start your next chat where you left off."
+            body="Choose what to bring — a note, two conversations, a reading — and Hubble writes it up for any AI app: your notes, earlier AI answers and sources kept apart, each quoted with where it came from, and disagreements left visible. You see exactly what the AI receives, then copy it, or let Hubble for Chrome type it into the message box. It never sends anything for you."
+            link={<MoreLink onClick={onPasteTabs}>Open Hubble</MoreLink>}
             stage={
-              <DemoWindow
-                scheme={demoScheme}
-                label="Interactive Hubble Command Centre showing the connected agents."
-                init={{ view: "command-centre", sidebarCollapsed: true, selectedSessionId: GEMINI_SESSION, contextPanelOpen: false }}
-              />
+              <Stage>
+                <ReuseIllustration className="h-[480px]" />
+              </Stage>
             }
           />
         </div>
@@ -210,12 +158,9 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <RevealSection className="m-section m-page">
           <Container>
             <h2 className="m-h2 m-reveal-item max-w-[810px] text-foreground" style={revealStep(0)}>
-              A calmer way to work with agents.
+              Your knowledge, under your control.
             </h2>
-            <div
-              className="m-reveal-item mt-[calc(var(--hb-v)*2)] grid gap-x-10 gap-y-8 border-t border-border pt-8 lg:grid-cols-3"
-              style={revealStep(1)}
-            >
+            <div className="m-reveal-item mt-[calc(var(--hb-v)*2)] grid gap-x-10 gap-y-8 border-t border-border pt-8 lg:grid-cols-3" style={revealStep(1)}>
               {PRINCIPLES.map((principle) => (
                 <article key={principle.title} className="flex flex-col">
                   <principle.icon className="size-4 text-muted-foreground" aria-hidden />
@@ -251,7 +196,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
               Try Hubble now.
             </h2>
             <div className="m-reveal-item mt-6" style={revealStep(1)}>
-              <HeroActions onOpenApp={onPasteTabs} exploreHref="#workspaces" secondary={desktopLink} />
+              <HeroActions onOpenApp={onPasteTabs} exploreHref="#capture" secondary={desktopLink} />
             </div>
           </Container>
         </RevealSection>
@@ -262,66 +207,40 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
   )
 }
 
-/** A feature section's window: a whole Hubble on its own demo state, mounted as it nears the viewport. */
-function DemoWindow({
-  label,
-  init,
-  scheme,
-  showSessions,
-}: {
-  label: string
-  init: DemoInit
-  scheme: { value: Scheme; set: (scheme: Scheme) => void }
-  showSessions?: boolean
-}) {
-  return (
-    <Stage>
-      <WhenNear className={WINDOW_HEIGHT}>
-        <HubbleDemoProvider init={init} scheme={scheme}>
-          <DemoFrame palette label={label} className="h-full">
-            <DemoApp {...(showSessions === false ? { showSessions: false } : {})} />
-          </DemoFrame>
-        </HubbleDemoProvider>
-      </WhenNear>
-    </Stage>
-  )
-}
+/** What Hubble does with each AI app, read from the provider registry so the row cannot claim more than Hubble does. */
+const WORKS_WITH: { name: string; note: string; mark: ReactNode }[] = AI_PROVIDER_IDS.map((id) => {
+  const provider = AI_PROVIDERS[id]
+  const parts = [provider.capabilities.pageCapture.supported ? "Save from the page" : "", provider.capabilities.exportImport.supported ? "Import export" : "Paste"].filter(Boolean)
+  return { name: provider.name, note: parts.join(" · "), mark: <ProviderMark provider={id} size={16} /> }
+})
 
-/** Integrations, read from the connector catalog so the row cannot claim more than Hubble does. */
-const INTEGRATIONS: { name: string; note: string; mark: ReactNode }[] = [
-  ...PLATFORM_PROVIDERS.map((spec) => ({
-    name: spec.shortName,
-    note: !spec.chat ? "Reads over MCP" : spec.sessions.available ? "Sessions" : "Connects",
-    mark: <AgentIcon connector={spec.provider} size="sm" />,
-  })),
-  { name: "Claude Desktop", note: "Reads over MCP", mark: <MessagesSquare className="size-4" aria-hidden /> },
+const TOOLS: { name: string; note: string; mark: ReactNode }[] = [
   { name: "Chrome", note: "Hubble for Chrome", mark: <Globe className="size-4" aria-hidden /> },
   { name: "Desktop", note: "Hubble Desktop", mark: <Monitor className="size-4" aria-hidden /> },
 ]
 
-const PRINCIPLES: { title: string; body: string; icon: typeof KeyRound }[] = [
+const PRINCIPLES: { title: string; body: string; icon: typeof Laptop }[] = [
   {
     title: "Local first",
-    body: "Workspaces, tabs and agent history live on your device. Sign in only if you want them synced.",
+    body: "Projects, conversations and notes live in your browser. Sign in only if you want projects synced between devices.",
     icon: Laptop,
   },
   {
-    title: "Your keys, your accounts",
-    body: "Agents run on your own provider account or key. Hubble never pools credentials between people.",
-    icon: KeyRound,
+    title: "Only what you choose",
+    body: "Hubble saves a conversation when you ask, never in the background, and never signs in to your AI accounts. You see every word before it goes into another AI chat.",
+    icon: Eye,
   },
   {
-    title: "Nothing changes without you",
-    body: "You see what an agent will use before it starts. Every change to a collection, every edit and every command waits for your approval.",
+    title: "Honest about sources",
+    body: "Every saved item keeps where it came from. AI answers are marked as AI answers, and saved text is quoted as material — never followed as instructions.",
     icon: ShieldCheck,
   },
 ]
 
 // The project's own history, newest first.
 const CHANGELOG = [
-  { date: "Oct 6, 2026", title: "Projects: collect sources from Chrome, and let any agent work from them" },
+  { date: "Oct 13, 2026", title: "Cross-AI memory: save conversations from ChatGPT, Claude, Gemini and Perplexity, search them, reuse them anywhere" },
+  { date: "Oct 12, 2026", title: "ChatGPT, Claude and Gemini can read your projects through a connector" },
+  { date: "Oct 6, 2026", title: "Projects: collect pages, PDFs and videos from Chrome" },
   { date: "Sep 26, 2026", title: "A new name, Hubble, and a calmer interface" },
-  { date: "Sep 25, 2026", title: "Agents that reason about your workspace" },
-  { date: "Sep 25, 2026", title: "Workspace plans you approve in one step" },
-  { date: "Sep 24, 2026", title: "Gemini CLI, Codex and Grok Build" },
 ]

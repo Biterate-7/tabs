@@ -9,8 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { AskAgentSubmenu } from "@/components/agents/agent-actions"
-import type { WorkingContext } from "@/lib/agents/command-centre/working-context"
+import { UseInAiMenuItem } from "@/components/memory/memory-actions"
+import type { MemorySelection } from "@/components/memory/memory-actions"
 
 /**
  * The row a CollectionGroup renders above its (possibly collapsed) tab list.
@@ -29,7 +29,7 @@ export function CollectionHeader({
   onOpenAll,
   onExport,
   onDelete,
-  agentContext,
+  reuseSelection,
 }: {
   name: string
   tabCount: number
@@ -42,8 +42,8 @@ export function CollectionHeader({
   onOpenAll: () => void
   onExport?: () => void
   onDelete: () => void
-  /** This collection, as agent context — offers "Ask agent" when the shell can take it there. */
-  agentContext?: WorkingContext
+  /** This collection, for "Use in AI chat" — offered when the shell can open the context builder. */
+  reuseSelection?: MemorySelection
 }) {
   return (
     <div className="flex items-center gap-1 py-1">
@@ -88,7 +88,7 @@ export function CollectionHeader({
               <Download /> Export
             </DropdownMenuItem>
           )}
-          {agentContext && <AskAgentSubmenu subject="collection" context={agentContext} />}
+          {reuseSelection && tabCount > 0 && <UseInAiMenuItem selection={reuseSelection} />}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 /> Delete collection

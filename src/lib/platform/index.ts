@@ -6,8 +6,8 @@
  * functions, so the Tauri runtime stays out of the web bundle while the
  * adapter itself costs a few bytes.
  */
-import { isDesktop, platformKind } from "./detect";
-import { desktopAgentBridge, desktopImportBridge, desktopPlatform } from "./desktop";
+import { isDesktop } from "./detect";
+import { desktopImportBridge, desktopPlatform } from "./desktop";
 import { webPlatform } from "./web";
 import type { PlatformAdapter } from "./types";
 
@@ -34,31 +34,6 @@ export function saveTextFile(filename: string, text: string, mimeType: string): 
   return adapter().saveTextFile(filename, text, mimeType);
 }
 
-export type { PickedProjectFolder } from "./desktop";
-
-/**
- * How the agent runtime client reaches the runtime in this shell (Phase J.1).
- *
- * `undefined` on the web, where the client posts to `/api/agents/control` as
- * it always has. On the desktop, the bundled runtime sidecar, through Rust.
- */
-export function agentRuntimeTransport(): ((body: unknown) => Promise<unknown>) | undefined {
-  return isDesktop() ? (body) => desktopAgentBridge.request(body) : undefined;
-}
-
-/**
- * The native folder picker for agent projects, on the desktop only.
- *
- * On the desktop a project folder can only come from here — Rust refuses one
- * that did not. On the web there is no trusted path source, so the typed path
- * and the runtime's validator remain what they were.
- */
-export function agentProjectFolderPicker():
-  | (() => Promise<{ path: string; name: string } | null>)
-  | undefined {
-  return isDesktop() ? () => desktopAgentBridge.pickProjectFolder() : undefined;
-}
-
 /**
  * Tabs sent straight from the Chrome extension to Hubble Desktop
  * (src-tauri/src/import_bridge.rs). `undefined` on the web, where the
@@ -66,15 +41,4 @@ export function agentProjectFolderPicker():
  */
 export function desktopImport(): typeof desktopImportBridge | undefined {
   return isDesktop() ? desktopImportBridge : undefined;
-}
-
-/**
- * Which surface the agent connectors are offered on (Phase J.2).
- *
- * Some connectors only work on one: a custom MCP agent connects to Hubble's
- * MCP server, which only a Hubble server with an account store runs. The
- * connector registry says which; this says where we are.
- */
-export function agentConnectorSurface(): "web" | "desktop" {
-  return platformKind();
 }

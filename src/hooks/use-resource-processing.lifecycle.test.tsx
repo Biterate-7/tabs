@@ -112,7 +112,7 @@ describe("content follows its tab out of a project", () => {
     await expectKeptThenSwept(view, [["physics", video.id], ["physics", pdf.id]], [["chem", other.id]])
   })
 
-  it("deleting a subject (the shell also prunes it at once)", async () => {
+  it("deleting a project (the shell also prunes it at once)", async () => {
     const { video, other } = await seed()
     const view = mount()
     view.set(deleteWorkspace(store, "physics"))
@@ -144,7 +144,7 @@ describe("content follows its tab out of a project", () => {
     next.unmount()
   })
 
-  it("moving a video to another subject carries its transcript, so it stays searchable there", async () => {
+  it("moving a video to another project carries its transcript, so it stays searchable there", async () => {
     const { video, other } = await seed()
     const view = mount()
     view.set(moveTabsBetweenWorkspaces(store, [video.id], "chem").store)

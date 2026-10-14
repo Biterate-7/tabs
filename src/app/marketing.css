@@ -15,7 +15,7 @@
  *     nothing here leaks back into the app.
  *
  * The live product windows on the page (`.m-app`) are the exception: they
- * carry the app's own palette, not this one — see demo/demo-theme.tsx.
+ * carry the app's own palette, not this one — see app-theme.tsx.
  *
  * The palette follows the visitor's system colour scheme, like the reference
  * site, with an explicit override on [data-scheme] set by the footer toggle.
@@ -279,8 +279,8 @@
 
 /* ---- The product, live -------------------------------------------------
    `.m-app` is a live Hubble on the page: the demo window and the sibling its
-   overlays portal into (see demo/demo-frame.tsx). Its design tokens are the
-   app's own Hubble Light / Hubble Dark, emitted by demo/demo-theme.tsx from
+   overlays portal into (see memory-illustrations.tsx). Its design tokens are the
+   app's own Hubble Light / Hubble Dark, emitted by app-theme.tsx from
    the app's resolver; this block only restores the app's base type, which
    the page's display-face defaults would otherwise leak into it. */
 .tabdump-marketing .m-app {

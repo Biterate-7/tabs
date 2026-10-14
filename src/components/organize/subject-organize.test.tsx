@@ -42,7 +42,7 @@ const own = (workspaceId: string) => loadCollectionState().collections.filter((c
 async function openOrganize(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "More actions" }))
   await user.click(await screen.findByRole("menuitem", { name: "Organize tabs" }))
-  return screen.findByRole("dialog", { name: "Organize this subject" })
+  return screen.findByRole("dialog", { name: "Organize this project" })
 }
 
 beforeEach(() => {
@@ -57,8 +57,8 @@ beforeEach(() => {
   })
 })
 
-describe("Organize this subject", () => {
-  it("turns loose tabs into collections, leaves filed tabs and other subjects alone, and saves", async () => {
+describe("Organize this project", () => {
+  it("turns loose tabs into collections, leaves filed tabs and other projects alone, and saves", async () => {
     const user = userEvent.setup()
     const onTabsChange = vi.fn()
     renderSubject({ onTabsChange })
@@ -68,7 +68,7 @@ describe("Organize this subject", () => {
     expect(dialog.querySelector("[data-smart-footer]")!.textContent).toBe("Puts 4 tabs into 2 collections (2 new). 2 stay as they are.")
 
     await user.click(within(dialog).getByRole("button", { name: "Organize 4 tabs" }))
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Organize this subject" })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Organize this project" })).toBeNull())
 
     await waitFor(() =>
       expect(own("bio").map((collection) => [collection.name, collection.tabIds])).toEqual([
@@ -83,7 +83,7 @@ describe("Organize this subject", () => {
     expect(onTabsChange).not.toHaveBeenCalled()
   })
 
-  it("Undo puts the subject's collections back exactly", async () => {
+  it("Undo puts the project's collections back exactly", async () => {
     const user = userEvent.setup()
     renderSubject()
     const dialog = await openOrganize(user)
@@ -101,7 +101,7 @@ describe("Organize this subject", () => {
     const before = loadCollectionState()
     const dialog = await openOrganize(user)
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }))
-    expect(screen.queryByRole("dialog", { name: "Organize this subject" })).toBeNull()
+    expect(screen.queryByRole("dialog", { name: "Organize this project" })).toBeNull()
     expect(loadCollectionState()).toEqual(before)
     expect(toast).not.toHaveBeenCalled()
   })
@@ -114,6 +114,6 @@ describe("Organize this subject", () => {
     expect(screen.queryByRole("dialog")).toBeNull()
     await user.click(within(offer.closest("[data-smart-organize-offer]") as HTMLElement).getByRole("button", { name: "Review" }))
     expect(onDismissOrganizeOffer).toHaveBeenCalledOnce()
-    expect(await screen.findByRole("dialog", { name: "Organize this subject" })).toBeTruthy()
+    expect(await screen.findByRole("dialog", { name: "Organize this project" })).toBeTruthy()
   })
 })

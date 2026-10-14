@@ -102,7 +102,7 @@ describe("Organize open tabs", () => {
     expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/^Organized/), expect.anything())
   }, 30_000)
 
-  it("files Chrome's tabs into the right subjects, leaves the rest open, saves, and undoes", async () => {
+  it("files Chrome's tabs into the right projects, leaves the rest open, saves, and undoes", async () => {
     const user = userEvent.setup()
     render(<AppShell />)
     await user.click(await screen.findByRole("button", { name: /Organize open tabs/ }))
@@ -128,13 +128,13 @@ describe("Organize open tabs", () => {
     // Still where they were.
     expect(loadWorkspaceStore()!.currentId).toBe("ws-history")
 
-    expect(toast).toHaveBeenCalledWith("Organized 4 pages into 2 subjects (1 new)", expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) }))
-    const options = vi.mocked(toast).mock.calls.find(([title]) => title === "Organized 4 pages into 2 subjects (1 new)")![1] as unknown as { action: { onClick: () => void } }
+    expect(toast).toHaveBeenCalledWith("Organized 4 pages into 2 projects (1 new)", expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) }))
+    const options = vi.mocked(toast).mock.calls.find(([title]) => title === "Organized 4 pages into 2 projects (1 new)")![1] as unknown as { action: { onClick: () => void } }
     act(() => options.action.onClick())
     await waitFor(() => expect(summary(loadWorkspaceStore())).toEqual([["History IA", ["French Revolution essay plan"]]]))
   }, 30_000)
 
-  it("Undo keeps a source the person has filed in a collection since, with its subject", async () => {
+  it("Undo keeps a source the person has filed in a collection since, with its project", async () => {
     const user = userEvent.setup()
     render(<AppShell />)
     await user.click(await screen.findByRole("button", { name: /Organize open tabs/ }))
@@ -151,7 +151,7 @@ describe("Organize open tabs", () => {
       JSON.stringify({ version: 1, collections: [{ id: "c1", workspaceId: projectile.id, name: "IA", tabIds: [lab.id], createdAt: 1, updatedAt: 1 }] })
     )
 
-    const options = vi.mocked(toast).mock.calls.find(([title]) => title === "Organized 4 pages into 2 subjects (1 new)")![1] as unknown as { action: { onClick: () => void } }
+    const options = vi.mocked(toast).mock.calls.find(([title]) => title === "Organized 4 pages into 2 projects (1 new)")![1] as unknown as { action: { onClick: () => void } }
     act(() => options.action.onClick())
     await waitFor(() =>
       expect(summary(loadWorkspaceStore())).toEqual([

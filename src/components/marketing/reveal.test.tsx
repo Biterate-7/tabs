@@ -7,14 +7,12 @@ import { REVEAL_THRESHOLD } from "./reveal"
 
 /** Every section below the hero, by what it is about. */
 const SECTION_TEXT = [
-  "Works with the agents and tools you already use",
-  "Collect context from Chrome.",
-  "Command your agents.",
-  "See your work spatially.",
-  "Give agents the right context.",
-  "Project → Context → Agent → Work.",
-  "Switch agents. Keep the project.",
-  "A calmer way to work with agents.",
+  "Capture → Connect → Find → Reuse.",
+  "Works beside the AI apps you already use",
+  "Save the conversation, not just the link.",
+  "Find it, whichever AI said it.",
+  "Start your next chat where you left off.",
+  "Your knowledge, under your control.",
   "Changelog",
   "Try Hubble now.",
 ]
@@ -91,7 +89,7 @@ describe("scroll reveal", () => {
     for (const text of SECTION_TEXT) {
       expect(revealing.some((section) => section.textContent?.includes(text)), text).toBe(true)
     }
-    for (const id of ["workspaces", "command-centre", "graph", "context", "agents", "changelog"]) {
+    for (const id of ["how-it-works", "capture", "find", "reuse", "changelog"]) {
       expect(document.getElementById(id)?.classList.contains("m-reveal"), id).toBe(true)
     }
     for (const section of revealing) {
@@ -100,25 +98,26 @@ describe("scroll reveal", () => {
     expect(document.querySelector("h1")!.closest(".m-reveal")).toBeNull()
     expect(document.querySelector("header")!.closest(".m-reveal")).toBeNull()
     expect(document.querySelector("footer")!.closest(".m-reveal")).toBeNull()
-    expect(document.querySelector("[data-hubble-demo]")!.closest(".m-reveal")).toBeNull()
+    // The hero's sample is on screen from the start.
+    expect(document.querySelector("[data-hubble-illustration]")!.closest(".m-reveal")).toBeNull()
   })
 
   it("staggers a feature section as title, body, link, then its window", () => {
     renderPage()
-    const items = Array.from(document.getElementById("command-centre")!.querySelectorAll<HTMLElement>(".m-reveal-item"))
+    const items = Array.from(document.getElementById("reuse")!.querySelectorAll<HTMLElement>(".m-reveal-item"))
     expect(items.map((item) => item.style.getPropertyValue("--m-reveal-step"))).toEqual(["0", "1", "2", "3"])
-    expect(items[0].textContent).toBe("Command your agents.")
+    expect(items[0].textContent).toBe("Start your next chat where you left off.")
     expect(items[3].querySelector(".m-stage")).not.toBeNull()
     // No link, so the window follows the body directly.
-    const graph = Array.from(document.getElementById("graph")!.querySelectorAll<HTMLElement>(".m-reveal-item"))
-    expect(graph.map((item) => item.style.getPropertyValue("--m-reveal-step"))).toEqual(["0", "1", "2"])
+    const find = Array.from(document.getElementById("find")!.querySelectorAll<HTMLElement>(".m-reveal-item"))
+    expect(find.map((item) => item.style.getPropertyValue("--m-reveal-step"))).toEqual(["0", "1", "2"])
   })
 
   it("holds a section below the fold until it is meaningfully in view, then reveals it", () => {
     vi.stubGlobal("IntersectionObserver", ManualObserver)
     belowTheFold()
     renderPage()
-    const graph = document.getElementById("graph")!
+    const graph = document.getElementById("find")!
     for (const section of sections()) expect(section.dataset.reveal).toBe("pending")
     expect(ManualObserver.all.find((observer) => observer.targets.has(graph))?.options.threshold).toBe(REVEAL_THRESHOLD)
 
@@ -128,14 +127,14 @@ describe("scroll reveal", () => {
     ManualObserver.scroll(graph, REVEAL_THRESHOLD)
     expect(graph.dataset.reveal).toBe("revealed")
     // Only the section that was reached.
-    expect(document.getElementById("context")!.dataset.reveal).toBe("pending")
+    expect(document.getElementById("reuse")!.dataset.reveal).toBe("pending")
   })
 
   it("stays revealed when the visitor scrolls away and back", () => {
     vi.stubGlobal("IntersectionObserver", ManualObserver)
     belowTheFold()
     renderPage()
-    const graph = document.getElementById("graph")!
+    const graph = document.getElementById("find")!
     ManualObserver.scroll(graph, 0.5)
     expect(graph.dataset.reveal).toBe("revealed")
 
@@ -153,26 +152,11 @@ describe("scroll reveal", () => {
     for (const section of sections()) expect(section.dataset.reveal).toBeUndefined()
   })
 
-  it("reveals independently of whether the section's live window has mounted", () => {
-    vi.stubGlobal("IntersectionObserver", ManualObserver)
-    belowTheFold()
-    renderPage()
-    const graph = document.getElementById("graph")!
-    ManualObserver.scroll(graph, 0.5)
-    expect(graph.dataset.reveal).toBe("revealed")
-    expect(graph.querySelector("[data-hubble-demo]")).toBeNull()
-  })
-
   it("without IntersectionObserver, renders every section as it is", () => {
     belowTheFold()
     renderPage()
     for (const section of sections()) expect(section.dataset.reveal).toBeUndefined()
     for (const text of SECTION_TEXT) expect(document.body.textContent).toContain(text)
-    // WhenNear's own fallback is untouched: the windows still mount on first scroll.
-    act(() => {
-      window.dispatchEvent(new Event("scroll"))
-    })
-    expect(document.querySelectorAll("[data-hubble-demo]")).toHaveLength(6)
   })
 
   it("for a visitor who prefers reduced motion, hides nothing", () => {
@@ -187,7 +171,7 @@ describe("scroll reveal", () => {
     const css = readFileSync(join(process.cwd(), "src/app/marketing.css"), "utf8")
     const block = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"))
     expect(block).toMatch(/\.m-reveal \.m-reveal-item\s*\{[^}]*opacity:\s*1 !important;[^}]*transform:\s*none !important;[^}]*transition:\s*none !important;/)
-    // The revealed state sets no transform, so it never becomes a containing block for the windows' fixed tooltips.
+    // The revealed state sets no transform, so it never becomes a containing block for anything fixed inside it.
     const revealed = css.match(/\.m-reveal\[data-reveal="revealed"\] \.m-reveal-item\s*\{([^}]*)\}/)
     expect(revealed?.[1]).not.toMatch(/(^|[^-])transform:/)
   })

@@ -6,7 +6,7 @@ import type { ConnectionFilters, GraphDisplaySettings, NodeSizeMode } from "@/li
 
 const CONNECTION_ROWS: { key: keyof ConnectionFilters; label: string }[] = [
   { key: "domain", label: "Same domain" },
-  { key: "workspace", label: "Same workspace" },
+  { key: "workspace", label: "Same project" },
   { key: "category", label: "Same category" },
   { key: "group", label: "Same group" },
   { key: "section", label: "Same section" },
@@ -137,7 +137,7 @@ export function GraphSettingsPanel({
 
       {workspaces.length > 1 && (
         <div>
-          <p className="text-eyebrow text-tertiary">WORKSPACE</p>
+          <p className="text-eyebrow text-tertiary">PROJECT</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Pill active={workspaceFilter === "all"} onClick={() => onWorkspaceFilterChange("all")}>
               All

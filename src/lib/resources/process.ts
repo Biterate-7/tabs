@@ -108,9 +108,27 @@ function settle(resource: TabResource, patch: Partial<TabResource>, now: number)
   return next;
 }
 
+/**
+ * Why a saved AI conversation has no text: Hubble never reads one from its
+ * address — that would need the person's account — so its text arrives only
+ * from the open page (Hubble for Chrome), an export file, or a paste.
+ */
+export const CONVERSATION_NEEDS_CAPTURE: ResourceError = {
+  code: "needs_capture",
+  message: "Saved as a link only. Hubble can't read an AI conversation from its address — open it and use Save to Hubble in Hubble for Chrome, or paste it.",
+  retryable: false,
+};
+
 export async function processSource(workspaceId: string, tab: Tab, deps: ProcessDeps): Promise<ProcessResult> {
   const resource = tab.resource!;
   const failed = (error: ResourceError): ProcessResult => ({ tabId: tab.id, resource: settle(resource, { status: "failed", error }, deps.now()) });
+
+  // An AI conversation is never fetched by address (it is behind the person's sign-in): it is a link until its text is saved.
+  if (resource.kind === "conversation") {
+    return resource.content
+      ? { tabId: tab.id, resource: settle(resource, { status: "ready" }, deps.now()) }
+      : { tabId: tab.id, resource: settle(resource, { status: "partial", error: CONVERSATION_NEEDS_CAPTURE }, deps.now()) };
+  }
 
   let response: ExtractionResponse;
   try {

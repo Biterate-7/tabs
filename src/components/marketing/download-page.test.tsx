@@ -147,9 +147,9 @@ describe("/download once a Windows installer is published", () => {
     expect(within(steps).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       expect.stringContaining("Install Hubble"),
       expect.stringContaining("Open Hubble"),
-      expect.stringContaining("Connect your agents"),
-      expect.stringContaining("Sign in to each agent"),
-      expect.stringContaining("Start working"),
+      expect.stringContaining("Make a project"),
+      expect.stringContaining("Bring things in"),
+      expect.stringContaining("Reuse them"),
     ])
   })
 
@@ -164,23 +164,16 @@ describe("/download once a Windows installer is published", () => {
 })
 
 describe("/download content", () => {
-  it("names the local agents from the catalogue, and never the MCP client", async () => {
+  it("offers no agents, runtimes or sign-ins to AI apps", () => {
     render(<DownloadPage />)
-    const agents = screen.getByRole("region", { name: "Works with your local agents" })
-    const names = within(agents).getAllByRole("listitem").map((item) => item.textContent)
-    expect(names).toEqual([
-      expect.stringContaining("Claude Code"),
-      expect.stringContaining("Codex"),
-      expect.stringContaining("Gemini CLI"),
-      expect.stringContaining("Grok Build"),
-    ])
-    expect(agents.textContent).not.toMatch(/Custom MCP|MCP agent/)
+    expect(document.body.textContent).not.toMatch(/\bagents?\b|runtime|Claude Code|Codex|Gemini CLI|Grok/i)
   })
 
-  it("explains web vs desktop, and does not imply credentials or workspaces carry over", () => {
+  it("explains web vs desktop honestly, and does not imply projects carry over", () => {
     render(<DownloadPage />)
-    expect(screen.getByText(/Local agents run on your computer, so Hubble Desktop is required to connect them/)).toBeTruthy()
-    expect(screen.getByText(/keeps its own workspaces on your computer, separate from your browser/)).toBeTruthy()
+    // Saving from an AI app's page is Hubble for Chrome's, which cannot reach the desktop app.
+    expect(screen.getByText(/AI conversations arrive as links,\s+and you paste or import their text/)).toBeTruthy()
+    expect(screen.getByText(/keeps its own projects on your computer, separate from your browser/)).toBeTruthy()
     expect(screen.getByText(/Nothing carries over from this website/)).toBeTruthy()
     // The page collects nothing.
     expect(screen.queryByRole("textbox")).toBeNull()
@@ -209,7 +202,7 @@ describe("/download content", () => {
   it("points its section links back at the landing page", () => {
     render(<DownloadPage />)
     const footer = document.querySelector("footer")!
-    expect(within(footer).getByRole("link", { name: "Workspaces" }).getAttribute("href")).toBe("/welcome#workspaces")
+    expect(within(footer).getByRole("link", { name: "Capture" }).getAttribute("href")).toBe("/welcome#capture")
     // No link to itself in the footer's Resources.
     expect(within(footer).queryByRole("link", { name: /Hubble Desktop|Download Hubble/ })?.getAttribute("href")).toBe("/download")
   })

@@ -6,14 +6,14 @@ import type { Collection } from "./types";
  *
  * ## Why a snapshot, and why it is guarded
  *
- * Every agent change is applied as one batch (./batch.ts), so the workspace's
+ * Every AI-proposed change is applied as one batch (./batch.ts), so the workspace's
  * collections immediately before and immediately after it are both in hand.
  * Restoring `previous` is then the exact inverse — a created collection
  * removed, a rename reverted, added tabs returned to wherever they were —
  * with no reconstruction from the change's description.
  *
  * That holds only while the workspace still holds exactly what the change
- * left (`expected`). Anything edited since — by the person or another agent —
+ * left (`expected`). Anything edited since — by the person or another AI —
  * means restoring would silently discard that later work, so the restore is
  * refused and nothing moves. Refusal is the safe failure: the workspace is
  * never left half-restored.

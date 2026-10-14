@@ -7,7 +7,6 @@ import { getDragTabId, hasDragTabId } from "@/lib/collections/drag"
 import { cn } from "@/lib/utils"
 import type { DependencyIndicatorData } from "@/components/workspace/tab-dependency-indicator"
 import type { CategoryId } from "@/lib/categories"
-import { collectionContext } from "@/lib/agents/command-centre/working-context"
 import type { Collection } from "@/lib/collections/types"
 import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
@@ -116,7 +115,7 @@ export function CollectionGroup({
         onOpenAll={onOpenAll}
         onExport={onExport}
         onDelete={onDelete}
-        agentContext={collectionContext(collection.workspaceId, collection.id)}
+        reuseSelection={{ workspaceId: collection.workspaceId, collectionIds: [collection.id] }}
       />
 
       <div

@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Hubble",
-  "version": "0.5.0",
-  "description": "Add tabs from Chrome to your Hubble subjects in one click.",
+  "version": "0.6.0",
+  "description": "Save AI conversations and tabs to your Hubble projects, and use what you saved in ChatGPT, Claude, Gemini and Perplexity.",
   "minimum_chrome_version": "102",
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Add to Hubble",
+    "default_title": "Hubble",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -22,7 +22,7 @@
   "commands": {
     "add-to-project": {
       "suggested_key": { "default": "Alt+Shift+H" },
-      "description": "Add this tab (or the selected tabs) to the subject open in Hubble"
+      "description": "Add this tab (or the selected tabs) to the project open in Hubble"
     }
   },
   "host_permissions": ["http://localhost:3000/*", "http://127.0.0.1:41517/*", "http://127.0.0.1:41518/*", "http://127.0.0.1:41519/*"],

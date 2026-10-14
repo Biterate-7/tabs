@@ -46,13 +46,13 @@ export function RenameWorkspaceDialog({
       <DialogContent>
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Edit subject</DialogTitle>
+            <DialogTitle>Edit project</DialogTitle>
           </DialogHeader>
           <Input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Subject name"
+            placeholder="Project name"
             className="mt-4"
           />
           <WorkspaceLogoUploader workspaceName={currentName} logo={logo} onChange={onLogoChange} />

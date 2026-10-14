@@ -327,3 +327,79 @@ body {
 .popup__desktop[hidden] {
   display: none;
 }
+
+/* ---- On an AI app: save the conversation, use Hubble here ---------------- */
+.popup__ai {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgb(var(--fg-rgb) / 0.1);
+}
+
+.popup__ai[hidden],
+.popup__memory[hidden] {
+  display: none;
+}
+
+.popup__memory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popup__memory > summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+.popup__input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border: 1px solid rgb(var(--fg-rgb) / 0.15);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.popup__textarea {
+  min-height: 44px;
+  resize: vertical;
+}
+
+.popup__results {
+  max-height: 168px;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid rgb(var(--fg-rgb) / 0.1);
+  border-radius: 4px;
+}
+
+.popup__results:empty {
+  display: none;
+}
+
+.popup__result {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.popup__result + .popup__result {
+  border-top: 1px solid rgb(var(--fg-rgb) / 0.08);
+}
+
+.popup__result-meta {
+  display: block;
+  color: rgb(var(--fg-rgb) / 0.55);
+  font-size: 11px;
+}

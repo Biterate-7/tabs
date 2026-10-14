@@ -36,8 +36,6 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof AppSidebar
       onOpenRecents={vi.fn()}
       onOpenHistoryDump={vi.fn()}
       onOpenGraph={vi.fn()}
-      onOpenCommandCentre={vi.fn()}
-      onOpenAgentHistory={vi.fn()}
       onOpenSettings={vi.fn()}
       {...overrides}
     />
@@ -50,17 +48,35 @@ beforeEach(() => {
 });
 
 describe("AppSidebar", () => {
-  it("leads with Home, AI and the subjects themselves", () => {
-    renderSidebar({ onOpenHome: vi.fn(), onOpenAI: vi.fn() });
+  it("leads with search, Projects, Graph and the projects themselves", () => {
+    renderSidebar({ onOpenHome: vi.fn(), onOpenSearch: vi.fn() });
 
-    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "AI" })).toBeTruthy();
-    const subjects = screen.getByRole("navigation", { name: "Subjects" });
-    expect(subjects.textContent).toContain("History HL");
-    expect(subjects.textContent).toContain("Math AA HL");
+    expect(screen.getByRole("button", { name: "Search your knowledge" })).toBeTruthy();
+    const main = screen.getByRole("navigation", { name: "Main" });
+    expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Projects", "Graph"]);
+    const projects = screen.getByRole("navigation", { name: "Projects" });
+    expect(projects.textContent).toContain("History HL");
+    expect(projects.textContent).toContain("Math AA HL");
   });
 
-  it("opens a subject when its row is clicked", async () => {
+  it("offers no agent, AI-chat or Command Centre destination", async () => {
+    const user = userEvent.setup();
+    renderSidebar({ onOpenHome: vi.fn(), onOpenSearch: vi.fn() });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(document.body.textContent).not.toMatch(/agent|command centre|AI chats|AI activity/i);
+  });
+
+  it("opens Search from the rail search field", async () => {
+    const user = userEvent.setup();
+    const onOpenSearch = vi.fn();
+    renderSidebar({ onOpenSearch, currentView: "search" });
+    const field = screen.getByRole("button", { name: "Search your knowledge" });
+    expect(field.getAttribute("aria-current")).toBe("page");
+    await user.click(field);
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+  });
+
+  it("opens a project when its row is clicked", async () => {
     const user = userEvent.setup();
     const onOpenSubject = vi.fn();
     renderSidebar({ onOpenSubject });
@@ -81,44 +97,46 @@ describe("AppSidebar", () => {
     expect(onOpenWorkspace).toHaveBeenCalledOnce();
   });
 
-  it("marks the open subject as the current page only while its page is on screen", () => {
+  it("marks the open project as the current page only while its page is on screen", () => {
     renderSidebar({ currentView: "workspace" });
     expect(screen.getByRole("button", { name: "Open History HL" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("does not mark a subject current while Home is on screen", () => {
+  it("does not mark a project current while Home is on screen", () => {
     renderSidebar({ currentView: "home", onOpenHome: vi.fn() });
     expect(screen.getByRole("button", { name: "Open History HL" }).getAttribute("aria-current")).toBeNull();
-    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "Projects" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("makes a new subject from the rail's + and its dialog", async () => {
+  it("makes a new project from the rail's + and its dialog", async () => {
     const user = userEvent.setup();
     const { onCreate } = renderSidebar();
 
     // The section's "+" (the row beneath it opens the same dialog).
-    await user.click(screen.getAllByRole("button", { name: "New subject" })[0]!);
-    await user.type(await screen.findByLabelText("Subject name"), "Physics SL");
-    await user.click(screen.getByRole("button", { name: "Create subject" }));
+    await user.click(screen.getAllByRole("button", { name: "New project" })[0]!);
+    await user.type(await screen.findByLabelText("Project name"), "Physics SL");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     expect(onCreate).toHaveBeenCalledWith("Physics SL", undefined);
   });
 
-  it("keeps power tools under More, closed by default", async () => {
+  it("keeps Favorites, Recent and Import from history under More, closed by default", async () => {
     const user = userEvent.setup();
-    const onOpenCommandCentre = vi.fn();
-    renderSidebar({ onOpenCommandCentre });
+    const onOpenFavorites = vi.fn();
+    renderSidebar({ onOpenFavorites });
 
-    expect(screen.queryByRole("button", { name: "AI chats" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Favorites" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(screen.getByRole("button", { name: "AI chats" }));
+    const more = screen.getByRole("navigation", { name: "More" });
+    expect([...more.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Favorites", "Recent", "Import from history"]);
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
 
-    expect(onOpenCommandCentre).toHaveBeenCalledOnce();
+    expect(onOpenFavorites).toHaveBeenCalledOnce();
   });
 
   it("opens More on its own while one of its destinations is on screen", () => {
-    renderSidebar({ currentView: "agent-history" });
-    expect(screen.getByRole("button", { name: "AI activity" }).getAttribute("aria-current")).toBe("page");
+    renderSidebar({ currentView: "recents" });
+    expect(screen.getByRole("button", { name: "Recent" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("remembers More being opened", async () => {
@@ -147,12 +165,11 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
   });
 
-  it("opens Graph View from More", async () => {
+  it("opens Graph from the main navigation", async () => {
     const user = userEvent.setup();
     const onOpenGraph = vi.fn();
     renderSidebar({ onOpenGraph });
 
-    await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(screen.getByRole("button", { name: "Graph" }));
 
     expect(onOpenGraph).toHaveBeenCalledOnce();
@@ -192,7 +209,7 @@ describe("AppSidebar", () => {
     const onOpenHome = vi.fn();
     renderSidebar({ mobileOpen: true, onMobileOpenChange, onOpenHome });
 
-    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.click(screen.getByRole("button", { name: "Projects" }));
 
     expect(onOpenHome).toHaveBeenCalledOnce();
     expect(onMobileOpenChange).toHaveBeenCalledWith(false);

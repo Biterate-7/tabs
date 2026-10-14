@@ -22,7 +22,7 @@ export function ClearWorkspaceDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Clear this subject?</AlertDialogTitle>
+          <AlertDialogTitle>Clear this project?</AlertDialogTitle>
           <AlertDialogDescription>
             This removes everything saved in it. This can&apos;t be undone.
           </AlertDialogDescription>
@@ -30,7 +30,7 @@ export function ClearWorkspaceDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={onConfirm}>
-            Clear subject
+            Clear project
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

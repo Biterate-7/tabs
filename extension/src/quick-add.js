@@ -27,7 +27,7 @@ export function readProjectList(raw) {
   return raw
     .filter((project) => project && typeof project.id === "string" && project.id.length > 0 && project.id.length <= 200 && typeof project.name === "string")
     .slice(0, 200)
-    .map((project) => ({ id: project.id, name: project.name.slice(0, 120) || "Untitled subject" }));
+    .map((project) => ({ id: project.id, name: project.name.slice(0, 120) || "Untitled project" }));
 }
 
 /**
@@ -120,7 +120,7 @@ export function describeAdding(target) {
  * always naming the project, so the person sees where the tab went:
  *
  *   Added to History IA          Already in History IA                    Couldn't add to History IA
- *   <source title>               This source is already in the subject.   <why, and what to do>
+ *   <source title>               This source is already in the project.   <why, and what to do>
  *   Ready · 1,840 words
  *
  * `tone` is "done", "same" (already there), or "error". The source title and
@@ -137,7 +137,7 @@ export function describeOutcome(result) {
     if (skipped > 0) notes.push(`${skipped} Chrome page${skipped === 1 ? "" : "s"} skipped`);
     if (added === 0) {
       const which = already > 1 ? "These sources are" : "This source is";
-      return { tone: "same", title: `Already in ${name}`, detail: [`${which} already in the subject.`, ...notes].join(" · ") };
+      return { tone: "same", title: `Already in ${name}`, detail: [`${which} already in the project.`, ...notes].join(" · ") };
     }
     return {
       tone: "done",

@@ -3,11 +3,8 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowRight, Download } from "lucide-react"
-import { AgentIcon } from "@/components/agents/agent-icon"
-import { offeredAuthMethods } from "@/lib/agents/platform/authentication"
 import { buttonVariants } from "@/components/ui/button"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { PLATFORM_PROVIDERS } from "@/lib/agents/platform/catalog"
 import {
   DESKTOP_OS_LABEL,
   currentVisitorOs,
@@ -25,32 +22,12 @@ import { Container, MoreLink, SiteFooter, SiteHeader, useMarketingScheme, type P
 const ROOT_ID = "hubble-download"
 const OSES: readonly DesktopOs[] = ["windows", "macos", "linux"]
 
-/**
- * The agents Hubble Desktop brings in: every catalogue agent the desktop app
- * starts on the visitor's machine. Read from the catalogue, so the page can
- * never name one the app does not run — an MCP client connects to Hubble
- * rather than being run by it, and the desktop app runs no MCP server.
- */
-const LOCAL_AGENTS = PLATFORM_PROVIDERS.filter((spec) => spec.transport !== "mcp" && spec.surfaces.includes("desktop"))
-
-/**
- * "Codex with your ChatGPT account, …": each local agent's own account
- * sign-in on the desktop, from the catalogue. Two examples are enough.
- */
-const SIGN_IN_EXAMPLES = LOCAL_AGENTS.flatMap((spec) => {
-  const account = offeredAuthMethods(spec, "desktop").find(({ method }) => method.kind === "account" && method.owner === "runtime")
-  return account ? [`${spec.displayName} with your ${account.method.label}`] : []
-}).slice(0, 2)
-
 const STEPS = [
   { title: "Install Hubble", body: "Run the Hubble installer." },
   { title: "Open Hubble", body: "Like any other app on your computer." },
-  { title: "Connect your agents", body: "Open the Command Centre and choose Connect agent." },
-  {
-    title: "Sign in to each agent",
-    body: SIGN_IN_EXAMPLES.length ? `With its own account — ${SIGN_IN_EXAMPLES.join(", ")}.` : "With its own account.",
-  },
-  { title: "Start working", body: "Attach a workspace and start a session." },
+  { title: "Make a project", body: "One per course, essay or piece of work." },
+  { title: "Bring things in", body: "Paste conversations, import a ChatGPT or Claude export, or add tabs from Chrome." },
+  { title: "Reuse them", body: "Search, then copy the parts you choose into your next AI chat." },
 ] as const
 
 /**
@@ -87,7 +64,7 @@ export function DownloadPage() {
 
   // The Chrome extension's guide lives on the landing page; from here, a store link or that page.
   const installAction: PrimaryAction =
-    install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", onClick: () => router.push("/welcome#workspaces") }
+    install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", onClick: () => router.push("/welcome#capture") }
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
@@ -99,9 +76,9 @@ export function DownloadPage() {
           <Container className="flex flex-col items-center text-center">
             <p className="m-small text-muted-foreground">Hubble Desktop</p>
             <h1 className="m-hero mt-3 max-w-[720px] text-foreground">
-              Your workspace, connected to the agents already running on your computer.
+              Everything you learn with AI, in an app of its own.
             </h1>
-            <p className="m-body mt-4 max-w-[520px] text-muted-foreground">Bring your local AI agents into Hubble.</p>
+            <p className="m-body mt-4 max-w-[520px] text-muted-foreground">Your projects, conversations and notes, kept on your computer.</p>
             <div className="mt-8 flex w-full flex-col items-center">
               {inDesktopApp ? (
                 <p role="status" className="m-body text-foreground">
@@ -142,30 +119,6 @@ export function DownloadPage() {
           </section>
         )}
 
-        {/* ---- Works with ---------------------------------------------------- */}
-        <section aria-labelledby="local-agents" className="m-section m-page">
-          <Container>
-            <h2 id="local-agents" className="m-small text-center text-foreground">
-              Works with your local agents
-            </h2>
-            <ul className="mx-auto mt-6 grid max-w-[720px] grid-cols-2 gap-2.5 sm:grid-cols-4">
-              {LOCAL_AGENTS.map((spec) => (
-                <li key={spec.provider} className="m-card flex h-[100px] flex-col items-center justify-center gap-2 px-2 text-center">
-                  <span className="flex items-center gap-2 text-foreground">
-                    <AgentIcon connector={spec.provider} size="sm" />
-                    <span className="text-[15px] leading-none font-medium tracking-[-0.015em] whitespace-nowrap">{spec.displayName}</span>
-                  </span>
-                  <span className="m-small text-[12px] text-muted-foreground">{spec.vendor}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="m-body mx-auto mt-8 max-w-[560px] text-center text-muted-foreground">
-              Hubble Desktop lets agents run on your computer, while Hubble gives them the workspace and context they need to
-              work with you. Every change they make still waits for your approval.
-            </p>
-          </Container>
-        </section>
-
         {/* ---- Web and Desktop ----------------------------------------------- */}
         <section aria-labelledby="web-and-desktop" className="m-section m-page">
           <Container>
@@ -175,7 +128,7 @@ export function DownloadPage() {
             <div className="mt-6 grid gap-2.5 md:grid-cols-2">
               <article className="m-card flex flex-col px-[17.5px] pt-[15.9px] pb-5">
                 <h3 className="m-body text-foreground">Hubble Web</h3>
-                <p className="m-body text-muted-foreground">Use Hubble directly in your browser. Nothing to install.</p>
+                <p className="m-body text-muted-foreground">Use Hubble directly in your browser. With Hubble for Chrome, save conversations from ChatGPT, Claude, Gemini and Perplexity straight into a project.</p>
                 <div className="mt-4">
                   <MoreLink onClick={enterApp}>Open Hubble</MoreLink>
                 </div>
@@ -183,11 +136,11 @@ export function DownloadPage() {
               <article className="m-card flex flex-col px-[17.5px] pt-[15.9px] pb-5">
                 <h3 className="m-body text-foreground">Hubble Desktop</h3>
                 <p className="m-body text-muted-foreground">
-                  Bring your local AI agents into Hubble. Local agents run on your computer, so Hubble Desktop is required to
-                  connect them.
+                  Hubble as an app on your computer. Hubble for Chrome can send it tabs; AI conversations arrive as links,
+                  and you paste or import their text.
                 </p>
                 <p className="m-small mt-3 text-muted-foreground">
-                  Hubble Desktop keeps its own workspaces on your computer, separate from your browser.
+                  Hubble Desktop keeps its own projects on your computer, separate from your browser.
                 </p>
               </article>
             </div>
@@ -210,7 +163,7 @@ export function DownloadPage() {
               ))}
             </ol>
             <p className="m-small mt-6 max-w-[640px] text-muted-foreground">
-              Nothing carries over from this website: each agent signs in on your computer, through its own sign-in.
+              Nothing carries over from this website automatically: export from Settings → Data here, and import it there.
             </p>
           </Container>
         </section>

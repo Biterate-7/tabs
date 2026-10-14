@@ -29,12 +29,8 @@ import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { getOnboardingState } from "@/lib/onboarding"
 import { isDesktop } from "@/lib/platform/detect"
 import { modKeyLabel } from "@/lib/keyboard"
-import { agentDisplayName } from "@/lib/agents/visual/identity"
-import { useProviderConnections } from "@/hooks/use-provider-connections"
-import type { AgentRequestFailure } from "@/lib/agents/request-failure"
 import type { Workspace } from "@/lib/workspace/types"
-import { ProviderConnectionCard } from "./provider-connection-card"
-import { FieldRow, GroupBlock, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
+import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
 
 /*
  * The settings panes that are not appearance and not a single connector.
@@ -61,7 +57,7 @@ export function AccountSettingsSection() {
 
   return (
     <div>
-      <SectionHeading title="Account" description="Your Hubble identity and where your subjects are kept." />
+      <SectionHeading title="Account" description="Your Hubble identity and where your projects are kept." />
       <SectionStack>
         {user ? (
           <FieldRow label={user.name} description={user.email}>
@@ -74,7 +70,7 @@ export function AccountSettingsSection() {
             label="Not signed in"
             description={
               configured
-                ? "Sign in to sync workspaces between devices and use them from ChatGPT, Claude, Gemini or Grok."
+                ? "Sign in to sync projects between devices and let ChatGPT, Claude or Gemini read them through a connector."
                 : "This deployment has no accounts configured. Everything stays on this device."
             }
           >
@@ -89,74 +85,14 @@ export function AccountSettingsSection() {
           label="Storage"
           description={
             user
-              ? "Workspaces are saved on this device first and synced to your account."
-              : "Workspaces are saved in this browser's local storage."
+              ? "Projects are saved on this device first; their pages and links sync to your account. Saved conversation text and notes stay on this device."
+              : "Projects, conversations and notes are saved in this browser."
           }
         >
           <Badge variant={user ? "success" : "default"}>{user ? "Synced" : "Local"}</Badge>
         </FieldRow>
       </SectionStack>
       <SignInDialog open={signInOpen} onOpenChange={setSignInOpen} />
-    </div>
-  )
-}
-
-// -------------------------------------------------------------- Providers
-
-/** Why the Providers list is empty, when it could not be read. */
-const PROVIDERS_FAILURE: Record<AgentRequestFailure, string> = {
-  sign_in_required: "Sign in to Hubble to save your own provider credentials.",
-  not_permitted: "Hubble didn't permit this request. Reload the page and try again.",
-  unavailable:
-    "This deployment cannot store provider credentials. Agents that sign in on their own (Claude Code, Gemini CLI) still work on this machine.",
-  failed: "Hubble couldn't load your provider credentials. Try again later.",
-}
-
-export function ProvidersSection() {
-  const connections = useProviderConnections()
-
-  return (
-    <div>
-      <SectionHeading
-        title="Providers"
-        description="Your own provider credentials. Sessions you start run on your account and your key — Hubble never shares one between users."
-      />
-      {connections.loading && <p className="text-body-sm text-tertiary">Loading…</p>}
-      {/* Why the list is empty, when it could not be read. Only a 503 is a
-          claim about the deployment; a 401 is a visitor not signed in. */}
-      {!connections.loading && connections.failure && (
-        <SectionStack>
-          <GroupBlock>
-            <p className="text-body-sm text-muted-foreground">
-              {PROVIDERS_FAILURE[connections.failure]}
-            </p>
-          </GroupBlock>
-        </SectionStack>
-      )}
-      {!connections.loading && !connections.failure && connections.connectable.length === 0 && (
-        <SectionStack>
-          <GroupBlock>
-            <p className="text-body-sm text-muted-foreground">No provider on this deployment accepts a credential yet.</p>
-          </GroupBlock>
-        </SectionStack>
-      )}
-      <div className="flex flex-col gap-3">
-        {connections.connectable.map((entry) => (
-          <ProviderConnectionCard
-            key={entry.provider}
-            provider={entry.provider}
-            providerName={agentDisplayName(entry.provider)}
-            connection={connections.forProvider(entry.provider)}
-            input={entry.input}
-            listFailure={connections.failure}
-            durable={connections.durable}
-            busy={connections.busy}
-            onConnect={connections.connect}
-            onRotate={connections.rotate}
-            onDisconnect={connections.disconnect}
-          />
-        ))}
-      </div>
     </div>
   )
 }
@@ -168,30 +104,26 @@ export function McpSection() {
     <div>
       <SectionHeading
         title="MCP"
-        description="How agents reach your Hubble context. Every server here is read-only unless a session you approve says otherwise."
+        description="Hubble is an MCP server that AI apps you already use can connect to, so they can read your synced projects — and save notes to them if you allow it."
       />
-      <GroupLabel>Agent sessions</GroupLabel>
-      <SectionStack className="mb-6">
-        <FieldRow
-          label="Session context server"
-          description="Each session you start gets its own short-lived Hubble server, bound to one workspace and revoked when the session ends. Hubble adds no other servers to a session."
-        >
-          <Badge variant="default">Per session</Badge>
-        </FieldRow>
-        <FieldRow
-          label="Workspace changes"
-          description="An AI can propose changes to a subject. Nothing is applied until you approve it in the chat."
-        >
-          <Badge variant="default">Approval required</Badge>
-        </FieldRow>
-      </SectionStack>
-      <GroupLabel>Use Hubble from ChatGPT, Claude, Gemini and Grok</GroupLabel>
       <SectionStack>
         <FieldRow
           label="Hubble MCP server"
-          description="Hubble is itself an MCP server for AI clients you already use. Connections, tokens, permissions and their activity are managed in Settings → AI Integrations."
+          description="Connections, permissions and what each app looked at are managed in Settings → AI connectors. Read-only unless you choose Read and save."
         >
-          <Badge variant="default">AI Integrations</Badge>
+          <Badge variant="default">AI connectors</Badge>
+        </FieldRow>
+        <FieldRow
+          label="Reorganizing"
+          description="An AI app can propose moving things between collections. Nothing changes until you approve it in Hubble."
+        >
+          <Badge variant="default">Approval required</Badge>
+        </FieldRow>
+        <FieldRow
+          label="What a connector can see"
+          description="Your synced projects: page titles, links, collections, notes on pages and saved project context. Not conversation text or notes kept only on this device."
+        >
+          <span />
         </FieldRow>
       </SectionStack>
     </div>
@@ -204,21 +136,21 @@ export function BrowserSection() {
   const connected = getOnboardingState().extensionConnected
   return (
     <div>
-      <SectionHeading title="Browser" description="How Hubble reads your browser and opens what you saved." />
+      <SectionHeading title="Browser" description="How Hubble works with your browser, and what it reads." />
       <SectionStack>
         <FieldRow
           label="Extension"
           description={
             connected
-              ? "The Hubble extension has delivered tabs to this workspace."
-              : "Not connected yet. Without it, paste URLs or use History Dump."
+              ? "Hubble for Chrome is connected."
+              : "Not connected yet. Without it, paste links and conversations, or import a file."
           }
         >
           <Badge variant={connected ? "success" : "default"}>{connected ? "Connected" : "Not connected"}</Badge>
         </FieldRow>
         <FieldRow
           label="What Hubble reads"
-          description="Only the tabs you send it — their titles and addresses. Never page contents, cookies or passwords."
+          description="Only what you send it: tabs' titles and addresses, and an AI conversation's visible text when you choose Save to Hubble on it. Never cookies, passwords or other tabs."
         >
           <span />
         </FieldRow>
@@ -235,7 +167,7 @@ export function BrowserSection() {
 export function ExtensionSection() {
   return (
     <div>
-      <SectionHeading title="Chrome extension" description="Add tabs from Chrome to any subject in one click." />
+      <SectionHeading title="Chrome extension" description="Save tabs and AI conversations to a project, and use your projects in ChatGPT, Claude, Gemini or Perplexity." />
       <SectionStack className="mb-6">
         <FieldRow label="Hubble for Chrome" description="Unpacked extension for Chrome and other Chromium browsers">
           <a href={EXTENSION_DOWNLOAD_URL} download className={buttonVariants({ size: "sm" })}>
@@ -265,11 +197,11 @@ export type WorkspaceSettingsProps = {
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onUpdateLogo: (id: string, logo: string | undefined) => void
-  /** Imports subjects from a Hubble export (.json). Moved here from the old rail switcher. */
+  /** Imports projects from a Hubble export (.json). */
   onImportFile?: (text: string) => void
 }
 
-/** Settings → Subjects: every subject (workspace) on this device — open, rename, remove, import. */
+/** Settings → Projects: every project (workspace) on this device — open, rename, remove, import. */
 export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, onDelete, onUpdateLogo, onImportFile }: WorkspaceSettingsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [renameId, setRenameId] = useState<string | null>(null)
@@ -279,7 +211,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
 
   return (
     <div>
-      <SectionHeading title="Subjects" description="Rename, remove or import subjects." />
+      <SectionHeading title="Projects" description="Rename, remove or import projects." />
       <SectionStack>
         {workspaces.map((w) => (
           <div key={w.id} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
@@ -287,7 +219,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
             <div className="min-w-0 flex-1">
               <p className="truncate text-body text-foreground">{w.name}</p>
               <p className="text-meta text-tertiary">
-                {w.tabs.length} resource{w.tabs.length === 1 ? "" : "s"}
+                {w.tabs.length + (w.notes?.length ?? 0)} item{w.tabs.length + (w.notes?.length ?? 0) === 1 ? "" : "s"}
               </p>
             </div>
             {w.id !== currentId && (
@@ -313,14 +245,14 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
       {onImportFile && (
         <>
           <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => fileInputRef.current?.click()}>
-            <Upload /> Import subjects…
+            <Upload /> Import projects…
           </Button>
           <input
             ref={fileInputRef}
             type="file"
             accept="application/json,.json"
             className="hidden"
-            aria-label="Import subjects from a Hubble export file"
+            aria-label="Import projects from a Hubble export file"
             onChange={async (event) => {
               const file = event.target.files?.[0]
               event.target.value = ""
@@ -413,27 +345,21 @@ export function DesktopSection() {
   const desktop = isDesktop()
   return (
     <div>
-      <SectionHeading title="Desktop app" description="Hubble on your computer, where your AI tools connect in one click." />
+      <SectionHeading title="Desktop app" description="Hubble as an app on your computer." />
       <SectionStack>
         <FieldRow
           label="This install"
           description={
             desktop
-              ? "You are running Hubble Desktop. Agents run on this machine, in projects you authorize."
-              : "You are using Hubble in the browser. Agents need Hubble Desktop, or a deployment with a remote runtime."
+              ? "You are running Hubble Desktop. Hubble for Chrome adds tabs here; AI conversations arrive as links — to save their text, paste them, or save them with Hubble open in Chrome."
+              : "You are using Hubble in the browser. Hubble for Chrome saves tabs and AI conversations here."
           }
         >
           <Badge variant="default">{desktop ? "Desktop" : "Web"}</Badge>
         </FieldRow>
         <FieldRow
-          label="Agent processes"
-          description="Agents Hubble starts end with the app. Nothing keeps running after you quit."
-        >
-          <span />
-        </FieldRow>
-        <FieldRow
           label="Your data"
-          description="Workspaces live in the app's own profile on this machine, separate from any browser."
+          description="Projects live in the app's own profile on this machine, separate from any browser."
         >
           <span />
         </FieldRow>
@@ -455,16 +381,25 @@ export function PrivacySection() {
     <div>
       <SectionHeading title="Privacy" description="What Hubble keeps, where, and who can see it." />
       <SectionStack className="mb-6">
-        <FieldRow label="Local first" description="Workspaces, tabs, notes and agent history are stored on this device.">
+        <FieldRow label="Local first" description="Projects, saved conversations, notes and the text Hubble read are stored on this device.">
           <span />
         </FieldRow>
         <FieldRow
-          label="Agent context"
-          description="Agents see only the context you attach to a session. Page titles are passed as quoted reference material, never as instructions."
+          label="Saving from AI apps"
+          description="Only when you choose Save to Hubble, and only the conversation on that page. Hubble never signs in to an AI app, never reads your account, and never takes your passwords or cookies."
         >
           <span />
         </FieldRow>
-        <FieldRow label="Credentials" description="Provider keys are yours alone and encrypted at rest; after you save one, Hubble shows only a short hint of it.">
+        <FieldRow
+          label="Reading web pages"
+          description="When you add a web page, its address is sent to Hubble's reader, which fetches the public page and returns its text. Conversations and notes are never sent to it."
+        >
+          <span />
+        </FieldRow>
+        <FieldRow
+          label="Using context in an AI chat"
+          description="You choose what goes in, see the exact text, and copy or insert it yourself. The AI app you paste it into receives that text. Saved text is marked as quoted material, never as instructions."
+        >
           <span />
         </FieldRow>
       </SectionStack>
@@ -495,7 +430,7 @@ export function AdvancedSection() {
       <SectionStack>
         <FieldRow
           label="Reset appearance"
-          description="Theme, typography, background, layout, shape, motion and accent back to their defaults. Workspaces and agents are untouched."
+          description="Theme, typography, background, layout, shape, motion and accent back to their defaults. Projects are untouched."
         >
           <AlertDialog>
             <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" />}>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Bot, Copy, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, Star, StickyNote, Trash2 } from "lucide-react"
+import { Copy, MessageSquareShare, ExternalLink, FolderInput, GitBranchPlus, Layers, Link2, ListTree, Star, StickyNote, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePointAnchoredPanel } from "@/components/ui/point-anchored-panel"
 import type { GraphNode } from "@/lib/graph/types"
@@ -38,8 +38,7 @@ export function GraphContextMenu({
   onToggleFavorite,
   onRemove,
   onClose,
-  onAskAgent,
-  onAddToAgentContext,
+  onUseInAi,
 }: {
   state: GraphContextMenuState | null
   otherWorkspaces: { id: string; name: string }[]
@@ -65,9 +64,8 @@ export function GraphContextMenu({
   onToggleFavorite: () => void
   onRemove: () => void
   onClose: () => void
-  /** "Ask agent about this" — this tab as an agent session's context. Absent outside the shell. */
-  onAskAgent?: () => void
-  onAddToAgentContext?: () => void
+  /** "Use in AI chat" — opens the context builder with this tab chosen. Absent outside the shell. */
+  onUseInAi?: () => void
 }) {
   const [moveOpen, setMoveOpen] = useState(false)
   const [collectionOpen, setCollectionOpen] = useState(false)
@@ -198,17 +196,12 @@ export function GraphContextMenu({
         )}
       </div>
 
-      {onAskAgent && (
+      {onUseInAi && (
         <>
           <div className="-mx-1 my-1 h-px bg-border" />
-          <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onAskAgent}>
-            <Bot /> Ask AI about this
+          <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onUseInAi}>
+            <MessageSquareShare /> Use in AI chat
           </button>
-          {onAddToAgentContext && (
-            <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onAddToAgentContext}>
-              <Bot /> Add to next AI chat
-            </button>
-          )}
         </>
       )}
 

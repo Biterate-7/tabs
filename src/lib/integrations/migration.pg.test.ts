@@ -5,8 +5,11 @@
  * Runs the real migration scripts as child processes, the same entry points
  * an operator runs, onto an empty real PostgreSQL database:
  *
- *   1. the production baseline: every migration that already ships
- *      (auth, sync, mcp, credentials, remote, agent-history, downloads);
+ *   1. the production baseline: every migration that ships (auth, sync,
+ *      mcp, downloads), plus the removed agent product's tables
+ *      (credentials, remote, agent-history), which production databases
+ *      still hold — applied from their frozen schemas
+ *      (__fixtures__/legacy-agent-schemas.sql);
  *   2. representative existing data: users, a session, a synced workspace
  *      with tabs and a collection, and a legacy read-only `tdmcp_` token;
  *   3. migrate:integrations, then again — it claims to be repeatable;
@@ -14,6 +17,7 @@
  *   5. a failure mid-migration leaves no half schema behind.
  */
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -31,7 +35,8 @@ import { describePostgres, emptyDatabase, seedUser } from "../../../test/pg/data
 
 const run = promisify(execFile);
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
-const BASELINE = ["auth", "sync", "mcp", "credentials", "remote", "agent-history", "downloads"] as const;
+const BASELINE = ["auth", "sync", "mcp", "downloads"] as const;
+const LEGACY_AGENT_SCHEMAS = readFileSync(path.join(__dirname, "__fixtures__", "legacy-agent-schemas.sql"), "utf8");
 
 async function migrate(name: string, url: string) {
   return run(process.execPath, [path.join(REPO_ROOT, "scripts", `migrate-${name}.mjs`)], {
@@ -67,6 +72,7 @@ describePostgres("migrate:integrations on a production-shaped database", () => {
   it("is additive, repeatable and preserves existing users, workspaces and legacy tokens", async () => {
     const db = await emptyDatabase();
     for (const name of BASELINE) await migrate(name, db.url);
+    await db.pool.query(LEGACY_AGENT_SCHEMAS);
 
     const alice = await seedUser(db.pool, "alice");
     const sync = new SyncService(db.pool);

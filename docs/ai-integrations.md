@@ -18,11 +18,15 @@ gets the same tools, is held to the same grant and is written to the same
 audit log. What differs per product is only how it is set up, and that is
 data in `src/lib/integrations/platforms.ts`.
 
-Settings → **AI Integrations** is where a person connects, chooses
+Settings → **AI connectors** is where a person connects, chooses
 permissions, tests, approves proposals, reads saved context and disconnects.
-Settings → AI Connections, the Command Centre and Hubble-launched agent
-sessions are unchanged. Those cover the other direction, where Hubble starts
-an agent.
+
+What a connector reads is the person's **synced** knowledge: project names,
+saved links and their titles, collections and notes. Saved AI conversation
+text, notes written in Hubble and extracted page text stay on the device
+that saved them (see [cross-ai-memory.md](./cross-ai-memory.md)), so a
+connector does not see them. To bring that into a chat, use **Use in AI chat**
+in Hubble or **Use Hubble in this chat** in Hubble for Chrome.
 
 ---
 
@@ -92,8 +96,8 @@ safer place for that door.
 
 | Tool | Runs on |
 | --- | --- |
-| `search_workspace` | `searchWorkspaceTabs` (session-context/insight), the same ranking an agent session's `search_tabs` uses |
-| `get_resource`, `get_workspace`, `get_tabs`, `get_collection` | the Phase E context resolver (`resolveContext`): URL redaction, bounds, notes off by default |
+| `search_workspace` | `searchWorkspaceTabs` (`lib/knowledge/workspace/insight.ts`) |
+| `get_resource`, `get_workspace`, `get_tabs`, `get_collection` | the context resolver (`lib/context/resolve.ts`, `resolveContext`): URL redaction, bounds, notes off by default |
 | `list_collections` | the synced collection model, hydrated by the client's own `applyChanges` |
 | `create_collection`, `add_resource_to_collection` | `createCollection` / `applyCollectionBatch` (src/lib/collections), the workspace view's reducers |
 | `propose_organization` | `validateWorkspacePlan` (J.5), drafting from `analyzeTopics` + `recommendPlacement` (J.6) |
@@ -172,7 +176,7 @@ supported (each call is a single short request).
 
 The server's `instructions` stay protocol-first and under 2 KB
 (`accountInstructions`), because Claude Code truncates longer instructions
-(`docs/agent-connector-platform.md` §15.3.1).
+(about 2 KB, marked "[truncated]").
 
 ---
 

@@ -1,78 +1,61 @@
 import { scopedKey } from "@/lib/storage/namespace";
-import type { AgentProviderId } from "@/lib/agents/connectors/types";
+import type { AiProviderId } from "@/lib/providers/registry";
 
 /**
- * The local loop log (Stage 3): which milestones of the work loop —
- * project → context → delegate → supervise → review → return — a person
- * reached, and when. It exists to answer one question about Hubble's first
- * users: *do they complete meaningful work through it?*
+ * The local loop log: which steps of Hubble's loop — capture → connect →
+ * find → reuse — a person reached, and when. It exists to answer one
+ * question about Hubble's first users: *does what they save come back to
+ * help them later?*
  *
  * ## What it never holds
  *
- * Content. No prompt, file, path, URL, tab, workspace or project name, and no
- * id that could be joined to one. A record is a milestone kind, a time, and —
- * where it says something — the agent's provider id ("gemini") and an
- * approval's answer. It is written to this browser's storage only: nothing in
- * Hubble sends it anywhere. A person can read their own summary
- * (`hubbleLoopSummary()` in the console) and choose to share it.
+ * Content. No conversation, prompt, URL, title, project name, and no id that
+ * could be joined to one. A record is a milestone kind, a time, and — where
+ * it says something — the AI app involved ("claude"). It is written to this
+ * browser's storage only: nothing in Hubble sends it anywhere. A person can
+ * read their own summary (`hubbleLoopSummary()` in the console) and choose
+ * to share it.
  */
 
 export type LoopMilestone =
   | "workspace_created"
   | "workspace_revisited"
-  | "project_connected"
-  | "context_changed"
-  | "session_started"
-  | "task_submitted"
-  | "approval_requested"
-  | "approval_answered"
-  | "task_completed"
-  | "task_failed"
-  | "handoff_started"
-  | "result_reviewed"
-  | "check_run"
-  // Hubble 2.0 — the project loop: Chrome → project → context → agent.
   | "project_created"
+  | "project_returned"
+  // Capture
   | "resource_added"
   | "resource_ready"
   | "resource_failed"
-  | "context_selected"
-  | "agent_selected"
-  | "agent_switched"
-  | "handoff_completed"
-  | "project_returned";
+  | "conversation_captured"
+  | "conversation_imported"
+  | "note_added"
+  // Find
+  | "search_used"
+  // Reuse
+  | "memory_copied"
+  | "memory_inserted";
 
 export const LOOP_MILESTONES: readonly LoopMilestone[] = [
   "workspace_created",
   "workspace_revisited",
-  "project_connected",
-  "context_changed",
-  "session_started",
-  "task_submitted",
-  "approval_requested",
-  "approval_answered",
-  "task_completed",
-  "task_failed",
-  "handoff_started",
-  "result_reviewed",
-  "check_run",
   "project_created",
+  "project_returned",
   "resource_added",
   "resource_ready",
   "resource_failed",
-  "context_selected",
-  "agent_selected",
-  "agent_switched",
-  "handoff_completed",
-  "project_returned",
+  "conversation_captured",
+  "conversation_imported",
+  "note_added",
+  "search_used",
+  "memory_copied",
+  "memory_inserted",
 ];
 
 export type LoopRecord = {
   kind: LoopMilestone;
   at: number;
-  provider?: AgentProviderId;
-  /** On `approval_answered` only. */
-  approved?: boolean;
+  /** The AI app a capture came from or reuse went to. */
+  provider?: AiProviderId;
 };
 
 const KEY = "tabdump:loop-log:v1";
@@ -83,7 +66,7 @@ export const REVISIT_GAP_MS = 30 * 60_000;
 /** How many already-counted milestones are remembered, for `once`. */
 const MAX_SEEN_KEYS = 300;
 
-const PROVIDER = /^[a-z][a-z0-9-]{0,40}(:[a-z0-9][a-z0-9-]{0,63})?$/;
+const PROVIDERS: readonly string[] = ["chatgpt", "claude", "gemini", "perplexity"];
 
 function revive(value: unknown): LoopRecord | null {
   if (!value || typeof value !== "object") return null;
@@ -93,8 +76,7 @@ function revive(value: unknown): LoopRecord | null {
   return {
     kind: record.kind as LoopMilestone,
     at: record.at,
-    ...(typeof record.provider === "string" && PROVIDER.test(record.provider) ? { provider: record.provider as AgentProviderId } : {}),
-    ...(typeof record.approved === "boolean" ? { approved: record.approved } : {}),
+    ...(typeof record.provider === "string" && PROVIDERS.includes(record.provider) ? { provider: record.provider as AiProviderId } : {}),
   };
 }
 
@@ -129,7 +111,7 @@ export function readLoopLog(): LoopRecord[] {
 }
 
 /**
- * A one-way digest of a dedupe key ("task_completed" + a session's position),
+ * A one-way digest of a dedupe key ("project_returned" + a project and a day),
  * so the log can tell a milestone was already counted without keeping any id.
  */
 function digest(key: string): string {
@@ -144,13 +126,13 @@ function digest(key: string): string {
  */
 export function recordLoopMilestone(
   kind: LoopMilestone,
-  detail: { provider?: AgentProviderId; approved?: boolean; once?: string } = {},
+  detail: { provider?: AiProviderId; once?: string } = {},
   now: number = Date.now()
 ): void {
-  const record = revive({ kind, at: now, ...(detail.provider ? { provider: detail.provider } : {}), ...(detail.approved !== undefined ? { approved: detail.approved } : {}) });
+  const record = revive({ kind, at: now, ...(detail.provider ? { provider: detail.provider } : {}) });
   if (!record) return;
   const stored = readStored();
-  // `once`: a milestone that a re-render, a re-read or a reload must not count twice (a task finishing).
+  // `once`: a milestone that a re-render, a re-read or a reload must not count twice (a return to a project).
   const key = detail.once ? digest(`${kind}:${detail.once}`) : undefined;
   if (key && stored.seen.includes(key)) return;
   writeStored({ records: [...stored.records, record], seen: key ? [...stored.seen, key] : stored.seen });
@@ -165,38 +147,40 @@ export function recordWorkspaceVisit(now: number = Date.now()): void {
 
 export type LoopSummary = {
   counts: Record<LoopMilestone, number>;
-  /** Approvals answered "approve", of all answered. */
-  approvalsApproved: number;
-  /** Tasks that were submitted and later had a result reviewed (or a check run) before the next task. */
-  tasksReviewed: number;
-  /** Distinct agents used to start sessions. */
-  agents: readonly AgentProviderId[];
+  /** Saves (captures, imports, sources, notes) followed by a reuse — saved knowledge that came back. */
+  reusesAfterCapture: number;
+  /** AI apps conversations were saved from, and context was reused in. */
+  capturedFrom: readonly AiProviderId[];
+  reusedIn: readonly AiProviderId[];
   firstAt?: number;
   lastAt?: number;
 };
 
-/** What the log says about the loop: how much work went all the way round. */
+const SAVES: readonly LoopMilestone[] = ["conversation_captured", "conversation_imported", "resource_added", "note_added"];
+const REUSES: readonly LoopMilestone[] = ["memory_copied", "memory_inserted"];
+
+/** What the log says about the loop: how much of what was saved came back. */
 export function loopSummary(records: readonly LoopRecord[] = readLoopLog()): LoopSummary {
   const counts = Object.fromEntries(LOOP_MILESTONES.map((kind) => [kind, 0])) as Record<LoopMilestone, number>;
-  const agents = new Set<AgentProviderId>();
-  let approvalsApproved = 0;
-  let tasksReviewed = 0;
-  let open = false;
+  const capturedFrom = new Set<AiProviderId>();
+  const reusedIn = new Set<AiProviderId>();
+  let reusesAfterCapture = 0;
+  let saved = false;
   for (const record of records) {
     counts[record.kind] += 1;
-    if (record.kind === "session_started" && record.provider) agents.add(record.provider);
-    if (record.kind === "approval_answered" && record.approved) approvalsApproved += 1;
-    if (record.kind === "task_submitted") open = true;
-    if ((record.kind === "result_reviewed" || record.kind === "check_run") && open) {
-      tasksReviewed += 1;
-      open = false;
+    if ((record.kind === "conversation_captured" || record.kind === "conversation_imported") && record.provider) capturedFrom.add(record.provider);
+    if (REUSES.includes(record.kind) && record.provider) reusedIn.add(record.provider);
+    if (SAVES.includes(record.kind)) saved = true;
+    if (REUSES.includes(record.kind) && saved) {
+      reusesAfterCapture += 1;
+      saved = false;
     }
   }
   return {
     counts,
-    approvalsApproved,
-    tasksReviewed,
-    agents: [...agents].sort(),
+    reusesAfterCapture,
+    capturedFrom: [...capturedFrom].sort(),
+    reusedIn: [...reusedIn].sort(),
     ...(records.length > 0 ? { firstAt: records[0]!.at, lastAt: records[records.length - 1]!.at } : {}),
   };
 }

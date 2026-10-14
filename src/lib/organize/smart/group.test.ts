@@ -147,7 +147,7 @@ describe("proposeSmartOrganization — open tabs", () => {
     expect(proposal.groups[0]!.itemIds).toEqual([proposal.items[1]!.id, proposal.items[2]!.id]);
   });
 
-  it("sends a group to the existing subject it clearly belongs to", () => {
+  it("sends a group to the existing project it clearly belongs to", () => {
     const history = subject("history", "History HL", [
       { url: "https://x.example/1", title: "Causes of the French Revolution essay" },
       { url: "https://x.example/2", title: "Napoleon timeline" },
@@ -257,7 +257,7 @@ describe("proposeSmartOrganization — open tabs", () => {
   });
 });
 
-describe("proposeSmartOrganization — a subject's tabs", () => {
+describe("proposeSmartOrganization — a project's tabs", () => {
   it("proposes collections for loose tabs and leaves tabs already in a collection alone", () => {
     const workspace = subject("bio", "Biology", [
       { url: "https://a.example/1", title: "Mitosis stages" },

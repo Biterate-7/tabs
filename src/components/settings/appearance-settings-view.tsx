@@ -3,12 +3,12 @@
 import { useState } from "react"
 import {
   AppWindow,
-  Bot,
   ChevronLeft,
+  Database,
+  MessagesSquare,
   Puzzle,
   Globe,
   Image,
-  KeyRound,
   Keyboard,
   LayoutGrid,
   Monitor,
@@ -35,8 +35,8 @@ import { LayoutSection } from "./sections/layout-section"
 import { ShapeSection } from "./sections/shape-section"
 import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
-import { ConnectorsSection } from "./sections/connectors-section"
 import { AiIntegrationsSection } from "./sections/ai-integrations-section"
+import { AiAppsSection, DataSection } from "./sections/knowledge-sections"
 import {
   AccountSettingsSection,
   AdvancedSection,
@@ -45,7 +45,6 @@ import {
   ExtensionSection,
   McpSection,
   PrivacySection,
-  ProvidersSection,
   ShortcutsSection,
   WorkspacesSection,
   type WorkspaceSettingsProps,
@@ -61,11 +60,12 @@ export type SettingsSection =
   | "motion"
   | "accent"
   | "account"
-  /** "AI Connections" in the nav. The id predates the name and deep links use it. */
-  | "connectors"
-  /** Using Hubble from ChatGPT, Claude, Gemini and Grok (src/lib/integrations). */
+  /** What Hubble can do with each AI app (src/lib/providers/registry.ts). */
+  | "ai-apps"
+  /** "AI connectors" in the nav: ChatGPT, Claude, Gemini and Grok reading Hubble over MCP (src/lib/integrations). */
   | "ai-integrations"
-  | "providers"
+  /** Export, and the records left by removed features. */
+  | "data"
   | "mcp"
   | "browser"
   | "workspaces"
@@ -91,17 +91,17 @@ const APPEARANCE_IDS = new Set(APPEARANCE.map((item) => item.id))
 const BEFORE: NavItem[] = [{ id: "general", label: "General", icon: Settings2 }]
 const AFTER: NavItem[] = [
   { id: "account", label: "Account", icon: UserRound },
-  { id: "connectors", label: "AI Connections", icon: Bot },
-  { id: "ai-integrations", label: "AI Integrations", icon: Cable },
-  { id: "workspaces", label: "Subjects", icon: Boxes },
+  { id: "ai-apps", label: "AI apps", icon: MessagesSquare },
+  { id: "ai-integrations", label: "AI connectors", icon: Cable },
+  { id: "workspaces", label: "Projects", icon: Boxes },
+  { id: "data", label: "Data", icon: Database },
   { id: "extension", label: "Chrome extension", icon: Puzzle },
   { id: "desktop", label: "Desktop app", icon: Monitor },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "privacy", label: "Privacy", icon: Shield },
 ]
-/** Technical settings, kept and labelled as such: API keys, MCP, browser control, developer options. */
+/** Technical settings, kept and labelled as such: MCP, browser, developer options. */
 const ADVANCED: NavItem[] = [
-  { id: "providers", label: "API keys", icon: KeyRound },
   { id: "mcp", label: "MCP", icon: PlugZap },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "advanced", label: "Diagnostics", icon: SlidersHorizontal },
@@ -224,16 +224,16 @@ export function AppearanceSettingsView({
             {active === "motion" && <MotionSection />}
             {active === "accent" && <AccentSection />}
             {active === "account" && <AccountSettingsSection />}
-            {active === "connectors" && <ConnectorsSection />}
+            {active === "ai-apps" && <AiAppsSection />}
             {active === "ai-integrations" && <AiIntegrationsSection />}
-            {active === "providers" && <ProvidersSection />}
+            {active === "data" && <DataSection workspaces={workspaceSettings?.workspaces ?? []} />}
             {active === "mcp" && <McpSection />}
             {active === "browser" && <BrowserSection />}
             {active === "workspaces" &&
               (workspaceSettings ? (
                 <WorkspacesSection {...workspaceSettings} />
               ) : (
-                <p className="text-body text-muted-foreground">No workspaces to show here.</p>
+                <p className="text-body text-muted-foreground">No projects to show here.</p>
               ))}
             {active === "shortcuts" && <ShortcutsSection />}
             {active === "desktop" && <DesktopSection />}

@@ -238,3 +238,23 @@ export const MENU_DESKTOP_PAGE = "hubble-desktop-page";
 // How often, and for how long, quick add asks Hubble how reading is going.
 export const SOURCE_STATUS_POLL_MS = 1200;
 export const SOURCE_STATUS_POLL_LIMIT_MS = 20000;
+
+// ---------------------------------------------------------------------------
+// Cross-AI memory: saving the conversation on an AI app's page, and using
+// what Hubble holds in that app (src/ai-pages.js; the page side is
+// src/hooks/use-extension-memory.ts and src/lib/memory/extension-protocol.ts).
+// ---------------------------------------------------------------------------
+
+// Popup -> background: "save the conversation in this tab to this project".
+export const MSG_CAPTURE_CONVERSATION = "HUBBLE_CAPTURE_CONVERSATION";
+// Popup -> background: a memory request for the Hubble page (projects, search, bundle, reused).
+export const MSG_MEMORY_REQUEST = "HUBBLE_MEMORY_REQUEST";
+// Popup -> background: "type this into the message box of this tab" (never sends).
+export const MSG_INSERT_CONTEXT = "HUBBLE_INSERT_CONTEXT";
+// Background -> content script -> page, and back: the page's request channel.
+export const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
+export const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
+// How long the content script waits for the page to answer one request.
+export const PAGE_REQUEST_TIMEOUT_MS = 15000;
+// How long the background keeps asking a page that says it isn't ready yet (it is still loading your projects).
+export const PAGE_READY_WAIT_MS = 12000;

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { ProjectHome } from "./project-home"
+import { MemoryActionsProvider, type MemoryActions } from "@/components/memory/memory-actions"
 import { ingestResources } from "@/lib/resources/ingest"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
@@ -19,6 +20,7 @@ function project(urls: string[] = []): Workspace {
 }
 
 const resources: ResourceActions = { retry: vi.fn(), attachPdf: vi.fn(), attachTranscript: vi.fn(async () => ({})), forget: vi.fn() }
+const notes = { update: vi.fn(), saveText: vi.fn(async () => true), remove: vi.fn() }
 
 function renderHome(workspace: Workspace, overrides: Partial<Parameters<typeof ProjectHome>[0]> = {}) {
   const onAddSources = vi.fn((inputs: { url: string }[]) => inputs.map((input) => ({ status: "added" as const, input, tabId: "x", kind: "webpage" as const })))
@@ -30,14 +32,18 @@ function renderHome(workspace: Workspace, overrides: Partial<Parameters<typeof P
     onRenameSource: vi.fn(),
     onRemoveSources: vi.fn(),
     onOpenSource: vi.fn(),
-    onUseInTask: vi.fn(),
-    onConnectAI: vi.fn(),
     onUpdateBrief: vi.fn(),
-    agents: [],
+    onCapture: vi.fn(),
+    notes,
     ...overrides,
   }
-  render(<ProjectHome {...props} />)
-  return props
+  const memory: MemoryActions = { currentWorkspaceId: workspace.id, reuse: vi.fn() }
+  render(
+    <MemoryActionsProvider value={memory}>
+      <ProjectHome {...props} />
+    </MemoryActionsProvider>
+  )
+  return { ...props, memory }
 }
 
 /** An external drag, as the page receives it from Chrome. */
@@ -55,23 +61,37 @@ function dragFromChrome(data: Record<string, string>, files: File[] = []) {
 afterEach(() => localStorage.clear())
 
 describe("ProjectHome", () => {
-  it("starts an empty subject with its name, one short line, and Add — no tutorial", () => {
-    renderHome(project())
+  it("starts an empty project with its name, the ways knowledge gets in, and Add — nothing about agents", async () => {
+    const user = userEvent.setup()
+    const props = renderHome(project())
     expect(screen.getByRole("heading", { name: "History IA", level: 1 })).toBeTruthy()
-    expect(screen.getByText("No resources yet.")).toBeTruthy()
+    expect(screen.getByText("Nothing saved in History IA yet.")).toBeTruthy()
     expect(screen.getByText("Cuban Missile Crisis.", { exact: false })).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /^Add/ }).length).toBeGreaterThan(0)
-    // With no AI connected, a quiet way to connect one — never a wall in front of the subject.
-    expect(screen.getByRole("button", { name: "Connect AI" })).toBeTruthy()
-    // An empty subject has no activity to show yet.
+    // Nothing to reuse yet, so no "Use in AI chat".
+    expect(screen.queryByRole("button", { name: "Use in AI chat" })).toBeNull()
+    // An empty project has no activity to show yet.
     expect(screen.queryByRole("button", { name: /Recent activity/ })).toBeNull()
-    // No explanatory paragraphs.
-    expect(document.body.textContent).not.toMatch(/Hubble reads each source|any agent you choose|Connect an agent/)
+    expect(document.body.textContent).not.toMatch(/agent|Connect AI|command centre/i)
+    await user.click(screen.getByRole("button", { name: "Paste a conversation" }))
+    expect(props.onCapture).toHaveBeenCalledWith("conversation")
+    await user.click(screen.getByRole("button", { name: "Write a note" }))
+    expect(props.onCapture).toHaveBeenCalledWith("note")
   })
 
-  it("leaves out Connect AI once an AI is connected", () => {
-    renderHome(project(), { agents: [{ provider: "claude-code", name: "Claude Code" }] })
-    expect(screen.queryByRole("button", { name: "Connect AI" })).toBeNull()
+  it("counts what it knows by kind and AI app, and filters to AI conversations", async () => {
+    const user = userEvent.setup()
+    let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [{ ...project(), tabs: [] }] }
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" }, { url: "https://a.example/one", title: "An article" }], "manual", NOW)!.store
+    const workspace = store.workspaces[0]!
+    workspace.notes = [{ id: "n1", kind: "note", title: "My thesis", origin: "manual", createdAt: NOW, updatedAt: NOW, contentHash: "h", chars: 10 }]
+    renderHome(workspace)
+    expect(document.querySelector("[data-knowledge-summary]")!.textContent).toBe("1 AI conversation (ChatGPT) · 1 source · 1 note")
+    await user.click(screen.getByRole("button", { name: "AI conversations" }))
+    const list = screen.getByRole("list", { name: "Knowledge in History IA" })
+    expect(list.textContent).toContain("Causes of the crisis")
+    expect(list.textContent).not.toContain("An article")
+    expect(list.textContent).not.toContain("My thesis")
   })
 
   describe("adding from Chrome", () => {
@@ -87,7 +107,7 @@ describe("ProjectHome", () => {
       expect(hints()).toEqual([])
     })
 
-    it("with Hubble for Chrome, names the subject: right-click a tab → Add to <subject>", () => {
+    it("with Hubble for Chrome, names the project: right-click a tab → Add to <project>", () => {
       renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
       expect(hints()).toEqual(["In Chrome: right-click a tab → Add to History IA · Alt + Shift + H"])
       expect(document.querySelector("[data-quick-add-target]")!.getAttribute("data-quick-add-target")).toBe("History IA")
@@ -108,7 +128,7 @@ describe("ProjectHome", () => {
       expect(hints()).toEqual(["In Chrome: right-click a tab → Add to History IA"])
     })
 
-    it("names whichever subject is on screen, and nothing else", () => {
+    it("names whichever project is on screen, and nothing else", () => {
       const props = renderHome(project(), { quickAdd: { shortcut: "Alt+Shift+H" } })
       expect(document.querySelector("[data-add-hint]")!.textContent).toContain("Add to History IA")
       cleanup()
@@ -221,12 +241,12 @@ describe("ProjectHome", () => {
     expect(screen.queryByText(/can't be read yet/)).toBeNull()
   })
 
-  it("removes a resource from the subject, and hands Ask AI on it to the shell", async () => {
+  it("removes a resource from the project, and hands Use in AI chat on it to the shell", async () => {
     const user = userEvent.setup()
     const workspace = project(["https://a.example/one"])
     const props = renderHome(workspace)
-    await user.click(screen.getByRole("button", { name: /^Ask AI about / }))
-    expect(props.onUseInTask).toHaveBeenCalledWith(expect.objectContaining({ id: workspace.tabs[0]!.id }))
+    await user.click(screen.getByRole("button", { name: /^Use .* in an AI chat$/ }))
+    expect(props.memory.reuse).toHaveBeenCalledWith({ workspaceId: "w", refs: [{ kind: "source", tabId: workspace.tabs[0]!.id }] })
     await user.click(screen.getByRole("button", { name: /More actions for/ }))
     await user.click(await screen.findByRole("menuitem", { name: /^Remove/ }))
     expect(props.onRemoveSources).toHaveBeenCalledWith([workspace.tabs[0]!.id])
@@ -238,7 +258,7 @@ describe("ProjectHome", () => {
     const props = renderHome(workspace)
     await user.click(screen.getByRole("button", { name: "Select" }))
     for (const box of screen.getAllByRole("checkbox", { name: /^Select / })) await user.click(box)
-    const toolbar = screen.getByRole("toolbar", { name: "Selected resources" })
+    const toolbar = screen.getByRole("toolbar", { name: "Selected items" })
     expect(toolbar.textContent).toContain("2 selected")
     await user.click(within(toolbar).getByRole("button", { name: "Remove" }))
     expect(props.onRemoveSources).toHaveBeenCalledWith(expect.arrayContaining(workspace.tabs.map((tab) => tab.id)))

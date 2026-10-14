@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MarketingPage } from "./marketing-page"
 
 beforeEach(() => {
@@ -12,47 +12,45 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe("MarketingPage", () => {
-  it("leads with one sentence, the calls to action and a live Hubble window", () => {
+  it("leads with one sentence, the calls to action and a sample project", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    expect(screen.getByRole("heading", { level: 1, name: /Your projects\. Your context\. Your agents\./ })).toBeTruthy()
+    expect(screen.getByRole("heading", { level: 1, name: "One connected workspace for everything you learn with AI." })).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /Get started/ }).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole("link", { name: "Explore Hubble" })[0].getAttribute("href")).toBe("#workspaces")
-    expect(screen.getByRole("region", { name: /Interactive Hubble demo/ })).toBeTruthy()
+    expect(screen.getAllByRole("link", { name: "Explore Hubble" })[0].getAttribute("href")).toBe("#capture")
+    expect(screen.getByRole("figure", { name: /Sample Hubble project/ })).toBeTruthy()
+    expect(screen.getByText("A sample project. Nothing on this page reads or stores your data.")).toBeTruthy()
   })
 
-  it("renders only the hero's window on load; the rest wait until they are near", () => {
+  it("explains the loop: capture, connect, find, reuse", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    expect(document.querySelectorAll("[data-hubble-demo]")).toHaveLength(1)
+    const loop = document.getElementById("how-it-works")!
+    expect([...loop.querySelectorAll("li p:first-of-type")].map((p) => p.textContent)).toEqual(["Capture", "Connect", "Find", "Reuse"])
   })
 
-  it("without IntersectionObserver, mounts the windows on the visitor's first scroll", () => {
+  it("says what works with each AI app from the provider registry, never more", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    act(() => {
-      window.dispatchEvent(new Event("scroll"))
-    })
-    expect(document.querySelectorAll("[data-hubble-demo]")).toHaveLength(6)
+    const row = screen.getByRole("heading", { name: "Works beside the AI apps you already use" }).closest("section")!
+    const cards = Object.fromEntries([...row.querySelectorAll("li")].map((li) => [li.querySelector("span span")!.textContent, li.textContent]))
+    expect(cards.ChatGPT).toContain("Save from the page · Import export")
+    expect(cards.Claude).toContain("Save from the page · Import export")
+    expect(cards.Gemini).toContain("Save from the page · Paste")
+    expect(cards.Perplexity).toContain("Save from the page · Paste")
+    expect(document.body.textContent).not.toMatch(/\bsync(s|ed|ing)? (automatically|your (chats|conversations))/i)
   })
 
-  it("has a live window in every feature section once near, each with its own isolated state", () => {
-    // Report every window as near, as a browser does when the visitor reaches it.
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class {
-        constructor(private callback: IntersectionObserverCallback) {}
-        observe(target: Element) {
-          this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver)
-        }
-        disconnect() {}
-        unobserve() {}
-      }
-    )
+  it("illustrates every feature with a sample computed by the product's own search and context code", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
-    for (const id of ["workspaces", "command-centre", "graph", "context", "agents"]) {
+    for (const id of ["capture", "find", "reuse"]) {
       const section = document.getElementById(id)
       expect(section, id).not.toBeNull()
-      expect(section!.querySelector("[data-hubble-demo]"), id).not.toBeNull()
+      expect(section!.querySelector("[data-hubble-illustration]"), id).not.toBeNull()
     }
-    expect(document.querySelectorAll("[data-hubble-demo]")).toHaveLength(6)
+    expect(document.getElementById("reuse")!.textContent).toContain("Context from my Hubble project")
+  })
+
+  it("says nothing about agents, sessions or a Command Centre", () => {
+    render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
+    expect(document.body.textContent).not.toMatch(/\bagents?\b|command cent(re|er)|runtime|approval/i)
   })
 
   it("shows the wordmark in capitals and never the old name", () => {
@@ -76,7 +74,7 @@ describe("MarketingPage", () => {
     // Header, closing pair, footer — all to the page, never straight to an installer.
     expect(links).toHaveLength(3)
     for (const link of links) expect(link.getAttribute("href")).toBe("/download")
-    // The hero is unchanged: its pair is still Get started and Explore Hubble.
+    // The hero's pair is Get started and Explore Hubble.
     const hero = screen.getByRole("heading", { level: 1 }).closest("section")!
     expect(within(hero).getByRole("link", { name: "Explore Hubble" })).toBeTruthy()
     expect(within(hero).queryByRole("link", { name: "Download Hubble" })).toBeNull()

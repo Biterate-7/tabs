@@ -19,11 +19,11 @@ beforeEach(() => window.localStorage.clear())
 
 describe("subjects", () => {
   it("names an unnamed workspace without saying 'workspace' or 'project'", () => {
-    expect(subjectName({ name: "  " })).toBe("Untitled subject")
+    expect(subjectName({ name: "  " })).toBe("Untitled project")
     expect(subjectName({ name: " History HL " })).toBe("History HL")
   })
 
-  it("treats only the untouched default as 'no subjects yet'", () => {
+  it("treats only the untouched default as 'no projects yet'", () => {
     const pristine = createDefaultWorkspace()
     expect(isPristineDefault(pristine)).toBe(true)
     expect(visibleSubjects(store([pristine]))).toEqual([])
@@ -36,12 +36,12 @@ describe("subjects", () => {
     expect(visibleSubjects(store([pristine, other]))).toHaveLength(2)
   })
 
-  it("shows a first subject the student called General, once subjects have started", () => {
+  it("shows a first project the student called General, once projects have started", () => {
     const general = createDefaultWorkspace()
     expect(visibleSubjects(store([general]), true)).toEqual([general])
   })
 
-  it("remembers that subjects have started", () => {
+  it("remembers that projects have started", () => {
     expect(loadSubjectsStarted()).toBe(false)
     markSubjectsStarted()
     expect(loadSubjectsStarted()).toBe(true)
@@ -54,7 +54,7 @@ describe("subjects", () => {
     expect(greeting(2)).toBe("Good evening")
   })
 
-  it("lists the newest resources across subjects, newest first", () => {
+  it("lists the newest resources across projects, newest first", () => {
     const a: Workspace = { ...createDefaultWorkspace(), id: "a", name: "History", tabs: [tab("old", 1), tab("new", 30)] }
     const b: Workspace = { ...createDefaultWorkspace(), id: "b", name: "Math", tabs: [tab("mid", 20)] }
     expect(recentResources([a, b], 2).map((entry) => `${entry.workspace.name}:${entry.tab.id}`)).toEqual(["History:new", "Math:mid"])

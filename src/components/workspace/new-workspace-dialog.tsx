@@ -64,7 +64,7 @@ export function NewWorkspaceDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>New subject</DialogTitle>
+            <DialogTitle>New project</DialogTitle>
           </DialogHeader>
           <div className="mt-4 flex flex-col gap-3">
             <Input
@@ -73,7 +73,7 @@ export function NewWorkspaceDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. History HL"
               className="h-9 text-body"
-              aria-label="Subject name"
+              aria-label="Project name"
             />
             {details ? (
               <>
@@ -85,7 +85,7 @@ export function NewWorkspaceDialog({
                     maxLength={BRIEF_LIMITS.description}
                     placeholder="The causes and consequences of the First World War."
                     className="mt-1 min-h-14 text-body-sm"
-                    aria-label="What the subject is about"
+                    aria-label="What the project is about"
                   />
                 </label>
                 <label className="text-meta text-muted-foreground">
@@ -108,7 +108,7 @@ export function NewWorkspaceDialog({
           </div>
           <DialogFooter>
             <Button type="submit" size="lg" disabled={!name.trim()}>
-              Create subject
+              Create project
             </Button>
           </DialogFooter>
         </form>

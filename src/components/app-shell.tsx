@@ -6,22 +6,14 @@ import { FirstRunLanding } from "@/components/marketing/first-run-landing"
 import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { HomeView } from "@/components/home/home-view"
-import { AiView } from "@/components/ai/ai-view"
+import { SearchView } from "@/components/search/search-view"
 import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, subjectName, visibleSubjects } from "@/lib/product/subjects"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
-import { CommandCentreView } from "@/components/command-centre/command-centre-view"
-import { buildContextWorld } from "@/lib/agents/command-centre/world"
-import { getStorageNamespace } from "@/lib/storage/namespace"
-import { AgentHistoryView } from "@/components/agents/agent-history-view"
-import { AgentSessionView } from "@/components/agents/agent-session-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { HistoryDumpView } from "@/components/workspace/history-dump-view"
-import { useAgentConnectors } from "@/hooks/use-agent-connectors"
-import { useAgentStore } from "@/hooks/use-agent-store"
-import { useClaudeCodeObserver } from "@/hooks/use-claude-code-observer"
 import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
@@ -39,26 +31,40 @@ import {
   updateWorkspaceTabs,
 } from "@/lib/workspace/store"
 import { setWorkspaceBrief } from "@/lib/workspace/brief"
-import { setWorkspaceProject, workspaceProjectId } from "@/lib/workspace/project"
 import { describeIngestion, ingestResources } from "@/lib/resources/ingest"
 import type { IngestionPlan, IngestOutcome } from "@/lib/resources/ingest"
 import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
-import { pruneProjectContent } from "@/lib/resources/content-store"
+import { deleteContent, pruneProjectContent, putContent } from "@/lib/resources/content-store"
 import { sameResource } from "@/lib/resources/url"
 import { searchTerms } from "@/lib/resources/search"
 import { formatTimestamp } from "@/lib/resources/transcript"
 import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube"
 import { useTranscriptSearch } from "@/hooks/use-transcript-search"
-import { PlayCircle } from "lucide-react"
+import { PlayCircle, Search } from "lucide-react"
 import { forgetProjectActivity, recordProjectEvent } from "@/lib/projects/activity"
 import { useResourceProcessing } from "@/hooks/use-resource-processing"
 import { ProjectHome, ProjectPage } from "@/components/project/project-home"
+import type { NoteActions } from "@/components/project/project-home"
+import { ReuseDialog } from "@/components/memory/reuse-dialog"
+import { CaptureDialog } from "@/components/memory/capture-dialog"
+import type { CaptureMode, ConversationSaveSummary, NoteSaveResult } from "@/components/memory/capture-dialog"
+import { MemoryActionsProvider } from "@/components/memory/memory-actions"
+import type { MemoryActions, MemorySelection } from "@/components/memory/memory-actions"
+import { applyConversationSave, planConversationSave } from "@/lib/conversations/save"
+import { cleanBody } from "@/lib/conversations/clean"
+import { contentHash } from "@/lib/conversations/hash"
+import { composeNote } from "@/lib/notes/compose"
+import { addProjectNote, removeProjectNotes, updateProjectNote, NOTE_LIMITS } from "@/lib/notes/notes"
+import { useExtensionMemory } from "@/hooks/use-extension-memory"
+import type { CaptureSaveResult } from "@/hooks/use-extension-memory"
+import type { ConversationInput } from "@/lib/conversations/types"
+import type { ConversationSave } from "@/lib/conversations/save"
+import type { NoteDraft } from "@/lib/notes/compose"
+import type { KnowledgeItemRef } from "@/lib/memory/items"
+import type { AiProviderId } from "@/lib/providers/registry"
 import { ProjectActionsProvider } from "@/components/project/project-actions"
 import type { ProjectActions } from "@/components/project/project-actions"
 import { TabInput } from "@/components/tab-input"
-import { loadAgentRoster } from "@/lib/agents/platform/roster"
-import { loadControlProjects } from "@/lib/agents/control/persistence"
-import { agentDisplayName } from "@/lib/agents/visual/identity"
 import { useNow } from "@/hooks/use-now"
 import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import { parseWorkspaceExport } from "@/lib/workspace/json-import"
@@ -100,19 +106,14 @@ import { OpenTabsOrganize } from "@/components/organize/open-tabs-organize"
 import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
-import type { ClaudeCodeConnector } from "@/lib/agents/connectors/providers/claude-code"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 import { openTab } from "@/lib/browser/open-tab"
 import { CommandPalette } from "@/components/command-palette/command-palette"
-import { AgentActionsProvider, type AgentActions } from "@/components/agents/agent-actions"
-import { addToContext, tabsContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
 import { createId } from "@/lib/id"
-import type { AgentHandoff } from "@/lib/agents/command-centre/working-context"
 import { CommandPaletteHostContext, type CommandPaletteHost } from "@/components/command-palette/palette-host"
 import { buildGlobalCommands, mergeCommands } from "@/components/command-palette/global-commands"
 import type { Command } from "@/components/command-palette/types"
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
-import { forgetLastTask } from "@/lib/agents/command-centre/last-task"
 import { exposeLoopSummary, recordLoopMilestone, recordWorkspaceVisit } from "@/lib/product/loop-log"
 import { useOptionalAppearanceContext } from "@/components/appearance-provider"
 
@@ -165,9 +166,11 @@ type OrganizeOutcome = { ok: true; report: OrganizeReport | undefined } | { ok: 
 
 const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   "invalid-json": "That file isn't valid JSON.",
-  "invalid-schema": "That file doesn't look like a Hubble export.",
+  "invalid-schema": "That file doesn't look like a Hubble export. (To import AI conversations, open a project and choose Add → Import a file.)",
   "unsupported-version": "That export was made with a newer version of Hubble.",
 }
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /**
  * A new subject in a store: a new workspace — or, while the store holds only
@@ -198,47 +201,17 @@ export function AppShell() {
   const [subjectsStarted, setSubjectsStarted] = useState(false)
   const [canPersist, setCanPersist] = useState(true)
   /*
-    Home is where Hubble opens: the student's subjects. "workspace" is a
-    subject's page; "ai" is the AI page. Everything else is a power surface
-    reached from the rail's More group, the palette or a link.
+    Home is where Hubble opens: the person's projects. "workspace" is a
+    project's page; "search" searches every project. Everything else is
+    reached from the rail, the palette or a link.
   */
-  const [view, setView] = useState<
-    | "home"
-    | "ai"
-    | "workspace"
-    | "graph"
-    | "settings"
-    | "favorites"
-    | "recents"
-    | "history-dump"
-    | "command-centre"
-    | "agent-history"
-    | "agent-session"
-  >("home")
-  /**
-   * Which session the Session View resolves, and which task is open inside
-   * it.
-   *
-   * This is the whole navigation mechanism for the phase. Hubble has no
-   * router - every view above is a `useState` union - so a session is
-   * addressed the same way: two opaque ids held beside the view. It is
-   * deliberately the smallest thing that works, and it is serialisable (see
-   * lib/agents/session/address.ts) so a later context-address system can
-   * adopt it without a migration.
-   *
-   * Nothing content-bearing lives here. Not a title, not a url, not a path,
-   * not an artifact id.
-   */
-  const [sessionTarget, setSessionTarget] = useState<{
-    runId: string
-    workItemId?: string
-  } | null>(null)
+  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump">("home")
   /**
    * Which settings section the next visit to Settings opens on.
    *
    * Held here rather than inside the settings view because the surfaces that
-   * deep-link into it live out here — the Agent World's header sends someone
-   * straight to Connectors or to Agent World. Cleared to undefined by the
+   * deep-link into it live out here — an AI connector's approval link, the
+   * palette's "AI apps". Cleared to undefined by the
    * ordinary Settings entry points, so the sidebar's Settings button keeps
    * landing where it always has.
    */
@@ -246,23 +219,19 @@ export function AppShell() {
   /** Where Settings' Back returns to. */
   const [settingsReturn, setSettingsReturn] = useState<Exclude<typeof view, "settings">>("home")
 
-  /**
-   * A request from the workspace to an agent, waiting for the Command Centre
-   * ("ask an agent about these"). Ids only, one workspace; consumed once by
-   * the Command Centre, which sends it to a session working in that
-   * workspace or makes it the next session's context. "Add to agent context"
-   * collects into it without leaving the workspace.
-   */
-  const [agentHandoff, setAgentHandoff] = useState<AgentHandoff | null>(null)
-  /** A session to open in the Command Centre — the workspace’s last task, from its "Open" (Stage 3). Consumed once. */
-  const [agentTaskSession, setAgentTaskSession] = useState<string | null>(null)
-  // The local loop log (Stage 3): coming back to Hubble is a return — counted at most once per half hour, never sent anywhere.
+  /** "Use in AI chat": the context builder, open on one project with these items chosen. */
+  const [reuse, setReuse] = useState<{ workspaceId: string; refs: KnowledgeItemRef[]; nonce: number } | null>(null)
+  /** The capture dialog: paste a conversation, write a note, import a file — into one project. */
+  const [capture, setCapture] = useState<{ workspaceId: string; mode: CaptureMode; nonce: number; prefill?: { link?: string; provider?: AiProviderId } } | null>(null)
+  /** What the Search page opens with (a query from the palette, a project's scope). */
+  const [searchStart, setSearchStart] = useState<{ query: string; workspaceId?: string; nonce: number }>({ query: "", nonce: 0 })
+  /** An item to open on a project's page (from Search or Home), at a conversation's turn when given. */
+  const [focusItem, setFocusItem] = useState<{ workspaceId: string; ref: KnowledgeItemRef; turn?: number; terms?: readonly string[]; nonce: number } | null>(null)
+  // The local loop log: coming back to Hubble is a return — counted at most once per half hour, never sent anywhere.
   useEffect(() => {
     exposeLoopSummary()
     recordWorkspaceVisit()
   }, [])
-  /** Where "View" on an agent's change lands: a collection to open and bring into view. */
-  const [focusCollection, setFocusCollection] = useState<{ id: string; nonce: number } | null>(null)
 
   /**
    * Opening Settings from somewhere that knows which section it wants.
@@ -274,7 +243,7 @@ export function AppShell() {
    */
   function openSettings(section?: SettingsSection) {
     setSettingsSection(section)
-    // Back goes where Settings was opened from: Home, a subject, the AI page…
+    // Back goes where Settings was opened from: Projects, a project, Search…
     if (view !== "settings") setSettingsReturn(view)
     setView("settings")
   }
@@ -305,7 +274,7 @@ export function AppShell() {
     The command palette belongs to the shell so ⌘K works on every
     destination. Views contribute their own commands through the host while
     mounted (see command-palette/palette-host.tsx); the shell adds the
-    global set — navigation, agents, workspaces, every saved tab, settings.
+    global set — navigation, knowledge, projects, every saved tab, settings.
   */
   const [paletteOpen, setPaletteOpen] = useState(false)
   // What the mounted views had contributed at the moment the palette opened.
@@ -313,7 +282,7 @@ export function AppShell() {
   const [contributedCommands, setContributedCommands] = useState<Command[][]>([])
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false)
   const contributedCommandsRef = useRef(new Map<string, Command[]>())
-  // What was said in every subject's videos, loaded only while the palette is open.
+  // What was said in every project's videos, loaded only while the palette is open.
   const searchMoments = useTranscriptSearch(store?.workspaces ?? NO_WORKSPACES, paletteOpen)
   const paletteHost = useMemo<CommandPaletteHost>(
     () => ({
@@ -354,9 +323,9 @@ export function AppShell() {
   const undoSnapshotRef = useRef<WorkspaceStore | null>(null)
   // Smart Organize for the tabs open in Chrome (Home, ⌘K).
   const [organizeOpenTabs, setOrganizeOpenTabs] = useState(false)
-  // The subject a bulk import just landed in: it offers Smart Organize once,
+  // The project a bulk import just landed in: it offers Smart Organize once,
   // as a quiet line the person can take or dismiss (see WorkspaceView).
-  // `token` tells one import from the next, so a second import into the same subject offers afresh.
+  // `token` tells one import from the next, so a second import into the same project offers afresh.
   const [organizeOfferFor, setOrganizeOfferFor] = useState<{ workspaceId: string; token: number } | null>(null)
   // Sources the person gave content to this session (an uploaded PDF, a pasted
   // transcript). Nothing on the tab record says so, and an Undo of Smart
@@ -467,7 +436,7 @@ export function AppShell() {
     // i.e. the app.
     setOnboarded(!available || onboarding.dismissed || onboarding.extensionConnected)
     if (!available) {
-      toast.info("Your subjects won't be saved between visits", {
+      toast.info("Your projects won't be saved between visits", {
         description: "Local storage isn't available in this browser.",
       })
     }
@@ -627,34 +596,6 @@ export function AppShell() {
     if (!tab) return
     openTab(tab.url)
     handleTabsChange(currentWorkspace.tabs.map((t) => (t.id === id ? { ...t, lastAccessedAt: Date.now() } : t)))
-  }
-
-  /**
-   * Opens a tab named by an agent session.
-   *
-   * Separate from handleOpenTabInView because a session can belong to a
-   * workspace the user is not currently in, and that view searches only the
-   * current one. It reuses the same `openTab` capability rather than
-   * introducing a second way to open a tab.
-   *
-   * A tab that no longer exists anywhere does nothing here - the Session
-   * View has already rendered it as stale, so there is no button to press.
-   */
-  function handleOpenAgentTab(id: string) {
-    if (!store) return
-    for (const workspace of store.workspaces) {
-      const tab = workspace.tabs.find((candidate) => candidate.id === id)
-      if (tab) {
-        openTab(tab.url)
-        return
-      }
-    }
-  }
-
-  /** History -> Session, and World -> Session. One entry point for both. */
-  function handleOpenSession(runId: string, workItemId?: string) {
-    setSessionTarget(workItemId === undefined ? { runId } : { runId, workItemId })
-    setView("agent-session")
   }
 
   function handleNotesChangeInView(id: string, notes: string) {
@@ -955,159 +896,10 @@ export function AppShell() {
     toast.success("Reorganized", { description: outcome.report ? summarizeReportForToast(outcome.report) : undefined })
   }
 
-  /**
-   * THE connector restore, mounted at the shell.
-   *
-   * Here rather than in a view, because the manager is a singleton that
-   * outlives any one surface and the user's intent is about the app, not
-   * about whichever screen happens to be open. Restoring from GraphView would
-   * mean a connector the user enabled in settings stayed dormant until they
-   * opened the graph, and the settings page would report "Not connected" for
-   * something they had connected.
-   *
-   * This starts observation, and — since the Agent World became a view of
-   * its own — the shell consumes it too. See below.
-   */
-  const connectors = useAgentConnectors({ restore: true })
-
-  /**
-   * THE agent domain, and THE observer that fills it.
-   *
-   * Both used to live in GraphView, on the reasoning that the graph was the
-   * only surface reading agent work. That stopped being true the moment the
-   * Agent World got a front door of its own: two views each mounting their
-   * own `useAgentStore` would be two debounced writers racing on one
-   * localStorage key, and two observers would be two ingestion paths for the
-   * same observations. Hoisting both here makes "exactly one" structural
-   * rather than a consequence of AppShell happening to render one view at a
-   * time — and `connectors/single-loop.test.ts` enforces it.
-   *
-   * This starts no poll loop. The connector the manager owns does the
-   * reading, on the user's connect/disconnect decision; this hook subscribes
-   * to it and hands what arrives to the domain. Ingestion now follows the
-   * app's lifetime rather than the graph's, which is also the behaviour a
-   * user would expect: work an agent did while they were reading their tabs
-   * is there when they open the world.
-   */
-  const agentStore = useAgentStore()
-
-  const claudeConnector = useMemo(
-    () => connectors.manager.connector("claude-code") as ClaudeCodeConnector | undefined,
-    [connectors.manager]
-  )
-
-  /**
-   * Per-workspace tab index for exact-match URL linking, keyed by Hubble's
-   * own normalized URL so an agent visiting a saved page links to the same tab
-   * the user would have opened.
-   */
-  const agentTabIndexes = useMemo(
-    () =>
-      (store?.workspaces ?? []).map((workspace) => {
-        const tabsByNormalizedUrl = new Map<string, string>()
-        for (const tab of workspace.tabs) {
-          if (!tabsByNormalizedUrl.has(tab.normalizedUrl)) {
-            tabsByNormalizedUrl.set(tab.normalizedUrl, tab.id)
-          }
-        }
-        return { workspaceId: workspace.id, tabsByNormalizedUrl }
-      }),
-    [store]
-  )
-
-  const agentObserver = useClaudeCodeObserver({
-    store: agentStore,
-    enabled: true,
-    connector: claudeConnector ?? null,
-    tabIndexes: agentTabIndexes,
-  })
-
   const currentWorkspace = store ? getCurrentWorkspace(store) : null
   // Subscribes to the engine rather than mirroring its state into React —
   // the engine stays the single source of truth for sync status.
   const syncState = useWorkspaceSyncState(sync, currentWorkspace?.id ?? null)
-
-  /*
-    The world the Command Centre's context bridge reads.
-
-    A plain read of persisted state rather than `useCollectionStore` /
-    `useDependencyStore`: those hooks are written to have exactly one live
-    instance at a time (WorkspaceView or GraphView), and a
-    second reactive instance here would put two debounced writers on one
-    localStorage key. Nothing in the Command Centre writes any of this — it
-    resolves context out of it — so a read-only snapshot is the correct and
-    the safe shape.
-
-    `ownerId` comes from the same storage namespace the stores were read
-    through, so the resolver's cross-account check is comparing like with
-    like rather than trusting an id from somewhere else.
-  */
-  const agentContextWorld = useMemo(() => {
-    if (!store || typeof window === "undefined") {
-      return buildContextWorld({
-        ownerId: null,
-        workspaces: [],
-        collections: [],
-        dependencies: [],
-        manualConnections: [],
-        projects: [],
-        agents: [],
-        runs: [],
-      })
-    }
-
-    return buildContextWorld({
-      ownerId: getStorageNamespace(),
-      workspaces: store.workspaces,
-      collections: loadCollectionState().collections,
-      dependencies: loadDependencyState().dependencies,
-      manualConnections: loadGraphState().manualConnections,
-      // Authorized projects live in the control plane's own storage and are
-      // joined by the Command Centre, which owns that hook.
-      projects: [],
-      agents: agentStore.agents,
-      runs: agentStore.runs,
-    })
-  }, [store, agentStore.agents, agentStore.runs])
-
-  const currentWorkspaceId = currentWorkspace?.id ?? null
-  const agentActions = useMemo<AgentActions | null>(() => {
-    if (!currentWorkspaceId) return null
-    const count = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`
-    return {
-      workspaceId: currentWorkspaceId,
-      ask: (context, intent = "ask", options) => {
-        const id = createId()
-        // Anything collected with "Add to next AI chat" in the same workspace comes along.
-        setAgentHandoff((pending) => ({
-          id,
-          context: (pending?.mode === "add" ? addToContext(pending.context, context) : undefined) ?? context,
-          mode: "ask",
-          intent,
-          ...(options?.run ? { run: true } : {}),
-          ...(options?.text ? { text: options.text } : {}),
-        }))
-        setView("command-centre")
-      },
-      add: (context) => {
-        const id = createId()
-        setAgentHandoff((pending) => ({
-          id,
-          context: (pending ? addToContext(pending.context, context) : undefined) ?? context,
-          mode: "add",
-          intent: "ask",
-        }))
-        const what = [
-          ...(context.collectionIds.length > 0 ? [count(context.collectionIds.length, "collection", "collections")] : []),
-          ...(context.tabIds.length > 0 ? [count(context.tabIds.length, "tab", "tabs")] : []),
-        ].join(" · ")
-        toast("Saved for your next AI chat", {
-          description: what || "This whole subject",
-          action: { label: "Open", onClick: () => setView("command-centre") },
-        })
-      },
-    }
-  }, [currentWorkspaceId])
 
   useTitleResolution(currentWorkspace?.tabs ?? [], (tabs) => {
     if (currentWorkspace) handleTitlesResolved(currentWorkspace.id, tabs)
@@ -1226,7 +1018,7 @@ export function AppShell() {
     runDumpOrganization(generation, nextWorkspace.id, imported, nextWorkspace.sections ?? [])
     // From Home or AI, land on the subject the tabs went into, so they are seen arriving (as a Desktop import does).
     // Anywhere else — the Graph above all, which has its own preparation screen for this — stays put.
-    setView((current) => (current === "home" || current === "ai" ? "workspace" : current))
+    setView((current) => (current === "home" || current === "search" ? "workspace" : current))
     // Organization is gated and asynchronous, but the ack is not: the count
     // answers "how many tabs did this shell take", which is settled the
     // moment they are merged and persisted above. See this function's
@@ -1247,13 +1039,25 @@ export function AppShell() {
     [store]
   )
   useExtensionImport(handleBrowserImport, extensionCanIngest)
+  // Hubble for Chrome's memory requests: projects, saving a captured conversation, search, context.
+  useExtensionMemory(
+    {
+      getStore: () => storeRef.current,
+      saveCapture: (workspaceId, input, truncated) => saveCapturedConversation(workspaceId, input, truncated),
+      onReused: ({ workspaceId, items, provider, how }) => {
+        recordLoopMilestone(how === "inserted" ? "memory_inserted" : "memory_copied", provider ? { provider } : {})
+        recordProjectEvent({ workspaceId, kind: "memory_reused", count: items, ...(provider ? { provider } : {}) })
+      },
+    },
+    extensionCanIngest
+  )
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
   // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
   const quickAdd = useExtensionQuickAdd({ workspaces: store?.workspaces, currentWorkspaceId: currentWorkspace?.id })
   // Chrome → Hubble Desktop (handleDesktopImport below): batches the extension sent straight to this app.
   const isDesktopShell = useIsDesktop()
   const desktopImports = useDesktopImport(isDesktopShell ? desktopImport() : undefined, hydrated && store !== null, () =>
-    toast.info("Tabs from Chrome weren't added", { description: "No subject was chosen in time. Add them again from Chrome." })
+    toast.info("Tabs from Chrome weren't added", { description: "No project was chosen in time. Add them again from Chrome." })
   )
 
   /*
@@ -1281,18 +1085,10 @@ export function AppShell() {
     },
   }
   const now = useNow(60_000)
-  // The agents a person connected (the roster) — re-read when they come back to a project.
-  const connectedAgents = useMemo(
-    () =>
-      hydrated && typeof window !== "undefined" && (view === "workspace" || view === "home")
-        ? loadAgentRoster().agents.map((agent) => ({ provider: agent.provider, name: agent.name || agentDisplayName(agent.provider) }))
-        : [],
-    [hydrated, view]
-  )
 
   function workspaceNamed(id: string): string {
     const workspace = storeRef.current?.workspaces.find((entry) => entry.id === id)
-    return workspace ? subjectName(workspace) : "this subject"
+    return workspace ? subjectName(workspace) : "this project"
   }
 
   /**
@@ -1344,7 +1140,6 @@ export function AppShell() {
     // Land on the project the tabs went to, so they are seen arriving.
     const after = storeRef.current
     if (after && after.currentId !== workspaceId) {
-      setAgentHandoff((pending) => (pending && pending.context.workspaceId !== workspaceId ? null : pending))
       persist(switchWorkspace(after, workspaceId))
       recordWorkspaceVisit()
     }
@@ -1374,7 +1169,7 @@ export function AppShell() {
     if (counts.duplicates > 0 && counts.invalid === 0) {
       const duplicate = plan.outcomes.find((outcome) => outcome.status === "duplicate")
       toast.info(`Already in ${name}`, {
-        description: counts.duplicates === 1 ? "It's already in this subject." : `These ${counts.duplicates} are already in this subject.`,
+        description: counts.duplicates === 1 ? "It's already in this project." : `These ${counts.duplicates} are already in this project.`,
         ...(duplicate ? { action: { label: "Open", onClick: () => openTab(duplicate.input.url) } } : {}),
       })
       return
@@ -1458,8 +1253,12 @@ export function AppShell() {
   }
 
   function projectHomeFor(workspace: NonNullable<typeof currentWorkspace>, emptyExtra?: React.ReactNode) {
-    const projectId = workspaceProjectId(workspace)
-    const folderName = projectId && typeof window !== "undefined" ? loadControlProjects().projects.find((project) => project.id === projectId)?.name : undefined
+    const noteActions: NoteActions = {
+      update: (noteId, patch) => handleUpdateNote(workspace.id, noteId, patch),
+      saveText: (noteId, text) => handleSaveNoteText(workspace.id, noteId, text),
+      remove: (noteIds) => handleRemoveNotes(workspace.id, noteIds),
+    }
+    const focus = focusItem?.workspaceId === workspace.id ? focusItem : null
     return (
       <ProjectHome
         key={workspace.id}
@@ -1467,23 +1266,211 @@ export function AppShell() {
         now={now}
         onAddSources={(inputs, origin) => handleAddSources(workspace.id, inputs, origin)}
         resources={sourceActions}
+        notes={noteActions}
         onRenameSource={(tabId, title) => handleRenameSource(workspace.id, tabId, title)}
         onRemoveSources={(tabIds) => handleRemoveSources(workspace.id, tabIds)}
         onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
         onOpenSourceAt={(tab, url) => handleOpenSource(workspace.id, tab.id, url)}
-        {...(agentActions ? { onUseInTask: (tab: { id: string }) => agentActions.ask(tabsContext(workspace.id, [tab.id])) } : {})}
-        onConnectAI={() => setView("ai")}
-        onOpenTask={(sessionId) => {
-          setAgentTaskSession(sessionId)
-          setView("command-centre")
-        }}
         onUpdateBrief={(brief) => handleUpdateWorkspaceBrief(workspace.id, brief)}
-        {...(folderName ? { folderName } : {})}
-        agents={connectedAgents}
+        onCapture={(mode, prefill) => openCapture(workspace.id, mode, prefill)}
+        {...(focus ? { focusItem: { ref: focus.ref, nonce: focus.nonce, ...(focus.turn !== undefined ? { turn: focus.turn } : {}), ...(focus.terms ? { terms: focus.terms } : {}) } } : {})}
         {...(quickAdd ? { quickAdd } : {})}
         {...(emptyExtra ? { emptyExtra } : {})}
       />
     )
+  }
+
+  /*
+    Knowledge without an address, and AI conversations.
+
+    Every conversation — saved from a page by Hubble for Chrome, imported
+    from an export file, or pasted — goes through planConversationSave and
+    applyConversationSave (lib/conversations/save.ts): the same duplicate rule
+    (same address and text: unchanged; same address, new text: updated in
+    place), the same provenance. Content is written to the content store
+    first and the project changes only for what was kept, so a project never
+    claims text it does not hold.
+  */
+  async function saveConversations(workspaceId: string, inputs: readonly ConversationInput[]): Promise<ConversationSaveSummary & { titles: string[] }> {
+    const summary = { added: 0, updated: 0, unchanged: 0, kept: 0, failed: 0, titles: [] as string[] }
+    let working = storeRef.current
+    if (!working || !working.workspaces.some((workspace) => workspace.id === workspaceId)) return { ...summary, failed: inputs.length }
+    // Planned one after another against a working copy, so the same conversation twice in one file is one item.
+    const plans: ConversationSave[] = []
+    for (const input of inputs) {
+      const plan = planConversationSave(working, workspaceId, input, createTimestamp(), createId)
+      if (!plan) {
+        summary.failed += 1
+        continue
+      }
+      if (plan.outcome === "unchanged" || plan.outcome === "kept") {
+        if (plan.outcome === "kept") summary.kept += 1
+        else summary.unchanged += 1
+        summary.titles.push(plan.target === "note" ? plan.note.title : (plan.tab.title ?? input.title))
+        continue
+      }
+      plans.push(plan)
+      working = applyConversationSave(working, plan, createTimestamp())
+    }
+    // Text first; only what was kept is applied to the project.
+    const kept: ConversationSave[] = []
+    for (let index = 0; index < plans.length; index += 50) {
+      const batch = plans.slice(index, index + 50)
+      const results = await Promise.all(batch.map((plan) => putContent(workspaceId, plan.id, plan.content).then(() => true, () => false)))
+      batch.forEach((plan, offset) => (results[offset] ? kept.push(plan) : (summary.failed += 1)))
+    }
+    if (kept.length > 0) {
+      let latest = storeRef.current
+      if (!latest) return { ...summary, failed: summary.failed + kept.length }
+      const at = createTimestamp()
+      for (const plan of kept) latest = applyConversationSave(latest, plan, at)
+      persist(latest)
+      for (const plan of kept) {
+        if (plan.outcome === "added") summary.added += 1
+        else summary.updated += 1
+        summary.titles.push(plan.target === "note" ? plan.note.title : (plan.tab.title ?? ""))
+      }
+      const provider = inputs[0]?.provider
+      const method = inputs[0]?.method
+      if (summary.added > 0) {
+        recordProjectEvent({ workspaceId, kind: "conversation_saved", count: summary.added, ...(provider ? { provider } : {}) })
+        recordLoopMilestone(method === "export" ? "conversation_imported" : "conversation_captured", provider ? { provider } : {})
+      }
+      if (summary.updated > 0) recordProjectEvent({ workspaceId, kind: "conversation_updated", count: summary.updated, ...(provider ? { provider } : {}) })
+    }
+    return summary
+  }
+
+  /** One conversation from Hubble for Chrome: saved, said where it went, and answered to the extension. */
+  async function saveCapturedConversation(workspaceId: string, input: ConversationInput, truncated: boolean): Promise<CaptureSaveResult> {
+    if (!storeRef.current?.workspaces.some((workspace) => workspace.id === workspaceId)) return { ok: false, reason: "project-missing" }
+    const summary = await saveConversations(workspaceId, [input])
+    if (summary.failed > 0) {
+      toast.error("A conversation from Chrome couldn't be saved", { description: "Hubble couldn't keep its text on this device. Nothing was changed — try again." })
+      return { ok: false, reason: "storage-failed" }
+    }
+    const name = workspaceNamed(workspaceId)
+    const outcome = summary.added > 0 ? "added" : summary.updated > 0 ? "updated" : summary.kept > 0 ? "kept" : "unchanged"
+    const title = summary.titles[0] ?? input.title
+    const words =
+      outcome === "added" ? `Saved to ${name}` : outcome === "updated" ? `Updated in ${name}` : outcome === "kept" ? `Kept the longer saved copy in ${name}` : `Already in ${name}, unchanged`
+    toast.success(words, { description: `${title}${truncated ? " · very long, so only the first part was kept" : ""}` })
+    return { ok: true, outcome, title }
+  }
+
+  async function handleSaveNote(workspaceId: string, draft: NoteDraft): Promise<NoteSaveResult> {
+    const latest = storeRef.current
+    const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!latest || !workspace) return { ok: false, message: "That project is gone." }
+    if ((workspace.notes?.length ?? 0) >= NOTE_LIMITS.notesPerProject) return { ok: false, message: "This project has as many notes as it can hold. Remove some first." }
+    const composed = composeNote(workspace, draft, createTimestamp(), createId)
+    if (!composed.ok) return { ok: false, message: composed.reason === "too-long" ? "That's too long to keep as one note. Split it into parts." : "There's nothing to save." }
+    if (composed.duplicate) return { ok: true, duplicate: true }
+    try {
+      await putContent(workspaceId, composed.note.id, composed.content)
+    } catch {
+      return { ok: false, message: "Hubble couldn't keep that on this device, so nothing was saved. Try again." }
+    }
+    const after = storeRef.current
+    if (!after) return { ok: false, message: "Hubble isn't ready. Try again." }
+    persist(addProjectNote(after, workspaceId, composed.note, createTimestamp()))
+    recordProjectEvent({ workspaceId, kind: "note_added", ...(composed.note.provider ? { provider: composed.note.provider } : {}) })
+    recordLoopMilestone("note_added")
+    return { ok: true, duplicate: false }
+  }
+
+  function handleUpdateNote(workspaceId: string, noteId: string, patch: { title?: string; tags?: string[] }) {
+    const latest = storeRef.current
+    if (!latest) return
+    const next = updateProjectNote(latest, workspaceId, noteId, patch, createTimestamp())
+    if (next !== latest) persist(next)
+  }
+
+  async function handleSaveNoteText(workspaceId: string, noteId: string, text: string): Promise<boolean> {
+    const body = cleanBody(text, NOTE_LIMITS.bodyChars)
+    if (!body) return false
+    try {
+      await putContent(workspaceId, noteId, { kind: "note", text: body, extractedAt: createTimestamp() })
+    } catch {
+      return false
+    }
+    const latest = storeRef.current
+    if (!latest) return false
+    persist(updateProjectNote(latest, workspaceId, noteId, { contentHash: contentHash({ text: body }), chars: body.length }, createTimestamp()))
+    return true
+  }
+
+  /** Removes notes; their text is forgotten once the toast closes without Undo — the same rule as a source's. */
+  function handleRemoveNotes(workspaceId: string, noteIds: string[]) {
+    const before = storeRef.current
+    const workspace = before?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!before || !workspace) return
+    const ids = new Set(noteIds)
+    const removed = (workspace.notes ?? []).filter((note) => ids.has(note.id))
+    if (removed.length === 0) return
+    persist(removeProjectNotes(before, workspaceId, noteIds, createTimestamp()))
+    recordProjectEvent({ workspaceId, kind: "sources_removed", count: removed.length })
+    let undone = false
+    const forgetUnlessUndone = () => {
+      if (!undone) void deleteContent(workspaceId, noteIds).catch(() => undefined)
+    }
+    toast(`Removed ${removed.length === 1 ? removed[0]!.title : plural(removed.length, "note", "notes")} from ${subjectName(workspace)}`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          let latest = storeRef.current
+          if (!latest) return
+          undone = true
+          for (const note of removed) latest = addProjectNote(latest, workspaceId, note, createTimestamp())
+          persist(latest)
+        },
+      },
+      onAutoClose: forgetUnlessUndone,
+      onDismiss: forgetUnlessUndone,
+    })
+  }
+
+  function openCapture(workspaceId: string, mode: CaptureMode, prefill?: { link?: string; provider?: AiProviderId }) {
+    setCapture({ workspaceId, mode, nonce: Date.now(), ...(prefill ? { prefill } : {}) })
+  }
+
+  /** "Use in AI chat" from anywhere: the chosen things, as items of one project. Collections become their saved tabs. */
+  function openReuse(selection: MemorySelection) {
+    const workspace = storeRef.current?.workspaces.find((entry) => entry.id === selection.workspaceId)
+    if (!workspace) return
+    const refs: KnowledgeItemRef[] = [...(selection.refs ?? [])]
+    const tabIds = new Set(selection.tabIds ?? [])
+    if (selection.collectionIds && selection.collectionIds.length > 0) {
+      const wanted = new Set(selection.collectionIds)
+      for (const collection of loadCollectionState().collections) {
+        if (collection.workspaceId === workspace.id && wanted.has(collection.id)) collection.tabIds.forEach((id) => tabIds.add(id))
+      }
+    }
+    for (const tab of workspace.tabs) if (tabIds.has(tab.id)) refs.push({ kind: "source", tabId: tab.id })
+    setReuse({ workspaceId: workspace.id, refs, nonce: Date.now() })
+  }
+
+  /** Opens an item where it lives: its project, its reader — or, for a saved tab Hubble holds no text for, the page itself. */
+  function openItem(workspaceId: string, ref: KnowledgeItemRef, turn?: number, terms?: readonly string[]) {
+    const latest = storeRef.current
+    const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+    if (!latest || !workspace) return
+    if (ref.kind === "source") {
+      const tab = workspace.tabs.find((entry) => entry.id === ref.tabId)
+      if (!tab) return
+      if (!tab.resource) {
+        handleOpenSource(workspaceId, tab.id)
+        return
+      }
+    }
+    if (latest.currentId !== workspaceId) handleSwitchWorkspace(workspaceId)
+    setFocusItem({ workspaceId, ref, nonce: Date.now(), ...(turn !== undefined ? { turn } : {}), ...(terms ? { terms } : {}) })
+    setView("workspace")
+  }
+
+  function openSearch(query = "", workspaceId?: string) {
+    setSearchStart({ query, nonce: Date.now(), ...(workspaceId ? { workspaceId } : {}) })
+    setView("search")
   }
 
   function handleClear() {
@@ -1495,20 +1482,18 @@ export function AppShell() {
   function handleSwitchWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
-    // Context collected for an agent belongs to the workspace it came from.
-    setAgentHandoff((pending) => (pending && pending.context.workspaceId !== id ? null : pending))
     persist(switchWorkspace(store, id))
     if (id !== store.currentId) recordWorkspaceVisit()
   }
 
-  /** Opens a subject's page — the rail's rows, Home's cards. */
+  /** Opens a project's page — the rail's rows, Home's cards. */
   function openSubject(id: string) {
     // Already the current one: nothing to switch, nothing to write.
     if (store && id !== store.currentId) handleSwitchWorkspace(id)
     setView("workspace")
   }
 
-  /** New subject: created, given its brief if one was written, and opened — no further setup. */
+  /** New project: created, given its brief if one was written, and opened — no further setup. */
   function handleCreateWorkspace(name: string, brief?: NewProjectBrief) {
     if (!store) return
     undoSnapshotRef.current = null
@@ -1540,21 +1525,11 @@ export function AppShell() {
     if (next !== store) persist(next)
   }
 
-  /** Attaches a project to a workspace, or detaches it (Hubble 1.6). A reference by id; the project itself is unchanged. */
-  function handleAttachWorkspaceProject(id: string, projectId: string | null) {
-    if (!store) return
-    const next = setWorkspaceProject(store, id, projectId)
-    if (next === store) return
-    persist(next)
-    if (projectId) recordLoopMilestone("project_connected")
-  }
-
   function handleDeleteWorkspace(id: string) {
     if (!store) return
     undoSnapshotRef.current = null
     persist(deleteWorkspace(store, id))
-    forgetLastTask(id)
-    // Its history and the text Hubble read for its sources go with it.
+    // Its history and everything stored for its items (read text, conversations, notes) go with it.
     forgetProjectActivity(id)
     void pruneProjectContent(id, new Set()).catch(() => undefined)
   }
@@ -1575,6 +1550,13 @@ export function AppShell() {
 
     const withImported = addWorkspaces(store, result.workspaces)
     persist(switchWorkspace(withImported, result.workspaces[0].id))
+    // Saved text that came with the file (an "Export everything"), under the ids its items have now.
+    if (result.contents.length > 0) {
+      void Promise.all(result.contents.map((entry) => putContent(entry.workspaceId, entry.itemId, entry.content).then(() => true, () => false))).then((saved) => {
+        const failed = saved.filter((ok) => !ok).length
+        if (failed > 0) toast.warning(`${plural(failed, "item's", "items'")} saved text couldn't be kept on this device`, { description: "Their titles and links were imported." })
+      })
+    }
 
     // Dependencies live in their own localStorage-backed store (see
     // hooks/use-dependency-store.ts), not inside WorkspaceStore itself, so
@@ -1607,7 +1589,7 @@ export function AppShell() {
         ? ` (skipped ${result.skippedWorkspaces} workspace${result.skippedWorkspaces === 1 ? "" : "s"}, ${result.skippedTabs} tab${result.skippedTabs === 1 ? "" : "s"}${result.skippedDependencies > 0 ? `, ${result.skippedDependencies} dependenc${result.skippedDependencies === 1 ? "y" : "ies"}` : ""}${result.skippedCollections > 0 ? `, ${result.skippedCollections} collection${result.skippedCollections === 1 ? "" : "s"}` : ""})`
         : ""
     toast.success(
-      `Imported ${result.workspaces.length} subject${result.workspaces.length === 1 ? "" : "s"}${skippedNote}`
+      `Imported ${result.workspaces.length} project${result.workspaces.length === 1 ? "" : "s"}${skippedNote}`
     )
   }
 
@@ -1746,7 +1728,7 @@ export function AppShell() {
     element that fills the content column.
 
     These used to be early `return`s from the component, which meant each
-    one replaced the entire shell — opening Agent World, the Graph, History
+    one replaced the entire shell — opening the Graph, Search, History
     or Settings unmounted the sidebar and left a back chevron as the only
     way home. Two things were wrong with that. The current location was
     invisible, which `design-principles.md` › Agency asks us not to do
@@ -1767,34 +1749,31 @@ export function AppShell() {
     return (
       <HomeView
         subjects={subjects}
-        // Never onboarded (a first desktop launch): "Welcome to Hubble". Otherwise, "Start with a subject".
+        // Never onboarded (a first desktop launch): "Welcome to Hubble". Otherwise, "Start with a project".
         firstRun={!onboarded}
         now={now}
         onOpenSubject={openSubject}
         onNewSubject={() => setNewWorkspaceOpen(true)}
         onOrganizeOpenTabs={() => setOrganizeOpenTabs(true)}
-        onOpenResource={(workspaceId, tabId) => handleOpenSource(workspaceId, tabId)}
-        aiConnected={connectedAgents.length > 0}
-        onConnectAI={() => setView("ai")}
+        onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
+        onOpenSearch={() => openSearch()}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />
     )
   }
 
-  if (view === "ai") {
+  if (view === "search") {
     return (
-      <AiView
-        subjects={subjects}
-        currentSubjectId={currentWorkspace.id}
-        onAsk={(workspaceId, intent, text) => {
-          if (store.currentId !== workspaceId) handleSwitchWorkspace(workspaceId)
-          // The same handoff Ask AI uses on a subject page, for the subject chosen here.
-          setAgentHandoff({ id: createId(), context: workspaceContext(workspaceId), mode: "ask", intent, run: true, ...(text ? { text } : {}) })
-          setView("command-centre")
+      <SearchView
+        key={searchStart.nonce}
+        workspaces={subjects.length > 0 ? subjects : store.workspaces}
+        initialQuery={searchStart.query}
+        {...(searchStart.workspaceId ? { initialWorkspaceId: searchStart.workspaceId } : {})}
+        onOpenItem={(workspaceId, ref, turn) => {
+          recordLoopMilestone("search_used")
+          openItem(workspaceId, ref, turn)
         }}
-        onOpenCommandCentre={() => setView("command-centre")}
-        onOpenActivity={() => setView("agent-history")}
-        onOpenConnectionDetails={() => openSettings("connectors")}
+        onOpenUrl={(url) => void openTab(url)}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />
     )
@@ -1804,10 +1783,7 @@ export function AppShell() {
     // The gate, at the transition itself rather than inside the canvas: while
     // a dump is organizing, laying out or settling, GraphView is not rendered
     // at all — so there is no partially-organized graph underneath anything,
-    // and nothing for a stray click to reach. Being sent here mid-dump (an
-    // extension import arriving while the graph is already open) parks the
-    // user on the preparation screen and drops them into the finished graph
-    // the moment it is ready.
+    // and nothing for a stray click to reach.
     if (!readiness.graphAvailable) {
       return (
         <OrganizationPreparationView
@@ -1818,15 +1794,7 @@ export function AppShell() {
         />
       )
     }
-    return (
-      <GraphView
-        store={store}
-        onStoreUpdate={persist}
-        onClose={() => setView("workspace")}
-        agentStore={agentStore}
-        agentSessionsAvailable={agentObserver.available}
-      />
-    )
+    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
   }
 
   if (view === "settings") {
@@ -1844,76 +1812,6 @@ export function AppShell() {
           onUpdateLogo: handleUpdateWorkspaceLogo,
           onImportFile: handleImportJson,
         }}
-      />
-    )
-  }
-
-  /*
-    The Command Centre.
-
-    A sibling of the Graph and of Agent History, not a layer over either: it
-    mounts the control-plane hooks, and exactly one agent surface is ever
-    mounted at a time. Ungated on readiness — the point of the surface is to
-    be able to say that agents cannot run here, which it cannot do if it is
-    withheld until they can.
-  */
-  if (view === "command-centre") {
-    return (
-      <CommandCentreView
-        world={agentContextWorld}
-        onClose={() => setView("workspace")}
-        // So "this agent isn't connected yet" in the start dialog has a button
-        // rather than an instruction to go looking.
-        onOpenConnectors={() => openSettings("connectors")}
-        // The workspace the user came from is the one a new session is
-        // associated with by default (Phase J). They can pick another.
-        {...(currentWorkspace ? { activeWorkspaceId: currentWorkspace.id } : {})}
-        handoff={agentHandoff}
-        onHandoffConsumed={(id) => setAgentHandoff((pending) => (pending?.id === id ? null : pending))}
-        {...(agentTaskSession ? { openSessionId: agentTaskSession } : {})}
-        onOpenSessionConsumed={() => setAgentTaskSession(null)}
-        onViewWorkspace={(workspaceId, collectionId) => {
-          if (store.currentId !== workspaceId && store.workspaces.some((workspace) => workspace.id === workspaceId)) {
-            handleSwitchWorkspace(workspaceId)
-          }
-          if (collectionId) setFocusCollection({ id: collectionId, nonce: Date.now() })
-          setView("workspace")
-        }}
-        onUpdateWorkspaceBrief={handleUpdateWorkspaceBrief}
-        onAttachWorkspaceProject={handleAttachWorkspaceProject}
-      />
-    )
-  }
-
-  /*
-    Agent History and the Session View.
-
-    Siblings of the graph rather than layers over it: exactly one of these
-    branches renders, so no two surfaces ever mount the agent stack at once.
-
-    Neither is gated on readiness, on connectors, or on recency. History
-    exists precisely to reach runs no live surface is still drawing.
-  */
-  if (view === "agent-history") {
-    return (
-      <AgentHistoryView
-        store={store}
-        agentStore={agentStore}
-        onOpenSession={(runId) => handleOpenSession(runId)}
-        onClose={() => setView("workspace")}
-      />
-    )
-  }
-
-  if (view === "agent-session" && sessionTarget) {
-    return (
-      <AgentSessionView
-        runId={sessionTarget.runId}
-        store={store}
-        agentStore={agentStore}
-        initialWorkItemId={sessionTarget.workItemId}
-        onOpenTab={handleOpenAgentTab}
-        onClose={() => setView("agent-history")}
       />
     )
   }
@@ -1983,31 +1881,50 @@ export function AppShell() {
     })
   }
 
+  // ⌘K: "search everything" for what is typed, before the commands that match it.
+  const paletteContent = (query: string): Command[] => {
+    const typed = query.trim()
+    const search: Command[] =
+      typed.length > 1
+        ? [
+            {
+              id: "search-knowledge-for",
+              label: `Search everything for “${typed}”`,
+              hint: "Conversations, notes and saved pages in every project",
+              group: "Navigation",
+              icon: Search,
+              forceMount: true,
+              onSelect: () => openSearch(typed),
+            },
+          ]
+        : []
+    return [...search, ...momentCommands(query)]
+  }
+
   const globalCommands = paletteOpen
     ? buildGlobalCommands(
         {
           goWorkspace: () => setView("workspace"),
           goHome: () => setView("home"),
-          openAI: () => setView("ai"),
+          openSearch: (query) => openSearch(query ?? ""),
           openGraph: handleOpenGraph,
           openFavorites: () => setView("favorites"),
           openRecents: () => setView("recents"),
           openHistoryDump: () => setView("history-dump"),
-          openCommandCentre: () => setView("command-centre"),
-          openAgentHistory: () => setView("agent-history"),
           openSettings: (section) => openSettings(section),
           switchWorkspace: handleSwitchWorkspace,
           newWorkspace: () => setNewWorkspaceOpen(true),
           openUrl: (url) => void openTab(url),
           organizeOpenTabs: () => setOrganizeOpenTabs(true),
-          ...(agentActions ? { askAgentAboutWorkspace: () => agentActions.ask(workspaceContext(agentActions.workspaceId)) } : {}),
+          reuseCurrent: () => openReuse({ workspaceId: currentWorkspace.id }),
+          capture: (mode) => openCapture(currentWorkspace.id, mode),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
       )
     : []
 
-  // "Add to project" from any tab menu or selection (Hubble 2.0): the same pipeline as a drop.
+  // "Add to project" from any tab menu or selection: the same pipeline as a drop.
   const projectActions: ProjectActions = {
     currentId: currentWorkspace.id,
     projects: store.workspaces.map((workspace) => ({ id: workspace.id, name: subjectName(workspace) })),
@@ -2016,17 +1933,22 @@ export function AppShell() {
     },
   }
 
+  // "Use in AI chat" everywhere it is offered: one dialog, owned here.
+  const memoryActions: MemoryActions = { currentWorkspaceId: currentWorkspace.id, reuse: openReuse }
+  const reuseWorkspace = reuse ? store.workspaces.find((workspace) => workspace.id === reuse.workspaceId) : undefined
+  const captureWorkspace = capture ? store.workspaces.find((workspace) => workspace.id === capture.workspaceId) : undefined
+
   return (
     <CommandPaletteHostContext.Provider value={paletteHost}>
     <ProjectActionsProvider value={projectActions}>
-    <AgentActionsProvider value={agentActions}>
+    <MemoryActionsProvider value={memoryActions}>
     <div className="flex min-h-screen">
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         commands={paletteOpen ? mergeCommands(globalCommands, contributedCommands) : []}
         placeholder="Search Hubble"
-        searchContent={momentCommands}
+        searchContent={paletteContent}
       />
       {desktopImportDialog}
       <OpenTabsOrganize
@@ -2045,8 +1967,33 @@ export function AppShell() {
           setView("workspace")
         }}
       />
+      {reuse && reuseWorkspace && (
+        <ReuseDialog
+          key={reuse.nonce}
+          open
+          onOpenChange={(open) => !open && setReuse(null)}
+          workspace={reuseWorkspace}
+          initialRefs={reuse.refs}
+          onCopied={({ items }) => {
+            recordLoopMilestone("memory_copied")
+            recordProjectEvent({ workspaceId: reuseWorkspace.id, kind: "memory_reused", count: items })
+          }}
+        />
+      )}
+      {capture && captureWorkspace && (
+        <CaptureDialog
+          key={capture.nonce}
+          open
+          onOpenChange={(open) => !open && setCapture(null)}
+          projectName={subjectName(captureWorkspace)}
+          initialMode={capture.mode}
+          {...(capture.prefill ? { prefill: capture.prefill } : {})}
+          onSaveConversations={(inputs) => saveConversations(captureWorkspace.id, inputs)}
+          onSaveNote={(draft) => handleSaveNote(captureWorkspace.id, draft)}
+        />
+      )}
       <AppSidebar
-        onOpenSearch={paletteHost.open}
+        onOpenSearch={() => openSearch()}
         workspaces={subjects}
         currentId={store.currentId}
         collapsed={sidebarCollapsed}
@@ -2057,34 +2004,19 @@ export function AppShell() {
         onOpenSubject={openSubject}
         onCreate={handleCreateWorkspace}
         onOpenHome={() => setView("home")}
-        onOpenAI={() => setView("ai")}
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}
         onOpenGraph={handleOpenGraph}
         graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
         graphLockedReason={readiness.label}
-        onOpenCommandCentre={() => setView("command-centre")}
-        onOpenAgentHistory={() => setView("agent-history")}
         onOpenSettings={() => openSettings()}
         onOpenWorkspace={() => setView("workspace")}
         currentView={view}
       />
-      <div
-        className="flex min-w-0 flex-1 flex-col"
-        // Settings → Appearance → Layout → Content width (see resolve.ts).
-        // "Full" resolves to `none`, i.e. today's unconstrained behavior.
-        //
-        // Only applied to the workspace itself. A destination like the Graph
-        // or the Agent World is a canvas, not a column of reading material,
-        // and capping it at the reading width would letterbox it inside a
-        // shell that is already narrower than the window.
-        // Content width (Settings → Layout) is applied inside each view to its
-        // reading column, so view headers can span the window as the
-        // reference's do.
-      >
-        {destination ?? (currentWorkspace.tabs.length === 0 ? (
-          // An empty project starts by collecting context (Hubble 2.0); dumping every open tab is still one field away.
+      <div className="flex min-w-0 flex-1 flex-col">
+        {destination ?? (currentWorkspace.tabs.filter((tab) => !tab.resource).length === 0 ? (
+          // A project with no saved tabs is its Knowledge Centre alone; dumping every open tab is still one field away.
           <ProjectPage
             key={currentWorkspace.id}
             workspace={currentWorkspace}
@@ -2113,11 +2045,6 @@ export function AppShell() {
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
             onOpenGraph={handleOpenGraph}
-            onOpenCommandCentre={() => setView("command-centre")}
-            onOpenAgentTask={(sessionId) => {
-              setAgentTaskSession(sessionId)
-              setView("command-centre")
-            }}
             graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
             graphLockedReason={readiness.label}
             organizationStatus={
@@ -2151,7 +2078,6 @@ export function AppShell() {
             onDeleteSection={handleDeleteSection}
             onAssignTabToSection={handleAssignTabToSection}
             onReorganizeSections={handleReorganizeSections}
-            {...(focusCollection ? { focusCollection } : {})}
             projectHome={projectHomeFor(currentWorkspace)}
             onBack={() => setView("home")}
             onRenameSubject={(name) => handleRenameWorkspace(currentWorkspace.id, name)}
@@ -2165,7 +2091,7 @@ export function AppShell() {
         ))}
       </div>
     </div>
-    </AgentActionsProvider>
+    </MemoryActionsProvider>
     </ProjectActionsProvider>
     </CommandPaletteHostContext.Provider>
   )

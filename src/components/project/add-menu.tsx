@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AppWindow, ChevronDown, Link2, Loader2, Plus } from "lucide-react"
+import { AppWindow, ChevronDown, ClipboardPaste, FileUp, Link2, Loader2, NotebookPen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import { Textarea } from "@/components/ui/textarea"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
@@ -16,6 +16,7 @@ import { inputsFromText } from "./add-source-dialog"
 import type { BrowserTabInfo } from "@/lib/browser/protocol"
 import type { IngestOutcome } from "@/lib/resources/ingest"
 import type { ResourceInput } from "@/lib/resources/types"
+import type { CaptureMode } from "@/components/memory/capture-dialog"
 
 /** "Alt+Shift+H" as Chrome reports it → "Alt + Shift + H". */
 function formatKeys(shortcut: string): string {
@@ -27,15 +28,22 @@ function formatKeys(shortcut: string): string {
 }
 
 /**
- * + Add — the one way in to a subject.
+ * + Add — the one way in to a project.
  *
  *     + Add ▾
+ *       Paste a conversation      (from any AI app)
+ *       Write a note
+ *       Import a file             (a ChatGPT or Claude export, Markdown, text)
+ *       ─────
  *       Browser tabs
  *       Link
  *
- * Both go through the same ingestion as everything else (the shell's
- * handleAddSources): the same duplicate rule, the same reading in the
- * background, the same toast with Undo. Dragging a link or the address bar
+ * Links and tabs go through the same ingestion as everything else (the
+ * shell's handleAddSources): the same duplicate rule, the same reading in
+ * the background, the same toast with Undo. Conversations and notes go
+ * through the capture dialog and the one conversation save
+ * (lib/conversations/save.ts). Saving the open conversation in an AI app is
+ * Hubble for Chrome's job, from that page. Dragging a link or the address bar
  * onto the page still works too; it just isn't something anyone has to read
  * about first.
  */
@@ -43,6 +51,7 @@ export function AddMenu({
   subjectName,
   onAdd,
   onOpenLink,
+  onCapture,
   quickAdd,
   size = "lg",
   variant = "default",
@@ -51,6 +60,8 @@ export function AddMenu({
   onAdd: (inputs: ResourceInput[]) => IngestOutcome[]
   /** Opens the paste-a-link dialog (owned by the subject page, which also opens it from elsewhere). */
   onOpenLink: () => void
+  /** Opens the capture dialog (paste a conversation, write a note, import a file). Absent: those entries are not offered. */
+  onCapture?: (mode: CaptureMode) => void
   /** Present once Hubble for Chrome has said it is here (see use-extension-quick-add). */
   quickAdd?: { shortcut: string }
   size?: "sm" | "default" | "lg"
@@ -67,7 +78,21 @@ export function AddMenu({
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuContent align="end" className="min-w-52">
+          {onCapture && (
+            <>
+              <DropdownMenuItem onClick={() => onCapture("conversation")}>
+                <ClipboardPaste /> Paste a conversation
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onCapture("note")}>
+                <NotebookPen /> Write a note
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onCapture("import")}>
+                <FileUp /> Import a file
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem onClick={() => setTabsOpen(true)}>
             <AppWindow /> Browser tabs
           </DropdownMenuItem>

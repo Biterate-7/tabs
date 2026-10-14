@@ -34,11 +34,10 @@ export function Wordmark({ className }: { className?: string }) {
 }
 
 export const NAV_LINKS = [
-  { href: "#workspaces", label: "Workspaces" },
-  { href: "#command-centre", label: "Command Centre" },
-  { href: "#graph", label: "Graph" },
-  { href: "#context", label: "Context" },
-  { href: "#agents", label: "Agents" },
+  { href: "#how-it-works", label: "How it works" },
+  { href: "#capture", label: "Capture" },
+  { href: "#find", label: "Find" },
+  { href: "#reuse", label: "Reuse" },
 ] as const
 
 export type PrimaryAction = { label: string; href?: string; onClick?: () => void }
@@ -371,11 +370,10 @@ const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] 
   {
     title: "Product",
     links: [
-      { label: "Workspaces", href: "#workspaces" },
-      { label: "Command Centre", href: "#command-centre" },
-      { label: "Graph", href: "#graph" },
-      { label: "Context", href: "#context" },
-      { label: "Agents", href: "#agents" },
+      { label: "How it works", href: "#how-it-works" },
+      { label: "Capture", href: "#capture" },
+      { label: "Find", href: "#find" },
+      { label: "Reuse", href: "#reuse" },
     ],
   },
   {
@@ -442,7 +440,7 @@ export function SiteFooter({
         </div>
 
         <div className="mt-24 flex flex-wrap items-center justify-between gap-4">
-          <p className="m-small text-muted-foreground">© 2026 Hubble · Your workspaces stay on your device.</p>
+          <p className="m-small text-muted-foreground">© 2026 Hubble · Your knowledge stays on your device.</p>
           <div role="radiogroup" aria-label="Colour scheme" className="flex items-center gap-0.5 rounded-full bg-surface-active p-0.5">
             {options.map((option) => (
               <button

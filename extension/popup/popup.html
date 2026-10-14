@@ -18,6 +18,35 @@
         </div>
 
         <div id="state-ready" class="popup__state" hidden>
+          <!-- On an AI app (ChatGPT, Claude, Gemini, Perplexity): save this conversation, or use Hubble here. -->
+          <section id="ai-section" class="popup__ai" aria-labelledby="ai-heading" hidden>
+            <h1 id="ai-heading" class="popup__heading">Save to Hubble</h1>
+            <p id="ai-page" class="popup__muted popup__detail"></p>
+            <label class="popup__switch">
+              <span class="popup__switch-label">Project</span>
+              <select id="ai-project-select" class="popup__select">
+                <option value="">Choose a project…</option>
+              </select>
+            </label>
+            <div class="popup__row">
+              <button id="capture-button" class="popup__button" disabled>Save this conversation</button>
+              <button id="ai-open-hubble-button" class="popup__button popup__button--secondary" hidden>Open Hubble</button>
+            </div>
+            <p id="capture-status" class="popup__muted popup__detail" role="status" hidden></p>
+
+            <details id="memory-panel" class="popup__memory">
+              <summary class="popup__subheading">Use your knowledge here</summary>
+              <input id="memory-query" class="popup__input" type="search" placeholder="Search this project…" aria-label="Search this project" />
+              <ul id="memory-results" class="popup__results" aria-label="Items to use"></ul>
+              <textarea id="memory-request" class="popup__input popup__textarea" placeholder="What you want to ask (optional — picks the most relevant parts)" aria-label="What you want to ask"></textarea>
+              <div class="popup__row">
+                <button id="insert-button" class="popup__button" disabled>Insert into message box</button>
+                <button id="copy-button" class="popup__button popup__button--secondary" disabled>Copy</button>
+              </div>
+              <p class="popup__muted popup__detail">The AI app receives exactly the text Hubble inserts or copies. Hubble never presses send.</p>
+              <p id="memory-status" class="popup__muted popup__detail" role="status" hidden></p>
+            </details>
+          </section>
           <!-- Hubble Desktop on this computer: straight in, you choose the project there. Shown once it has been seen. -->
           <section id="desktop-section" class="popup__desktop" aria-labelledby="desktop-heading" hidden>
             <h2 id="desktop-heading" class="popup__subheading">Hubble Desktop <span id="desktop-status" class="popup__muted"></span></h2>
@@ -36,13 +65,13 @@
             </div>
             <p id="quick-add-hint" class="popup__muted popup__detail" hidden></p>
             <label class="popup__switch">
-              <span class="popup__switch-label">Subject</span>
+              <span class="popup__switch-label">Project</span>
               <select id="project-select" class="popup__select">
-                <option value="">Choose a subject…</option>
+                <option value="">Choose a project…</option>
               </select>
             </label>
           </section>
-          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble to add this tab to a subject.</p>
+          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble to add this tab to a project.</p>
 
           <!-- The plain dump: every tab in this window, into Hubble as it always was. -->
           <section class="popup__dump" aria-label="Save this window">

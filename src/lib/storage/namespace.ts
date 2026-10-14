@@ -39,50 +39,27 @@ export const SCOPED_STORAGE_KEYS = [
   "tabdump:collections:v1",
   "tabdump:dependencies:v1",
   "tabdump:graph:v1",
-  // Agent identities, runs, their tab links and their activity logs (see
-  // src/lib/agents/persistence.ts). Personal content by the same test as the
-  // keys above — it records what was worked on and when — so it partitions
-  // with them rather than staying global.
+  // Left by the AI agent features Hubble no longer has (agents and their
+  // runs, observed Claude Code projects, canvas layout, connectors, sessions,
+  // authorized folders, the roster and each project's last task). Nothing
+  // writes these any more. They stay partitioned like the rest — they name
+  // the person's own folders and work — until the person exports or deletes
+  // them in Settings → Data (src/lib/storage/legacy-agent-data.ts).
   "tabdump:agents:v1",
-  // Which local Claude Code project belongs to which workspace (see
-  // src/lib/agents/claude-code/mapping.ts). Scoped for the same reason as the
-  // rest: it names the user's own directories, and one account's project
-  // layout is not another's business.
   "tabdump:claude-code-mapping:v1",
-  // Where the user has dragged agent nodes on the canvas, and which agent
-  // filter they last used (see src/lib/agents/spatial/persistence.ts). Layout
-  // state, but personal layout state — it describes their workspace, so it
-  // partitions with the rest rather than staying global.
   "tabdump:agent-layout:v1",
-  // Which AI connectors the user has asked Hubble to observe (see
-  // src/lib/agents/connectors/persistence.ts). Scoped because "this person
-  // watches Claude Code" is a fact about them, not about the device — and
-  // because one account must never inherit another's observation settings.
-  // It holds intent only: no credential is written here, or anywhere else.
   "tabdump:connectors:v1",
-  // The control plane's sessions and authorized local projects (see
-  // src/lib/agents/control/persistence.ts). Scoped for the strongest reason
-  // any key here is: a project record names a directory on this machine that
-  // one account has authorized an agent to touch, and another account signed
-  // into the same browser must never inherit that authorization.
   "tabdump:agent-sessions:v1",
   "tabdump:agent-projects:v1",
-  // The agents a user has connected, and what they approved each for (see
-  // src/lib/agents/platform/roster.ts). Scoped because which agents one
-  // person connected — and what they let each do — is theirs. It holds
-  // identities and consent only; no credential of any kind.
   "tabdump:agent-roster:v1",
-  // Each workspace's latest agent task and how it ended (see
-  // src/lib/agents/command-centre/last-task.ts) — what a returning person is
-  // shown. Scoped: it is their instruction and their project's changes.
   "tabdump:agent-last-task:v1",
-  // The local loop log (see src/lib/product/loop-log.ts): which milestones of
-  // the work loop this person reached, and when. Counts and kinds only, but a
+  // The local loop log (see src/lib/product/loop-log.ts): which steps of the
+  // capture → reuse loop this person reached, and when. Counts and kinds only, but a
   // record of one person's use, so it partitions with the rest.
   "tabdump:loop-log:v1",
-  // Each project's history (Hubble 2.0 — see src/lib/projects/activity.ts):
-  // sources added and read, and the agent work done there. Scoped: it is
-  // one person's record of their own projects.
+  // Each project's history (see src/lib/projects/activity.ts): what came in,
+  // what Hubble read, when it was reused. Scoped: it is one person's record
+  // of their own projects.
   "tabdump:project-activity:v1",
 ] as const;
 

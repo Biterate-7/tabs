@@ -50,7 +50,7 @@ export function DeleteSectionDialog({
           <AlertDialogTitle>Delete &quot;{sectionName}&quot;?</AlertDialogTitle>
           <AlertDialogDescription>
             {tabCount > 0
-              ? `Any subsections are removed too. Its ${tabCount} tab${tabCount === 1 ? "" : "s"} stay in the subject — choose where they go.`
+              ? `Any subsections are removed too. Its ${tabCount} tab${tabCount === 1 ? "" : "s"} stay in the project — choose where they go.`
               : "It has no tabs, so nothing else is affected."}
           </AlertDialogDescription>
         </AlertDialogHeader>

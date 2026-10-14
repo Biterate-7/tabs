@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils"
  * from that mismatch, all of them visible in the shipped product:
  *
  *  1. Nothing said where you were. `IconButton` has no notion of a current
- *     page, so opening Agent World lit nothing in the rail — the only
+ *     page, so opening a destination lit nothing in the rail — the only
  *     `aria-current` anywhere in the shell was on the workspace list.
  *     Apple's Agency principle asks that an interface "keep them informed
  *     about what's happening"; a navigation list that never marks the
@@ -125,7 +125,7 @@ export const SidebarItem = React.forwardRef<HTMLButtonElement, SidebarItemProps>
 SidebarItem.displayName = "SidebarItem"
 
 /**
- * A group heading in the rail: "This week", "Agents", "Workspaces" — 11px
+ * A group heading in the rail: "This week", "Projects" — 11px
  * in sentence case at the tertiary tier, as the reference's rail labels
  * are. Renders nothing when the rail is collapsed rather than shrinking to
  * an unreadable stub.

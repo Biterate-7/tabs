@@ -88,8 +88,6 @@ describe("CommandPalette site icons", () => {
     openFavorites: noop,
     openRecents: noop,
     openHistoryDump: noop,
-    openCommandCentre: noop,
-    openAgentHistory: noop,
     openSettings: noop,
     switchWorkspace: noop,
     newWorkspace: noop,
@@ -195,18 +193,18 @@ describe("CommandPalette site icons", () => {
     expect(item.querySelector("svg.lucide-globe")).not.toBeNull()
   })
 
-  it("leaves navigation, AI, subject and settings results on their own icons", async () => {
+  it("leaves navigation, AI, project and settings results on their own icons", async () => {
     service["savemyexams.com"] = "icon"
     const commands = commandsFor([tab("t1", "Save My Exams", "https://www.savemyexams.com/a", "savemyexams.com")])
     render(<CommandPalette open onOpenChange={vi.fn()} commands={commands} />)
     await flush()
 
     for (const [label, glyph] of [
-      ["Go to Home", "lucide-house"],
+      ["Go to Projects", "lucide-house"],
       ["Open graph view", "lucide-waypoints"],
-      ["Open AI chats", "lucide-radio"],
+      ["AI apps", "lucide-messages-square"],
       ["Physics", "lucide-boxes"],
-      ["New subject", "lucide-folder-plus"],
+      ["New project", "lucide-folder-plus"],
       ["Open settings", "lucide-settings"],
     ] as const) {
       const item = row(label)
@@ -243,12 +241,11 @@ describe("paletteFilter", () => {
   it("does not match scattered letters, so a tab search is not buried under commands", async () => {
     const { paletteFilter } = await import("./command-palette")
     // The regression: fuzzy matching let "arxiv" hit this command's keywords.
-    expect(paletteFilter("Connect an agent Agents agents-connect", "arxiv", ["provider", "mcp", "codex", "gemini", "grok"])).toBe(0)
+    expect(paletteFilter("AI connectors Settings settings-connectors", "arxiv", ["mcp", "connect", "integration"])).toBe(0)
     expect(paletteFilter("https://arxiv.org/abs/2310.06770 Tabs tab-1", "arxiv", ["arxiv.org"])).toBeGreaterThan(0)
   })
 
-  it("still finds AI chats by its power-user name, Command Centre", async () => {
-    const { paletteFilter } = await import("./command-palette")
+  it("offers capture, search and reuse for the open project, and nothing about agents", async () => {
     const { buildGlobalCommands } = await import("./global-commands")
     const noop = () => {}
     const commands = buildGlobalCommands(
@@ -258,18 +255,20 @@ describe("paletteFilter", () => {
         openFavorites: noop,
         openRecents: noop,
         openHistoryDump: noop,
-        openCommandCentre: noop,
-        openAgentHistory: noop,
         openSettings: noop,
         switchWorkspace: noop,
         newWorkspace: noop,
         openUrl: noop,
+        goHome: noop,
+        openSearch: noop,
+        reuseCurrent: noop,
+        capture: noop,
       },
-      { workspaces: [], currentId: "" }
+      { workspaces: [{ id: "w", name: "History IA", tabs: [], createdAt: 0, updatedAt: 0 }], currentId: "w" }
     )
-    const entry = commands.find((command) => command.id === "agents-command-centre")!
-    expect(entry.label).toBe("Open AI chats")
-    expect(paletteFilter(`${entry.label} ${entry.group} ${entry.id}`, "command centre", entry.keywords ?? [])).toBeGreaterThan(0)
+    const ids = commands.map((command) => command.id)
+    expect(ids).toEqual(expect.arrayContaining(["go-home", "go-search", "go-graph", "memory-use-project", "capture-conversation", "capture-note", "capture-import"]))
+    expect(commands.map((command) => `${command.id} ${command.label} ${(command.keywords ?? []).join(" ")}`).join("\n")).not.toMatch(/agent|command centre|runtime/i)
   })
 
   it("ranks a label prefix above a keyword hit", async () => {
