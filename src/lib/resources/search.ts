@@ -1,11 +1,13 @@
 import { formatTimestamp } from "./transcript";
 import type { Tab } from "@/lib/tabs/types";
-import type { ResourceContent, TranscriptSegment } from "./types";
+import type { ConversationRole, ResourceContent, TranscriptSegment } from "./types";
+import type { ProjectNote } from "@/lib/notes/notes";
 
 /**
  * Searching one project: every source's title, address and notes, the text
- * Hubble extracted from it (page text, each PDF page, transcript lines), and
- * the project's previous agent results.
+ * Hubble holds for it (page text, each PDF page, transcript lines, each turn
+ * of a saved AI conversation), and the project's notes — their titles, tags
+ * and bodies.
  *
  * Plain term matching, not embeddings: it runs on this device over content
  * that never leaves it, it is exact about *where* a match is (a PDF page, a
@@ -13,8 +15,8 @@ import type { ResourceContent, TranscriptSegment } from "./types";
  * same place for a hit; hits are ranked by how many times the terms occur
  * and where (a title outranks body text).
  *
- * Scoped by construction: it is handed one project's tabs and that project's
- * contents, and has no way to reach any other. Whatever the caller leaves
+ * Scoped by construction: it is handed one project's items and that
+ * project's contents, and has no way to reach any other. Whatever the caller leaves
  * out of `tabs` (a removed source, a filter) is never searched, even if its
  * content is still in the store.
  *
@@ -35,14 +37,18 @@ export type SearchLocation =
   | { kind: "notes" }
   | { kind: "text" }
   | { kind: "page"; page: number }
+  /** A turn of a saved AI conversation, by position; `role` says whether the person or the AI said it. */
+  | { kind: "turn"; turn: number; role: ConversationRole }
+  | { kind: "tags" }
   /** `line` is the transcript line the moment starts on; `end` when the passage's end is known. */
   | { kind: "transcript"; start?: number; end?: number; line: number };
 
 export type ProjectSearchHit =
   | { type: "source"; tabId: string; location: SearchLocation; snippet: string; score: number }
-  | { type: "result"; id: string; snippet: string; score: number };
+  | { type: "note"; noteId: string; location: SearchLocation; snippet: string; score: number };
 
-export type SearchableResult = { id: string; text: string };
+/** What search reads of a note: its record. The body comes from `contents`, by the note's id. */
+export type SearchableNote = Pick<ProjectNote, "id" | "title" | "tags">;
 
 const MAX_HITS = 50;
 const SNIPPET_RADIUS = 80;
@@ -243,6 +249,8 @@ export function markMatches(text: string, terms: readonly string[]): { text: str
 export function describeLocation(location: SearchLocation): string | undefined {
   if (location.kind === "page") return `page ${location.page}`;
   if (location.kind === "transcript") return location.start !== undefined ? `at ${formatTimestamp(location.start)}` : "in the transcript";
+  if (location.kind === "turn") return location.role === "user" ? "in your message" : "in the AI's reply";
+  if (location.kind === "tags") return "in its tags";
   return undefined;
 }
 
@@ -250,7 +258,7 @@ export function searchProject(input: {
   query: string;
   tabs: readonly Pick<Tab, "id" | "title" | "url" | "domain" | "notes" | "resource">[];
   contents: ReadonlyMap<string, ResourceContent>;
-  results?: readonly SearchableResult[];
+  notes?: readonly SearchableNote[];
   limit?: number;
 }): ProjectSearchHit[] {
   const terms = searchTerms(input.query);
@@ -262,8 +270,8 @@ export function searchProject(input: {
     if (score > 0) hits.push({ type: "source", tabId, location, snippet: snippetAround(text, terms, phrase), score: score * weight });
   };
 
+  // Every saved page is searched by what it says about itself; a source also by the text Hubble holds for it.
   for (const tab of input.tabs) {
-    if (!tab.resource) continue;
     if (tab.title) push(tab.id, { kind: "title" }, tab.title, 10);
     push(tab.id, { kind: "address" }, `${tab.domain} ${tab.url}`, 4);
     if (tab.notes) push(tab.id, { kind: "notes" }, tab.notes, 6);
@@ -271,6 +279,7 @@ export function searchProject(input: {
     if (!content) continue;
     if (content.text) push(tab.id, { kind: "text" }, content.text, 1);
     content.pages?.forEach((page, index) => push(tab.id, { kind: "page", page: index + 1 }, page, 1));
+    content.turns?.forEach((turn, index) => push(tab.id, { kind: "turn", turn: index, role: turn.role }, turn.text, 1));
     for (const moment of transcriptMoments(content.transcript ?? [], terms, phrase)) {
       hits.push({
         type: "source",
@@ -281,9 +290,18 @@ export function searchProject(input: {
       });
     }
   }
-  for (const result of input.results ?? []) {
-    const score = scoreOf(result.text, terms);
-    if (score > 0) hits.push({ type: "result", id: result.id, snippet: snippetAround(result.text, terms, phrase), score: score * 3 });
+  const pushNote = (noteId: string, location: SearchLocation, text: string, weight: number) => {
+    const score = scoreOf(text, terms);
+    if (score > 0) hits.push({ type: "note", noteId, location, snippet: snippetAround(text, terms, phrase), score: score * weight });
+  };
+  for (const note of input.notes ?? []) {
+    pushNote(note.id, { kind: "title" }, note.title, 10);
+    if (note.tags && note.tags.length > 0) pushNote(note.id, { kind: "tags" }, note.tags.join(" "), 6);
+    const content = input.contents.get(note.id);
+    if (!content) continue;
+    // A note is the person's own words: its body outranks extracted page text.
+    if (content.text) pushNote(note.id, { kind: "text" }, content.text, 2);
+    content.turns?.forEach((turn, index) => pushNote(note.id, { kind: "turn", turn: index, role: turn.role }, turn.text, 1));
   }
 
   // Strongest first; within a source, each place once (a page, a transcript moment).
@@ -330,7 +348,8 @@ function rank(hits: ProjectSearchHit[], limit: number): ProjectSearchHit[] {
   const seen = new Set<string>();
   const out: ProjectSearchHit[] = [];
   for (const hit of hits) {
-    const key = hit.type === "result" ? `r:${hit.id}` : `s:${hit.tabId}:${hit.location.kind}:${"page" in hit.location ? hit.location.page : ""}:${"line" in hit.location ? hit.location.line : ""}`;
+    const where = `${hit.location.kind}:${"page" in hit.location ? hit.location.page : ""}:${"line" in hit.location ? hit.location.line : ""}:${"turn" in hit.location ? hit.location.turn : ""}`;
+    const key = hit.type === "note" ? `n:${hit.noteId}:${where}` : `s:${hit.tabId}:${where}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(hit);

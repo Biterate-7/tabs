@@ -15,7 +15,7 @@ const GROUP_ORDER: CommandGroup[] = [
   "Ask",
   "Moments",
   "Navigation",
-  "Agents",
+  "Memory",
   "Workspaces",
   "Workspace",
   "Tabs",
@@ -28,11 +28,11 @@ const GROUP_ORDER: CommandGroup[] = [
   "Help",
 ]
 
-/** What a group is called on screen. The ids predate Subjects and AI, and every command still files under them. */
+/** What a group is called on screen. The ids predate Projects, and every command still files under them. */
 const GROUP_LABEL: Partial<Record<CommandGroup, string>> = {
-  Agents: "AI",
-  Workspaces: "Subjects",
-  Workspace: "This subject",
+  Memory: "Your knowledge",
+  Workspaces: "Projects",
+  Workspace: "This project",
   Moments: "Said in your videos",
 }
 

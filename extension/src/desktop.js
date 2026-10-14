@@ -252,7 +252,7 @@ function plural(count, one, many = `${one}s`) {
 export function describeDesktopResult(outcome) {
   const notSent = (outcome?.overLimit ?? 0) + (outcome?.skippedRestricted ?? 0);
   if (outcome?.status === "done") {
-    const project = outcome.project || "your subject";
+    const project = outcome.project || "your project";
     const failed = (outcome.failed ?? 0) + (outcome.overLimit ?? 0);
     const added = outcome.added ?? 0;
     const duplicates = outcome.duplicates ?? 0;
@@ -262,7 +262,7 @@ export function describeDesktopResult(outcome) {
     if (outcome.skippedRestricted > 0) notes.push(`${plural(outcome.skippedRestricted, "Chrome page")} skipped`);
     if (added === 0 && duplicates > 0) {
       const which = duplicates > 1 ? "These sources are" : "This source is";
-      return { tone: "same", title: `Already in ${project}`, detail: [`${which} already in the subject.`, ...notes].join(" · ") };
+      return { tone: "same", title: `Already in ${project}`, detail: [`${which} already in the project.`, ...notes].join(" · ") };
     }
     if (added === 0) {
       return { tone: "error", title: `Couldn't add to ${project}`, detail: "Only web pages, PDFs and videos with a web address can be added.", actions: ["retry"] };
@@ -275,7 +275,7 @@ export function describeDesktopResult(outcome) {
     case "cancelled":
       return { tone: "same", title: "Nothing added", detail: "Cancelled in Hubble Desktop." };
     case "expired":
-      return { tone: "error", title: "Nothing added", detail: "No subject was chosen in Hubble Desktop in time.", actions: ["retry"] };
+      return { tone: "error", title: "Nothing added", detail: "No project was chosen in Hubble Desktop in time.", actions: ["retry"] };
     case "failed":
       return { tone: "error", title: "Couldn't import these tabs", detail: "Please try again.", actions: ["retry"] };
     case "no-importable-tabs":
@@ -291,7 +291,7 @@ export function describeDesktopResult(outcome) {
     case "invalid-payload":
       return { tone: "error", title: "Couldn't import these tabs", detail: "Please try again.", actions: ["retry"] };
     case "already-running":
-      return { tone: "error", title: "Still adding the last tabs", detail: "Choose a subject in Hubble Desktop first." };
+      return { tone: "error", title: "Still adding the last tabs", detail: "Choose a project in Hubble Desktop first." };
     case "desktop-not-responding":
     case "desktop-session-lost":
     default:
@@ -306,7 +306,7 @@ export function describeDesktopPhase(phase, count) {
     case "launching":
       return { tone: "working", title: "Opening Hubble Desktop…", detail: "If Chrome asks, choose Open Hubble." };
     case "waiting":
-      return { tone: "working", title: `Add ${tabs} to Hubble`, detail: "Choose a subject in Hubble Desktop." };
+      return { tone: "working", title: `Add ${tabs} to Hubble`, detail: "Choose a project in Hubble Desktop." };
     default:
       return { tone: "working", title: "Connecting to Hubble Desktop…", detail: tabs };
   }

@@ -82,7 +82,7 @@ export function WorkspaceHeader({
   graphLockedReason?: string
   /** Opens the mobile sidebar drawer — the sidebar has no other affordance below the `md` breakpoint. */
   onOpenSidebar?: () => void
-  /** "← Subjects": back to Home. Absent outside the shell. */
+  /** "← Projects": back to Home. Absent outside the shell. */
   onBack?: () => void
   subjectMenu?: SubjectMenuActions
   /** No tab filter in the bar: the page has its own search for everything in it. */
@@ -105,7 +105,7 @@ export function WorkspaceHeader({
           <div className="mr-auto flex min-w-0 items-center gap-2">
             {onBack ? (
               <Button type="button" variant="ghost" size="sm" className="-ml-1.5" onClick={onBack}>
-                <ChevronLeft /> Subjects
+                <ChevronLeft /> Projects
               </Button>
             ) : (
               currentWorkspace && <span className="truncate text-h2 text-foreground">{subjectName(currentWorkspace)}</span>
@@ -193,7 +193,7 @@ export function SubjectActionsMenu({
             <>
               {children && <DropdownMenuSeparator />}
               <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-                <Pencil /> Rename subject
+                <Pencil /> Rename project
               </DropdownMenuItem>
             </>
           )}
@@ -205,7 +205,7 @@ export function SubjectActionsMenu({
           )}
           {subjectMenu?.canDelete && (
             <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-              <Trash2 /> Delete subject
+              <Trash2 /> Delete project
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>

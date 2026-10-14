@@ -23,7 +23,7 @@ type CollectionStore = {
 function analyze(workspace: Workspace, collections: readonly Collection[]): SmartOrganizeStatus {
   try {
     const { items, truncated } = itemsFromSubject(workspace, collections)
-    if (items.length === 0) return { kind: "empty", message: "There are no web pages in this subject to organize yet." }
+    if (items.length === 0) return { kind: "empty", message: "There are no web pages in this project to organize yet." }
     const proposal = proposeSmartOrganization(items, { mode: "subject", workspace, collections }, { truncated })
     return {
       kind: "ready",
@@ -57,7 +57,7 @@ export function SubjectOrganize({
   open: boolean
   onOpenChange: (open: boolean) => void
   workspace: Workspace
-  /** Every collection (the store's pruned view); this subject's are picked out. */
+  /** Every collection (the store's pruned view); this project's are picked out. */
   collections: readonly Collection[]
   store: CollectionStore
   onReviewDuplicates?: () => void
@@ -91,7 +91,7 @@ export function SubjectOrganize({
     const batch = store.applyBatch(workspace.id, operations)
     if (!batch.ok) {
       // All or nothing: nothing was applied. The dialog stays open with the person's edits.
-      toast.error("Couldn't organize this subject", { description: "Nothing was changed — its tabs or collections changed while you were reviewing. Close this and try again." })
+      toast.error("Couldn't organize this project", { description: "Nothing was changed — its tabs or collections changed while you were reviewing. Close this and try again." })
       return
     }
     onOpenChange(false)

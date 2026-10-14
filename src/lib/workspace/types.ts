@@ -1,5 +1,6 @@
 import type { Tab } from "@/lib/tabs/types";
 import type { Section } from "@/lib/sections/types";
+import type { ProjectNote } from "@/lib/notes/notes";
 
 export type Group = {
   id: string;
@@ -20,17 +21,6 @@ export type WorkspaceBrief = {
   updatedAt: number;
 };
 
-/**
- * The local project a workspace is about (Hubble 1.6): a reference to an
- * authorized project by id, never a path. The project itself — its folder and
- * what agents may do in it — is the control plane's `AgentProject`, kept on
- * this device; see src/lib/workspace/project.ts.
- */
-export type WorkspaceProjectLink = {
-  projectId: string;
-  attachedAt: number;
-};
-
 export type Workspace = {
   id: string;
   name: string;
@@ -43,8 +33,12 @@ export type Workspace = {
   logo?: string;
   /** What the workspace is for and what is being worked on now, in the user's words (Hubble 1.5 — see src/lib/workspace/brief.ts). Absent until the user writes one. */
   brief?: WorkspaceBrief;
-  /** The project attached to this workspace (Hubble 1.6 — see src/lib/workspace/project.ts). Absent until one is attached. */
-  project?: WorkspaceProjectLink;
+  /**
+   * Notes, excerpts and AI conversations kept without a web address (see
+   * src/lib/notes/notes.ts). Device-local, like a source's text. Absent until
+   * the first one.
+   */
+  notes?: ProjectNote[];
   createdAt: number;
   updatedAt: number;
 };

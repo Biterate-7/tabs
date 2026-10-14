@@ -43,8 +43,9 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  * another device — and only some of them know about stored content. So the
  * store itself is the authority, watched here:
  *
- *   - a tab that disappears takes its content out of reach at once: search,
- *     the reader and agents only ever look at a project's current tabs;
+ *   - an item that disappears takes its content out of reach at once:
+ *     search, the reader and the context builder only ever look at a
+ *     project's current items (its tabs and its notes);
  *   - the content itself stays until the next page load, because every Undo
  *     lives in this page — and a toast's Undo can be pressed long after the
  *     removal (Sonner pauses it while hovered or while the window is
@@ -58,16 +59,16 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  *     if the account changed meanwhile.
  *
  * Paths that know they are final still forget at once: Remove's toast
- * closing without Undo, and deleting a subject. All of it is idempotent.
+ * closing without Undo, and deleting a project. All of it is idempotent.
  */
 
 const CONCURRENCY = 3
 /** How long after a page load the orphaned-content sweep waits, so sync can settle first. */
 export const CONTENT_GRACE_MS = 60_000
 
-/** Every project's tab ids — what content may be kept for. */
+/** Every project's item ids — its tabs and its notes — what content may be kept for. */
 function presentTabs(store: WorkspaceStore): Map<string, Set<string>> {
-  return new Map(store.workspaces.map((workspace) => [workspace.id, new Set(workspace.tabs.map((tab) => tab.id))]))
+  return new Map(store.workspaces.map((workspace) => [workspace.id, new Set([...workspace.tabs.map((tab) => tab.id), ...(workspace.notes ?? []).map((note) => note.id)])]))
 }
 
 export type ResourceActions = {

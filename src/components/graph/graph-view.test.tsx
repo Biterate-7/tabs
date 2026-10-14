@@ -2,22 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GraphView } from "./graph-view";
-import { useAgentStore } from "@/hooks/use-agent-store";
 import type { Tab } from "@/lib/tabs/types";
 import type { WorkspaceStore } from "@/lib/workspace/types";
 
-/**
- * GraphView no longer mounts the agent domain — the shell does, and hands it
- * down, so that exactly one store and one observer exist however many
- * surfaces read agent work (see connectors/single-loop.test.ts). These tests
- * are about the graph rather than about agents, so this harness stands in for
- * the shell: a real store, and no observed sessions.
- */
-function GraphViewHarness(
-  props: Omit<React.ComponentProps<typeof GraphView>, "agentStore" | "agentSessionsAvailable">
-) {
-  const agentStore = useAgentStore();
-  return <GraphView {...props} agentStore={agentStore} agentSessionsAvailable={false} />;
+/** The graph view on its own, as the shell mounts it. */
+function GraphViewHarness(props: React.ComponentProps<typeof GraphView>) {
+  return <GraphView {...props} />;
 }
 
 function makeTab(over: Partial<Tab> & { id: string }): Tab {
@@ -139,14 +129,14 @@ describe("GraphView", () => {
 
   it("shows a filtered-out message when every connection filter is off", async () => {
     const user = userEvent.setup();
-    // Two tabs, same domain, same (only) workspace — domain and workspace
+    // Two tabs, same domain, same (only) project — domain and project
     // filters are both on by default, so both must be turned off to reach
     // zero edges (category/group are off by default; there's no manual link).
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     await user.click(screen.getByRole("checkbox", { name: /same domain/i }));
-    await user.click(screen.getByRole("checkbox", { name: /same workspace/i }));
+    await user.click(screen.getByRole("checkbox", { name: /same project/i }));
 
     expect(screen.getByText("No connections match the current filters.")).toBeTruthy();
   });

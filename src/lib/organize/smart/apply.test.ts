@@ -57,7 +57,7 @@ function proposalFor(store: WorkspaceStore) {
 const allTabs = (store: WorkspaceStore) => store.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => `${workspace.name}: ${tab.title}`)).sort();
 
 describe("applySmartToSubjects", () => {
-  it("adds each group's pages as sources to the right subject, creating only what is missing", () => {
+  it("adds each group's pages as sources to the right project, creating only what is missing", () => {
     const before = baseStore();
     let proposal = proposalFor(before);
     const revolution = proposal.groups.find((group) => group.name === "French Revolution")!;
@@ -79,12 +79,12 @@ describe("applySmartToSubjects", () => {
     expect(applied.store.currentId).toBe("home");
     expect(allTabs(applied.store).some((line) => line.includes("Weekend"))).toBe(false);
     expect(applied.results.find((result) => result.name === "French Revolution")).toMatchObject({ targetId: "history", created: false, added: 2, alreadyThere: 1 });
-    expect(describeApplied(applied.results, "open-tabs")).toEqual({ title: "Organized 4 pages into 2 subjects (1 new)", details: ["1 already there"] });
+    expect(describeApplied(applied.results, "open-tabs")).toEqual({ title: "Organized 4 pages into 2 projects (1 new)", details: ["1 already there"] });
     // Original state untouched (pure).
     expect(before).toEqual(baseStore());
   });
 
-  it("is safe to run twice: nothing is duplicated and no second subject is made", () => {
+  it("is safe to run twice: nothing is duplicated and no second project is made", () => {
     const first = applySmartToSubjects(baseStore(), proposalFor(baseStore()), OPTIONS).store;
     // Run again against the same open tabs — the pages are now saved, so they are left out by default…
     const again = proposalFor(first);
@@ -97,7 +97,7 @@ describe("applySmartToSubjects", () => {
     expect(second.results.every((result) => result.added === 0)).toBe(true);
   });
 
-  it("uses an existing subject with the group's name instead of creating a twin", () => {
+  it("uses an existing project with the group's name instead of creating a twin", () => {
     let proposal = proposalFor(baseStore());
     const group = proposal.groups.find((entry) => entry.name === "Projectile motion")!;
     proposal = renameGroup(proposal, group.id, "  physics ");
@@ -106,7 +106,7 @@ describe("applySmartToSubjects", () => {
     expect(applied.results.find((result) => result.groupId === group.id)).toMatchObject({ targetId: "home", created: false, added: 2 });
   });
 
-  it("reports a group whose subject disappeared and still applies the others", () => {
+  it("reports a group whose project disappeared and still applies the others", () => {
     let proposal = proposalFor(baseStore());
     const revolution = proposal.groups.find((group) => group.name === "French Revolution")!;
     proposal = setDestination(proposal, revolution.id, { kind: "subject", workspaceId: "deleted-meanwhile" });
@@ -125,7 +125,7 @@ describe("applySmartToSubjects", () => {
     expect(applied.results).toEqual([]);
   });
 
-  it("turns the untouched default into the first subject, like New subject does", () => {
+  it("turns the untouched default into the first project, like New project does", () => {
     const fresh: WorkspaceStore = { version: 1, currentId: "d", workspaces: [{ ...createDefaultWorkspace(), id: "d" }] };
     const { items } = itemsFromBrowserTabs(OPEN, fresh.workspaces);
     const proposal = proposeSmartOrganization(items, { mode: "open-tabs", subjects: [] });
@@ -161,7 +161,7 @@ describe("undoSmartToSubjects", () => {
     expect(undone.keptSubjects).toEqual([]);
   });
 
-  it("only takes back what it added: later work survives, and a created subject someone used is kept", () => {
+  it("only takes back what it added: later work survives, and a created project someone used is kept", () => {
     const applied = applySmartToSubjects(baseStore(), proposalFor(baseStore()), OPTIONS);
     const created = applied.store.workspaces.find((workspace) => workspace.name === "Projectile motion")!;
     const later: WorkspaceStore = {
@@ -208,7 +208,7 @@ describe("undoSmartToSubjects", () => {
     expect(undone.store).toEqual(baseStore());
   });
 
-  it("keeps an added source the person has since moved, noted or starred — and the subject holding it", () => {
+  it("keeps an added source the person has since moved, noted or starred — and the project holding it", () => {
     const applied = applySmartToSubjects(baseStore(), proposalFor(baseStore()), OPTIONS);
     const created = applied.store.workspaces.find((workspace) => workspace.name === "Projectile motion")!;
     const lab = created.tabs.find((entry) => entry.title === "Projectile motion lab")!;
@@ -234,7 +234,7 @@ describe("undoSmartToSubjects", () => {
     expect(taken).not.toContain(revolutionTab.id);
   });
 
-  it("keeps a new subject the person renamed or described, even once it is empty again", () => {
+  it("keeps a new project the person renamed or described, even once it is empty again", () => {
     const applied = applySmartToSubjects(baseStore(), proposalFor(baseStore()), OPTIONS);
     const edited: WorkspaceStore = {
       ...applied.store,
@@ -384,7 +384,7 @@ describe("smartCollectionOperations", () => {
     expect(smartCollectionOperations(again, workspace, batch.collections).operations).toEqual([]);
   });
 
-  it("folds two groups with one name into one collection and skips tabs that left the subject", () => {
+  it("folds two groups with one name into one collection and skips tabs that left the project", () => {
     let proposal = plan([]);
     const [first, second] = proposal.groups;
     proposal = renameGroup(proposal, second!.id, first!.name.toUpperCase());

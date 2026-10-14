@@ -1,10 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { ArrowRight, CheckSquare, ChevronDown, ChevronLeft, PanelLeftOpen, Play, Search, Sparkles, Trash2, X } from "lucide-react"
+import { useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
-import { AgentIcon } from "@/components/agents/agent-icon"
-import { AskAiMenu } from "@/components/agents/agent-actions"
+import { useMemoryActions } from "@/components/memory/memory-actions"
+import { NoteCard } from "@/components/memory/note-card"
+import { NoteDialog } from "@/components/memory/note-dialog"
+import { ProviderBadge } from "@/components/memory/provider-mark"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
@@ -17,103 +19,100 @@ import { SourceDetailsDialog } from "./source-details-dialog"
 import type { TranscriptSeek } from "./video-transcript"
 import { ProjectDropOverlay, useExternalDrop } from "./project-drop-zone"
 import { SourceKindIcon } from "./source-status"
-import { useLastTask } from "@/hooks/use-last-task"
 import { useProjectActivity } from "@/hooks/use-project-activity"
 import { useProjectContents } from "@/hooks/use-project-contents"
-import { tabsContext, workspaceContext } from "@/lib/agents/command-centre/working-context"
-import { agentDisplayName } from "@/lib/agents/visual/identity"
-import { aiName } from "@/lib/product/ai-vocabulary"
 import { subjectName } from "@/lib/product/subjects"
 import { describeLocation, markMatches, searchProject, searchTerms } from "@/lib/resources/search"
 import { formatTimestamp } from "@/lib/resources/transcript"
 import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube"
-import { needsAttention, projectSources } from "@/lib/resources/ingest"
-import { projectState } from "@/lib/projects/state"
-import { recordLoopMilestone } from "@/lib/product/loop-log"
+import { needsAttention } from "@/lib/resources/ingest"
+import { knowledgeCounts, knowledgeItemsOf, refKey } from "@/lib/memory/items"
+import { aiProviderName } from "@/lib/providers/registry"
 import { cn } from "@/lib/utils"
+import type { CaptureMode } from "@/components/memory/capture-dialog"
 import type { DroppedResources } from "@/lib/resources/drop"
 import type { IngestOutcome } from "@/lib/resources/ingest"
+import type { KnowledgeItem, KnowledgeItemRef } from "@/lib/memory/items"
+import type { ProjectNote } from "@/lib/notes/notes"
 import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
-import type { AgentProviderId } from "@/lib/agents/connectors/types"
+import type { AiProviderId } from "@/lib/providers/registry"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 
-type Filter = "all" | "webpage" | "pdf" | "video" | "attention"
+type Filter = "all" | "conversation" | "source" | "note" | "attention"
 
-const FILTERS: { id: Filter; label: string; matches: (tab: Tab) => boolean }[] = [
+const FILTERS: { id: Filter; label: string; matches: (item: KnowledgeItem, tab?: Tab) => boolean }[] = [
   { id: "all", label: "All", matches: () => true },
-  { id: "webpage", label: "Web pages", matches: (tab) => tab.resource!.kind === "webpage" || tab.resource!.kind === "document" || tab.resource!.kind === "unknown" },
-  { id: "pdf", label: "PDFs", matches: (tab) => tab.resource!.kind === "pdf" },
-  { id: "video", label: "Videos", matches: (tab) => tab.resource!.kind === "youtube" || tab.resource!.kind === "video" },
-  { id: "attention", label: "Needs attention", matches: (tab) => needsAttention(tab.resource) },
+  { id: "conversation", label: "AI conversations", matches: (item) => item.type === "conversation" },
+  { id: "source", label: "Sources", matches: (item) => item.type !== "conversation" && item.type !== "note" && item.type !== "excerpt" },
+  { id: "note", label: "Notes", matches: (item) => item.type === "note" || item.type === "excerpt" },
+  { id: "attention", label: "Needs attention", matches: (_item, tab) => Boolean(tab && needsAttention(tab.resource)) },
 ]
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
+/** What the project page needs to change a note. */
+export type NoteActions = {
+  update: (noteId: string, patch: { title?: string; tags?: string[] }) => void
+  saveText: (noteId: string, text: string) => Promise<boolean>
+  remove: (noteIds: string[]) => void
+}
+
 export type ProjectHomeProps = {
   workspace: Workspace
   now: number
-  /** The one ingestion pipeline. Returns each input's outcome. */
+  /** The one ingestion pipeline for links. Returns each input's outcome. */
   onAddSources: (inputs: ResourceInput[], origin: ResourceOrigin) => IngestOutcome[]
   resources: ResourceActions
+  notes: NoteActions
   onRenameSource: (tabId: string, title: string) => void
   onRemoveSources: (tabIds: string[]) => void
   onOpenSource: (tab: Tab) => void
   /** Open a resource at an address Hubble built for it — a video at a moment. */
   onOpenSourceAt?: (tab: Tab, url: string) => void
-  /** "Ask AI" on one resource: a chat about it. */
-  onUseInTask?: (tab: Tab) => void
-  onOpenTask?: (sessionId: string) => void
   onUpdateBrief?: (brief: { description: string; focus: string }) => void
-  /** Where "Connect AI" goes, shown only while no AI is connected. */
-  onConnectAI?: () => void
-  /** The connected local folder's name, when the subject has one — its files. */
-  folderName?: string
-  /** AIs connected in Hubble (the roster). */
-  agents: readonly { provider: AgentProviderId; name: string }[]
+  /** Opens the capture dialog: paste a conversation (optionally for a saved link), write a note, import a file. */
+  onCapture: (mode: CaptureMode, prefill?: { link?: string; provider?: AiProviderId }) => void
   /** Shown under the empty state, behind "Paste a list of tabs": the older dump-everything input. */
   emptyExtra?: ReactNode
   /**
    * Present once Hubble for Chrome has said it is here: a tab's right-click
-   * menu ("Add to <subject>") and the shortcut add Chrome tabs to this
-   * subject — the one on screen.
+   * menu ("Add to <project>") and the shortcut add Chrome tabs to this
+   * project — the one on screen.
    */
   quickAdd?: { shortcut: string }
+  /** An item to open on arrival (from Search or Home): its reader, at a conversation's turn when given. A new nonce opens it again. */
+  focusItem?: { ref: KnowledgeItemRef; turn?: number; terms?: readonly string[]; nonce: number }
 }
 
 /**
- * A subject's page.
+ * A project's Knowledge Centre.
  *
- *     History HL                                   [+ Add ▾]  [Ask AI ▾]
+ *     History IA                            [+ Add ▾]  [Use in AI chat]
  *     The causes and consequences of WW1
  *
- *     Continue with Claude · Summary of the Treaty of Versailles   →
- *
- *     Resources  12                        [Select]   [Search History HL…]
+ *     12 items · 4 AI conversations (ChatGPT, Claude) · 6 sources · 2 notes
+ *     [All] [AI conversations] [Sources] [Notes]        [Select] [Search…]
  *     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
- *     │ Treaty of …  │ │ JSTOR article│ │ YouTube …    │
+ *     │ ◇ Causes of… │ │ JSTOR article│ │ My thesis    │
  *     └──────────────┘ └──────────────┘ └──────────────┘
  *
- *     Recent activity ▸
- *
- * The subject (a workspace — see lib/product/subjects.ts) leads with its
- * name and the two things to do: put something in, and ask AI about it.
- * Ask AI uses the selected resources when some are selected, else the
- * whole subject; which AI, session or context is never asked. Collections
- * and the rest of the subject's tabs follow below, in the workspace view.
- *
- * The whole page is still a drop target for links and the address bar
- * dragged from Chrome — it just doesn't need a paragraph saying so.
+ * Everything the project knows, whichever AI app or website it came from,
+ * in one place — and the two things to do with it: bring more in, and use
+ * it in an AI chat. Saved tabs that are not sources follow below, in the
+ * workspace view. The whole page is still a drop target for links dragged
+ * from Chrome.
  */
 export function ProjectHome(props: ProjectHomeProps) {
   const { workspace, now, resources } = props
-  const sources = useMemo(() => projectSources(workspace).sort((a, b) => (b.resource!.addedAt ?? 0) - (a.resource!.addedAt ?? 0)), [workspace])
-  const lastTask = useLastTask(workspace.id)
+  const memory = useMemoryActions()
+  const items = useMemo(() => knowledgeItemsOf(workspace), [workspace])
+  const counts = useMemo(() => knowledgeCounts(items), [items])
   const events = useProjectActivity(workspace.id)
-  const state = useMemo(() => projectState({ workspace, ...(lastTask ? { lastTask } : {}), events }), [workspace, lastTask, events])
   const [addOpen, setAddOpen] = useState(false)
-  const [details, setDetails] = useState<{ tabId: string; rename: boolean; seek?: TranscriptSeek } | null>(null)
+  const [details, setDetails] = useState<{ tabId: string; rename: boolean; seek?: TranscriptSeek; turn?: number } | null>(null)
+  const [openNote, setOpenNote] = useState<{ noteId: string; turn?: number } | null>(null)
   const [filter, setFilter] = useState<Filter>("all")
   const [query, setQuery] = useState("")
   const [showActivity, setShowActivity] = useState(false)
@@ -123,30 +122,38 @@ export function ProjectHome(props: ProjectHomeProps) {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [pasteOpen, setPasteOpen] = useState(false)
-
-  // Coming back to a subject with work in it is the return the loop log counts — once a day per subject, never sent.
-  const returning = Boolean(lastTask)
-  useEffect(() => {
-    if (returning) recordLoopMilestone("project_returned", { once: `${workspace.id}:${new Date().toDateString()}` })
-  }, [returning, workspace.id])
+  // Arriving with an item to open (Search, Home): opened once per request — adjusting state during render, not in an effect.
+  const [seenFocus, setSeenFocus] = useState<number | undefined>(undefined)
+  const [focusTerms, setFocusTerms] = useState<readonly string[]>([])
+  const focus = props.focusItem
+  if (focus && focus.nonce !== seenFocus) {
+    setSeenFocus(focus.nonce)
+    setFocusTerms(focus.terms ?? [])
+    if (focus.ref.kind === "note") setOpenNote({ noteId: focus.ref.noteId, ...(focus.turn !== undefined ? { turn: focus.turn } : {}) })
+    else setDetails({ tabId: focus.ref.tabId, rename: false, ...(focus.turn !== undefined ? { turn: focus.turn } : {}) })
+  }
 
   const projectName = subjectName(workspace)
-  const working = sources.filter((tab) => tab.resource!.status === "pending" || tab.resource!.status === "processing").length
+  const tabById = useMemo(() => new Map(workspace.tabs.map((tab) => [tab.id, tab])), [workspace.tabs])
+  const noteById = useMemo(() => new Map((workspace.notes ?? []).map((note) => [note.id, note])), [workspace.notes])
+  const working = items.filter((item) => item.status === "pending" || item.status === "processing").length
   const searching = query.trim().length > 1
   const contents = useProjectContents(useMemo(() => (searching ? [workspace] : []), [searching, workspace]))
-  const tabById = useMemo(() => new Map(workspace.tabs.map((tab) => [tab.id, tab])), [workspace.tabs])
   const titleOf = (tabId: string) => {
     const tab = tabById.get(tabId)
     return tab ? tab.title?.trim() || tab.domain : undefined
   }
 
+  const activeFilter = FILTERS.find((entry) => entry.id === filter) ?? FILTERS[0]!
+  const visible = items.filter((item) => activeFilter.matches(item, item.ref.kind === "source" ? tabById.get(item.ref.tabId) : undefined))
+
   const hits = useMemo(() => {
     if (!searching) return []
-    const results = events.filter((event) => event.kind === "task").map((event) => ({ id: event.id, text: `${agentDisplayName(event.provider)} ${event.headline ?? ""} ${event.task ?? ""}` }))
-    // A kind filter narrows search too; agent work is only "All".
-    const shown = filter === "all" ? workspace.tabs : workspace.tabs.filter((tab) => tab.resource && (FILTERS.find((entry) => entry.id === filter) ?? FILTERS[0]!).matches(tab))
-    return searchProject({ query, tabs: shown, contents: contents.get(workspace.id) ?? new Map(), ...(filter === "all" ? { results } : {}), limit: 30 })
-  }, [searching, query, filter, workspace.tabs, workspace.id, contents, events])
+    // A filter narrows search too.
+    const shownTabs = filter === "all" ? workspace.tabs : workspace.tabs.filter((tab) => visible.some((item) => item.ref.kind === "source" && item.ref.tabId === tab.id))
+    const shownNotes = (workspace.notes ?? []).filter((note) => filter === "all" || visible.some((item) => item.ref.kind === "note" && item.ref.noteId === note.id))
+    return searchProject({ query, tabs: shownTabs, contents: contents.get(workspace.id) ?? new Map(), notes: shownNotes, limit: 30 })
+  }, [searching, query, filter, workspace.tabs, workspace.notes, workspace.id, contents, visible])
 
   const handleDrop = (dropped: DroppedResources) => {
     if (dropped.inputs.length > 0) {
@@ -154,14 +161,14 @@ export function ProjectHome(props: ProjectHomeProps) {
       setDropNotice(null)
     } else if (dropped.files.length > 0) {
       // A file has no address to keep; it belongs to a PDF resource waiting for it.
-      const waiting = sources.filter((tab) => tab.resource!.kind === "pdf" && tab.resource!.status !== "ready")
+      const waiting = workspace.tabs.filter((tab) => tab.resource?.kind === "pdf" && tab.resource.status !== "ready")
       const pdf = dropped.files.find((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))
       const match = pdf ? (waiting.find((tab) => tab.resource!.meta?.fileName === pdf.name || decodeURIComponent(tab.url).toLowerCase().endsWith(`/${pdf.name.toLowerCase()}`)) ?? (waiting.length === 1 ? waiting[0] : undefined)) : undefined
       if (pdf && match) {
         void resources.attachPdf(workspace.id, match.id, pdf)
         setDropNotice(null)
       } else {
-        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "That couldn't be added. Try a link instead.")
+        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "To bring in a conversation export or a text file, use Add → Import a file.")
       }
     } else {
       setDropNotice("That couldn't be added. Try a link instead.")
@@ -169,36 +176,46 @@ export function ProjectHome(props: ProjectHomeProps) {
   }
   const { active } = useExternalDrop({ enabled: true, onDrop: handleDrop })
 
-  // Only the filters that would show something different from "All".
-  const kindsPresent = FILTERS.filter((entry) => entry.id !== "all" && sources.some(entry.matches))
+  const kindsPresent = FILTERS.filter((entry) => entry.id !== "all" && items.some((item) => entry.matches(item, item.ref.kind === "source" ? tabById.get(item.ref.tabId) : undefined)))
   const filters = kindsPresent.length > 1 || kindsPresent.some((entry) => entry.id === "attention") ? [FILTERS[0]!, ...kindsPresent] : []
-  const visible = sources.filter((FILTERS.find((entry) => entry.id === filter) ?? FILTERS[0]!).matches)
   const detailTab = details ? (tabById.get(details.tabId) ?? null) : null
+  const detailNote: ProjectNote | null = openNote ? (noteById.get(openNote.noteId) ?? null) : null
+
+  const reuse = (refs: readonly KnowledgeItemRef[]) => memory?.reuse({ workspaceId: workspace.id, refs })
+  const pasteFor = (tab: Tab) => props.onCapture("conversation", { link: tab.url, ...(tab.resource?.meta?.provider ? { provider: tab.resource.meta.provider } : {}) })
   const cardActions = {
     onOpen: props.onOpenSource,
-    ...(props.onUseInTask ? { onUseInTask: props.onUseInTask } : {}),
+    ...(memory ? { onUseInAi: (tab: Tab) => reuse([{ kind: "source", tabId: tab.id }]) } : {}),
+    onPasteConversation: pasteFor,
     onRename: (tab: Tab) => setDetails({ tabId: tab.id, rename: true }),
     onRemove: (tab: Tab) => props.onRemoveSources([tab.id]),
     onRetry: (tab: Tab) => resources.retry(workspace.id, tab.id),
     onDetails: (tab: Tab) => setDetails({ tabId: tab.id, rename: false }),
     onCopyUrl: (tab: Tab) => void navigator.clipboard?.writeText(tab.url).catch(() => undefined),
   }
-  // Ask AI works on what is selected, or the whole subject.
-  const chosen = [...selected].filter((id) => tabById.has(id))
-  const askContext = chosen.length > 0 ? tabsContext(workspace.id, chosen) : workspaceContext(workspace.id)
+  const chosen = items.filter((item) => selected.has(refKey(item.ref)))
 
   function stopSelecting() {
     setSelecting(false)
     setSelected(new Set())
   }
 
-  function toggle(id: string) {
+  function toggle(ref: KnowledgeItemRef) {
     setSelected((current) => {
       const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      const key = refKey(ref)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
+  }
+
+  function removeChosen() {
+    const tabIds = chosen.flatMap((item) => (item.ref.kind === "source" ? [item.ref.tabId] : []))
+    const noteIds = chosen.flatMap((item) => (item.ref.kind === "note" ? [item.ref.noteId] : []))
+    if (tabIds.length > 0) props.onRemoveSources(tabIds)
+    if (noteIds.length > 0) props.notes.remove(noteIds)
+    stopSelecting()
   }
 
   const addMenu = (size: "default" | "lg", variant: "default" | "secondary") => (
@@ -206,17 +223,20 @@ export function ProjectHome(props: ProjectHomeProps) {
       subjectName={projectName}
       onAdd={(inputs) => props.onAddSources(inputs, "manual")}
       onOpenLink={() => setAddOpen(true)}
+      onCapture={(mode) => props.onCapture(mode)}
       size={size}
       variant={variant}
       {...(props.quickAdd ? { quickAdd: props.quickAdd } : {})}
     />
   )
 
+  const providerNames = [...counts.providers]
+
   return (
     <section aria-label={projectName} className="mb-6 flex flex-col gap-8" data-project-home={workspace.id}>
       <ProjectDropOverlay active={active} projectName={projectName} />
 
-      {/* The subject, and the two things to do with it. */}
+      {/* The project, and the two things to do with it. */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="truncate text-statement text-foreground" data-subject-title>
@@ -246,38 +266,20 @@ export function ProjectHome(props: ProjectHomeProps) {
           ) : (
             props.onUpdateBrief && (
               <button type="button" className="mt-1 text-body-sm text-tertiary hover:text-foreground" onClick={() => setEditingBrief(true)}>
-                Add details
+                Add what this project is for
               </button>
             )
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {addMenu("lg", "default")}
-          <AskAiMenu context={askContext} variant="secondary" label={chosen.length > 0 ? `Ask AI · ${chosen.length}` : "Ask AI"} />
-          {props.agents.length === 0 && props.onConnectAI && (
-            <Button type="button" size="sm" variant="ghost" onClick={props.onConnectAI}>
-              Connect AI
+          {memory && items.length + workspace.tabs.length > 0 && (
+            <Button type="button" size="lg" variant="secondary" onClick={() => reuse(chosen.length > 0 ? chosen.map((item) => item.ref) : [])}>
+              <MessageSquareShare /> {chosen.length > 0 ? `Use ${chosen.length} in AI chat` : "Use in AI chat"}
             </Button>
           )}
         </div>
       </div>
-
-      {/* Where the last AI chat was left: one line, one click. */}
-      {state.lastTask && props.onOpenTask && (
-        <button
-          type="button"
-          onClick={() => props.onOpenTask!(state.lastTask!.sessionId)}
-          className="-mt-3 flex min-w-0 items-center gap-2 self-start rounded-md border border-subtle bg-card px-3 py-2 text-left transition-colors hover:border-strong focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
-          data-project-left-off
-        >
-          <AgentIcon connector={state.lastTask.provider} size="xs" />
-          <span className="shrink-0 text-body-sm text-foreground">Continue with {aiName(state.lastTask.provider)}</span>
-          <span className="min-w-0 truncate text-body-sm text-tertiary" title={state.lastTask.task}>
-            · {state.lastTask.headline}
-          </span>
-          <ArrowRight aria-hidden className="size-3.5 shrink-0 text-tertiary" />
-        </button>
-      )}
 
       {dropNotice && (
         <p role="alert" className="-mt-3 flex items-center gap-2 text-body-sm text-destructive">
@@ -288,11 +290,19 @@ export function ProjectHome(props: ProjectHomeProps) {
         </p>
       )}
 
-      {/* Resources. A subject that only has saved tabs (from before resources) shows them below, not "No resources yet". */}
-      {sources.length === 0 && workspace.tabs.length > 0 ? null : sources.length === 0 ? (
-        <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-strong px-5 py-8" data-project-empty>
-          <p className="text-h2 text-foreground">No resources yet.</p>
-          {addMenu("default", "secondary")}
+      {/* The knowledge. A project that only has saved tabs (from a dump) shows them below, not "Nothing saved yet". */}
+      {items.length === 0 && workspace.tabs.length > 0 ? (
+        <CaptureInvite projectName={projectName} onCapture={props.onCapture} compact />
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-start gap-4 rounded-md border border-dashed border-strong px-5 py-8" data-project-empty>
+          <div>
+            <p className="text-h2 text-foreground">Nothing saved in {projectName} yet.</p>
+            <p className="mt-1 max-w-prose text-body-sm text-muted-foreground">
+              Bring in what you learn: AI conversations from ChatGPT, Claude, Gemini or Perplexity, pages and PDFs you read, and your own notes. Then find it here and use it in your next AI chat.
+            </p>
+          </div>
+          <CaptureInvite projectName={projectName} onCapture={props.onCapture} />
+          <div className="flex flex-wrap gap-2">{addMenu("default", "secondary")}</div>
           {props.quickAdd && (
             <p className="hidden text-meta text-tertiary md:block" data-add-hint data-quick-add-target={projectName}>
               In Chrome: right-click a tab → Add to {projectName}
@@ -321,13 +331,22 @@ export function ProjectHome(props: ProjectHomeProps) {
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-h2 text-foreground">Resources</h2>
+            <h2 className="text-h2 text-foreground">Knowledge</h2>
             <span className="text-meta text-tertiary" data-project-counts>
-              {sources.length}
+              {items.length}
+            </span>
+            <span className="text-meta text-tertiary max-sm:hidden" data-knowledge-summary>
+              {[
+                counts.conversations > 0 ? `${plural(counts.conversations, "AI conversation", "AI conversations")}${providerNames.length > 0 ? ` (${providerNames.map(aiProviderName).join(", ")})` : ""}` : "",
+                counts.sources > 0 ? plural(counts.sources, "source", "sources") : "",
+                counts.notes > 0 ? plural(counts.notes, "note", "notes") : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
             {working > 0 && (
               <span role="status" className="text-meta text-muted-foreground">
-                · Reading {plural(working, "resource", "resources")}…
+                · Reading {plural(working, "item", "items")}…
               </span>
             )}
             <div className="ml-auto flex w-full items-center gap-1.5 sm:w-auto">
@@ -348,7 +367,7 @@ export function ProjectHome(props: ProjectHomeProps) {
             </div>
           </div>
           {filters.length > 0 && (
-            <div className="-mt-1 flex flex-wrap gap-1" role="group" aria-label="Show resources">
+            <div className="-mt-1 flex flex-wrap gap-1" role="group" aria-label="Show">
               {filters.map((entry) => (
                 <Button key={entry.id} type="button" size="xs" variant={filter === entry.id ? "secondary" : "ghost"} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
                   {entry.label}
@@ -356,22 +375,19 @@ export function ProjectHome(props: ProjectHomeProps) {
               ))}
             </div>
           )}
+          {counts.conversations === 0 && <CaptureInvite projectName={projectName} onCapture={props.onCapture} compact />}
           {selecting && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-subtle bg-card px-3 py-2" role="toolbar" aria-label="Selected resources">
-              <span className="text-body-sm text-foreground">{chosen.length > 0 ? `${chosen.length} selected` : "Select resources to ask AI about"}</span>
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-subtle bg-card px-3 py-2" role="toolbar" aria-label="Selected items">
+              <span className="text-body-sm text-foreground">{chosen.length > 0 ? `${chosen.length} selected` : "Select items to use in an AI chat"}</span>
               <span className="min-w-0 flex-1" />
               {chosen.length > 0 && (
                 <>
-                  <AskAiMenu context={askContext} size="sm" />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      props.onRemoveSources(chosen)
-                      stopSelecting()
-                    }}
-                  >
+                  {memory && (
+                    <Button type="button" size="sm" variant="secondary" onClick={() => reuse(chosen.map((item) => item.ref))}>
+                      <MessageSquareShare /> Use in AI chat
+                    </Button>
+                  )}
+                  <Button type="button" size="sm" variant="ghost" onClick={removeChosen}>
                     <Trash2 /> Remove
                   </Button>
                 </>
@@ -384,32 +400,44 @@ export function ProjectHome(props: ProjectHomeProps) {
               terms={searchTerms(query)}
               titleOf={titleOf}
               tabOf={(tabId) => tabById.get(tabId)}
-              onOpen={(tabId, seek) => setDetails({ tabId, rename: false, ...(seek ? { seek } : {}) })}
+              noteOf={(noteId) => noteById.get(noteId)}
+              onOpen={(tabId, seek, turn) => setDetails({ tabId, rename: false, ...(seek ? { seek } : {}), ...(turn !== undefined ? { turn } : {}) })}
+              onOpenNote={(noteId, turn) => setOpenNote({ noteId, ...(turn !== undefined ? { turn } : {}) })}
               {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
-              onOpenTask={props.onOpenTask}
-              events={events}
               working={working}
             />
           ) : visible.length === 0 ? (
             <p className="text-body-sm text-muted-foreground">Nothing here.</p>
           ) : (
-            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3" aria-label={`Resources in ${projectName}`}>
-              {visible.map((tab) => (
-                <ResourceCard
-                  key={tab.id}
-                  tab={tab}
-                  now={now}
-                  actions={cardActions}
-                  {...(selecting ? { selection: { selected: selected.has(tab.id), onToggle: () => toggle(tab.id) } } : {})}
-                />
-              ))}
+            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3" aria-label={`Knowledge in ${projectName}`}>
+              {visible.map((item) => {
+                const selection = selecting ? { selected: selected.has(refKey(item.ref)), onToggle: () => toggle(item.ref) } : undefined
+                if (item.ref.kind === "note") {
+                  const note = noteById.get(item.ref.noteId)
+                  if (!note) return null
+                  return (
+                    <NoteCard
+                      key={item.id}
+                      note={note}
+                      now={now}
+                      onOpen={() => setOpenNote({ noteId: note.id })}
+                      {...(memory ? { onUseInAi: () => reuse([{ kind: "note", noteId: note.id }]) } : {})}
+                      onDelete={() => props.notes.remove([note.id])}
+                      {...(selection ? { selection } : {})}
+                    />
+                  )
+                }
+                const tab = tabById.get(item.ref.tabId)
+                if (!tab) return null
+                return <ResourceCard key={tab.id} tab={tab} now={now} actions={cardActions} {...(selection ? { selection } : {})} />
+              })}
             </ul>
           )}
         </div>
       )}
 
-      {/* Recent activity: there when wanted, not in the way — and not at all until there is something in the subject. */}
-      {events.length > 0 && (workspace.tabs.length > 0 || state.lastTask) && (
+      {/* Recent activity: there when wanted, not in the way — and not at all until there is something in the project. */}
+      {events.length > 0 && workspace.tabs.length + items.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <button
             type="button"
@@ -422,7 +450,7 @@ export function ProjectHome(props: ProjectHomeProps) {
           </button>
           {showActivity && (
             <>
-              <ProjectActivity events={events} projectName={projectName} titleOf={titleOf} now={now} limit={showAllActivity ? undefined : 6} {...(props.onOpenTask ? { onOpenTask: props.onOpenTask } : {})} />
+              <ProjectActivity events={events} projectName={projectName} titleOf={(id) => titleOf(id) ?? noteById.get(id)?.title} now={now} limit={showAllActivity ? undefined : 6} />
               {events.length > 6 && (
                 <Button type="button" size="xs" variant="ghost" className="-ml-1.5 w-fit" onClick={() => setShowAllActivity((value) => !value)}>
                   {showAllActivity ? "Show less" : "Show all activity"}
@@ -445,11 +473,85 @@ export function ProjectHome(props: ProjectHomeProps) {
           onOpen={props.onOpenSource}
           onAttachPdf={async (tab, file) => void (await resources.attachPdf(workspace.id, tab.id, file))}
           onAttachTranscript={(tab, text) => resources.attachTranscript(workspace.id, tab.id, text)}
+          onPasteConversation={(tab) => {
+            setDetails(null)
+            pasteFor(tab)
+          }}
           {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
           {...(details?.seek ? { seek: details.seek } : {})}
+          {...(details?.turn !== undefined ? { focusTurn: details.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}
+        />
+      )}
+      {detailNote && (
+        <NoteDialog
+          note={detailNote}
+          workspaceId={workspace.id}
+          onOpenChange={(open) => !open && setOpenNote(null)}
+          onUpdate={(note, patch) => props.notes.update(note.id, patch)}
+          onSaveText={(note, text) => props.notes.saveText(note.id, text)}
+          onDelete={(note) => {
+            setOpenNote(null)
+            props.notes.remove([note.id])
+          }}
+          {...(openNote?.turn !== undefined ? { focusTurn: openNote.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}
         />
       )}
     </section>
+  )
+}
+
+/**
+ * How AI conversations get into a project — said where it is needed, in one
+ * line each. Saving from the page is Hubble for Chrome's; this page can
+ * paste and import.
+ */
+function CaptureInvite({ projectName, onCapture, compact = false }: { projectName: string; onCapture: ProjectHomeProps["onCapture"]; compact?: boolean }) {
+  if (compact) {
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-subtle bg-card px-3 py-2 text-body-sm text-muted-foreground" data-capture-invite>
+        <span>No AI conversations in {projectName} yet.</span>
+        <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("conversation")}>
+          <ClipboardPaste /> Paste one
+        </Button>
+        <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("import")}>
+          Import an export
+        </Button>
+        <span className="text-tertiary">or use Save to Hubble in Hubble for Chrome on ChatGPT, Claude, Gemini or Perplexity.</span>
+      </p>
+    )
+  }
+  return (
+    <ul className="grid w-full gap-2 sm:grid-cols-3" data-capture-invite>
+      <li className="rounded-md border border-subtle bg-card p-3">
+        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
+          <Puzzle aria-hidden className="size-3.5" /> Save from an AI app
+        </p>
+        <p className="mt-1 text-meta text-muted-foreground">On ChatGPT, Claude, Gemini or Perplexity, open Hubble for Chrome and choose Save to Hubble.</p>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {(["chatgpt", "claude", "gemini", "perplexity"] as const).map((provider) => (
+            <ProviderBadge key={provider} provider={provider} />
+          ))}
+        </div>
+      </li>
+      <li className="rounded-md border border-subtle bg-card p-3">
+        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
+          <ClipboardPaste aria-hidden className="size-3.5" /> Paste or import
+        </p>
+        <p className="mt-1 text-meta text-muted-foreground">Paste any conversation, or import a ChatGPT or Claude data export.</p>
+        <Button type="button" size="xs" variant="secondary" className="mt-2" onClick={() => onCapture("conversation")}>
+          Paste a conversation
+        </Button>
+      </li>
+      <li className="rounded-md border border-subtle bg-card p-3">
+        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
+          <NotebookPen aria-hidden className="size-3.5" /> Write it down
+        </p>
+        <p className="mt-1 text-meta text-muted-foreground">Decisions, open questions, a passage worth keeping.</p>
+        <Button type="button" size="xs" variant="secondary" className="mt-2" onClick={() => onCapture("note")}>
+          Write a note
+        </Button>
+      </li>
+    </ul>
   )
 }
 
@@ -477,26 +579,26 @@ function SearchResults({
   terms,
   titleOf,
   tabOf,
+  noteOf,
   onOpen,
+  onOpenNote,
   onOpenAt,
-  onOpenTask,
-  events,
   working,
 }: {
   hits: ReturnType<typeof searchProject>
   terms: readonly string[]
   titleOf: (tabId: string) => string | undefined
   tabOf: (tabId: string) => Tab | undefined
-  onOpen: (tabId: string, seek?: TranscriptSeek) => void
+  noteOf: (noteId: string) => ProjectNote | undefined
+  onOpen: (tabId: string, seek?: TranscriptSeek, turn?: number) => void
+  onOpenNote: (noteId: string, turn?: number) => void
   onOpenAt?: (tab: Tab, url: string) => void
-  onOpenTask?: (sessionId: string) => void
-  events: ReturnType<typeof useProjectActivity>
-  /** Resources still being read: their content can't be searched yet. */
+  /** Items still being read: their content can't be searched yet. */
   working: number
 }) {
   const stillReading = working > 0 && (
     <p className="text-meta text-tertiary">
-      Still reading {working === 1 ? "1 resource" : `${working} resources`} — {working === 1 ? "it" : "they"} can be searched once ready.
+      Still reading {working === 1 ? "1 item" : `${working} items`} — {working === 1 ? "it" : "they"} can be searched once ready.
     </p>
   )
   if (hits.length === 0)
@@ -508,68 +610,77 @@ function SearchResults({
     )
   return (
     <div className="flex flex-col gap-1.5">
-    {stillReading}
-    <ul className="flex flex-col divide-y divide-subtle rounded-md border border-subtle" aria-label="Search results">
-      {hits.map((hit, index) => {
-        if (hit.type === "result") {
-          const event = events.find((entry) => entry.id === hit.id)
+      {stillReading}
+      <ul className="flex flex-col divide-y divide-subtle rounded-md border border-subtle" aria-label="Search results">
+        {hits.map((hit, index) => {
+          const location = hit.location
+          const turn = location.kind === "turn" ? location.turn : undefined
+          if (hit.type === "note") {
+            const note = noteOf(hit.noteId)
+            if (!note) return null
+            const where = describeLocation(location)
+            return (
+              <li key={`n-${hit.noteId}-${index}`} className="flex items-start gap-1 pr-2 hover:bg-surface-hover" data-search-hit={location.kind}>
+                <button type="button" className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none" onClick={() => onOpenNote(note.id, turn)}>
+                  <NotebookPen aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-body-sm text-foreground">
+                      {note.title}
+                      {where && <span className="text-tertiary"> — {where}</span>}
+                    </span>
+                    <span className="block text-meta text-muted-foreground">
+                      <Highlighted text={hit.snippet} terms={terms} />
+                    </span>
+                  </span>
+                  {note.provider ? <ProviderBadge provider={note.provider} className="mt-0.5" /> : null}
+                </button>
+              </li>
+            )
+          }
+          const tab = tabOf(hit.tabId)
+          const kind = tab?.resource?.kind
+          const moment = location.kind === "transcript" ? location : undefined
+          const at = moment?.start
+          const video = at !== undefined && tab ? parseYouTubeUrl(tab.url) : undefined
+          const where = moment ? undefined : describeLocation(location)
+          const provider = tab?.resource?.meta?.provider
           return (
-            <li key={`r-${hit.id}-${index}`} className="flex items-start gap-2 p-2">
-              {event?.provider && <AgentIcon connector={event.provider} size="xs" />}
-              <div className="min-w-0 flex-1">
-                <p className="text-body-sm text-foreground">{agentDisplayName(event?.provider)}&apos;s work</p>
-                <p className="text-meta text-muted-foreground">{hit.snippet}</p>
-              </div>
-              {event?.sessionId && onOpenTask && (
-                <Button type="button" size="xs" variant="ghost" onClick={() => onOpenTask(event.sessionId!)}>
-                  Review
+            <li key={`s-${hit.tabId}-${index}`} className="flex items-start gap-1 pr-2 hover:bg-surface-hover" data-search-hit={location.kind}>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none"
+                onClick={() => (tab?.resource ? onOpen(hit.tabId, moment ? { line: moment.line, ...(at !== undefined ? { seconds: at } : {}), nonce: ++seekNonce } : undefined, turn) : tab && onOpenAt?.(tab, tab.url))}
+              >
+                {kind && <SourceKindIcon kind={kind} className="mt-0.5" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-body-sm text-foreground">
+                    {titleOf(hit.tabId)}
+                    {where && <span className="text-tertiary"> — {where}</span>}
+                    {!tab?.resource && <span className="text-tertiary"> — saved tab</span>}
+                  </span>
+                  <span className="block text-meta text-muted-foreground">
+                    {at !== undefined && <span className="mr-1.5 text-tertiary tabular-nums">{formatTimestamp(at)}</span>}
+                    <Highlighted text={hit.snippet} terms={terms} />
+                  </span>
+                </span>
+                {provider ? <ProviderBadge provider={provider} className="mt-0.5" /> : null}
+              </button>
+              {video && tab && onOpenAt && at !== undefined && (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="mt-1.5 shrink-0"
+                  aria-label={`Watch ${titleOf(hit.tabId) ?? "the video"} on YouTube from ${formatTimestamp(at)}`}
+                  onClick={() => onOpenAt(tab, youtubeMomentUrl(video.videoId, at))}
+                >
+                  <Play /> {formatTimestamp(at)}
                 </Button>
               )}
             </li>
           )
-        }
-        const tab = tabOf(hit.tabId)
-        const kind = tab?.resource?.kind
-        const location = hit.location
-        const moment = location.kind === "transcript" ? location : undefined
-        const at = moment?.start
-        const video = at !== undefined && tab ? parseYouTubeUrl(tab.url) : undefined
-        const where = moment ? undefined : describeLocation(location)
-        return (
-          <li key={`s-${hit.tabId}-${index}`} className="flex items-start gap-1 pr-2 hover:bg-surface-hover" data-search-hit={location.kind}>
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none"
-              onClick={() => onOpen(hit.tabId, moment ? { line: moment.line, ...(at !== undefined ? { seconds: at } : {}), nonce: ++seekNonce } : undefined)}
-            >
-              {kind && <SourceKindIcon kind={kind} className="mt-0.5" />}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-body-sm text-foreground">
-                  {titleOf(hit.tabId)}
-                  {where && <span className="text-tertiary"> — {where}</span>}
-                </span>
-                <span className="block text-meta text-muted-foreground">
-                  {at !== undefined && <span className="mr-1.5 text-tertiary tabular-nums">{formatTimestamp(at)}</span>}
-                  <Highlighted text={hit.snippet} terms={terms} />
-                </span>
-              </span>
-            </button>
-            {video && tab && onOpenAt && at !== undefined && (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                className="mt-1.5 shrink-0"
-                aria-label={`Watch ${titleOf(hit.tabId) ?? "the video"} on YouTube from ${formatTimestamp(at)}`}
-                onClick={() => onOpenAt(tab, youtubeMomentUrl(video.videoId, at))}
-              >
-                <Play /> {formatTimestamp(at)}
-              </Button>
-            )}
-          </li>
-        )
-      })}
-    </ul>
+        })}
+      </ul>
     </div>
   )
 }
@@ -581,7 +692,7 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
     onSave(draft)
   }
   return (
-    <form onSubmit={submit} className="mt-2 flex flex-col gap-2 rounded-md border border-subtle p-3" aria-label="Subject details">
+    <form onSubmit={submit} className="mt-2 flex flex-col gap-2 rounded-md border border-subtle p-3" aria-label="Project details">
       <label className="text-meta text-muted-foreground">
         What is it about?
         <Textarea className="mt-1 min-h-14 text-body-sm" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} maxLength={280} />
@@ -590,6 +701,7 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
         Current goal
         <Input className="mt-1" value={draft.focus} onChange={(event) => setDraft({ ...draft, focus: event.target.value })} maxLength={160} />
       </label>
+      <p className="text-meta text-tertiary">Included at the top of context you reuse in AI chats, when you choose.</p>
       <div className="flex gap-2">
         <Button type="submit" size="sm">
           Save
@@ -612,9 +724,9 @@ export function formatShortcut(shortcut: string): string {
 }
 
 /**
- * The page around an empty subject: the way back to Subjects, the subject's
- * menu, and the drawer button the sidebar needs below `md`. A subject with
- * things in it uses the workspace view's own bar instead.
+ * The page around an empty project: the way back to Projects, the project's
+ * menu, and the drawer button the sidebar needs below `md`. A project with
+ * saved tabs uses the workspace view's own bar instead.
  */
 export function ProjectPage({
   workspace,
@@ -649,7 +761,7 @@ export function ProjectPage({
         )}
         {onBack ? (
           <Button type="button" variant="ghost" size="sm" className="-ml-1.5 mr-auto" onClick={onBack}>
-            <ChevronLeft /> Subjects
+            <ChevronLeft /> Projects
           </Button>
         ) : (
           <span className="mr-auto truncate text-h2 text-foreground">{subjectName(workspace)}</span>

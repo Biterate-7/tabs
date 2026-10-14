@@ -30,7 +30,13 @@ import {
   MENU_DESKTOP_TAB,
   MENU_DESKTOP_WINDOW,
   MENU_DESKTOP_PAGE,
+  MSG_CAPTURE_CONVERSATION,
+  MSG_MEMORY_REQUEST,
+  MSG_INSERT_CONTEXT,
+  MSG_PAGE_REQUEST,
+  PAGE_READY_WAIT_MS,
 } from "../src/config.js";
+import { aiProviderOf, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
@@ -884,7 +890,7 @@ async function showBadge(toast) {
   if (toast.tone === "working") return;
   badgeTimer = setTimeout(() => {
     chrome.action.setBadgeText({ text: "" }).catch(() => {});
-    chrome.action.setTitle({ title: "Add to Hubble" }).catch(() => {});
+    chrome.action.setTitle({ title: "Hubble" }).catch(() => {});
   }, 6000);
 }
 
@@ -1284,6 +1290,158 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })()
       .then((outcome) => safeSendResponse(sendResponse, outcome ?? { ok: true }))
       .catch((err) => safeSendResponse(sendResponse, { reason: "unexpected-error", detail: errorMessage(err) }));
+    return true;
+  }
+
+  return undefined;
+});
+
+// ---------------------------------------------------------------------------
+// Cross-AI memory: the conversation on an AI app's page into a project, and a
+// project's knowledge back into an AI app's message box.
+//
+//   Save        popup -> here -> executeScript(readConversationFromPage) on the
+//               tab the person is looking at (allowed by the activeTab grant
+//               their click gave) -> the Hubble page saves it (kind "capture")
+//   Search/use  popup -> here -> the Hubble page (kind "search" / "bundle")
+//   Insert      popup -> here -> executeScript(insertIntoComposer) on that tab.
+//               It types; it never sends.
+//
+// Every answer the Hubble page gives was re-validated there; every reason a
+// step fails comes back to the popup as a reason, never as a success.
+// ---------------------------------------------------------------------------
+
+function newRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Sends one request to the Hubble page and resolves to its answer:
+ * { ok: true, result } or { ok: false, error }. `openIfMissing` opens Hubble
+ * (in the background) when no tab has it — only for something the person
+ * just asked for. A page still loading answers "not-ready" and is asked
+ * again for a few seconds.
+ */
+async function askHubblePage(kind, args, { openIfMissing = false } = {}) {
+  let tab;
+  try {
+    tab = pickIngestibleTab(await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` }));
+  } catch {
+    tab = undefined;
+  }
+  if (!tab) {
+    if (!openIfMissing) return { ok: false, error: "no-hubble-tab" };
+    try {
+      const opened = await openHubbleTab();
+      tab = { id: opened.tabId, windowId: opened.windowId };
+    } catch {
+      return { ok: false, error: "hubble-unreachable" };
+    }
+  }
+
+  const deadline = Date.now() + PAGE_READY_WAIT_MS;
+  let injected = false;
+  for (;;) {
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { type: MSG_PAGE_REQUEST, payload: { requestId: newRequestId(), kind, args } });
+    } catch (err) {
+      // A tab opened before the extension was installed has no content script: repaired once, as for a dump.
+      if (!injected && isMissingReceiverError(err) && (await ensureContentScriptInjected(tab.id))) {
+        injected = true;
+        continue;
+      }
+      response = undefined;
+    }
+    const retry = !response || response.error === "not-ready";
+    if (!retry) return { ...response, hubbleTabId: tab.id };
+    if (Date.now() >= deadline) return { ok: false, error: response ? "not-ready" : "no-response" };
+    await sleep(500);
+  }
+}
+
+/** Saves the conversation in `tabId` to a project. */
+async function captureConversation({ tabId, workspaceId }) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: "tab-gone" };
+  }
+  if (!tab?.url || !aiProviderOf(tab.url)) return { ok: false, error: "not-supported" };
+  if (!isConversationUrl(tab.url)) return { ok: false, error: "not-a-conversation" };
+  let read;
+  try {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
+    read = injection?.result;
+  } catch (err) {
+    log("capture-read-failed", { detail: errorMessage(err) });
+    return { ok: false, error: "page-unreadable" };
+  }
+  if (!read?.ok) return { ok: false, error: read?.reason ?? "page-unreadable" };
+  log("capture-read", { provider: read.provider, turns: read.turns.length });
+  // The address Chrome reports wins over the page's own: it is what the person is looking at.
+  return askHubblePage("capture", { workspaceId, capture: { url: tab.url, title: read.title || tab.title || "", turns: read.turns } }, { openIfMissing: true });
+}
+
+async function insertContext({ tabId, text }) {
+  if (typeof text !== "string" || text.length === 0 || text.length > 200000) return { inserted: false, reason: "invalid" };
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return { inserted: false, reason: "tab-gone" };
+  }
+  if (!tab?.url || !aiProviderOf(tab.url)) return { inserted: false, reason: "not-supported" };
+  try {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: insertIntoComposer, args: [text] });
+    return injection?.result ?? { inserted: false, reason: "not-inserted" };
+  } catch (err) {
+    log("insert-failed", { detail: errorMessage(err) });
+    return { inserted: false, reason: "page-unreadable" };
+  }
+}
+
+const MEMORY_KINDS = new Set(["projects", "search", "bundle", "reused"]);
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Only this extension's own popup: a page can't message the extension, and a content script isn't asked to.
+  if (sender?.id !== chrome.runtime.id || sender?.tab) return undefined;
+
+  if (message?.type === MSG_CAPTURE_CONVERSATION) {
+    const tabId = message.payload?.tabId;
+    const workspaceId = message.payload?.workspaceId;
+    if (!Number.isInteger(tabId) || typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200) {
+      safeSendResponse(sendResponse, { ok: false, error: "invalid" });
+      return undefined;
+    }
+    captureConversation({ tabId, workspaceId })
+      .then((answer) => safeSendResponse(sendResponse, answer))
+      .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
+    return true;
+  }
+
+  if (message?.type === MSG_MEMORY_REQUEST) {
+    const kind = message.payload?.kind;
+    if (!MEMORY_KINDS.has(kind)) {
+      safeSendResponse(sendResponse, { ok: false, error: "invalid" });
+      return undefined;
+    }
+    askHubblePage(kind, message.payload?.args ?? {}, { openIfMissing: message.payload?.openIfMissing === true })
+      .then((answer) => safeSendResponse(sendResponse, answer))
+      .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
+    return true;
+  }
+
+  if (message?.type === MSG_INSERT_CONTEXT) {
+    const tabId = message.payload?.tabId;
+    if (!Number.isInteger(tabId)) {
+      safeSendResponse(sendResponse, { inserted: false, reason: "invalid" });
+      return undefined;
+    }
+    insertContext({ tabId, text: message.payload?.text })
+      .then((answer) => safeSendResponse(sendResponse, answer))
+      .catch(() => safeSendResponse(sendResponse, { inserted: false, reason: "failed" }));
     return true;
   }
 

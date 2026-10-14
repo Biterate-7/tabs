@@ -6,7 +6,8 @@ export type CommandGroup =
   | "Moments"
   | "Navigation"
   | "Workspaces"
-  | "Agents"
+  /** Using saved knowledge in an AI chat, and bringing knowledge in. */
+  | "Memory"
   | "Workspace"
   | "Tabs"
   | "Selection"

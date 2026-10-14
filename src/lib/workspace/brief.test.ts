@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { applyChanges } from "@/lib/sync/apply";
 import { loadWorkspaceStore, saveWorkspaceStore } from "./persistence";
 import type { SyncChange } from "@/lib/sync/types";
-import { buildSessionContextSnapshot, readSessionContextSnapshot } from "@/lib/agents/session-context/snapshot";
-import { summarizeWorkspace } from "@/lib/agents/session-context/insight";
+import { buildWorkspaceSnapshot, readWorkspaceSnapshot } from "@/lib/knowledge/workspace/snapshot";
+import { summarizeWorkspace } from "@/lib/knowledge/workspace/insight";
 import {
   BRIEF_LIMITS,
   briefCountsLine,
@@ -157,11 +157,11 @@ describe("where a brief lives", () => {
 
   it("reaches the agent's workspace copy re-read and scrubbed, and its summary", () => {
     const raw = workspace({ brief: { description: "Uses password=hunter2hunter", focus: "Now", updatedAt: T0 } });
-    const snapshot = buildSessionContextSnapshot({ workspaces: [raw], collections: [], dependencies: [] }, "w1")!;
+    const snapshot = buildWorkspaceSnapshot({ workspaces: [raw], collections: [], dependencies: [] }, "w1")!;
     expect(snapshot.workspace.brief?.description).not.toContain("hunter2");
     expect(summarizeWorkspace(snapshot).workspace).toMatchObject({ name: "Research", focus: "Now" });
     // A malformed brief on the wire is dropped, the workspace kept.
-    const read = readSessionContextSnapshot({ ...snapshot, workspace: { ...snapshot.workspace, brief: { description: ["x"] } } }, "w1")!;
+    const read = readWorkspaceSnapshot({ ...snapshot, workspace: { ...snapshot.workspace, brief: { description: ["x"] } } }, "w1")!;
     expect(read.workspace.brief).toBeUndefined();
     expect(read.workspace.tabs).toHaveLength(3);
   });

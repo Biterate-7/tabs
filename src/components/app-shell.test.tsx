@@ -38,28 +38,28 @@ function postExtensionImport(tabs: { url: string; title?: string }[]) {
   );
 }
 
-/** Hubble opens on Home; a subject's page is one click on its row in the rail. */
+/** Hubble opens on Home; a project's page is one click on its row in the rail. */
 async function openSubject(user: ReturnType<typeof userEvent.setup>, name = "General") {
-  const rail = await screen.findByRole("navigation", { name: "Subjects" });
+  const rail = await screen.findByRole("navigation", { name: "Projects" });
   await user.click(await within(rail).findByRole("button", { name: `Open ${name}` }));
 }
 
 /**
  * The paste-a-list dump, reached the way a student reaches it: from Home's
- * "Start with a subject", a first subject (named "General" — the default's own
+ * "Start with a project", a first subject (named "General" — the default's own
  * name — so every test below still reads as it did), or the subject already
  * there; then "Paste a list of tabs" on its empty page.
  */
 async function openPasteBox(user: ReturnType<typeof userEvent.setup> = userEvent.setup(), name = "General") {
-  await screen.findByRole("navigation", { name: "Subjects" });
+  await screen.findByRole("navigation", { name: "Projects" });
   const ready = screen.queryByPlaceholderText(/Paste your tabs/);
   if (ready) return ready;
   if (!screen.queryByRole("button", { name: /Paste a list of tabs/ })) {
     const start = screen.queryByRole("region", { name: "Get started" });
     if (start) {
       await user.click(within(start).getByRole("button"));
-      await user.type(await screen.findByLabelText("Subject name"), name);
-      await user.click(screen.getByRole("button", { name: "Create subject" }));
+      await user.type(await screen.findByLabelText("Project name"), name);
+      await user.click(screen.getByRole("button", { name: "Create project" }));
     } else {
       await openSubject(user, name);
     }
@@ -70,7 +70,7 @@ async function openPasteBox(user: ReturnType<typeof userEvent.setup> = userEvent
 
 /** An empty subject on screen: its one-line empty state. */
 async function expectEmptySubject() {
-  expect(await screen.findByText("No resources yet.")).toBeTruthy();
+  expect(await screen.findByText(/^Nothing saved in .+ yet\.$/)).toBeTruthy();
 }
 
 async function dumpOneTab(user: ReturnType<typeof userEvent.setup>, url = "https://github.com/a") {
@@ -96,9 +96,9 @@ function renderShellWithAppearance() {
 
 /** New subject, from the rail's "+". */
 async function createSubject(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click((await screen.findAllByRole("button", { name: "New subject" }))[0]!);
-  await user.type(await screen.findByLabelText("Subject name"), name);
-  await user.click(screen.getByRole("button", { name: "Create subject" }));
+  await user.click((await screen.findAllByRole("button", { name: "New project" }))[0]!);
+  await user.type(await screen.findByLabelText("Project name"), name);
+  await user.click(screen.getByRole("button", { name: "Create project" }));
 }
 
 /** The subject's own ⋯ menu, on its page. */
@@ -127,6 +127,8 @@ afterEach(() => {
 });
 
 
+const LANDING_HEADING = "One connected workspace for everything you learn with AI.";
+
 describe("AppShell first run", () => {
   it("greets a visitor who has never used Hubble with the public landing page", async () => {
     // Undoes the shared beforeEach: this is the one case that wants the
@@ -134,16 +136,12 @@ describe("AppShell first run", () => {
     window.localStorage.clear();
     render(<AppShell />);
 
-    const heading = await screen.findByRole("heading", { level: 1, name: /Your projects. Your context. Your agents./ });
+    const heading = await screen.findByRole("heading", { level: 1, name: LANDING_HEADING });
     expect(heading).toBeTruthy();
     // The app shell itself must not be mounted underneath it — no rail, no
-    // Home, nothing for a stray click to reach. The landing page's live demo
-    // has a subject rail of its own; every one found must be that demo's,
-    // inside its window, never the shell's.
-    expect(screen.queryByRole("heading", { name: "Start with a subject" })).toBeNull();
-    const rails = screen.queryAllByRole("navigation", { name: "Subjects" });
-    expect(rails.length).toBeGreaterThan(0);
-    expect(rails.every((rail) => rail.closest("[data-hubble-demo]"))).toBe(true);
+    // Home, nothing for a stray click to reach.
+    expect(screen.queryByRole("heading", { name: "Start with a project" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Projects" })).toBeNull();
   });
 
   it("hands over to the app once the visitor chooses to open Hubble", async () => {
@@ -154,15 +152,15 @@ describe("AppShell first run", () => {
     await user.click((await screen.findAllByRole("button", { name: /Open Hubble/ }))[0]);
 
     // Home, with the one thing to do first.
-    expect(await screen.findByRole("heading", { name: "Start with a subject" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Start with a project" })).toBeTruthy();
   });
 
   it("sends a returning visitor straight to the app, landing page skipped", async () => {
     // Onboarding already handled (the shared beforeEach) and nothing
     // persisted: an empty workspace belongs to the app, not to marketing.
     render(<AppShell />);
-    expect(await screen.findByRole("heading", { name: "Start with a subject" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /Your projects. Your context. Your agents./ })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Start with a project" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: LANDING_HEADING })).toBeNull();
   });
 
   it("keeps a visitor who has dumped tabs out of the landing page", async () => {
@@ -173,15 +171,15 @@ describe("AppShell first run", () => {
     saveWorkspace([makeTab({ id: "t1" })]);
     render(<AppShell />);
 
-    const rail = await screen.findByRole("navigation", { name: "Subjects" });
+    const rail = await screen.findByRole("navigation", { name: "Projects" });
     expect(within(rail).getByRole("button", { name: "Open General" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /Your projects. Your context. Your agents./ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: LANDING_HEADING })).toBeNull();
   });
 });
 describe("AppShell persistence", () => {
   it("shows Home when nothing is persisted", async () => {
     render(<AppShell />);
-    expect(await screen.findByRole("heading", { name: "Start with a subject" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Start with a project" })).toBeTruthy();
   });
 
   it("persists a dumped workspace and restores it on remount", async () => {
@@ -260,7 +258,7 @@ describe("AppShell persistence", () => {
 
     await openSubjectMenu(user);
     await user.click(await screen.findByRole("menuitem", { name: "Clear" }));
-    await user.click(await screen.findByRole("button", { name: "Clear subject" }));
+    await user.click(await screen.findByRole("button", { name: "Clear project" }));
     await expectEmptySubject();
 
     unmount();
@@ -297,13 +295,13 @@ describe("AppShell persistence", () => {
 });
 
 describe("AppShell workspaces", () => {
-  it("gives a brand-new user a single clean default workspace — shown as no subjects yet", async () => {
+  it("gives a brand-new user a single clean default workspace — shown as no projects yet", async () => {
     render(<AppShell />);
-    expect(await screen.findByRole("heading", { name: "Start with a subject" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Start with a project" })).toBeTruthy();
     expect(loadWorkspaceStore()?.workspaces.map((w) => w.name) ?? ["General"]).toEqual(["General"]);
   });
 
-  it("makes the first subject out of that default rather than beside it", async () => {
+  it("makes the first project out of that default rather than beside it", async () => {
     const user = userEvent.setup();
     render(<AppShell />);
     await openPasteBox(user, "History HL");
@@ -311,14 +309,14 @@ describe("AppShell workspaces", () => {
     expect(saved.workspaces.map((w) => w.name)).toEqual(["History HL"]);
   });
 
-  it("keeps a first subject the student called General", async () => {
+  it("keeps a first project the student called General", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<AppShell />);
     await openPasteBox(user, "General");
     unmount();
     render(<AppShell />);
     // Its name and emptiness match the untouched default, but it is the student's: it stays listed.
-    const rail = await screen.findByRole("navigation", { name: "Subjects" });
+    const rail = await screen.findByRole("navigation", { name: "Projects" });
     expect(within(rail).getByRole("button", { name: "Open General" })).toBeTruthy();
   });
 
@@ -350,8 +348,8 @@ describe("AppShell workspaces", () => {
 
     await createSubject(user, "General");
     await openSubjectMenu(user);
-    await user.click(await screen.findByRole("menuitem", { name: "Rename subject" }));
-    const input = await screen.findByPlaceholderText("Subject name");
+    await user.click(await screen.findByRole("menuitem", { name: "Rename project" }));
+    const input = await screen.findByPlaceholderText("Project name");
     await user.clear(input);
     await user.type(input, "Renamed");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -400,8 +398,8 @@ describe("AppShell workspaces", () => {
     expect((await screen.findAllByText("Second")).length).toBeGreaterThan(0);
 
     await openSubjectMenu(user);
-    await user.click(await screen.findByRole("menuitem", { name: "Delete subject" }));
-    await user.click(await screen.findByRole("button", { name: "Delete subject" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete project" }));
+    await user.click(await screen.findByRole("button", { name: "Delete project" }));
 
     // Back on Home, without it.
     expect(await screen.findByRole("heading", { name: "What are you working on?" })).toBeTruthy();
@@ -409,7 +407,7 @@ describe("AppShell workspaces", () => {
     expect(screen.queryByText("Second")).toBeNull();
   });
 
-  it("never deletes the last subject: there is always somewhere to put things", async () => {
+  it("never deletes the last project: there is always somewhere to put things", async () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
@@ -417,7 +415,7 @@ describe("AppShell workspaces", () => {
     await openSubjectMenu(user);
     // The menu offers Clear, never Delete, for the only subject.
     expect(await screen.findByRole("menuitem", { name: "Clear" })).toBeTruthy();
-    expect(screen.queryByRole("menuitem", { name: "Delete subject" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Delete project" })).toBeNull();
   });
 
   it("persists multiple workspaces across a remount", async () => {
@@ -430,7 +428,7 @@ describe("AppShell workspaces", () => {
     unmount();
     render(<AppShell />);
 
-    const rail = await screen.findByRole("navigation", { name: "Subjects" });
+    const rail = await screen.findByRole("navigation", { name: "Projects" });
     expect(within(rail).getByRole("button", { name: "Open Second" })).toBeTruthy();
     expect(within(rail).getByRole("button", { name: "Open General" })).toBeTruthy();
   });
@@ -462,9 +460,9 @@ describe("AppShell workspaces", () => {
     });
 
     await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click((await screen.findAllByRole("button", { name: "Subjects" })).find((b) => b.closest("nav[aria-label='Settings sections']"))!);
+    await user.click((await screen.findAllByRole("button", { name: "Projects" })).find((b) => b.closest("nav[aria-label='Settings sections']"))!);
     const file = new File([exportedJson], "export.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Import subjects from a Hubble export file"), file);
+    await user.upload(screen.getByLabelText("Import projects from a Hubble export file"), file);
 
     expect((await screen.findAllByText("Imported Notes")).length).toBeGreaterThan(0);
     await openSubject(user, "Imported Notes");
@@ -477,9 +475,9 @@ describe("AppShell workspaces", () => {
     renderShellWithAppearance();
 
     await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click((await screen.findAllByRole("button", { name: "Subjects" })).find((b) => b.closest("nav[aria-label='Settings sections']"))!);
+    await user.click((await screen.findAllByRole("button", { name: "Projects" })).find((b) => b.closest("nav[aria-label='Settings sections']"))!);
     const file = new File(["{not json"], "export.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Import subjects from a Hubble export file"), file);
+    await user.upload(screen.getByLabelText("Import projects from a Hubble export file"), file);
 
     // Nothing imported, nothing lost: the only workspace is still the untouched default.
     expect(loadWorkspaceStore()?.workspaces.map((w) => w.name) ?? ["General"]).toEqual(["General"]);
@@ -787,10 +785,10 @@ describe("AppShell Settings navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "Back" }));
     // Back where Settings was opened from: Home.
-    expect(await screen.findByRole("heading", { name: "Start with a subject" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Start with a project" })).toBeTruthy();
   });
 
-  it("offers no route into a removed Agent World", async () => {
+  it("offers no route into the removed agent product — Command Centre, AI chats, agent history or Agent World", async () => {
     // The world is gone from navigation, not merely hidden. A rail row that
     // still existed would be the "dead UI left behind" this removal was
     // meant to avoid.
@@ -799,5 +797,6 @@ describe("AppShell Settings navigation", () => {
 
     expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Agent World settings" })).toBeNull();
+    for (const name of [/command cent(re|er)/i, /^AI chats$/i, /^AI activity$/i, /^AI$/, /agents?/i]) expect(screen.queryByRole("button", { name })).toBeNull();
   });
 });

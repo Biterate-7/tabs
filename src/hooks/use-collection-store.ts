@@ -84,9 +84,9 @@ export function useCollectionStore(workspaces: Workspace[]) {
 
     This used to be debounced by 400ms, and the timer was cleared when the
     hook unmounted, so a change made just before leaving a surface was never
-    written. That is exactly the moment an agent's approved change lands: the
-    Command Centre applies it, the user presses "View", and the workspace view
-    mounts — reading storage *before* the Command Centre's cleanup could have
+    written. That is exactly the moment an approved AI change lands: it is applied
+    elsewhere, the user presses "View", and the workspace view mounts —
+    reading storage *before* the other surface's cleanup could have
     flushed anything, since React renders the incoming view before it unmounts
     the outgoing one. Writing here, in the effect, puts every change on disk
     before the next user event is handled. Identical writes are skipped, so a
@@ -234,7 +234,7 @@ export function useCollectionStore(workspaces: Workspace[]) {
       },
       /**
        * Puts one workspace's collections back exactly as they were before a
-       * change — the undo for an agent's applied change. Only while that
+       * change — the undo for an applied AI change. Only while that
        * workspace still holds exactly what the change left (`expected`):
        * anything edited since means an undo would discard someone's later
        * work, so it is refused and nothing moves. Every collection whose

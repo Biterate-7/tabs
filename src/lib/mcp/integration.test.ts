@@ -146,7 +146,8 @@ describe("authentication and the MCP authorization discovery", () => {
     if (!issued.ok) throw new Error("fixture");
     const client = await connect(world, issued.token);
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toContain("list_agent_projects");
+    expect(names).toContain("list_workspaces");
+    expect(names.some((name) => name.includes("agent"))).toBe(false);
     expect(names).not.toContain("create_collection");
     const listed = await call(client, "list_workspaces");
     expect(listed.json!.workspaces.map((w: { workspaceId: string }) => w.workspaceId).sort()).toEqual([HISTORY, PHYSICS].sort());

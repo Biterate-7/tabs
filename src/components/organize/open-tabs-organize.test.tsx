@@ -91,8 +91,8 @@ describe("Organize open tabs", () => {
     expect(within(dialog).getByText(/Already in History/)).toBeTruthy()
     expect(within(dialog).getByText(/1 browser page was skipped/)).toBeTruthy()
 
-    // The footer says exactly what will happen: one copy of the duplicated page, two new subjects.
-    expect(dialog.querySelector("[data-smart-footer]")!.textContent).toBe("Adds 4 pages to 2 subjects (2 new). 2 stay as they are.")
+    // The footer says exactly what will happen: one copy of the duplicated page, two new projects.
+    expect(dialog.querySelector("[data-smart-footer]")!.textContent).toBe("Adds 4 pages to 2 projects (2 new). 2 stay as they are.")
   })
 
   it("lets the person rename, move, exclude and leave tabs as they are before confirming", async () => {
@@ -118,8 +118,8 @@ describe("Organize open tabs", () => {
     await user.click(within(dialog).getByRole("button", { name: "Move Projectile motion calculator" }))
     await user.click(await screen.findByRole("menuitem", { name: "Leave as it is" }))
 
-    // Send the revolution group to the existing History subject.
-    await user.click(within(groupNamed("French Revolution")).getByRole("button", { name: /New subject/ }))
+    // Send the revolution group to the existing History project.
+    await user.click(within(groupNamed("French Revolution")).getByRole("button", { name: /New project/ }))
     await user.click(await screen.findByRole("menuitem", { name: "Add to History" }))
 
     await user.click(within(dialog).getByRole("button", { name: /^Organize \d+ pages?$/ }))

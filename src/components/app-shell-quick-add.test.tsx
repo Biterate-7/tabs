@@ -51,7 +51,7 @@ const hint = () => document.querySelector("[data-add-hint]")?.textContent
 
 /** Hubble opens on Home; a subject's page is one click on its row in the rail. */
 async function openSubject(user: ReturnType<typeof userEvent.setup>, name: string) {
-  const rail = await screen.findByRole("navigation", { name: "Subjects" })
+  const rail = await screen.findByRole("navigation", { name: "Projects" })
   await user.click(within(rail).getByRole("button", { name: `Open ${name}` }))
 }
 

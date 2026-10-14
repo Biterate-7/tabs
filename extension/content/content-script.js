@@ -18,6 +18,10 @@ const MSG_PROJECT_FOCUS = "TABDUMP_PROJECT_FOCUS";
 const MSG_QUICK_ADD_INFO = "TABDUMP_QUICK_ADD_INFO";
 const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
 const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
+const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
+const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
+// Mirrors config.js PAGE_REQUEST_TIMEOUT_MS.
+const PAGE_REQUEST_TIMEOUT_MS = 15000;
 
 const CHECK_IMPORTED_TIMEOUT_MS = 1500;
 // Mirrors config.js's IMPORT_ACK_TIMEOUT_MS. Duplicated for the same
@@ -343,6 +347,45 @@ onPageMessage((event) => {
     { source: MESSAGE_SOURCE, type: MSG_EXTENSION_PONG, payload: { requestId } },
     window.location.origin
   );
+});
+
+// Cross-AI memory: one request from the extension (save a captured
+// conversation, search, build context) relayed into the page, and the page's
+// answer back — matched by requestId, bounded by a timeout. A transport only:
+// the page re-validates every request (src/lib/memory/extension-protocol.ts).
+onExtensionMessage((message, _sender, sendResponse) => {
+  if (message?.type !== MSG_PAGE_REQUEST) return undefined;
+  const requestId = typeof message.payload?.requestId === "string" ? message.payload.requestId : `${Date.now()}-${Math.random()}`;
+  let settled = false;
+
+  function finish(response) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    window.removeEventListener("message", handleResult);
+    try {
+      sendResponse(response);
+    } catch {
+      // The background's port is gone; it reports a missing answer itself.
+    }
+  }
+
+  function handleResult(event) {
+    if (event.origin !== window.location.origin) return;
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_PAGE_RESPONSE) return;
+    if (data.payload?.requestId !== requestId) return;
+    finish(data.payload.ok === true ? { ok: true, result: data.payload.result } : { ok: false, error: typeof data.payload.error === "string" ? data.payload.error : "failed" });
+  }
+
+  const timer = setTimeout(() => finish({ ok: false, error: "timeout" }), PAGE_REQUEST_TIMEOUT_MS);
+  window.addEventListener("message", handleResult);
+  window.postMessage(
+    { source: MESSAGE_SOURCE, type: MSG_PAGE_REQUEST, payload: { requestId, kind: message.payload?.kind, args: message.payload?.args } },
+    window.location.origin
+  );
+  return true;
 });
 
 log(alreadyRegistered ? "duplicate-copy-inert" : "message-listener-ready");

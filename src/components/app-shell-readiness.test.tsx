@@ -74,7 +74,7 @@ function postExtensionImport(urls: string[]) {
 /** Hubble opens on Home: open the subject, and the rail's More, where the Graph lives. */
 async function openSubjectWithMore() {
   const user = userEvent.setup();
-  const rail = await screen.findByRole("navigation", { name: "Subjects" });
+  const rail = await screen.findByRole("navigation", { name: "Projects" });
   await user.click(within(rail).getByRole("button", { name: "Open General" }));
   await screen.findByPlaceholderText("Search tabs...");
   if (!screen.queryByRole("button", { name: "Graph" })) await user.click(screen.getByRole("button", { name: "More" }));

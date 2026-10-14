@@ -2,7 +2,10 @@
 
 A thin Manifest V3 Chrome/Chromium extension: collects the current window's
 tabs and hands them to the Hubble web app via its existing ingestion
-pipeline. No build step — plain JavaScript, loaded unpacked.
+pipeline, and — on a ChatGPT, Claude, Gemini or Perplexity conversation —
+saves that conversation to a project or brings Hubble context into it (see
+[docs/cross-ai-memory.md](../docs/cross-ai-memory.md) §6). No build step —
+plain JavaScript, loaded unpacked.
 
 ## Load it locally
 

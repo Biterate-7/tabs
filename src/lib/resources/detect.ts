@@ -1,3 +1,4 @@
+import { conversationRefOf } from "@/lib/providers/registry";
 import type { ResourceKind } from "./types";
 
 /**
@@ -10,7 +11,8 @@ import type { ResourceKind } from "./types";
  *   1. a MIME type — the server's Content-Type, or a dropped file's type —
  *      because a URL can lie (`/download?id=7` is a PDF; `/paper.pdf` can be
  *      an HTML landing page that only links to one);
- *   2. known providers by hostname and path (YouTube watch/shorts/embed/live,
+ *   2. known providers by hostname and path (an AI app's conversation —
+ *      ChatGPT, Claude, Gemini, Perplexity; YouTube watch/shorts/embed/live,
  *      youtu.be; Vimeo and other video hosts);
  *   3. the path's extension;
  *   4. otherwise a web page — the honest default for an http(s) address.
@@ -84,6 +86,7 @@ export function detectResourceType(input: { url: string; mimeType?: string; file
 
   if (!url || !web) return fileExtension && DOCUMENT_EXTENSIONS.has(fileExtension) ? "document" : "unknown";
 
+  if (conversationRefOf(url.href)) return "conversation";
   if (youtubeVideoId(url)) return "youtube";
   const host = hostOf(url);
   if (VIDEO_HOSTS.has(host) && url.pathname.length > 1) return "video";

@@ -17,7 +17,7 @@ import type { Collection } from "./types";
  *
  * ## What a batch can do
  *
- * Exactly the three things an agent may propose, each already an operation a
+ * Exactly the three things an AI connector may propose, each already an operation a
  * person makes by hand: create a collection (optionally seeded with tabs),
  * rename one, add tabs to one. Nothing here deletes a collection, removes a
  * tab or touches another workspace: a batch is scoped to one workspace, and

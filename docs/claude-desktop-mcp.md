@@ -12,9 +12,12 @@
 
 
 Hubble is an MCP server. Claude Desktop can connect to it and **read** your
-Hubble context — synced workspaces, tabs, collections, tab relationships, and
-the status of your Hubble remote agent projects. It cannot change anything in
-Hubble, and it cannot run anything.
+Hubble context — synced workspaces, tabs, collections and tab relationships.
+It cannot change anything in Hubble, and it cannot run anything.
+
+> **Removed since:** `list_agent_projects` and `list_agent_sessions`, with
+> the agent features they described. The sections below that mention them
+> describe the original state.
 
 ---
 
@@ -44,10 +47,7 @@ authenticate with OAuth, which Hubble does not yet implement (§7). The bridge
 relays JSON-RPC between the two transports unchanged; it has no tools and no
 logic that could widen what the server allows.
 
-**It is not a second control plane.** The MCP layer (`src/lib/mcp/`) imports
-nothing from the agent control plane, the runtime host, the remote sandbox
-service or the credential store. There is no tool that starts, steers,
-approves or stops an agent. `src/lib/mcp/security.test.ts` asserts all of it.
+**It cannot act.** No tool starts, runs or changes anything. `src/lib/mcp/security.test.ts` asserts it.
 
 ## 2. Tools and resources
 
@@ -58,8 +58,6 @@ approves or stops an agent. `src/lib/mcp/security.test.ts` asserts all of it.
 | `get_tabs` | Specific tabs by id (≤ 50). Notes only with `includeNotes: true`. |
 | `get_collection` | One collection and its member tabs. |
 | `get_tab_graph` | A tab's dependencies and graph neighbours, depth ≤ 2. |
-| `list_agent_projects` | Your Hubble remote agent projects: name, status, granted permissions. |
-| `list_agent_sessions` | Your remote agent sessions' status. Cannot start, stop or message one. |
 
 Resource template: `tabdump://workspace/{workspaceId}` — the `get_workspace`
 overview, attachable in Claude Desktop.
@@ -68,14 +66,13 @@ Every tool is annotated `readOnlyHint: true`, `destructiveHint: false`,
 `openWorldHint: false`. The list is pinned by test.
 
 Workspace tools are thin wrappers over the Phase E context resolver
-(`src/lib/agents/context/resolve.ts`), so they inherit its rules unchanged:
+(`src/lib/context/resolve.ts`), so they inherit its rules unchanged:
 
 - **URLs are redacted** — credentials in the URL removed, the fragment always
   dropped (implicit OAuth returns `#access_token=`), secret-looking query
   values replaced with `[redacted]`.
 - **Notes are off** unless a call asks for them.
 - **Everything is bounded**, and anything cut is reported in `omissions`.
-- **No project roots**: the resolver runs with `localRuntimeAllowed: false`.
 
 Never exposed: sandbox names, process ids, provider session ids, internal
 owner ids, tokens, credentials.
@@ -118,8 +115,7 @@ absent from the static export.
 ## 5. Connecting Claude Desktop (each user)
 
 1. **Sign in** to Hubble, and make sure the workspaces you want are synced.
-2. **Settings → Agents → Use Hubble from Claude → Connect Claude
-   Desktop.** Copy the config it shows — the token is displayed once.
+2. **Settings → AI connectors → Claude Desktop.** Copy the config it shows — the token is displayed once.
 3. **Get the bridge.** It is `scripts/tabdump-mcp-bridge.mjs` in this
    repository, and it needs the repository's `node_modules`
    (`npm install`). Node 18+.
@@ -178,7 +174,6 @@ npx @modelcontextprotocol/inspector --cli --config claude_desktop_config.json --
   `node_modules`). Publishing it as a package is a distribution task, not a
   security one.
 - **Read-only.** No tool writes, and none will be added without its own
-  permission design — the agent control plane's approval model does not
-  extend to an MCP client, and must not be bypassed through one.
+  permission design (AI connectors' Read and save grant is that design).
 - **Stateless.** No server-initiated notifications; each request is
   authenticated and answered on its own.

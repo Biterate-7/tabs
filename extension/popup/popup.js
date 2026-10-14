@@ -16,6 +16,7 @@ import {
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { readStoredTarget } from "../src/quick-add.js";
+import { initAiPanel } from "./ai-panel.js";
 
 const els = {
   loading: document.getElementById("state-loading"),
@@ -129,7 +130,7 @@ export function readProjects(raw) {
   return raw
     .filter((project) => project && typeof project.id === "string" && project.id && typeof project.name === "string")
     .slice(0, 100)
-    .map((project) => ({ id: project.id, name: project.name.slice(0, 120) || "Untitled subject", sources: Number.isInteger(project.sources) ? project.sources : 0 }));
+    .map((project) => ({ id: project.id, name: project.name.slice(0, 120) || "Untitled project", sources: Number.isInteger(project.sources) ? project.sources : 0 }));
 }
 
 // The tabs "Add to project" would take: this window's active tab, and the highlighted ones.
@@ -190,7 +191,7 @@ async function renderProjects(listed) {
   if (!els.projectSection) return;
   const remembered = await rememberedProject();
   // No Hubble tab to ask: the project Hubble last had open is still where a tab goes (Hubble opens to take it).
-  const projects = listed ?? (remembered ? [{ id: remembered.id, name: remembered.name || "Your subject", sources: 0 }] : undefined);
+  const projects = listed ?? (remembered ? [{ id: remembered.id, name: remembered.name || "Your project", sources: 0 }] : undefined);
   if (!projects || projects.length === 0) {
     els.projectSection.hidden = true;
     if (els.projectUnavailable) els.projectUnavailable.hidden = projectTabs.current === 0;
@@ -200,7 +201,7 @@ async function renderProjects(listed) {
   els.projectSelect.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "Choose a subject…";
+  placeholder.textContent = "Choose a project…";
   els.projectSelect.appendChild(placeholder);
   for (const project of projects) {
     const option = document.createElement("option");
@@ -224,7 +225,7 @@ function updateProjectButtons() {
       heading.firstChild.textContent = "Add to ";
       els.projectName.textContent = chosenProject().name;
     } else {
-      heading.firstChild.textContent = "Choose a subject to add to";
+      heading.firstChild.textContent = "Choose a project to add to";
       els.projectName.textContent = "";
     }
   }
@@ -305,6 +306,8 @@ async function detectTabs() {
   updateReadyUi(payload.tabs, undefined);
   showState(els.ready);
   void renderDesktop(payload.tabs.length);
+  // On an AI app: save this conversation, or use Hubble here.
+  void initAiPanel(chromeTabs.find((tab) => tab.active)).catch(() => {});
 
   if (payload.tabs.length === 0) return;
 
@@ -375,12 +378,12 @@ function describeDumpFailure(response) {
     case "nothing-imported":
       return {
         message: response.target
-          ? `Hubble couldn't add this to ${response.target.name || "the subject"} — only web pages, PDFs and videos with a web address can be added.`
+          ? `Hubble couldn't add this to ${response.target.name || "the project"} — only web pages, PDFs and videos with a web address can be added.`
           : "Hubble received the tabs but couldn't import any of them.",
         detail: response.detail,
       };
     case "no-project":
-      return { message: "Choose a subject to add to first." };
+      return { message: "Choose a project to add to first." };
     case "interrupted":
       return { message: "The previous dump was interrupted before it finished. Please try again." };
     case "already-running":
@@ -461,7 +464,7 @@ function successDetail(state) {
   if (unread > 0) notes.push(`${unread} couldn't be read as a link`);
   if (state.skippedRestricted) notes.push(`${state.skippedRestricted} browser page${state.skippedRestricted === 1 ? "" : "s"} skipped`);
   if (state.skippedAlreadyImported) notes.push(`${state.skippedAlreadyImported} already imported`);
-  if (state.alreadyInProject && state.accepted > 0) notes.push(`${state.alreadyInProject} already in the subject`);
+  if (state.alreadyInProject && state.accepted > 0) notes.push(`${state.alreadyInProject} already in the project`);
   return notes.join(" · ");
 }
 
@@ -474,7 +477,7 @@ function finishWithSuccess(state) {
     els.successProject.hidden = !toProject;
     if (toProject) {
       const added = state.accepted ?? 0;
-      const name = state.target.name || "your subject";
+      const name = state.target.name || "your project";
       els.successProject.textContent =
         added > 0 ? `Added ${added} source${added === 1 ? "" : "s"} to ${name}` : `Already in ${name}`;
     }

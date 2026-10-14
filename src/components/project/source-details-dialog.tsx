@@ -1,13 +1,17 @@
 "use client"
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { Captions, ExternalLink, FileUp, RotateCw } from "lucide-react"
+import { Captions, ClipboardPaste, ExternalLink, FileUp, MessageSquareShare, RotateCw } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { SourceKindIcon, SourceStatus } from "./source-status"
 import { VideoTranscript, type TranscriptSeek } from "./video-transcript"
+import { captureLine, ConversationView } from "@/components/memory/conversation-view"
+import { ProviderBadge } from "@/components/memory/provider-mark"
+import { useMemoryActions } from "@/components/memory/memory-actions"
+import { aiProviderName, providerOfUrl } from "@/lib/providers/registry"
 import { isDesktop } from "@/lib/platform/detect"
 import { getContent } from "@/lib/resources/content-store"
 import { formatTimestamp } from "@/lib/resources/transcript"
@@ -19,6 +23,9 @@ const PREVIEW_CHARS = 1200
 
 /** The opening of what Hubble read — enough to check it read the right thing, never the whole document in the DOM. */
 export function contentPreview(content: ResourceContent): { label: string; text: string } {
+  if (content.turns && content.turns.length > 0) {
+    return { label: `${content.turns.length} turns`, text: content.turns.slice(0, 4).map((turn) => `${turn.role === "user" ? "You" : "AI"}: ${turn.text}`).join("\n\n").slice(0, PREVIEW_CHARS) }
+  }
   if (content.pages && content.pages.length > 0) {
     const first = content.pages.findIndex((page) => page.trim().length > 0)
     const index = first === -1 ? 0 : first
@@ -48,6 +55,9 @@ export function SourceDetailsDialog({
   onAttachTranscript,
   onOpenAt,
   seek,
+  focusTurn,
+  terms,
+  onPasteConversation,
 }: {
   tab: Tab | null
   workspaceId: string
@@ -56,6 +66,11 @@ export function SourceDetailsDialog({
   onOpenAt?: (tab: Tab, url: string) => void
   /** Open a video's transcript at a moment (from search). */
   seek?: TranscriptSeek
+  /** Open a conversation at a turn (from search), with the search words marked there. */
+  focusTurn?: number
+  terms?: readonly string[]
+  /** A conversation saved as a link only: paste its text (opens the capture dialog). */
+  onPasteConversation?: (tab: Tab) => void
   onOpenChange: (open: boolean) => void
   onRename: (tab: Tab, title: string) => void
   onRetry: (tab: Tab) => void
@@ -72,6 +87,7 @@ export function SourceDetailsDialog({
   const [message, setMessage] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const transcriptFile = useRef<HTMLInputElement>(null)
+  const memory = useMemoryActions()
 
   // A different source resets the form — adjusting state during render rather than in an effect.
   if (tab?.id !== trackedTab) {
@@ -111,6 +127,8 @@ export function SourceDetailsDialog({
   const isPdf = resource.kind === "pdf"
   const isVideo = resource.kind === "youtube" || resource.kind === "video"
   const isYouTube = resource.kind === "youtube"
+  const isConversation = resource.kind === "conversation"
+  const provider = isConversation ? (meta.provider ?? providerOfUrl(tab.url)) : undefined
 
   function rename(event: FormEvent) {
     event.preventDefault()
@@ -142,7 +160,7 @@ export function SourceDetailsDialog({
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className={isYouTube ? "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl" : "sm:max-w-xl"}>
+      <DialogContent className={isYouTube ? "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl" : "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"}>
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-center gap-2">
             <SourceKindIcon kind={resource.kind} />
@@ -163,9 +181,12 @@ export function SourceDetailsDialog({
           </form>
 
           <div className="flex flex-col gap-1">
-            <p className="text-meta text-tertiary">
-              {RESOURCE_KIND_LABEL[resource.kind]}
-              {facts.length > 0 ? ` · ${facts.join(" · ")}` : ""}
+            <p className="flex flex-wrap items-center gap-x-1.5 text-meta text-tertiary">
+              {provider ? <ProviderBadge provider={provider} /> : null}
+              {provider ? "·" : null}
+              <span>{RESOURCE_KIND_LABEL[resource.kind]}</span>
+              {isConversation ? <span>· {captureLine(meta.capture, resource.updatedAt)}</span> : null}
+              {facts.length > 0 ? <span>· {facts.join(" · ")}</span> : null}
             </p>
             <SourceStatus resource={resource} />
           </div>
@@ -182,7 +203,28 @@ export function SourceDetailsDialog({
             />
           )}
 
-          {preview && !isYouTube && (
+          {isConversation && loaded && (
+            <section aria-label="The saved conversation">
+              <p className="mb-1 text-meta text-tertiary">Saved as it was shown{meta.turnCount ? ` · ${meta.turnCount} turns` : ""}. AI-generated replies may contain mistakes.</p>
+              <ConversationView turns={loaded.turns} {...(loaded.text ? { text: loaded.text } : {})} {...(provider ? { provider } : {})} {...(focusTurn !== undefined ? { focusTurn } : {})} {...(terms ? { terms } : {})} />
+            </section>
+          )}
+
+          {isConversation && resource.status !== "ready" && (
+            <section aria-label="Save the conversation's text" className="rounded-md border border-subtle p-3">
+              <p className="text-body-sm text-foreground">Only the link is saved — Hubble can&apos;t read this conversation from its address.</p>
+              <p className="text-meta text-muted-foreground">
+                Open it and use Save to Hubble in Hubble for Chrome, or paste the conversation here. Saving it again with the same link fills in this item.
+              </p>
+              {onPasteConversation && (
+                <Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => onPasteConversation(tab)}>
+                  <ClipboardPaste /> Paste the conversation
+                </Button>
+              )}
+            </section>
+          )}
+
+          {preview && !isYouTube && !isConversation && (
             <section aria-label="What Hubble read">
               <p className="text-meta text-tertiary">What Hubble read — {preview.label}. Written by the source, shown as it is.</p>
               <pre className="mt-1 max-h-48 overflow-y-auto rounded-md border border-subtle bg-background p-2 font-sans text-body-sm whitespace-pre-wrap text-muted-foreground">{preview.text || "(This page of the document has no text.)"}</pre>
@@ -237,13 +279,18 @@ export function SourceDetailsDialog({
 
         <DialogFooter>
           {/* A video's reader offers its own "Try again" for errors a retry could fix. */}
-          {(resource.status === "failed" || resource.status === "partial") && !(isYouTube && resource.error?.retryable) && (
+          {memory && (
+            <Button type="button" variant="ghost" onClick={() => memory.reuse({ workspaceId, refs: [{ kind: "source", tabId: tab.id }] })}>
+              <MessageSquareShare /> Use in AI chat
+            </Button>
+          )}
+          {(resource.status === "failed" || resource.status === "partial") && !isConversation && !(isYouTube && resource.error?.retryable) && (
             <Button type="button" variant="ghost" onClick={() => onRetry(tab)}>
               <RotateCw /> Read again
             </Button>
           )}
           <Button type="button" variant="secondary" onClick={() => onOpen(tab)}>
-            <ExternalLink /> Open
+            <ExternalLink /> {provider ? `Open in ${aiProviderName(provider)}` : "Open"}
           </Button>
         </DialogFooter>
       </DialogContent>

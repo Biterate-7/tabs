@@ -22,13 +22,19 @@ export type GraphEdgePopoverState =
       y: number
     }
 
+/**
+ * Why two items are joined. Only a link the person made says anything about
+ * how the items relate; every other reason is Hubble inferring from where
+ * they were saved, and is labelled as such — never as a claim that the two
+ * say the same thing.
+ */
 const REASON_LABEL: Record<EdgeReason, string> = {
-  domain: "Same domain",
-  workspace: "Same workspace",
-  category: "Same category",
-  group: "Same group",
-  section: "Same section",
-  manual: "Manually linked",
+  domain: "Inferred: same site",
+  workspace: "Inferred: same project",
+  category: "Inferred: same category",
+  group: "Inferred: same group",
+  section: "Inferred: same section",
+  manual: "Linked by you",
 }
 
 function titleOf(node: GraphNode): string {

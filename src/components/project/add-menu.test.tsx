@@ -85,7 +85,7 @@ describe("+ Add", () => {
     expect(props.onAdd).toHaveBeenCalledWith([{ url: "https://a.example" }, { url: "https://b.example" }])
   })
 
-  it("with Hubble for Chrome present but unreachable here, names the right-click for this subject", async () => {
+  it("with Hubble for Chrome present but unreachable here, names the right-click for this project", async () => {
     sendBrowserCommand.mockResolvedValue({ id: "1", ok: false, error: "extension-unreachable" })
     const user = userEvent.setup()
     renderMenu({ quickAdd: { shortcut: "Alt+Shift+H" } })

@@ -1,4 +1,4 @@
-import { Bot, Download, ExternalLink, FolderInput, Layers, Tag, Trash2, X } from "lucide-react"
+import { Download, ExternalLink, FolderInput, Layers, MessageSquareShare, Tag, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import {
@@ -10,8 +10,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CATEGORIES, CATEGORY_ORDER } from "@/lib/categories"
 import type { CategoryId } from "@/lib/categories"
-import { INTENT_LABELS } from "@/components/agents/agent-actions"
-import type { AgentIntent } from "@/lib/agents/command-centre/working-context"
 import { useProjectActions } from "@/components/project/project-actions"
 import type { Tab } from "@/lib/tabs/types"
 
@@ -26,7 +24,7 @@ export function SelectionToolbar({
   onAddToCollection,
   onGatherNew,
   addToCollectionTarget,
-  agentActions,
+  onUseInAi,
   selectedTabs,
 }: {
   count: number
@@ -42,12 +40,8 @@ export function SelectionToolbar({
   onGatherNew?: () => void
   /** Set while "Add tabs" was invoked from a specific collection's header menu — swaps the whole toolbar into a focused "confirm/cancel" mode instead of the general selection actions. */
   addToCollectionTarget?: { name: string; onConfirm: () => void }
-  /**
-   * Sends the selection to an agent: "Ask agent" opens the Command Centre
-   * with these tabs as the session's context; "Add to agent context" collects
-   * them without leaving. Absent outside the shell.
-   */
-  agentActions?: { onAsk: (intent: AgentIntent) => void; onAdd: () => void }
+  /** Opens the context builder with the selection chosen ("Use in AI chat"). Absent outside the shell. */
+  onUseInAi?: () => void
   /** The selected tabs, for "Add to project" (Hubble 2.0). */
   selectedTabs?: readonly Pick<Tab, "url" | "title" | "resource">[]
 }) {
@@ -80,7 +74,7 @@ export function SelectionToolbar({
             <DropdownMenuTrigger
               render={
                 <Button variant="secondary" size="sm" className="mr-1 shrink-0">
-                  <FolderInput /> Add to subject
+                  <FolderInput /> Add to project
                 </Button>
               }
             />
@@ -93,25 +87,10 @@ export function SelectionToolbar({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {agentActions && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button variant="secondary" size="sm" className="mr-1 shrink-0" aria-label="Ask AI about selected tabs">
-                  <Bot /> Ask AI
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end">
-              {(Object.keys(INTENT_LABELS.selection) as (keyof typeof INTENT_LABELS.selection)[]).map((intent) => (
-                <DropdownMenuItem key={intent} onClick={() => agentActions.onAsk(intent)}>
-                  {INTENT_LABELS.selection[intent]}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={agentActions.onAdd}>Add to next AI chat</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {onUseInAi && (
+          <Button variant="secondary" size="sm" className="mr-1 shrink-0" aria-label="Use selected tabs in an AI chat" onClick={onUseInAi}>
+            <MessageSquareShare /> Use in AI chat
+          </Button>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger

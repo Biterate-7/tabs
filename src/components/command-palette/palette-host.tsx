@@ -7,7 +7,7 @@ import type { Command } from "./types"
  * The shell-level command palette, as seen by the views inside it.
  *
  * Hubble has one palette and it belongs to the shell, so ⌘K works on every
- * destination — Command Centre, Settings, Graph — not only on the workspace.
+ * destination — Search, Settings, Graph — not only on the workspace.
  * A view that has commands of its own (the workspace's selection, sort and
  * section actions) contributes them while it is mounted; the shell merges
  * them with its global ones at the moment the palette opens.

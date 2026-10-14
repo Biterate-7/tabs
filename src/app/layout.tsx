@@ -98,7 +98,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin()),
   title: "Hubble",
   description:
-    "Turn a browser full of tabs into a workspace — and see the AI agent runs happening inside it.",
+    "One connected workspace for everything you learn and create with AI.",
 };
 
 // A minimal, best-effort core-palette lookup so the pre-hydration inline

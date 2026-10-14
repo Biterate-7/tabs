@@ -1,7 +1,8 @@
 import { EXTRACTION_ERRORS, LEGACY_BLOCKED_MESSAGE, LEGACY_TRANSCRIPT_MESSAGE } from "./extraction";
 import { cleanLanguageTag } from "./transcript";
-import { RESOURCE_KINDS, RESOURCE_ORIGINS, RESOURCE_STATUSES } from "./types";
-import type { ResourceError, ResourceErrorCode, ResourceMeta, TabResource } from "./types";
+import { CONVERSATION_CAPTURE_METHODS, RESOURCE_KINDS, RESOURCE_ORIGINS, RESOURCE_STATUSES } from "./types";
+import { isAiProviderId } from "@/lib/providers/registry";
+import type { ConversationTurn, ResourceContent, ResourceError, ResourceErrorCode, ResourceMeta, TabResource } from "./types";
 
 /**
  * A stored `resource`, re-read field by field.
@@ -30,6 +31,7 @@ const ERROR_CODES: readonly ResourceErrorCode[] = [
   "pdf_needs_file",
   "pdf_unreadable",
   "transcript_unavailable",
+  "needs_capture",
   "timeout",
   "offline",
   "interrupted",
@@ -55,10 +57,18 @@ function readMeta(raw: unknown): ResourceMeta | undefined {
     const value = text(source[field], max);
     if (value) meta[field] = value;
   }
-  for (const field of ["pageCount", "durationSeconds", "fileSize"] as const) {
+  for (const field of ["pageCount", "durationSeconds", "fileSize", "turnCount"] as const) {
     const value = count(source[field]);
     if (value !== undefined) meta[field] = value;
   }
+  for (const field of ["conversationCreatedAt", "conversationUpdatedAt"] as const) {
+    const value = time(source[field]);
+    if (value !== undefined) meta[field] = value;
+  }
+  if (isAiProviderId(source.provider)) meta.provider = source.provider;
+  if (typeof source.conversationId === "string" && /^[A-Za-z0-9._-]{1,200}$/.test(source.conversationId)) meta.conversationId = source.conversationId;
+  if (typeof source.contentHash === "string" && /^[0-9a-f]{16}$/.test(source.contentHash)) meta.contentHash = source.contentHash;
+  if (CONVERSATION_CAPTURE_METHODS.includes(source.capture as never)) meta.capture = source.capture as ResourceMeta["capture"];
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
@@ -94,8 +104,10 @@ export function readTabResource(raw: unknown): TabResource | undefined {
       content = { chars, extractedAt };
       const pages = count(summary.pages);
       const lines = count(summary.transcriptLines);
+      const turns = count(summary.turns);
       if (pages !== undefined) content.pages = pages;
       if (lines !== undefined) content.transcriptLines = lines;
+      if (turns !== undefined) content.turns = turns;
       const language = cleanLanguageTag(summary.language);
       if (language) content.language = language;
       if (summary.truncated === true) content.truncated = true;
@@ -117,4 +129,47 @@ export function readTabResource(raw: unknown): TabResource | undefined {
     ...(error && (honestStatus === "partial" || honestStatus === "failed") ? { error } : {}),
     ...(attempts !== undefined ? { attempts } : {}),
   };
+}
+
+/**
+ * Stored content from somewhere Hubble did not write it (an export file),
+ * re-read field by field and bounded: unknown fields are left behind, a
+ * malformed line or turn is dropped, and anything over the storage limits
+ * is cut (see boundContent). `undefined` when nothing usable is left.
+ */
+export function readResourceContent(raw: unknown): ResourceContent | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const kind = source.kind === "note" || RESOURCE_KINDS.includes(source.kind as TabResource["kind"]) ? (source.kind as ResourceContent["kind"]) : undefined;
+  const extractedAt = time(source.extractedAt);
+  if (!kind || extractedAt === undefined) return undefined;
+  const content: ResourceContent = { kind, extractedAt };
+  if (typeof source.text === "string" && source.text.length > 0) content.text = source.text;
+  if (Array.isArray(source.pages)) {
+    const pages = source.pages.filter((page): page is string => typeof page === "string");
+    if (pages.length > 0) content.pages = pages;
+  }
+  if (Array.isArray(source.transcript)) {
+    const transcript = source.transcript.flatMap((line) => {
+      if (!line || typeof line !== "object" || typeof (line as { text?: unknown }).text !== "string") return [];
+      const entry = line as { text: string; start?: unknown; end?: unknown };
+      const start = time(entry.start);
+      const end = time(entry.end);
+      return [{ text: entry.text, ...(start !== undefined ? { start } : {}), ...(end !== undefined ? { end } : {}) }];
+    });
+    if (transcript.length > 0) content.transcript = transcript;
+  }
+  if (Array.isArray(source.turns)) {
+    const turns = source.turns.flatMap((turn) => {
+      if (!turn || typeof turn !== "object") return [];
+      const entry = turn as { role?: unknown; text?: unknown; at?: unknown };
+      if ((entry.role !== "user" && entry.role !== "assistant") || typeof entry.text !== "string" || entry.text.length === 0) return [];
+      const at = time(entry.at);
+      return [{ role: entry.role, text: entry.text, ...(at !== undefined ? { at } : {}) } as ConversationTurn];
+    });
+    if (turns.length > 0) content.turns = turns;
+  }
+  if (source.truncated === true) content.truncated = true;
+  if (!content.text && !content.pages && !content.transcript && !content.turns) return undefined;
+  return content;
 }

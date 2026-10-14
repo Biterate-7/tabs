@@ -1,9 +1,7 @@
 import { SYNC_CURSOR_START } from "@/lib/sync/types";
-import { createMemoryRemoteStore } from "@/lib/agents/remote/store";
 import { createSyncMcpData } from "../data";
 import type { SyncChange, SyncChangesPage, WorkspaceSyncPayload } from "@/lib/sync/types";
 import type { SyncReader, HubbleMcpData } from "../data";
-import type { RemoteStore } from "@/lib/agents/remote/store";
 
 /**
  * Two accounts' synced Hubble data, as sync change pages.
@@ -143,38 +141,6 @@ export function createFixtureSyncReader(pageSize = 500): SyncReader & { pulls: {
   };
 }
 
-export async function createFixtureRemoteStore(): Promise<RemoteStore> {
-  const store = createMemoryRemoteStore();
-  for (const [owner, name, projectId, sessionId] of [
-    [ALICE, "Alice test project", "rp-alice", "rs-alice"],
-    [BOB, "Bob hidden project", "rp-bob", "rs-bob"],
-  ] as const) {
-    await store.createProject({
-      id: projectId,
-      ownerId: `account:${owner}`,
-      name,
-      source: "remote_upload",
-      sandboxName: `tabdump-sandbox-${projectId}-PLANTED`,
-      scopes: ["read_project"],
-      status: "ready",
-      createdAt: T,
-      updatedAt: T,
-    });
-    await store.createSession({
-      id: sessionId,
-      ownerId: `account:${owner}`,
-      projectId,
-      provider: "claude-code",
-      sandboxName: `tabdump-sandbox-${projectId}-PLANTED`,
-      commandId: "cmd-PLANTED",
-      providerSessionId: "provider-session-PLANTED",
-      createdAt: T,
-      updatedAt: T,
-    });
-  }
-  return store;
-}
-
 export async function createFixtureData(): Promise<HubbleMcpData> {
-  return createSyncMcpData({ sync: createFixtureSyncReader(), remote: await createFixtureRemoteStore() });
+  return createSyncMcpData({ sync: createFixtureSyncReader() });
 }

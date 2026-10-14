@@ -19,7 +19,7 @@ const physics: Workspace = {
 };
 
 describe("describeAddress", () => {
-  it("accepts web pages and refuses everything a subject cannot hold", () => {
+  it("accepts web pages and refuses everything a project cannot hold", () => {
     expect(describeAddress("https://www.Example.com/a/?utm_source=x#frag")).toMatchObject({ domain: "example.com", normalizedUrl: "https://www.example.com/a" });
     for (const bad of ["chrome://newtab/", "file:///C:/notes.pdf", "javascript:alert(1)", "about:blank", "http://localhost:3000/", "not a url", ""]) {
       expect(describeAddress(bad)).toBeNull();
@@ -75,7 +75,7 @@ describe("itemsFromBrowserTabs", () => {
 });
 
 describe("itemsFromSubject", () => {
-  it("describes the subject's tabs and marks those already in one of its collections", () => {
+  it("describes the project's tabs and marks those already in one of its collections", () => {
     const { items } = itemsFromSubject(physics, [
       { id: "c1", workspaceId: "physics", name: "Waves", tabIds: ["p1"], createdAt: 1, updatedAt: 1 },
       { id: "c2", workspaceId: "other", name: "Elsewhere", tabIds: ["s1"], createdAt: 1, updatedAt: 1 },

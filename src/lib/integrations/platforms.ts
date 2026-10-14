@@ -280,7 +280,6 @@ export const PLATFORM_SURFACES: readonly PlatformSurface[] = [
     requirements: ["Gemini CLI installed on this computer."],
     limitations: [
       "OAuth needs a browser on the same machine; use a token for SSH sessions and containers.",
-      "Hubble's other Gemini integration — starting Gemini from Hubble's Command Centre — is separate and unchanged.",
     ],
     steps: ["Create a token connection below.", "Run the command shown (or merge the settings.json snippet), then /mcp to check it."],
     docs: "https://google-gemini.github.io/gemini-cli/docs/tools/mcp-server.html",

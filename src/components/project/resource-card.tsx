@@ -1,6 +1,6 @@
 "use client"
 
-import { Copy, ExternalLink, FileUp, Info, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
+import { ClipboardPaste, Copy, ExternalLink, FileUp, Info, MessageSquareShare, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SourceStatus } from "./source-status"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
+import { aiProviderName, providerOfUrl } from "@/lib/providers/registry"
 import { formatRelativeTime } from "@/lib/time-format"
 import { RESOURCE_KIND_LABEL } from "@/lib/resources/types"
 import { cn } from "@/lib/utils"
@@ -19,8 +21,10 @@ import type { Tab } from "@/lib/tabs/types"
 
 export type SourceActions = {
   onOpen: (tab: Tab) => void
-  /** "Ask AI" about this one resource. */
-  onUseInTask?: (tab: Tab) => void
+  /** "Use in AI chat" with this one item. */
+  onUseInAi?: (tab: Tab) => void
+  /** A conversation saved as a link only: paste its text. */
+  onPasteConversation?: (tab: Tab) => void
   onRename: (tab: Tab) => void
   onRemove: (tab: Tab) => void
   onRetry: (tab: Tab) => void
@@ -29,18 +33,21 @@ export type SourceActions = {
 }
 
 /**
- * One resource in a subject:
+ * One saved item with an address in a project — a page, PDF, video or AI
+ * conversation:
  *
  *   ☐  ▶  Cuban Missile Crisis Explained
  *         youtube.com · YouTube video · 4 min ago
  *         ⓘ Saved · Transcript isn't available — add one…   (only when not simply ready)
- *         [Open] [Ask AI] [•••]
+ *         [Open] [Use in AI chat] [•••]
+ *
+ * A conversation shows its AI app instead of a site, and opens in that app.
  *
  * A ready resource says nothing about being ready — that is the normal case,
  * and the student does not need to be told it. Reading, saved-without-text
  * and couldn't-read still say so, with what fixes them.
  *
- * `selection` turns on the checkbox, for "select some → Ask AI".
+ * `selection` turns on the checkbox, for "select some → Use in AI chat".
  */
 export function ResourceCard({
   tab,
@@ -62,6 +69,8 @@ export function ResourceCard({
   // Not while Hubble is still getting one itself.
   const needsTranscript = (resource.kind === "youtube" || resource.kind === "video") && (resource.status === "partial" || resource.status === "failed")
   const added = formatRelativeTime(resource.addedAt, now)
+  const provider = resource.kind === "conversation" ? (resource.meta?.provider ?? providerOfUrl(tab.url)) : undefined
+  const needsCapture = resource.kind === "conversation" && resource.status !== "ready"
   return (
     <li
       className={cn(
@@ -82,27 +91,33 @@ export function ResourceCard({
           />
         )}
         {/* The site's own icon (Chrome's, when the tab came from Chrome); the kind is named in words below. */}
-        <span className="mt-0.5 flex" data-source-icon>
-          <TabFavicon domain={tab.domain} icon={tab.favicon} size={16} />
+        <span className="mt-0.5 flex text-muted-foreground" data-source-icon>
+          {provider ? <ProviderMark provider={provider} size={16} /> : <TabFavicon domain={tab.domain} icon={tab.favicon} size={16} />}
         </span>
         <div className="min-w-0 flex-1">
           <button type="button" className="block w-full truncate text-left text-body text-foreground outline-none hover:underline focus-visible:underline" title={title} onClick={() => actions.onDetails(tab)}>
             {title}
           </button>
-          <p className="truncate text-meta text-tertiary">
-            {tab.domain} · {RESOURCE_KIND_LABEL[resource.kind]}
-            {added ? ` · ${added}` : ""}
+          <p className="flex min-w-0 items-center gap-1 truncate text-meta text-tertiary">
+            {provider ? <ProviderBadge provider={provider} /> : <span className="truncate">{tab.domain}</span>}
+            <span className="shrink-0">· {RESOURCE_KIND_LABEL[resource.kind]}</span>
+            {added ? <span className="shrink-0">· {added}</span> : null}
           </p>
         </div>
       </div>
       {resource.status !== "ready" && <SourceStatus resource={resource} />}
       <div className="mt-auto flex flex-wrap items-center gap-1">
         <Button type="button" size="xs" variant="secondary" onClick={() => actions.onOpen(tab)} aria-label={`Open ${title}`}>
-          <ExternalLink /> Open
+          <ExternalLink /> {provider ? `Open in ${aiProviderName(provider)}` : "Open"}
         </Button>
-        {actions.onUseInTask && (
-          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInTask!(tab)} aria-label={`Ask AI about ${title}`}>
-            Ask AI
+        {actions.onUseInAi && !needsCapture && (
+          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInAi!(tab)} aria-label={`Use ${title} in an AI chat`}>
+            <MessageSquareShare /> Use in AI chat
+          </Button>
+        )}
+        {needsCapture && actions.onPasteConversation && (
+          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onPasteConversation!(tab)} aria-label={`Paste the conversation for ${title}`}>
+            <ClipboardPaste /> Paste conversation
           </Button>
         )}
         {needsFile && (
@@ -129,7 +144,7 @@ export function ResourceCard({
             <DropdownMenuItem onClick={() => actions.onCopyUrl(tab)}>
               <Copy /> Copy link
             </DropdownMenuItem>
-            {canRetry && (
+            {canRetry && !needsCapture && (
               <DropdownMenuItem onClick={() => actions.onRetry(tab)}>
                 <RotateCw /> Read again
               </DropdownMenuItem>

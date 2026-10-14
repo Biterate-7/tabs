@@ -525,7 +525,7 @@
 
   /* Hero-sized line (26px) — a view's one sentence, an empty state. */
 
-  /* View title (18px) — "Settings", "Command Centre". */
+  /* View title (18px) — "Settings", "Search". */
 
   /* Panel / section title (13px medium). */
 
@@ -845,23 +845,4 @@
   animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
-}
-/* ===================================================================
-   Agent marks
-
-   The marks are static drawings. They used to animate — a keyframe per
-   visual state, selected by name from the Agent World's motion policy —
-   and that whole system went with the world. A command centre renders
-   these in dense lists where a hundred moving marks are noise rather than
-   information, so state is carried by tone and by the words beside it.
-
-   What is left is the geometry that makes an inline SVG sit correctly
-   beside text. `agent-icon.test.tsx` asserts that no state animates, so a
-   keyframe reintroduced here without a decision fails the build.
-   =================================================================== */
-
-.agent-mark {
-  /* The marks are inline SVG; giving the wrapper its own containing box
-     keeps the text baseline beside it from shifting. */
-  line-height: 0;
 }

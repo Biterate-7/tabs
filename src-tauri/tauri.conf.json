@@ -8,7 +8,7 @@
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run desktop:runtime && npm run desktop:export"
+    "beforeBuildCommand": "npm run desktop:export"
   },
   "app": {
     "withGlobalTauri": false,
@@ -40,8 +40,8 @@
     "targets": ["msi", "nsis"],
     "publisher": "Hubble",
     "category": "Productivity",
-    "shortDescription": "Turn browser-tab chaos into an organized workspace.",
-    "longDescription": "Hubble turns a pile of open browser tabs into an organized, searchable spatial workspace. Your workspaces stay on this device.",
+    "shortDescription": "One connected workspace for everything you learn with AI.",
+    "longDescription": "Hubble keeps what you learn in AI apps, with the pages and notes behind it, in searchable projects you can reuse in your next AI chat. Your projects stay on this device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -56,12 +56,6 @@
       "wix": {
         "upgradeCode": "778d87a8-77ea-516f-b314-46696aa85a7c"
       }
-    },
-    "externalBin": [
-      "binaries/tabdump-agent-node"
-    ],
-    "resources": {
-      "agent-runtime/runtime.mjs": "agent-runtime/runtime.mjs"
     }
   }
 }

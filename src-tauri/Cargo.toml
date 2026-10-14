@@ -40,12 +40,6 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # The import bridge's session ids and tokens. Already in the dependency tree.
 getrandom = "0.3"
 
-# The agent runtime sidecar (Phase J.1) is placed in a job object that kills
-# its whole process tree when Hubble exits — see src/agent_runtime.rs. Already
-# in the dependency tree through Tauri; named here for the job-object API.
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
-
 [features]
 # Used by `tauri build --debug` / CI to keep devtools available.
 custom-protocol = ["tauri/custom-protocol"]

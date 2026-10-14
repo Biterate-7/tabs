@@ -13,8 +13,7 @@ import { GraphContextMenu, type GraphContextMenuState } from "./graph-context-me
 import { GraphEdgePopover, type GraphEdgePopoverState } from "./graph-edge-popover"
 import { GraphNodeNotesView } from "./graph-node-notes-view"
 import { GraphLinkDialog, type GraphLinkDialogMode } from "./graph-link-dialog"
-import { useAgentActions } from "@/components/agents/agent-actions"
-import { tabsContext } from "@/lib/agents/command-centre/working-context"
+import { useMemoryActions } from "@/components/memory/memory-actions"
 import { buildDependencyEdges, buildGraphEdges, buildGraphNodes, buildWorkspaceLookup, edgeKey } from "@/lib/graph/relations"
 import { buildClusterTree, computeClusterAnchors } from "@/lib/graph/clusters"
 import { computeLocalDistances } from "@/lib/graph/local-graph"
@@ -54,31 +53,10 @@ import { GatherDialog } from "@/components/workspace/gather-dialog"
 import { RenameCollectionDialog } from "@/components/workspace/rename-collection-dialog"
 import { DeleteCollectionDialog } from "@/components/workspace/delete-collection-dialog"
 
-import { useAgentSpatial } from "@/hooks/use-agent-spatial"
-import { useAgentIntelligence } from "@/hooks/use-agent-intelligence"
-import { useAgentConnectors } from "@/hooks/use-agent-connectors"
-import { buildInspectorSelection } from "@/lib/agents/spatial/inspector"
-import { runIdForWorkItemSelection } from "@/lib/agents/spatial/scene"
-import { getRunsTouchingArtifact } from "@/lib/agents/intelligence/relationships"
-import { runSpatialId } from "@/lib/agents/spatial/types"
-import { visualStateForRun } from "@/lib/agents/visual/states"
-import { searchAgentWork } from "@/lib/agents/spatial/search"
-import { CONNECTOR_STATUS_LABELS } from "@/lib/agents/connectors/types"
-import { GraphAgentPanel } from "./graph-agent-panel"
-import type { AgentActivityItem } from "@/components/agents/agent-activity-list"
-import type { AgentStoreApi } from "@/hooks/use-agent-store"
+
 
 const CAMERA_FLUSH_DELAY_MS = 200
 const SAVE_DEBOUNCE_MS = 400
-
-/**
- * The visual states the sidebar's "now" list shows.
- *
- * Only states that mean something is happening. A completed or failed run is
- * history, and the panel already shows history — repeating it under a heading
- * that says "now" would make a finished run look live.
- */
-const LIVE_ACTIVITY_STATES = new Set(["working", "thinking", "communicating", "waiting", "starting"])
 
 type LinkDialogState = { mode: GraphLinkDialogMode; tabId: string } | null
 
@@ -86,26 +64,10 @@ export function GraphView({
   store,
   onStoreUpdate,
   onClose,
-  agentStore,
-  agentSessionsAvailable,
 }: {
   store: WorkspaceStore
   onStoreUpdate: (store: WorkspaceStore) => void
   onClose: () => void
-  /**
-   * The agent domain, mounted once at the shell and handed down.
-   *
-   * It used to be mounted here, alongside the observer that feeds it. Both
-   * moved out when the Agent World became a view of its own: two surfaces
-   * that each mounted their own store would have been two debounced writers
-   * racing on one localStorage key, and two observers would have been two
-   * ingestion paths for the same observations. One of each, at the shell,
-   * removes the question rather than relying on the two views never being
-   * open at once. See AppShell, and connectors/single-loop.test.ts.
-   */
-  agentStore: AgentStoreApi
-  /** Whether Claude Code sessions can currently be observed, from the shell's observer. */
-  agentSessionsAvailable: boolean
 }) {
   const canvasHandleRef = useRef<GraphCanvasHandle>(null)
   const [graphState, setGraphState] = useState<GraphPersistedState>(() => {
@@ -256,249 +218,6 @@ export function GraphView({
   const selectedTabId = graphState.settings.selectedTabId
   const centerTabId = view === "local" ? selectedTabId : null
   const hasCenter = Boolean(centerTabId && nodeById.has(centerTabId))
-
-  /**
-   * The agent work layer.
-   *
-   * Reads the agent store the shell mounted, which the observer feeds — this
-   * view owns no polling and makes no request of its own. It is also strictly
-   * a reader: nothing here can change a run, a status or a relationship.
-   */
-  const agentTabBounds = useMemo(() => {
-    const points = Object.values(graphState.positions)
-    if (points.length === 0) return null
-    let minX = Infinity
-    let maxX = -Infinity
-    let minY = Infinity
-    let maxY = -Infinity
-    for (const point of points) {
-      if (point.x < minX) minX = point.x
-      if (point.x > maxX) maxX = point.x
-      if (point.y < minY) minY = point.y
-      if (point.y > maxY) maxY = point.y
-    }
-    return Number.isFinite(minX) ? { minX, maxX, minY, maxY } : null
-  }, [graphState.positions])
-
-  /**
-   * Connector state, read-only.
-   *
-   * No `restore` here: AppShell owns that, because the manager outlives any
-   * one view and a connector the user enabled must not stay dormant until
-   * they happen to open the graph. This view reads the same singleton, so it
-   * and the settings panel can never disagree about what is connected.
-   */
-  const connectors = useAgentConnectors()
-
-  /**
-   * The connector strip's view models.
-   *
-   * Only what the user has actually enabled: a provider they have never
-   * connected is not a row in the workspace sidebar, it is an option in
-   * settings. Status words come from the connector layer rather than being
-   * re-derived here, so the sidebar and the settings page can never disagree
-   * about what state something is in.
-   */
-  const agentPanelConnectors = useMemo(
-    () =>
-      connectors.connectors
-        .filter((view) => view.enabled)
-        .map((view) => ({
-          provider: view.descriptor.provider,
-          displayName: view.descriptor.displayName,
-          statusLabel: CONNECTOR_STATUS_LABELS[view.status.kind],
-          connected: view.status.kind === "connected",
-          // Carried raw as well as resolved, so the strip can draw the
-          // provider's mark in the state its connector is in. The word stays
-          // the connector layer's to decide.
-          statusKind: view.status.kind,
-        })),
-    [connectors.connectors]
-  )
-
-  /** Provider id → display name, for the provider filter. Built from the catalogue, not hard-coded. */
-  const providerLabels = useMemo(() => {
-    const labels: Record<string, string> = {}
-    for (const view of connectors.connectors) {
-      labels[view.descriptor.provider] = view.descriptor.displayName
-    }
-    return labels
-  }, [connectors.connectors])
-
-  const agentSpatial = useAgentSpatial({
-    state: agentStore.state,
-    workspaceId: store.currentId,
-    tabBounds: agentTabBounds,
-  })
-
-  /**
-   * The Phase 16 derived intelligence layer.
-   *
-   * Reads the same store the spatial layer does and owns no state of its own —
-   * it groups the domain once per state object so the inspector, the canvas
-   * and the search box share one traversal rather than each doing their own.
-   */
-  const agentIntelligence = useAgentIntelligence({
-    state: agentStore.state,
-    workspaceId: store.currentId,
-    selectedId: agentSpatial.selectedId,
-  })
-
-  const agentLayer = useMemo(
-    () => ({
-      scene: agentSpatial.scene,
-      positions: agentSpatial.positions,
-      emphasized: agentSpatial.emphasized,
-      selectedId: agentSpatial.selectedId,
-      /** Objects the selected run touches, so the canvas can emphasise them. */
-      highlighted: agentIntelligence.highlighted,
-    }),
-    [
-      agentSpatial.scene,
-      agentSpatial.positions,
-      agentSpatial.emphasized,
-      agentSpatial.selectedId,
-      agentIntelligence.highlighted,
-    ]
-  )
-
-  /** Tab titles for the inspector, so it can name a run's context tabs without importing the tab store. */
-  const agentTabTitles = useMemo(() => {
-    const titles = new Map<string, string>()
-    for (const workspace of store.workspaces) {
-      for (const tab of workspace.tabs) {
-        titles.set(tab.id, tab.title?.trim() || tab.domain)
-      }
-    }
-    return titles
-  }, [store.workspaces])
-
-  /**
-   * What is running right now, for the sidebar's NOW section.
-   *
-   * Read off the same spatial scene the canvas draws, so the list and the
-   * canvas cannot disagree about what state a run is in — there is one
-   * derivation and both consume it. Filtered to the states that mean
-   * something is happening: a finished run belongs in the history the panel
-   * already shows, not in a list headed "now".
-   *
-   * `visualStateForRun` is given the same inputs the scene gave it, so a run
-   * that reads as `thinking` on the canvas reads as `thinking` here. It is
-   * never passed `isHandingOff`: handoffs were a world derivation, and
-   * inventing one from a run pair would be a claim the domain has not made.
-   */
-  const agentActivity = useMemo<AgentActivityItem[]>(
-    () =>
-      agentSpatial.scene.nodes.flatMap((node) => {
-        if (node.kind !== "run") return []
-        const state = visualStateForRun({
-          status: node.status,
-          currentActivity: node.activity,
-          hasNamedWork: Boolean(node.primaryWorkItemTitle),
-        })
-        if (!LIVE_ACTIVITY_STATES.has(state)) return []
-        return [
-          {
-            id: node.id,
-            provider: node.provider,
-            agentName: node.label,
-            state,
-            activity: node.activity,
-            progress: node.workProgress,
-          },
-        ]
-      }),
-    [agentSpatial.scene.nodes]
-  )
-
-  const agentInspection = useMemo(
-    () =>
-      buildInspectorSelection({
-        state: agentStore.state,
-        scene: agentSpatial.scene,
-        selectedId: agentSpatial.selectedId,
-        tabTitles: agentTabTitles,
-        intelligence: agentIntelligence.index,
-      }),
-    [
-      agentStore.state,
-      agentSpatial.scene,
-      agentSpatial.selectedId,
-      agentTabTitles,
-      agentIntelligence.index,
-    ]
-  )
-
-  /**
-   * Agent search results.
-   *
-   * Scoped to the current scene, which means they inherit the active filter
-   * and the current workspace — a result always corresponds to something the
-   * user can then be shown.
-   */
-  const agentSearchResults = useMemo(
-    () =>
-      searchAgentWork(
-        agentSpatial.scene,
-        {
-          artifacts: agentStore.state.artifacts,
-          artifactLinks: agentStore.state.artifactLinks,
-          workspaceId: store.currentId,
-          visibleRunIds: new Set(
-            agentSpatial.scene.nodes.filter((n) => n.kind === "run").map((n) => n.runId)
-          ),
-        },
-        query
-      ),
-    [agentSpatial.scene, agentStore.state.artifacts, agentStore.state.artifactLinks, store.currentId, query]
-  )
-
-  const workspaceAgentRunCount = useMemo(
-    () => agentStore.state.runs.filter((run) => run.workspaceId === store.currentId).length,
-    [agentStore.state.runs, store.currentId]
-  )
-
-  /**
-   * Selecting a search result.
-   *
-   * Selects the entity and focuses its spatial node, reusing the canvas's
-   * existing focus mechanism rather than introducing a second viewport
-   * controller. Purely presentational — nothing about the agent domain
-   * changes.
-   */
-  function handleSelectAgentResult(id: string) {
-    agentSpatial.select(id)
-
-    // A work item has no body on the canvas, so "focus it" means focus the run
-    // that owns it. Resolved through the scene rather than by parsing the id,
-    // so an item whose run is no longer visible focuses nothing instead of
-    // sending the camera to a node that is not there.
-    const focusId = runIdForWorkItemSelection(agentSpatial.scene, id) ?? id
-    const point = agentSpatial.positions.get(focusId)
-    if (point) {
-      canvasHandleRef.current?.focusPoint(point.x, point.y)
-      return
-    }
-
-    // A file that the scene has not disclosed yet has no position — selecting
-    // it is what discloses it, and that happens on the next render. So focus
-    // a run that worked on it instead, which is on screen now. Workspace-
-    // scoped, so an identically-named file elsewhere cannot move the camera.
-    if (focusId.startsWith("artifact:")) {
-      const artifactId = focusId.slice("artifact:".length)
-      for (const runId of getRunsTouchingArtifact(
-        agentIntelligence.index,
-        store.currentId,
-        artifactId
-      )) {
-        const runPoint = agentSpatial.positions.get(runSpatialId(runId))
-        if (runPoint) {
-          canvasHandleRef.current?.focusPoint(runPoint.x, runPoint.y)
-          return
-        }
-      }
-    }
-  }
 
   const { visibleNodes, visibleEdges, visibleDependencyEdges, centerDistances } = useMemo(() => {
     if (hasCenter && centerTabId) {
@@ -906,8 +625,8 @@ export function GraphView({
     : null
 
   const contextNode = contextMenu?.node
-  // A node as agent context — only inside the shell, which knows where to send it.
-  const agentActions = useAgentActions()
+  // A node, for "Use in AI chat" — only inside the shell, which owns the context builder.
+  const memory = useMemoryActions()
   const otherWorkspaces = contextNode
     ? store.workspaces
         .filter((w) => w.id !== workspaceLookup.get(contextNode.id)?.id)
@@ -1053,9 +772,6 @@ export function GraphView({
           onBoundaryOffsetsNormalized={handleBoundaryOffsetsNormalized}
           onHoverChange={setHover}
           onSelectedNodeScreenChange={setSelectedNodeScreen}
-          agentLayer={agentLayer}
-          onSelectAgentNode={agentSpatial.select}
-          onAgentNodeMoved={(id, x, y) => agentSpatial.moveNode(id, { x, y })}
         />
       )}
 
@@ -1091,28 +807,6 @@ export function GraphView({
         workspaceFilter={graphState.settings.workspaceFilter}
         onWorkspaceFilterChange={handleWorkspaceFilterChange}
         onFit={handleFit}
-        agentPanel={
-          <GraphAgentPanel
-            available={agentSessionsAvailable}
-            filter={agentSpatial.filter}
-            onFilterChange={agentSpatial.setFilter}
-            connectors={agentPanelConnectors}
-            providers={agentSpatial.providers}
-            providerFilter={agentSpatial.providerFilter}
-            onProviderFilterChange={agentSpatial.setProviderFilter}
-            providerLabels={providerLabels}
-            selection={agentInspection}
-            hiddenRunCount={agentSpatial.hiddenRunCount}
-            hasAnyAgentData={workspaceAgentRunCount > 0}
-            hasVisibleRuns={agentSpatial.scene.nodes.some((node) => node.kind === "run")}
-            searchQuery={query}
-            searchResults={agentSearchResults}
-            onSelectResult={handleSelectAgentResult}
-            onSelectRun={(runId) => agentSpatial.select(`run:${runId}`)}
-            activity={agentActivity}
-            selectedActivityId={agentSpatial.selectedId}
-          />
-        }
         selectedNode={selectedNode}
         dependenciesOfSelected={dependenciesOfSelected}
         usedByOfSelected={usedByOfSelected}
@@ -1191,14 +885,10 @@ export function GraphView({
           setContextMenu(null)
         }}
         onClose={() => setContextMenu(null)}
-        {...(agentActions
+        {...(memory
           ? {
-              onAskAgent: () => {
-                if (contextNode) agentActions.ask(tabsContext(contextNode.workspaceId, [contextNode.id]), "explain")
-                setContextMenu(null)
-              },
-              onAddToAgentContext: () => {
-                if (contextNode) agentActions.add(tabsContext(contextNode.workspaceId, [contextNode.id]))
+              onUseInAi: () => {
+                if (contextNode) memory.reuse({ workspaceId: contextNode.workspaceId, tabIds: [contextNode.id] })
                 setContextMenu(null)
               },
             }

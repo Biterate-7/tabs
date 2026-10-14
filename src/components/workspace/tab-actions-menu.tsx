@@ -18,9 +18,8 @@ import { rootSections, childrenOf } from "@/lib/sections/relations"
 import type { Section } from "@/lib/sections/types"
 import type { Tab } from "@/lib/tabs/types"
 import { openTab } from "@/lib/browser/open-tab"
-import { AskAgentSubmenu, useAgentActions } from "@/components/agents/agent-actions"
+import { UseInAiMenuItem, useMemoryActions } from "@/components/memory/memory-actions"
 import { AddToProjectSubmenu } from "@/components/project/project-actions"
-import { tabsContext } from "@/lib/agents/command-centre/working-context"
 
 /**
  * Recursively renders one level of the section tree as nested
@@ -91,8 +90,8 @@ export function TabActionsMenu({
   trigger: ReactElement
   align?: "start" | "end" | "center"
 }) {
-  // "Ask agent" — present only inside the shell, which knows where to send it.
-  const agent = useAgentActions()
+  // "Use in AI chat" — present only inside the shell, which owns the context builder.
+  const memory = useMemoryActions()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={trigger} />
@@ -105,7 +104,7 @@ export function TabActionsMenu({
             <PanelRight /> Inspect…
           </DropdownMenuItem>
         )}
-        {agent && <AskAgentSubmenu subject="tab" context={tabsContext(agent.workspaceId, [tab.id])} />}
+        {memory && <UseInAiMenuItem selection={{ workspaceId: memory.currentWorkspaceId, tabIds: [tab.id] }} />}
         <AddToProjectSubmenu tabs={[tab]} />
         {onAddDependency && (
           <DropdownMenuItem onClick={() => onAddDependency(tab.id)}>

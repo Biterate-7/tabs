@@ -35,8 +35,7 @@ Installers are never committed to Git and never served from Vercel.
    with `tauri build --bundles nsis` (release profile — never `--debug`), and
    creates a **draft** release with the installer and its SHA-256.
 
-The build receives no secrets. Provider credentials are never bundled: every
-agent signs in on the user's machine through its own sign-in.
+The build receives no secrets, and the app bundles no credentials.
 
 ## 2. Check the draft before publishing
 
@@ -47,10 +46,11 @@ that has never had Hubble:
 - [ ] The installer and the Start menu entry say **Hubble**, with the Hubble icon.
 - [ ] Hubble opens to the app (not a dev server, no devtools).
 - [ ] Settings → Desktop says "You are running Hubble Desktop".
-- [ ] Command Centre → Connect agent: Claude Code, Codex, Gemini CLI and Grok
-      Build show their real local state (installed / sign-in required /
-      not installed), not "Unavailable here".
-- [ ] Quitting Hubble leaves no agent process running.
+- [ ] Projects, Search, Graph and Settings open; a new project can be made
+      and a note written in it.
+- [ ] Settings → AI apps lists ChatGPT, Claude, Gemini and Perplexity with
+      what works on desktop.
+- [ ] Hubble for Chrome's *Send to Hubble Desktop* delivers tabs.
 
 Then publish the draft on GitHub.
 

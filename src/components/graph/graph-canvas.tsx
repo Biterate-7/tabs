@@ -40,16 +40,6 @@ import { assertBoundaryWithinBudget, assertNodeRadius } from "@/lib/graph/dimens
 import { peekFaviconImage, requestFavicon, subscribeFavicons } from "@/lib/favicon/client"
 import { drawNode, nodeLabelBox, nodeLabelFont } from "./node-renderer"
 import { drawEdge, drawDependencyEdge } from "./edge-renderer"
-import {
-  AGENT_NODE_SIZES,
-  AGENT_STATUS_VISUALS,
-  drawAgentEdge,
-  drawAgentNode,
-  drawAgentTabHighlight,
-  hitTestAgentNode,
-  type AgentCanvasLayer,
-  type AgentNodeColors,
-} from "./agent-node-renderer"
 import { drawCollectionBoundary } from "./collection-renderer"
 
 export type GraphCollection = { id: string; name: string; tabIds: string[] }
@@ -58,8 +48,6 @@ export type GraphCanvasHandle = {
   zoomBy: (factor: number) => void
   fitToView: () => void
   centerOnNode: (id: string) => void
-  /** Centres on a world point — used for agent-layer nodes, which are not physics bodies. */
-  focusPoint: (x: number, y: number) => void
   focusCollection: (id: string) => void
   focusCluster: (id: string) => void
 }
@@ -233,21 +221,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   onHoverChange: (hover: HoverInfo | null) => void
   /** Fired whenever the selected node's live on-screen anchor changes (selection, pan, zoom, drag, camera animation) — lets the host pin a persistent Tab Peek popup to the node itself rather than to the cursor, so it survives hover moving anywhere else on the canvas. Null whenever nothing is selected or the selected node isn't currently visible. */
   onSelectedNodeScreenChange: (info: HoverInfo | null) => void
-  /**
-   * The agent work layer: runs, the files they touched, and the relationships
-   * between them.
-   *
-   * Drawn on this canvas but deliberately OUTSIDE the physics simulation. Its
-   * nodes are placed arithmetically (lib/agents/spatial/placement.ts) and are
-   * never handed to the engine, so adding them changes no force any existing
-   * tab feels and a hand-arranged workspace cannot rearrange itself because an
-   * agent appeared. Absent when there is no agent activity in this workspace.
-   */
-  agentLayer?: AgentCanvasLayer | null
-  /** Selection of an agent-layer node. Separate from onSelectNode, which means a tab. */
-  onSelectAgentNode?: (id: string | null) => void
-  /** Reports a dragged agent node. Layout only — it cannot change agent state. */
-  onAgentNodeMoved?: (id: string, x: number, y: number) => void
 }>(function GraphCanvas(
   {
     nodes,
@@ -283,9 +256,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
     onBoundaryOffsetsNormalized,
     onHoverChange,
     onSelectedNodeScreenChange,
-    agentLayer,
-    onSelectAgentNode,
-    onAgentNodeMoved,
   },
   ref
 ) {
@@ -416,32 +386,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
    */
   const structureSignatureRef = useRef<string | null>(null)
 
-  /**
-   * The agent layer, read by the draw loop.
-   *
-   * Held in a ref like every other per-frame input so a new poll result
-   * repaints without re-running the physics setup — the agent layer is not a
-   * physics input, and treating it as one would reheat the simulation (and so
-   * move every tab) every few seconds.
-   */
-  const agentLayerRef = useRef<AgentCanvasLayer | null>(null)
-  /** Screen-space cards from the last frame, for hit-testing pointer events. */
-  const agentHitboxesRef = useRef<
-    { id: string; x: number; y: number; width: number; height: number }[]
-  >([])
-  const agentDragRef = useRef<{
-    id: string
-    offsetX: number
-    offsetY: number
-    startX: number
-    startY: number
-    pointerId: number
-    moved: boolean
-  } | null>(null)
-  const agentHoverIdRef = useRef<string | null>(null)
-
   nodesRef.current = nodes
-  agentLayerRef.current = agentLayer ?? null
   edgesRef.current = edges
   dependencyEdgesRef.current = dependencyEdges
   selectedTabIdRef.current = selectedTabId
@@ -1284,151 +1229,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       })
     }
 
-    // ---- Agent work layer -------------------------------------------------
-    //
-    // Drawn last so agent cards sit above the tab graph, and drawn from
-    // arithmetic positions rather than from the simulation — nothing below
-    // touches a physics body, which is what guarantees the tab layout is
-    // unchanged by anything an agent does.
-    agentHitboxesRef.current = []
-    const layer = agentLayerRef.current
-    if (layer && layer.scene.nodes.length > 0) {
-      // Built from the app's own resolved palette rather than from literals,
-      // so the agent layer follows the active theme like everything else on
-      // this canvas.
-      const agentColors: AgentNodeColors = {
-        surface: palette.nodeDefault,
-        border: palette.nodeStroke,
-        selectedBorder: palette.nodeSelectedRing,
-        text: palette.textPrimary,
-        mutedText: palette.textDim,
-        live: palette.nodeCenterRing,
-        idle: palette.textDim,
-        good: palette.edgeDependency,
-        bad: palette.nodeSelectedRing,
-        muted: palette.textDim,
-      }
-
-      const screenOf = (id: string): { x: number; y: number } | null => {
-        if (id.startsWith("tab:")) {
-          // Tab endpoints come from the simulation, so an edge to a tab
-          // follows that tab wherever the physics or the user has put it.
-          const body = simulation.findNode(id.slice("tab:".length))
-          if (body?.x === undefined || body?.y === undefined) return null
-          return worldToScreen(camera, { x: body.x, y: body.y }, width, height)
-        }
-        const world = layer.positions.get(id)
-        if (!world) return null
-        return worldToScreen(camera, world, width, height)
-      }
-
-      for (const edge of layer.scene.edges) {
-        const from = screenOf(edge.source)
-        const to = screenOf(edge.target)
-        if (!from || !to) continue
-        drawAgentEdge(ctx, {
-          from,
-          to,
-          kind: edge.kind,
-          isEmphasized: layer.emphasized.has(edge.id),
-          // One hue for every agent relationship; the kinds are told apart by
-          // dash pattern and width, which stays legible without colour.
-          color: layer.emphasized.has(edge.id) ? palette.edgeHighlighted : palette.edgeDim,
-        })
-      }
-
-      // Tabs the selected run touched, ringed where the tab layer already
-      // drew them. Drawn after the edges so the ring sits over the line, and
-      // only while a run is selected — see drawAgentTabHighlight.
-      const highlightedTabs = layer.highlighted?.tabIds
-      if (highlightedTabs && highlightedTabs.size > 0) {
-        for (const tabId of highlightedTabs) {
-          const body = simulation.findNode(tabId)
-          if (body?.x === undefined || body?.y === undefined) continue
-          const at = worldToScreen(camera, { x: body.x, y: body.y }, width, height)
-          drawAgentTabHighlight(ctx, {
-            at,
-            // Tracks the node's own drawn radius, so the ring sits just
-            // outside it at every zoom level rather than at a fixed offset.
-            radius: (body.radius ?? 12) * camera.zoom + 5,
-            color: palette.edgeHighlighted,
-          })
-        }
-      }
-
-      // A single phase for every working indicator, so live runs pulse
-      // together rather than each drifting on its own clock.
-      const pulse = (performance.now() % 1600) / 1600
-
-      for (const node of layer.scene.nodes) {
-        const screen = screenOf(node.id)
-        if (!screen) continue
-
-        const size = AGENT_NODE_SIZES[node.kind]
-        const cardWidth = size.width * camera.zoom
-        const cardHeight = size.height * camera.zoom
-        // Below this the cards are unreadable smudges; the edges still carry
-        // the shape of the work at that distance.
-        if (cardWidth < 44) continue
-
-        agentHitboxesRef.current.push({
-          id: node.id,
-          x: screen.x,
-          y: screen.y,
-          width: cardWidth,
-          height: cardHeight,
-        })
-
-        const isSelected = layer.selectedId === node.id
-        let detail: string | undefined
-        let meta: string | undefined
-        let progress: { completed: number; total: number } | undefined
-        let status: (typeof AGENT_STATUS_VISUALS) extends Record<infer K, unknown> ? K : never
-        status = "idle" as typeof status
-
-        if (node.kind === "run") {
-          // The primary work item, when there is one, says what is being
-          // worked on; the activity line says what the agent is doing this
-          // second. The former is the more useful of the two at a glance.
-          detail = node.primaryWorkItemTitle ?? node.activity
-          const parts: string[] = []
-          if (node.workItemCount > 0) {
-            parts.push(`${node.workItemCount} item${node.workItemCount === 1 ? "" : "s"}`)
-          }
-          if (node.artifactCount > 0) parts.push(`${node.artifactCount} file${node.artifactCount === 1 ? "" : "s"}`)
-          if (node.tabCount > 0) parts.push(`${node.tabCount} tab${node.tabCount === 1 ? "" : "s"}`)
-          meta = parts.join(" · ") || undefined
-          status = node.status
-          progress = node.workProgress
-        } else if (node.kind === "agent") {
-          detail = node.provider
-          meta = `${node.activeRunCount} active · ${node.totalRunCount} total`
-          status = node.status
-        } else {
-          detail = node.relativePath
-          meta = node.runCount > 1 ? `${node.runCount} runs` : undefined
-        }
-
-        drawAgentNode(ctx, {
-          kind: node.kind,
-          x: screen.x,
-          y: screen.y,
-          width: cardWidth,
-          height: cardHeight,
-          label: node.label,
-          detail,
-          meta,
-          progress,
-          status: node.kind === "artifact" ? undefined : status,
-          isSelected,
-          isHovered: agentHoverIdRef.current === node.id,
-          isDimmed: layer.selectedId !== null && !isSelected,
-          pulse,
-          colors: agentColors,
-        })
-      }
-    }
-
     // Report the selected node's live screen anchor for the host's
     // persistent Tab Peek popup — entirely separate from hover, so panning,
     // zooming, or dragging keeps the popup attached to the node itself
@@ -1761,18 +1561,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
       const next: CameraState = { x: node.x, y: node.y, zoom: Math.max(cameraRef.current.zoom, 1) }
       animateCameraTo(next)
     },
-    /**
-     * Centres on an arbitrary world point.
-     *
-     * The agent layer's nodes are not physics bodies, so `centerOnNode` — which
-     * resolves an id through the simulation — cannot reach them. This is the
-     * same camera animation, given the point directly, rather than a second
-     * viewport controller.
-     */
-    focusPoint(x: number, y: number) {
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return
-      animateCameraTo({ x, y, zoom: Math.max(cameraRef.current.zoom, 1) })
-    },
     focusCollection(id: string) {
       const simulation = simulationRef.current!
       const { width, height } = sizeRef.current
@@ -1947,26 +1735,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
     if (e.button !== 0) return
 
-    // Agent cards are drawn above the tab graph, so they are hit-tested
-    // first — otherwise a card sitting over a tab would be unclickable.
-    // Reverse order so the most recently drawn card wins an overlap.
-    const agentHit = [...agentHitboxesRef.current]
-      .reverse()
-      .find((box) => hitTestAgentNode(box, point))
-    if (agentHit) {
-      canvasRef.current?.setPointerCapture(e.pointerId)
-      agentDragRef.current = {
-        id: agentHit.id,
-        offsetX: point.x - agentHit.x,
-        offsetY: point.y - agentHit.y,
-        startX: point.x,
-        startY: point.y,
-        pointerId: e.pointerId,
-        moved: false,
-      }
-      return
-    }
-
     const hit = hitTestNode(point.x, point.y)
     canvasRef.current?.setPointerCapture(e.pointerId)
 
@@ -2009,30 +1777,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
   function handlePointerMove(e: ReactPointerEvent<HTMLCanvasElement>) {
     const point = screenPointFromEvent(e)
     const { width, height } = sizeRef.current
-
-    if (agentDragRef.current && agentDragRef.current.pointerId === e.pointerId) {
-      const drag = agentDragRef.current
-      if (
-        !drag.moved &&
-        Math.hypot(point.x - drag.startX, point.y - drag.startY) > CLICK_DRAG_THRESHOLD
-      ) {
-        drag.moved = true
-      }
-
-      if (drag.moved) {
-        // Moved live, without reheating the simulation: an agent card is not
-        // a physics body, so dragging one must not disturb a single tab.
-        const world = screenToWorld(
-          cameraRef.current,
-          { x: point.x - drag.offsetX, y: point.y - drag.offsetY },
-          width,
-          height
-        )
-        agentLayerRef.current?.positions.set(drag.id, world)
-        requestDraw()
-      }
-      return
-    }
 
     if (dragRef.current && dragRef.current.pointerId === e.pointerId) {
       const world = screenToWorld(cameraRef.current, point, width, height)
@@ -2103,37 +1847,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, {
 
   function handlePointerUp(e: ReactPointerEvent<HTMLCanvasElement>) {
     const point = screenPointFromEvent(e)
-
-    if (agentDragRef.current && agentDragRef.current.pointerId === e.pointerId) {
-      const drag = agentDragRef.current
-      agentDragRef.current = null
-      canvasRef.current?.releasePointerCapture(e.pointerId)
-
-      if (drag.moved) {
-        // A drag records layout and nothing else. There is no branch here
-        // that could change a run's status or its relationships — the canvas
-        // observes agent work, it does not edit it.
-        const world = screenToWorld(
-          cameraRef.current,
-          { x: point.x - drag.offsetX, y: point.y - drag.offsetY },
-          sizeRef.current.width,
-          sizeRef.current.height
-        )
-        onAgentNodeMoved?.(drag.id, world.x, world.y)
-      } else {
-        // Agent selection is its own state; picking one clears any tab,
-        // collection or cluster selection so the three cannot disagree.
-        onSelectNode(null)
-        onSelectCollection(null)
-        onSelectCluster(null)
-        onSelectAgentNode?.(
-          agentLayerRef.current?.selectedId === drag.id ? null : drag.id
-        )
-      }
-
-      requestDraw()
-      return
-    }
 
     if (dragRef.current && dragRef.current.pointerId === e.pointerId) {
       const { id, startX, startY } = dragRef.current

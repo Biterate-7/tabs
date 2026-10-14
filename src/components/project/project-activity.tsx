@@ -1,16 +1,14 @@
 "use client"
 
-import { AgentIcon } from "@/components/agents/agent-icon"
-import { Button } from "@/components/ui/button"
-import { agentDisplayName } from "@/lib/agents/visual/identity"
-import { TASK_STATE_LABEL } from "@/lib/agents/activity/outcome"
+import { ProviderMark } from "@/components/memory/provider-mark"
+import { aiProviderName, isAiProviderId } from "@/lib/providers/registry"
 import { cn } from "@/lib/utils"
 import type { ProjectEvent } from "@/lib/projects/activity"
 import type { ResourceOrigin } from "@/lib/resources/types"
 
 const ORIGIN_WORDS: Record<ResourceOrigin, string> = {
   chrome: " from Chrome",
-  extension: " with the Chrome extension",
+  extension: " with Hubble for Chrome",
   manual: "",
   upload: " by upload",
   import: " from your saved tabs",
@@ -44,7 +42,9 @@ export function dayLabel(at: number, now: number): string {
   return new Date(at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
 }
 
-export function describeProjectEvent(row: ActivityRow, input: { projectName: string; titleOf: (tabId: string) => string | undefined }): string {
+const providerWords = (provider: string | undefined) => (isAiProviderId(provider) ? ` from ${aiProviderName(provider)}` : "")
+
+export function describeProjectEvent(row: ActivityRow, input: { projectName: string; titleOf: (id: string) => string | undefined }): string {
   const { event, count } = row
   switch (event.kind) {
     case "project_created":
@@ -52,7 +52,7 @@ export function describeProjectEvent(row: ActivityRow, input: { projectName: str
     case "sources_added":
       return `You added ${plural(event.count ?? 1, "source", "sources")}${event.origin ? ORIGIN_WORDS[event.origin] : ""}`
     case "sources_removed":
-      return `You removed ${plural(event.count ?? 1, "source", "sources")}`
+      return `You removed ${plural(event.count ?? 1, "item", "items")}`
     case "source_ready": {
       if (count > 1) return `Hubble read ${count} sources`
       const title = event.tabId ? input.titleOf(event.tabId) : undefined
@@ -63,18 +63,23 @@ export function describeProjectEvent(row: ActivityRow, input: { projectName: str
       const title = event.tabId ? input.titleOf(event.tabId) : undefined
       return title ? `Hubble couldn't read ${title}` : "Hubble couldn't read a source (since removed)"
     }
-    case "context_selected":
-      return `You chose ${plural(event.count ?? 0, "source", "sources")} for a task`
-    case "agent_switched":
-      return `Continued ${agentDisplayName(event.fromProvider)}'s work with ${agentDisplayName(event.provider)}`
-    case "task":
-      return `${agentDisplayName(event.provider)} · ${event.headline ?? "Task"}`
+    case "conversation_saved":
+      return (event.count ?? 1) > 1 ? `You saved ${plural(event.count ?? 1, "conversation", "conversations")}${providerWords(event.provider)}` : `You saved a conversation${providerWords(event.provider)}`
+    case "conversation_updated":
+      return `You updated a saved conversation${providerWords(event.provider)}`
+    case "note_added":
+      return "You added a note"
+    case "memory_reused":
+      return `You used ${plural(event.count ?? 1, "item", "items")} in an AI chat`
+    // Records left by the removed agent features are never listed (projectEventsIn drops them).
+    default:
+      return "Earlier activity"
   }
 }
 
 /**
- * A project's history, by day: sources added and read, tasks and their
- * outcomes, agents handing over to each other. Each task opens its session.
+ * A project's history, by day: what came in (sources, conversations, notes),
+ * what Hubble read, and when its knowledge was reused.
  */
 export function ProjectActivity({
   events,
@@ -82,22 +87,16 @@ export function ProjectActivity({
   titleOf,
   now,
   limit,
-  onOpenTask,
 }: {
   events: readonly ProjectEvent[]
   projectName: string
-  titleOf: (tabId: string) => string | undefined
+  titleOf: (id: string) => string | undefined
   now: number
   limit?: number
-  onOpenTask?: (sessionId: string) => void
 }) {
   const rows = activityRows(events).slice(0, limit)
   if (rows.length === 0) {
-    return (
-      <p className="text-body-sm text-muted-foreground">
-        No work yet. Your first agent task will appear here.
-      </p>
-    )
+    return <p className="text-body-sm text-muted-foreground">Nothing has happened in this project yet.</p>
   }
   // A day's heading goes above its first row.
   const days = rows.map((row) => dayLabel(row.at, now))
@@ -106,28 +105,14 @@ export function ProjectActivity({
       {rows.map((row, index) => {
         const heading = index === 0 || days[index] !== days[index - 1] ? days[index] : null
         const time = new Date(row.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-        const task = row.event.kind === "task" ? row.event : null
+        const provider = isAiProviderId(row.event.provider) ? row.event.provider : undefined
         return (
           <li key={row.key} className={cn("flex flex-col", heading && "mt-2 first:mt-0")} data-project-event={row.event.kind}>
             {heading && <p className="mb-1 text-eyebrow text-tertiary">{heading}</p>}
             <div className="flex min-w-0 items-start gap-2 py-1">
               <span className="w-12 shrink-0 text-meta tabular-nums text-tertiary">{time}</span>
-              {task?.provider && <AgentIcon connector={task.provider} size="xs" />}
-              <div className="min-w-0 flex-1">
-                <p className="text-body-sm text-foreground">{describeProjectEvent(row, { projectName, titleOf })}</p>
-                {task && (
-                  <p className="truncate text-meta text-muted-foreground" title={task.task}>
-                    {task.state ? TASK_STATE_LABEL[task.state] : ""}
-                    {task.context ? ` · Used ${task.context}` : ""}
-                    {task.task ? ` · “${task.task}”` : ""}
-                  </p>
-                )}
-              </div>
-              {task?.sessionId && onOpenTask && (
-                <Button type="button" size="xs" variant="ghost" onClick={() => onOpenTask(task.sessionId!)} aria-label={`Review ${agentDisplayName(task.provider)}'s task`}>
-                  Review
-                </Button>
-              )}
+              {provider && <ProviderMark provider={provider} size={14} className="mt-0.5 text-muted-foreground" />}
+              <p className="min-w-0 flex-1 text-body-sm text-foreground">{describeProjectEvent(row, { projectName, titleOf })}</p>
             </div>
           </li>
         )

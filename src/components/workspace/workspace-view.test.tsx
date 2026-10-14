@@ -207,7 +207,7 @@ describe("WorkspaceView cleanup (Phase 6)", () => {
     await user.click(screen.getByRole("button", { name: "More actions" }));
     await user.click(await screen.findByRole("menuitem", { name: "Find duplicates" }));
 
-    expect(await screen.findByText("This subject can be tidied up.")).toBeTruthy();
+    expect(await screen.findByText("This project can be tidied up.")).toBeTruthy();
     expect(onTabsChange).not.toHaveBeenCalled();
   });
 

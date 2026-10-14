@@ -10,16 +10,16 @@ export type ProjectContents = ReadonlyMap<string, ReadonlyMap<string, ResourceCo
 const EMPTY: ProjectContents = new Map()
 
 /**
- * The extracted content of some projects' sources, loaded from the content
- * store (IndexedDB) — only for the projects named, and only when something
- * that reads it is on screen (a live session's context, project search,
- * a source's details).
+ * The stored content of some projects' items — sources' text, saved AI
+ * conversations, notes — loaded from the content store (IndexedDB), only for
+ * the projects named, and only when something that reads it is on screen
+ * (search, the reader, the context builder).
  *
- * Reloads a project when what its tabs say about their content changes (a
- * source finished reading, a PDF was attached, a source was removed), so
- * what is loaded never lags what the cards claim.
+ * Reloads a project when what its items say about their content changes (a
+ * source finished reading, a conversation was saved again, a note was
+ * added or removed), so what is loaded never lags what the cards claim.
  */
-export function useProjectContents(workspaces: readonly Pick<Workspace, "id" | "tabs">[]): ProjectContents {
+export function useProjectContents(workspaces: readonly Pick<Workspace, "id" | "tabs" | "notes">[]): ProjectContents {
   // What each project's tabs claim about their content: a change here is the only reason to read again.
   const key = useMemo(
     () =>
@@ -28,8 +28,8 @@ export function useProjectContents(workspaces: readonly Pick<Workspace, "id" | "
           const sources = workspace.tabs
             .filter((tab) => tab.resource?.content)
             .map((tab) => `${tab.id}@${tab.resource!.content!.extractedAt}`)
-            .join(",")
-          return `${workspace.id}:${sources}`
+          const notes = (workspace.notes ?? []).map((note) => `${note.id}@${note.contentHash}`)
+          return `${workspace.id}:${[...sources, ...notes].join(",")}`
         })
         .sort()
         .join("|"),

@@ -2,8 +2,6 @@ import { applyChanges } from "@/lib/sync/apply";
 import { SYNC_CURSOR_START } from "@/lib/sync/types";
 import type { LocalSyncState } from "@/lib/sync/apply";
 import type { SyncChangesPage, SyncCursor, WorkspaceSyncPayload } from "@/lib/sync/types";
-import type { RemoteStore } from "@/lib/agents/remote/store";
-import type { AgentProviderId } from "@/lib/agents/connectors/types";
 import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
 import type { Workspace } from "@/lib/workspace/types";
@@ -56,35 +54,9 @@ export type McpLoadedWorkspace = {
   truncated: boolean;
 };
 
-/** Remote project metadata. Deliberately without the sandbox handle. */
-export type McpAgentProject = {
-  id: string;
-  name: string;
-  source: string;
-  scopes: readonly string[];
-  status: string;
-  expiresAt?: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
-/** Remote session status. Without the sandbox, the process id or the provider's session id. */
-export type McpAgentSession = {
-  id: string;
-  projectId: string;
-  provider: AgentProviderId;
-  /** Whether the provider has revealed a session id, i.e. whether it could be resumed. */
-  resumable: boolean;
-  createdAt: number;
-  updatedAt: number;
-};
-
 export type HubbleMcpData = {
   listWorkspaces(userId: string): Promise<McpWorkspaceSummary[]>;
   loadWorkspace(userId: string, workspaceId: string): Promise<McpLoadedWorkspace | undefined>;
-  /** `undefined` when this deployment has no remote agent plane. */
-  listAgentProjects(userId: string): Promise<McpAgentProject[] | undefined>;
-  listAgentSessions(userId: string): Promise<McpAgentSession[] | undefined>;
 };
 
 /**
@@ -98,16 +70,7 @@ export const MAX_HYDRATION_PAGES = 20;
 /** Most workspaces `list_workspaces` returns. */
 export const MAX_LISTED_WORKSPACES = 50;
 
-/** The owner id the remote plane files an account's rows under. See `runtime/actor.ts`. */
-export function remoteOwnerIdFor(userId: string): string {
-  return `account:${userId}`;
-}
-
-export function createSyncMcpData(deps: {
-  sync: SyncReader;
-  /** Absent on a deployment with no remote agent plane. */
-  remote?: RemoteStore;
-}): HubbleMcpData {
+export function createSyncMcpData(deps: { sync: SyncReader }): HubbleMcpData {
   return {
     async listWorkspaces(userId) {
       const rows = await deps.sync.listWorkspaces(userId);
@@ -153,34 +116,6 @@ export function createSyncMcpData(deps: {
         dependencies: state.dependencies,
         truncated: hasMore,
       };
-    },
-
-    async listAgentProjects(userId) {
-      if (!deps.remote) return undefined;
-      const projects = await deps.remote.listProjects(remoteOwnerIdFor(userId));
-      return projects.map((project) => ({
-        id: project.id,
-        name: project.name,
-        source: project.source,
-        scopes: [...project.scopes],
-        status: project.status,
-        ...(project.expiresAt !== undefined ? { expiresAt: project.expiresAt } : {}),
-        createdAt: project.createdAt,
-        updatedAt: project.updatedAt,
-      }));
-    },
-
-    async listAgentSessions(userId) {
-      if (!deps.remote) return undefined;
-      const sessions = await deps.remote.listSessions(remoteOwnerIdFor(userId));
-      return sessions.map((session) => ({
-        id: session.id,
-        projectId: session.projectId,
-        provider: session.provider,
-        resumable: typeof session.providerSessionId === "string" && session.providerSessionId.length > 0,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-      }));
     },
   };
 }

@@ -222,21 +222,4 @@ describe("account isolation", () => {
     await alice.close();
     await bob.close();
   });
-
-  it("lists only the caller's agent projects and sessions, without sandbox handles", async () => {
-    const client = await connect(aliceToken);
-    const projects = await call(client, "list_agent_projects");
-    const sessions = await call(client, "list_agent_sessions");
-
-    expect(projects.json.projects.map((p: { id: string }) => p.id)).toEqual(["rp-alice"]);
-    expect(sessions.json.sessions).toEqual([
-      expect.objectContaining({ id: "rs-alice", projectId: "rp-alice", resumable: true }),
-    ]);
-    for (const text of [projects.text, sessions.text]) {
-      expect(text).not.toContain("PLANTED");
-      expect(text).not.toContain("sandbox");
-      expect(text).not.toContain("rp-bob");
-    }
-    await client.close();
-  });
 });

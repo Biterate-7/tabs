@@ -57,8 +57,7 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      # The sidecar ships a copy of this Node (scripts/build-agent-runtime.mjs),
-      # so this is the Node version installed users run their agents under.
+      # Node builds the static frontend export the installer ships.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -73,8 +72,8 @@ jobs:
       - run: npm ci
 
       # A release-profile build: `tauri build` without --debug. Its
-      # beforeBuildCommand builds the agent runtime sidecar and the static
-      # frontend export. No secrets are passed to it.
+      # beforeBuildCommand builds the static frontend export. No secrets are
+      # passed to it.
       - name: Build the installer
         run: npx tauri build --bundles nsis --ci
 

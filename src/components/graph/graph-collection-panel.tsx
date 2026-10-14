@@ -1,9 +1,8 @@
 "use client"
 
-import { Bot, ExternalLink, Layers, Pencil, Scan, Trash2 } from "lucide-react"
+import { ExternalLink, Layers, MessageSquareShare, Pencil, Scan, Trash2 } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
-import { useAgentActions } from "@/components/agents/agent-actions"
-import { collectionContext } from "@/lib/agents/command-centre/working-context"
+import { useMemoryActions } from "@/components/memory/memory-actions"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import type { Collection } from "@/lib/collections/types"
@@ -35,21 +34,21 @@ export function GraphCollectionPanel({
   onOpenAll: () => void
   onDelete: () => void
 }) {
-  // This collection as an agent session's context — inside the shell only.
-  const agent = useAgentActions()
+  // This collection, for "Use in AI chat" — inside the shell only.
+  const memory = useMemoryActions()
   return (
     <div className="space-y-4 duration-(--duration-base) ease-(--ease-standard) animate-in fade-in-0">
       <div className="flex items-center justify-between">
         <p className="text-eyebrow text-tertiary">COLLECTION</p>
         <div className="flex items-center gap-0.5">
-          {agent && (
+          {memory && (
             <IconButton
-              aria-label="Ask AI about this collection"
-              tooltip="Ask AI about this collection"
+              aria-label="Use this collection in an AI chat"
+              tooltip="Use in AI chat"
               className="size-7"
-              onClick={() => agent.ask(collectionContext(collection.workspaceId, collection.id), "analyze")}
+              onClick={() => memory.reuse({ workspaceId: collection.workspaceId, collectionIds: [collection.id] })}
             >
-              <Bot />
+              <MessageSquareShare />
             </IconButton>
           )}
           <IconButton aria-label="Focus collection" tooltip="Focus this collection" className="size-7" onClick={onFocus}>

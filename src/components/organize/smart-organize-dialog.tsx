@@ -90,7 +90,7 @@ export function SmartOrganizeDialog({
     <Dialog open={open} onOpenChange={(next) => !applying && onOpenChange(next)}>
       <DialogContent className="flex max-h-[min(88vh,760px)] flex-col gap-0 p-0 sm:max-w-2xl" data-smart-organize>
         <DialogHeader className="px-5 pt-5 pb-3">
-          <DialogTitle>{mode === "open-tabs" ? "Organize open tabs" : "Organize this subject"}</DialogTitle>
+          <DialogTitle>{mode === "open-tabs" ? "Organize open tabs" : "Organize this project"}</DialogTitle>
           <DialogDescription className="text-body-sm">
             {mode === "open-tabs"
               ? "Grouped on this device from tab titles and addresses. Nothing changes until you confirm, and no tab is closed."
@@ -184,7 +184,7 @@ function SmartReview({
   const problems = validateProposal(proposal)
   const unnamed = new Set(problems.map((problem) => problem.groupId))
   const mode = proposal.mode
-  const placeWord = mode === "open-tabs" ? ["subject", "subjects"] : ["collection", "collections"]
+  const placeWord = mode === "open-tabs" ? ["project", "projects"] : ["collection", "collections"]
   const pageWord = mode === "open-tabs" ? ["page", "pages"] : ["tab", "tabs"]
   const nothingToDo = proposal.groups.every((group) => group.itemIds.length === 0)
 
@@ -249,7 +249,7 @@ function SmartReview({
               Not sure <span className="text-tertiary">· left as they are · {reviewItems.length}</span>
             </h3>
             <p className="mt-0.5 text-meta text-tertiary">
-              {mode === "open-tabs" ? "These stay open in Chrome and aren't added. Move any of them into a group." : "These stay in the subject, outside any collection."}
+              {mode === "open-tabs" ? "These stay open in Chrome and aren't added. Move any of them into a group." : "These stay in the project, outside any collection."}
             </p>
             <ul className="mt-1.5 flex flex-col">
               {reviewItems.map((item) => (
@@ -376,7 +376,7 @@ function GroupCard({
 }) {
   const nameId = useId()
   const effective = effectiveDestination(group, places)
-  const newLabel = mode === "open-tabs" ? "New subject" : "New collection"
+  const newLabel = mode === "open-tabs" ? "New project" : "New collection"
   const options = [
     { value: "new", label: newLabel },
     ...places.map((place) => ({ value: `place:${place.id}`, label: `Add to ${place.name}` })),
@@ -420,7 +420,7 @@ function GroupCard({
           {group.reason}
           {(group.destination.kind === "new-subject" || group.destination.kind === "new-collection") &&
             effective.kind !== group.destination.kind &&
-            ` · goes into your existing ${mode === "open-tabs" ? "subject" : "collection"} with this name`}
+            ` · goes into your existing ${mode === "open-tabs" ? "project" : "collection"} with this name`}
         </p>
         {items.length === 0 ? (
           <p className="mt-1.5 text-meta text-tertiary">No tabs — this group will be skipped.</p>

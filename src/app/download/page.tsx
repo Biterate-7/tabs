@@ -4,7 +4,7 @@ import { siteUrl } from "@/lib/site-url"
 
 const TITLE = "Download Hubble Desktop"
 const DESCRIPTION =
-  "Hubble Desktop connects your workspace to the AI agents already running on your computer — Claude Code, Codex, Gemini CLI and Grok Build."
+  "Hubble as an app on your computer: your projects, AI conversations and notes, kept locally and searchable offline."
 
 /**
  * `/download` — server-rendered like `/welcome`, so the page and its

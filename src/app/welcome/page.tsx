@@ -2,9 +2,9 @@ import type { Metadata } from "next"
 import { WelcomeRoute } from "@/components/marketing/welcome-route"
 import { siteUrl } from "@/lib/site-url"
 
-const TITLE = "Hubble — the workspace for agentic work"
+const TITLE = "Hubble — one workspace for everything you learn with AI"
 const DESCRIPTION =
-  "Collect sources from Chrome into a project, then let Claude Code, Gemini CLI, Codex or Grok work from the same context — handing work between them, with every change waiting for your approval."
+  "Save conversations from ChatGPT, Claude, Gemini and Perplexity into projects with the pages and notes behind them, find them later, and bring the right parts into your next AI chat."
 
 /**
  * The server-rendered landing page.

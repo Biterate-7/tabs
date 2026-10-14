@@ -120,7 +120,7 @@ describe("ExportMenu", () => {
       "hubble-export.txt",
       expect.any(String)
     );
-    expect(toastSpy).toHaveBeenCalledWith("Subject exported");
+    expect(toastSpy).toHaveBeenCalledWith("Project exported");
   });
 
   it("shows an error toast when copying fails", async () => {
@@ -144,7 +144,7 @@ describe("ExportMenu", () => {
     await user.click(screen.getByRole("button", { name: /Export/ }));
     await user.click(await screen.findByText("Export TXT"));
 
-    expect(toastSpy).toHaveBeenCalledWith("Couldn't export this subject");
+    expect(toastSpy).toHaveBeenCalledWith("Couldn't export this project");
   });
 
   it("does not show JSON export items when no workspace context is given", async () => {
@@ -171,7 +171,7 @@ describe("ExportMenu", () => {
     const parsed = JSON.parse(text);
     expect(parsed.version).toBe(1);
     expect(parsed.workspaces).toEqual([workspace]);
-    expect(toastSpy).toHaveBeenCalledWith("Subject exported as JSON");
+    expect(toastSpy).toHaveBeenCalledWith("Project exported as JSON");
   });
 
   it("only offers 'Export all workspaces' when there is more than one", async () => {
@@ -201,7 +201,7 @@ describe("ExportMenu", () => {
     const [filename, text] = vi.mocked(jsonExportLib.downloadJsonFile).mock.calls[0];
     expect(filename).toMatch(/^hubble-all-workspaces-\d{4}-\d{2}-\d{2}\.json$/);
     expect(JSON.parse(text).workspaces).toEqual([workspaceA, workspaceB]);
-    expect(toastSpy).toHaveBeenCalledWith("All subjects exported as JSON");
+    expect(toastSpy).toHaveBeenCalledWith("All projects exported as JSON");
   });
 
   it("shows an error toast when a JSON export fails", async () => {
@@ -214,6 +214,6 @@ describe("ExportMenu", () => {
     await user.click(screen.getByRole("button", { name: /Export/ }));
     await user.click(await screen.findByText("Export workspace (JSON)"));
 
-    expect(toastSpy).toHaveBeenCalledWith("Couldn't export this subject");
+    expect(toastSpy).toHaveBeenCalledWith("Couldn't export this project");
   });
 });

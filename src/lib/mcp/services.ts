@@ -1,5 +1,4 @@
 import "server-only";
-import { createPostgresRemoteStore } from "@/lib/agents/remote/store-postgres";
 import { checkRateLimit } from "@/lib/ai/server/rate-limit";
 import { getIntegrationStore } from "@/lib/integrations/store-postgres";
 import { getSyncService } from "@/lib/sync/store";
@@ -19,8 +18,6 @@ import type { McpHttpDeps } from "./http";
  * The integration store (connections, OAuth, proposals, context, audit) is
  * on the same database; a deployment that has not run
  * `npm run migrate:integrations` yet still serves legacy read-only tokens.
- * The remote agent store is optional too: without it the two agent-status
- * tools answer `available: false`.
  */
 export async function getMcpDeps(): Promise<McpHttpDeps | undefined> {
   const tokens = await getMcpTokenStore().catch(() => undefined);
@@ -29,13 +26,10 @@ export async function getMcpDeps(): Promise<McpHttpDeps | undefined> {
   const sync = await getSyncService();
   if (!sync.ok) return undefined;
 
-  const [remote, store] = await Promise.all([
-    createPostgresRemoteStore().catch(() => undefined),
-    getIntegrationStore().catch(() => undefined),
-  ]);
+  const store = await getIntegrationStore().catch(() => undefined);
   return {
     tokens,
-    data: createSyncMcpData({ sync: sync.service, remote }),
+    data: createSyncMcpData({ sync: sync.service }),
     ...(store ? { integration: { store, sync: sync.service } } : {}),
     rateLimit: checkRateLimit,
   };

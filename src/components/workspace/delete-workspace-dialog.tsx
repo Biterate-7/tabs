@@ -34,7 +34,7 @@ export function DeleteWorkspaceDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            Delete subject
+            Delete project
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

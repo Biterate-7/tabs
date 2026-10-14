@@ -90,19 +90,19 @@ async function renderSettled() {
     </StrictMode>
   );
   // Hubble opens on Home: open the subject first.
-  const rail = await screen.findByRole("navigation", { name: "Subjects" });
+  const rail = await screen.findByRole("navigation", { name: "Projects" });
   await user.click(within(rail).getByRole("button", { name: "Open General" }));
   await screen.findByPlaceholderText("Search tabs...");
   saveSpy.mockClear();
   return user;
 }
 
-/** From Home's "Start with a subject": a first subject, then "Paste a list of tabs" on its empty page. */
+/** From Home's "Start with a project": a first subject, then "Paste a list of tabs" on its empty page. */
 async function openPasteBox(user: ReturnType<typeof userEvent.setup>) {
   const start = await screen.findByRole("region", { name: "Get started" });
   await user.click(within(start).getByRole("button"));
-  await user.type(await screen.findByLabelText("Subject name"), "General");
-  await user.click(screen.getByRole("button", { name: "Create subject" }));
+  await user.type(await screen.findByLabelText("Project name"), "General");
+  await user.click(screen.getByRole("button", { name: "Create project" }));
   await user.click(await screen.findByRole("button", { name: /Paste a list of tabs/ }));
   return screen.findByPlaceholderText(/Paste your tabs/);
 }
