@@ -82,6 +82,19 @@ describe("migrate:integrations target safety", () => {
     expect(result.out).not.toContain(SECRET);
   });
 
+  it("checks the host the driver will dial, so a host= parameter cannot redirect a matching URL", async () => {
+    const result = await migrate(
+      SCRIPT,
+      ["--expect-host=ep-prod-main"],
+      cleanEnv({ POSTGRES_URL: `postgresql://owner:${SECRET}@ep-prod-main-pooler.example.invalid/neondb?host=ep-dev-branch.example.invalid` })
+    );
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("the driver would not connect to the host in POSTGRES_URL");
+    expect(result.out).toContain("Nothing was changed");
+    expect(result.out).not.toContain("Migration failed");
+    expect(result.out).not.toContain(SECRET);
+  });
+
   it("accepts the endpoint label with or without -pooler, then connects — and redacts the driver's error", async () => {
     for (const expected of ["ep-prod-main", "ep-prod-main-pooler", "--expect-host"]) {
       const args = expected === "--expect-host" ? ["--expect-host", "ep-prod-main-pooler.example.invalid"] : [`--expect-host=${expected}`];

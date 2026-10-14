@@ -52,12 +52,18 @@ function expectedHost(argv) {
   return "";
 }
 
-/** The parts of a connection string that are safe to print and to match on. */
-function describeTarget(value) {
-  const url = new URL(value);
-  const host = url.hostname.toLowerCase();
+/**
+ * The parts of the target that are safe to print and to match on, taken from
+ * the client pg will actually connect with: a `?host=` parameter or PGHOST can
+ * make the driver dial a host other than the one the URL shows, so the URL
+ * alone proves nothing. Null when the two disagree.
+ */
+function describeTarget(value, client) {
+  const urlHost = new URL(value).hostname.toLowerCase();
+  const host = String(client.host ?? "").toLowerCase();
+  if (!host || host !== urlHost) return null;
   const endpoint = host.split(".")[0].replace(/-pooler$/, "");
-  return { host, endpoint, database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "(default)" };
+  return { host, endpoint, database: client.database || "(default)" };
 }
 
 function matchesTarget(target, expected) {
@@ -77,11 +83,22 @@ async function main() {
     return;
   }
 
+  const { Client } = await import("pg");
+  let client;
   let target;
   try {
-    target = describeTarget(connection.value);
+    client = new Client({ connectionString: connection.value });
+    target = describeTarget(connection.value, client);
   } catch {
     console.error(`${connection.name} is not a valid connection URL.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!target) {
+    console.error(
+      `Refusing to run: the driver would not connect to the host in ${connection.name} ` +
+        `(a host= parameter or PGHOST overrides it). Nothing was changed.`
+    );
     process.exitCode = 1;
     return;
   }
@@ -100,9 +117,6 @@ async function main() {
   }
 
   const schema = readFileSync(SCHEMA_PATH, "utf8");
-
-  const { Client } = await import("pg");
-  const client = new Client({ connectionString: connection.value });
 
   await client.connect();
   try {
