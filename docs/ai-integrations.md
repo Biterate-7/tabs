@@ -486,9 +486,15 @@ npm run migrate:integrations
   restore has been checked; the migration has been run against a copy or a
   staging database; an operator with access to the database runs it. The
   migration is one transaction of `CREATE … IF NOT EXISTS` statements on new
-  tables only — it reads, locks and rewrites no existing table, and on a
-  failure nothing is left behind. Recovery is to drop the `hubble_*` tables;
-  nothing else depends on them.
+  tables only — it reads and rewrites no existing table, and on a failure
+  nothing is left behind. The only lock on an existing table is the brief
+  `SHARE ROW EXCLUSIVE` on `tabdump_users` that adding the foreign keys
+  takes, which holds writes to that table for the length of the transaction.
+  Recovery is to drop the `hubble_*` tables (nothing else depends on them),
+  then redeploy: a warm instance caches the store once it has seen the
+  schema, so without a redeploy it would answer 500 instead of 503. Dropping
+  after people have connected deletes their connections, saved notes and
+  audit log.
 - **Desktop:** every new server surface is a `route.ts`, or the `.ts`
   consent page, so `npm run desktop:export` is unaffected. The desktop app's
   AI Integrations pane points to the web app.

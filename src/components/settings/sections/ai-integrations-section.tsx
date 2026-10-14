@@ -661,7 +661,7 @@ export function AiIntegrationsSection() {
               <a className="text-link underline-offset-4 hover:underline" href={CANONICAL_PRODUCTION_ORIGIN} target="_blank" rel="noreferrer">
                 {CANONICAL_PRODUCTION_ORIGIN.replace(/^https:\/\//, "")}
               </a>
-              , sign in, and manage AI Integrations there.
+              , sign in, and manage AI connectors there.
             </p>
           </GroupBlock>
         </SectionStack>

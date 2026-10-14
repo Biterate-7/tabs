@@ -173,7 +173,7 @@ export default function PrivacyPolicyPage() {
         <h2>AI Integrations</h2>
         <p>
           You can connect an AI assistant you already use — such as ChatGPT, Claude, Gemini or Grok — to your
-          Hubble account in Settings → AI Integrations. Nothing in this section applies unless you do.
+          Hubble account in Settings → AI connectors. Nothing in this section applies unless you do.
         </p>
         <p>
           <strong>What the assistant can see.</strong> Only the synced workspaces you choose for that
@@ -196,7 +196,7 @@ export default function PrivacyPolicyPage() {
         </p>
         <p>
           <strong>Disconnecting.</strong> You can disconnect an assistant at any time in Settings → AI
-          Integrations; it loses access on its next request. You can delete saved notes and project context
+          connectors; it loses access on its next request. You can delete saved notes and project context
           there too.
         </p>
       </section>
