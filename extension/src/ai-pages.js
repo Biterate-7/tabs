@@ -23,9 +23,11 @@
 //
 // ## Pages change
 //
-// AI apps change their markup without notice. The readers look for the
-// message elements each app uses (verified against fixtures, not the live
-// apps), and fail with a reason rather than guess: a page with no readable
+// AI apps change their markup without notice, and ChatGPT runs more than one
+// layout at a time (2026-10-15: signed-in chats had dropped the role
+// attributes the signed-out ones still carried). The readers look for the
+// message elements each app uses — ChatGPT's as a list of layouts, tried in
+// order — and fail with a reason rather than guess: a page with no readable
 // messages is "no-messages", never an empty save. The popup then offers the
 // fallback — paste the conversation in Hubble.
 
@@ -68,10 +70,26 @@ export function isConversationUrl(url) {
 
 /**
  * Reads the conversation on screen. Runs in the page.
- * Resolves to { ok: true, provider, url, title, turns: [{ role, text }] }
- * or { ok: false, reason: "not-supported" | "no-messages" }.
+ * Resolves to { ok: true, provider, url, title, turns: [{ role, text }], truncated }
+ * (plus `olderNotLoaded: true` when the app says earlier messages are still
+ * to load) or { ok: false, reason }:
+ *
+ *   not-supported       not an AI app this reads
+ *   no-messages         nothing here looks like the app's messages: its
+ *                       layout changed, so the popup offers the paste fallback
+ *   empty-conversation  the conversation is on screen but has no messages
+ *                       (a new chat, or one that has not loaded)
+ *
+ * A page still rendering is read again until `waitMs` has passed before
+ * either failure is given. Each read starts from nothing, so a retry never
+ * repeats a message.
+ *
+ * Text is rebuilt from the elements rather than taken from innerText: code
+ * blocks keep their lines and come back fenced with their language, list
+ * items keep a marker, table cells stay on their row, and the app's own
+ * labels and buttons ("ChatGPT said:", "Copy code") are left out.
  */
-export function readConversationFromPage(doc, href) {
+export async function readConversationFromPage(doc, href, waitMs = 3000) {
   const page = doc || document;
   const address = href || location.href;
   const MAX_TOTAL = 2000000;
@@ -81,64 +99,235 @@ export function readConversationFromPage(doc, href) {
   } catch {
     return { ok: false, reason: "not-supported" };
   }
-  // Text only screen readers get (Gemini repeats the whole question as "You said …") is not what anyone said.
-  const HIDDEN_LABELS = '.cdk-visually-hidden, .sr-only, .visually-hidden, [class*="screen-reader"]';
-  const textOf = (el) => {
-    if (!el) return "";
-    let raw = typeof el.innerText === "string" && el.innerText.length > 0 ? el.innerText : el.textContent || "";
-    for (const hidden of el.querySelectorAll(HIDDEN_LABELS)) {
-      const label = (hidden.innerText || hidden.textContent || "").trim();
-      if (label) raw = raw.replace(label, "");
-    }
-    return raw.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  };
+  const provider =
+    host === "chatgpt.com" || host === "chat.openai.com"
+      ? "chatgpt"
+      : host === "claude.ai"
+        ? "claude"
+        : host === "gemini.google.com"
+          ? "gemini"
+          : host === "www.perplexity.ai" || host === "perplexity.ai"
+            ? "perplexity"
+            : undefined;
+  if (!provider) return { ok: false, reason: "not-supported" };
+
+  // Never part of what anyone said.
+  const SKIP = [
+    "script", "style", "noscript", "template", "svg", "textarea", "input", "select",
+    "[hidden]", '[aria-hidden="true"]',
+    // Text only screen readers get (Gemini repeats the whole question as "You said …").
+    ".cdk-visually-hidden", ".sr-only", ".visually-hidden", '[class*="screen-reader"]',
+    // ChatGPT: what its own Copy leaves out (code-block headers, turn separators), and its "You said:" / "ChatGPT said:" labels.
+    '[data-markdown-copy="exclude"]', "h4[data-message-attribution]", "h4[data-conversation-role]",
+  ].join(", ");
+  const CODE = "[data-code-block], pre";
+  const BLOCK = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DETAILS", "DIV", "DL", "DT", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION", "SUMMARY", "TABLE", "TBODY", "TFOOT", "THEAD", "TR", "UL"]);
+  const PARAGRAPH = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "TABLE", "UL", "OL", "FIGURE"]);
+  const HOLD = "\uE000";
+
   // Elements in document order, without any that sit inside another match (a wrapper and its inner node are one message).
   const outermost = (elements) => elements.filter((el) => !elements.some((other) => other !== el && other.contains(el)));
-  const turns = [];
-  let total = 0;
-  const push = (role, el) => {
-    const text = textOf(el);
-    if (!text || total >= MAX_TOTAL) return;
-    const kept = text.slice(0, MAX_TOTAL - total);
-    total += kept.length;
-    const last = turns[turns.length - 1];
-    // One reply split across several nodes is still one turn.
-    if (last && last.role === role && role === "assistant") last.text = `${last.text}\n\n${kept}`;
-    else turns.push({ role, text: kept });
+
+  // A <pre> whose wrapper holds only it and a one-word label before it (signed-out ChatGPT, 2026-10-15): the label names its language.
+  const labelOf = (pre) => {
+    const label = pre.previousElementSibling;
+    return label && !label.firstElementChild && pre.parentElement.children.length === 2 && /^[A-Za-z][\w+#.-]{0,19}$/.test((label.textContent || "").trim()) ? label : null;
   };
 
-  let provider;
-  if (host === "chatgpt.com" || host === "chat.openai.com") {
-    provider = "chatgpt";
-    for (const el of outermost([...page.querySelectorAll("[data-message-author-role], [data-message-role]")])) {
-      const role = el.getAttribute("data-message-author-role") || el.getAttribute("data-message-role");
-      if (role !== "user" && role !== "assistant") continue;
-      push(
-        role,
-        el.querySelector("[data-assistant-markdown-root]") || el.querySelector(".markdown") || el.querySelector("[data-user-message-bubble]") || el.querySelector(".whitespace-pre-wrap") || el
-      );
+  function readOnce() {
+    const code = [];
+    const codeOf = (el) => {
+      const editor = el.querySelector("[data-language]");
+      const inner = el.matches("pre") ? el.querySelector("code") : editor || el.querySelector("pre code, code");
+      const label = el.matches("pre") ? labelOf(el) : null;
+      const named = (inner && inner.getAttribute("data-language")) || (/(?:^|\s)language-([\w+#.-]+)/.exec((inner && inner.getAttribute("class")) || "") || [])[1] || (label ? label.textContent.trim().toLowerCase() : "");
+      let body;
+      if (!inner) body = render(el, true);
+      else {
+        // A code editor draws one element per line.
+        const lines = [...inner.children];
+        body = lines.length > 0 && lines.every((line) => line.tagName === "DIV") ? lines.map((line) => line.textContent || "").join("\n") : inner.textContent || "";
+      }
+      return "```" + named + "\n" + body.replace(/^\n+/, "").replace(/\s+$/, "") + "\n```";
+    };
+    function render(root, verbatim = false) {
+      let out = "";
+      // At least `lines` line breaks here: two blocks meeting share one break, not one each.
+      const breakTo = (lines) => {
+        const have = /\n*$/.exec(out)[0].length;
+        if (out && have < lines) out += "\n".repeat(lines - have);
+      };
+      const walk = (node) => {
+        if (node.nodeType === 3) {
+          const value = node.nodeValue || "";
+          if (verbatim) out += value;
+          else if (!value.trim()) {
+            // Markup indentation is not text; a space between two words is.
+            if (!value.includes("\n") && out && !/\s$/.test(out)) out += " ";
+          } else out += value.includes("\n") ? value : value.replace(/[ \t\f\v]{2,}/g, " ");
+          return;
+        }
+        if (node.nodeType !== 1 || node.matches(SKIP)) return;
+        // A code block's language label goes on its fence, not into the text.
+        if (!verbatim && node.nextElementSibling && node.nextElementSibling.matches("pre") && labelOf(node.nextElementSibling) === node) return;
+        // A formula (KaTeX) as the TeX it was written in, not its rendered glyphs followed by that TeX.
+        const tex = !verbatim && node.matches(".katex, math") && node.querySelector('annotation[encoding="application/x-tex"]');
+        if (tex) {
+          const display = node.closest(".katex-display") || node.matches('math[display="block"]') || node.querySelector('math[display="block"]');
+          if (display) breakTo(2);
+          out += display ? `$$${tex.textContent.trim()}$$` : `$${tex.textContent.trim()}$`;
+          if (display) breakTo(2);
+          return;
+        }
+        if (!verbatim && node.matches(CODE)) {
+          code.push(codeOf(node));
+          breakTo(2);
+          out += `${HOLD}${code.length - 1}${HOLD}`;
+          breakTo(2);
+          return;
+        }
+        const tag = node.tagName.toUpperCase();
+        if (tag === "BR") {
+          out += "\n";
+          return;
+        }
+        const part = node.getAttribute("data-d-component");
+        if (tag === "TD" || tag === "TH" || part === "table-cell") {
+          out += (node.previousElementSibling ? " | " : "") + render(node, verbatim).replace(/\s*\n\s*/g, " ").trim();
+          return;
+        }
+        const item = tag === "LI" || part === "list-item";
+        // A paragraph inside a list item is that item's line, not a paragraph of its own.
+        const paragraph = PARAGRAPH.has(tag) && !(node.parentElement && node.parentElement.closest('li, [data-d-component="list-item"]'));
+        const gap = verbatim ? 0 : paragraph ? 2 : item || BLOCK.has(tag) || part === "table-row" ? 1 : 0;
+        breakTo(gap);
+        if (item && !verbatim) {
+          const list = node.parentElement;
+          out += list && list.tagName === "OL" ? `${[...list.children].indexOf(node) + 1}. ` : "- ";
+        }
+        for (const child of node.childNodes) walk(child);
+        breakTo(gap);
+      };
+      for (const child of root.childNodes) walk(child);
+      return out;
     }
-  } else if (host === "claude.ai") {
-    provider = "claude";
-    const matches = outermost([...page.querySelectorAll('[data-testid="user-message"], .font-claude-response, .font-claude-message')]);
-    for (const el of matches) push(el.matches('[data-testid="user-message"]') ? "user" : "assistant", el);
-  } else if (host === "gemini.google.com") {
-    provider = "gemini";
-    for (const el of outermost([...page.querySelectorAll("user-query, model-response")])) {
-      const user = el.tagName.toLowerCase() === "user-query";
-      push(user ? "user" : "assistant", user ? el.querySelector(".query-text") || el : el.querySelector("message-content") || el.querySelector(".markdown") || el);
+    const textOf = (elements) =>
+      elements
+        .map((el) => render(el))
+        .join("\n\n")
+        .replace(/\r\n?/g, "\n")
+        // A list item's text sits in its own paragraph: back on the marker's line.
+        .replace(/(^|\n)(- |\d+\. )\s+(?!- |\d+\. )/g, "$1$2")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+        .replace(new RegExp(`${HOLD}(\\d+)${HOLD}`, "g"), (_, index) => code[Number(index)]);
+
+    const turns = [];
+    let total = 0;
+    let found = 0;
+    const push = (role, elements) => {
+      found += 1;
+      const text = textOf(elements.filter(Boolean));
+      if (!text || total >= MAX_TOTAL) return;
+      const kept = text.slice(0, MAX_TOTAL - total);
+      total += kept.length;
+      const last = turns[turns.length - 1];
+      // One reply split across several nodes is still one turn.
+      if (last && last.role === role && role === "assistant") last.text = `${last.text}\n\n${kept}`;
+      else turns.push({ role, text: kept });
+    };
+    // The first selector that matches inside `el` — every match of it, a reply can come in parts.
+    const bodyOf = (el, selectors) => {
+      for (const selector of selectors) {
+        const matches = outermost([...el.querySelectorAll(selector)]);
+        if (matches.length > 0) return matches;
+      }
+      return [el];
+    };
+
+    let firstMessage;
+    if (provider === "chatgpt") {
+      // ChatGPT has more than one layout live at once; the first that finds messages is the page's, and only it is read.
+      const LAYOUTS = [
+        {
+          // Seen live 2026-10-15, signed in and signed out at /c/: one element per message, keyed "<turn>:<n>:<role>".
+          messages: "[data-content-search-unit-key]",
+          roleOf: (el) => (/:(user|assistant)$/.exec(el.getAttribute("data-content-search-unit-key") || "") || [])[1],
+        },
+        {
+          // The role on the message itself: li[data-message-role] (signed out at /uc/, 2026-10-14) and the earlier data-message-author-role.
+          messages: "[data-message-author-role], [data-message-role]",
+          roleOf: (el) => el.getAttribute("data-message-author-role") || el.getAttribute("data-message-role"),
+        },
+      ];
+      for (const layout of LAYOUTS) {
+        for (const el of outermost([...page.querySelectorAll(layout.messages)])) {
+          const role = layout.roleOf(el);
+          if (role !== "user" && role !== "assistant") continue;
+          firstMessage = firstMessage || el;
+          push(role, bodyOf(el, ['[data-markdown-copy="contents"]', "[data-assistant-markdown-root]", ".markdown", "[data-user-message-bubble]", ".whitespace-pre-wrap"]));
+        }
+        if (found > 0) break;
+      }
+    } else if (provider === "claude") {
+      const matches = outermost([...page.querySelectorAll('[data-testid="user-message"], .font-claude-response, .font-claude-message')]);
+      for (const el of matches) push(el.matches('[data-testid="user-message"]') ? "user" : "assistant", [el]);
+    } else if (provider === "gemini") {
+      for (const el of outermost([...page.querySelectorAll("user-query, model-response")])) {
+        const user = el.tagName.toLowerCase() === "user-query";
+        push(user ? "user" : "assistant", [user ? el.querySelector(".query-text") || el : el.querySelector("message-content") || el.querySelector(".markdown") || el]);
+      }
+    } else {
+      const matches = outermost([...page.querySelectorAll('[data-testid="query-text"], [class*="group/query"], [data-message-bubble="right"], .prose')]);
+      for (const el of matches) push(el.classList.contains("prose") ? "assistant" : "user", [el]);
     }
-  } else if (host === "www.perplexity.ai" || host === "perplexity.ai") {
-    provider = "perplexity";
-    const matches = outermost([...page.querySelectorAll('[data-testid="query-text"], [class*="group/query"], [data-message-bubble="right"], .prose')]);
-    for (const el of matches) push(el.classList.contains("prose") ? "assistant" : "user", el);
-  } else {
-    return { ok: false, reason: "not-supported" };
+
+    if (turns.length === 0) {
+      // Empty only when the conversation area is there and holds nothing but a loading notice. Turns or
+      // text Hubble could not read are a layout it no longer understands, never "no messages".
+      const thread = provider === "chatgpt" && found === 0 && page.querySelector('[data-thread-find-target="conversation"], [data-conversation-transcript]');
+      const notices = thread ? [...thread.querySelectorAll('[role="status"]')].map((status) => status.textContent || "") : [];
+      const empty = thread && !thread.querySelector("[data-turn-key], li") && !notices.reduce((text, notice) => text.replace(notice, ""), thread.textContent || "").trim();
+      return { ok: false, reason: empty ? "empty-conversation" : "no-messages", provider };
+    }
+    const title = String(page.title || "").trim().slice(0, 300);
+    const read = { ok: true, provider, url: address, title, turns, truncated: total >= MAX_TOTAL };
+    // ChatGPT shows only the latest messages of a long chat and says so above them ("Loading older messages…").
+    const thread = firstMessage && firstMessage.closest('[data-thread-find-target="conversation"]');
+    const pending = thread && [...thread.querySelectorAll('[role="status"]')].some((status) => (status.textContent || "").trim() && status.compareDocumentPosition(firstMessage) & 4);
+    if (pending) read.olderNotLoaded = true;
+    return read;
   }
 
-  if (turns.length === 0) return { ok: false, reason: "no-messages", provider };
-  const title = String(page.title || "").trim().slice(0, 300);
-  return { ok: true, provider, url: address, title, turns, truncated: total >= MAX_TOTAL };
+  const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
+  for (;;) {
+    const read = readOnce();
+    if (read.ok || Date.now() >= deadline) return read;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+const PAGE_READ_REASONS = new Set(["not-supported", "no-messages", "empty-conversation"]);
+
+/**
+ * What `readConversationFromPage` sent back, re-checked in the extension
+ * before it goes anywhere: the page is the AI app's, not ours, so a result
+ * that is missing, malformed or carries a reason this file never gives is a
+ * failure with a reason, never a save. Resolves to
+ * { ok: true, title, turns, olderNotLoaded } or { ok: false, error }.
+ */
+export function checkPageRead(read) {
+  if (!read || typeof read !== "object") return { ok: false, error: "page-unreadable" };
+  if (read.ok !== true) return { ok: false, error: PAGE_READ_REASONS.has(read.reason) ? read.reason : "invalid" };
+  if (!Array.isArray(read.turns)) return { ok: false, error: "invalid" };
+  const turns = [];
+  for (const turn of read.turns) {
+    if (!turn || (turn.role !== "user" && turn.role !== "assistant") || typeof turn.text !== "string") return { ok: false, error: "invalid" };
+    if (turn.text.trim()) turns.push({ role: turn.role, text: turn.text });
+  }
+  if (turns.length === 0) return { ok: false, error: "invalid" };
+  return { ok: true, title: typeof read.title === "string" ? read.title : "", turns, olderNotLoaded: read.olderNotLoaded === true };
 }
 
 /**

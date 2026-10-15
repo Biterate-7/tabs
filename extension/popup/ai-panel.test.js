@@ -1,7 +1,9 @@
 // What the popup says after Save to Hubble, and how it re-reads what the
-// Hubble page sends back. Pure parts of ai-panel.js; no chrome.* needed.
-import { describe, expect, it } from "vitest";
-import { captureError, describeCapture, readHits, readPanelProjects } from "./ai-panel.js";
+// Hubble page sends back. Pure parts of ai-panel.js, then the Save button
+// itself with only chrome.runtime/storage mocked.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MSG_CAPTURE_CONVERSATION, MSG_MEMORY_REQUEST } from "../src/config.js";
+import { captureError, describeCapture, initAiPanel, readHits, readPanelProjects } from "./ai-panel.js";
 
 describe("describeCapture", () => {
   it("says what a save did, in words", () => {
@@ -29,5 +31,72 @@ describe("what the popup accepts from the page", () => {
   it("falls back to a generic message for an unknown reason", () => {
     expect(captureError("not-a-conversation")).toMatch(/isn't one/);
     expect(captureError("something-new")).toBe("Something went wrong. Try again.");
+  });
+});
+
+describe("the Save button on a ChatGPT conversation", () => {
+  const TAB = { id: 7, url: "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f", active: true };
+  let captures;
+
+  function mount(captureAnswer) {
+    // The AI section of popup.html, as the popup has it.
+    document.body.innerHTML = `<section id="ai-section" hidden><p id="ai-page"></p><select id="ai-project-select"></select>
+      <button id="capture-button" disabled>Save this conversation</button><button id="ai-open-hubble-button" hidden>Open Hubble</button>
+      <p id="capture-status" role="status" hidden></p>
+      <details id="memory-panel"><input id="memory-query" /><ul id="memory-results"></ul><textarea id="memory-request"></textarea>
+      <button id="insert-button" disabled></button><button id="copy-button" disabled></button><p id="memory-status" hidden></p></details></section>`;
+    captures = [];
+    globalThis.chrome = {
+      storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } },
+      runtime: {
+        sendMessage: vi.fn(async ({ type, payload }) => {
+          if (type === MSG_CAPTURE_CONVERSATION) {
+            captures.push(payload);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return captureAnswer;
+          }
+          if (type === MSG_MEMORY_REQUEST && payload.kind === "projects") return { ok: true, result: { projects: [{ id: "phys", name: "Physics" }] } };
+          if (type === MSG_MEMORY_REQUEST) return { ok: true, result: { hits: [] } };
+          return undefined;
+        }),
+      },
+    };
+    return initAiPanel(TAB, document);
+  }
+
+  const status = () => document.getElementById("capture-status").textContent;
+  const button = () => document.getElementById("capture-button");
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+  afterEach(() => {
+    delete globalThis.chrome;
+    document.body.innerHTML = "";
+  });
+
+  it("saves into the chosen project once, however many times it is clicked, and says what it saved", async () => {
+    await mount({ ok: true, result: { outcome: "added", turns: 10, olderNotLoaded: true } });
+    expect(document.getElementById("ai-project-select").value).toBe("phys");
+    button().click();
+    button().click();
+    expect(button().disabled).toBe(true);
+    expect(status()).toBe("Saving…");
+    await settle();
+    expect(captures).toEqual([{ tabId: 7, workspaceId: "phys" }]);
+    expect(status()).toBe("Saved to Physics · 10 turns. Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them.");
+    expect(button().disabled).toBe(false);
+  });
+
+  it("offers the paste fallback only when the page's messages could not be read", async () => {
+    await mount({ ok: false, error: "no-messages" });
+    button().click();
+    await settle();
+    expect(status()).toMatch(/couldn't find the messages .* Add → Paste a conversation/);
+  });
+
+  it("says an empty conversation is empty, not unreadable", async () => {
+    await mount({ ok: false, error: "empty-conversation" });
+    button().click();
+    await settle();
+    expect(status()).toBe("There are no messages in this conversation yet. If it's still loading, wait a moment and try again.");
   });
 });

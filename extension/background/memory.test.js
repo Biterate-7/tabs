@@ -89,6 +89,80 @@ describe("Save to Hubble", () => {
   });
 });
 
+describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
+  const CHATGPT_URL = "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f";
+  const unit = (key, body) => `<div data-content-search-unit-key="fallback-turn-0:${key}">${body}</div>`;
+
+  /** A ChatGPT conversation reduced to its structure; executeScript runs the real reader against it. */
+  function chatgptPage(status = "") {
+    const doc = document.implementation.createHTMLDocument("Admissions Strategy Assessment");
+    doc.body.innerHTML = `<nav><a href="/c/other">Another chat</a></nav>
+      <main><div data-thread-find-target="conversation">${status ? `<div role="status">${status}</div>` : ""}<div data-turn-key="t1">
+        <h4>You said:</h4>${unit("0:user", `<div data-user-message-bubble="true"><div>What caused WW1?</div></div><button aria-label="Copy message"></button>`)}
+        ${unit("1:assistant", `<h4 data-conversation-role="assistant">ChatGPT said:</h4><div data-markdown-copy="contents"><p data-d-component="text">Militarism and alliances.</p></div>`)}
+      </div></div><form><textarea name="prompt">draft</textarea></form></main>`;
+    return doc;
+  }
+
+  beforeEach(() => {
+    chrome.tabs.get.mockImplementation(async (id) => fakeTab({ id, url: CHATGPT_URL, title: "Admissions Strategy Assessment" }));
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(chatgptPage(), CHATGPT_URL, 0) }]);
+  });
+
+  it("reads the page with the real reader and hands Hubble its messages, in order, once", async () => {
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-physics" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added" } });
+    expect(answer.result).not.toHaveProperty("olderNotLoaded");
+    expect(pageRequests).toEqual([
+      expect.objectContaining({
+        kind: "capture",
+        args: {
+          workspaceId: "ws-physics",
+          capture: {
+            url: CHATGPT_URL,
+            title: "Admissions Strategy Assessment",
+            turns: [
+              { role: "user", text: "What caused WW1?" },
+              { role: "assistant", text: "Militarism and alliances." },
+            ],
+          },
+        },
+      }),
+    ]);
+  });
+
+  it("saves what is on screen and tells the popup when older messages had not loaded", async () => {
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(chatgptPage("Loading older messages…"), CHATGPT_URL, 0) }]);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-physics" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", olderNotLoaded: true } });
+    expect(pageRequests).toHaveLength(1);
+  });
+
+  it("asks Hubble to save nothing when the page sends back something malformed", async () => {
+    for (const result of [{ ok: true, turns: "What caused WW1?" }, { ok: true, turns: [{ role: "system", text: "x" }] }, { ok: false, reason: "something-new" }]) {
+      chrome.scripting.executeScript.mockResolvedValue([{ result }]);
+      expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "invalid" });
+    }
+    expect(pageRequests).toEqual([]);
+  });
+
+  it("says the page could not be read when the script fails or answers nothing", async () => {
+    chrome.scripting.executeScript.mockRejectedValue(new Error("Cannot access contents of the page."));
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "page-unreadable" });
+    chrome.scripting.executeScript.mockResolvedValue([]);
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "page-unreadable" });
+    expect(pageRequests).toEqual([]);
+  });
+
+  it("tells an empty conversation apart from one it cannot read", async () => {
+    const empty = document.implementation.createHTMLDocument("ChatGPT");
+    empty.body.innerHTML = `<main><div data-thread-find-target="conversation"><div></div></div></main>`;
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(empty, CHATGPT_URL, 0) }]);
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "empty-conversation" });
+    expect(pageRequests).toEqual([]);
+  });
+});
+
 describe("Use Hubble in this chat", () => {
   it("relays only the four memory requests to the Hubble page", async () => {
     await ask({ type: MSG_MEMORY_REQUEST, payload: { kind: "search", args: { query: "thesis" } } });
