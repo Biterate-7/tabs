@@ -456,21 +456,20 @@ reads only (§9). Two things the vendor's tool does that matter:
 ## 7. Deployment
 
 ```bash
-npm run migrate:auth
+node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-auth.mjs --expect-host=<ep-… endpoint or host>
 ```
 
 ```bash
-npm run migrate:sync
+node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-sync.mjs --expect-host=<ep-… endpoint or host>
 ```
 
 ```bash
 node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-integrations.mjs --expect-host=<ep-… endpoint or host>
 ```
 
-- **Naming the target:** unlike the other `migrate:*` scripts,
-  `migrate:integrations` never reads `.env.local` or `.env` — `vercel env
-  pull` writes the Development database there, so it would silently become
-  the target. The connection string must be in the command's environment,
+- **Naming the target:** no `migrate:*` script reads `.env.local` or
+  `.env` (`scripts/db-target.mjs`) — `vercel env pull` writes a real
+  database there, so it would silently become the target. The connection string must be in the command's environment,
   and `--expect-host` must name the host it points at (the Neon endpoint
   label, with or without `-pooler`, or the full host name). The script
   prints the host and database name, refuses a missing or mismatched

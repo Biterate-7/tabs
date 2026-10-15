@@ -659,7 +659,7 @@ administrator rights. `test/pg/` boots one real server per test run:
 
 ### What is now verified against a real server
 
-- **Migration.** `npm run migrate:auth` and `npm run migrate:sync` are run as
+- **Migration.** `scripts/migrate-auth.mjs` and `scripts/migrate-sync.mjs` are run as
   child processes against an empty database — the real scripts, not a copy.
   All expected tables, indexes and constraints exist afterwards; the
   auth-before-sync ordering guard fires and leaves nothing behind.

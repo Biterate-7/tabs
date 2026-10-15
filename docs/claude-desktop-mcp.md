@@ -102,8 +102,11 @@ credentials and Claude Desktop never sees Hubble's session.
 ## 4. Deploying (operator, once)
 
 ```bash
-npm run migrate:mcp
+node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-mcp.mjs --expect-host=<ep-… endpoint or host>
 ```
+
+The script reads no `.env` file and refuses to connect unless
+`--expect-host` names the host the connection string points at.
 
 Creates `tabdump_mcp_tokens`. Additive and idempotent. Needs the auth and sync
 schemas already applied (`migrate:auth`, `migrate:sync`). No new environment

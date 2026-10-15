@@ -55,8 +55,12 @@ To turn it on:
 3. For production, add a Postgres connection string as `POSTGRES_URL` (Vercel Postgres injects this for you) and apply the schema once:
 
 ```bash
-npm run migrate:auth
+node --env-file=<file holding the target POSTGRES_URL> scripts/migrate-auth.mjs --expect-host=<ep-… endpoint or host>
 ```
+
+Every `migrate:*` script and `downloads:report` reads its database only from the command's environment — never from `.env.local` or `.env` — and refuses to connect unless `--expect-host` names the host it points at (`scripts/db-target.mjs`). Keep the `--env-file` file outside the repository and delete it afterwards.
+
+**Local development never uses the production database.** Point `next dev` at a separate database (a Neon development branch, or none at all for the in-memory store) in `.env.development.local`, which `next dev` reads before `.env.local`. Don't keep a production connection string in `.env.local`: `next build` / `next start` read it too. The test suite clears `POSTGRES_URL`, `DATABASE_URL` and `PG*` before every file and runs its Postgres suites on a throwaway local cluster.
 
 Sessions are server-side rows, so production needs that database — a serverless deployment has nowhere else to keep them. Local development without one falls back to an in-memory store, so you can sign in and out immediately; those sessions just don't survive a dev-server restart.
 

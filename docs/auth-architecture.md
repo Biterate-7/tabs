@@ -211,7 +211,9 @@ To exercise accounts locally:
 2. Put `NEXT_PUBLIC_GOOGLE_CLIENT_ID=…` in `.env.local`.
 3. `npm run dev`. With no database configured, sessions land in the
    in-memory store and last until the dev server restarts. Set
-   `POSTGRES_URL` and run `npm run migrate:auth` to use a real one.
+   `POSTGRES_URL` in `.env.development.local` to a development database
+   (never production) and apply the schema with `scripts/migrate-auth.mjs`
+   (see the README) to use a real one.
 
 The session cookie is `Secure` only in production, because a `Secure` cookie
 is dropped over the plain http that `next dev` serves. That is the single

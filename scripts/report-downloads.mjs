@@ -2,49 +2,21 @@
 /**
  * Prints Hubble Desktop download counts (src/lib/downloads/schema.sql).
  *
- *   npm run downloads:report
+ *   node --env-file=<file holding POSTGRES_URL> scripts/report-downloads.mjs --expect-host=<endpoint>
  *
  * Read-only: one SELECT, no writes. The counts are aggregate (day, platform,
  * version → number), so there is nothing personal to print. They are not
  * served by any route; this script, run by someone who holds the database
  * credential, is how they are read.
  *
- * Reads the connection string from POSTGRES_URL or DATABASE_URL (or
- * .env.local / .env). The variable NAME is printed; its value never is.
+ * The target is never implied: see ./db-target.mjs. .env.local and .env are
+ * not read, and --expect-host must name the host the connection string in
+ * the real environment points at.
  */
 
-import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CONNECTION_ENV_VARS = ["POSTGRES_URL", "DATABASE_URL"];
-
-/** The same minimal .env reader as the migrate:* scripts. Never overrides a real environment variable. */
-function loadEnvFile(file) {
-  if (!existsSync(file)) return;
-  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (process.env[key] !== undefined) continue;
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
-  }
-}
-
-function connectionString() {
-  for (const name of CONNECTION_ENV_VARS) {
-    const value = process.env[name]?.trim();
-    if (value) return { name, value };
-  }
-  return null;
-}
+import { redactConnectionStrings, resolveDatabaseTarget } from "./db-target.mjs";
 
 /** Totals from rows, as the report prints them. Exported for the test. */
 export function summarise(rows) {
@@ -58,18 +30,10 @@ export function summarise(rows) {
 }
 
 async function main() {
-  loadEnvFile(path.join(ROOT, ".env.local"));
-  loadEnvFile(path.join(ROOT, ".env"));
+  const resolved = await resolveDatabaseTarget("scripts/report-downloads.mjs");
+  if (!resolved) return;
+  const { client, target, variable } = resolved;
 
-  const connection = connectionString();
-  if (!connection) {
-    console.error(`No database configured. Set ${CONNECTION_ENV_VARS.join(" or ")} and run this again.`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const { Client } = await import("pg");
-  const client = new Client({ connectionString: connection.value });
   await client.connect();
   try {
     const result = await client.query(
@@ -79,7 +43,7 @@ async function main() {
     );
     const rows = result.rows.map((row) => ({ ...row, downloads: Number(row.downloads) }));
     const summary = summarise(rows);
-    console.log(`Hubble Desktop downloads (via ${connection.name})`);
+    console.log(`Hubble Desktop downloads from ${target.host}/${target.database} (via ${variable})`);
     console.log(`Total: ${summary.total}`);
     console.log("By platform:", summary.byPlatform);
     console.log("By version:", summary.byVersion);
@@ -92,7 +56,7 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    console.error("Report failed:", error instanceof Error ? error.message : error);
+    console.error("Report failed:", redactConnectionStrings(error));
     process.exitCode = 1;
   });
 }

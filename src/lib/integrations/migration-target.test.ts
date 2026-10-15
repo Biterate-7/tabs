@@ -1,12 +1,13 @@
 /**
- * migrate:integrations must never pick its database by accident.
+ * No database script may pick its database by accident.
  *
- * A `vercel env pull` writes the Development database into .env.local, so a
- * script that read it would migrate whatever that file names. These tests run
- * the real script as a child process, the way an operator does, and check that
- * the target has to be supplied in the environment and confirmed with
- * --expect-host before anything connects — and that no output ever carries a
- * credential. None of them needs a database.
+ * A `vercel env pull` writes a real database into .env.local — for this
+ * project it has been the production one — so a script that read it would
+ * migrate whatever that file names. These tests run the real scripts as child
+ * processes, the way an operator does, and check that the target has to be
+ * supplied in the environment and confirmed with --expect-host before anything
+ * connects — and that no output ever carries a credential. None of them needs
+ * a database.
  */
 import { execFile } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -16,7 +17,10 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
-const SCRIPT = path.resolve(__dirname, "..", "..", "..", "scripts", "migrate-integrations.mjs");
+const SCRIPTS_DIR = path.resolve(__dirname, "..", "..", "..", "scripts");
+const SCRIPT = path.join(SCRIPTS_DIR, "migrate-integrations.mjs");
+/** Every script that opens a database connection. */
+const DATABASE_SCRIPTS = ["migrate-auth", "migrate-sync", "migrate-mcp", "migrate-downloads", "migrate-integrations", "report-downloads"];
 const SECRET = "s3cret-Pa55word";
 
 /** The developer's own database variables never reach the child. */
@@ -50,6 +54,7 @@ describe("migrate:integrations target safety", () => {
     mkdirSync(path.join(root, "scripts"));
     const script = path.join(root, "scripts", "migrate-integrations.mjs");
     copyFileSync(SCRIPT, script);
+    copyFileSync(path.join(SCRIPTS_DIR, "db-target.mjs"), path.join(root, "scripts", "db-target.mjs"));
     writeFileSync(path.join(root, ".env.local"), `POSTGRES_URL=postgresql://dev:${SECRET}@127.0.0.1:1/devdb\n`);
     writeFileSync(path.join(root, ".env"), `DATABASE_URL=postgresql://dev:${SECRET}@127.0.0.1:1/devdb\n`);
 
@@ -106,5 +111,53 @@ describe("migrate:integrations target safety", () => {
       expect(result.out, expected).not.toContain("Refusing");
       expect(result.out, expected).not.toContain(SECRET);
     }
+  });
+});
+
+describe.each(DATABASE_SCRIPTS)("%s target safety", (name) => {
+  const original = path.join(SCRIPTS_DIR, `${name}.mjs`);
+
+  it("reads no .env.local or .env, so a pulled database is never the target", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "hubble-dbscript-"));
+    temps.push(root);
+    mkdirSync(path.join(root, "scripts"));
+    const script = path.join(root, "scripts", `${name}.mjs`);
+    copyFileSync(original, script);
+    copyFileSync(path.join(SCRIPTS_DIR, "db-target.mjs"), path.join(root, "scripts", "db-target.mjs"));
+    writeFileSync(path.join(root, ".env.local"), `POSTGRES_URL=postgresql://dev:${SECRET}@127.0.0.1:1/devdb
+`);
+    writeFileSync(path.join(root, ".env"), `DATABASE_URL=postgresql://dev:${SECRET}@127.0.0.1:1/devdb
+`);
+
+    const result = await migrate(script, ["--expect-host=127.0.0.1"], cleanEnv());
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("No database configured");
+    expect(result.out).toContain(`scripts/${name}.mjs`);
+    expect(result.out).not.toContain(SECRET);
+  });
+
+  it("refuses to run without --expect-host, or with the wrong one, before connecting", async () => {
+    const env = cleanEnv({ POSTGRES_URL: `postgresql://owner:${SECRET}@ep-prod-main-pooler.example.invalid/neondb` });
+    const missing = await migrate(original, [], env);
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain("Refusing to run without --expect-host");
+
+    const wrong = await migrate(original, ["--expect-host=ep-dev-branch"], env);
+    expect(wrong.code).toBe(1);
+    expect(wrong.out).toContain("Refusing to run: --expect-host is ep-dev-branch");
+    for (const out of [missing.out, wrong.out]) {
+      expect(out).not.toMatch(/failed:/);
+      expect(out).not.toContain(SECRET);
+      expect(out).not.toContain("owner");
+    }
+  });
+
+  it("redacts the driver's error once past the guard", async () => {
+    const result = await migrate(original, ["--expect-host=ep-prod-main"], cleanEnv({ POSTGRES_URL: `postgresql://owner:${SECRET}@ep-prod-main-pooler.example.invalid/neondb` }));
+    // Past the guard: the only failure left is that .invalid never resolves.
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Target (via POSTGRES_URL)");
+    expect(result.out).toMatch(/failed:/);
+    expect(result.out).not.toContain(SECRET);
   });
 });
