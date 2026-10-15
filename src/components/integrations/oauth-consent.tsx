@@ -215,7 +215,7 @@ export function OAuthConsent() {
                   ))}
                   {state.request.requestedLevel === "write" && permission === "read" && (
                     <p className="text-body-sm text-muted-foreground">
-                      It asked to save changes too. You can allow that now, or later in Settings → AI Integrations.
+                      It asked to save changes too. You can allow that now, or later in Settings → AI connectors.
                     </p>
                   )}
                 </fieldset>
@@ -265,7 +265,7 @@ export function OAuthConsent() {
                   <p className="mt-3 text-body-sm text-muted-foreground">
                     What it reads from Hubble is sent to {state.request.clientProduct === "Another MCP client" ? "that app" : state.request.clientProduct}{" "}
                     and handled under its privacy terms. Hubble keeps a record of what it does — not your conversations. You can
-                    disconnect it any time in Settings → AI Integrations.
+                    disconnect it any time in Settings → AI connectors.
                   </p>
                 </div>
 
