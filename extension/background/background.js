@@ -36,7 +36,7 @@ import {
   MSG_PAGE_REQUEST,
   PAGE_READY_WAIT_MS,
 } from "../src/config.js";
-import { aiProviderOf, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
+import { aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
@@ -1378,10 +1378,17 @@ async function captureConversation({ tabId, workspaceId }) {
     log("capture-read-failed", { detail: errorMessage(err) });
     return { ok: false, error: "page-unreadable" };
   }
-  if (!read?.ok) return { ok: false, error: read?.reason ?? "page-unreadable" };
-  log("capture-read", { provider: read.provider, turns: read.turns.length });
+  const checked = checkPageRead(read);
+  // Counts and reasons only: what the conversation says is never logged.
+  if (!checked.ok) {
+    log("capture-read-refused", { reason: checked.error });
+    return { ok: false, error: checked.error };
+  }
+  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length });
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
-  return askHubblePage("capture", { workspaceId, capture: { url: tab.url, title: read.title || tab.title || "", turns: read.turns } }, { openIfMissing: true });
+  const answer = await askHubblePage("capture", { workspaceId, capture: { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns } }, { openIfMissing: true });
+  // The page saved what was on screen; the popup says when that was not the whole chat.
+  return answer?.ok && checked.olderNotLoaded ? { ...answer, result: { ...answer.result, olderNotLoaded: true } } : answer;
 }
 
 async function insertContext({ tabId, text }) {

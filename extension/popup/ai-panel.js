@@ -20,6 +20,7 @@ export const CAPTURE_ERRORS = {
   "not-supported": "Hubble can save conversations from ChatGPT, Claude, Gemini and Perplexity.",
   "not-a-conversation": "Open a conversation to save it — this page isn't one.",
   "no-messages": "Hubble couldn't find the messages on this page (the app may have changed its layout). Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
+  "empty-conversation": "There are no messages in this conversation yet. If it's still loading, wait a moment and try again.",
   empty: "Hubble couldn't find the messages on this page. Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
   "page-unreadable": "Chrome didn't let Hubble read this page. Reload it and try again, or paste the conversation in Hubble.",
   "project-missing": "That project isn't in Hubble any more. Choose another one.",
@@ -41,10 +42,11 @@ export function captureError(reason) {
 export function describeCapture(result, projectName) {
   const turns = Number.isInteger(result?.turns) ? ` · ${result.turns} turn${result.turns === 1 ? "" : "s"}` : "";
   const cut = result?.truncated ? " · very long, so only the first part was kept" : "";
-  if (result?.outcome === "updated") return `Updated the saved copy in ${projectName}${turns}${cut}`;
-  if (result?.outcome === "unchanged") return `Already saved in ${projectName} — nothing new since.`;
+  const older = result?.olderNotLoaded ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them." : "";
+  if (result?.outcome === "updated") return `Updated the saved copy in ${projectName}${turns}${cut}${older}`;
+  if (result?.outcome === "unchanged") return `Already saved in ${projectName} — nothing new since${older || "."}`;
   if (result?.outcome === "kept") return `${projectName} already has more of this conversation than the page shows, so the saved copy was kept. Scroll to the top to load the whole conversation, then save again.`;
-  return `Saved to ${projectName}${turns}${cut}`;
+  return `Saved to ${projectName}${turns}${cut}${older}`;
 }
 
 const TYPE_WORDS = { conversation: "AI conversation", webpage: "Web page", pdf: "PDF", video: "Video", document: "Document", link: "Link", note: "Note", excerpt: "Excerpt" };

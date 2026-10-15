@@ -139,13 +139,44 @@ project, search in Hubble, build context, Insert.
 Signed-in pages were not tested and can differ. Each fix has a fixture in
 `extension/src/ai-pages.test.js` ("live markup, 2026-10-14").
 
+### ChatGPT, 2026-10-15: the signed-in layout
+
+They did differ. Signed-in ChatGPT (and, by then, signed-out chats at
+`/c/<id>`) no longer puts a role attribute on a message: there is no
+`data-message-role` or `data-message-author-role` anywhere on the page, so
+every Save ended in "couldn't find the messages". Each message is now an
+element keyed `data-content-search-unit-key="<turn>:<n>:user|assistant"`; a
+reply's text is in `[data-markdown-copy="contents"]`, and "You said:" /
+"ChatGPT said:" are visible `h4` labels beside it.
+
+The ChatGPT reader is now a list of layouts tried in order (message keys,
+then role attributes); only the first that finds messages is read, so a
+message is never read twice. Text is rebuilt from the elements, not
+`innerText`: code blocks come back fenced with their language, formulas as
+their TeX (`$…$`, `$$…$$`), list items keep a marker, table cells stay on
+their row, and what ChatGPT's own Copy
+leaves out (`data-markdown-copy="exclude"`: code-block headers, timestamps)
+stays out. A page still rendering is read again for up to 3 s. The reader
+tells *no messages on screen yet* (`empty-conversation`) apart from *a layout
+it cannot read* (`no-messages`, which offers the paste fallback). When
+ChatGPT shows "Loading older messages…" above the thread, what is on screen
+is saved and the popup says older messages were left out. The background
+re-checks the page's answer (`checkPageRead`) before anything reaches Hubble.
+
+Checked live: the reader on a signed-in conversation (10 messages, tables,
+lists, the older-messages notice) and on a signed-out `/c/` chat with a code
+block; and the real popup end to end on a signed-out `/uc/` chat (which still
+uses role attributes) — Save into Physics, Save again ("Already saved"), one
+item kept, turns and roles as on the page. Fixtures: "ChatGPT, signed in
+(live markup, 2026-10-15)".
+
 Deliberately absent: provider sign-in, cookies, private or undocumented
 endpoints, background reading of tabs, and any "sync". Saving again is how a
 grown conversation is brought up to date.
 
 ## 6. Hubble for Chrome
 
-`extension/` 0.6.0. The popup's AI section (`popup/ai-panel.js`) appears on a
+`extension/` 0.6.1. The popup's AI section (`popup/ai-panel.js`) appears on a
 conversation page of a known AI app:
 
 ```
