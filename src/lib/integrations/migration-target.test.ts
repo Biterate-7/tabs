@@ -11,6 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -150,6 +151,52 @@ describe.each(DATABASE_SCRIPTS)("%s target safety", (name) => {
       expect(out).not.toContain(SECRET);
       expect(out).not.toContain("owner");
     }
+  });
+
+  it("opens no connection until --expect-host matches, then dials exactly that host", async () => {
+    // A TCP listener standing in for a database: it counts connection attempts and hangs up.
+    let attempts = 0;
+    const server = createServer((socket) => {
+      attempts++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      const env = cleanEnv({ POSTGRES_URL: `postgresql://owner:${SECRET}@127.0.0.1:${port}/neondb` });
+      for (const args of [[], ["--expect-host="], ["--expect-host"], ["--expect-host=ep-prod-main"], ["--expect-host=127.0.0.2"]]) {
+        const refused = await migrate(original, args, env);
+        expect(refused.code, args.join(" ")).toBe(1);
+        expect(refused.out, args.join(" ")).toContain("Refusing to run");
+        expect(attempts, args.join(" ")).toBe(0);
+      }
+      const matched = await migrate(original, ["--expect-host=127.0.0.1"], env);
+      expect(matched.code).toBe(1);
+      expect(attempts).toBeGreaterThanOrEqual(1);
+      expect(matched.out).not.toContain(SECRET);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("names neither the user nor the password, even when the URL has no database", async () => {
+    const result = await migrate(original, [], cleanEnv({ POSTGRES_URL: `postgresql://someowner:${SECRET}@ep-prod-main-pooler.example.invalid` }));
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("host ep-prod-main-pooler.example.invalid, database (default)");
+    expect(result.out).not.toContain("someowner");
+    expect(result.out).not.toContain(SECRET);
+  });
+
+  it("refuses a value that is not a connection URL without echoing it", async () => {
+    const malformed = await migrate(original, ["--expect-host=x"], cleanEnv({ DATABASE_URL: `postgresql://owner:${SECRET}@bad host.example/db` }));
+    expect(malformed.code).toBe(1);
+    expect(malformed.out).toContain("DATABASE_URL is not a valid connection URL");
+    expect(malformed.out).not.toContain(SECRET);
+    // Parses as a URL with no host, so the driver would dial a default: refused as a host mismatch.
+    const hostless = await migrate(original, ["--expect-host=x"], cleanEnv({ DATABASE_URL: `owner:${SECRET} not a url` }));
+    expect(hostless.code).toBe(1);
+    expect(hostless.out).toContain("Refusing to run");
+    expect(hostless.out).not.toContain(SECRET);
   });
 
   it("redacts the driver's error once past the guard", async () => {

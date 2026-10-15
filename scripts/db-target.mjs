@@ -40,11 +40,15 @@ function expectedHost(argv) {
  * alone proves nothing. Null when the two disagree.
  */
 function describeTarget(value, client) {
-  const urlHost = new URL(value).hostname.toLowerCase();
+  const url = new URL(value);
+  const urlHost = url.hostname.toLowerCase();
   const host = String(client.host ?? "").toLowerCase();
   if (!host || host !== urlHost) return null;
   const endpoint = host.split(".")[0].replace(/-pooler$/, "");
-  return { host, endpoint, database: client.database || "(default)" };
+  // From the URL, not client.database: with no database in the URL, pg falls
+  // back to the user name, which must not be printed.
+  const database = decodeURIComponent(url.pathname.replace(/^\//, "")) || "(default)";
+  return { host, endpoint, database };
 }
 
 function matchesTarget(target, expected) {

@@ -6,8 +6,10 @@ import { cleanup } from "@testing-library/react";
 // PG* variables, and a developer's shell or a `vercel env pull` can carry
 // production's. Suites that need Postgres get a throwaway cluster of their own
 // (test/pg), and tests that exercise configuration stub these with vi.stubEnv.
+// Matched case-insensitively: on Windows process.env is, so "PgHost" is PGHOST.
 for (const name of Object.keys(process.env)) {
-  if (name === "POSTGRES_URL" || name === "DATABASE_URL" || name.startsWith("PG")) delete process.env[name];
+  const upper = name.toUpperCase();
+  if (upper === "POSTGRES_URL" || upper === "DATABASE_URL" || upper.startsWith("PG")) delete process.env[name];
 }
 
 afterEach(() => {
