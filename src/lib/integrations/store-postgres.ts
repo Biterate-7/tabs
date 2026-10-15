@@ -205,12 +205,31 @@ function noteFromRow(row: NoteRow): WorkspaceNoteRecord {
 
 export function createPostgresIntegrationStore(pool: Pool): IntegrationStore {
   const store: IntegrationStore = {
-    async createConnection(r) {
-      await pool.query(
-        `INSERT INTO hubble_integration_connections (${CONNECTION_COLUMNS})
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL)`,
-        [r.id, r.userId, r.client, r.label, r.method, r.oauthClientId ?? null, r.scopes, r.workspaceIds, r.createdAt, r.updatedAt]
-      );
+    async createConnection(r, maxActive) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Serializes connection creation per account until COMMIT, so the
+        // count below cannot go stale before the insert — a count and an
+        // insert alone let simultaneous requests all see room. The insert is
+        // its own statement so its snapshot is taken after the lock is held.
+        // Transaction-scoped, so it is released however the transaction ends
+        // and works behind a transaction-mode pooler.
+        await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('hubble_integration_connections:' || $1::text, 0))`, [r.userId]);
+        const result = await client.query(
+          `INSERT INTO hubble_integration_connections (${CONNECTION_COLUMNS})
+           SELECT $1, $2::uuid, $3, $4, $5, $6, $7::text[], $8::text[], $9::bigint, $10::bigint, NULL, NULL
+            WHERE (SELECT count(*) FROM hubble_integration_connections WHERE user_id = $2::uuid AND revoked_at IS NULL) < $11`,
+          [r.id, r.userId, r.client, r.label, r.method, r.oauthClientId ?? null, r.scopes, r.workspaceIds, r.createdAt, r.updatedAt, maxActive]
+        );
+        await client.query("COMMIT");
+        return (result.rowCount ?? 0) > 0;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async getConnection(userId, id) {
       const result = await pool.query<ConnectionRow>(

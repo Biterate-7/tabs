@@ -128,7 +128,6 @@ export async function createTokenConnection(
   if (!isPermissionLevel(input.permission)) return { ok: false, problem: "invalid_permission" };
   const workspaceIds = readWorkspaces(input.workspaceIds, input.grantable);
   if (typeof workspaceIds === "string") return { ok: false, problem: workspaceIds };
-  if ((await store.countActiveConnections(input.userId)) >= MAX_ACTIVE_CONNECTIONS) return { ok: false, problem: "too_many_connections" };
 
   const connection: ConnectionRecord = {
     id: mintRecordId("conn"),
@@ -141,7 +140,7 @@ export async function createTokenConnection(
     createdAt: input.now,
     updatedAt: input.now,
   };
-  await store.createConnection(connection);
+  if (!(await store.createConnection(connection, MAX_ACTIVE_CONNECTIONS))) return { ok: false, problem: "too_many_connections" };
   const minted = mintCredential("personal");
   await store.createCredential({
     id: mintRecordId("cred"),

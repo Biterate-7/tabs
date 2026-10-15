@@ -285,33 +285,94 @@ describePostgres("AI integrations against real PostgreSQL", () => {
     expect(active[0].scopes).toEqual(["hubble.read"]);
   });
 
-  // KNOWN GAP: the cap is a count followed by an insert, with no lock or
-  // constraint between them, so requests that arrive together can each see
-  // room and all succeed. Whether they do in practice depends on timing, so
-  // this holds every count until all of them have been read — the
-  // interleaving two simultaneous requests can produce — and lets the SQL
-  // decide. `it.fails` records the gap; when the cap is enforced atomically
-  // (in the insert, or under a per-account lock) this starts failing — then
-  // make it a plain `it`.
-  it.fails(`holds the ${MAX_ACTIVE_CONNECTIONS}-connection cap when connections are created concurrently`, async () => {
+  /**
+   * A store whose createConnection calls all wait at the door until `racers`
+   * of them have arrived, then go in together: every caller has finished
+   * whatever it checked beforehand, and the inserts run concurrently. This is
+   * the interleaving simultaneous requests can produce, made certain rather
+   * than left to timing, so the cap is decided by the SQL alone.
+   */
+  function storeWithBarrier(racers: number): IntegrationStore {
+    let arrived = 0;
+    let open!: () => void;
+    const door = new Promise<void>((resolve) => (open = resolve));
+    const barrier: IntegrationStore = Object.create(store);
+    barrier.createConnection = async (...args: Parameters<IntegrationStore["createConnection"]>) => {
+      if (++arrived === racers) open();
+      await door;
+      return store.createConnection(...args);
+    };
+    return barrier;
+  }
+
+  /** Enough open pool connections that the racers' queries really run at once. */
+  async function warmPool(size: number) {
+    await Promise.all(Array.from({ length: size }, () => pool.query("SELECT pg_sleep(0.05)")));
+  }
+
+  it(`never lets concurrent token connections take an account past ${MAX_ACTIVE_CONNECTIONS}`, async () => {
     const grantable = new Set([workspace]);
     const create = (target: IntegrationStore, label: string) =>
       createTokenConnection(target, { userId: alice, client: "other", label, permission: "read", workspaceIds: [workspace], grantable, now: Date.now() });
     for (let i = 0; i < MAX_ACTIVE_CONNECTIONS - 1; i++) expect((await create(store, `c${i}`)).ok).toBe(true);
+    const bobsOwn = await createTokenConnection(store, { userId: bob, client: "other", label: "bob", permission: "read", workspaceIds: [bobWorkspace], grantable: new Set([bobWorkspace]), now: Date.now() });
+    expect(bobsOwn.ok).toBe(true);
 
-    const racers = 4;
-    let counted = 0;
-    let release!: () => void;
-    const allCounted = new Promise<void>((resolve) => (release = resolve));
-    const barrier: IntegrationStore = Object.create(store);
-    barrier.countActiveConnections = async (userId) => {
-      const count = await store.countActiveConnections(userId);
-      if (++counted === racers) release();
-      await allCounted;
-      return count;
-    };
-    await Promise.all(Array.from({ length: racers }, (_, i) => create(barrier, `race${i}`)));
-    expect((await activeConnections(alice)).length).toBeLessThanOrEqual(MAX_ACTIVE_CONNECTIONS);
+    const racers = 6;
+    await warmPool(racers);
+    const barrier = storeWithBarrier(racers);
+    const results = await Promise.all(Array.from({ length: racers }, (_, i) => create(barrier, `race${i}`)));
+
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).map((r) => (r.ok ? "" : r.problem))).toEqual(Array(racers - 1).fill("too_many_connections"));
+    expect(await activeConnections(alice)).toHaveLength(MAX_ACTIVE_CONNECTIONS);
+    // A refused request leaves nothing behind: no connection row, no credential.
+    const { rows } = await pool.query("SELECT count(*)::int AS n FROM hubble_integration_credentials c JOIN hubble_integration_connections k ON k.id = c.connection_id WHERE k.user_id = $1", [alice]);
+    expect(rows[0].n).toBe(MAX_ACTIVE_CONNECTIONS);
+    // The cap is per account: Bob is untouched and can still connect.
+    expect(await activeConnections(bob)).toHaveLength(1);
+
+    // Disconnecting one frees exactly one slot.
+    const [oldest] = await activeConnections(alice);
+    expect(await revokeConnection(store, alice, oldest.id, Date.now())).toBe(true);
+    const secondRound = storeWithBarrier(racers);
+    const again = await Promise.all(Array.from({ length: racers }, (_, i) => create(secondRound, `again${i}`)));
+    expect(again.filter((r) => r.ok)).toHaveLength(1);
+    expect(await activeConnections(alice)).toHaveLength(MAX_ACTIVE_CONNECTIONS);
+  });
+
+  it(`never lets concurrent OAuth code exchanges take an account past ${MAX_ACTIVE_CONNECTIONS}`, async () => {
+    const grantable = new Set([workspace]);
+    for (let i = 0; i < MAX_ACTIVE_CONNECTIONS - 1; i++) {
+      const created = await createTokenConnection(store, { userId: alice, client: "other", label: `c${i}`, permission: "read", workspaceIds: [workspace], grantable, now: Date.now() });
+      expect(created.ok).toBe(true);
+    }
+
+    // Several clients are approved while one slot is free (consent only checks; it creates nothing).
+    const racers = 6;
+    const { createHash } = await import("node:crypto");
+    const pending = [];
+    for (let i = 0; i < racers; i++) {
+      const client = await oauthClient();
+      const verifier = randomUUID() + randomUUID();
+      const challenge = createHash("sha256").update(verifier).digest("base64url");
+      const v = await validateAuthorizationRequest(store, { response_type: "code", client_id: client.client_id, redirect_uri: CALLBACK, code_challenge: challenge, code_challenge_method: "S256", resource: ENDPOINT }, ISSUER);
+      if (!v.ok) throw new Error(v.description);
+      const approved = await approveAuthorization(store, { request: v.request, issuer: ISSUER, userId: alice, level: "read", workspaceIds: [workspace], grantableWorkspaceIds: grantable, now: Date.now() });
+      if (!approved.ok) throw new Error(approved.reason);
+      pending.push({ clientId: client.client_id, verifier, code: new URL(approved.location).searchParams.get("code")! });
+    }
+
+    await warmPool(racers);
+    const barrier = storeWithBarrier(racers);
+    const answers = await Promise.all(
+      pending.map((p) => exchangeToken(barrier, new URLSearchParams({ grant_type: "authorization_code", code: p.code, code_verifier: p.verifier, client_id: p.clientId }), undefined, ISSUER, Date.now()))
+    );
+    expect(answers.filter((a) => a.status === 200)).toHaveLength(1);
+    for (const refused of answers.filter((a) => a.status !== 200)) expect(refused).toMatchObject({ status: 400, body: { error: "invalid_grant" } });
+    expect(await activeConnections(alice)).toHaveLength(MAX_ACTIVE_CONNECTIONS);
+    const winner = answers.find((a) => a.status === 200)!;
+    expect(await works(String(winner.body.access_token))).toBe(true);
   });
 
   it("deleting an account removes every integration row it owns, and nobody else's", async () => {
