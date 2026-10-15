@@ -30,7 +30,7 @@ describe("MarketingPage", () => {
   it("says what works with each AI app from the provider registry, never more", () => {
     render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
     const row = screen.getByRole("heading", { name: "Works beside the AI apps you already use" }).closest("section")!
-    const cards = Object.fromEntries([...row.querySelectorAll("li")].map((li) => [li.querySelector("span span")!.textContent, li.textContent]))
+    const cards = Object.fromEntries([...row.querySelectorAll("li")].map((li) => [li.querySelector("li > span:first-child > span:last-child")!.textContent, li.textContent]))
     expect(cards.ChatGPT).toContain("Save from the page · Import export")
     expect(cards.Claude).toContain("Save from the page · Import export")
     expect(cards.Gemini).toContain("Save from the page · Paste")

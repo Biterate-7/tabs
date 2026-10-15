@@ -14,6 +14,7 @@
     "migrate:sync": "node scripts/migrate-sync.mjs",
     "desktop:export": "node scripts/desktop-export.mjs",
     "brand:assets": "node scripts/build-brand-assets.mjs",
+    "brand:providers": "node scripts/build-provider-logos.mjs",
     "desktop:icons": "node scripts/build-brand-assets.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",

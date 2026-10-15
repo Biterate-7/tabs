@@ -49,7 +49,7 @@ export function KnowledgeIllustration({ className }: { className?: string }) {
         {items.map((item) => (
           <li key={item.id} className="flex min-w-0 items-start gap-2.5 rounded-md border border-subtle bg-card p-3">
             {item.provider ? (
-              <ProviderMark provider={item.provider} size={16} className="mt-0.5 text-muted-foreground" />
+              <ProviderMark provider={item.provider} size={16} className="mt-0.5" />
             ) : item.type === "note" ? (
               <NotebookPen aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             ) : (
