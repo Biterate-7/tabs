@@ -42,7 +42,10 @@ export function captureError(reason) {
 export function describeCapture(result, projectName) {
   const turns = Number.isInteger(result?.turns) ? ` · ${result.turns} turn${result.turns === 1 ? "" : "s"}` : "";
   const cut = result?.truncated ? " · very long, so only the first part was kept" : "";
-  const older = result?.olderNotLoaded ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them." : "";
+  const unread = Number.isInteger(result?.unreadReplies) && result.unreadReplies > 0 ? result.unreadReplies : 0;
+  const older =
+    (result?.olderNotLoaded ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them." : "") +
+    (unread ? `. ${unread === 1 ? "1 reply" : `${unread} replies`} had no text Hubble could read (an image, or not shown yet) and ${unread === 1 ? "was" : "were"} left out.` : "");
   if (result?.outcome === "updated") return `Updated the saved copy in ${projectName}${turns}${cut}${older}`;
   if (result?.outcome === "unchanged") return `Already saved in ${projectName} — nothing new since${older || "."}`;
   if (result?.outcome === "kept") return `${projectName} already has more of this conversation than the page shows, so the saved copy was kept. Scroll to the top to load the whole conversation, then save again.`;

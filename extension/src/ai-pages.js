@@ -72,7 +72,8 @@ export function isConversationUrl(url) {
  * Reads the conversation on screen. Runs in the page.
  * Resolves to { ok: true, provider, url, title, turns: [{ role, text }], truncated }
  * (plus `olderNotLoaded: true` when the app says earlier messages are still
- * to load) or { ok: false, reason }:
+ * to load, and `unreadReplies: n` when n replies had no text to read) or
+ * { ok: false, reason }:
  *
  *   not-supported       not an AI app this reads
  *   no-messages         nothing here looks like the app's messages: its
@@ -226,9 +227,12 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     const turns = [];
     let total = 0;
     let found = 0;
+    let unread = 0;
     const push = (role, elements) => {
       found += 1;
       const text = textOf(elements.filter(Boolean));
+      // A reply with no text (not drawn yet, or only an image) is counted, never silently dropped.
+      if (!text && role === "assistant") unread += 1;
       if (!text || total >= MAX_TOTAL) return;
       const kept = text.slice(0, MAX_TOTAL - total);
       total += kept.length;
@@ -244,6 +248,24 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         if (matches.length > 0) return matches;
       }
       return [el];
+    };
+
+    // Where this conversation is. ChatGPT keeps the chat you came from in the page after an in-app switch
+    // (data-app-shell-active-page="false", seen live 2026-10-15): its questions still have their text, its
+    // replies are emptied. Only the active page is read, and a turn tagged with another conversation's id
+    // is left out.
+    const marks = [...page.querySelectorAll("[data-app-shell-active-page]")];
+    const active = outermost(marks.filter((mark) => mark.getAttribute("data-app-shell-active-page") === "true"));
+    const roots = active.length > 0 ? active : [page];
+    const within = (selector) => roots.flatMap((root) => [...root.querySelectorAll(selector)]);
+    const chatId = (/\/c\/([A-Za-z0-9-]{8,80})\/?$/.exec(new URL(address).pathname) || [])[1];
+    const ownChat = (el) => {
+      if (!chatId) return true;
+      const turn = el.closest("[data-turn-key]") || el;
+      const ids = [...turn.querySelectorAll("[data-chatgpt-selection-conversation-id]")]
+        .filter((tagged) => !turn.matches("[data-turn-key]") || tagged.closest("[data-turn-key]") === turn)
+        .map((tagged) => tagged.getAttribute("data-chatgpt-selection-conversation-id"));
+      return ids.length === 0 || ids.includes(chatId);
     };
 
     let firstMessage;
@@ -262,9 +284,9 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         },
       ];
       for (const layout of LAYOUTS) {
-        for (const el of outermost([...page.querySelectorAll(layout.messages)])) {
+        for (const el of outermost(within(layout.messages))) {
           const role = layout.roleOf(el);
-          if (role !== "user" && role !== "assistant") continue;
+          if ((role !== "user" && role !== "assistant") || !ownChat(el)) continue;
           firstMessage = firstMessage || el;
           push(role, bodyOf(el, ['[data-markdown-copy="contents"]', "[data-assistant-markdown-root]", ".markdown", "[data-user-message-bubble]", ".whitespace-pre-wrap"]));
         }
@@ -286,7 +308,7 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     if (turns.length === 0) {
       // Empty only when the conversation area is there and holds nothing but a loading notice. Turns or
       // text Hubble could not read are a layout it no longer understands, never "no messages".
-      const thread = provider === "chatgpt" && found === 0 && page.querySelector('[data-thread-find-target="conversation"], [data-conversation-transcript]');
+      const thread = provider === "chatgpt" && found === 0 && within('[data-thread-find-target="conversation"], [data-conversation-transcript]')[0];
       const notices = thread ? [...thread.querySelectorAll('[role="status"]')].map((status) => status.textContent || "") : [];
       const empty = thread && !thread.querySelector("[data-turn-key], li") && !notices.reduce((text, notice) => text.replace(notice, ""), thread.textContent || "").trim();
       return { ok: false, reason: empty ? "empty-conversation" : "no-messages", provider };
@@ -297,13 +319,15 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     const thread = firstMessage && firstMessage.closest('[data-thread-find-target="conversation"]');
     const pending = thread && [...thread.querySelectorAll('[role="status"]')].some((status) => (status.textContent || "").trim() && status.compareDocumentPosition(firstMessage) & 4);
     if (pending) read.olderNotLoaded = true;
+    if (unread > 0) read.unreadReplies = unread;
     return read;
   }
 
   const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
   for (;;) {
     const read = readOnce();
-    if (read.ok || Date.now() >= deadline) return read;
+    // A reply still being drawn is waited for too; after the wait, what could be read is saved and the gap is said.
+    if ((read.ok && !read.unreadReplies) || Date.now() >= deadline) return read;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
@@ -315,7 +339,7 @@ const PAGE_READ_REASONS = new Set(["not-supported", "no-messages", "empty-conver
  * before it goes anywhere: the page is the AI app's, not ours, so a result
  * that is missing, malformed or carries a reason this file never gives is a
  * failure with a reason, never a save. Resolves to
- * { ok: true, title, turns, olderNotLoaded } or { ok: false, error }.
+ * { ok: true, title, turns, olderNotLoaded, unreadReplies } or { ok: false, error }.
  */
 export function checkPageRead(read) {
   if (!read || typeof read !== "object") return { ok: false, error: "page-unreadable" };
@@ -327,7 +351,8 @@ export function checkPageRead(read) {
     if (turn.text.trim()) turns.push({ role: turn.role, text: turn.text });
   }
   if (turns.length === 0) return { ok: false, error: "invalid" };
-  return { ok: true, title: typeof read.title === "string" ? read.title : "", turns, olderNotLoaded: read.olderNotLoaded === true };
+  const unreadReplies = Number.isInteger(read.unreadReplies) && read.unreadReplies > 0 ? Math.min(read.unreadReplies, 10000) : 0;
+  return { ok: true, title: typeof read.title === "string" ? read.title : "", turns, olderNotLoaded: read.olderNotLoaded === true, unreadReplies };
 }
 
 /**

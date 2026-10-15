@@ -232,7 +232,7 @@ describe("insertIntoComposer", () => {
 // every Save end in "couldn't find the messages".
 const SIGNED_IN = "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f";
 
-function unitTurn(index, question, answer) {
+function unitTurn(index, question, answer, chat = "") {
   return `<div data-turn-key="69ff8060-e2b1-46e6-b070-f80adac4016${index}">
     <div data-content-search-turn-key="fallback-turn-${index}">
       <div aria-label="Sent" role="separator" data-markdown-copy="exclude"><time><span>11:2${index}</span></time></div>
@@ -240,7 +240,7 @@ function unitTurn(index, question, answer) {
         <div><div>
           <h4>You said:</h4>
           <div data-chatgpt-search-unit-key="fallback-turn-${index}:0:user" data-content-search-unit-key="fallback-turn-${index}:0:user" data-chatgpt-search-message-ids="">
-            <div><div data-user-message-bubble="true"><div><div><div data-search-result-target=""><div><div style="white-space: pre-wrap">${question}</div></div></div></div></div></div>
+            <div><div data-user-message-bubble="true"><div><div><div data-search-result-target=""><div><div style="white-space: pre-wrap">${question}</div></div></div></div></div></div></div>
             <div><span data-state="closed"><button aria-label="Copy message"><svg><path></path></svg></button></span><span data-state="closed"><button aria-label="Edit message"><svg><path></path></svg></button></span></div>
           </div>
         </div>
@@ -248,7 +248,7 @@ function unitTurn(index, question, answer) {
           <span data-chatgpt-agent-turn-start=""></span>
           <div data-content-search-unit-key="fallback-turn-${index}:1:assistant" data-chatgpt-search-unit-key="fallback-turn-${index}:1:assistant" data-chatgpt-search-message-ids="">
             <h4 data-conversation-role="assistant">ChatGPT said:</h4>
-            <div><div data-chatgpt-selection-message-id="m${index}"><div data-markdown-text-style="assistant-message"><div data-dil-source-message-id="" data-chatgpt-copy-reference="0" data-markdown-copy="contents"><div><div hidden=""></div><div data-theme="dark"><div data-d-inline-reveal="" data-d-direction="col">${answer}</div></div></div></div></div></div>
+            <div><div${chat ? ` data-chatgpt-selection-conversation-id="${chat}"` : ""} data-chatgpt-selection-message-id="m${index}"><div data-markdown-text-style="assistant-message"><div data-dil-source-message-id="" data-chatgpt-copy-reference="0" data-markdown-copy="contents"><div><div hidden=""></div><div data-theme="dark"><div data-d-inline-reveal="" data-d-direction="col">${answer}</div></div></div></div></div></div>
           </div>
         </div></div>
         <div><span data-state="closed"><button aria-label="Copy">Copy</button></span><span data-state="closed"><button aria-label="Rate">Good response</button></span></div>
@@ -417,6 +417,52 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
     expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toEqual(first);
   });
 
+  it("reads only the open chat when ChatGPT keeps the one you came from in the page", async () => {
+    // Seen live 2026-10-15: after switching chats in the app, the previous chat stays mounted on an inactive
+    // page, its questions intact and its replies emptied. Saving read both, and the stray questions led the save.
+    const previous = "6ad08116-edd8-83ec-b032-cde25a3651ae";
+    const open = "6ad062bc-2bcc-83e8-9305-06038d74964f";
+    const doc = page(
+      `<div data-app-shell-active-page="false"><main data-codex-history-swipe-page="true"><div data-thread-find-target="conversation">
+         ${unitTurn(0, "Reply with a Python code block.", "", previous)}${unitTurn(1, "State Newton's second law.", "", previous)}
+       </div></main></div>
+       <div data-app-shell-active-page="true"><main data-codex-history-swipe-page="true"><div data-thread-find-target="conversation">
+         ${unitTurn(0, "What caused WW1?", text("Militarism and alliances."), open)}
+       </div></main></div>`
+    );
+    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({
+      ok: true,
+      turns: [
+        { role: "user", text: "What caused WW1?" },
+        { role: "assistant", text: "Militarism and alliances." },
+      ],
+    });
+  });
+
+  it("leaves out a turn tagged with another conversation's id, wherever it sits", async () => {
+    const doc = signedInPage([unitTurn(0, "A question from another chat", text("Its reply."), "6ad08116-edd8-83ec-b032-cde25a3651ae"), unitTurn(1, "What caused WW1?", text("Militarism."), "6ad062bc-2bcc-83e8-9305-06038d74964f")]);
+    expect((await readConversationFromPage(doc, SIGNED_IN, 0)).turns).toEqual([
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism." },
+    ]);
+  });
+
+  it("counts a reply with no text instead of dropping it silently, and waits for one still being drawn", async () => {
+    const empty = await readConversationFromPage(signedInPage([unitTurn(0, "Draw me a diagram.", ""), unitTurn(1, "What caused WW1?", text("Militarism."))]), SIGNED_IN, 0);
+    expect(empty).toMatchObject({ ok: true, unreadReplies: 1, turns: [{ role: "user" }, { role: "user" }, { role: "assistant" }] });
+
+    const doc = signedInPage([unitTurn(0, "What caused WW1?", "")]);
+    setTimeout(() => {
+      doc.querySelector('[data-markdown-copy="contents"] [data-d-direction="col"]').innerHTML = text("Militarism and alliances.");
+    }, 300);
+    const drawn = await readConversationFromPage(doc, SIGNED_IN, 3000);
+    expect(drawn.turns).toEqual([
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism and alliances." },
+    ]);
+    expect(drawn).not.toHaveProperty("unreadReplies");
+  });
+
   it("says when ChatGPT has not loaded the older messages above the ones on screen", async () => {
     const doc = signedInPage([unitTurn(0, "What caused WW1?", text("Militarism and alliances."))], { status: "Loading older messages…" });
     expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({ ok: true, olderNotLoaded: true });
@@ -451,8 +497,10 @@ describe("checkPageRead: what came back from the page, before it goes anywhere",
         turns: [{ role: "user", text: "Why?", html: "<b>x</b>" }, { role: "assistant", text: "  " }, { role: "assistant", text: "Because." }],
         truncated: false,
         olderNotLoaded: true,
+        unreadReplies: 2,
       })
-    ).toEqual({ ok: true, title: "Causes of WW1", turns: [{ role: "user", text: "Why?" }, { role: "assistant", text: "Because." }], olderNotLoaded: true });
+    ).toEqual({ ok: true, title: "Causes of WW1", turns: [{ role: "user", text: "Why?" }, { role: "assistant", text: "Because." }], olderNotLoaded: true, unreadReplies: 2 });
+    for (const unreadReplies of [undefined, -1, 1.5, "3"]) expect(checkPageRead({ ok: true, turns: [{ role: "user", text: "Why?" }], unreadReplies }).unreadReplies).toBe(0);
   });
 
   it("says the page gave no answer when the script returned nothing", () => {

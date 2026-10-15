@@ -12,6 +12,11 @@ describe("describeCapture", () => {
     expect(describeCapture({ outcome: "unchanged" }, "History IA")).toBe("Already saved in History IA — nothing new since.");
   });
 
+  it("says how many replies had no readable text and were left out", () => {
+    expect(describeCapture({ outcome: "added", turns: 3, unreadReplies: 1 }, "Physics")).toBe("Saved to Physics · 3 turns. 1 reply had no text Hubble could read (an image, or not shown yet) and was left out.");
+    expect(describeCapture({ outcome: "updated", turns: 4, unreadReplies: 2 }, "Physics")).toMatch(/2 replies had no text .* were left out\.$/);
+  });
+
   it("explains a kept longer copy, and how to save the whole thread", () => {
     expect(describeCapture({ outcome: "kept", turns: 2 }, "History IA")).toMatch(/already has more of this conversation .* kept\. Scroll to the top/);
   });

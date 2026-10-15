@@ -138,6 +138,21 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
     expect(pageRequests).toHaveLength(1);
   });
 
+  it("saves only the open chat when the one you came from is still in the page, and says which replies were unreadable", async () => {
+    const doc = document.implementation.createHTMLDocument("Admissions Strategy Assessment");
+    doc.body.innerHTML = `<div data-app-shell-active-page="false"><div data-turn-key="old">${unit("0:user", `<div data-user-message-bubble="true">A question from the last chat</div>`)}${unit("1:assistant", `<div data-chatgpt-selection-conversation-id="6ad08116-edd8-83ec-b032-cde25a3651ae"><div data-markdown-copy="contents"></div></div>`)}</div></div>
+      <div data-app-shell-active-page="true"><div data-turn-key="t1">${unit("0:user", `<div data-user-message-bubble="true">Draw the forces.</div>`)}${unit("1:assistant", `<div data-markdown-copy="contents"><img alt=""></div>`)}</div>
+      <div data-turn-key="t2">${unit("0:user", `<div data-user-message-bubble="true">What caused WW1?</div>`)}${unit("1:assistant", `<div data-markdown-copy="contents"><p>Militarism.</p></div>`)}</div></div>`;
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(doc, CHATGPT_URL, 0) }]);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-physics" } });
+    expect(answer).toMatchObject({ ok: true, result: { unreadReplies: 1 } });
+    expect(pageRequests[0].args.capture.turns).toEqual([
+      { role: "user", text: "Draw the forces." },
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism." },
+    ]);
+  });
+
   it("asks Hubble to save nothing when the page sends back something malformed", async () => {
     for (const result of [{ ok: true, turns: "What caused WW1?" }, { ok: true, turns: [{ role: "system", text: "x" }] }, { ok: false, reason: "something-new" }]) {
       chrome.scripting.executeScript.mockResolvedValue([{ result }]);

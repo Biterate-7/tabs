@@ -163,6 +163,15 @@ ChatGPT shows "Loading older messages…" above the thread, what is on screen
 is saved and the popup says older messages were left out. The background
 re-checks the page's answer (`checkPageRead`) before anything reaches Hubble.
 
+After switching chats inside the app, ChatGPT keeps the chat you came from in
+the page (`data-app-shell-active-page="false"`): its questions keep their
+text, its replies are emptied. A first build read both and saved the previous
+chat's questions at the top of this one. The reader now reads only the active
+page, leaves out any turn tagged (`data-chatgpt-selection-conversation-id`)
+with another conversation's id, and never drops a reply silently: a reply
+with no text is waited for, then counted (`unreadReplies`) and named in the
+popup.
+
 Checked live: the reader on a signed-in conversation (10 messages, tables,
 lists, the older-messages notice) and on a signed-out `/c/` chat with a code
 block; and the real popup end to end on a signed-out `/uc/` chat (which still
