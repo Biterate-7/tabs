@@ -46,7 +46,12 @@ export type RetentionCutoffs = {
  * cannot both redeem one code or both apply one proposal.
  */
 export type IntegrationStore = {
-  createConnection(record: ConnectionRecord): Promise<void>;
+  /**
+   * Inserts the connection unless the account already has `maxActive` live
+   * ones, and says whether it did. The count and the insert are one atomic
+   * step, so concurrent requests can never take an account past the cap.
+   */
+  createConnection(record: ConnectionRecord, maxActive: number): Promise<boolean>;
   getConnection(userId: string, connectionId: string): Promise<ConnectionRecord | undefined>;
   listConnections(userId: string): Promise<ConnectionRecord[]>;
   countActiveConnections(userId: string): Promise<number>;
@@ -145,8 +150,11 @@ export function createMemoryIntegrationStore(): IntegrationStore & {
     activity,
     proposals,
 
-    async createConnection(record) {
+    async createConnection(record, maxActive) {
+      // No await between the count and the push: atomic in one event loop.
+      if (connections.filter((c) => c.userId === record.userId && c.revokedAt === undefined).length >= maxActive) return false;
       connections.push(clone(record));
+      return true;
     },
     async getConnection(userId, id) {
       const found = ownConnection(userId, id);

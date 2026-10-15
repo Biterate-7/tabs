@@ -1,6 +1,17 @@
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+// No test may reach a real database. The app finds its database through
+// POSTGRES_URL / DATABASE_URL (src/lib/auth/store/postgres.ts) and pg through
+// PG* variables, and a developer's shell or a `vercel env pull` can carry
+// production's. Suites that need Postgres get a throwaway cluster of their own
+// (test/pg), and tests that exercise configuration stub these with vi.stubEnv.
+// Matched case-insensitively: on Windows process.env is, so "PgHost" is PGHOST.
+for (const name of Object.keys(process.env)) {
+  const upper = name.toUpperCase();
+  if (upper === "POSTGRES_URL" || upper === "DATABASE_URL" || upper.startsWith("PG")) delete process.env[name];
+}
+
 afterEach(() => {
   cleanup();
 });

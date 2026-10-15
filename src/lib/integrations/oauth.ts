@@ -378,6 +378,7 @@ export async function approveAuthorization(
   if (chosen.length > MAX_GRANTED_WORKSPACES || !chosen.every((id) => input.grantableWorkspaceIds.has(id))) {
     return { ok: false, reason: "unknown_workspace" };
   }
+  // An early answer for the consent page; the code exchange enforces the cap atomically.
   if ((await store.countActiveConnections(input.userId)) >= MAX_ACTIVE_CONNECTIONS) return { ok: false, reason: "too_many_connections" };
 
   const { code, codeHash } = mintAuthorizationCode();
@@ -534,9 +535,6 @@ export async function exchangeToken(
     if (redirectUri !== null && redirectUri !== record.redirectUri) return INVALID_GRANT;
     const verifier = form.get("code_verifier");
     if (!verifier || !verifyPkce(verifier, record.codeChallenge)) return INVALID_GRANT;
-    if ((await store.countActiveConnections(record.userId)) >= MAX_ACTIVE_CONNECTIONS) {
-      return oauthError(400, "invalid_grant", "This Hubble account has too many AI connections. Disconnect one in Hubble first.");
-    }
 
     const connection: ConnectionRecord = {
       id: mintRecordId("conn"),
@@ -550,7 +548,9 @@ export async function exchangeToken(
       createdAt: now,
       updatedAt: now,
     };
-    await store.createConnection(connection);
+    if (!(await store.createConnection(connection, MAX_ACTIVE_CONNECTIONS))) {
+      return oauthError(400, "invalid_grant", "This Hubble account has too many AI connections. Disconnect one in Hubble first.");
+    }
     await store.setAuthorizationCodeConnection(record.codeHash, connection.id);
     return issuePair(store, connection, record.resource, now);
   }

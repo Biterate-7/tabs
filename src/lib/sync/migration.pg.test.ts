@@ -22,15 +22,10 @@ const run = promisify(execFile);
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 async function migrate(script: "migrate-auth.mjs" | "migrate-sync.mjs", url: string) {
-  return run(process.execPath, [path.join(REPO_ROOT, "scripts", script)], {
+  return run(process.execPath, [path.join(REPO_ROOT, "scripts", script), `--expect-host=${new URL(url).hostname}`], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      POSTGRES_URL: url,
-      // The scripts also read .env.local/.env; this test must depend on
-      // neither, and must never pick up a developer's real database.
-      DATABASE_URL: "",
-    },
+    // The scripts read no .env file, so the target is exactly this URL.
+    env: { ...process.env, POSTGRES_URL: url, DATABASE_URL: "" },
   });
 }
 

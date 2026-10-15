@@ -60,7 +60,7 @@ First make sure the download-count table exists in the production database
 (once per database; it is idempotent):
 
 ```bash
-npm run migrate:downloads
+node --env-file=<file holding the production POSTGRES_URL> scripts/migrate-downloads.mjs --expect-host=<ep-… endpoint or host>
 ```
 
 Without it, downloads still redirect, and each one logs
@@ -105,8 +105,11 @@ The counts are not served by any route. Read them with the database
 credential:
 
 ```bash
-npm run downloads:report
+node --env-file=<file holding the production POSTGRES_URL> scripts/report-downloads.mjs --expect-host=<ep-… endpoint or host>
 ```
+
+Neither script reads `.env.local` or `.env`; both refuse to connect unless
+`--expect-host` names the host the connection string points at.
 
 Test downloads are indistinguishable from real ones in the table. Note the
 count before and after a test download and subtract.
