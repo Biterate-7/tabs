@@ -111,7 +111,7 @@ export function ProjectActivity({
             {heading && <p className="mb-1 text-eyebrow text-tertiary">{heading}</p>}
             <div className="flex min-w-0 items-start gap-2 py-1">
               <span className="w-12 shrink-0 text-meta tabular-nums text-tertiary">{time}</span>
-              {provider && <ProviderMark provider={provider} size={14} className="mt-0.5 text-muted-foreground" />}
+              {provider && <ProviderMark provider={provider} size={14} className="mt-0.5" />}
               <p className="min-w-0 flex-1 text-body-sm text-foreground">{describeProjectEvent(row, { projectName, titleOf })}</p>
             </div>
           </li>

@@ -56,7 +56,7 @@ import type { IntegrationsData, UseIntegrations } from "@/hooks/use-integrations
 
 /** The client's mark: an AI app Hubble knows, or a neutral one. */
 function ClientMark({ client }: { client: IntegrationClient }) {
-  if (client === "chatgpt" || client === "claude" || client === "gemini") return <ProviderMark provider={client} size={16} className="text-muted-foreground" />
+  if (client === "chatgpt" || client === "claude" || client === "gemini") return <ProviderMark provider={client} size={16} />
   return <Cable aria-hidden className="size-4 shrink-0 text-muted-foreground" />
 }
 
