@@ -57,10 +57,10 @@ function saveMoreOpen(open: boolean): void {
  * The persistent left rail.
  *
  *     Hubble
- *     [Search your knowledge]
+ *     [Search]
  *     Projects
  *     Graph
- *     PROJECTS               +
+ *     PROJECTS
  *       History HL
  *       Math AA HL
  *     More ›        Favorites, Recent, Import from history
@@ -72,7 +72,7 @@ function saveMoreOpen(open: boolean): void {
  * Projects are where knowledge accumulates, so the rail is: find something
  * (search), the projects (and the graph that connects what is in them), and
  * the projects themselves (workspaces — see lib/product/subjects.ts).
- * Opening a project opens it; the "+" makes one.
+ * Opening a project opens it; "New project" under the list makes one.
  *
  * ## Progressive disclosure
  *
@@ -222,14 +222,14 @@ export function AppSidebar({
         {onOpenSearch && (
           <div className={cn("flex shrink-0 flex-col px-2 pb-2", railCollapsed && "items-center px-0")}>
             {railCollapsed ? (
-              <IconButton aria-label="Search your knowledge" tooltip="Search your knowledge" onClick={onOpenSearch}>
+              <IconButton aria-label="Search" tooltip="Search" onClick={onOpenSearch}>
                 <Search />
               </IconButton>
             ) : (
               <button
                 type="button"
                 onClick={go(onOpenSearch)}
-                aria-label="Search your knowledge"
+                aria-label="Search"
                 aria-current={currentView === "search" ? "page" : undefined}
                 className={cn(
                   "flex h-[30px] w-full items-center gap-2 rounded-md border border-border bg-background px-2 text-left text-body text-tertiary transition-[border-color,color] duration-(--duration-fast) ease-(--ease-color) outline-none hover:border-strong hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
@@ -237,7 +237,7 @@ export function AppSidebar({
                 )}
               >
                 <Search className="size-3.5 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">Search your knowledge</span>
+                <span className="min-w-0 flex-1 truncate">Search</span>
               </button>
             )}
           </div>
@@ -260,11 +260,8 @@ export function AppSidebar({
             />
           </nav>
 
-          <div className={cn("mt-4 flex items-center justify-between pr-1", railCollapsed && "mt-3 justify-center border-t border-subtle pt-3 pr-0")}>
+          <div className={cn("mt-4 pr-1", railCollapsed && "mt-3 flex justify-center border-t border-subtle pt-3 pr-0")}>
             <SidebarSectionLabel collapsed={railCollapsed}>Projects</SidebarSectionLabel>
-            <IconButton aria-label="New project" tooltip="New project" onClick={() => setNewOpen(true)} className={cn("size-6", railCollapsed && "hidden")}>
-              <Plus />
-            </IconButton>
           </div>
           <nav aria-label="Projects" className="mt-0.5 flex flex-col gap-px">
             {workspaces.map((w) => {

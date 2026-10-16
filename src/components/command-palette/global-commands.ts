@@ -49,11 +49,11 @@ export function buildGlobalCommands(
 
   const navigation: Command[] = [
     ...(actions.goHome ? [{ id: "go-home", label: "Go to Projects", group: "Navigation" as const, icon: House, onSelect: actions.goHome, keywords: ["home", "start", "subjects"] }] : []),
-    ...(actions.openSearch ? [{ id: "go-search", label: "Search knowledge", group: "Navigation" as const, icon: Search, onSelect: () => actions.openSearch?.(), keywords: ["find", "memory", "conversations", "notes"] }] : []),
+    ...(actions.openSearch ? [{ id: "go-search", label: "Search", group: "Navigation" as const, icon: Search, onSelect: () => actions.openSearch?.(), keywords: ["find", "memory", "conversations", "notes"] }] : []),
     { id: "go-workspace", label: current ? `Go to ${current.name}` : "Go to project", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["workspace", "project", "tabs"] },
-    { id: "go-graph", label: "Open graph view", group: "Navigation", icon: Waypoints, onSelect: actions.openGraph, keywords: ["relationships", "map", "knowledge graph"] },
+    { id: "go-graph", label: "Go to Graph", group: "Navigation", icon: Waypoints, onSelect: actions.openGraph, keywords: ["relationships", "map", "knowledge graph"] },
     { id: "go-favorites", label: "Go to Favorites", group: "Navigation", icon: Star, onSelect: actions.openFavorites },
-    { id: "go-recents", label: "Go to Recents", group: "Navigation", icon: Clock, onSelect: actions.openRecents },
+    { id: "go-recents", label: "Go to Recent", group: "Navigation", icon: Clock, onSelect: actions.openRecents },
     { id: "go-history-dump", label: "Import from history", group: "Navigation", icon: ScanSearch, onSelect: actions.openHistoryDump, keywords: ["history dump"] },
   ]
 
@@ -62,8 +62,7 @@ export function buildGlobalCommands(
       ? [
           {
             id: "memory-use-project",
-            label: `Use ${current.name} in an AI chat`,
-            hint: "Choose what to copy into ChatGPT, Claude, Gemini or another AI app",
+            label: `Use ${current.name} in AI chat`,
             group: "Memory" as const,
             icon: MessageSquareShare,
             onSelect: actions.reuseCurrent,
@@ -75,7 +74,7 @@ export function buildGlobalCommands(
       ? [
           { id: "capture-conversation", label: `Paste a conversation into ${current.name}`, group: "Memory" as const, icon: ClipboardPaste, onSelect: () => actions.capture?.("conversation"), keywords: ["save", "chatgpt", "claude", "gemini", "perplexity", "chat"] },
           { id: "capture-note", label: `Write a note in ${current.name}`, group: "Memory" as const, icon: NotebookPen, onSelect: () => actions.capture?.("note"), keywords: ["excerpt", "decision", "idea"] },
-          { id: "capture-import", label: `Import conversations into ${current.name}`, hint: "ChatGPT or Claude export, Markdown, text", group: "Memory" as const, icon: FileUp, onSelect: () => actions.capture?.("import"), keywords: ["conversations.json", "export", "file"] },
+          { id: "capture-import", label: `Import a file into ${current.name}`, group: "Memory" as const, icon: FileUp, onSelect: () => actions.capture?.("import"), keywords: ["conversations.json", "export", "file"] },
         ]
       : []),
   ]
@@ -101,7 +100,6 @@ export function buildGlobalCommands(
           {
             id: "organize-open-tabs",
             label: "Organize open tabs",
-            hint: "Group the tabs open in Chrome into projects",
             group: "Workspaces" as const,
             icon: Group,
             onSelect: actions.organizeOpenTabs,
@@ -132,8 +130,8 @@ export function buildGlobalCommands(
 
   const settings: Command[] = [
     { id: "settings-open", label: "Open settings", group: "Settings", icon: Settings, onSelect: () => actions.openSettings("general"), keywords: ["preferences"] },
-    { id: "settings-ai-apps", label: "AI apps", hint: "What works with ChatGPT, Claude, Gemini, Perplexity", group: "Settings", icon: MessagesSquare, onSelect: () => actions.openSettings("ai-apps"), keywords: ["providers", "capture", "extension"] },
-    { id: "settings-connectors", label: "AI connectors", hint: "Let ChatGPT, Claude or Gemini read Hubble", group: "Settings", icon: Cable, onSelect: () => actions.openSettings("ai-integrations"), keywords: ["mcp", "connect", "integration"] },
+    { id: "settings-ai-apps", label: "AI apps", group: "Settings", icon: MessagesSquare, onSelect: () => actions.openSettings("ai-apps"), keywords: ["providers", "capture", "extension"] },
+    { id: "settings-connectors", label: "AI connectors", group: "Settings", icon: Cable, onSelect: () => actions.openSettings("ai-integrations"), keywords: ["mcp", "connect", "integration"] },
     { id: "settings-data", label: "Export your data", group: "Settings", icon: Database, onSelect: () => actions.openSettings("data"), keywords: ["backup", "download", "delete"] },
     { id: "settings-theme", label: "Change theme", group: "Settings", icon: Palette, onSelect: () => actions.openSettings("theme"), keywords: ["appearance", "color"] },
     { id: "settings-typography", label: "Change typography", group: "Settings", icon: Type, onSelect: () => actions.openSettings("typography"), keywords: ["font"] },

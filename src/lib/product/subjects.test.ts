@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { createDefaultWorkspace } from "@/lib/workspace/migration"
-import { greeting, isPristineDefault, loadSubjectsStarted, markSubjectsStarted, recentResources, subjectName, visibleSubjects } from "./subjects"
+import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, recentResources, subjectName, visibleSubjects } from "./subjects"
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types"
 
 function store(workspaces: Workspace[]): WorkspaceStore {
@@ -45,13 +45,6 @@ describe("subjects", () => {
     expect(loadSubjectsStarted()).toBe(false)
     markSubjectsStarted()
     expect(loadSubjectsStarted()).toBe(true)
-  })
-
-  it("greets by the local hour", () => {
-    expect(greeting(8)).toBe("Good morning")
-    expect(greeting(14)).toBe("Good afternoon")
-    expect(greeting(21)).toBe("Good evening")
-    expect(greeting(2)).toBe("Good evening")
   })
 
   it("lists the newest resources across projects, newest first", () => {

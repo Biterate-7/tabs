@@ -3,6 +3,7 @@
 import { MessageSquareShare, MessagesSquare, MoreHorizontal, NotebookPen, Quote, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { IconButton } from "@/components/ui/icon-button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ProviderBadge } from "./provider-mark"
 import { KNOWLEDGE_TYPE_LABEL } from "@/lib/memory/items"
@@ -61,9 +62,9 @@ export function NoteCard({
           Read
         </Button>
         {onUseInAi && (
-          <Button type="button" size="xs" variant="ghost" onClick={onUseInAi} aria-label={`Use ${note.title} in an AI chat`}>
-            <MessageSquareShare /> Use in AI chat
-          </Button>
+          <IconButton className="size-6" aria-label={`Use ${note.title} in an AI chat`} tooltip="Use in AI chat" onClick={onUseInAi}>
+            <MessageSquareShare />
+          </IconButton>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button type="button" size="icon-xs" variant="ghost" className="ml-auto" aria-label={`More actions for ${note.title}`} />}>

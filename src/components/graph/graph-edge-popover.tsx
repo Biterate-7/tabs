@@ -117,7 +117,7 @@ export function GraphEdgePopover({
             state.edge.reasons.includes("category") ||
             state.edge.reasons.includes("domain")) && (
             <div className="mt-2.5 space-y-0.5 border-t border-subtle pt-2 text-body-sm text-muted-foreground">
-              {state.edge.reasons.includes("workspace") && <p>Workspace: {source.workspaceName}</p>}
+              {state.edge.reasons.includes("workspace") && <p>Project: {source.workspaceName}</p>}
               {state.edge.reasons.includes("category") && <p>Category: {CATEGORIES[category].name}</p>}
               {state.edge.reasons.includes("domain") && <p>Domain: {source.tab.domain}</p>}
             </div>

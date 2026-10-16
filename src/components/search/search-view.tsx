@@ -25,7 +25,7 @@ import type { Workspace } from "@/lib/workspace/types"
 type TypeFilter = "all" | "conversations" | "sources" | "notes"
 
 const TYPE_FILTERS: { id: TypeFilter; label: string; types?: KnowledgeItemType[] }[] = [
-  { id: "all", label: "Everything" },
+  { id: "all", label: "All" },
   { id: "conversations", label: "AI conversations", types: ["conversation"] },
   { id: "sources", label: "Sources", types: ["webpage", "pdf", "video", "document", "link"] },
   { id: "notes", label: "Notes", types: ["note", "excerpt"] },
@@ -34,7 +34,7 @@ const TYPE_FILTERS: { id: TypeFilter; label: string; types?: KnowledgeItemType[]
 const ALL_PROJECTS = "all"
 
 /**
- * Search your knowledge: everything saved in every project — or one —
+ * Search: everything saved in every project — or one —
  * whichever AI app it came from.
  *
  * Runs on this device over the projects' own content (lib/memory/search.ts);
@@ -107,13 +107,13 @@ export function SearchView({
             <PanelLeftOpen />
           </IconButton>
         )}
-        <p className="text-h2 text-foreground">Search your knowledge</p>
+        <h1 className="text-h2 text-foreground">Search</h1>
       </header>
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
         <label className="relative">
           <span className="sr-only">Search conversations, notes and saved pages</span>
           <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-tertiary" />
-          <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="What did you learn about…" className="h-10 pl-9 text-body" />
+          <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Conversations, notes, pages…" className="h-10 pl-9 text-body" />
         </label>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -136,15 +136,11 @@ export function SearchView({
           </div>
         </div>
 
-        {!searching ? (
-          <p className="text-body-sm text-muted-foreground">
-            Search what you saved from ChatGPT, Claude, Gemini and Perplexity, your notes, and the pages, PDFs and videos in your projects. It runs on this device.
-          </p>
-        ) : hits.length === 0 ? (
+        {!searching ? null : hits.length === 0 ? (
           <div className="flex flex-col gap-1" role="status">
-            <p className="text-body-sm text-muted-foreground">{loading ? "Searching…" : "Nothing you've saved mentions that."}</p>
-            {!loading && providers.size > 0 && <p className="text-meta text-tertiary">Only items from {[...providers].map((id) => AI_PROVIDERS[id].name).join(", ")} were searched.</p>}
-            {reading > 0 && <p className="text-meta text-tertiary">Hubble is still reading {reading === 1 ? "1 item" : `${reading} items`}; they can be searched once ready.</p>}
+            <p className="text-body-sm text-muted-foreground">{loading ? "Searching…" : "No results."}</p>
+            {!loading && providers.size > 0 && <p className="text-meta text-tertiary">Filtered to {[...providers].map((id) => AI_PROVIDERS[id].name).join(", ")}.</p>}
+            {reading > 0 && <p className="text-meta text-tertiary">Still reading {reading === 1 ? "1 item" : `${reading} items`}.</p>}
           </div>
         ) : (
           <ul className="flex flex-col divide-y divide-subtle rounded-md border border-subtle" aria-label="Search results">

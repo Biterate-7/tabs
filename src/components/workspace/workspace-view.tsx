@@ -727,7 +727,6 @@ export function WorkspaceView({
         {
           id: "organize-run",
           label: "Organize tabs",
-          hint: "Sort this project's loose tabs into collections",
           group: "Actions",
           icon: Group,
           onSelect: () => setOrganizeOpen(true),
@@ -784,7 +783,7 @@ export function WorkspaceView({
       ? [
           {
             id: "nav-open-graph",
-            label: "Open graph view",
+            label: "Go to Graph",
             group: "Navigation",
             icon: Waypoints,
             onSelect: onOpenGraph,
@@ -806,7 +805,7 @@ export function WorkspaceView({
       ? [
           {
             id: "nav-open-recents",
-            label: "Go to Recents",
+            label: "Go to Recent",
             group: "Navigation",
             icon: History,
             onSelect: onOpenRecents,
@@ -878,8 +877,7 @@ export function WorkspaceView({
     ? [
         {
           id: "memory-use-selection",
-          label: selectedCount > 0 ? `Use ${selectedLabel} in an AI chat` : "Use selected tabs in an AI chat",
-          hint: "Choose context to copy into ChatGPT, Claude, Gemini…",
+          label: selectedCount > 0 ? `Use ${selectedLabel} in AI chat` : "Use selected tabs in AI chat",
           group: "Memory",
           icon: MessageSquareShare,
           disabled: selectedCount === 0,

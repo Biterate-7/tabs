@@ -93,8 +93,8 @@ export function SmartOrganizeDialog({
           <DialogTitle>{mode === "open-tabs" ? "Organize open tabs" : "Organize this project"}</DialogTitle>
           <DialogDescription className="text-body-sm">
             {mode === "open-tabs"
-              ? "Grouped on this device from tab titles and addresses. Nothing changes until you confirm, and no tab is closed."
-              : "Grouped on this device from tab titles and addresses. Nothing changes until you confirm, and nothing is removed."}
+              ? "Nothing changes until you confirm. No tab is closed."
+              : "Nothing changes until you confirm. Nothing is removed."}
           </DialogDescription>
         </DialogHeader>
 
@@ -267,8 +267,8 @@ function SmartReview({
             </h3>
             <p className="mt-0.5 text-meta text-tertiary">
               {mode === "open-tabs"
-                ? "Hubble saves one copy of a page. Nothing is closed — tidy Chrome yourself if you like."
-                : "Nothing is removed here. Clean up can remove saved copies, with your confirmation."}
+                ? "Hubble saves one copy of a page. Nothing is closed."
+                : "Nothing is removed here."}
             </p>
             <ul className="mt-1.5 flex flex-col gap-1">
               {proposal.duplicates.map((set) => {

@@ -133,18 +133,16 @@ export function ReuseDialog({
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-4xl" data-reuse-dialog>
         <DialogHeader>
-          <DialogTitle>Use in an AI chat</DialogTitle>
-          <DialogDescription>
-            Choose what to bring from {name}. You&apos;ll copy the text below and paste it into ChatGPT, Claude, Gemini or any AI app — that app receives exactly this text, nothing else.
-          </DialogDescription>
+          <DialogTitle>Use in AI chat</DialogTitle>
+          <DialogDescription>Copy from {name} into any AI chat. The app receives only this text.</DialogDescription>
         </DialogHeader>
 
         <div className="mt-2 grid min-h-0 gap-4 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
           {/* Choosing */}
           <div className="flex min-w-0 flex-col gap-2">
             <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-              What are you about to ask? <span className="text-tertiary">(optional — picks the most relevant parts)</span>
-              <Input value={request} onChange={(event) => setRequest(event.target.value)} placeholder="e.g. Compare the causes of WW1 my chats came up with" maxLength={2000} />
+              Your question
+              <Input value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Optional — picks the most relevant parts" maxLength={2000} />
             </label>
             <label className="relative">
               <span className="sr-only">Filter {name}</span>
@@ -189,7 +187,7 @@ export function ReuseDialog({
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="flex items-center justify-between gap-2">
               <span className="text-meta text-muted-foreground">
-                {nothingChosen ? "Choose what to include." : `${refs.length} item${refs.length === 1 ? "" : "s"} · ${text.length.toLocaleString()} characters`}
+                {nothingChosen ? "Nothing chosen" : `${refs.length} item${refs.length === 1 ? "" : "s"} · ${text.length.toLocaleString()} characters`}
                 {loading && " · loading…"}
               </span>
               {draft !== null && (
@@ -217,7 +215,7 @@ export function ReuseDialog({
                 bundle.providers.length > 1 ? "conversations from different AI apps are quoted separately" : "",
               ]
                 .filter(Boolean)
-                .join(" · ") || "Quoted text keeps where it came from. You can edit anything before copying."}
+                .join(" · ")}
             </p>
           </div>
         </div>
@@ -225,10 +223,10 @@ export function ReuseDialog({
         <DialogFooter className="items-center gap-3 sm:justify-between">
           <p role="status" className="text-meta text-muted-foreground">
             {copy.status === "copied"
-              ? "Copied. Paste it into your AI chat — it hasn't been sent anywhere."
+              ? "Copied — nothing was sent."
               : copy.status === "selected"
-                ? "Your browser didn't allow copying. The text is selected — press Ctrl+C (⌘C on a Mac)."
-                : "On ChatGPT, Claude, Gemini or Perplexity, Hubble for Chrome can also type this into the message box for you."}
+                ? "Copying was blocked. The text is selected — press Ctrl+C (⌘C on a Mac)."
+                : ""}
           </p>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import Link from "next/link"
-import { ArrowUpRight, Download, LogIn, LogOut, RotateCcw, Upload } from "lucide-react"
+import { ArrowUpRight, ChevronRight, Download, LogIn, LogOut, RotateCcw, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -37,8 +37,10 @@ import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui
  *
  * Every row below reports something the product actually does or offers a
  * control it already has; none of them is a placeholder. Where a surface has
- * nothing configurable yet (Desktop, Browser), the pane says what is true of
- * this install instead of inventing a toggle.
+ * nothing configurable yet (Desktop), the pane says what is true of this
+ * install instead of inventing a toggle. Each pane is a title and its rows; a
+ * row's description is one short line, kept only where it says something
+ * about data or permissions that the label cannot.
  */
 
 // ---------------------------------------------------------------- Account
@@ -57,7 +59,7 @@ export function AccountSettingsSection() {
 
   return (
     <div>
-      <SectionHeading title="Account" description="Your Hubble identity and where your projects are kept." />
+      <SectionHeading title="Account" />
       <SectionStack>
         {user ? (
           <FieldRow label={user.name} description={user.email}>
@@ -68,11 +70,7 @@ export function AccountSettingsSection() {
         ) : (
           <FieldRow
             label="Not signed in"
-            description={
-              configured
-                ? "Sign in to sync projects between devices and let ChatGPT, Claude or Gemini read them through a connector."
-                : "This deployment has no accounts configured. Everything stays on this device."
-            }
+            description={configured ? "Sign in to sync projects and use AI connectors." : "Accounts aren't available here."}
           >
             {configured && (
               <Button type="button" size="sm" onClick={() => setSignInOpen(true)}>
@@ -85,8 +83,8 @@ export function AccountSettingsSection() {
           label="Storage"
           description={
             user
-              ? "Projects are saved on this device first; their pages and links sync to your account. Saved conversation text and notes stay on this device."
-              : "Projects, conversations and notes are saved in this browser."
+              ? "Links and titles sync to your account. Conversation text and notes stay on this device."
+              : "Everything is saved in this browser."
           }
         >
           <Badge variant={user ? "success" : "default"}>{user ? "Synced" : "Local"}</Badge>
@@ -97,93 +95,43 @@ export function AccountSettingsSection() {
   )
 }
 
-// -------------------------------------------------------------------- MCP
+// -------------------------------------------------------------- Extension
 
-export function McpSection() {
-  return (
-    <div>
-      <SectionHeading
-        title="MCP"
-        description="Hubble is an MCP server that AI apps you already use can connect to, so they can read your synced projects — and save notes to them if you allow it."
-      />
-      <SectionStack>
-        <FieldRow
-          label="Hubble MCP server"
-          description="Connections, permissions and what each app looked at are managed in Settings → AI connectors. Read-only unless you choose Read and save."
-        >
-          <Badge variant="default">AI connectors</Badge>
-        </FieldRow>
-        <FieldRow
-          label="Reorganizing"
-          description="An AI app can propose moving things between collections. Nothing changes until you approve it in Hubble."
-        >
-          <Badge variant="default">Approval required</Badge>
-        </FieldRow>
-        <FieldRow
-          label="What a connector can see"
-          description="Your synced projects: page titles, links, collections, notes on pages and saved project context. Not conversation text or notes kept only on this device."
-        >
-          <span />
-        </FieldRow>
-      </SectionStack>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------- Browser
-
-export function BrowserSection() {
+/** Settings → Chrome extension: whether it is connected, what it reads, and how to install it. */
+export function ExtensionSection() {
   const connected = getOnboardingState().extensionConnected
   return (
     <div>
-      <SectionHeading title="Browser" description="How Hubble works with your browser, and what it reads." />
-      <SectionStack>
-        <FieldRow
-          label="Extension"
-          description={
-            connected
-              ? "Hubble for Chrome is connected."
-              : "Not connected yet. Without it, paste links and conversations, or import a file."
-          }
-        >
-          <Badge variant={connected ? "success" : "default"}>{connected ? "Connected" : "Not connected"}</Badge>
-        </FieldRow>
-        <FieldRow
-          label="What Hubble reads"
-          description="Only what you send it: tabs' titles and addresses, and an AI conversation's visible text when you choose Save to Hubble on it. Never cookies, passwords or other tabs."
-        >
-          <span />
-        </FieldRow>
-        <FieldRow label="Opening tabs" description="Saved tabs open in your browser, never inside Hubble.">
-          <span />
-        </FieldRow>
-      </SectionStack>
-    </div>
-  )
-}
-
-// -------------------------------------------------------------- Extension
-
-export function ExtensionSection() {
-  return (
-    <div>
-      <SectionHeading title="Chrome extension" description="Save tabs and AI conversations to a project, and use your projects in ChatGPT, Claude, Gemini or Perplexity." />
+      <SectionHeading title="Chrome extension" />
       <SectionStack className="mb-6">
-        <FieldRow label="Hubble for Chrome" description="Unpacked extension for Chrome and other Chromium browsers">
-          <a href={EXTENSION_DOWNLOAD_URL} download className={buttonVariants({ size: "sm" })}>
-            <Download /> Download
-          </a>
+        <FieldRow label="Hubble for Chrome" description="Save tabs and AI conversations from Chrome.">
+          <span className="flex items-center gap-2">
+            <Badge variant={connected ? "success" : "default"}>{connected ? "Connected" : "Not connected"}</Badge>
+            <a href={EXTENSION_DOWNLOAD_URL} download className={buttonVariants({ size: "sm", variant: connected ? "outline" : "default" })}>
+              <Download /> Download
+            </a>
+          </span>
+        </FieldRow>
+        <FieldRow
+          label="What it reads"
+          description="Only what you send: tab titles and addresses, and a conversation's visible text when you choose Save to Hubble. Never cookies or passwords."
+        >
+          <span />
         </FieldRow>
       </SectionStack>
-      <GroupLabel>Install</GroupLabel>
-      <SectionStack>
-        {EXTENSION_INSTALL_STEPS.map((step, i) => (
-          <div key={i} className="flex gap-3 px-4 py-2.5 text-body text-muted-foreground">
-            <span className="w-4 shrink-0 text-meta leading-5 text-tertiary tabular-nums">{i + 1}</span>
-            <span>{step}</span>
-          </div>
-        ))}
-      </SectionStack>
+      <details className="group">
+        <summary className="mb-2 flex w-fit cursor-pointer list-none items-center gap-1 text-label text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90" /> Install steps
+        </summary>
+        <SectionStack>
+          {EXTENSION_INSTALL_STEPS.map((step, i) => (
+            <div key={i} className="flex gap-3 px-4 py-2.5 text-body text-muted-foreground">
+              <span className="w-4 shrink-0 text-meta leading-5 text-tertiary tabular-nums">{i + 1}</span>
+              <span>{step}</span>
+            </div>
+          ))}
+        </SectionStack>
+      </details>
     </div>
   )
 }
@@ -211,7 +159,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
 
   return (
     <div>
-      <SectionHeading title="Projects" description="Rename, remove or import projects." />
+      <SectionHeading title="Projects" />
       <SectionStack>
         {workspaces.map((w) => (
           <div key={w.id} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
@@ -301,23 +249,19 @@ export function ShortcutsSection() {
       ],
     },
     {
-      label: "Workspace",
+      label: "Saved tabs",
       items: [
-        { keys: ["/"], description: "Focus the tab search" },
+        { keys: ["/"], description: "Search tabs" },
         { keys: ["↑", "↓"], description: "Move through results" },
-        { keys: ["Enter"], description: "Open the highlighted tab, or run a command" },
-        { keys: [mod, "A"], description: "Select all visible tabs (in selection mode)" },
-        { keys: ["Esc"], description: "Exit selection mode, then clear the search" },
+        { keys: ["Enter"], description: "Open the highlighted tab" },
+        { keys: [mod, "A"], description: "Select all (in selection mode)" },
+        { keys: ["Esc"], description: "Exit selection, then clear the search" },
       ],
-    },
-    {
-      label: "AI chats",
-      items: [{ keys: ["Enter"], description: "Send the message in the composer" }],
     },
   ]
   return (
     <div>
-      <SectionHeading title="Shortcuts" description="Every keyboard shortcut Hubble responds to." />
+      <SectionHeading title="Shortcuts" />
       {groups.map((group) => (
         <div key={group.label} className="mb-6">
           <GroupLabel>{group.label}</GroupLabel>
@@ -345,24 +289,19 @@ export function DesktopSection() {
   const desktop = isDesktop()
   return (
     <div>
-      <SectionHeading title="Desktop app" description="Hubble as an app on your computer." />
+      <SectionHeading title="Desktop app" />
       <SectionStack>
         <FieldRow
           label="This install"
-          description={
-            desktop
-              ? "You are running Hubble Desktop. Hubble for Chrome adds tabs here; AI conversations arrive as links — to save their text, paste them, or save them with Hubble open in Chrome."
-              : "You are using Hubble in the browser. Hubble for Chrome saves tabs and AI conversations here."
-          }
+          description={desktop ? "Hubble for Chrome adds tabs here. To keep a conversation's text, paste it." : "You're using Hubble in the browser."}
         >
           <Badge variant="default">{desktop ? "Desktop" : "Web"}</Badge>
         </FieldRow>
-        <FieldRow
-          label="Your data"
-          description="Projects live in the app's own profile on this machine, separate from any browser."
-        >
-          <span />
-        </FieldRow>
+        {desktop && (
+          <FieldRow label="Your data" description="Kept in the app's own profile, separate from any browser.">
+            <span />
+          </FieldRow>
+        )}
       </SectionStack>
     </div>
   )
@@ -379,27 +318,24 @@ const LEGAL_LINKS = [
 export function PrivacySection() {
   return (
     <div>
-      <SectionHeading title="Privacy" description="What Hubble keeps, where, and who can see it." />
+      <SectionHeading title="Privacy" />
       <SectionStack className="mb-6">
-        <FieldRow label="Local first" description="Projects, saved conversations, notes and the text Hubble read are stored on this device.">
+        <FieldRow label="Local first" description="Projects, conversations, notes and page text are stored on this device.">
           <span />
         </FieldRow>
         <FieldRow
           label="Saving from AI apps"
-          description="Only when you choose Save to Hubble, and only the conversation on that page. Hubble never signs in to an AI app, never reads your account, and never takes your passwords or cookies."
+          description="Only when you choose Save to Hubble, and only that conversation. Hubble never signs in to an AI app or reads your passwords or cookies."
         >
           <span />
         </FieldRow>
         <FieldRow
           label="Reading web pages"
-          description="When you add a web page, its address is sent to Hubble's reader, which fetches the public page and returns its text. Conversations and notes are never sent to it."
+          description="A page's address is sent to Hubble's reader, which fetches the public page. Conversations and notes are never sent."
         >
           <span />
         </FieldRow>
-        <FieldRow
-          label="Using context in an AI chat"
-          description="You choose what goes in, see the exact text, and copy or insert it yourself. The AI app you paste it into receives that text. Saved text is marked as quoted material, never as instructions."
-        >
+        <FieldRow label="Using context in an AI chat" description="You choose what goes in and copy it yourself. The AI app receives only that text.">
           <span />
         </FieldRow>
       </SectionStack>
@@ -426,11 +362,11 @@ export function AdvancedSection() {
   const { resetAllAppearance } = useAppearanceContext()
   return (
     <div>
-      <SectionHeading title="Diagnostics" description="Resets and diagnostics." />
+      <SectionHeading title="Diagnostics" />
       <SectionStack>
         <FieldRow
           label="Reset appearance"
-          description="Theme, typography, background, layout, shape, motion and accent back to their defaults. Projects are untouched."
+          description="Back to the default look. Projects are untouched."
         >
           <AlertDialog>
             <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" />}>

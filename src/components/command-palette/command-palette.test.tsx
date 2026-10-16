@@ -201,7 +201,7 @@ describe("CommandPalette site icons", () => {
 
     for (const [label, glyph] of [
       ["Go to Projects", "lucide-house"],
-      ["Open graph view", "lucide-waypoints"],
+      ["Go to Graph", "lucide-waypoints"],
       ["AI apps", "lucide-messages-square"],
       ["Physics", "lucide-boxes"],
       ["New project", "lucide-folder-plus"],

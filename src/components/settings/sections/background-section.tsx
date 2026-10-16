@@ -34,7 +34,7 @@ export function BackgroundSection() {
 
   return (
     <div>
-      <SectionHeading title="Background" description="Give Hubble a solid color, a gradient, or an image behind the UI." />
+      <SectionHeading title="Background" />
 
       <SectionStack>
         <FieldRow label="Type">

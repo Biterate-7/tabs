@@ -53,8 +53,8 @@ export function OpenTabsOrganize({
           title: "Hubble Desktop can't see your Chrome tabs",
           message: (
             <>
-              Send tabs here with Hubble for Chrome (right-click a tab → Add to Hubble), then open the subject they landed in and choose{" "}
-              <span className="font-medium text-foreground">⋯ → Organize tabs</span>. Organizing open tabs directly works in Hubble on the web.
+              Add tabs with Hubble for Chrome, then open their project and choose{" "}
+              <span className="font-medium text-foreground">⋯ → Organize tabs</span>.
             </>
           ),
         }}
@@ -109,7 +109,7 @@ function OpenTabsSession({
           title: "Hubble for Chrome isn't connected",
           message: (
             <>
-              Organizing open tabs reads them through{" "}
+              This needs{" "}
               {install.mode === "store" ? (
                 <a className="text-link hover:underline" href={install.url} target="_blank" rel="noreferrer">
                   Hubble for Chrome
@@ -119,7 +119,7 @@ function OpenTabsSession({
                   Hubble for Chrome
                 </a>
               )}
-              . Tabs already saved in a subject can be organized from that subject: <span className="font-medium text-foreground">⋯ → Organize tabs</span>.
+              . Saved tabs can be organized from their project: <span className="font-medium text-foreground">⋯ → Organize tabs</span>.
             </>
           ),
         })

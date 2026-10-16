@@ -51,7 +51,7 @@ describe("AppSidebar", () => {
   it("leads with search, Projects, Graph and the projects themselves", () => {
     renderSidebar({ onOpenHome: vi.fn(), onOpenSearch: vi.fn() });
 
-    expect(screen.getByRole("button", { name: "Search your knowledge" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Search" })).toBeTruthy();
     const main = screen.getByRole("navigation", { name: "Main" });
     expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Projects", "Graph"]);
     const projects = screen.getByRole("navigation", { name: "Projects" });
@@ -70,7 +70,7 @@ describe("AppSidebar", () => {
     const user = userEvent.setup();
     const onOpenSearch = vi.fn();
     renderSidebar({ onOpenSearch, currentView: "search" });
-    const field = screen.getByRole("button", { name: "Search your knowledge" });
+    const field = screen.getByRole("button", { name: "Search" });
     expect(field.getAttribute("aria-current")).toBe("page");
     await user.click(field);
     expect(onOpenSearch).toHaveBeenCalledOnce();
@@ -108,11 +108,11 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("button", { name: "Projects" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("makes a new project from the rail's + and its dialog", async () => {
+  it("makes a new project from the rail and its dialog", async () => {
     const user = userEvent.setup();
     const { onCreate } = renderSidebar();
 
-    // The section's "+" (the row beneath it opens the same dialog).
+    // The "New project" row beneath the list.
     await user.click(screen.getAllByRole("button", { name: "New project" })[0]!);
     await user.type(await screen.findByLabelText("Project name"), "Physics SL");
     await user.click(screen.getByRole("button", { name: "Create project" }));

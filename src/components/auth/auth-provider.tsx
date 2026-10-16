@@ -215,7 +215,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     if (copied.length === 0) return
 
-    toast.success("Your workspaces are in your account")
+    toast.success("Your projects are in your account")
     // The shell hydrated from the (then empty) account namespace moments
     // ago; remounting is what makes it re-read what was just copied in.
     setRemountToken((n) => n + 1)

@@ -479,7 +479,7 @@ export function GraphView({
     const next = updateWorkspaceTabs(store, workspace.id, removeTabs(workspace.tabs, [tabId]))
     onStoreUpdate(next)
     if (selectedTabId === tabId) updateSettings({ selectedTabId: null })
-    toast.success("Removed from workspace")
+    toast.success("Removed from project")
   }
 
   function handleMoveToWorkspace(tabId: string, targetWorkspaceId: string) {
@@ -487,7 +487,7 @@ export function GraphView({
     if (result.moved.length === 0) return
     onStoreUpdate(result.store)
     const target = store.workspaces.find((w) => w.id === targetWorkspaceId)
-    toast.success(`Moved to ${target?.name ?? "workspace"}`)
+    toast.success(`Moved to ${target?.name ?? "project"}`)
   }
 
   function handleAddManualLink(a: string, b: string) {
@@ -698,7 +698,7 @@ export function GraphView({
       style={{ animation: "view-pop-in var(--duration-slow) var(--ease-standard) both" }}
     >
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
-        <IconButton aria-label="Back to workspace" tooltip="Back to workspace" onClick={onClose}>
+        <IconButton aria-label="Back to project" tooltip="Back to project" onClick={onClose}>
           <ChevronLeft />
         </IconButton>
         <div className="hidden items-center gap-1.5 rounded-md border border-border bg-popover px-2.5 py-1 text-label text-tertiary shadow-sm sm:flex">

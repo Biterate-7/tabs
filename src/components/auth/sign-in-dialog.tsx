@@ -50,8 +50,7 @@ export function SignInDialog({
           </span>
           <DialogTitle>Sign in to Hubble</DialogTitle>
           <DialogDescription>
-            Your workspaces stay on this device — signing in keeps them yours, separate from anyone
-            else who uses this browser.
+            Signing in keeps your projects separate from anyone else on this browser.
           </DialogDescription>
         </DialogHeader>
 

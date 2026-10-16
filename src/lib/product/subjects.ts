@@ -75,13 +75,6 @@ export function markSubjectsStarted(): void {
   }
 }
 
-/** "Good morning" / "Good afternoon" / "Good evening", by the local hour. */
-export function greeting(hour: number): string {
-  if (hour >= 5 && hour < 12) return "Good morning"
-  if (hour >= 12 && hour < 18) return "Good afternoon"
-  return "Good evening"
-}
-
 /** When anything in a project last changed: its newest item, or the project itself. */
 export function subjectUpdatedAt(workspace: Workspace): number {
   let latest = workspace.updatedAt

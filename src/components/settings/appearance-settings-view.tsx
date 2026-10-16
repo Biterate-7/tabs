@@ -7,14 +7,12 @@ import {
   Database,
   MessagesSquare,
   Puzzle,
-  Globe,
   Image,
   Keyboard,
   LayoutGrid,
   Monitor,
   Paintbrush,
   Palette,
-  PlugZap,
   Settings2,
   Shield,
   SlidersHorizontal,
@@ -40,10 +38,8 @@ import { AiAppsSection, DataSection } from "./sections/knowledge-sections"
 import {
   AccountSettingsSection,
   AdvancedSection,
-  BrowserSection,
   DesktopSection,
   ExtensionSection,
-  McpSection,
   PrivacySection,
   ShortcutsSection,
   WorkspacesSection,
@@ -66,8 +62,6 @@ export type SettingsSection =
   | "ai-integrations"
   /** Export, and the records left by removed features. */
   | "data"
-  | "mcp"
-  | "browser"
   | "workspaces"
   | "shortcuts"
   | "desktop"
@@ -100,20 +94,17 @@ const AFTER: NavItem[] = [
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "privacy", label: "Privacy", icon: Shield },
 ]
-/** Technical settings, kept and labelled as such: MCP, browser, developer options. */
-const ADVANCED: NavItem[] = [
-  { id: "mcp", label: "MCP", icon: PlugZap },
-  { id: "browser", label: "Browser", icon: Globe },
-  { id: "advanced", label: "Diagnostics", icon: SlidersHorizontal },
-]
+/** Technical settings, kept and labelled as such. MCP lives under AI connectors; the browser under Chrome extension. */
+const ADVANCED: NavItem[] = [{ id: "advanced", label: "Diagnostics", icon: SlidersHorizontal }]
 
 /**
  * Settings.
  *
  * The reference's settings grammar: a narrow list of sections on the left,
  * one pane on the right at a reading width, and in the pane hairlined groups
- * of rows rather than a board of cards. Appearance is one entry with its
- * seven parts nested under it, so the list stays scannable.
+ * of rows rather than a board of cards. Appearance is one entry whose
+ * seven parts unfold beneath it only while one of them is open, so the list
+ * stays short.
  *
  * Mounted as a destination inside the shell (see app-shell.tsx), not a
  * modal: appearance alone is larger than a dialog can hold.
@@ -132,7 +123,7 @@ export function AppearanceSettingsView({
   /** The workspace list and its actions, for Settings → Workspaces. Omitted where there is no store (tests). */
   workspaceSettings?: WorkspaceSettingsProps
 }) {
-  const [active, setActive] = useState<SettingsSection>(initialSection ?? "theme")
+  const [active, setActive] = useState<SettingsSection>(initialSection ?? "general")
   const inAppearance = APPEARANCE_IDS.has(active)
 
   const row = (item: NavItem, nested = false) => {
@@ -189,10 +180,9 @@ export function AppearanceSettingsView({
             <AppWindow className="size-4 shrink-0" aria-hidden />
             Appearance
           </button>
-          {APPEARANCE.map((item) => row(item, true))}
+          {inAppearance && APPEARANCE.map((item) => row(item, true))}
           {AFTER.map((item) => row(item))}
-          <p className="mt-4 px-2 pb-1 text-meta text-tertiary">Advanced</p>
-          {ADVANCED.map((item) => row(item))}
+          <div className="mt-3 border-t border-subtle pt-3">{ADVANCED.map((item) => row(item))}</div>
         </nav>
 
         {/* Below `sm` the section list becomes one horizontal strip. */}
@@ -227,8 +217,6 @@ export function AppearanceSettingsView({
             {active === "ai-apps" && <AiAppsSection />}
             {active === "ai-integrations" && <AiIntegrationsSection />}
             {active === "data" && <DataSection workspaces={workspaceSettings?.workspaces ?? []} />}
-            {active === "mcp" && <McpSection />}
-            {active === "browser" && <BrowserSection />}
             {active === "workspaces" &&
               (workspaceSettings ? (
                 <WorkspacesSection {...workspaceSettings} />

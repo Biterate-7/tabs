@@ -3,6 +3,7 @@
 import { ClipboardPaste, Copy, ExternalLink, FileUp, Info, MessageSquareShare, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +40,7 @@ export type SourceActions = {
  *   ☐  ▶  Cuban Missile Crisis Explained
  *         youtube.com · YouTube video · 4 min ago
  *         ⓘ Saved · Transcript isn't available — add one…   (only when not simply ready)
- *         [Open] [Use in AI chat] [•••]
+ *         [Open] [⇪] [•••]      (⇪ = Use in AI chat, an icon with a tooltip)
  *
  * A conversation shows its AI app instead of a site, and opens in that app.
  *
@@ -111,9 +112,9 @@ export function ResourceCard({
           <ExternalLink /> {provider ? `Open in ${aiProviderName(provider)}` : "Open"}
         </Button>
         {actions.onUseInAi && !needsCapture && (
-          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onUseInAi!(tab)} aria-label={`Use ${title} in an AI chat`}>
-            <MessageSquareShare /> Use in AI chat
-          </Button>
+          <IconButton className="size-6" aria-label={`Use ${title} in an AI chat`} tooltip="Use in AI chat" onClick={() => actions.onUseInAi!(tab)}>
+            <MessageSquareShare />
+          </IconButton>
         )}
         {needsCapture && actions.onPasteConversation && (
           <Button type="button" size="xs" variant="ghost" onClick={() => actions.onPasteConversation!(tab)} aria-label={`Paste the conversation for ${title}`}>

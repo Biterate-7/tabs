@@ -43,10 +43,7 @@ export function ThemeSection() {
 
   return (
     <div>
-      <SectionHeading
-        title="Theme"
-        description="Pick a preset, favorite the ones you reach for, or build a fully custom palette."
-      />
+      <SectionHeading title="Theme" />
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <SegmentedControl

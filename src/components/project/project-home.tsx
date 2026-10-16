@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
+import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, FileUp, Link2, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { NoteCard } from "@/components/memory/note-card"
@@ -27,7 +27,6 @@ import { formatTimestamp } from "@/lib/resources/transcript"
 import { parseYouTubeUrl, youtubeMomentUrl } from "@/lib/resources/youtube"
 import { needsAttention } from "@/lib/resources/ingest"
 import { knowledgeCounts, knowledgeItemsOf, refKey } from "@/lib/memory/items"
-import { aiProviderName } from "@/lib/providers/registry"
 import { cn } from "@/lib/utils"
 import type { CaptureMode } from "@/components/memory/capture-dialog"
 import type { DroppedResources } from "@/lib/resources/drop"
@@ -92,8 +91,7 @@ export type ProjectHomeProps = {
  *     History IA                            [+ Add ▾]  [Use in AI chat]
  *     The causes and consequences of WW1
  *
- *     12 items · 4 AI conversations (ChatGPT, Claude) · 6 sources · 2 notes
- *     [All] [AI conversations] [Sources] [Notes]        [Select] [Search…]
+ *     [All 12] [AI conversations 4] [Sources 6] [Notes 2]  [Select] [Search…]
  *     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
  *     │ ◇ Causes of… │ │ JSTOR article│ │ My thesis    │
  *     └──────────────┘ └──────────────┘ └──────────────┘
@@ -168,7 +166,7 @@ export function ProjectHome(props: ProjectHomeProps) {
         void resources.attachPdf(workspace.id, match.id, pdf)
         setDropNotice(null)
       } else {
-        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "To bring in a conversation export or a text file, use Add → Import a file.")
+        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "To import a file, use Add → Import a file.")
       }
     } else {
       setDropNotice("That couldn't be added. Try a link instead.")
@@ -176,7 +174,9 @@ export function ProjectHome(props: ProjectHomeProps) {
   }
   const { active } = useExternalDrop({ enabled: true, onDrop: handleDrop })
 
-  const kindsPresent = FILTERS.filter((entry) => entry.id !== "all" && items.some((item) => entry.matches(item, item.ref.kind === "source" ? tabById.get(item.ref.tabId) : undefined)))
+  const tabOfItem = (item: KnowledgeItem) => (item.ref.kind === "source" ? tabById.get(item.ref.tabId) : undefined)
+  const filterCounts = new Map(FILTERS.map((entry) => [entry.id, items.filter((item) => entry.matches(item, tabOfItem(item))).length]))
+  const kindsPresent = FILTERS.filter((entry) => entry.id !== "all" && (filterCounts.get(entry.id) ?? 0) > 0)
   const filters = kindsPresent.length > 1 || kindsPresent.some((entry) => entry.id === "attention") ? [FILTERS[0]!, ...kindsPresent] : []
   const detailTab = details ? (tabById.get(details.tabId) ?? null) : null
   const detailNote: ProjectNote | null = openNote ? (noteById.get(openNote.noteId) ?? null) : null
@@ -230,8 +230,6 @@ export function ProjectHome(props: ProjectHomeProps) {
     />
   )
 
-  const providerNames = [...counts.providers]
-
   return (
     <section aria-label={projectName} className="mb-6 flex flex-col gap-8" data-project-home={workspace.id}>
       <ProjectDropOverlay active={active} projectName={projectName} />
@@ -266,7 +264,7 @@ export function ProjectHome(props: ProjectHomeProps) {
           ) : (
             props.onUpdateBrief && (
               <button type="button" className="mt-1 text-body-sm text-tertiary hover:text-foreground" onClick={() => setEditingBrief(true)}>
-                Add what this project is for
+                Add description
               </button>
             )
           )}
@@ -292,17 +290,28 @@ export function ProjectHome(props: ProjectHomeProps) {
 
       {/* The knowledge. A project that only has saved tabs (from a dump) shows them below, not "Nothing saved yet". */}
       {items.length === 0 && workspace.tabs.length > 0 ? (
-        <CaptureInvite projectName={projectName} onCapture={props.onCapture} compact />
+        <CaptureInvite onCapture={props.onCapture} />
       ) : items.length === 0 ? (
         <div className="flex flex-col items-start gap-4 rounded-md border border-dashed border-strong px-5 py-8" data-project-empty>
-          <div>
-            <p className="text-h2 text-foreground">Nothing saved in {projectName} yet.</p>
-            <p className="mt-1 max-w-prose text-body-sm text-muted-foreground">
-              Bring in what you learn: AI conversations from ChatGPT, Claude, Gemini or Perplexity, pages and PDFs you read, and your own notes. Then find it here and use it in your next AI chat.
-            </p>
+          <p className="text-h2 text-foreground">Nothing saved yet</p>
+          <div className="flex flex-wrap gap-2" data-capture-invite>
+            <Button type="button" variant="secondary" onClick={() => props.onCapture("conversation")}>
+              <ClipboardPaste /> Paste a conversation
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => props.onCapture("note")}>
+              <NotebookPen /> Write a note
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
+              <Link2 /> Add a link
+            </Button>
           </div>
-          <CaptureInvite projectName={projectName} onCapture={props.onCapture} />
-          <div className="flex flex-wrap gap-2">{addMenu("default", "secondary")}</div>
+          <p className="flex flex-wrap items-center gap-1.5 text-meta text-tertiary">
+            <Puzzle aria-hidden className="size-3.5" /> Or save from
+            {(["chatgpt", "claude", "gemini", "perplexity"] as const).map((provider) => (
+              <ProviderBadge key={provider} provider={provider} />
+            ))}
+            with Hubble for Chrome
+          </p>
           {props.quickAdd && (
             <p className="hidden text-meta text-tertiary md:block" data-add-hint data-quick-add-target={projectName}>
               In Chrome: right-click a tab → Add to {projectName}
@@ -331,22 +340,26 @@ export function ProjectHome(props: ProjectHomeProps) {
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-h2 text-foreground">Knowledge</h2>
-            <span className="text-meta text-tertiary" data-project-counts>
-              {items.length}
-            </span>
-            <span className="text-meta text-tertiary max-sm:hidden" data-knowledge-summary>
-              {[
-                counts.conversations > 0 ? `${plural(counts.conversations, "AI conversation", "AI conversations")}${providerNames.length > 0 ? ` (${providerNames.map(aiProviderName).join(", ")})` : ""}` : "",
-                counts.sources > 0 ? plural(counts.sources, "source", "sources") : "",
-                counts.notes > 0 ? plural(counts.notes, "note", "notes") : "",
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
+            <h2 className="sr-only">Knowledge</h2>
+            {filters.length > 0 ? (
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Show">
+                {filters.map((entry) => (
+                  <Button key={entry.id} type="button" size="xs" variant={filter === entry.id ? "secondary" : "ghost"} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
+                    {entry.label}
+                    <span className="text-tertiary tabular-nums" data-filter-count>
+                      {filterCounts.get(entry.id) ?? 0}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <span className="text-meta text-tertiary" data-project-counts>
+                {plural(items.length, "item", "items")}
+              </span>
+            )}
             {working > 0 && (
               <span role="status" className="text-meta text-muted-foreground">
-                · Reading {plural(working, "item", "items")}…
+                Reading {plural(working, "item", "items")}…
               </span>
             )}
             <div className="ml-auto flex w-full items-center gap-1.5 sm:w-auto">
@@ -366,19 +379,10 @@ export function ProjectHome(props: ProjectHomeProps) {
               </label>
             </div>
           </div>
-          {filters.length > 0 && (
-            <div className="-mt-1 flex flex-wrap gap-1" role="group" aria-label="Show">
-              {filters.map((entry) => (
-                <Button key={entry.id} type="button" size="xs" variant={filter === entry.id ? "secondary" : "ghost"} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
-                  {entry.label}
-                </Button>
-              ))}
-            </div>
-          )}
-          {counts.conversations === 0 && <CaptureInvite projectName={projectName} onCapture={props.onCapture} compact />}
+          {counts.conversations === 0 && <CaptureInvite onCapture={props.onCapture} />}
           {selecting && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-subtle bg-card px-3 py-2" role="toolbar" aria-label="Selected items">
-              <span className="text-body-sm text-foreground">{chosen.length > 0 ? `${chosen.length} selected` : "Select items to use in an AI chat"}</span>
+              <span className="text-body-sm text-foreground">{chosen.length > 0 ? `${chosen.length} selected` : "Select items"}</span>
               <span className="min-w-0 flex-1" />
               {chosen.length > 0 && (
                 <>
@@ -501,57 +505,21 @@ export function ProjectHome(props: ProjectHomeProps) {
 }
 
 /**
- * How AI conversations get into a project — said where it is needed, in one
- * line each. Saving from the page is Hubble for Chrome's; this page can
- * paste and import.
+ * A project with things in it but no AI conversation yet: one quiet line
+ * with the two ways to bring one in. Saving from the AI app itself is
+ * Hubble for Chrome's, and is offered there.
  */
-function CaptureInvite({ projectName, onCapture, compact = false }: { projectName: string; onCapture: ProjectHomeProps["onCapture"]; compact?: boolean }) {
-  if (compact) {
-    return (
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-subtle bg-card px-3 py-2 text-body-sm text-muted-foreground" data-capture-invite>
-        <span>No AI conversations in {projectName} yet.</span>
-        <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("conversation")}>
-          <ClipboardPaste /> Paste one
-        </Button>
-        <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("import")}>
-          Import an export
-        </Button>
-        <span className="text-tertiary">or use Save to Hubble in Hubble for Chrome on ChatGPT, Claude, Gemini or Perplexity.</span>
-      </p>
-    )
-  }
+function CaptureInvite({ onCapture }: { onCapture: ProjectHomeProps["onCapture"] }) {
   return (
-    <ul className="grid w-full gap-2 sm:grid-cols-3" data-capture-invite>
-      <li className="rounded-md border border-subtle bg-card p-3">
-        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
-          <Puzzle aria-hidden className="size-3.5" /> Save from an AI app
-        </p>
-        <p className="mt-1 text-meta text-muted-foreground">On ChatGPT, Claude, Gemini or Perplexity, open Hubble for Chrome and choose Save to Hubble.</p>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {(["chatgpt", "claude", "gemini", "perplexity"] as const).map((provider) => (
-            <ProviderBadge key={provider} provider={provider} />
-          ))}
-        </div>
-      </li>
-      <li className="rounded-md border border-subtle bg-card p-3">
-        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
-          <ClipboardPaste aria-hidden className="size-3.5" /> Paste or import
-        </p>
-        <p className="mt-1 text-meta text-muted-foreground">Paste any conversation, or import a ChatGPT or Claude data export.</p>
-        <Button type="button" size="xs" variant="secondary" className="mt-2" onClick={() => onCapture("conversation")}>
-          Paste a conversation
-        </Button>
-      </li>
-      <li className="rounded-md border border-subtle bg-card p-3">
-        <p className="flex items-center gap-1.5 text-body-sm text-foreground">
-          <NotebookPen aria-hidden className="size-3.5" /> Write it down
-        </p>
-        <p className="mt-1 text-meta text-muted-foreground">Decisions, open questions, a passage worth keeping.</p>
-        <Button type="button" size="xs" variant="secondary" className="mt-2" onClick={() => onCapture("note")}>
-          Write a note
-        </Button>
-      </li>
-    </ul>
+    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-body-sm text-muted-foreground" data-capture-invite>
+      <span className="mr-1">No AI conversations yet</span>
+      <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("conversation")}>
+        <ClipboardPaste /> Paste
+      </Button>
+      <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("import")}>
+        <FileUp /> Import
+      </Button>
+    </p>
   )
 }
 
@@ -598,7 +566,7 @@ function SearchResults({
 }) {
   const stillReading = working > 0 && (
     <p className="text-meta text-tertiary">
-      Still reading {working === 1 ? "1 item" : `${working} items`} — {working === 1 ? "it" : "they"} can be searched once ready.
+      Still reading {working === 1 ? "1 item" : `${working} items`}.
     </p>
   )
   if (hits.length === 0)
@@ -701,7 +669,7 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
         Current goal
         <Input className="mt-1" value={draft.focus} onChange={(event) => setDraft({ ...draft, focus: event.target.value })} maxLength={160} />
       </label>
-      <p className="text-meta text-tertiary">Included at the top of context you reuse in AI chats, when you choose.</p>
+      <p className="text-meta text-tertiary">Included when you use this project in an AI chat.</p>
       <div className="flex gap-2">
         <Button type="submit" size="sm">
           Save

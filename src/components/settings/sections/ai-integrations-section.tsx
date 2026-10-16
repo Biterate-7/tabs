@@ -124,12 +124,12 @@ function WorkspacePicker({
   if (workspaces.length === 0) {
     return (
       <p className="text-body-sm text-muted-foreground" role="alert">
-        No workspace is synced to your account yet. AI clients can only see synced workspaces — sync one first.
+        No project is synced to your account yet. Sync one first.
       </p>
     )
   }
   return (
-    <ul className="flex max-h-48 flex-col gap-0.5 overflow-auto rounded-xs border border-border p-1.5" aria-label="Workspaces it can see">
+    <ul className="flex max-h-48 flex-col gap-0.5 overflow-auto rounded-xs border border-border p-1.5" aria-label="Projects it can see">
       {workspaces.map((workspace) => (
         <li key={workspace.id}>
           <label className="flex cursor-pointer items-center gap-2 rounded-xs px-2 py-1 hover:bg-surface-hover">
@@ -137,7 +137,7 @@ function WorkspacePicker({
               checked={chosen.includes(workspace.id)}
               onCheckedChange={(checked) => onChange(checked ? [...new Set([...chosen, workspace.id])] : chosen.filter((id) => id !== workspace.id))}
             />
-            <span className="truncate text-body-sm text-foreground">{workspace.name || "Untitled workspace"}</span>
+            <span className="truncate text-body-sm text-foreground">{workspace.name || "Untitled project"}</span>
           </label>
         </li>
       ))}
@@ -334,7 +334,7 @@ function ConnectionRow({
               {connection.label} <span className="text-body-sm text-muted-foreground">· {connection.clientName}</span>
             </p>
             <p className="text-body-sm text-muted-foreground">
-              {PERMISSION_LABEL[connection.permission]} · {visible.length} {visible.length === 1 ? "workspace" : "workspaces"} ·{" "}
+              {PERMISSION_LABEL[connection.permission]} · {visible.length} {visible.length === 1 ? "project" : "projects"} ·{" "}
               {connection.method === "oauth" ? "signed in with OAuth" : `token …${connection.token?.hint ?? ""}`}
               {connection.lastUsedAt ? ` · last used ${formatRelativeTime(connection.lastUsedAt, now)}` : " · never used yet"}
             </p>
@@ -345,7 +345,7 @@ function ConnectionRow({
 
       {connection.status === "waiting_for_client" && (
         <p className="mt-2 text-body-sm text-muted-foreground">
-          Hubble has not heard from {connection.clientName} on this connection yet. Finish setup there, then ask it something about your workspace.
+          Waiting for {connection.clientName}. Finish setup there, then ask it about a project.
         </p>
       )}
       {connection.status === "expired" && (
@@ -469,7 +469,7 @@ function Proposals({ integrations, data, now }: { integrations: UseIntegrations;
                 ))}
               </ul>
               {proposal.failure === "changed" && (
-                <p className="mt-2 text-body-sm text-muted-foreground">The workspace changed after this was proposed, so it was not applied. Nothing changed.</p>
+                <p className="mt-2 text-body-sm text-muted-foreground">The project changed since this was proposed, so nothing was applied.</p>
               )}
               <div className="mt-2 flex gap-2">
                 {proposal.status === "pending" && (
@@ -505,14 +505,14 @@ function ProjectMemoryPanel({ data }: { data: IntegrationsData }) {
       <GroupLabel>Saved project context</GroupLabel>
       <SectionStack className="mb-6">
         <GroupBlock>
-          <p className="text-body-sm text-muted-foreground">What AI clients saved in Hubble when you asked them to — goals, summaries, decisions, tasks and notes. Only you can delete it.</p>
+          <p className="text-body-sm text-muted-foreground">What AI clients saved when you asked. Only you can delete it.</p>
           <select
-            aria-label="Workspace"
+            aria-label="Project"
             className="mt-2 h-8 rounded-xs border border-border bg-background px-2 text-body-sm text-foreground"
             value={workspaceId ?? ""}
             onChange={(event) => setWorkspaceId(event.target.value || null)}
           >
-            <option value="">Choose a workspace…</option>
+            <option value="">Choose a project…</option>
             {data.workspaces.map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
                 {workspace.name || "Untitled workspace"}
@@ -523,7 +523,7 @@ function ProjectMemoryPanel({ data }: { data: IntegrationsData }) {
           {memory && typeof memory === "object" && "failed" in memory && <p className="mt-2 text-body-sm text-destructive">{memory.failed}</p>}
           {memory && typeof memory === "object" && "notes" in memory && (
             <div className="mt-3 flex flex-col gap-2">
-              {!memory.context && memory.notesTotal === 0 && <p className="text-body-sm text-muted-foreground">Nothing has been saved for this workspace.</p>}
+              {!memory.context && memory.notesTotal === 0 && <p className="text-body-sm text-muted-foreground">Nothing saved for this project.</p>}
               {memory.context?.goal && <p className="text-body-sm text-foreground"><span className="text-muted-foreground">Goal:</span> {memory.context.goal}</p>}
               {memory.context?.summary && <p className="text-body-sm whitespace-pre-wrap text-foreground"><span className="text-muted-foreground">Summary:</span> {memory.context.summary}</p>}
               {memory.context && memory.context.decisions.length > 0 && (
@@ -613,15 +613,15 @@ function Guide() {
     <SectionStack className="mb-6">
       <GroupBlock>
         <p className="flex items-center gap-2 text-body text-foreground">
-          <ShieldCheck className="size-4" aria-hidden /> What connecting gives an AI client
+          <ShieldCheck className="size-4" aria-hidden /> What a connector can access
         </p>
         <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-body-sm text-muted-foreground">
-          <li>Only the workspaces you choose, and only once they are synced to your account. Workspaces kept only on a device stay invisible.</li>
-          <li>{PERMISSION_LABEL.read} by default. {PERMISSION_LABEL.write} is a separate choice; reorganizing several collections still waits for your approval here.</li>
-          <li>What it reads is sent to that AI provider and handled under its privacy terms. Hubble records what each client did — never your conversations or page text.</li>
-          <li>Disconnect any time below; access ends on its next request.</li>
+          <li>Only projects you choose, once synced to your account.</li>
+          <li>{PERMISSION_LABEL.read} by default. {PERMISSION_LABEL.write} is separate; reorganizing waits for your approval.</li>
+          <li>What it reads goes to that AI provider, under its privacy terms. Hubble logs what each client did, never your conversation or page text.</li>
+          <li>Disconnect any time; access ends on its next request.</li>
         </ul>
-        <p className="mt-2 text-body-sm text-foreground">No connection can ever:</p>
+        <p className="mt-2 text-body-sm text-foreground">Never allowed to:</p>
         <ul className="mt-1 flex flex-col gap-0.5">
           {NEVER_ALLOWED.map((line) => (
             <li key={line} className="flex items-start gap-2 text-body-sm text-muted-foreground">
@@ -646,7 +646,7 @@ export function AiIntegrationsSection() {
   const heading = (
     <SectionHeading
       title="AI connectors"
-      description="Use Hubble inside ChatGPT, Claude, Gemini and Grok. They read the projects you sync — names, links, titles and collections — and keep what you ask them to save. Saved conversation text and notes stay on this device, so a connector can't see them."
+      description="Let ChatGPT, Claude, Gemini and Grok read the projects you sync. Conversation text and notes stay on this device."
     />
   )
 
@@ -657,11 +657,11 @@ export function AiIntegrationsSection() {
         <SectionStack>
           <GroupBlock>
             <p className="text-body-sm text-muted-foreground">
-              AI clients connect to your account on the web, where synced projects live. Open Hubble at{" "}
+              Connectors are managed on the web. Open{" "}
               <a className="text-link underline-offset-4 hover:underline" href={CANONICAL_PRODUCTION_ORIGIN} target="_blank" rel="noreferrer">
                 {CANONICAL_PRODUCTION_ORIGIN.replace(/^https:\/\//, "")}
               </a>
-              , sign in, and manage AI Integrations there.
+ and sign in.
             </p>
           </GroupBlock>
         </SectionStack>
@@ -680,7 +680,7 @@ export function AiIntegrationsSection() {
         <SectionStack>
           <GroupBlock>
             <p className="text-body text-foreground">Setup required: sign in</p>
-            <p className="mt-1 text-body-sm text-muted-foreground">AI clients connect to your Hubble account and see the projects you sync to it.</p>
+            <p className="mt-1 text-body-sm text-muted-foreground">Connectors see the projects you sync to your account.</p>
             {auth?.configured && (
               <Button type="button" size="sm" className="mt-3" onClick={() => setSignInOpen(true)}>
                 Sign in
@@ -694,7 +694,7 @@ export function AiIntegrationsSection() {
         <SectionStack>
           <GroupBlock>
             <p className="text-body text-foreground">Connection unavailable</p>
-            <p className="mt-1 text-body-sm text-muted-foreground">This Hubble deployment has no database for AI integrations. Everything else keeps working on this device.</p>
+            <p className="mt-1 text-body-sm text-muted-foreground">Not available on this server. Everything else still works.</p>
           </GroupBlock>
         </SectionStack>
       )}
@@ -718,7 +718,7 @@ export function AiIntegrationsSection() {
           <SectionStack className="mb-6">
             {state.data.connections.length === 0 ? (
               <GroupBlock>
-                <p className="text-body-sm text-muted-foreground">Not connected. Choose an AI client below to set one up.</p>
+                <p className="text-body-sm text-muted-foreground">Not connected. Choose an AI client below.</p>
               </GroupBlock>
             ) : (
               <ul className="divide-y divide-subtle">

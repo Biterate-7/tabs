@@ -34,7 +34,7 @@ describe("GraphNodeNotesView", () => {
     expect(screen.getByRole("heading", { name: "arxiv.org" })).toBeTruthy();
   });
 
-  it("shows the real properties for the tab: title, url, and workspace", () => {
+  it("shows the real properties for the tab: title, url, and project", () => {
     render(<GraphNodeNotesView node={makeNode("a", "arxiv.org", { title: "arXiv" })} onNotesChange={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByText("Properties")).toBeTruthy();
     expect(screen.getByText("title")).toBeTruthy();
@@ -42,7 +42,7 @@ describe("GraphNodeNotesView", () => {
     expect(
       screen.getByText((_, el) => el?.tagName.toLowerCase() === "span" && el.textContent === "https://arxiv.org")
     ).toBeTruthy();
-    expect(screen.getByText("workspace")).toBeTruthy();
+    expect(screen.getByText("project")).toBeTruthy();
     expect(screen.getByText("School")).toBeTruthy();
   });
 

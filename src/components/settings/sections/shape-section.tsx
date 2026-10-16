@@ -19,7 +19,7 @@ export function ShapeSection() {
 
   return (
     <div>
-      <SectionHeading title="Shape" description="Corner rounding, border, and shadow strength — applied consistently to every card, button, input, and panel." />
+      <SectionHeading title="Shape" />
 
       <SectionStack>
         <FieldRow label="Corner radius" stacked>

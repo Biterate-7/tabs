@@ -166,7 +166,7 @@ export function OAuthConsent() {
               <div className="mt-8 rounded-md border border-border p-4">
                 <p className="text-body text-foreground">Sign in to choose what it can see.</p>
                 <p className="mt-1 text-body-sm text-muted-foreground">
-                  Only workspaces synced to your Hubble account can be shared with an AI client.
+                  Only projects synced to your Hubble account can be shared.
                 </p>
                 <div className="mt-4 flex gap-2">
                   <Button type="button" onClick={() => setSignInOpen(true)}>
@@ -221,11 +221,10 @@ export function OAuthConsent() {
                 </fieldset>
 
                 <fieldset className="flex flex-col gap-2">
-                  <legend className="mb-2 text-label text-muted-foreground">Which workspaces it can see</legend>
+                  <legend className="mb-2 text-label text-muted-foreground">Which projects it can see</legend>
                   {state.workspaces.length === 0 ? (
                     <p className="text-body-sm text-muted-foreground" role="alert">
-                      None of your workspaces is synced to your account yet. In Hubble, open a workspace and sync it, then start
-                      the connection again from your AI app.
+                      None of your projects is synced to your account yet. Sync one in Hubble, then connect again from your AI app.
                     </p>
                   ) : (
                     <ul className="flex max-h-64 flex-col gap-1 overflow-auto rounded-md border border-border p-2">
@@ -240,7 +239,7 @@ export function OAuthConsent() {
                                 )
                               }
                             />
-                            <span className="min-w-0 flex-1 truncate text-body text-foreground">{workspace.name || "Untitled workspace"}</span>
+                            <span className="min-w-0 flex-1 truncate text-body text-foreground">{workspace.name || "Untitled project"}</span>
                             {/* Two workspaces may share a name; the date tells them apart. */}
                             <span className="shrink-0 text-meta text-tertiary">updated {formatFullDate(workspace.updatedAt)}</span>
                           </label>
@@ -248,7 +247,7 @@ export function OAuthConsent() {
                       ))}
                     </ul>
                   )}
-                  <p className="text-body-sm text-muted-foreground">Workspaces kept only on a device are never visible to it.</p>
+                  <p className="text-body-sm text-muted-foreground">Projects kept only on a device are never visible to it.</p>
                 </fieldset>
 
                 <div className="rounded-md border border-border p-3">
@@ -285,7 +284,7 @@ export function OAuthConsent() {
                   </Button>
                 </div>
                 {chosen.length === 0 && state.workspaces.length > 0 && (
-                  <p className="text-body-sm text-muted-foreground">Choose at least one workspace to approve.</p>
+                  <p className="text-body-sm text-muted-foreground">Choose at least one project.</p>
                 )}
               </form>
             )}
