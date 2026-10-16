@@ -123,7 +123,7 @@ describe("Graph View readiness gate", () => {
     expect(graphButton().disabled).toBe(false);
 
     await user.click(graphButton());
-    expect(await screen.findByRole("button", { name: "Back to workspace" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Back to project" })).toBeTruthy();
   });
 
   it("locks the graph for the whole dump — through the \"Other\" stage — and unlocks it only once the layout has settled", async () => {
@@ -167,7 +167,7 @@ describe("Graph View readiness gate", () => {
     graphButton().removeAttribute("disabled");
     await user.click(graphButton());
 
-    expect(screen.queryByRole("button", { name: "Back to workspace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to project" })).toBeNull();
     expect(screen.getByPlaceholderText("Search tabs...")).toBeTruthy();
   });
 
@@ -211,7 +211,7 @@ describe("Graph View readiness gate", () => {
     // The error screen is reachable, and it is not the graph.
     await user.click(graphButton());
     expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Back to workspace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to project" })).toBeNull();
 
     // Retrying re-runs the same organization rather than requiring a re-dump.
     await user.click(screen.getByRole("button", { name: "Try again" }));

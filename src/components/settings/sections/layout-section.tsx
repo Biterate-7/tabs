@@ -11,7 +11,7 @@ export function LayoutSection() {
 
   return (
     <div>
-      <SectionHeading title="Layout" description="Adjust spacing and how much of the window Hubble's content uses — purely visual, nothing here changes functionality." />
+      <SectionHeading title="Layout" />
 
       <SectionStack>
         <FieldRow label="Content width" description="How wide the main content area can grow.">
@@ -37,7 +37,7 @@ export function LayoutSection() {
             ]}
           />
         </FieldRow>
-        <FieldRow label="Sidebar density" description="Width of the workspace sidebar.">
+        <FieldRow label="Sidebar density">
           <SegmentedControl
             value={l.sidebarDensity}
             onValueChange={(v) => setLayout({ sidebarDensity: v })}

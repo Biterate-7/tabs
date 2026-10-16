@@ -124,10 +124,7 @@ function ScanSetup({
     <div className="flex flex-1 items-center justify-center px-6">
       <div className="w-full max-w-sm text-center">
         <ScanSearch className="mx-auto size-6 text-tertiary" aria-hidden />
-        <h2 className="mt-3 text-h1 font-medium text-foreground">Scan browser history</h2>
-        <p className="mt-2 text-body-sm text-muted-foreground">
-          Find pages you&apos;ve recently researched, revisited, or may want to keep.
-        </p>
+        <h2 className="mt-3 text-h1 font-medium text-foreground">Find pages worth keeping</h2>
 
         <div className="mt-6 space-y-3 text-left">
           <Select
@@ -145,7 +142,7 @@ function ScanSetup({
         </div>
 
         <Button size="lg" className="mt-6 w-full" onClick={onScan}>
-          Scan History
+          Scan history
         </Button>
       </div>
     </div>
@@ -156,8 +153,7 @@ function ScanLoading() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <Loader2 className="size-6 animate-spin text-tertiary" aria-hidden />
-      <p className="text-body font-medium text-foreground">Scanning your browser history…</p>
-      <p className="text-body-sm text-muted-foreground">Finding pages worth keeping</p>
+      <p className="text-body font-medium text-foreground">Scanning history…</p>
     </div>
   )
 }
@@ -298,7 +294,7 @@ export function HistoryDumpView({
           <ChevronLeft />
         </IconButton>
         <ScanSearch className="size-4 shrink-0 text-tertiary" />
-        <p className="text-h2 text-foreground">History Dump</p>
+        <p className="text-h2 text-foreground">Import from history</p>
       </div>
 
       {stage === "idle" && (
@@ -324,7 +320,7 @@ export function HistoryDumpView({
               <EmptyState
                 icon={ScanSearch}
                 title="No history found"
-                description="There aren't any browser history entries in this time range."
+                description="Nothing in this time range."
                 action={{ label: "Try a different range", onClick: reset }}
               />
             </div>
@@ -332,8 +328,8 @@ export function HistoryDumpView({
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
                 icon={ScanSearch}
-                title="Nothing worth surfacing yet"
-                description="We scanned your history but couldn't find useful pages in this range. Try a longer time range."
+                title="Nothing worth keeping"
+                description="Try a longer time range."
                 action={{ label: "Choose a different range", onClick: reset }}
               />
             </div>
@@ -341,8 +337,8 @@ export function HistoryDumpView({
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
                 icon={ScanSearch}
-                title="You're already covered"
-                description="All of the useful pages we found are already in Hubble."
+                title="Already saved"
+                description="Every useful page here is already in Hubble."
                 action={{ label: "Scan a different range", onClick: reset }}
               />
             </div>
@@ -410,7 +406,7 @@ export function HistoryDumpView({
 
                   {filteredOther.length > 0 && (
                     <section>
-                      <p className="mb-2 px-1 text-eyebrow text-tertiary">OTHER POTENTIAL TABS</p>
+                      <p className="mb-2 px-1 text-eyebrow text-tertiary">OTHER PAGES</p>
                       <div className="rounded-md border border-border bg-card px-2 pb-1">
                         {filteredOther.map((c) => (
                           <HistoryCandidateRow

@@ -200,7 +200,7 @@ export function CaptureDialog({
   }
 
   const providerOptions = AI_PROVIDER_IDS.map((id) => ({ value: id, label: AI_PROVIDERS[id].name }))
-  const fromOptions = [{ value: NOT_FROM_AI, label: "Not from an AI app" }, ...providerOptions]
+  const fromOptions = [{ value: NOT_FROM_AI, label: "Me" }, ...providerOptions]
 
   return (
     <Dialog
@@ -214,7 +214,7 @@ export function CaptureDialog({
         <form onSubmit={submit} className="flex flex-col gap-3">
           <DialogHeader>
             <DialogTitle>Add to {projectName}</DialogTitle>
-            <DialogDescription>Bring in a conversation from any AI app, a note, or an export file. It stays on this device.</DialogDescription>
+            <DialogDescription>Saved only on this device.</DialogDescription>
           </DialogHeader>
           <SegmentedControl
             value={mode}
@@ -242,27 +242,30 @@ export function CaptureDialog({
                   <Select value={effectiveProvider} onValueChange={(value) => isAiProviderId(value) && setProvider(value)} options={providerOptions} />
                 </label>
                 <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                  Its link <span className="text-tertiary">(optional)</span>
+                  <span>
+                    Link <span className="text-tertiary">· optional</span>
+                  </span>
                   <Input value={link} onChange={(event) => setLink(event.target.value)} placeholder={`${AI_PROVIDERS[effectiveProvider].homeUrl}…`} inputMode="url" />
                 </label>
               </div>
               <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                Title <span className="text-tertiary">(optional)</span>
+                <span>
+                  Title <span className="text-tertiary">· optional</span>
+                </span>
                 <Input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} />
               </label>
               <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                The conversation
+                Conversation
                 <Textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} className="max-h-[45dvh] min-h-48 overflow-y-auto text-body-sm" placeholder={"You: …\nChatGPT: …"} />
               </label>
               {text.trim() && parsed && (
                 <p className="flex items-start gap-1.5 text-meta text-muted-foreground" data-parse-preview>
                   <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
                   {parsed.structured
-                    ? `${parsed.turns.length} turns found: ${parsed.turns.filter((turn) => turn.role === "user").length} from you, ${parsed.turns.filter((turn) => turn.role === "assistant").length} from ${aiProviderName(effectiveProvider)}.`
-                    : `No "You:" / "${aiProviderName(effectiveProvider)}:" labels found, so it will be saved as one block of text. Add labels to keep who said what.`}
+                    ? `${parsed.turns.length} turns: ${parsed.turns.filter((turn) => turn.role === "user").length} from you, ${parsed.turns.filter((turn) => turn.role === "assistant").length} from ${aiProviderName(effectiveProvider)}`
+                    : `No "You:" / "${aiProviderName(effectiveProvider)}:" labels — saved as one block of text`}
                 </p>
               )}
-              {linkRef && <p className="text-meta text-tertiary">Saving again later with the same link updates this copy instead of adding a second one.</p>}
             </>
           ) : mode === "note" ? (
             <>
@@ -279,12 +282,14 @@ export function CaptureDialog({
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                  From an AI answer?
+                  From
                   <Select value={noteFrom} onValueChange={setNoteFrom} options={fromOptions} />
                 </label>
               </div>
               <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                Title <span className="text-tertiary">(optional)</span>
+                <span>
+                  Title <span className="text-tertiary">· optional</span>
+                </span>
                 <Input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} />
               </label>
               <label className="flex flex-col gap-1 text-meta text-muted-foreground">
@@ -293,7 +298,9 @@ export function CaptureDialog({
               </label>
               {noteKind === "excerpt" && (
                 <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                  Where it came from <span className="text-tertiary">(optional link)</span>
+                  <span>
+                    Source link <span className="text-tertiary">· optional</span>
+                  </span>
                   <Input value={link} onChange={(event) => setLink(event.target.value)} inputMode="url" />
                 </label>
               )}
@@ -301,7 +308,7 @@ export function CaptureDialog({
           ) : (
             <div className="flex flex-col gap-2">
               <p className="text-body-sm text-muted-foreground">
-                A ChatGPT or Claude data export (unzip it and choose <span className="font-mono text-[12px]">conversations.json</span>), or a Markdown or text file — for example a Perplexity thread exported as Markdown.
+                ChatGPT or Claude export (<span className="font-mono text-[12px]">conversations.json</span>), Markdown or text.
               </p>
               <input
                 ref={fileRef}
@@ -323,7 +330,7 @@ export function CaptureDialog({
                   </label>
                   {noteFrom !== NOT_FROM_AI && parsed && (
                     <p className="text-meta text-muted-foreground">
-                      {parsed.structured ? `${parsed.turns.length} turns found.` : "No speaker labels found — it will be kept as one block of text."}
+                      {parsed.structured ? `${parsed.turns.length} turns` : "No speaker labels — kept as one block of text"}
                     </p>
                   )}
                 </div>

@@ -68,10 +68,10 @@ export const PERMISSION_DESCRIPTION: Record<PermissionLevel, string> = {
 
 /** What no connection can do, at any level. Shown on the consent page and in Settings. */
 export const NEVER_ALLOWED = [
-  "Delete workspaces, collections, tabs or notes",
+  "Delete projects, collections, tabs or notes",
   "Run commands or read files on your computer",
   "Open or fetch web addresses",
-  "See workspaces you did not choose",
+  "See projects you did not choose",
 ] as const;
 
 /* ------------------------------------------------------------------ *

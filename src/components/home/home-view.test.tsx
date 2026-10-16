@@ -47,12 +47,11 @@ function renderHome(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
 }
 
 describe("Projects (Home)", () => {
-  it("with no projects, says what Hubble is for and offers one button", async () => {
+  it("with no projects, says what Hubble is for in one sentence and offers one button", async () => {
     const user = userEvent.setup()
     const props = renderHome()
-    expect(screen.getByRole("heading", { name: "Start with a project" })).toBeTruthy()
-    expect(screen.getByText("One connected workspace for everything you learn and create with AI.")).toBeTruthy()
-    expect(screen.getByRole("list", { name: "How Hubble works" }).textContent).toMatch(/Capture.*Connect.*Find.*Reuse/)
+    expect(screen.getByRole("heading", { name: "No projects yet" })).toBeTruthy()
+    expect(screen.getByText(/reuse them in any AI chat/)).toBeTruthy()
     expect(screen.getAllByRole("button")).toHaveLength(1)
     await user.click(screen.getByRole("button", { name: /New project/ }))
     expect(props.onNewSubject).toHaveBeenCalledOnce()
@@ -61,8 +60,8 @@ describe("Projects (Home)", () => {
   it("welcomes someone opening Hubble for the first time, and needs no AI setup", () => {
     renderHome({ firstRun: true, onOrganizeOpenTabs: vi.fn() })
     expect(screen.getByRole("heading", { name: "Welcome to Hubble" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: /Create your first project/ })).toBeTruthy()
-    expect(screen.getByText(/No AI connection, API key or sign-in needed/)).toBeTruthy()
+    expect(screen.getByRole("button", { name: /New project/ })).toBeTruthy()
+    expect(screen.getByText(/No sign-in needed/)).toBeTruthy()
   })
 
   it("leads with the projects and what each holds, and opens one", async () => {
@@ -70,7 +69,7 @@ describe("Projects (Home)", () => {
     const props = renderHome({
       subjects: [project("h", "History HL", [source("a", "Causes of WW1", NOW, "chatgpt"), source("b", "Britannica", NOW - 1000)]), project("m", "Math AA HL")],
     })
-    expect(screen.getByText("Good evening")).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeTruthy()
     expect(screen.getByText(/1 AI conversation · 1 source/)).toBeTruthy()
     expect(screen.getByText("Empty")).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "Open Math AA HL" }))
@@ -89,7 +88,7 @@ describe("Projects (Home)", () => {
   it("offers search and organizing open tabs once there are projects", async () => {
     const user = userEvent.setup()
     const props = renderHome({ subjects: [project("h", "History HL")], onOrganizeOpenTabs: vi.fn(), onOpenSearch: vi.fn() })
-    await user.click(screen.getByRole("button", { name: /Search your knowledge/ }))
+    await user.click(screen.getByRole("button", { name: /Search/ }))
     await user.click(screen.getByRole("button", { name: /Organize open tabs/ }))
     expect(props.onOpenSearch).toHaveBeenCalledOnce()
     expect(props.onOrganizeOpenTabs).toHaveBeenCalledOnce()

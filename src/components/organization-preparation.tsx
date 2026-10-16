@@ -79,8 +79,8 @@ export function OrganizationPreparationView({
           </div>
           <p className="mt-1 pl-6 text-body-sm text-muted-foreground">
             {failed
-              ? "The graph stays closed until organizing finishes, so it never opens onto a half-organized layout."
-              : "The graph opens once every tab has been organized and the layout has settled."}
+              ? "The graph opens once organizing finishes."
+              : "The graph opens when this finishes."}
           </p>
 
           {!failed && (

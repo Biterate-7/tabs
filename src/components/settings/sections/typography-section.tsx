@@ -20,17 +20,17 @@ export function TypographySection() {
 
   return (
     <div>
-      <SectionHeading title="Typography" description="Control the fonts and text rhythm used across Hubble." />
+      <SectionHeading title="Typography" />
 
       <GroupLabel>Faces</GroupLabel>
       <SectionStack className="mb-6">
-        <FieldRow label="Interface" description="Menus, lists, messages — the product face.">
+        <FieldRow label="Interface">
           <Select className="w-48" value={t.uiFont} onValueChange={(v) => setTypography({ uiFont: v })} options={UI_FONT_OPTIONS} />
         </FieldRow>
-        <FieldRow label="Content and notes" description="Long-form writing in notes.">
+        <FieldRow label="Notes">
           <Select className="w-48" value={t.contentFont} onValueChange={(v) => setTypography({ contentFont: v })} options={CONTENT_FONT_OPTIONS} />
         </FieldRow>
-        <FieldRow label="Monospace" description="Code, paths and commands.">
+        <FieldRow label="Monospace">
           <Select className="w-48" value={t.monoFont} onValueChange={(v) => setTypography({ monoFont: v })} options={MONO_FONT_OPTIONS} />
         </FieldRow>
       </SectionStack>

@@ -47,7 +47,7 @@ async function renderAndScan(items: typeof FREQUENT_ITEM[], workspaceTabs: Tab[]
   const user = userEvent.setup()
   render(<HistoryDumpView tabs={workspaceTabs} onClose={onClose} onDump={onDump} />)
 
-  await user.click(screen.getByRole("button", { name: "Scan History" }))
+  await user.click(screen.getByRole("button", { name: "Scan history" }))
   await waitFor(() => expect(fetchBrowserHistoryMock).toHaveBeenCalled())
 
   return { onDump, onClose, user }
@@ -57,7 +57,7 @@ describe("HistoryDumpView — setup stage", () => {
   it("shows the scan setup with the default time range and does not scan until asked", () => {
     render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
     expect(screen.getByText("Last 7 days")).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Scan History" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Scan history" })).toBeTruthy()
     expect(fetchBrowserHistoryMock).not.toHaveBeenCalled()
   })
 
@@ -75,7 +75,7 @@ describe("HistoryDumpView — review stage", () => {
     await renderAndScan([FREQUENT_ITEM, WEAK_ITEM])
 
     expect(await screen.findByText("HIGH CONFIDENCE")).toBeTruthy()
-    expect(screen.getByText("OTHER POTENTIAL TABS")).toBeTruthy()
+    expect(screen.getByText("OTHER PAGES")).toBeTruthy()
     expect(screen.getByText(/Tab \(interface\)/)).toBeTruthy()
   })
 
@@ -226,13 +226,13 @@ describe("HistoryDumpView — empty states", () => {
 
   it("shows a 'nothing worth surfacing' empty state when everything scanned was filtered as noise", async () => {
     await renderAndScan([{ ...WEAK_ITEM, url: "chrome://settings", title: "Settings" }])
-    expect(await screen.findByText("Nothing worth surfacing yet")).toBeTruthy()
+    expect(await screen.findByText("Nothing worth keeping")).toBeTruthy()
   })
 
   it("shows an 'already covered' empty state when every surfaced page is already saved", async () => {
     const existing = makeTab({ id: "existing-1", normalizedUrl: "https://existing.example/saved" })
     await renderAndScan([ALREADY_SAVED_ITEM], [existing])
-    expect(await screen.findByText("You're already covered")).toBeTruthy()
+    expect(await screen.findByText("Already saved")).toBeTruthy()
   })
 })
 
@@ -242,7 +242,7 @@ describe("HistoryDumpView — extension errors", () => {
     const user = userEvent.setup()
     render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
 
-    await user.click(screen.getByRole("button", { name: "Scan History" }))
+    await user.click(screen.getByRole("button", { name: "Scan history" }))
     expect(await screen.findByText("Hubble extension not detected.")).toBeTruthy()
 
     fetchBrowserHistoryMock.mockResolvedValue({ ok: true, items: [FREQUENT_ITEM] })
@@ -255,7 +255,7 @@ describe("HistoryDumpView — extension errors", () => {
     const user = userEvent.setup()
     render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
 
-    await user.click(screen.getByRole("button", { name: "Scan History" }))
+    await user.click(screen.getByRole("button", { name: "Scan history" }))
     expect(await screen.findByText("History access isn't available.")).toBeTruthy()
   })
 })

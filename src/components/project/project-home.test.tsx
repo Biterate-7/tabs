@@ -65,7 +65,7 @@ describe("ProjectHome", () => {
     const user = userEvent.setup()
     const props = renderHome(project())
     expect(screen.getByRole("heading", { name: "History IA", level: 1 })).toBeTruthy()
-    expect(screen.getByText("Nothing saved in History IA yet.")).toBeTruthy()
+    expect(screen.getByText("Nothing saved yet")).toBeTruthy()
     expect(screen.getByText("Cuban Missile Crisis.", { exact: false })).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /^Add/ }).length).toBeGreaterThan(0)
     // Nothing to reuse yet, so no "Use in AI chat".
@@ -79,15 +79,16 @@ describe("ProjectHome", () => {
     expect(props.onCapture).toHaveBeenCalledWith("note")
   })
 
-  it("counts what it knows by kind and AI app, and filters to AI conversations", async () => {
+  it("counts what it knows by kind, and filters to AI conversations", async () => {
     const user = userEvent.setup()
     let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [{ ...project(), tabs: [] }] }
     store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" }, { url: "https://a.example/one", title: "An article" }], "manual", NOW)!.store
     const workspace = store.workspaces[0]!
     workspace.notes = [{ id: "n1", kind: "note", title: "My thesis", origin: "manual", createdAt: NOW, updatedAt: NOW, contentHash: "h", chars: 10 }]
     renderHome(workspace)
-    expect(document.querySelector("[data-knowledge-summary]")!.textContent).toBe("1 AI conversation (ChatGPT) · 1 source · 1 note")
-    await user.click(screen.getByRole("button", { name: "AI conversations" }))
+    const chips = [...screen.getByRole("group", { name: "Show" }).querySelectorAll("button")].map((chip) => chip.textContent)
+    expect(chips).toEqual(["All3", "AI conversations1", "Sources1", "Notes1"])
+    await user.click(screen.getByRole("button", { name: /^AI conversations/ }))
     const list = screen.getByRole("list", { name: "Knowledge in History IA" })
     expect(list.textContent).toContain("Causes of the crisis")
     expect(list.textContent).not.toContain("An article")
@@ -213,7 +214,7 @@ describe("ProjectHome", () => {
       expect.stringContaining("Couldn't read · Hubble couldn't reach this page."),
       expect.stringContaining("Waiting"),
     ])
-    await user.click(screen.getByRole("button", { name: "Needs attention" }))
+    await user.click(screen.getByRole("button", { name: /^Needs attention/ }))
     expect(screen.getAllByRole("listitem").filter((item) => item.hasAttribute("data-source-card"))).toHaveLength(1)
   })
 

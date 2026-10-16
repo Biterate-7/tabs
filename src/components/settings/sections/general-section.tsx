@@ -18,8 +18,8 @@ export function GeneralSection() {
           label="Theme"
           description={
             settings.themeId === "midnight" || settings.themeId === "hubble-light"
-              ? "The Hubble palette, in ink or paper."
-              : "A library theme is active. Pick one here to return to the Hubble palette."
+              ? undefined
+              : "A library theme is active. Pick one to switch back."
           }
         >
           <SegmentedControl
@@ -31,10 +31,10 @@ export function GeneralSection() {
             ]}
           />
         </FieldRow>
-        <FieldRow label="Play intro animation" description="Show the Hubble cinematic intro when opening the app.">
+        <FieldRow label="Intro animation">
           <Switch checked={settings.playIntro} onCheckedChange={setPlayIntro} aria-label="Play intro animation" />
         </FieldRow>
-        <FieldRow label="Interface sounds" description="Short, subtle sound effects for interactions like opening a folder.">
+        <FieldRow label="Interface sounds">
           <Switch
             checked={settings.sound.enabled}
             onCheckedChange={(enabled) => setSound({ enabled })}

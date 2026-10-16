@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { ProviderMark } from "@/components/memory/provider-mark"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AI_PROVIDERS, AI_PROVIDER_IDS } from "@/lib/providers/registry"
 import { loadCollectionState } from "@/lib/collections/persistence"
 import { loadDependencyState } from "@/lib/dependencies/persistence"
@@ -28,67 +29,84 @@ import type { ResourceContent } from "@/lib/resources/types"
 import type { Workspace } from "@/lib/workspace/types"
 
 const CAPABILITY_ROWS: { key: keyof ProviderCapabilities; label: string }[] = [
-  { key: "pageCapture", label: "Save the open conversation (Hubble for Chrome)" },
-  { key: "exportImport", label: "Import the app's data export" },
+  { key: "pageCapture", label: "Save from the page" },
+  { key: "exportImport", label: "Import an export" },
   { key: "paste", label: "Paste a conversation" },
-  { key: "insert", label: "Type context into the message box" },
-  { key: "connector", label: "The app reads Hubble (MCP connector)" },
-  { key: "autoSync", label: "Keep saved conversations up to date automatically" },
+  { key: "insert", label: "Type into the chat box" },
+  { key: "connector", label: "AI connector (MCP)" },
+  { key: "autoSync", label: "Keep in sync automatically" },
 ]
 
 const VERIFIED_WORDS: Record<ProviderCapability["verified"], string> = {
-  fixture: "Tested against saved sample pages and files, not the live app",
-  protocol: "Tested over the connector protocol, not yet with the vendor's app",
+  fixture: "Tested against saved sample pages and files, not the live app.",
+  protocol: "Tested over the connector protocol, not yet with the vendor's app.",
   none: "",
 }
 
 /**
  * Settings → AI apps: what Hubble can do with each AI app, as the provider
  * registry records it — including what it cannot, and how each claim was
- * tested. Nothing here is a toggle; it is the honest answer to "will this
- * work with the app I use?".
+ * tested. One mark per app and capability; the registry's note and how it
+ * was tested are a focus or hover away, never a wall of text. Nothing here
+ * is a toggle.
  */
 export function AiAppsSection() {
   return (
     <div>
-      <SectionHeading
-        title="AI apps"
-        description="Hubble keeps what you learn in ChatGPT, Claude, Gemini and Perplexity in one place. It never signs in to these apps or reads your account: it saves the conversation on screen when you ask, or a file you exported yourself."
-      />
-      <div className="flex flex-col gap-6">
-        {AI_PROVIDER_IDS.map((id) => {
-          const provider = AI_PROVIDERS[id]
-          return (
-            <section key={id} aria-label={provider.name} data-provider-capabilities={id}>
-              <GroupLabel className="flex items-center gap-1.5">
-                <ProviderMark provider={id} size={14} /> {provider.name}
-              </GroupLabel>
-              <SectionStack>
-                {CAPABILITY_ROWS.map(({ key, label }) => {
-                  const capability = provider.capabilities[key]
+      <SectionHeading title="AI apps" description="Hubble never signs in to these apps. It saves a conversation only when you ask." />
+      <div className="overflow-x-auto rounded-md border border-border bg-card">
+        <table className="w-full border-collapse text-body-sm">
+          <thead>
+            <tr className="border-b border-subtle">
+              <th scope="col" className="px-4 py-2.5 text-left text-label font-normal text-muted-foreground">
+                <span className="sr-only">Capability</span>
+              </th>
+              {AI_PROVIDER_IDS.map((id) => (
+                <th key={id} scope="col" className="px-2 py-2.5 text-center font-normal text-muted-foreground" data-provider-capabilities={id}>
+                  <span className="inline-flex items-center gap-1.5">
+                    <ProviderMark provider={id} size={14} />
+                    <span className="max-sm:sr-only">{AI_PROVIDERS[id].name}</span>
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-subtle">
+            {CAPABILITY_ROWS.map(({ key, label }) => (
+              <tr key={key} data-capability={key}>
+                <th scope="row" className="px-4 py-2 text-left font-normal text-foreground">
+                  {label}
+                </th>
+                {AI_PROVIDER_IDS.map((id) => {
+                  const capability = AI_PROVIDERS[id].capabilities[key]
+                  const detail = [capability.note, capability.supported ? VERIFIED_WORDS[capability.verified] : ""].filter(Boolean).join(" ")
+                  const state = capability.supported ? "Available" : "Not available"
+                  const spoken = detail.startsWith(state) ? detail : `${state}. ${detail}`.trim()
                   return (
-                    <div key={key} className="flex items-start gap-3 px-4 py-2.5" data-capability={key} data-supported={capability.supported}>
-                      {capability.supported ? (
-                        <Check aria-label="Available" className="mt-0.5 size-4 shrink-0 text-foreground" />
-                      ) : (
-                        <Minus aria-label="Not available" className="mt-0.5 size-4 shrink-0 text-tertiary" />
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-body-sm text-foreground">{label}</p>
-                        <p className="text-meta text-muted-foreground">{capability.note}</p>
-                        {capability.supported && VERIFIED_WORDS[capability.verified] && <p className="text-meta text-tertiary">{VERIFIED_WORDS[capability.verified]}</p>}
-                      </div>
-                    </div>
+                    <td key={id} className="px-2 py-1 text-center" data-supported={capability.supported}>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-label={`${AI_PROVIDERS[id].name}: ${label} — ${spoken}`}
+                              className="inline-flex size-7 items-center justify-center rounded-xs outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60"
+                            >
+                              {capability.supported ? <Check aria-hidden className="size-4 text-foreground" /> : <Minus aria-hidden className="size-4 text-tertiary" />}
+                            </button>
+                          }
+                        />
+                        <TooltipContent>{detail || state}</TooltipContent>
+                      </Tooltip>
+                    </td>
                   )
                 })}
-              </SectionStack>
-            </section>
-          )
-        })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <p className="mt-6 text-body-sm text-muted-foreground">
-        AI apps change their pages without notice. If saving from a page stops working, Hubble says so — paste the conversation instead, and it is kept the same way.
-      </p>
+      <p className="mt-3 text-meta text-tertiary">If saving from a page stops working, paste the conversation instead.</p>
     </div>
   )
 }
@@ -130,17 +148,17 @@ export function DataSection({ workspaces }: { workspaces: readonly Workspace[] }
 
   return (
     <div>
-      <SectionHeading title="Data" description="Where your knowledge is kept, and how to take it with you." />
+      <SectionHeading title="Data" />
       <SectionStack className="mb-6">
-        <FieldRow label="On this device" description="Projects, saved conversations, notes and the text Hubble read from pages are kept in this browser. Signing in syncs projects, page titles and links between your devices — not conversation text or notes.">
+        <FieldRow label="On this device" description="Everything is kept in this browser. Signing in syncs titles and links — not conversation text or notes.">
           <span />
         </FieldRow>
-        <FieldRow label="Export everything" description="Every project with its notes, saved conversations and read text, as one JSON file. Import it in Settings → Projects.">
+        <FieldRow label="Export everything" description="All projects with their text, as one JSON file.">
           <Button type="button" size="sm" disabled={busy} onClick={() => void exportAll(true)}>
             <Download /> Export
           </Button>
         </FieldRow>
-        <FieldRow label="Export projects only" description="Projects, links, collections and note titles — without saved text. Smaller.">
+        <FieldRow label="Export projects only" description="Links, collections and titles, without text.">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void exportAll(false)}>
             <Download /> Export
           </Button>
@@ -153,8 +171,8 @@ export function DataSection({ workspaces }: { workspaces: readonly Workspace[] }
           <SectionStack>
             <GroupBlock>
               <p className="text-body-sm text-foreground">
-                Earlier versions of Hubble ran AI agents. Their records are still in this browser: {legacy.keys.length} stored list{legacy.keys.length === 1 ? "" : "s"}
-                {legacy.projectEvents > 0 ? ` and ${legacy.projectEvents} entries in project history` : ""}. Hubble no longer uses them.
+                {legacy.keys.length} stored list{legacy.keys.length === 1 ? "" : "s"}
+                {legacy.projectEvents > 0 ? ` and ${legacy.projectEvents} project history entries` : ""} from earlier AI agent features. Hubble no longer uses them.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button type="button" size="sm" variant="outline" onClick={() => void exportLegacy()}>

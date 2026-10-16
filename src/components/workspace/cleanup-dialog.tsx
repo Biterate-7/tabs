@@ -245,7 +245,7 @@ export function CleanupDialog({
               Remove {tabsLabel(pendingIds?.length ?? 0)}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              One copy of each duplicate stays in your workspace. This
+              One copy of each duplicate stays. This
               can&apos;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

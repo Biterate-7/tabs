@@ -11,7 +11,7 @@ export function MotionSection() {
 
   return (
     <div>
-      <SectionHeading title="Motion" description="How much animation Hubble uses for transitions, imports, and view changes." />
+      <SectionHeading title="Motion" />
 
       {prefersReducedMotion && (
         <p className="mb-3 rounded-md border border-border bg-warning-subtle px-3 py-2 text-body-sm text-warning">

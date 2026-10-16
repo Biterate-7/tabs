@@ -114,7 +114,7 @@ export function GraphNodeNotesView({
               <PropertyRow label="url" icon={Link2}>
                 <span className="block truncate">{node.tab.url}</span>
               </PropertyRow>
-              <PropertyRow label="workspace" icon={Layers}>
+              <PropertyRow label="project" icon={Layers}>
                 {node.workspaceName}
               </PropertyRow>
               {categoryDef && (

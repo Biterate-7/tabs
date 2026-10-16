@@ -137,7 +137,7 @@ describe("searching a project's videos", () => {
     })
     const tabs = store.workspaces[0]!.tabs.map((tab) => (tab.id === chat.id ? { ...tab, resource: { ...tab.resource!, status: "ready" as const, content: summary } } : tab))
     renderHome({ ...store.workspaces[0]!, tabs })
-    await userEvent.click(screen.getByRole("button", { name: "AI conversations" }))
+    await userEvent.click(screen.getByRole("button", { name: /^AI conversations/ }))
     await search("energy")
     const results = await screen.findByRole("list", { name: "Search results" })
     expect((await within(results).findAllByText("Energy questions", { exact: false })).length).toBeGreaterThan(0)

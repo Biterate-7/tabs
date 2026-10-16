@@ -154,7 +154,7 @@ export function SourceDetailsDialog({
     if (result.error) setMessage(result.error)
     else {
       setTranscript("")
-      setMessage("Transcript added. You can search it, and AI can read it.")
+      setMessage("Transcript added.")
     }
   }
 
@@ -212,10 +212,8 @@ export function SourceDetailsDialog({
 
           {isConversation && resource.status !== "ready" && (
             <section aria-label="Save the conversation's text" className="rounded-md border border-subtle p-3">
-              <p className="text-body-sm text-foreground">Only the link is saved — Hubble can&apos;t read this conversation from its address.</p>
-              <p className="text-meta text-muted-foreground">
-                Open it and use Save to Hubble in Hubble for Chrome, or paste the conversation here. Saving it again with the same link fills in this item.
-              </p>
+              <p className="text-body-sm text-foreground">Only the link is saved.</p>
+              <p className="text-meta text-muted-foreground">Paste the conversation, or save it from the page with Hubble for Chrome.</p>
               {onPasteConversation && (
                 <Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => onPasteConversation(tab)}>
                   <ClipboardPaste /> Paste the conversation
@@ -226,7 +224,7 @@ export function SourceDetailsDialog({
 
           {preview && !isYouTube && !isConversation && (
             <section aria-label="What Hubble read">
-              <p className="text-meta text-tertiary">What Hubble read — {preview.label}. Written by the source, shown as it is.</p>
+              <p className="text-meta text-tertiary">What Hubble read — {preview.label}</p>
               <pre className="mt-1 max-h-48 overflow-y-auto rounded-md border border-subtle bg-background p-2 font-sans text-body-sm whitespace-pre-wrap text-muted-foreground">{preview.text || "(This page of the document has no text.)"}</pre>
             </section>
           )}
@@ -234,7 +232,7 @@ export function SourceDetailsDialog({
           {isPdf && resource.status !== "ready" && (
             <section aria-label="Upload the PDF" className="rounded-md border border-subtle p-3">
               <p className="text-body-sm text-foreground">Hubble needs the file itself to read this PDF.</p>
-              <p className="text-meta text-muted-foreground">Download it in Chrome, then choose it here. It is read on this device and never uploaded anywhere.</p>
+              <p className="text-meta text-muted-foreground">Download it, then choose it here. It&apos;s read on this device, never uploaded.</p>
               <input ref={fileInput} type="file" accept="application/pdf,.pdf" className="sr-only" aria-label="Choose the PDF file" onChange={(event) => void uploadPdf(event.target.files?.[0])} />
               <Button type="button" size="sm" variant="secondary" className="mt-2" disabled={busy === "pdf"} onClick={() => fileInput.current?.click()}>
                 <FileUp /> {busy === "pdf" ? "Reading the PDF…" : "Upload PDF"}
@@ -245,9 +243,7 @@ export function SourceDetailsDialog({
           {isVideo && resource.status !== "ready" && (
             <section aria-label="Add a transcript" className="rounded-md border border-subtle p-3">
               <p className="text-body-sm text-foreground">Add a transcript yourself to search what is said.</p>
-              <p className="text-meta text-muted-foreground">
-                On YouTube, open the video&apos;s description and choose “Show transcript”, then copy it here — or choose a .vtt, .srt or .txt caption file. It stays on this device.
-              </p>
+              <p className="text-meta text-muted-foreground">On YouTube: description → “Show transcript”, then copy it here. Or choose a .vtt, .srt or .txt file.</p>
               <Textarea className="mt-2 min-h-20 text-body-sm" value={transcript} onChange={(event) => setTranscript(event.target.value)} aria-label="Transcript text" placeholder={"0:00\nIn October 1962…"} />
               <div className="mt-2 flex gap-2">
                 <Button type="button" size="sm" variant="secondary" disabled={!transcript.trim() || busy === "transcript"} onClick={() => void addTranscript(transcript)}>

@@ -71,7 +71,7 @@ describe("OAuthConsent", () => {
     )
     const user = userEvent.setup()
     render(<OAuthConsent />)
-    expect(await screen.findByText(/None of your workspaces is synced/)).toBeTruthy()
+    expect(await screen.findByText(/None of your projects is synced/)).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "Deny" }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://claude.ai/api/mcp/auth_callback?error=access_denied"))
     expect(posts[0]).toMatchObject({ decision: "deny" })

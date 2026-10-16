@@ -15,10 +15,7 @@ export function AccentSection() {
 
   return (
     <div>
-      <SectionHeading
-        title="Accent"
-        description="An accent color independent from the theme — drives buttons, links, selected navigation, focus rings, toggles, and graph selection."
-      />
+      <SectionHeading title="Accent" />
 
       <SectionStack>
         <FieldRow label="Use theme's accent" description="Turn off to pick your own color below.">
