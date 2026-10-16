@@ -1381,14 +1381,16 @@ async function captureConversation({ tabId, workspaceId }) {
   const checked = checkPageRead(read);
   // Counts and reasons only: what the conversation says is never logged.
   if (!checked.ok) {
-    log("capture-read-refused", { reason: checked.error });
+    // A null result is Chrome swallowing an error thrown in the page; `detail` is the reader's own error, never page text.
+    log("capture-read-refused", { reason: checked.error, provider: aiProviderOf(tab.url), detail: typeof read?.detail === "string" ? read.detail : read == null ? "no result" : undefined });
     return { ok: false, error: checked.error };
   }
-  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length });
+  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length, partial: checked.partial });
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
   const answer = await askHubblePage("capture", { workspaceId, capture: { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns } }, { openIfMissing: true });
   // The page saved what was on screen; the popup says when that was not the whole chat.
-  return answer?.ok && checked.olderNotLoaded ? { ...answer, result: { ...answer.result, olderNotLoaded: true } } : answer;
+  if (!answer?.ok || !(checked.olderNotLoaded || checked.partial)) return answer;
+  return { ...answer, result: { ...answer.result, ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) } };
 }
 
 async function insertContext({ tabId, text }) {
