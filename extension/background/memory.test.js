@@ -154,12 +154,56 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
     expect(pageRequests).toEqual([]);
   });
 
+  it("says read-failed, not that Chrome blocked the page, when the reader itself throws", async () => {
+    const broken = { title: "", querySelectorAll: () => { throw new TypeError("boom"); } };
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(broken, CHATGPT_URL, 0) }]);
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "read-failed" });
+    expect(pageRequests).toEqual([]);
+  });
+
   it("tells an empty conversation apart from one it cannot read", async () => {
     const empty = document.implementation.createHTMLDocument("ChatGPT");
     empty.body.innerHTML = `<main><div data-thread-find-target="conversation"><div></div></div></main>`;
     chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(empty, CHATGPT_URL, 0) }]);
     expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "empty-conversation" });
     expect(pageRequests).toEqual([]);
+  });
+});
+
+describe("Save to Hubble on Claude, Gemini and Perplexity, signed in (2026-10-16)", () => {
+  /** executeScript runs the real reader against a page reduced to the app's structure. */
+  function serve(url, title, html) {
+    const doc = document.implementation.createHTMLDocument(title);
+    doc.body.innerHTML = html;
+    chrome.tabs.get.mockImplementation(async (id) => fakeTab({ id, url, title }));
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(doc, url, 0) }]);
+  }
+  const claudeRow = (index, fromTail, inner) => `<div data-testid="transcript-row" data-index="${index}" data-perf-row-from-tail="${fromTail}">${inner}</div>`;
+  const claudeReply = (text) => `<div data-testid="assistant-message"><h2 class="sr-only">Claude responded: ${text}</h2><div data-find-omitted="" data-state="closed">Thought for 2 seconds</div><div data-perf-reply-text="" class="standard-markdown"><p>${text}</p></div></div>`;
+
+  it.each([
+    ["Claude", "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", "Thesis feedback - Claude", claudeRow(0, 1, `<div data-testid="user-message"><p>What caused WW1?</p></div>`) + claudeRow(1, 0, claudeReply("Militarism and alliances."))],
+    ["Gemini", "https://gemini.google.com/app/ed0431c2728ddb16", "Causes of WW1 - Google Gemini", `<user-query><div class="query-text"><h5 class="cdk-visually-hidden">You said What caused WW1?</h5><p>What caused WW1?</p></div></user-query><model-response><message-content><div class="markdown"><p>Militarism and alliances.</p></div></message-content></model-response>`],
+    ["Perplexity", "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0", "What caused WW1?", `<div data-workflow-entry="0"><div data-message-bubble="right"><p>What caused WW1?</p></div></div><div data-workflow-final-text=""><div class="prose"><p>Militarism and alliances.</p></div></div>`],
+  ])("%s: hands Hubble the question and the reply, at the conversation's own address", async (_name, url, title, html) => {
+    serve(url, title, html);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added" } });
+    expect(answer.result).not.toHaveProperty("partial");
+    expect(pageRequests).toEqual([
+      expect.objectContaining({
+        kind: "capture",
+        args: { workspaceId: "ws-history", capture: { url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] } },
+      }),
+    ]);
+  });
+
+  it("saves what a long Claude chat has on the page and tells the popup it was only part", async () => {
+    serve("https://claude.ai/chat/ad3e4ff2-7bbc-49c2-aa96-f24622d1409c", "Long chat - Claude", claudeRow(13, 1, `<div data-testid="user-message"><p>And then?</p></div>`) + claudeRow(14, 0, claudeReply("Then it ended.")));
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", partial: true } });
+    expect(answer.result).not.toHaveProperty("olderNotLoaded");
+    expect(pageRequests).toHaveLength(1);
   });
 });
 
