@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { openExternal, saveTextFile } from "./index";
+import { openExternal, saveFile, saveTextFile } from "./index";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
@@ -62,6 +62,23 @@ describe("platform dispatch", () => {
     expect(openSpy).not.toHaveBeenCalled();
     expect(assignSpy).not.toHaveBeenCalled();
   });
+
+  it("saves an uploaded file's bytes: a download on web, the raw-bytes Rust command on desktop", async () => {
+    const bytes = new Uint8Array([37, 80, 68, 70])
+    setDesktop(false)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+    expect(await saveFile("Lecture 4.pdf", bytes, "application/pdf")).toBe(true)
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(invoke).not.toHaveBeenCalled()
+
+    setDesktop(true)
+    invoke.mockResolvedValue(true)
+    expect(await saveFile("Lecture 4.pdf", bytes, "application/pdf")).toBe(true)
+    // The bytes are the IPC body itself (never a JSON array of numbers); the name rides in a header, never a path.
+    expect(invoke).toHaveBeenCalledWith("export_file", bytes, { headers: { "x-file-name": "Lecture%204.pdf" } })
+    invoke.mockRejectedValue(new Error("disk full"))
+    expect(await saveFile("Lecture 4.pdf", bytes, "application/pdf")).toBe(false)
+  })
 
   it("reports a cancelled desktop save as `false` rather than throwing", async () => {
     setDesktop(true);

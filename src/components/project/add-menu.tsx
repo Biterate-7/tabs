@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AppWindow, ChevronDown, ClipboardPaste, FileUp, Link2, Loader2, NotebookPen, Plus } from "lucide-react"
+import { AppWindow, ChevronDown, ClipboardPaste, FileInput, FileUp, Link2, Loader2, NotebookPen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -34,8 +34,9 @@ function formatKeys(shortcut: string): string {
  *     + Add ▾
  *       Paste a conversation      (from any AI app)
  *       Write a note
- *       Import a file             (a ChatGPT or Claude export, Markdown, text)
+ *       Import AI chats           (a ChatGPT or Claude export, Markdown, text)
  *       ─────
+ *       Upload files              (PDF, Word, Markdown, text — read on this device)
  *       Browser tabs
  *       Link
  *
@@ -43,7 +44,8 @@ function formatKeys(shortcut: string): string {
  * shell's handleAddSources): the same duplicate rule, the same reading in
  * the background, the same toast with Undo. Conversations and notes go
  * through the capture dialog and the one conversation save
- * (lib/conversations/save.ts). Saving the open conversation in an AI app is
+ * (lib/conversations/save.ts). Uploaded files go through the upload dialog
+ * and the one file pipeline (hooks/use-file-uploads.ts). Saving the open conversation in an AI app is
  * Hubble for Chrome's job, from that page. Dragging a link or the address bar
  * onto the page still works too; it just isn't something anyone has to read
  * about first.
@@ -53,6 +55,7 @@ export function AddMenu({
   onAdd,
   onOpenLink,
   onCapture,
+  onUpload,
   quickAdd,
   size = "lg",
   variant = "default",
@@ -63,6 +66,8 @@ export function AddMenu({
   onOpenLink: () => void
   /** Opens the capture dialog (paste a conversation, write a note, import a file). Absent: those entries are not offered. */
   onCapture?: (mode: CaptureMode) => void
+  /** Opens the Upload files dialog. Absent: not offered. */
+  onUpload?: () => void
   /** Present once Hubble for Chrome has said it is here (see use-extension-quick-add). */
   quickAdd?: { shortcut: string }
   size?: "sm" | "default" | "lg"
@@ -89,10 +94,15 @@ export function AddMenu({
                 <NotebookPen /> Write a note
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onCapture("import")}>
-                <FileUp /> Import a file
+                <FileInput /> Import AI chats
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
+          )}
+          {onUpload && (
+            <DropdownMenuItem onClick={onUpload}>
+              <FileUp /> Upload files
+            </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => setTabsOpen(true)}>
             <AppWindow /> Browser tabs

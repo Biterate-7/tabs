@@ -32,4 +32,7 @@ export type PlatformAdapter = {
    * normal outcome the UI reports differently from a failure.
    */
   saveTextFile(filename: string, text: string, mimeType: string): Promise<boolean>;
+
+  /** The same for bytes — an uploaded file's original, saved back out. */
+  saveFile(filename: string, bytes: Uint8Array, mimeType: string): Promise<boolean>;
 };

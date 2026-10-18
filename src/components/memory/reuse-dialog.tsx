@@ -149,6 +149,31 @@ export function ReuseDialog({
               <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-tertiary" />
               <Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Find in ${name}…`} className="pl-7" />
             </label>
+            {shown.length > 1 && (
+              <div className="-mb-1 flex items-center justify-between">
+                <span className="text-meta text-tertiary">{refs.length > 0 ? `${refs.length} chosen` : "Choose what to include"}</span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    const keys = shown.map((item) => refKey(item.ref))
+                    const all = keys.every((key) => chosen.has(key))
+                    setChosen((current) => {
+                      const next = new Set(current)
+                      for (const key of keys) {
+                        if (all) next.delete(key)
+                        else next.add(key)
+                      }
+                      return next
+                    })
+                    setCopy({ status: "idle" })
+                  }}
+                >
+                  {shown.every((item) => chosen.has(refKey(item.ref))) ? "Select none" : "Select all"}
+                </Button>
+              </div>
+            )}
             <ul className="flex max-h-72 min-h-24 flex-col overflow-y-auto rounded-md border border-subtle" aria-label={`Items in ${name}`}>
               {shown.length === 0 ? (
                 <li className="p-3 text-body-sm text-muted-foreground">{items.length === 0 ? `Nothing is saved in ${name} yet.` : "Nothing here matches."}</li>
@@ -165,7 +190,7 @@ export function ReuseDialog({
                           <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-meta text-tertiary">
                             {item.provider ? <ProviderBadge provider={item.provider} /> : null}
                             <span>{KNOWLEDGE_TYPE_LABEL[item.type]}</span>
-                            {!item.hasText && <span>link only</span>}
+                            {!item.hasText && <span>{item.fileName ? (item.status === "processing" ? "still reading" : "no text") : "link only"}</span>}
                           </span>
                         </span>
                       </label>

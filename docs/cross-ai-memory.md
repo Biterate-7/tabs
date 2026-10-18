@@ -32,6 +32,7 @@ what it already held plus one new list.
 | AI conversation without an address (a paste) | `ProjectNote` of kind `conversation` (`lib/notes/notes.ts`) | turns, or the whole text when it could not be split |
 | Note, excerpt | `ProjectNote` of kind `note` / `excerpt` (title, tags, AI app, source address) | text in the content store |
 | Web page, PDF, video, document | `Tab.resource` (unchanged) | text, pages, transcript |
+| Uploaded file (PDF, Word, Markdown, text) | `ProjectNote` of kind `file`, with `file`: name, format, size, status, pages | pages (PDF) or text; the original bytes in the `files` store ([project-context.md §5a](./project-context.md)) |
 
 - `Workspace.notes` is **device-local**, like the brief and every
   `resource`: sync carries links and titles, never saved text
@@ -96,7 +97,15 @@ context for any AI app. Pure: no clock, no storage.
   the bundle says it is reference material, not instructions.
 - **Bounded**: a budget (Short 5k · Standard 12k · Long 30k characters) shared
   across items, passages matching the person's request first, a question kept
-  with its answer. What does not fit is still named under *Also relevant*.
+  with its answer. With a request, the items that mention it share the room;
+  one that doesn't is quoted only from its beginning and says it doesn't
+  mention the request. What does not fit is still named under *Also relevant*.
+- **Grounded in uploaded files**: an uploaded file is quoted under its name
+  ("uploaded file “lecture-4.pdf”, 12 pages"), PDF passages marked `(p. N)`,
+  and the bundle asks the AI to name the document and page it relies on and
+  to say when the documents don't answer something. A file Hubble couldn't
+  read (a scan, still reading, damaged) is named with the reason and nothing
+  from it is quoted — the AI is never handed a file as if it had been read.
 
 The **Use in AI chat** dialog (`components/memory/reuse-dialog.tsx`) shows the
 whole text, editable, before anything leaves Hubble, and copies it. In Hubble

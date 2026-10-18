@@ -18,9 +18,9 @@ import { DESKTOP_IMPORT_REQUESTED_EVENT, type DesktopImportOutcome } from "@/lib
  * enforced on the Rust side, below the IPC boundary.
  */
 
-async function invokeCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
+async function invokeCommand<T>(command: string, args: Record<string, unknown> | Uint8Array, headers?: Record<string, string>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>(command, args);
+  return headers ? invoke<T>(command, args, { headers }) : invoke<T>(command, args);
 }
 
 /**
@@ -63,6 +63,15 @@ export const desktopPlatform: PlatformAdapter = {
         suggestedName: filename,
         contents: text,
       });
+    } catch {
+      return false;
+    }
+  },
+
+  /** The bytes travel as the raw IPC body (not a JSON array); the name rides in a header. See `export_file`. */
+  async saveFile(filename: string, bytes: Uint8Array): Promise<boolean> {
+    try {
+      return await invokeCommand<boolean>("export_file", bytes, { "x-file-name": encodeURIComponent(filename) });
     } catch {
       return false;
     }

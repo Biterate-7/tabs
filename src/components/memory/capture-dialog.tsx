@@ -39,7 +39,7 @@ const NOT_FROM_AI = "none"
  *
  *   Paste a conversation   from any AI app; split into turns when it says who spoke
  *   Write a note           their own words, or a passage they want to keep
- *   Import a file          a ChatGPT or Claude export (conversations.json), or Markdown/text
+ *   Import AI chats        a ChatGPT or Claude export (conversations.json), or Markdown/text
  *
  * Every path previews what will be saved before it is, and reports what
  * actually happened after — added, updated, already there, or why not.
@@ -226,7 +226,7 @@ export function CaptureDialog({
             options={[
               { value: "conversation", label: "Paste a conversation" },
               { value: "note", label: "Write a note" },
-              { value: "import", label: "Import a file" },
+              { value: "import", label: "Import AI chats" },
             ]}
           />
 

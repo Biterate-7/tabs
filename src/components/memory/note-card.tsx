@@ -1,17 +1,17 @@
 "use client"
 
-import { MessageSquareShare, MessagesSquare, MoreHorizontal, NotebookPen, Quote, Trash2 } from "lucide-react"
+import { FileText, MessageSquareShare, MessagesSquare, MoreHorizontal, NotebookPen, Quote, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ProviderBadge } from "./provider-mark"
-import { KNOWLEDGE_TYPE_LABEL } from "@/lib/memory/items"
+import { NOTE_KIND_LABEL } from "@/lib/memory/items"
 import { formatRelativeTime } from "@/lib/time-format"
 import { cn } from "@/lib/utils"
 import type { ProjectNote } from "@/lib/notes/notes"
 
-const ICON = { note: NotebookPen, excerpt: Quote, conversation: MessagesSquare } as const
+const ICON = { note: NotebookPen, excerpt: Quote, conversation: MessagesSquare, file: FileText } as const
 
 /**
  * One project note in the Knowledge Centre — a note, a kept passage, or an
@@ -50,7 +50,7 @@ export function NoteCard({
           </button>
           <p className="flex min-w-0 items-center gap-1 truncate text-meta text-tertiary">
             {note.provider ? <ProviderBadge provider={note.provider} /> : null}
-            <span className="shrink-0">{note.provider ? "· " : ""}{KNOWLEDGE_TYPE_LABEL[note.kind]}</span>
+            <span className="shrink-0">{note.provider ? "· " : ""}{NOTE_KIND_LABEL[note.kind]}</span>
             {note.turns ? <span className="shrink-0">· {note.turns} turns</span> : null}
             {added ? <span className="shrink-0">· {added}</span> : null}
           </p>

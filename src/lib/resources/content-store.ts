@@ -30,11 +30,21 @@ import type { ResourceContent, ResourceContentSummary } from "./types";
  *
  * Keys are item ids: a source's tab id, or a project note's id (both minted
  * by lib/id.ts, so they never collide).
+ *
+ * ## Originals
+ *
+ * An uploaded file (lib/files) keeps its original bytes in a second object
+ * store, `files`, under the same key as its text. Every lifecycle path here
+ * — delete, prune, move — covers both stores, so a file's original follows
+ * its item exactly as its text does, and a removed item never leaves bytes
+ * behind. Bytes are stored as an ArrayBuffer (structured-cloneable in every
+ * browser and the desktop webview), never in localStorage.
  */
 
 const DB_NAME = "hubble-resources";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "content";
+const FILES = "files";
 const PROJECT_INDEX = "project";
 
 export type StoredContent = ResourceContent & {
@@ -45,7 +55,20 @@ export type StoredContent = ResourceContent & {
   tabId: string;
 };
 
+/** An uploaded file's original. */
+export type StoredFile = {
+  key: string;
+  project: string;
+  workspaceId: string;
+  itemId: string;
+  bytes: ArrayBuffer;
+  name: string;
+  type: string;
+  storedAt: number;
+};
+
 const memory = new Map<string, StoredContent>();
+const memoryFiles = new Map<string, StoredFile>();
 
 function owner(): string {
   return getStorageNamespace() ?? "_";
@@ -78,6 +101,9 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "key" }).createIndex(PROJECT_INDEX, "project", { unique: false });
       }
+      if (!db.objectStoreNames.contains(FILES)) {
+        db.createObjectStore(FILES, { keyPath: "key" }).createIndex(PROJECT_INDEX, "project", { unique: false });
+      }
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -96,13 +122,13 @@ function openDb(): Promise<IDBDatabase> {
   return opening;
 }
 
-function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
+function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T> | void, storeName: typeof STORE | typeof FILES = STORE): Promise<T | undefined> {
   return openDb().then(
     (db) =>
       new Promise<T | undefined>((resolve, reject) => {
-        const tx = db.transaction(STORE, mode);
+        const tx = db.transaction(storeName, mode);
         let result: T | undefined;
-        const request = work(tx.objectStore(STORE));
+        const request = work(tx.objectStore(storeName));
         if (request) request.onsuccess = () => (result = request.result);
         tx.oncomplete = () => resolve(result);
         tx.onerror = () => reject(tx.error);
@@ -233,24 +259,62 @@ export async function getContents(workspaceId: string, tabIds: readonly string[]
   return out;
 }
 
+/** Forgets these items' text and, for uploaded files, their originals. */
 export async function deleteContent(workspaceId: string, tabIds: readonly string[]): Promise<void> {
   if (tabIds.length === 0) return;
   const keys = tabIds.map((tabId) => contentKey(workspaceId, tabId));
   if (!contentStorePersistent()) {
-    for (const key of keys) memory.delete(key);
+    for (const key of keys) {
+      memory.delete(key);
+      memoryFiles.delete(key);
+    }
     return;
   }
-  await run("readwrite", (store) => {
-    for (const key of keys) store.delete(key);
-  });
+  for (const storeName of [STORE, FILES] as const) {
+    await run(
+      "readwrite",
+      (store) => {
+        for (const key of keys) store.delete(key);
+      },
+      storeName
+    );
+  }
+}
+
+/** Item ids of one project that have an original stored. Keys only — never the bytes. */
+async function projectFileIds(workspaceId: string): Promise<string[]> {
+  const project = projectKey(workspaceId);
+  if (!contentStorePersistent()) return [...memoryFiles.values()].filter((record) => record.project === project).map((record) => record.itemId);
+  const keys = (await run<IDBValidKey[]>("readonly", (store) => store.index(PROJECT_INDEX).getAllKeys(IDBKeyRange.only(project)) as IDBRequest<IDBValidKey[]>, FILES)) ?? [];
+  const prefix = `${project}|`;
+  return keys.filter((key): key is string => typeof key === "string" && key.startsWith(prefix)).map((key) => key.slice(prefix.length));
 }
 
 /** Removes stored content for tabs a project no longer has — after a removal, an undo window, or a deleted project. */
 export async function pruneProjectContent(workspaceId: string, keepTabIds: ReadonlySet<string>): Promise<number> {
   const stored = await getProjectContents(workspaceId);
-  const stale = [...stored.keys()].filter((tabId) => !keepTabIds.has(tabId));
+  const ids = new Set([...stored.keys(), ...(await projectFileIds(workspaceId))]);
+  const stale = [...ids].filter((tabId) => !keepTabIds.has(tabId));
   await deleteContent(workspaceId, stale);
   return stale.length;
+}
+
+/**
+ * Keeps an uploaded file's original bytes, under its item's key. Throws when
+ * the device refuses (out of space, storage blocked) — the caller adds
+ * nothing then, so no item claims a file it doesn't have.
+ */
+export async function putFile(workspaceId: string, itemId: string, bytes: ArrayBuffer, info: { name: string; type: string; now: number }): Promise<void> {
+  const record: StoredFile = { key: contentKey(workspaceId, itemId), project: projectKey(workspaceId), workspaceId, itemId, bytes, name: info.name, type: info.type, storedAt: info.now };
+  if (!contentStorePersistent()) memoryFiles.set(record.key, record);
+  else await run("readwrite", (store) => void store.put(record), FILES);
+}
+
+/** An uploaded file's original, or `undefined` when this device doesn't have it. */
+export async function getFile(workspaceId: string, itemId: string): Promise<{ bytes: ArrayBuffer; name: string; type: string } | undefined> {
+  const key = contentKey(workspaceId, itemId);
+  const record = contentStorePersistent() ? await run<StoredFile>("readonly", (store) => store.get(key) as IDBRequest<StoredFile>, FILES) : memoryFiles.get(key);
+  return record ? { bytes: record.bytes, name: record.name, type: record.type } : undefined;
 }
 
 /**
@@ -261,8 +325,10 @@ export async function pruneProjectContent(workspaceId: string, keepTabIds: Reado
 export async function moveContent(fromWorkspaceId: string, toWorkspaceId: string, tabId: string): Promise<boolean> {
   if (fromWorkspaceId === toWorkspaceId) return false;
   const content = await getContent(fromWorkspaceId, tabId);
-  if (!content) return false;
-  await putContent(toWorkspaceId, tabId, content);
+  const file = await getFile(fromWorkspaceId, tabId);
+  if (!content && !file) return false;
+  if (content) await putContent(toWorkspaceId, tabId, content);
+  if (file) await putFile(toWorkspaceId, tabId, file.bytes, { name: file.name, type: file.type, now: Date.now() });
   await deleteContent(fromWorkspaceId, [tabId]);
   return true;
 }
@@ -281,27 +347,38 @@ export async function pruneContentExcept(present: ReadonlyMap<string, ReadonlySe
   for (const [workspaceId, tabIds] of present) for (const tabId of tabIds) keep.add(contentKey(workspaceId, tabId));
   if (!contentStorePersistent()) {
     let removed = 0;
-    for (const key of [...memory.keys()]) {
-      if (key.startsWith(prefix) && !keep.has(key)) {
-        memory.delete(key);
-        removed += 1;
+    for (const records of [memory, memoryFiles] as Map<string, unknown>[]) {
+      for (const key of [...records.keys()]) {
+        if (key.startsWith(prefix) && !keep.has(key)) {
+          records.delete(key);
+          removed += 1;
+        }
       }
     }
     return removed;
   }
-  const keys = ((await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))) ?? []).filter(
-    (key): key is string => typeof key === "string" && !keep.has(key)
-  );
-  if (keys.length > 0) {
-    await run("readwrite", (store) => {
-      for (const key of keys) store.delete(key);
-    });
+  let removed = 0;
+  for (const storeName of [STORE, FILES] as const) {
+    const keys = ((await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)), storeName)) ?? []).filter(
+      (key): key is string => typeof key === "string" && !keep.has(key)
+    );
+    if (keys.length > 0) {
+      await run(
+        "readwrite",
+        (store) => {
+          for (const key of keys) store.delete(key);
+        },
+        storeName
+      );
+    }
+    removed += keys.length;
   }
-  return keys.length;
+  return removed;
 }
 
 /** For tests: forget the memory fallback and the open connection. */
 export function resetContentStoreForTests(): void {
   memory.clear();
+  memoryFiles.clear();
   opening = null;
 }

@@ -202,9 +202,10 @@ not do it. The tab strip's own context menu (`chrome.contextMenus`,
 `contexts: ["tab"]`) is the closest documented interaction with an actual tab.
 
 A dropped **file** has no web address, and a source is always openable (sync,
-the opener and the extension all depend on it), so a dropped PDF is attached
-to the PDF source waiting for it (the one asking for its file, or the one whose
-file name matches); otherwise Hubble explains how. Mobile has no drag; *Add
+the opener and the extension all depend on it), so a file is never a source:
+a single dropped PDF whose name matches a PDF link waiting for its file
+completes that link; any other dropped file is **uploaded** to the project
+(§5a) and the Upload files dialog opens to show its progress. Mobile has no drag; *Add
 source* is always available and keyboard-accessible.
 
 ## 5. Reading sources
@@ -253,6 +254,59 @@ Text is untrusted. It is stored as-is, and wherever it leaves Hubble it is
 framed as quoted reference material: in a context bundle it is a quotation
 under its origin (cross-ai-memory.md), and the MCP tools that let ChatGPT,
 Claude or Gemini read a project carry a fixed provenance line.
+
+## 5a. Uploaded files
+
+**+ Add → Upload files** (or a drop anywhere on the project, or *Upload files*
+in an empty project) adds documents from the device: PDF, Word (.docx),
+Markdown, text, CSV, JSON and HTML, several at once, up to 25 MB each
+(10 MB for text formats), 20 per batch.
+
+**Model — not a second one.** An uploaded file is a *project note* of kind
+`file` (`lib/notes/notes.ts`): knowledge with no web address, exactly what
+notes already are. So it is device-local like every note (sync carries
+links and titles, never saved text or files), listed with the sources
+(`lib/memory/items.ts` maps it to type `pdf` or `document`), searched,
+chosen and quoted through the same paths, and reached by the extension's
+"Use Hubble in this chat" with no protocol change. `ProjectNote.file` holds
+the name (cleaned: no folders, no control or bidi characters), format, size,
+status, PDF page count and the error in words.
+
+**Storage.** The original bytes are kept in the content store's second
+object store, `files` (IndexedDB `hubble-resources`, version 2), under the
+item's key `<account>|<project>|<item>`; the extracted text goes in
+`content` beside it. Every lifecycle path — Remove after its Undo window,
+the once-per-load orphan sweep, deleting a project, a move — covers both
+stores, so an original never outlives its item. Each project keeps its own
+copy: the same file uploaded to two projects is two items, and removing it
+from one never touches the other. The same bytes twice in one project are
+one item ("Already in Physics HL"). Nothing is written to localStorage, and
+nothing is uploaded to a server.
+
+**Reading** happens in the browser or the desktop webview
+(`lib/files/extract.ts`): PDFs with the existing unpdf reader, page by page;
+DOCX by reading `word/document.xml` out of the zip with the platform's own
+`DecompressionStream` (`lib/files/docx.ts` — no new dependency; deleted
+revisions and field codes left out, tables kept as rows); text formats
+decoded by BOM, then strict UTF-8, then Windows-1252, refusing binary;
+HTML through `readHtml`. The format is confirmed from the bytes: a `.pdf`
+that isn't one, a renamed `.doc`, a damaged or password-protected file is
+*Couldn't read* with the reason. A scan (no text layer) is *Saved · No text
+found — this PDF may be a scan* — Hubble has no OCR and never calls it ready.
+Zip bombs stop at 40 MB unpacked.
+
+**States**, the same words as sources: *Adding…* (keeping the original),
+*Reading…*, ready (says nothing), *Saved · why*, *Couldn't read · why* with
+*Try again* only when trying again could help. The original is written
+before the item exists and the text before the item says ready. A reading
+cut short by a reload is picked up again from the kept original, at most
+three times in all, then says it was interrupted.
+
+**Reader and actions.** A file opens in a reader that shows its text page by
+page (as text, never markup); a search hit opens it at its page. *Download
+original* gives the file back — a download on the web, a native Save dialog
+in Hubble Desktop (`export_file`: the bytes as the raw IPC body, a suggested
+name in a header, never a path).
 
 ## 6. Searching sources
 
@@ -312,6 +366,12 @@ On an AI app's conversation page the popup also offers **Save to Hubble** and
   answered with `Access-Control-Allow-Origin: *`). Until this route is
   deployed to production, desktop sources stay partial/failed with a reason —
   never a fake "ready". PDF uploads and transcripts work offline.
+- **Uploaded files** work the same on both, offline: the file picker is a
+  plain `<input type="file">`, reading runs in the webview, and IndexedDB
+  persists across desktop restarts. Desktop disables Tauri's own drop handler
+  (`disable_drag_drop_handler`) so a file dragged from Explorer reaches the
+  page; a drop the page doesn't take would be a `file:` navigation, which
+  the window's navigation guard refuses.
 - No analytics. The local loop log (`hubbleLoopSummary()`) counts
   `project_created`, `resource_added/ready/failed`, `project_returned` and
   the capture/find/reuse milestones, never content.
@@ -326,7 +386,9 @@ npx vitest run src/components/project      # project page: drop, add source, sta
 npx vitest run extension                   # extension incl. add-to-project.test.js
 ```
 
-- PDF tests parse a real PDF built byte by byte (`lib/resources/__fixtures__/pdf.ts`).
+- PDF tests parse a real PDF built byte by byte (`lib/resources/__fixtures__/pdf.ts`);
+  DOCX tests read real zip archives built the same way (`lib/files/__fixtures__/docx.ts`).
+- Uploaded files: `npx vitest run src/lib/files src/hooks/use-file-uploads.test.tsx src/lib/memory/files-context.test.ts src/components/project/project-files.test.tsx`.
 - Live browser QA used system Chrome via puppeteer: drops are delivered with
   CDP `Input.dispatchDragEvent` (Chrome's own drag pipeline into the page) and
   the extension is loaded unpacked (`Extensions.loadUnpacked`).

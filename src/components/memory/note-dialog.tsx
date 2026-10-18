@@ -11,7 +11,7 @@ import { ProviderBadge } from "./provider-mark"
 import { useMemoryActions } from "./memory-actions"
 import { getContent } from "@/lib/resources/content-store"
 import { openTab } from "@/lib/browser/open-tab"
-import { KNOWLEDGE_TYPE_LABEL } from "@/lib/memory/items"
+import { NOTE_KIND_LABEL } from "@/lib/memory/items"
 import type { ProjectNote } from "@/lib/notes/notes"
 import type { ResourceContent } from "@/lib/resources/types"
 
@@ -20,6 +20,7 @@ const ORIGIN_WORDS: Record<ProjectNote["origin"], string> = {
   paste: "Pasted",
   import: "Imported from a file",
   capture: "Saved from a page",
+  upload: "Uploaded",
 }
 
 /**
@@ -105,7 +106,7 @@ export function NoteDialog({
           <DialogDescription className="flex flex-wrap items-center gap-x-1.5">
             {note.provider ? <ProviderBadge provider={note.provider} /> : null}
             {note.provider ? "·" : null}
-            <span>{KNOWLEDGE_TYPE_LABEL[note.kind]}</span>
+            <span>{NOTE_KIND_LABEL[note.kind]}</span>
             <span>· {note.kind === "conversation" ? captureLine(note.origin === "import" ? "export" : note.origin === "capture" ? "page" : "paste", note.createdAt) : `${ORIGIN_WORDS[note.origin]} · ${new Date(note.createdAt).toLocaleDateString()}`}</span>
           </DialogDescription>
         </DialogHeader>

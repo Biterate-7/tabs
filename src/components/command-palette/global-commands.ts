@@ -74,7 +74,7 @@ export function buildGlobalCommands(
       ? [
           { id: "capture-conversation", label: `Paste a conversation into ${current.name}`, group: "Memory" as const, icon: ClipboardPaste, onSelect: () => actions.capture?.("conversation"), keywords: ["save", "chatgpt", "claude", "gemini", "perplexity", "chat"] },
           { id: "capture-note", label: `Write a note in ${current.name}`, group: "Memory" as const, icon: NotebookPen, onSelect: () => actions.capture?.("note"), keywords: ["excerpt", "decision", "idea"] },
-          { id: "capture-import", label: `Import a file into ${current.name}`, group: "Memory" as const, icon: FileUp, onSelect: () => actions.capture?.("import"), keywords: ["conversations.json", "export", "file"] },
+          { id: "capture-import", label: `Import AI chats into ${current.name}`, group: "Memory" as const, icon: FileUp, onSelect: () => actions.capture?.("import"), keywords: ["conversations.json", "export", "file"] },
         ]
       : []),
   ]

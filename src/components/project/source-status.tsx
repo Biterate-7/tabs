@@ -2,7 +2,7 @@
 
 import { AlertCircle, Check, CheckCircle2, Circle, FileText, Globe, Link2, Loader2, MessagesSquare, PlayCircle, Film, FileType2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { ResourceKind, TabResource } from "@/lib/resources/types"
+import type { ResourceKind, ResourceStatus, TabResource } from "@/lib/resources/types"
 
 /** One glyph per kind, so a list of sources reads at a glance. */
 export function SourceKindIcon({ kind, className }: { kind: ResourceKind; className?: string }) {
@@ -36,6 +36,11 @@ export function contentLine(resource: TabResource): string | undefined {
 export function SourceStatus({ resource, compact = false }: { resource: TabResource; compact?: boolean }) {
   const { status } = resource
   const detail = status === "ready" ? contentLine(resource) : status === "partial" || status === "failed" ? resource.error?.message : undefined
+  return <StatusLine status={status} {...(detail ? { detail } : {})} compact={compact} />
+}
+
+/** The status line itself, for anything read like a source (an uploaded file too). */
+export function StatusLine({ status, detail, compact = false }: { status: ResourceStatus; detail?: string; compact?: boolean }) {
   const label = { pending: "Waiting", processing: "Reading…", ready: "Ready", partial: "Saved", failed: "Couldn't read" }[status]
   const Icon = { pending: Circle, processing: Loader2, ready: CheckCircle2, partial: Check, failed: AlertCircle }[status]
   return (

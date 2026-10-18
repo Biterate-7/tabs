@@ -196,7 +196,7 @@ function SearchHitRow({
           <span>{item ? KNOWLEDGE_TYPE_LABEL[item.type] : "Saved tab"}</span>
           <span>· {projectName}</span>
           {hit.more > 0 && <span>· {hit.more} more match{hit.more === 1 ? "" : "es"}</span>}
-          {item && !item.hasText && <span>· link only</span>}
+          {item && !item.hasText && <span>· {item.fileName ? "no text" : "link only"}</span>}
         </span>
       </button>
       <div className="mt-2 flex shrink-0 gap-0.5">

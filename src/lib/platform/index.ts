@@ -34,6 +34,11 @@ export function saveTextFile(filename: string, text: string, mimeType: string): 
   return adapter().saveTextFile(filename, text, mimeType);
 }
 
+/** Saves bytes as a file (an uploaded file's original): a browser download on web, a native Save dialog on desktop. */
+export function saveFile(filename: string, bytes: Uint8Array, mimeType: string): Promise<boolean> {
+  return adapter().saveFile(filename, bytes, mimeType);
+}
+
 /**
  * Tabs sent straight from the Chrome extension to Hubble Desktop
  * (src-tauri/src/import_bridge.rs). `undefined` on the web, where the
