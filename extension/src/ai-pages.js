@@ -72,13 +72,17 @@ export function isConversationUrl(url) {
  * Reads the conversation on screen. Runs in the page.
  * Resolves to { ok: true, provider, url, title, turns: [{ role, text }], truncated }
  * (plus `olderNotLoaded: true` when the app says earlier messages are still
- * to load) or { ok: false, reason }:
+ * to load, and `partial: true` when the app keeps only the messages near the
+ * screen on the page — Claude and Perplexity do for long chats, so no scroll
+ * position has them all) or { ok: false, reason }:
  *
  *   not-supported       not an AI app this reads
  *   no-messages         nothing here looks like the app's messages: its
  *                       layout changed, so the popup offers the paste fallback
  *   empty-conversation  the conversation is on screen but has no messages
  *                       (a new chat, or one that has not loaded)
+ *   read-failed         reading the page threw (`detail` says what, never
+ *                       the page's text)
  *
  * A page still rendering is read again until `waitMs` has passed before
  * either failure is given. Each read starts from nothing, so a retry never
@@ -119,6 +123,8 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     ".cdk-visually-hidden", ".sr-only", ".visually-hidden", '[class*="screen-reader"]',
     // ChatGPT: what its own Copy leaves out (code-block headers, turn separators), and its "You said:" / "ChatGPT said:" labels.
     '[data-markdown-copy="exclude"]', "h4[data-message-attribution]", "h4[data-conversation-role]",
+    // Gemini: a code block's header (its language name and buttons) — the name goes on the fence instead.
+    ".code-block-decoration",
   ].join(", ");
   const CODE = "[data-code-block], pre";
   const BLOCK = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DETAILS", "DIV", "DL", "DT", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION", "SUMMARY", "TABLE", "TBODY", "TFOOT", "THEAD", "TR", "UL"]);
@@ -140,7 +146,10 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       const editor = el.querySelector("[data-language]");
       const inner = el.matches("pre") ? el.querySelector("code") : editor || el.querySelector("pre code, code");
       const label = el.matches("pre") ? labelOf(el) : null;
-      const named = (inner && inner.getAttribute("data-language")) || (/(?:^|\s)language-([\w+#.-]+)/.exec((inner && inner.getAttribute("class")) || "") || [])[1] || (label ? label.textContent.trim().toLowerCase() : "");
+      const block = el.closest("code-block");
+      const header = block && block.querySelector(".code-block-decoration");
+      const headerName = header ? ((header.querySelector("span") || header).textContent || "").trim() : "";
+      const named = (inner && inner.getAttribute("data-language")) || (/(?:^|\s)language-([\w+#.-]+)/.exec((inner && inner.getAttribute("class")) || "") || [])[1] || (label ? label.textContent.trim().toLowerCase() : "") || (/^[A-Za-z][\w+#.-]{0,19}$/.test(headerName) ? headerName.toLowerCase() : "");
       let body;
       if (!inner) body = render(el, true);
       else {
@@ -247,6 +256,7 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     };
 
     let firstMessage;
+    let partial = false;
     if (provider === "chatgpt") {
       // ChatGPT has more than one layout live at once; the first that finds messages is the page's, and only it is read.
       const LAYOUTS = [
@@ -271,8 +281,16 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         if (found > 0) break;
       }
     } else if (provider === "claude") {
-      const matches = outermost([...page.querySelectorAll('[data-testid="user-message"], .font-claude-response, .font-claude-message')]);
-      for (const el of matches) push(el.matches('[data-testid="user-message"]') ? "user" : "assistant", [el]);
+      // Seen live signed in 2026-10-16: a reply is [data-testid="assistant-message"], its text in one or more
+      // [data-perf-reply-text] blocks between thinking and tool panels. Earlier layouts: .font-claude-response / -message.
+      const matches = outermost([...page.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"], .font-claude-response, .font-claude-message')]);
+      for (const el of matches) {
+        if (el.matches('[data-testid="user-message"]')) push("user", [el]);
+        else push("assistant", bodyOf(el, ["[data-perf-reply-text]", ".standard-markdown, .progressive-markdown"]));
+      }
+      // A long chat keeps only the rows near the screen mounted; each row knows its place in the whole chat.
+      const rows = [...page.querySelectorAll('[data-testid="transcript-row"]')];
+      partial = rows.length > 0 && (Math.min(...rows.map((row) => Number(row.getAttribute("data-index")) || 0)) > 0 || Math.min(...rows.map((row) => Number(row.getAttribute("data-perf-row-from-tail")) || 0)) > 0);
     } else if (provider === "gemini") {
       for (const el of outermost([...page.querySelectorAll("user-query, model-response")])) {
         const user = el.tagName.toLowerCase() === "user-query";
@@ -281,6 +299,10 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     } else {
       const matches = outermost([...page.querySelectorAll('[data-testid="query-text"], [class*="group/query"], [data-message-bubble="right"], .prose')]);
       for (const el of matches) push(el.classList.contains("prose") ? "assistant" : "user", [el]);
+      // Signed in (2026-10-16), a thread keeps only the turns near the screen mounted: opened at its end, it
+      // starts mid-way, with a reply and no question before it.
+      const entries = [...page.querySelectorAll("[data-workflow-entry]")].map((el) => Number(el.getAttribute("data-workflow-entry")) || 0);
+      partial = (entries.length > 0 && Math.min(...entries) > 0) || (turns.length > 0 && turns[0].role === "assistant");
     }
 
     if (turns.length === 0) {
@@ -297,25 +319,33 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     const thread = firstMessage && firstMessage.closest('[data-thread-find-target="conversation"]');
     const pending = thread && [...thread.querySelectorAll('[role="status"]')].some((status) => (status.textContent || "").trim() && status.compareDocumentPosition(firstMessage) & 4);
     if (pending) read.olderNotLoaded = true;
+    if (partial) read.partial = true;
     return read;
   }
 
   const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
   for (;;) {
-    const read = readOnce();
+    let read;
+    try {
+      read = readOnce();
+    } catch (err) {
+      // Chrome turns a thrown error into no result at all, which the popup could only call "Chrome didn't let
+      // Hubble read this page". Said as what it is instead, with the error (never the page's text) for the log.
+      return { ok: false, reason: "read-failed", provider, detail: `${(err && err.name) || "Error"}: ${(err && err.message) || ""}`.slice(0, 200) };
+    }
     if (read.ok || Date.now() >= deadline) return read;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
 
-const PAGE_READ_REASONS = new Set(["not-supported", "no-messages", "empty-conversation"]);
+const PAGE_READ_REASONS = new Set(["not-supported", "no-messages", "empty-conversation", "read-failed"]);
 
 /**
  * What `readConversationFromPage` sent back, re-checked in the extension
  * before it goes anywhere: the page is the AI app's, not ours, so a result
  * that is missing, malformed or carries a reason this file never gives is a
  * failure with a reason, never a save. Resolves to
- * { ok: true, title, turns, olderNotLoaded } or { ok: false, error }.
+ * { ok: true, title, turns, olderNotLoaded, partial } or { ok: false, error }.
  */
 export function checkPageRead(read) {
   if (!read || typeof read !== "object") return { ok: false, error: "page-unreadable" };
@@ -327,7 +357,7 @@ export function checkPageRead(read) {
     if (turn.text.trim()) turns.push({ role: turn.role, text: turn.text });
   }
   if (turns.length === 0) return { ok: false, error: "invalid" };
-  return { ok: true, title: typeof read.title === "string" ? read.title : "", turns, olderNotLoaded: read.olderNotLoaded === true };
+  return { ok: true, title: typeof read.title === "string" ? read.title : "", turns, olderNotLoaded: read.olderNotLoaded === true, partial: read.partial === true };
 }
 
 /**

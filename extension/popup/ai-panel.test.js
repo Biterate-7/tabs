@@ -15,6 +15,14 @@ describe("describeCapture", () => {
   it("explains a kept longer copy, and how to save the whole thread", () => {
     expect(describeCapture({ outcome: "kept", turns: 2 }, "History IA")).toMatch(/already has more of this conversation .* kept\. Scroll to the top/);
   });
+
+  it("says when only part of a long chat was on the page, without advice that scrolling would fix it", () => {
+    const saved = describeCapture({ outcome: "added", turns: 4, partial: true, olderNotLoaded: true }, "History IA");
+    expect(saved).toMatch(/^Saved to History IA · 4 turns\. Only the part of this chat loaded on the page was saved/);
+    expect(saved).toMatch(/data export or paste the conversation in Hubble/);
+    expect(saved).not.toMatch(/scroll/i);
+    expect(describeCapture({ outcome: "kept", partial: true }, "History IA")).not.toMatch(/scroll/i);
+  });
 });
 
 describe("what the popup accepts from the page", () => {
@@ -30,6 +38,7 @@ describe("what the popup accepts from the page", () => {
 
   it("falls back to a generic message for an unknown reason", () => {
     expect(captureError("not-a-conversation")).toMatch(/isn't one/);
+    expect(captureError("read-failed")).toMatch(/couldn't read this conversation.*Paste a conversation/);
     expect(captureError("something-new")).toBe("Something went wrong. Try again.");
   });
 });

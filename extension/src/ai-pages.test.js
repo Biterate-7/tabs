@@ -440,6 +440,101 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
   });
 });
 
+// Shapes seen in signed-in chats on 2026-10-16 (element structure only; the text here is made up).
+const claudeRow = (index, fromTail, inner) =>
+  `<div data-testid="transcript-row" data-index="${index}" data-perf-row-from-tail="${fromTail}"><div role="article"><div data-mini-claude-message=""><div data-transcript-row="">${inner}</div></div></div></div>`;
+const claudeQuestion = (text) =>
+  `<h2 data-find-omitted="" class="sr-only">You said: ${text}</h2><div data-user-scope=""><div data-turn-key="t" class="font-sans"><div class="font-normal break-words"><div><div><div data-testid="user-message" class="grid-cols-1"><div><p class="whitespace-pre-wrap break-words">${text}</p></div></div></div></div></div></div></div>`;
+const claudeReply = (...parts) =>
+  `<div data-reply-scope=""><div data-testid="assistant-message" data-turn-key="t" data-is-streaming="false"><h2 data-find-omitted="" class="sr-only">Claude responded: ${parts[0]}</h2><div>` +
+  `<div data-find-omitted="" data-state="closed"><div class="font-sans font-normal"><span>Thought for 4 seconds</span></div><span role="status" class="sr-only">Thinking</span></div>` +
+  parts.map((part) => `<div data-transcript-engine-root=""><div class="prose"><div data-perf-reply-text="" class="standard-markdown grid-cols-1"><p>${part}</p></div></div></div><div data-find-omitted="" data-state="closed"><div data-cds-row="">Searched the web</div></div>`).join("") +
+  `</div><div data-testid="message-actions"><button>Retry</button></div></div></div>`;
+
+describe("signed in (live markup, 2026-10-16)", () => {
+  const CLAUDE = "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044";
+
+  it("Claude: reads each question and reply, leaving out the spoken labels, thinking and tool panels", async () => {
+    const doc = page(
+      `<nav data-testid="sidebar"><a href="/chat/older">An older chat</a></nav>
+       <div data-testid="transcript-list">${claudeRow(0, 3, claudeQuestion("Is my thesis arguable?"))}${claudeRow(1, 2, claudeReply("Yes, mostly.", "Narrow the time frame."))}${claudeRow(2, 1, claudeQuestion("Which years?"))}${claudeRow(3, 0, claudeReply("1905 to 1914."))}</div>
+       <div data-testid="chat-input" contenteditable="true"></div>`,
+      "Thesis feedback - Claude"
+    );
+    const read = await readConversationFromPage(doc, CLAUDE);
+    expect(read).toEqual({
+      ok: true,
+      provider: "claude",
+      url: CLAUDE,
+      title: "Thesis feedback - Claude",
+      turns: [
+        { role: "user", text: "Is my thesis arguable?" },
+        { role: "assistant", text: "Yes, mostly.\n\nNarrow the time frame." },
+        { role: "user", text: "Which years?" },
+        { role: "assistant", text: "1905 to 1914." },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("Claude: a reply with no text block (an artifact only) is still read, from the whole message", async () => {
+    const doc = page(claudeRow(0, 1, claudeQuestion("Make me slides")) + claudeRow(1, 0, `<div data-testid="assistant-message"><div data-testid="frame-card-open">Slides deck</div></div>`));
+    expect((await readConversationFromPage(doc, CLAUDE)).turns).toEqual([
+      { role: "user", text: "Make me slides" },
+      { role: "assistant", text: "Slides deck" },
+    ]);
+  });
+
+  it("Claude: says only part of a long chat was on the page when earlier or later rows are not mounted", async () => {
+    const tail = page(claudeRow(13, 1, claudeQuestion("And then?")) + claudeRow(14, 0, claudeReply("Then it ended.")));
+    expect(await readConversationFromPage(tail, CLAUDE)).toMatchObject({ ok: true, partial: true });
+    const head = page(claudeRow(0, 5, claudeQuestion("Start here")) + claudeRow(1, 4, claudeReply("Started.")));
+    expect(await readConversationFromPage(head, CLAUDE)).toMatchObject({ ok: true, partial: true });
+    const whole = page(claudeRow(0, 1, claudeQuestion("Start here")) + claudeRow(1, 0, claudeReply("Started.")));
+    expect(await readConversationFromPage(whole, CLAUDE)).not.toHaveProperty("partial");
+  });
+
+  it("Gemini: names a code block's language on its fence, leaving its header out of the text", async () => {
+    const doc = page(
+      `<user-query><div class="query-text"><p class="query-text-line">Print two colours in Python</p></div></user-query>
+       <model-response><message-content><div class="markdown"><p>Here you go.</p><code-block><div class="code-block"><div class="formatted-code-block-internal-container"><div class="animated-opacity"><div class="code-block-decoration header-formatted"><span>Python</span><div class="buttons"><gem-icon-button aria-label="Copy code"></gem-icon-button></div></div><pre><code class="code-container">colors = ["red", "blue"]\nprint(colors)</code></pre></div></div></div></code-block></div></message-content></model-response>`
+    );
+    expect((await readConversationFromPage(doc, "https://gemini.google.com/app/ed0431c2728ddb16")).turns).toEqual([
+      { role: "user", text: "Print two colours in Python" },
+      { role: "assistant", text: 'Here you go.\n\n```python\ncolors = ["red", "blue"]\nprint(colors)\n```' },
+    ]);
+  });
+
+  const perplexityTurn = (entry, question, answer) =>
+    `<div class="group/partition" data-workflow-entry="${entry}"><div dir="auto"><div><div class="group/user-bubble"><div data-message-bubble="right"><p>${question}</p></div></div></div></div></div>` +
+    `<div class="group/partition group/final-text" data-workflow-final-text=""><div data-workflow-items=""><div><div class="prose"><p>${answer}</p></div></div></div></div>`;
+
+  it("Perplexity: reads a whole thread in order", async () => {
+    const doc = page(`<div></div><div></div>${perplexityTurn(0, "First question", "First answer.")}${perplexityTurn(1, "Follow-up", "Second answer.")}`);
+    const read = await readConversationFromPage(doc, "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0");
+    expect(read.turns.map((turn) => turn.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(read).not.toHaveProperty("partial");
+  });
+
+  it("Perplexity: says only part of the thread was on the page when it starts mid-way", async () => {
+    // Opened at its end: the first question is not mounted, the thread starts with the tail of a reply.
+    const doc = page(`<div></div><div></div><div></div><div><div class="prose"><p>First answer, its end.</p></div></div>${perplexityTurn(2, "Follow-up", "Second answer.")}`);
+    const read = await readConversationFromPage(doc, "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0");
+    expect(read.turns.map((turn) => turn.role)).toEqual(["assistant", "user", "assistant"]);
+    expect(read.partial).toBe(true);
+  });
+
+  it("says read-failed, with the error and not the page's text, when reading the page throws", async () => {
+    const broken = {
+      title: "A private title",
+      querySelectorAll() {
+        throw new TypeError("Cannot read properties of null (reading 'children')");
+      },
+    };
+    expect(await readConversationFromPage(broken, CLAUDE, 0)).toEqual({ ok: false, reason: "read-failed", provider: "claude", detail: "TypeError: Cannot read properties of null (reading 'children')" });
+  });
+});
+
 describe("checkPageRead: what came back from the page, before it goes anywhere", () => {
   it("passes on a well-formed read with only the role and text of each turn", () => {
     expect(
@@ -452,7 +547,12 @@ describe("checkPageRead: what came back from the page, before it goes anywhere",
         truncated: false,
         olderNotLoaded: true,
       })
-    ).toEqual({ ok: true, title: "Causes of WW1", turns: [{ role: "user", text: "Why?" }, { role: "assistant", text: "Because." }], olderNotLoaded: true });
+    ).toEqual({ ok: true, title: "Causes of WW1", turns: [{ role: "user", text: "Why?" }, { role: "assistant", text: "Because." }], olderNotLoaded: true, partial: false });
+  });
+
+  it("passes on that only part of a long chat was on the page", () => {
+    expect(checkPageRead({ ok: true, turns: [{ role: "assistant", text: "Because." }], partial: true })).toMatchObject({ ok: true, partial: true });
+    expect(checkPageRead({ ok: true, turns: [{ role: "assistant", text: "Because." }], partial: "yes" })).toMatchObject({ ok: true, partial: false });
   });
 
   it("says the page gave no answer when the script returned nothing", () => {
@@ -462,6 +562,7 @@ describe("checkPageRead: what came back from the page, before it goes anywhere",
   it("passes on the reader's own reasons, and nothing else the page might say", () => {
     expect(checkPageRead({ ok: false, reason: "no-messages" })).toEqual({ ok: false, error: "no-messages" });
     expect(checkPageRead({ ok: false, reason: "empty-conversation" })).toEqual({ ok: false, error: "empty-conversation" });
+    expect(checkPageRead({ ok: false, reason: "read-failed", detail: "TypeError: x" })).toEqual({ ok: false, error: "read-failed" });
     expect(checkPageRead({ ok: false, reason: "project-missing" })).toEqual({ ok: false, error: "invalid" });
     expect(checkPageRead({ ok: false })).toEqual({ ok: false, error: "invalid" });
   });

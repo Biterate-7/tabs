@@ -170,6 +170,31 @@ uses role attributes) — Save into Physics, Save again ("Already saved"), one
 item kept, turns and roles as on the page. Fixtures: "ChatGPT, signed in
 (live markup, 2026-10-15)".
 
+### Claude, Gemini and Perplexity, 2026-10-16: signed in
+
+Checked in a signed-in Chrome (structure and counts only):
+
+| | Before | Now |
+|---|---|---|
+| Claude | A reply is `[data-testid="assistant-message"]` with its text in `[data-perf-reply-text]`; `.font-claude-response` is gone, so a save kept the questions and silently dropped every reply. | Replies are read; the spoken "You said / Claude responded" headings and the thinking and tool panels stay out. |
+| Gemini | Read correctly signed in and out. A code block's header ("Python" and its buttons) leaked into the text above an unlabelled fence. | The header names the fence's language and is left out of the text. |
+| Perplexity | Read correctly once rendered, but only the turns near the screen are on the page: opened at its end, a thread started mid-reply with its first question missing. | Saved as it is, and the popup says only part was on the page. |
+
+Claude virtualizes long chats the same way (an 18-row chat had rows 13–17
+mounted), so for both apps no scroll position has every message: the reader
+sets `partial` from the rows' own positions (`data-index` and
+`data-perf-row-from-tail` on Claude, `data-workflow-entry` on Perplexity),
+and the popup points to the app's export or a paste instead of "scroll up".
+
+Chrome turns an error thrown inside an injected function into
+`result: null` (checked on Chrome 155), which the popup could only call
+"Chrome didn't let Hubble read this page". The reader now catches its own
+errors and answers `read-failed`, with the error (never page text) in the
+service worker's log. That message was the one reported for these apps; the
+reader did not throw on any page checked, so what caused it is still
+unconfirmed. The service worker's `[Hubble] capture-read-refused` line now
+says which it was. Fixtures: "signed in (live markup, 2026-10-16)".
+
 Deliberately absent: provider sign-in, cookies, private or undocumented
 endpoints, background reading of tabs, and any "sync". Saving again is how a
 grown conversation is brought up to date.
