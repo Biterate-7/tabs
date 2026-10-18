@@ -148,6 +148,19 @@ describe("the Rust shell", () => {
     expect(libRs).toMatch(/\n\s*false\s*\n\s*\}\)/);
   });
 
+  it("sends target=_blank links and window.open to the browser instead of dropping them", () => {
+    // With no new-window handler WebView2 refuses every such request in
+    // silence, which left each external link in the UI doing nothing.
+    expect(libRs).toContain(".on_new_window(");
+    expect(libRs).toContain("NewWindowResponse::Deny");
+    expect(libRs).not.toContain("NewWindowResponse::Allow");
+    expect(libRs).not.toContain("NewWindowResponse::Create");
+    // The opener plugin's injected link handler would cancel those clicks and
+    // call an IPC permission the frontend is never granted.
+    expect(libRs).toContain(".open_js_links_on_click(false)");
+    expect(libRs).not.toContain("tauri_plugin_opener::init()");
+  });
+
   it("only ever treats the app's own origins as internal", () => {
     expect(libRs).toContain('"tauri.localhost"');
     expect(libRs).toContain('"localhost"');

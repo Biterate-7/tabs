@@ -34,6 +34,13 @@ fn is_internal(url: &tauri::Url) -> bool {
     )
 }
 
+/// A webpage that belongs in the user's browser rather than in this window.
+/// Everything else that tries to leave the app (`mailto:`, `file:`, OS
+/// handler schemes) goes nowhere, matching `open_external`'s safelist.
+fn belongs_in_browser(url: &tauri::Url) -> bool {
+    !is_internal(url) && matches!(url.scheme(), "http" | "https")
+}
+
 pub fn run() {
     tauri::Builder::default()
         // First, so a second launch exits before it builds anything. Opening
@@ -44,7 +51,16 @@ pub fn run() {
             import_bridge::focus_main_window(app);
         }))
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_opener::init())
+        // Rust-side only (commands::open_external). By default the plugin also
+        // injects a click handler that cancels every `<a target="_blank">`
+        // and asks `plugin:opener|open_url` instead — a permission this app
+        // deliberately never grants, so those links did nothing. Without it
+        // they reach `on_new_window` below.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
@@ -72,6 +88,7 @@ pub fn run() {
             }
             let focus = app.handle().clone();
             app.deep_link().on_open_url(move |_| import_bridge::focus_main_window(&focus));
+            let popup_handle = handle.clone();
 
             // Built here rather than declared in tauri.conf.json because
             // `on_navigation` can only be attached at build time, and that
@@ -95,10 +112,23 @@ pub fn run() {
                     // ordinary <a href> in the UI. Hand it to the real
                     // browser and refuse the navigation, so the Hubble
                     // window always still shows Hubble.
-                    if matches!(url.scheme(), "http" | "https") {
+                    if belongs_in_browser(&url) {
                         let _ = commands::open_external(handle.clone(), url.to_string());
                     }
                     false
+                })
+                // `<a target="_blank">` and `window.open()` never reach
+                // `on_navigation`: they ask for a new window instead, and
+                // with no handler WebView2 silently refuses every one — so
+                // each such link in the UI (store listing, provider docs,
+                // "manage connectors on the web") did nothing at all. A
+                // webpage goes to the default browser; no second app window
+                // is ever created.
+                .on_new_window(move |url, _features| {
+                    if belongs_in_browser(&url) {
+                        let _ = commands::open_external(popup_handle.clone(), url.to_string());
+                    }
+                    tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
 
@@ -111,4 +141,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Hubble");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{belongs_in_browser, is_internal};
+    use tauri::Url;
+
+    fn url(raw: &str) -> Url {
+        Url::parse(raw).unwrap()
+    }
+
+    #[test]
+    fn the_app_and_dev_server_stay_in_the_window() {
+        for raw in ["tauri://localhost/", "http://tauri.localhost/privacy/", "http://localhost:3000/", "http://127.0.0.1:3000/"] {
+            assert!(is_internal(&url(raw)), "{raw}");
+            assert!(!belongs_in_browser(&url(raw)), "{raw}");
+        }
+    }
+
+    #[test]
+    fn webpages_go_to_the_browser_and_nothing_else_does() {
+        assert!(belongs_in_browser(&url("https://hubble-hq.vercel.app/")));
+        assert!(belongs_in_browser(&url("http://example.com/page")));
+        for raw in ["mailto:someone@example.com", "file:///C:/Windows/win.ini", "ms-settings:privacy", "javascript:alert(1)"] {
+            assert!(!belongs_in_browser(&url(raw)), "{raw}");
+        }
+    }
 }

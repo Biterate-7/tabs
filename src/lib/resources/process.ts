@@ -1,5 +1,4 @@
-import { apiOrigin } from "@/lib/platform/api-base";
-import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs";
+import { publicApiUrl } from "@/lib/platform/api-base";
 import { EXTRACTION_ERRORS, isExtractionResponse } from "./extraction";
 import { extractPdfText, PdfUnreadableError } from "./pdf";
 import { cleanLanguageTag, normalizeTranscript, parseTranscript } from "./transcript";
@@ -68,7 +67,7 @@ export type ProcessResult = {
 
 /** Where the reader lives: same origin on the web; the deployed site from the desktop app, which has no server of its own. */
 export function extractionEndpoint(platform: "web" | "desktop"): string {
-  return `${apiOrigin() || (platform === "desktop" ? CANONICAL_PRODUCTION_ORIGIN : "")}/api/resources/extract`;
+  return publicApiUrl("/api/resources/extract", platform);
 }
 
 export function httpExtractor(endpoint: string): ProcessDeps["extract"] {

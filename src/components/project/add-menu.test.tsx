@@ -93,3 +93,28 @@ describe("+ Add", () => {
     expect((await dialog.findByText(/right-click a tab/)).textContent).toContain("Add to History HL")
   })
 })
+
+describe("+ Add in Hubble Desktop", () => {
+  function setDesktop(on: boolean) {
+    if (on) (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    else delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  }
+
+  it("names the extension's desktop menu item, not the website's quick add", async () => {
+    setDesktop(true)
+    try {
+      sendBrowserCommand.mockResolvedValue({ id: "1", ok: false, error: "desktop-unreachable" })
+      const user = userEvent.setup()
+      renderMenu({ quickAdd: { shortcut: "Alt+Shift+S" } })
+      const dialog = within(await openBrowserTabs(user))
+
+      expect(await dialog.findByText("Hubble → Add to Hubble Desktop")).toBeTruthy()
+      expect(dialog.queryByText(/Add to History HL/)).toBeNull()
+      expect(dialog.getByRole("link", { name: "Hubble for Chrome" })).toBeTruthy()
+      // Pasting still works here.
+      expect(dialog.getByRole("textbox")).toBeTruthy()
+    } finally {
+      setDesktop(false)
+    }
+  })
+})

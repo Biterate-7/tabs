@@ -81,8 +81,11 @@ rather than merely different:
    browser tab. On desktop that would navigate the app window to someone
    else's website, turning Hubble into a bad browser with no way back.
 2. **`saveTextFile`** — the web export clicks a hidden `<a download>` with a
-   blob URL. A Tauri webview has no download UI for that to land in, so the
-   export would silently go nowhere.
+   blob URL. WebView2 does save such a download, but silently into the
+   Downloads folder with no say over name or place; desktop shows the native
+   Save dialog instead. (Plain `<a href download>` links to a bundled file,
+   such as the extension ZIP, are left to WebView2 and do land in Downloads —
+   verified 2026-10-18.)
 
 Clipboard, file *import*, `localStorage` and IndexedDB are deliberately
 **not** abstracted: they behave identically in WebView2, so wrapping them
@@ -110,6 +113,23 @@ The **navigation guard** (`src-tauri/src/lib.rs`) is the backstop: any
 navigation to a non-app origin is cancelled, and an `http(s)` one is handed
 to the default browser instead. So even a link that never reaches
 `openTab()` cannot strand the window on a foreign page.
+
+**New-window requests** (`<a target="_blank">`, `window.open()`, Ctrl/Shift-
+click) never reach `on_navigation`. Two things used to swallow every one of
+them, so each external link in the UI did nothing:
+
+- `tauri_plugin_opener::init()` injects a click handler that cancels any
+  `target="_blank"` link and calls `plugin:opener|open_url` over IPC — a
+  permission this app deliberately never grants, so the call was refused
+  (an unhandled rejection in the console). The plugin is now built with
+  `open_js_links_on_click(false)`: it is used from Rust only.
+- With no `on_new_window` handler, WebView2 refuses every new window in
+  silence. The window is now built with one that hands an `http(s)` URL to
+  `open_external` and always answers `Deny`, so no second app window is
+  ever created and `mailto:`/`file:`/OS schemes still go nowhere.
+
+`desktop-config.test.ts` pins both, and `lib.rs` has unit tests for the
+routing rule (`belongs_in_browser`).
 
 Verified against the running Windows build: clicking a saved tab opened the
 URL in the default browser and left the window on `http://tauri.localhost/`,
@@ -199,6 +219,18 @@ the identity function, so every call stays relative and same-origin exactly
 as before. `NEXT_PUBLIC_TABDUMP_API_ORIGIN` can point those calls at a
 deployed Hubble instead.
 
+On desktop, Tauri's asset server answers **any** unknown path — `/api/titles`
+included — with the bundle's own `index.html` and a `200`. So with no API
+origin configured, `apiUrl()` throws `ServerUnavailableError` on desktop:
+every caller already makes its request inside a `try`, so it fails at once
+as "offline" instead of parsing a web page as an API answer.
+
+The two public, cookie-free routes that answer any origin — the source reader
+(`/api/resources/extract`) and the favicon resolver (`/api/favicon`) — go
+through `publicApiUrl()`, which is same-origin on the web and the deployed
+Hubble (`CANONICAL_PRODUCTION_ORIGIN`, the one origin CSP `connect-src`
+allows) on desktop. Never use it for a route that reads a session.
+
 It is **unset for the v1 desktop build**, deliberately:
 
 - The backend sends no CORS headers, so a cross-origin call from the
@@ -213,18 +245,22 @@ degrade on their own:
 
 | Feature | Desktop v1 behaviour |
 | --- | --- |
-| Title resolution (`/api/titles`) | Falls back to domain-derived titles — the existing offline path in `src/lib/titles/client/queue.ts` |
-| Auto-Organize AI hints (`/api/ai/*`) | Falls back to deterministic domain/keyword clustering, exactly as with no `GEMINI_API_KEY` |
+| Title resolution (`/api/titles`) | Not called. Sources get their title from the reader (`/api/resources/extract`, reached via `publicApiUrl`), and tabs from Chrome carry Chrome's title, so this only ever affected bare links |
+| Section organizing AI hints (`/api/ai/*`) | Not called; deterministic domain/keyword clustering, exactly as with no `GEMINI_API_KEY`. Kept local on purpose: it would send titles and addresses to Gemini |
 
 ## Browser extension relationship
 
 The extension's content script is injected **only into the Hubble web
 origin**. A Chrome extension cannot inject into a WebView2 application, so
-the extension bridge is inherently web-only and is permanently
-"not connected" on desktop.
+the page bridge (`src/lib/browser/bridge.ts`) is web-only. On desktop
+`sendBrowserCommand` answers `DESKTOP_UNREACHABLE` at once rather than
+waiting out its timeout, and the views that would use it say what to do
+instead: "Add browser tabs" and Settings → Chrome extension name the
+extension's **Hubble → Add to Hubble Desktop** menu item, and Import from
+history explains that it works on the web.
 
-This needs no new conditionals: the app already handles a missing
-extension. History Dump has a dedicated `not-connected` state.
+Tabs reach the desktop app through its own loopback bridge instead — see
+[desktop-import.md](desktop-import.md).
 
 The actual dump flow today is:
 
@@ -237,8 +273,8 @@ Browser tabs
 ```
 
 **Honest limitation:** because that path ends in the *web origin's*
-localStorage, tabs dumped through the extension do **not** appear in the
-desktop app. There is no server-side workspace store to carry them across,
+localStorage, tabs dumped through the extension's *website* path do **not**
+appear in the desktop app (the desktop path, "Add to Hubble Desktop", does). There is no server-side workspace store to carry them across,
 and inventing one would duplicate a backend the product does not otherwise
 have.
 
@@ -314,3 +350,34 @@ Two Windows-specific notes for whoever ships this:
   `desktop-config.test.ts` keeps in sync) for every build you distribute.
 
 macOS and Linux remain unbuilt from this repository.
+
+## Feature parity (audited 2026-10-18)
+
+Measured in a packaged-mode debug build (`tauri build --debug --no-bundle`,
+served from `http://tauri.localhost`, driven over CDP) unless marked *unit*.
+The website's behaviour is unchanged by that audit.
+
+| Feature | Web | Desktop | How desktop was checked |
+| --- | --- | --- | --- |
+| Projects: create, rename, delete, navigate | Works | Works | Driven in the app |
+| Add links (web page, YouTube, PDF by address) | Works | Works — reader on the deployed site | Wikipedia, YouTube (title + transcript), example.com |
+| Private-network addresses refused by the reader | Works | Works | `qa.localtest.me` refused |
+| Favicons | Works | Works — deployed resolver | Probe |
+| Open a saved source | Same tab / extension | Default browser; window stays on Hubble | A local server received the request |
+| External links (`target="_blank"`, `window.open`) | Works | **Fixed** — default browser | A local server received the request (trusted click) |
+| Universal search (Ctrl+K) | Works | Works | Driven in the app |
+| Graph | Works | Works | Canvas rendered |
+| Paste a conversation, notes | Works | Works | Driven in the app |
+| Use in AI chat → Copy | Works | Works | Windows clipboard read back, then restored |
+| Export (all / projects only) | Browser download | Native Save dialog | Dialog appeared; cancelling left the app quiet |
+| Import projects (.json) | Works | Works | File set on the input; "Imported 1 project" |
+| Data after restart and after an app update | Works | Works | localStorage + IndexedDB text survived both |
+| Single instance | n/a | Works | A second launch exited |
+| Chrome → Hubble Desktop (extension menu) | n/a | Works | The extension's own `desktop.js` against the running app |
+| Extension ZIP download | Works | Works — WebView2 saves to Downloads | Probe |
+| Add browser tabs (list Chrome's tabs) | Works with extension | Not possible; **fixed** to say how, at once (was a 2.5 s wait, then web-only advice) | Driven in the app |
+| Import from history | Works with extension | Not possible; **fixed** to say so up front (was 15 s, then "install the extension") | Driven in the app |
+| Smart Organize: open Chrome tabs | Works with extension | Not possible; message **fixed** to point at an action that exists | Driven in the app |
+| Save a conversation from an AI site (extension) | Works | Not possible; Settings → Desktop app says to paste instead | Code review |
+| Sign-in, sync, AI connectors | Works | Not available by design (see *Authentication*) | Settings copy checked |
+| Section organizing AI hints, title API | Works | Local fallback by design; no request is sent | *unit* |

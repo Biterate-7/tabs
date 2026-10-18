@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { SearchBar } from "@/components/workspace/search-bar"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { useHistoryDump } from "@/hooks/use-history-dump"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { selectDiverseSuggestions } from "@/lib/history-dump/select"
 import { HISTORY_TIME_RANGES, DEFAULT_HISTORY_TIME_RANGE } from "@/lib/history-dump/types"
 import type { HistoryCandidate, HistoryTimeRangeId } from "@/lib/history-dump/types"
@@ -190,6 +191,7 @@ export function HistoryDumpView({
   onDump: (entries: BrowserImportEntry[]) => void
 }) {
   const { stage, result, error, scan, reset } = useHistoryDump()
+  const isDesktop = useIsDesktop()
   const [rangeId, setRangeId] = useState<HistoryTimeRangeId>(DEFAULT_HISTORY_TIME_RANGE)
   const [customStart, setCustomStart] = useState(() => toDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
   const [customEnd, setCustomEnd] = useState(() => toDateInputValue(Date.now()))
@@ -297,7 +299,18 @@ export function HistoryDumpView({
         <p className="text-h2 text-foreground">Import from history</p>
       </div>
 
-      {stage === "idle" && (
+      {/* Chrome's history is read by Hubble for Chrome, which talks to the Hubble website — never to this app. */}
+      {isDesktop && (
+        <div className="flex flex-1 flex-col items-center justify-center px-6">
+          <EmptyState
+            icon={PlugZap}
+            title="Hubble Desktop can't read Chrome's history"
+            description="Import from history works in Hubble on the web, with Hubble for Chrome. To add tabs here, right-click a tab in Chrome → Hubble → Add to Hubble Desktop."
+          />
+        </div>
+      )}
+
+      {!isDesktop && stage === "idle" && (
         <ScanSetup
           rangeId={rangeId}
           onRangeChange={setRangeId}

@@ -259,3 +259,18 @@ describe("HistoryDumpView — extension errors", () => {
     expect(await screen.findByText("History access isn't available.")).toBeTruthy()
   })
 })
+
+describe("HistoryDumpView — Hubble Desktop", () => {
+  it("says up front that history can't be read here, with no scan to start", () => {
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    try {
+      render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
+      expect(screen.getByText("Hubble Desktop can't read Chrome's history")).toBeTruthy()
+      expect(screen.getByText(/Add to Hubble Desktop/)).toBeTruthy()
+      expect(screen.queryByRole("button", { name: "Scan history" })).toBeNull()
+      expect(fetchBrowserHistoryMock).not.toHaveBeenCalled()
+    } finally {
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    }
+  })
+})

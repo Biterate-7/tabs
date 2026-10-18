@@ -660,8 +660,8 @@ export function AiIntegrationsSection() {
               Connectors are managed on the web. Open{" "}
               <a className="text-link underline-offset-4 hover:underline" href={CANONICAL_PRODUCTION_ORIGIN} target="_blank" rel="noreferrer">
                 {CANONICAL_PRODUCTION_ORIGIN.replace(/^https:\/\//, "")}
-              </a>
- and sign in.
+              </a>{" "}
+              and sign in.
             </p>
           </GroupBlock>
         </SectionStack>

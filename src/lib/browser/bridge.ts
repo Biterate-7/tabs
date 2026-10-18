@@ -1,9 +1,11 @@
 "use client"
 
 import { createId } from "@/lib/id"
+import { isDesktop } from "@/lib/platform/detect"
 import {
   BROWSER_MESSAGE_SOURCE,
   DEFAULT_BROWSER_COMMAND_TIMEOUT_MS,
+  DESKTOP_UNREACHABLE,
   MSG_BROWSER_COMMAND,
   MSG_BROWSER_COMMAND_RESULT,
   MSG_EXTENSION_PING,
@@ -98,6 +100,7 @@ function postPing() {
  */
 let watchRefCount = 0
 export function startConnectionWatch(): () => void {
+  if (isDesktop()) return () => {}
   ensureListening()
   watchRefCount += 1
 
@@ -143,8 +146,10 @@ export function sendBrowserCommand<Args, Data>(
   args: Args,
   opts?: { timeoutMs?: number }
 ): Promise<BrowserCommandResult<Data>> {
-  ensureListening()
   const id = createId()
+  // Inside Hubble Desktop nothing would ever answer (see DESKTOP_UNREACHABLE), so say so now rather than after the timeout.
+  if (isDesktop()) return Promise.resolve({ id, ok: false, error: DESKTOP_UNREACHABLE })
+  ensureListening()
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_BROWSER_COMMAND_TIMEOUT_MS
 
   return new Promise((resolve) => {

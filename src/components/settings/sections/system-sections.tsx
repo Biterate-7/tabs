@@ -27,7 +27,7 @@ import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-d
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { getOnboardingState } from "@/lib/onboarding"
-import { isDesktop } from "@/lib/platform/detect"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { modKeyLabel } from "@/lib/keyboard"
 import type { Workspace } from "@/lib/workspace/types"
 import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
@@ -48,6 +48,7 @@ import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui
 export function AccountSettingsSection() {
   const auth = useOptionalAuth()
   const [signInOpen, setSignInOpen] = useState(false)
+  const isDesktop = useIsDesktop()
 
   const configured = Boolean(auth?.configured)
   const user = auth?.status === "authenticated" ? auth.user : null
@@ -70,7 +71,13 @@ export function AccountSettingsSection() {
         ) : (
           <FieldRow
             label="Not signed in"
-            description={configured ? "Sign in to sync projects and use AI connectors." : "Accounts aren't available here."}
+            description={
+              configured
+                ? "Sign in to sync projects and use AI connectors."
+                : isDesktop
+                  ? "Sign-in isn't in the desktop app yet. Projects here stay on this computer."
+                  : "Accounts aren't available here."
+            }
           >
             {configured && (
               <Button type="button" size="sm" onClick={() => setSignInOpen(true)}>
@@ -84,7 +91,9 @@ export function AccountSettingsSection() {
           description={
             user
               ? "Links and titles sync to your account. Conversation text and notes stay on this device."
-              : "Everything is saved in this browser."
+              : isDesktop
+                ? "Everything is saved in this app on this computer."
+                : "Everything is saved in this browser."
           }
         >
           <Badge variant={user ? "success" : "default"}>{user ? "Synced" : "Local"}</Badge>
@@ -99,14 +108,24 @@ export function AccountSettingsSection() {
 
 /** Settings → Chrome extension: whether it is connected, what it reads, and how to install it. */
 export function ExtensionSection() {
-  const connected = getOnboardingState().extensionConnected
+  const isDesktop = useIsDesktop()
+  // The website hears from the extension through the page; Hubble Desktop never does (Chrome reaches it over its own
+  // local bridge), so there it says how to send tabs instead of a status that could only ever read "Not connected".
+  const connected = !isDesktop && getOnboardingState().extensionConnected
   return (
     <div>
       <SectionHeading title="Chrome extension" />
       <SectionStack className="mb-6">
-        <FieldRow label="Hubble for Chrome" description="Save tabs and AI conversations from Chrome.">
+        <FieldRow
+          label="Hubble for Chrome"
+          description={
+            isDesktop
+              ? "Sends tabs here: in Chrome, right-click a tab → Hubble → Add to Hubble Desktop."
+              : "Save tabs and AI conversations from Chrome."
+          }
+        >
           <span className="flex items-center gap-2">
-            <Badge variant={connected ? "success" : "default"}>{connected ? "Connected" : "Not connected"}</Badge>
+            {!isDesktop && <Badge variant={connected ? "success" : "default"}>{connected ? "Connected" : "Not connected"}</Badge>}
             <a href={EXTENSION_DOWNLOAD_URL} download className={buttonVariants({ size: "sm", variant: connected ? "outline" : "default" })}>
               <Download /> Download
             </a>
@@ -286,7 +305,7 @@ export function ShortcutsSection() {
 // ---------------------------------------------------------------- Desktop
 
 export function DesktopSection() {
-  const desktop = isDesktop()
+  const desktop = useIsDesktop()
   return (
     <div>
       <SectionHeading title="Desktop app" />

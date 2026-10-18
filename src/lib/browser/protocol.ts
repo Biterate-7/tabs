@@ -45,6 +45,14 @@ export const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
 export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
 
 /**
+ * Every command's answer inside Hubble Desktop. The extension's content script
+ * is only ever injected into the Hubble website, so in the desktop webview
+ * nothing would answer — Chrome reaches the desktop app over its own loopback
+ * bridge (src-tauri/src/import_bridge.rs) instead.
+ */
+export const DESKTOP_UNREACHABLE = "desktop-unreachable";
+
+/**
  * The allowlist extension/src/browser-commands.js implements. Only three of
  * these are actually sent from this web app today — list_browser_tabs/
  * list_browser_windows (src/lib/browser/context.ts, for title resolution)

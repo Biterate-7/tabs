@@ -177,6 +177,9 @@ describe("Organize open tabs", () => {
     renderOrganize()
     const dialog = await screen.findByRole("dialog", { name: "Organize open tabs" })
     expect(within(dialog).getByText("Hubble Desktop can't see your Chrome tabs")).toBeTruthy()
+    // Points at what works from Chrome — not a project menu item that sources sent from Chrome never get.
+    expect(within(dialog).getByText("Hubble → Add all tabs in this window to Hubble Desktop")).toBeTruthy()
+    expect(within(dialog).queryByText(/Organize tabs/)).toBeNull()
     expect(sendBrowserCommand).not.toHaveBeenCalled()
   })
 

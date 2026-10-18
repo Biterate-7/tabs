@@ -1,6 +1,5 @@
-import { apiOrigin } from "@/lib/platform/api-base";
+import { publicApiUrl } from "@/lib/platform/api-base";
 import { isDesktop } from "@/lib/platform/detect";
-import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs";
 import { faviconHostKey } from "./host";
 
 /**
@@ -54,15 +53,10 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
-/** Where the resolver lives: same-origin on the web, the deployed site from the desktop app. */
-function faviconServiceOrigin(platform: "web" | "desktop"): string {
-  return apiOrigin() || (platform === "desktop" ? CANONICAL_PRODUCTION_ORIGIN : "");
-}
-
 /** Where `host`'s icon is looked up: the resolver, and the direct fallback where the platform allows one. */
 export function faviconSources(host: string, platform: "web" | "desktop"): { service: string; direct: string | null } {
   return {
-    service: `${faviconServiceOrigin(platform)}/api/favicon?host=${encodeURIComponent(host)}`,
+    service: publicApiUrl(`/api/favicon?host=${encodeURIComponent(host)}`, platform),
     direct: platform === "desktop" ? null : `https://${host}/favicon.ico`,
   };
 }

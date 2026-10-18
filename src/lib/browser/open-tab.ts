@@ -59,7 +59,12 @@ export async function openTab(url: string, options?: { newTab?: boolean }): Prom
   }
 
   if (isDesktop()) {
-    await openExternal(url)
+    // The Rust side can refuse (it re-checks the scheme) or find no default browser to hand the page to.
+    try {
+      await openExternal(url)
+    } catch {
+      toast.error("Couldn't open this tab", { description: "Your default browser didn't open it." })
+    }
     return
   }
 
