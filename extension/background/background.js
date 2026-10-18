@@ -1432,13 +1432,16 @@ async function captureConversation({ tabId, workspaceId }) {
   saveShown = undefined;
   const viaDesktop = await desktopSave({ ...capture, provider: aiProviderOf(tab.url), truncated: read?.truncated === true });
   if (!viaDesktop.fallback) {
-    const answer = answerFromDesktop(viaDesktop);
-    return answer.ok && checked.olderNotLoaded ? { ...answer, result: { ...answer.result, olderNotLoaded: true } } : answer;
+    return withReadNotes(answerFromDesktop(viaDesktop), checked);
   }
   // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup.
   if (!workspaceId) return { ok: false, error: "no-project" };
   const answer = await askHubblePage("capture", { workspaceId, capture }, { openIfMissing: true });
-  // The page saved what was on screen; the popup says when that was not the whole chat.
+  return withReadNotes(answer, checked);
+}
+
+/** What was saved was what was on screen; the popup says when that was not the whole chat. */
+function withReadNotes(answer, checked) {
   if (!answer?.ok || !(checked.olderNotLoaded || checked.partial)) return answer;
   return { ...answer, result: { ...answer.result, ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) } };
 }

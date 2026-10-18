@@ -256,6 +256,28 @@ describe("Save to Hubble on Claude, Gemini and Perplexity, signed in (2026-10-16
     expect(answer.result).not.toHaveProperty("olderNotLoaded");
     expect(pageRequests).toHaveLength(1);
   });
+
+  // The same real readers, with Hubble Desktop open: what each app's markup yields is what the bridge is sent.
+  it.each([
+    ["Claude", "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", "claude", "Thesis feedback - Claude", claudeRow(0, 1, `<div data-testid="user-message"><p>What caused WW1?</p></div>`) + claudeRow(1, 0, claudeReply("Militarism and alliances."))],
+    ["Gemini", "https://gemini.google.com/app/ed0431c2728ddb16", "gemini", "Causes of WW1 - Google Gemini", `<user-query><div class="query-text"><h5 class="cdk-visually-hidden">You said What caused WW1?</h5><p>What caused WW1?</p></div></user-query><model-response><message-content><div class="markdown"><p>Militarism and alliances.</p></div></message-content></model-response>`],
+    ["Perplexity", "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0", "perplexity", "What caused WW1?", `<div data-workflow-entry="0"><div data-message-bubble="right"><p>What caused WW1?</p></div></div><div data-workflow-final-text=""><div class="prose"><p>Militarism and alliances.</p></div></div>`],
+  ])("%s with Hubble Desktop open: the question and the reply go to the bridge, not the Hubble page", async (_name, url, provider, title, html) => {
+    openHubbleDesktop();
+    serve(url, title, html);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", desktop: true } });
+    expect(pageRequests).toEqual([]);
+    const sent = bridgeRequests.find((request) => request.pathname.endsWith("/import"));
+    expect(sent.body.conversation).toMatchObject({ provider, url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] });
+  });
+
+  it("tells the popup a long Claude chat saved to Hubble Desktop was only part of it", async () => {
+    openHubbleDesktop();
+    serve("https://claude.ai/chat/ad3e4ff2-7bbc-49c2-aa96-f24622d1409c", "Long chat - Claude", claudeRow(13, 1, `<div data-testid="user-message"><p>And then?</p></div>`) + claudeRow(14, 0, claudeReply("Then it ended.")));
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", desktop: true, partial: true } });
+  });
 });
 
 describe("Use Hubble in this chat", () => {
