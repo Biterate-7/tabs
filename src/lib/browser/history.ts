@@ -1,4 +1,5 @@
 import { sendBrowserCommand } from "./bridge"
+import { DESKTOP_UNREACHABLE } from "./protocol"
 import type { HistoryVisitItem } from "./protocol"
 
 export type { HistoryVisitItem }
@@ -34,7 +35,7 @@ export async function fetchBrowserHistory(
   >("get_history", { startTime, endTime, maxResults }, { timeoutMs: HISTORY_FETCH_TIMEOUT_MS })
 
   if (!result.ok) {
-    const notConnected = /timed out|extension-unreachable/i.test(result.error)
+    const notConnected = result.error === DESKTOP_UNREACHABLE || /timed out|extension-unreachable/i.test(result.error)
     return notConnected ? { ok: false, reason: "not-connected" } : { ok: false, reason: "error", error: result.error }
   }
 

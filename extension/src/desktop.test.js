@@ -5,10 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DESKTOP_BRIDGE_PORTS,
   DESKTOP_MAX_TABS,
+  DESKTOP_MAX_CONVERSATION_BYTES,
+  DESKTOP_MAX_TURN_CHARS,
+  DESKTOP_MAX_TURNS,
   DesktopError,
+  buildDesktopConversation,
   buildDesktopPayload,
   describeDesktopPhase,
   describeDesktopResult,
+  describeDesktopSave,
   findDesktop,
   readDesktopResult,
   sendToDesktop,
@@ -110,7 +115,7 @@ describe("buildDesktopPayload", () => {
 describe("finding Hubble Desktop", () => {
   it("finds it on whichever bridge port it took", async () => {
     const bridge = fakeBridge({ port: DESKTOP_BRIDGE_PORTS[2], ready: false });
-    await expect(findDesktop({ fetch: bridge.fetch })).resolves.toEqual({ port: DESKTOP_BRIDGE_PORTS[2], ready: false });
+    await expect(findDesktop({ fetch: bridge.fetch })).resolves.toEqual({ port: DESKTOP_BRIDGE_PORTS[2], ready: false, conversations: false });
     // Only loopback is ever asked.
     expect(bridge.fetch.mock.calls.every(([url]) => url.startsWith("http://127.0.0.1:"))).toBe(true);
   });
@@ -144,7 +149,7 @@ describe("finding Hubble Desktop", () => {
     let calls = 0;
     const starting = vi.fn(async (url, init) => (++calls <= 6 ? Promise.reject(new TypeError("Failed to fetch")) : bridge.fetch(url, init)));
     const onTick = vi.fn();
-    await expect(waitForDesktop({ fetch: starting, sleep: noSleep, onTick })).resolves.toEqual({ port: DESKTOP_BRIDGE_PORTS[0], ready: true });
+    await expect(waitForDesktop({ fetch: starting, sleep: noSleep, onTick })).resolves.toEqual({ port: DESKTOP_BRIDGE_PORTS[0], ready: true, conversations: false });
     expect(onTick).toHaveBeenCalledTimes(2);
   });
 
@@ -273,5 +278,113 @@ describe("what the person is told", () => {
     expect(describeDesktopPhase("connecting", 12)).toMatchObject({ tone: "working", title: "Connecting to Hubble Desktop…" });
     expect(describeDesktopPhase("launching", 12)).toMatchObject({ title: "Opening Hubble Desktop…" });
     expect(describeDesktopPhase("waiting", 12)).toEqual({ tone: "working", title: "Add 12 tabs to Hubble", detail: "Choose a project in Hubble Desktop." });
+  });
+});
+
+describe("a conversation for Hubble Desktop", () => {
+  const capture = (over = {}) => ({
+    provider: "chatgpt",
+    url: "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f",
+    title: "Photosynthesis",
+    turns: [
+      { role: "user", text: "How does photosynthesis work?" },
+      { role: "assistant", text: "Light, water and CO2 become sugar." },
+    ],
+    ...over,
+  });
+
+  it("knows a Hubble Desktop that takes conversations from one that predates them", async () => {
+    const answering = (body) => vi.fn(async (url) => (new URL(url).port === String(DESKTOP_BRIDGE_PORTS[0]) ? json(200, body) : Promise.reject(new TypeError("Failed to fetch"))));
+    const hello = { app: "hubble-desktop", protocol: 1, ready: true };
+    await expect(findDesktop({ fetch: answering({ ...hello, kinds: ["tabs", "conversation"] }) })).resolves.toEqual({ port: DESKTOP_BRIDGE_PORTS[0], ready: true, conversations: true });
+    await expect(findDesktop({ fetch: answering(hello) })).resolves.toMatchObject({ conversations: false });
+    await expect(findDesktop({ fetch: answering({ ...hello, kinds: "conversation" }) })).resolves.toMatchObject({ conversations: false });
+  });
+
+  it("sends the app, the address, the title and each turn's role and text — nothing else the page had", () => {
+    const { payload, turns, truncated } = buildDesktopConversation(
+      capture({ turns: [{ role: "user", text: "Q", html: "<b>Q</b>", id: 3 }, { role: "assistant", text: "  " }, { role: "system", text: "x" }, { role: "assistant", text: "A" }], cookies: "secret" }),
+      "req-12345678"
+    );
+    expect(payload).toEqual({
+      version: 1,
+      requestId: "req-12345678",
+      source: "chrome-extension",
+      kind: "conversation",
+      conversation: {
+        provider: "chatgpt",
+        url: "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f",
+        title: "Photosynthesis",
+        turns: [
+          { role: "user", text: "Q" },
+          { role: "assistant", text: "A" },
+        ],
+        truncated: false,
+      },
+    });
+    expect([turns, truncated]).toEqual([2, false]);
+  });
+
+  it("cuts a very long conversation to what Hubble keeps, and says so", () => {
+    const many = buildDesktopConversation(capture({ turns: Array.from({ length: DESKTOP_MAX_TURNS + 5 }, () => ({ role: "user", text: "a" })) }));
+    expect([many.turns, many.truncated]).toEqual([DESKTOP_MAX_TURNS, true]);
+    const long = buildDesktopConversation(capture({ turns: [{ role: "user", text: "a".repeat(DESKTOP_MAX_TURN_CHARS + 1) }] }));
+    expect(long.payload.conversation.turns[0].text).toHaveLength(DESKTOP_MAX_TURN_CHARS);
+    expect(long.truncated).toBe(true);
+    // The page's own cut is carried.
+    expect(buildDesktopConversation(capture({ truncated: true })).truncated).toBe(true);
+  });
+
+  it("never cuts a character in half, and mends one the page left broken", () => {
+    const emoji = "😀";
+    const { payload } = buildDesktopConversation(capture({ turns: [{ role: "user", text: "a".repeat(DESKTOP_MAX_TURN_CHARS - 1) + emoji }, { role: "assistant", text: "bad \uD800 half" }] }));
+    expect(payload.conversation.turns[0].text).toBe("a".repeat(DESKTOP_MAX_TURN_CHARS - 1));
+    expect(payload.conversation.turns[1].text).toBe("bad � half");
+    // What goes over the wire is JSON any strict parser takes.
+    expect(JSON.stringify(payload)).not.toMatch(/\\ud8/i);
+  });
+
+  it("drops the latest turns when the text is too many bytes to send", () => {
+    // Control characters are six bytes each as JSON: under the character limits, over the byte limit.
+    const heavy = "\u0001".repeat(DESKTOP_MAX_TURN_CHARS);
+    const { payload, truncated } = buildDesktopConversation(capture({ turns: Array.from({ length: 20 }, () => ({ role: "user", text: heavy })) }));
+    expect(new TextEncoder().encode(JSON.stringify(payload)).length).toBeLessThanOrEqual(DESKTOP_MAX_CONVERSATION_BYTES);
+    expect(payload.conversation.turns.length).toBeLessThan(20);
+    expect(truncated).toBe(true);
+  });
+
+  it("re-checks a conversation's result rather than trusting its shape", () => {
+    expect(readDesktopResult({ status: "done", result: { kind: "conversation", requestId: "req-1", success: true, saved: "added", turns: 14, truncated: true, project: "Biology" } })).toEqual({
+      status: "done",
+      requestId: "req-1",
+      success: true,
+      kind: "conversation",
+      saved: "added",
+      turns: 14,
+      truncated: true,
+      project: "Biology",
+    });
+    expect(readDesktopResult({ status: "done", result: { kind: "conversation", saved: "deleted", turns: -1 } }, "req-2")).toEqual({
+      status: "done",
+      requestId: "req-2",
+      success: false,
+      kind: "conversation",
+      turns: 0,
+      truncated: false,
+    });
+  });
+
+  it("says where it was saved, and never calls a failure a save", () => {
+    expect(describeDesktopSave({ status: "done", saved: "added", project: "Biology", turns: 14 })).toEqual({ tone: "done", title: "Saved to Biology", detail: "14 turns" });
+    expect(describeDesktopSave({ status: "done", saved: "updated", project: "Biology", turns: 2, truncated: true })).toEqual({
+      tone: "done",
+      title: "Updated in Biology",
+      detail: "2 turns · very long, so only the first part was kept",
+    });
+    expect(describeDesktopSave({ status: "done", saved: "unchanged", project: "Biology" })).toMatchObject({ tone: "same", title: "Already saved in Biology" });
+    expect(describeDesktopSave({ status: "done", project: "Biology" })).toMatchObject({ tone: "error", title: "Couldn't save the conversation" });
+    expect(describeDesktopSave({ status: "cancelled" })).toEqual({ tone: "same", title: "Nothing saved", detail: "Cancelled in Hubble Desktop." });
+    expect(describeDesktopSave({ status: "expired" })).toMatchObject({ tone: "error", title: "Nothing saved" });
+    expect(describeDesktopSave({ reason: "something-new" })).toMatchObject({ tone: "error", title: "Hubble Desktop isn't responding" });
   });
 });

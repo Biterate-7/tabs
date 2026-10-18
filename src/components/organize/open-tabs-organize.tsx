@@ -51,10 +51,13 @@ export function OpenTabsOrganize({
         status={{
           kind: "unavailable",
           title: "Hubble Desktop can't see your Chrome tabs",
+          // Tabs sent this way arrive as a project's sources (see useDesktopImport), and the project page has no
+          // ⋯ → Organize tabs for those, so the only honest pointer is how to send them.
           message: (
             <>
-              Add tabs with Hubble for Chrome, then open their project and choose{" "}
-              <span className="font-medium text-foreground">⋯ → Organize tabs</span>.
+              To bring tabs here, right-click a tab in Chrome →{" "}
+              <span className="font-medium text-foreground">Hubble → Add all tabs in this window to Hubble Desktop</span>, and
+              pick a project.
             </>
           ),
         }}

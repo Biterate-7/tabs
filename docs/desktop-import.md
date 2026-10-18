@@ -1,9 +1,16 @@
 # Chrome → Hubble Desktop
 
-The Hubble Chrome extension can send tabs straight into Hubble Desktop, with no
+The Hubble Chrome extension can send tabs, and AI conversations it reads from
+ChatGPT, Claude, Gemini or Perplexity, straight into Hubble Desktop, with no
 website in between. Hubble Web keeps working exactly as before; the desktop is
-an additional destination, offered once the extension has seen Hubble Desktop
-on this computer.
+an additional destination.
+
+- **Tabs** are offered once the extension has seen Hubble Desktop on this
+  computer. If Hubble Desktop is closed, the extension opens it.
+- **Conversations** ("Save to Hubble" in the popup on an AI app's page) go to
+  Hubble Desktop **when it is open**; otherwise to Hubble on the web, as
+  before. Save never opens Hubble Desktop: a person who only uses Hubble on
+  the web is never sent to an app they didn't start.
 
 ```
 Chrome tab ──right-click "Add to Hubble Desktop" / popup──▶ extension (background.js)
@@ -21,26 +28,43 @@ Hubble Desktop (src-tauri/src/import_bridge.rs) ──event + focus──▶ web
 extension polls GET /v1/sessions/:id ──▶ "Added 9 sources to Research · 3 already there"
 ```
 
+A conversation takes the same road, with these differences:
+
+```
+popup "Save to Hubble Desktop" ──▶ background.js reads the conversation on screen (activeTab)
+     │  GET /v1/hello → "kinds": ["tabs", "conversation"]?   ── no ──▶ Hubble on the web, as before
+     │  POST /v1/sessions/:id/import  { "kind": "conversation", … }
+     ▼
+Hubble Desktop ──▶ "Save a conversation to Hubble — choose a project"
+     │  readConversationCapture(…)                    the web's own re-read of a capture
+     │  saveCapturedConversation(project, …)          the save the web uses for the extension's Save
+     ▼
+toast in the AI app's page (and the popup, if still open) ──▶ "Saved to Biology · 14 turns"
+```
+
 ## Pieces
 
 | Where | What |
 | --- | --- |
-| `src-tauri/src/import_bridge.rs` | Loopback HTTP bridge (std `TcpListener`, no server dependency), sessions, validation, pending queue, two Tauri commands. |
+| `src-tauri/src/import_bridge.rs` | Loopback HTTP bridge (std `TcpListener`, no server dependency), sessions, validation of both kinds, pending queue, two Tauri commands. |
 | `src-tauri/src/lib.rs` | Starts the bridge in `setup`, registers `tauri-plugin-single-instance` and `tauri-plugin-deep-link`. |
 | `src-tauri/tauri.conf.json` | `plugins.deep-link.desktop.schemes: ["hubble"]` — the NSIS/MSI installers register the scheme from this. |
-| `src/lib/desktop/import-protocol.ts` | Webview half of the protocol: re-validation, outcome counting, shared constants. |
-| `src/hooks/use-desktop-import.ts` | Pulls queued batches when the app is ready; listens for new ones; expires them before Rust does. |
-| `src/components/desktop-import-dialog.tsx` | Project picker: projects, "Open now" default, + New project, Cancel. |
-| `extension/src/desktop.js` | Payload building, bridge discovery, session/transfer/result polling, wording. |
-| `extension/src/desktop-add.js` | One run end to end, with every browser call injected. |
-| `extension/background/background.js` | Context menu items, popup message, protocol launch, toast/badge, Retry / Open Hubble Web. |
+| `src/lib/desktop/import-protocol.ts` | Webview half of the protocol: re-validation (a conversation through `readConversationCapture`), outcome counting, shared constants. |
+| `src/hooks/use-desktop-import.ts` | Pulls queued requests when the app is ready; listens for new ones; answers unusable ones at once; expires them before Rust does. |
+| `src/components/desktop-import-dialog.tsx` | Project picker for either kind: projects, "Open now" default, + New project, Cancel. |
+| `src/components/app-shell.tsx` | `handleDesktopImport`: tabs → `handleAddSources`, a conversation → `saveCapturedConversation`. |
+| `extension/src/desktop.js` | Payload building (`buildDesktopPayload`, `buildDesktopConversation`), bridge discovery, session/transfer/result polling, wording. |
+| `extension/src/desktop-add.js` | One run end to end, with every browser call injected: `createDesktopAdd` (tabs), `createDesktopSave` (a conversation). |
+| `extension/background/background.js` | Context menu items, popup messages, protocol launch, toast/badge, Retry / Open Hubble Web; Save tries Hubble Desktop before the Hubble page. |
+| `extension/popup/ai-panel.js` | "Save to Hubble Desktop" when it is open (no project needed in the popup), else "Save this conversation" into the project chosen there. |
 
 ## Protocol (version 1)
 
-`POST /v1/sessions/:id/import` body:
+`POST /v1/sessions/:id/import` body — a batch of tabs (`"kind"` may be left out,
+which is what every extension before conversations sends):
 
 ```json
-{ "version": 1, "requestId": "…", "source": "chrome-extension",
+{ "version": 1, "requestId": "…", "source": "chrome-extension", "kind": "tabs",
   "tabs": [{ "url": "https://…", "title": "…", "favicon": "https://…" }] }
 ```
 
@@ -48,17 +72,44 @@ Only what `ResourceInput` takes travels — no tab or window ids, pinned or acti
 state. Order is window, then tab-strip order. At most 200 tabs (the pipeline's
 `MAX_INGEST_BATCH`); the extension counts anything past that as not added.
 
+…or one conversation:
+
+```json
+{ "version": 1, "requestId": "…", "source": "chrome-extension", "kind": "conversation",
+  "conversation": { "provider": "claude", "url": "https://claude.ai/chat/…", "title": "…",
+                    "turns": [{ "role": "user", "text": "…" }, { "role": "assistant", "text": "…" }],
+                    "truncated": false } }
+```
+
+Limits are `CONVERSATION_LIMITS` (`src/lib/conversations/types.ts`): at most
+4 000 turns, 100 000 characters a turn, 2 000 000 characters in all, and an
+8 MiB body. The extension cuts a longer conversation to fit and sets
+`truncated` — Hubble then says only the first part was kept, as it does on the
+web. The bridge refuses anything over the limits rather than cutting it.
+
+`GET /v1/hello` says which kinds this Hubble Desktop takes —
+`"kinds": ["tabs", "conversation"]`. A Hubble Desktop from before conversations
+doesn't say, and the extension then saves to Hubble on the web.
+
 Result (`GET /v1/sessions/:id` once answered, then the session is forgotten):
 
 ```json
 { "status": "done | cancelled | expired | failed",
-  "result": { "requestId": "…", "success": true, "received": 12, "added": 9,
+  "result": { "kind": "tabs", "requestId": "…", "success": true, "received": 12, "added": 9,
               "duplicates": 3, "failed": 0, "project": "Research" } }
+
+{ "status": "done | cancelled | expired | failed",
+  "result": { "kind": "conversation", "requestId": "…", "success": true,
+              "saved": "added | updated | unchanged | kept", "turns": 14,
+              "truncated": false, "project": "Biology" } }
 ```
 
 `duplicates` is the pipeline's own rule: an address that is already a source of
 that project is not added again (an address saved there as a plain tab becomes
-a source — counted as added, as everywhere else).
+a source — counted as added, as everywhere else). `saved` is the conversation
+save's own rule, the same as on the web: a conversation already in the project
+is updated, left unchanged, or — when the project has more of it than the page
+showed — kept.
 
 ## Security
 
@@ -70,41 +121,66 @@ a source — counted as added, as everywhere else).
   compare; unused sessions expire in 30 s, unanswered requests in 180 s,
   uncollected results in 60 s; at most 8 at once. All in memory.
 * Four routes. Nothing reaches a file, a process, another Tauri command or the
-  network. Bodies ≤ 2 MiB, headers ≤ 8 KiB, 5 s I/O timeouts, ≤ 16 connections.
-* The payload is validated in Rust (version, source, request id, count, http(s)
-  only, ≤ 2048-char addresses, ≤ 500-char titles, favicons http(s) only) and
-  again in the webview. Bad addresses are dropped and counted, never fatal.
-* Nothing is imported until the person presses Add in Hubble; Cancel imports
-  nothing.
+  network. Bodies ≤ 2 MiB for tabs and ≤ 8 MiB for a conversation, headers
+  ≤ 8 KiB, 5 s I/O timeouts, ≤ 16 connections.
+* **Only in, never out.** No route searches a project, lists projects, or
+  returns saved text — and none will. Any local program can send a
+  `chrome-extension://` `Origin` (only *web pages* can't), so anything the
+  bridge answered with would leave without the person's say-so. That is why
+  "Use your knowledge here" (search and context) stays with Hubble on the web,
+  and why the popup shows no Hubble Desktop projects: the person chooses the
+  project in Hubble Desktop itself. A result says only what the person did with
+  the request that session sent.
+* Tabs are validated in Rust (version, source, request id, count, http(s) only,
+  ≤ 2048-char addresses, ≤ 500-char titles, favicons http(s) only) and again in
+  the webview. Bad addresses are dropped and counted, never fatal.
+* A conversation is validated in Rust (a known provider, an http(s) address,
+  a string title, a role of `user` or `assistant` and string text for every
+  turn, the limits above) and refused whole if any of it is wrong. The webview
+  then reads it with `readConversationCapture`, as the web does: the provider
+  comes from the address, never from the payload; an address that isn't one
+  AI-app conversation is refused; text is cleaned and bounded. A refused one is
+  answered "failed" and never shown.
+* Nothing is imported until the person presses Add or Save in Hubble; Cancel
+  imports nothing.
 * The token authenticates the *session*, not the client: any local program can
   open a session, just as any local program can already read the Chrome
   profile. What it cannot do is import without the person accepting it in the
   Hubble window, or read another session's result. The extension id is not
   pinned because the extension is distributed unpacked (its id depends on
   where it was unpacked).
-* Logs carry request ids, counts and reasons — never addresses, titles or
-  tokens. Rust logs only in debug builds.
+* Logs carry request ids, counts and reasons — never addresses, titles,
+  conversation text or tokens. Rust logs only in debug builds.
 
 ## Privacy
 
 The transfer is Chrome → loopback → Hubble Desktop. Nothing about it goes to
 Hubble's servers. Once tabs are sources of a project, Hubble reads them the way
 it reads any source added on the desktop (that existing step uses the deployed
-reader, see `docs/project-context.md`); this feature does not change that.
+reader, see `docs/project-context.md`); this feature does not change that. A
+conversation's text is saved on this computer only, like a pasted one.
 
 ## Extension permissions
 
 `host_permissions` gains `http://127.0.0.1:41517/*`, `…:41518/*`, `…:41519/*`
 — the bridge ports and nothing wider — so the service worker can reach the
-bridge. No new API permissions.
+bridge. No new API permissions. Reading the conversation uses the `activeTab`
+grant the person's click on the popup gives, as it does for Hubble on the web.
 
 ## Startup race
 
-Batches wait in Rust (`Bridge`), created in `setup` before the window. The
+Requests wait in Rust (`Bridge`), created in `setup` before the window. The
 webview asks for them only once its store has loaded (`desktop_import_take`)
 and again on each `hubble-import:requested` event, so a batch sent while Hubble
 is launching is shown as soon as Hubble can take it. A webview that reloads
-mid-choice is shown the batch again. Batches expire; nothing survives a quit.
+mid-choice is shown the request again. Requests expire; nothing survives a quit.
+
+## The popup closes
+
+Hubble Desktop comes to the front to ask for a project, which usually closes
+Chrome's popup. The extension's service worker keeps the run going and reports
+the outcome as a toast in the AI app's page ("Saved to Biology · 14 turns");
+the popup shows it too if it is still open.
 
 ## Single instance
 

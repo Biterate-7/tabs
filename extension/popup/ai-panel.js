@@ -1,4 +1,4 @@
-import { MSG_CAPTURE_CONVERSATION, MSG_INSERT_CONTEXT, MSG_MEMORY_REQUEST, TARGET_PROJECT_KEY } from "../src/config.js";
+import { MSG_CAPTURE_CONVERSATION, MSG_DESKTOP_STATUS, MSG_INSERT_CONTEXT, MSG_MEMORY_REQUEST, TARGET_PROJECT_KEY } from "../src/config.js";
 import { AI_PROVIDER_NAMES, aiProviderOf, isConversationUrl } from "../src/ai-pages.js";
 import { readStoredTarget } from "../src/quick-add.js";
 
@@ -6,7 +6,9 @@ import { readStoredTarget } from "../src/quick-add.js";
  * The popup's AI-app section: on ChatGPT, Claude, Gemini or Perplexity,
  *
  *   Save this conversation   reads the conversation on screen (only now,
- *                            only this tab) into the project chosen here
+ *                            only this tab) into Hubble Desktop when it is
+ *                            open — the person picks the project there —
+ *                            or else into the project chosen here
  *   Use your knowledge here  searches that project, builds context from the
  *                            items ticked, and inserts it into the message
  *                            box — or copies it, and says which happened
@@ -23,6 +25,7 @@ export const CAPTURE_ERRORS = {
   "empty-conversation": "There are no messages in this conversation yet. If it's still loading, wait a moment and try again.",
   empty: "Hubble couldn't find the messages on this page. Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
   "page-unreadable": "Chrome didn't let Hubble read this page. Reload it and try again, or paste the conversation in Hubble.",
+  "read-failed": "Hubble couldn't read this conversation's layout. Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
   "project-missing": "That project isn't in Hubble any more. Choose another one.",
   "storage-failed": "Hubble couldn't keep the conversation on this device, so nothing was saved. Try again.",
   invalid: "That didn't come through as a conversation. Reload the page and try again.",
@@ -32,6 +35,16 @@ export const CAPTURE_ERRORS = {
   timeout: "Hubble didn't answer in time. Open Hubble, then try again.",
   "not-ready": "Hubble is still loading. Try again in a moment.",
   failed: "Something went wrong. Try again.",
+  // Saving to Hubble Desktop (background.js → src/desktop-add.js).
+  "no-project": "Hubble Desktop isn't open any more. Choose a project to save to Hubble on the web.",
+  "desktop-cancelled": "Nothing saved — cancelled in Hubble Desktop.",
+  "desktop-expired": "Nothing saved — no project was chosen in Hubble Desktop in time.",
+  "desktop-failed": "Hubble Desktop couldn't keep the conversation, so nothing was saved. Try again.",
+  "desktop-busy": "Hubble Desktop is busy. Finish what's open there, then try again.",
+  "already-running": "Still saving the last conversation. Choose a project in Hubble Desktop first.",
+  "invalid-payload": "Hubble Desktop couldn't take this conversation. Reload the page and try again.",
+  "desktop-not-responding": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
+  "desktop-session-lost": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
 };
 
 export function captureError(reason) {
@@ -42,10 +55,16 @@ export function captureError(reason) {
 export function describeCapture(result, projectName) {
   const turns = Number.isInteger(result?.turns) ? ` · ${result.turns} turn${result.turns === 1 ? "" : "s"}` : "";
   const cut = result?.truncated ? " · very long, so only the first part was kept" : "";
-  const older = result?.olderNotLoaded ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them." : "";
+  // A long Claude or Perplexity chat keeps only the messages near the screen on the page, wherever it is scrolled.
+  const older = result?.partial
+    ? ". Only the part of this chat loaded on the page was saved — long chats load a few messages at a time. To keep all of it, import the app's data export or paste the conversation in Hubble."
+    : result?.olderNotLoaded
+      ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them."
+      : "";
   if (result?.outcome === "updated") return `Updated the saved copy in ${projectName}${turns}${cut}${older}`;
   if (result?.outcome === "unchanged") return `Already saved in ${projectName} — nothing new since${older || "."}`;
-  if (result?.outcome === "kept") return `${projectName} already has more of this conversation than the page shows, so the saved copy was kept. Scroll to the top to load the whole conversation, then save again.`;
+  if (result?.outcome === "kept")
+    return `${projectName} already has more of this conversation than the page shows, so the saved copy was kept.${result?.partial ? "" : " Scroll to the top to load the whole conversation, then save again."}`;
   return `Saved to ${projectName}${turns}${cut}${older}`;
 }
 
@@ -53,6 +72,16 @@ const TYPE_WORDS = { conversation: "AI conversation", webpage: "Web page", pdf: 
 
 function send(type, payload) {
   return chrome.runtime.sendMessage({ type, payload }).catch(() => ({ ok: false, error: "no-response" }));
+}
+
+/** Whether Save goes to Hubble Desktop: it is open, and new enough to take a conversation. */
+async function desktopTakesConversations() {
+  try {
+    const status = await chrome.runtime.sendMessage({ type: MSG_DESKTOP_STATUS });
+    return status?.available === true && status.conversations === true;
+  } catch {
+    return false;
+  }
 }
 
 function memory(kind, args, openIfMissing = false) {
@@ -132,6 +161,10 @@ export async function initAiPanel(activeTab, doc = document) {
   const chosen = new Set();
   let hits = [];
   let busy = false;
+  // Hubble Desktop is open: Save goes there and the project is chosen there.
+  // The project here then only scopes "Use your knowledge here", which stays
+  // with Hubble on the web — the desktop bridge only takes things in.
+  let toDesktop = false;
 
   section.hidden = false;
   el("ai-page").textContent = conversation ? `${name} · this conversation` : `${name} · open a conversation to save it`;
@@ -144,7 +177,7 @@ export async function initAiPanel(activeTab, doc = document) {
   const projectName = () => select.selectedOptions?.[0]?.textContent ?? "your project";
 
   function updateButtons() {
-    captureButton.disabled = busy || !conversation || !projectId();
+    captureButton.disabled = busy || !conversation || (!toDesktop && !projectId());
     insertButton.disabled = busy || chosen.size === 0 || !projectId();
     copyButton.disabled = busy || chosen.size === 0 || !projectId();
   }
@@ -165,6 +198,11 @@ export async function initAiPanel(activeTab, doc = document) {
     updateButtons();
   }
 
+  function showDesktopTarget() {
+    captureButton.textContent = toDesktop ? "Save to Hubble Desktop" : "Save this conversation";
+    if (toDesktop) say(captureStatus, conversation ? "Hubble Desktop is open. You'll choose the project there." : "");
+  }
+
   async function loadProjects(openIfMissing) {
     const remembered = await rememberedProject();
     const answer = await memory("projects", {}, openIfMissing);
@@ -172,13 +210,14 @@ export async function initAiPanel(activeTab, doc = document) {
       const projects = readPanelProjects(answer.result?.projects);
       openButton.hidden = true;
       fillProjects(projects, remembered?.id ?? answer.result?.currentId);
-      if (projects.length === 0) say(captureStatus, "Make a project in Hubble first.");
+      if (projects.length === 0 && !toDesktop) say(captureStatus, "Make a project in Hubble first.");
       return true;
     }
     // No Hubble open: the project last used still works — Hubble opens when the conversation is saved.
     fillProjects(remembered ? [{ id: remembered.id, name: remembered.name || "Your project" }] : [], remembered?.id);
-    openButton.hidden = false;
-    say(captureStatus, remembered ? "Hubble isn't open; it will open to save the conversation." : "Open Hubble to choose a project.");
+    // Saving to Hubble Desktop needs no Hubble tab; only searching does.
+    openButton.hidden = toDesktop;
+    if (!toDesktop) say(captureStatus, remembered ? "Hubble isn't open; it will open to save the conversation." : "Open Hubble to choose a project.");
     return false;
   }
 
@@ -292,18 +331,29 @@ export async function initAiPanel(activeTab, doc = document) {
   }
 
   captureButton.addEventListener("click", async () => {
-    if (busy || !projectId()) return;
+    if (busy || (!toDesktop && !projectId())) return;
     busy = true;
     updateButtons();
-    say(captureStatus, "Saving…");
-    const answer = await send(MSG_CAPTURE_CONVERSATION, { tabId: activeTab.id, workspaceId: projectId() });
+    // Hubble Desktop comes to the front to ask for a project, which usually closes this popup: the page's toast then says how it went.
+    say(captureStatus, toDesktop ? "Choose a project in Hubble Desktop…" : "Saving…");
+    const answer = await send(MSG_CAPTURE_CONVERSATION, { tabId: activeTab.id, ...(projectId() ? { workspaceId: projectId() } : {}) });
     busy = false;
-    updateButtons();
-    say(captureStatus, answer?.ok ? describeCapture(answer.result, projectName()) : captureError(answer?.error));
     if (answer?.ok) {
-      openButton.hidden = true;
+      say(captureStatus, describeCapture(answer.result, answer.result?.project || projectName()));
+      if (!answer.result?.desktop) openButton.hidden = true;
+      updateButtons();
       void search();
+      return;
     }
+    say(captureStatus, captureError(answer?.error));
+    // Hubble Desktop closed since this popup opened: back to choosing a project for Hubble on the web.
+    if (answer?.error === "no-project" && toDesktop) {
+      toDesktop = false;
+      showDesktopTarget();
+      await loadProjects(false);
+      say(captureStatus, captureError("no-project"));
+    }
+    updateButtons();
   });
   openButton.addEventListener("click", async () => {
     say(captureStatus, "Opening Hubble…");
@@ -330,6 +380,8 @@ export async function initAiPanel(activeTab, doc = document) {
     if (el("memory-panel").open && hits.length === 0) void search();
   });
 
+  toDesktop = conversation && (await desktopTakesConversations());
+  showDesktopTarget();
   await loadProjects(false);
   return true;
 }

@@ -13,14 +13,38 @@ const CHAT_URL = "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb";
 
 let listeners;
 let pageRequests;
+// Save asks Hubble Desktop first, over loopback: never the real network here.
+const realFetch = globalThis.fetch;
+let bridgeRequests;
 
 function fakeTab(over) {
   return { id: 7, windowId: 10, url: CHAT_URL, title: "Thesis feedback - Claude", status: "complete", ...over };
 }
 
+function json(status, body) {
+  return { status, ok: status >= 200 && status < 300, json: async () => body };
+}
+
+/** Hubble Desktop's bridge on its first port, saving whatever it is sent into "Biology". */
+function openHubbleDesktop() {
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    const { pathname, port } = new URL(url);
+    if (port !== "41517") throw new TypeError("Failed to fetch");
+    bridgeRequests.push({ method: init.method ?? "GET", pathname, body: init.body ? JSON.parse(init.body) : undefined });
+    if (pathname === "/v1/hello") return json(200, { app: "hubble-desktop", protocol: 1, ready: true, kinds: ["tabs", "conversation"] });
+    if (pathname === "/v1/sessions") return json(201, { sessionId: "s1", token: "tok" });
+    if (pathname.endsWith("/import")) return json(202, { status: "waiting", kind: "conversation", turns: 2 });
+    return json(200, { status: "done", result: { kind: "conversation", requestId: bridgeRequests[2].body.requestId, success: true, saved: "added", turns: 2, truncated: false, project: "Biology" } });
+  });
+}
+
 beforeEach(() => {
   listeners = [];
   pageRequests = [];
+  bridgeRequests = [];
+  globalThis.fetch = vi.fn(async () => {
+    throw new TypeError("Failed to fetch");
+  });
   globalThis.chrome = {
     runtime: { id: EXTENSION_ID, onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
     tabs: {
@@ -50,6 +74,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete globalThis.chrome;
+  globalThis.fetch = realFetch;
   vi.resetModules();
 });
 
@@ -61,6 +86,32 @@ async function ask(message, sender = POPUP) {
     if (!kept.includes(true)) resolve(undefined);
   });
 }
+
+describe("Save to Hubble with Hubble Desktop open", () => {
+  it("sends the conversation to Hubble Desktop, not the Hubble page, and says where the person put it", async () => {
+    openHubbleDesktop();
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
+    expect(answer).toEqual({ ok: true, result: { outcome: "added", turns: 2, truncated: false, project: "Biology", desktop: true } });
+    expect(pageRequests).toEqual([]);
+    const sent = bridgeRequests.find((request) => request.pathname.endsWith("/import"));
+    // Chrome's own address and the provider it names; role and text only.
+    expect(sent.body).toMatchObject({
+      kind: "conversation",
+      source: "chrome-extension",
+      conversation: { provider: "claude", url: CHAT_URL, title: "Thesis feedback - Claude", turns: [{ role: "user", text: "Is it arguable?" }, { role: "assistant", text: "Yes." }], truncated: false },
+    });
+  });
+
+  it("needs no project chosen in the popup, but Hubble on the web does", async () => {
+    openHubbleDesktop();
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toMatchObject({ ok: true, result: { desktop: true } });
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toEqual({ ok: false, error: "no-project" });
+    expect(pageRequests).toEqual([]);
+  });
+});
 
 describe("Save to Hubble", () => {
   it("reads only the conversation tab it was given, then hands it to the Hubble page with Chrome's own address", async () => {
@@ -154,12 +205,78 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
     expect(pageRequests).toEqual([]);
   });
 
+  it("says read-failed, not that Chrome blocked the page, when the reader itself throws", async () => {
+    const broken = { title: "", querySelectorAll: () => { throw new TypeError("boom"); } };
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(broken, CHATGPT_URL, 0) }]);
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "read-failed" });
+    expect(pageRequests).toEqual([]);
+  });
+
   it("tells an empty conversation apart from one it cannot read", async () => {
     const empty = document.implementation.createHTMLDocument("ChatGPT");
     empty.body.innerHTML = `<main><div data-thread-find-target="conversation"><div></div></div></main>`;
     chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(empty, CHATGPT_URL, 0) }]);
     expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "empty-conversation" });
     expect(pageRequests).toEqual([]);
+  });
+});
+
+describe("Save to Hubble on Claude, Gemini and Perplexity, signed in (2026-10-16)", () => {
+  /** executeScript runs the real reader against a page reduced to the app's structure. */
+  function serve(url, title, html) {
+    const doc = document.implementation.createHTMLDocument(title);
+    doc.body.innerHTML = html;
+    chrome.tabs.get.mockImplementation(async (id) => fakeTab({ id, url, title }));
+    chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(doc, url, 0) }]);
+  }
+  const claudeRow = (index, fromTail, inner) => `<div data-testid="transcript-row" data-index="${index}" data-perf-row-from-tail="${fromTail}">${inner}</div>`;
+  const claudeReply = (text) => `<div data-testid="assistant-message"><h2 class="sr-only">Claude responded: ${text}</h2><div data-find-omitted="" data-state="closed">Thought for 2 seconds</div><div data-perf-reply-text="" class="standard-markdown"><p>${text}</p></div></div>`;
+
+  it.each([
+    ["Claude", "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", "Thesis feedback - Claude", claudeRow(0, 1, `<div data-testid="user-message"><p>What caused WW1?</p></div>`) + claudeRow(1, 0, claudeReply("Militarism and alliances."))],
+    ["Gemini", "https://gemini.google.com/app/ed0431c2728ddb16", "Causes of WW1 - Google Gemini", `<user-query><div class="query-text"><h5 class="cdk-visually-hidden">You said What caused WW1?</h5><p>What caused WW1?</p></div></user-query><model-response><message-content><div class="markdown"><p>Militarism and alliances.</p></div></message-content></model-response>`],
+    ["Perplexity", "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0", "What caused WW1?", `<div data-workflow-entry="0"><div data-message-bubble="right"><p>What caused WW1?</p></div></div><div data-workflow-final-text=""><div class="prose"><p>Militarism and alliances.</p></div></div>`],
+  ])("%s: hands Hubble the question and the reply, at the conversation's own address", async (_name, url, title, html) => {
+    serve(url, title, html);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added" } });
+    expect(answer.result).not.toHaveProperty("partial");
+    expect(pageRequests).toEqual([
+      expect.objectContaining({
+        kind: "capture",
+        args: { workspaceId: "ws-history", capture: { url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] } },
+      }),
+    ]);
+  });
+
+  it("saves what a long Claude chat has on the page and tells the popup it was only part", async () => {
+    serve("https://claude.ai/chat/ad3e4ff2-7bbc-49c2-aa96-f24622d1409c", "Long chat - Claude", claudeRow(13, 1, `<div data-testid="user-message"><p>And then?</p></div>`) + claudeRow(14, 0, claudeReply("Then it ended.")));
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", partial: true } });
+    expect(answer.result).not.toHaveProperty("olderNotLoaded");
+    expect(pageRequests).toHaveLength(1);
+  });
+
+  // The same real readers, with Hubble Desktop open: what each app's markup yields is what the bridge is sent.
+  it.each([
+    ["Claude", "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", "claude", "Thesis feedback - Claude", claudeRow(0, 1, `<div data-testid="user-message"><p>What caused WW1?</p></div>`) + claudeRow(1, 0, claudeReply("Militarism and alliances."))],
+    ["Gemini", "https://gemini.google.com/app/ed0431c2728ddb16", "gemini", "Causes of WW1 - Google Gemini", `<user-query><div class="query-text"><h5 class="cdk-visually-hidden">You said What caused WW1?</h5><p>What caused WW1?</p></div></user-query><model-response><message-content><div class="markdown"><p>Militarism and alliances.</p></div></message-content></model-response>`],
+    ["Perplexity", "https://www.perplexity.ai/search/07f15fc6-ef25-4f50-aa41-4a551474a5b0", "perplexity", "What caused WW1?", `<div data-workflow-entry="0"><div data-message-bubble="right"><p>What caused WW1?</p></div></div><div data-workflow-final-text=""><div class="prose"><p>Militarism and alliances.</p></div></div>`],
+  ])("%s with Hubble Desktop open: the question and the reply go to the bridge, not the Hubble page", async (_name, url, provider, title, html) => {
+    openHubbleDesktop();
+    serve(url, title, html);
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", desktop: true } });
+    expect(pageRequests).toEqual([]);
+    const sent = bridgeRequests.find((request) => request.pathname.endsWith("/import"));
+    expect(sent.body.conversation).toMatchObject({ provider, url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] });
+  });
+
+  it("tells the popup a long Claude chat saved to Hubble Desktop was only part of it", async () => {
+    openHubbleDesktop();
+    serve("https://claude.ai/chat/ad3e4ff2-7bbc-49c2-aa96-f24622d1409c", "Long chat - Claude", claudeRow(13, 1, `<div data-testid="user-message"><p>And then?</p></div>`) + claudeRow(14, 0, claudeReply("Then it ended.")));
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", desktop: true, partial: true } });
   });
 });
 

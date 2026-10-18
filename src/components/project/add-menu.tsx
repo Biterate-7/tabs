@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Kbd } from "@/components/ui/kbd"
 import { Textarea } from "@/components/ui/textarea"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { sendBrowserCommand } from "@/lib/browser/bridge"
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
 import { getExtensionInstallInfo, EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
@@ -108,6 +109,19 @@ export function AddMenu({
 
 type Loaded = { kind: "loading" } | { kind: "tabs"; tabs: BrowserTabInfo[] } | { kind: "unavailable" }
 
+/** "Hubble for Chrome", linked to wherever it is installed from. */
+function ExtensionLink({ install }: { install: ReturnType<typeof getExtensionInstallInfo> }) {
+  return install.mode === "store" ? (
+    <a className="text-link hover:underline" href={install.url} target="_blank" rel="noreferrer">
+      Hubble for Chrome
+    </a>
+  ) : (
+    <a className="text-link hover:underline" href={EXTENSION_DOWNLOAD_URL} download>
+      Hubble for Chrome
+    </a>
+  )
+}
+
 /**
  * Browser tabs: the tabs open in Chrome, ticked to add.
  *
@@ -116,7 +130,8 @@ type Loaded = { kind: "loading" } | { kind: "tabs"; tabs: BrowserTabInfo[] } | {
  * anything that is not a web page are left out. With no extension to ask
  * (not installed, or Hubble Desktop, which Chrome reaches the other way), it
  * says how tabs get here from Chrome instead, in one line, with a paste box
- * underneath for anything already copied.
+ * underneath for anything already copied. In Hubble Desktop that line names
+ * the extension's desktop menu item: the website's quick add can't reach it.
  */
 function BrowserTabsDialog({
   subjectName,
@@ -134,6 +149,7 @@ function BrowserTabsDialog({
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" })
   const [chosen, setChosen] = useState<Set<number>>(new Set())
   const [pasted, setPasted] = useState("")
+  const isDesktop = useIsDesktop()
 
   useEffect(() => {
     let alive = true
@@ -239,7 +255,12 @@ function BrowserTabsDialog({
 
         {loaded.kind === "unavailable" && (
           <div className="mt-4 flex flex-col gap-3">
-            {quickAdd ? (
+            {isDesktop ? (
+              <p className="text-body-sm text-foreground">
+                In Chrome, right-click a tab → <span className="font-medium">Hubble → Add to Hubble Desktop</span>. It needs{" "}
+                <ExtensionLink install={install} />.
+              </p>
+            ) : quickAdd ? (
               <p className="text-body-sm text-foreground">
                 In Chrome, right-click a tab → <span className="font-medium">Add to {subjectName}</span>
                 {quickAdd.shortcut && (
@@ -250,17 +271,7 @@ function BrowserTabsDialog({
               </p>
             ) : (
               <p className="text-body-sm text-foreground">
-                Add tabs straight from Chrome with{" "}
-                {install.mode === "store" ? (
-                  <a className="text-link hover:underline" href={install.url} target="_blank" rel="noreferrer">
-                    Hubble for Chrome
-                  </a>
-                ) : (
-                  <a className="text-link hover:underline" href={EXTENSION_DOWNLOAD_URL} download>
-                    Hubble for Chrome
-                  </a>
-                )}
-                .
+                Add tabs straight from Chrome with <ExtensionLink install={install} />.
               </p>
             )}
             <label className="text-meta text-muted-foreground">

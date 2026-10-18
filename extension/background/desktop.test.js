@@ -217,9 +217,9 @@ describe("Add to Hubble Desktop", () => {
 
   it("tells the popup whether Hubble Desktop is open", async () => {
     await load();
-    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: true, seen: true });
+    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: true, conversations: false, seen: true });
     desktop.running = false;
-    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: false, seen: true });
+    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: false, conversations: false, seen: true });
   });
 });
 

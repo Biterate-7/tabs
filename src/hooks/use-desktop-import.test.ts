@@ -72,6 +72,70 @@ describe("useDesktopImport", () => {
     expect(result.current.current).toBeUndefined()
   })
 
+  it("queues a conversation beside batches of tabs, read the way a capture on the web is", async () => {
+    const conversation = {
+      kind: "conversation",
+      requestId: "req-convo001",
+      provider: "claude",
+      url: "https://claude.ai/chat/0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+      title: "Essay outline",
+      turns: [
+        { role: "user", text: "Outline my essay" },
+        { role: "assistant", text: "1. Intro" },
+      ],
+      truncated: false,
+      expiresInMs: 180_000,
+    }
+    const fake = fakeBridge([pending("req-tabs0001"), conversation])
+    const { result } = renderHook(() => useDesktopImport(fake.bridge, true))
+    await waitFor(() => expect(result.current.waiting).toBe(2))
+    act(() => result.current.answer("req-tabs0001", { status: "cancelled", added: 0, duplicates: 0, failed: 0 }))
+    const current = result.current.current
+    expect(current?.kind).toBe("conversation")
+    expect(current?.kind === "conversation" && current.conversation).toMatchObject({ provider: "claude", title: "Essay outline", method: "page" })
+    act(() => result.current.answer("req-convo001", { status: "done", project: "English", saved: "added", turns: 2, truncated: false }))
+    expect(fake.finished[1]).toEqual({ requestId: "req-convo001", outcome: { status: "done", project: "English", saved: "added", turns: 2, truncated: false } })
+  })
+
+  it("saves a conversation through the shell's save and answers Rust with what it did", async () => {
+    const entry = {
+      kind: "conversation",
+      requestId: "req-convo003",
+      url: "https://gemini.google.com/app/abc123def456",
+      title: "Cell biology",
+      turns: [{ role: "user", text: "What is a ribosome?" }],
+      truncated: true,
+      expiresInMs: 180_000,
+    }
+    const fake = fakeBridge([entry])
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, reason: "project-missing" })
+      .mockResolvedValueOnce({ ok: true, outcome: "updated", title: "Cell biology" })
+    const { result } = renderHook(() => useDesktopImport(fake.bridge, true, undefined, save))
+    await waitFor(() => expect(result.current.current?.requestId).toBe("req-convo003"))
+    const request = result.current.current
+    if (request?.kind !== "conversation") throw new Error("not a conversation")
+
+    // A project that vanished is not an answer: the person chooses again.
+    await act(async () => expect(await result.current.saveCapture(request, "ws-gone", "Gone")).toEqual({ ok: false, reason: "project-missing" }))
+    expect(fake.finished).toHaveLength(0)
+    expect(result.current.current?.requestId).toBe("req-convo003")
+
+    await act(async () => expect(await result.current.saveCapture(request, "ws-bio", "Biology")).toMatchObject({ ok: true, outcome: "updated" }))
+    expect(save).toHaveBeenLastCalledWith("ws-bio", expect.objectContaining({ provider: "gemini", method: "page" }), true)
+    expect(fake.finished).toEqual([{ requestId: "req-convo003", outcome: { status: "done", project: "Biology", saved: "updated", turns: 1, truncated: true } }])
+    expect(result.current.current).toBeUndefined()
+  })
+
+  it("answers a conversation that isn't one at once, and never shows it", async () => {
+    const fake = fakeBridge([{ kind: "conversation", requestId: "req-convo002", provider: "chatgpt", url: "https://example.com/c/1", turns: [{ role: "user", text: "Hi" }], expiresInMs: 1000 }])
+    const { result } = renderHook(() => useDesktopImport(fake.bridge, true))
+    await waitFor(() => expect(fake.finished).toHaveLength(1))
+    expect(fake.finished[0]).toEqual({ requestId: "req-convo002", outcome: { status: "failed", added: 0, duplicates: 0, failed: 0 } })
+    expect(result.current.current).toBeUndefined()
+  })
+
   it("lets a batch go before Rust stops waiting for it, so it can't be added after Chrome was told it wasn't", async () => {
     const fake = fakeBridge([pending("req-expires1", 1, 5000)])
     const onExpire = vi.fn()

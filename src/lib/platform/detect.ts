@@ -3,8 +3,10 @@
  *
  * This is the ONLY place that answers that question. The rule the rest of
  * the codebase follows: product logic never asks. A handful of narrow
- * seams ask — `src/lib/platform/index.ts`, `src/lib/browser/open-tab.ts`,
- * `src/lib/auth/client.ts` — and everything else stays identical on both
+ * seams ask — `src/lib/platform/index.ts`, `src/lib/platform/api-base.ts`,
+ * `src/lib/browser/open-tab.ts`, `src/lib/browser/bridge.ts`,
+ * `src/lib/auth/client.ts` — plus views that word a capability differently
+ * (through `useIsDesktop`), and everything else stays identical on both
  * platforms, because it genuinely is identical.
  *
  * `__TAURI_INTERNALS__` (not `__TAURI__`) is the marker: the latter only

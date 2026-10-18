@@ -1,7 +1,7 @@
 // "Add to Hubble Desktop", whole runs: Hubble open, closed, not installed, not
 // responding, cancelled, retried — with every browser call injected.
 import { describe, expect, it, vi } from "vitest";
-import { createDesktopAdd } from "./desktop-add.js";
+import { createDesktopAdd, createDesktopSave } from "./desktop-add.js";
 import { DESKTOP_BRIDGE_PORTS } from "./desktop.js";
 
 function chromeTab(id, url = `https://example.com/${id}`) {
@@ -146,5 +146,105 @@ describe("Add to Hubble Desktop", () => {
     expect((await run({ scope: "current" })).reason).toBe("already-running");
     release = true;
     await expect(first).resolves.toMatchObject({ status: "done" });
+  });
+});
+
+/** Hubble Desktop for a conversation: open or not, new enough or not, and what the person does there. */
+function desktopForSave({ running = true, kinds = ["tabs", "conversation"], answer = (payload) => ({ status: "done", result: { kind: "conversation", success: true, saved: "added", turns: payload.conversation.turns.length, project: "Biology" } }) } = {}) {
+  const state = { running, sent: [] };
+  let session;
+  state.fetch = vi.fn(async (url, init = {}) => {
+    const { pathname, port } = new URL(url);
+    if (!state.running || Number(port) !== DESKTOP_BRIDGE_PORTS[0]) throw new TypeError("Failed to fetch");
+    if (pathname === "/v1/hello") return json(200, { app: "hubble-desktop", protocol: 1, ready: true, ...(kinds ? { kinds } : {}) });
+    if (pathname === "/v1/sessions") return json(201, { sessionId: "s1", token: "tok" });
+    if (pathname.endsWith("/import")) {
+      session = JSON.parse(init.body);
+      state.sent.push(session);
+      return json(202, { status: "waiting", kind: "conversation", turns: session.conversation.turns.length });
+    }
+    const result = answer(session);
+    return json(200, result ? { ...result, result: { requestId: session.requestId, ...result.result } } : { status: "waiting" });
+  });
+  return state;
+}
+
+function saveHarness(hubble = desktopForSave()) {
+  const shown = [];
+  let clock = 0;
+  const save = createDesktopSave({
+    show: vi.fn(async (toast) => {
+      shown.push(toast);
+    }),
+    fetch: hubble.fetch,
+    sleep: async (ms) => {
+      clock += ms;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+    now: () => clock,
+  });
+  return { save, shown, hubble };
+}
+
+const conversation = {
+  provider: "claude",
+  url: "https://claude.ai/chat/0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+  title: "Essay outline",
+  turns: [
+    { role: "user", text: "Outline my essay" },
+    { role: "assistant", text: "1. Intro" },
+  ],
+};
+
+describe("Save this conversation to Hubble Desktop", () => {
+  it("with Hubble Desktop open: sends it, waits for the person's choice, and says where it went", async () => {
+    const { save, shown, hubble } = saveHarness();
+    const outcome = await save(conversation);
+    expect(hubble.sent[0]).toMatchObject({ kind: "conversation", conversation: { provider: "claude", title: "Essay outline", turns: conversation.turns } });
+    expect(shown.map((toast) => toast.title)).toEqual(["Connecting to Hubble Desktop…", "Save to Hubble", "Saved to Biology"]);
+    expect(outcome).toMatchObject({ status: "done", saved: "added", turns: 2, project: "Biology" });
+    expect(outcome.toast).toMatchObject({ tone: "done", final: true });
+  });
+
+  it("with Hubble Desktop closed: leaves Save to Hubble on the web, and never opens the app", async () => {
+    const { save, shown, hubble } = saveHarness(desktopForSave({ running: false }));
+    await expect(save(conversation)).resolves.toEqual({ fallback: true, reason: "desktop-not-open" });
+    expect(hubble.sent).toHaveLength(0);
+    expect(shown).toHaveLength(0);
+  });
+
+  it("with a Hubble Desktop that predates conversations: leaves Save to Hubble on the web", async () => {
+    const { save, hubble } = saveHarness(desktopForSave({ kinds: null }));
+    await expect(save(conversation)).resolves.toEqual({ fallback: true, reason: "desktop-too-old" });
+    expect(hubble.sent).toHaveLength(0);
+  });
+
+  it("when the person cancels or doesn't choose in time: says nothing was saved", async () => {
+    const cancelled = saveHarness(desktopForSave({ answer: () => ({ status: "cancelled", result: { kind: "conversation" } }) }));
+    expect(await cancelled.save(conversation)).toMatchObject({ status: "cancelled" });
+    expect(cancelled.shown.at(-1)).toMatchObject({ tone: "same", title: "Nothing saved" });
+    const expired = saveHarness(desktopForSave({ answer: () => ({ status: "expired", result: { kind: "conversation" } }) }));
+    expect(await expired.save(conversation)).toMatchObject({ status: "expired" });
+    expect(expired.shown.at(-1)).toMatchObject({ tone: "error", title: "Nothing saved" });
+  });
+
+  it("when Hubble Desktop refuses it: says so, and the next save runs", async () => {
+    const hubble = desktopForSave();
+    const refusing = vi.fn(async (url, init) => (new URL(url).pathname.endsWith("/import") ? json(400, { ok: false, reason: "invalid-payload" }) : hubble.fetch(url, init)));
+    const { save, shown } = saveHarness({ ...hubble, fetch: refusing });
+    expect(await save(conversation)).toMatchObject({ reason: "invalid-payload" });
+    expect(shown.at(-1)).toMatchObject({ tone: "error", title: "Couldn't save the conversation" });
+    expect((await save(conversation)).reason).not.toBe("already-running");
+  });
+
+  it("saves one conversation at a time", async () => {
+    let release;
+    const hubble = desktopForSave({ answer: (payload) => (release ? { status: "done", result: { kind: "conversation", saved: "added", turns: payload.conversation.turns.length, project: "Biology" } } : undefined) });
+    const { save } = saveHarness(hubble);
+    const first = save(conversation);
+    await vi.waitFor(() => expect(hubble.sent).toHaveLength(1));
+    expect((await save(conversation)).reason).toBe("already-running");
+    release = true;
+    await expect(first).resolves.toMatchObject({ status: "done", saved: "added" });
   });
 });

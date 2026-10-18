@@ -38,7 +38,7 @@ import {
 } from "../src/config.js";
 import { aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
-import { createDesktopAdd } from "../src/desktop-add.js";
+import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
@@ -1262,7 +1262,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const found = await findDesktop().catch(() => undefined);
       if (found) await markDesktopSeen();
-      return { ok: true, available: Boolean(found), seen: Boolean(found) || (await desktopSeen()) };
+      return { ok: true, available: Boolean(found), conversations: Boolean(found?.conversations), seen: Boolean(found) || (await desktopSeen()) };
     })().then((response) => safeSendResponse(sendResponse, response));
     return true;
   }
@@ -1302,7 +1302,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 //
 //   Save        popup -> here -> executeScript(readConversationFromPage) on the
 //               tab the person is looking at (allowed by the activeTab grant
-//               their click gave) -> the Hubble page saves it (kind "capture")
+//               their click gave) -> Hubble Desktop, when it is open (the
+//               person picks the project there; src/desktop-add.js), or else
+//               the Hubble page saves it (kind "capture")
 //   Search/use  popup -> here -> the Hubble page (kind "search" / "bundle")
 //   Insert      popup -> here -> executeScript(insertIntoComposer) on that tab.
 //               It types; it never sends.
@@ -1360,7 +1362,44 @@ async function askHubblePage(kind, args, { openIfMissing = false } = {}) {
   }
 }
 
-/** Saves the conversation in `tabId` to a project. */
+// Where the current desktop save reports (the AI app's tab), and what it last showed there.
+let saveToastTabId;
+let saveShown;
+
+/** A desktop save's progress or outcome, as a toast in the AI app's page — only when its words change. */
+async function showSaveToast(toast) {
+  const { final, ...words } = toast;
+  const view = { ...words, ...(final ? { dismissAfterMs: toast.tone === "error" ? 15000 : 6000 } : {}) };
+  const key = JSON.stringify(view);
+  if (key === saveShown) return;
+  saveShown = key;
+  await showToast(saveToastTabId, view);
+}
+
+const desktopSave = createDesktopSave({
+  show: showSaveToast,
+  fetch: (...args) => globalThis.fetch(...args),
+  sleep,
+  log,
+});
+
+/**
+ * A desktop save's outcome as the popup takes a save's answer: what was
+ * saved and where, or a reason it turns into words.
+ */
+function answerFromDesktop(outcome) {
+  if (outcome.status === "done" && outcome.saved) {
+    return { ok: true, result: { outcome: outcome.saved, turns: outcome.turns, truncated: outcome.truncated, project: outcome.project, desktop: true } };
+  }
+  const reason = outcome.status ?? outcome.reason;
+  return { ok: false, error: ["cancelled", "expired", "failed", "done"].includes(reason) ? `desktop-${reason === "done" ? "failed" : reason}` : reason };
+}
+
+/**
+ * Saves the conversation in `tabId`: to Hubble Desktop when it is open (the
+ * person picks the project there), otherwise to `workspaceId` through the
+ * Hubble page, as before.
+ */
 async function captureConversation({ tabId, workspaceId }) {
   let tab;
   try {
@@ -1381,14 +1420,30 @@ async function captureConversation({ tabId, workspaceId }) {
   const checked = checkPageRead(read);
   // Counts and reasons only: what the conversation says is never logged.
   if (!checked.ok) {
-    log("capture-read-refused", { reason: checked.error });
+    // A null result is Chrome swallowing an error thrown in the page; `detail` is the reader's own error, never page text.
+    log("capture-read-refused", { reason: checked.error, provider: aiProviderOf(tab.url), detail: typeof read?.detail === "string" ? read.detail : read == null ? "no result" : undefined });
     return { ok: false, error: checked.error };
   }
-  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length });
+  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length, partial: checked.partial });
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
-  const answer = await askHubblePage("capture", { workspaceId, capture: { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns } }, { openIfMissing: true });
-  // The page saved what was on screen; the popup says when that was not the whole chat.
-  return answer?.ok && checked.olderNotLoaded ? { ...answer, result: { ...answer.result, olderNotLoaded: true } } : answer;
+  const capture = { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns };
+
+  saveToastTabId = tabId;
+  saveShown = undefined;
+  const viaDesktop = await desktopSave({ ...capture, provider: aiProviderOf(tab.url), truncated: read?.truncated === true });
+  if (!viaDesktop.fallback) {
+    return withReadNotes(answerFromDesktop(viaDesktop), checked);
+  }
+  // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup.
+  if (!workspaceId) return { ok: false, error: "no-project" };
+  const answer = await askHubblePage("capture", { workspaceId, capture }, { openIfMissing: true });
+  return withReadNotes(answer, checked);
+}
+
+/** What was saved was what was on screen; the popup says when that was not the whole chat. */
+function withReadNotes(answer, checked) {
+  if (!answer?.ok || !(checked.olderNotLoaded || checked.partial)) return answer;
+  return { ...answer, result: { ...answer.result, ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) } };
 }
 
 async function insertContext({ tabId, text }) {
@@ -1418,7 +1473,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === MSG_CAPTURE_CONVERSATION) {
     const tabId = message.payload?.tabId;
     const workspaceId = message.payload?.workspaceId;
-    if (!Number.isInteger(tabId) || typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200) {
+    // No project is fine: Hubble Desktop asks for one. Hubble on the web needs one (captureConversation says so).
+    if (!Number.isInteger(tabId) || (workspaceId !== undefined && (typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200))) {
       safeSendResponse(sendResponse, { ok: false, error: "invalid" });
       return undefined;
     }

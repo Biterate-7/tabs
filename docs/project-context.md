@@ -288,7 +288,7 @@ remote images (Tauri CSP), so there a time opens YouTube instead.
 
 ## 7. The extension
 
-`extension/` (0.6.1). The popup's round trip to the open Hubble page returns
+`extension/` (0.7.0). The popup's round trip to the open Hubble page returns
 the projects (ids, names, item counts). *Add to a project*: choose a project
 (pre-selected: the project open in Hubble, or the last one chosen here), then
 *Add this tab* or *Add N selected tabs*. Quick add (§4) uses `contextMenus`

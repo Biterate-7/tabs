@@ -23,6 +23,7 @@ import { loadDependencyState } from "@/lib/dependencies/persistence"
 import { getProjectContents } from "@/lib/resources/content-store"
 import { buildWorkspaceExport, downloadJsonFile, serializeWorkspaceExport } from "@/lib/workspace/json-export"
 import { deleteLegacyAgentData, exportLegacyAgentData, findLegacyAgentData, hasLegacyAgentData } from "@/lib/storage/legacy-agent-data"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { FieldRow, GroupBlock, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
 import type { ProviderCapabilities, ProviderCapability } from "@/lib/providers/registry"
 import type { ResourceContent } from "@/lib/resources/types"
@@ -121,6 +122,7 @@ function today(): string {
  */
 export function DataSection({ workspaces }: { workspaces: readonly Workspace[] }) {
   const [busy, setBusy] = useState(false)
+  const isDesktop = useIsDesktop()
   const [legacy, setLegacy] = useState(() => (typeof window === "undefined" ? null : findLegacyAgentData()))
 
   async function exportAll(includeText: boolean) {
@@ -150,7 +152,14 @@ export function DataSection({ workspaces }: { workspaces: readonly Workspace[] }
     <div>
       <SectionHeading title="Data" />
       <SectionStack className="mb-6">
-        <FieldRow label="On this device" description="Everything is kept in this browser. Signing in syncs titles and links — not conversation text or notes.">
+        <FieldRow
+          label="On this device"
+          description={
+            isDesktop
+              ? "Everything is kept in this app on this computer."
+              : "Everything is kept in this browser. Signing in syncs titles and links — not conversation text or notes."
+          }
+        >
           <span />
         </FieldRow>
         <FieldRow label="Export everything" description="All projects with their text, as one JSON file.">

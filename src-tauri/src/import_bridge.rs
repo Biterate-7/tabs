@@ -34,17 +34,28 @@
 //!   is never used expires; a request nobody answers expires; a result nobody
 //!   collects expires. Nothing outlives the app: all of it is in memory.
 //! * **Four routes, one job.** There is no route that touches a file, runs a
-//!   command or reaches a Tauri command. The bridge can only queue a batch of
-//!   web addresses for the person to accept or decline in Hubble's own window.
-//! * **The payload is validated here** — version, source, request id, tab
-//!   count, address scheme and length, title length, favicon, body size — and
-//!   again by the webview (src/lib/desktop/import-protocol.ts) before anything
-//!   reaches the import pipeline. Bad addresses are dropped and counted, not
-//!   fatal: the person sees "8 of 10 added".
+//!   command or reaches a Tauri command. The bridge can only queue something
+//!   for the person to accept or decline in Hubble's own window: a batch of
+//!   web addresses (`"kind": "tabs"`, the default) or one AI conversation the
+//!   extension read from ChatGPT, Claude, Gemini or Perplexity
+//!   (`"kind": "conversation"`).
+//! * **Nothing flows out.** The bridge only takes things in. No route reads a
+//!   project, a search or a saved conversation: a local program can forge
+//!   `Origin`, so anything this answered with would leave without the
+//!   person's say-so. A result says only what the person did with the
+//!   request it sent.
+//! * **The payload is validated here** — version, source, request id, kind;
+//!   for tabs their count, address scheme and length, title length, favicon
+//!   and body size; for a conversation its provider, address, title, turn
+//!   count, roles, text length and body size — and again by the webview
+//!   (src/lib/desktop/import-protocol.ts) before anything is saved. Bad tab
+//!   addresses are dropped and counted, not fatal: the person sees "8 of 10
+//!   added".
 //! * **The person decides.** Nothing is imported until they choose a project
-//!   and press Add in the desktop window; Cancel imports nothing.
+//!   and press Add (or Save) in the desktop window; Cancel imports nothing.
 //!
-//! Tab addresses are never logged — only request ids, counts and outcomes.
+//! Tab addresses and conversation text are never logged — only request ids,
+//! counts and outcomes.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -74,6 +85,25 @@ pub const MAX_URL_CHARS: usize = 2048;
 pub const MAX_TITLE_CHARS: usize = 500;
 /// 200 tabs of maximum-length addresses, titles and favicons fit with room.
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// One conversation at most what Hubble keeps of one: `CONVERSATION_LIMITS`
+/// (src/lib/conversations/types.ts). The extension trims to these before it
+/// sends; anything over them is refused here, not cut.
+pub const MAX_CONVERSATION_TURNS: usize = 4000;
+pub const MAX_TURN_CHARS: usize = 100000;
+pub const MAX_CONVERSATION_CHARS: usize = 2000000;
+/// 2 000 000 characters as JSON — multibyte text, escaped newlines and quotes.
+pub const MAX_CONVERSATION_BODY_BYTES: usize = 8 * 1024 * 1024;
+/// The AI apps a conversation can come from (`AI_PROVIDER_IDS`,
+/// src/lib/providers/registry.ts). The webview decides the provider again
+/// from the conversation's address, never from this.
+pub const AI_PROVIDERS: [&str; 4] = ["chatgpt", "claude", "gemini", "perplexity"];
+/// What the bridge takes, as `/v1/hello` reports it, so an extension can tell
+/// a Hubble Desktop that predates conversations from one that takes them.
+pub const PAYLOAD_KINDS: [&str; 2] = ["tabs", "conversation"];
+
+/// The largest body any request may carry; each kind then has its own limit.
+const MAX_REQUEST_BYTES: usize = if MAX_CONVERSATION_BODY_BYTES > MAX_BODY_BYTES { MAX_CONVERSATION_BODY_BYTES } else { MAX_BODY_BYTES };
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_SESSIONS: usize = 8;
 const MAX_CONNECTIONS: usize = 16;
@@ -120,6 +150,63 @@ pub struct ValidatedImport {
     pub rejected: usize,
 }
 
+/// One turn of a conversation: who said it and what they said. The text is
+/// data — kept so it can be found later, never run or followed.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ConversationTurn {
+    /// "user" or "assistant".
+    pub role: &'static str,
+    pub text: String,
+}
+
+/// A validated conversation: what is shown to the person and handed to the
+/// shell's conversation save — the fields of a page capture
+/// (src/lib/conversations/capture.ts) and nothing else.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidatedConversation {
+    pub request_id: String,
+    pub provider: &'static str,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub turns: Vec<ConversationTurn>,
+    /// The extension already cut a very long conversation to fit.
+    pub truncated: bool,
+}
+
+/// Anything the bridge queues for the person, tagged by `kind` for the webview.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ImportRequest {
+    Tabs(ValidatedImport),
+    Conversation(ValidatedConversation),
+}
+
+impl ImportRequest {
+    pub fn request_id(&self) -> &str {
+        match self {
+            ImportRequest::Tabs(tabs) => &tabs.request_id,
+            ImportRequest::Conversation(conversation) => &conversation.request_id,
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ImportRequest::Tabs(_) => "tabs",
+            ImportRequest::Conversation(_) => "conversation",
+        }
+    }
+
+    /// Tabs or turns: what the logs and the queued event count.
+    pub fn items(&self) -> usize {
+        match self {
+            ImportRequest::Tabs(tabs) => tabs.tabs.len(),
+            ImportRequest::Conversation(conversation) => conversation.turns.len(),
+        }
+    }
+}
+
 /// Why a request was refused. Each maps to one status code and one short,
 /// stable reason the extension turns into words — never a stack trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +215,8 @@ pub enum Refusal {
     UnsupportedVersion,
     TooManyTabs,
     NoTabs,
+    TooManyTurns,
+    EmptyConversation,
     TooLarge,
     Forbidden,
     Unauthorized,
@@ -140,7 +229,12 @@ pub enum Refusal {
 impl Refusal {
     pub fn status(self) -> u16 {
         match self {
-            Refusal::BadRequest | Refusal::UnsupportedVersion | Refusal::TooManyTabs | Refusal::NoTabs => 400,
+            Refusal::BadRequest
+            | Refusal::UnsupportedVersion
+            | Refusal::TooManyTabs
+            | Refusal::NoTabs
+            | Refusal::TooManyTurns
+            | Refusal::EmptyConversation => 400,
             Refusal::TooLarge => 413,
             Refusal::Forbidden => 403,
             Refusal::Unauthorized => 401,
@@ -157,6 +251,8 @@ impl Refusal {
             Refusal::UnsupportedVersion => "unsupported-version",
             Refusal::TooManyTabs => "too-many-tabs",
             Refusal::NoTabs => "no-tabs",
+            Refusal::TooManyTurns => "too-many-turns",
+            Refusal::EmptyConversation => "empty-conversation",
             Refusal::TooLarge => "payload-too-large",
             Refusal::Forbidden => "forbidden",
             Refusal::Unauthorized => "unauthorized",
@@ -193,9 +289,10 @@ fn clean_title(raw: &str) -> Option<String> {
 }
 
 /// Checks a request body against the wire protocol (extension/src/desktop.js
-/// `buildDesktopPayload`). Unknown fields are ignored, never carried forward.
-pub fn validate_payload(body: &[u8]) -> Result<ValidatedImport, Refusal> {
-    if body.len() > MAX_BODY_BYTES {
+/// `buildDesktopPayload` and `buildDesktopConversation`). Unknown fields are
+/// ignored, never carried forward.
+pub fn validate_payload(body: &[u8]) -> Result<ImportRequest, Refusal> {
+    if body.len() > MAX_REQUEST_BYTES {
         return Err(Refusal::TooLarge);
     }
     let value: Value = serde_json::from_slice(body).map_err(|_| Refusal::BadRequest)?;
@@ -210,6 +307,21 @@ pub fn validate_payload(body: &[u8]) -> Result<ValidatedImport, Refusal> {
         return Err(Refusal::BadRequest);
     }
     let request_id = object.get("requestId").and_then(Value::as_str).filter(|id| is_request_id(id)).ok_or(Refusal::BadRequest)?;
+    // No kind is a batch of tabs: what every extension before conversations sends.
+    match object.get("kind") {
+        None => validate_tabs(object, request_id, body.len()).map(ImportRequest::Tabs),
+        Some(kind) => match kind.as_str() {
+            Some("tabs") => validate_tabs(object, request_id, body.len()).map(ImportRequest::Tabs),
+            Some("conversation") => validate_conversation(object, request_id, body.len()).map(ImportRequest::Conversation),
+            _ => Err(Refusal::BadRequest),
+        },
+    }
+}
+
+fn validate_tabs(object: &serde_json::Map<String, Value>, request_id: &str, body_len: usize) -> Result<ValidatedImport, Refusal> {
+    if body_len > MAX_BODY_BYTES {
+        return Err(Refusal::TooLarge);
+    }
     let raw_tabs = object.get("tabs").and_then(Value::as_array).ok_or(Refusal::BadRequest)?;
     if raw_tabs.is_empty() {
         return Err(Refusal::NoTabs);
@@ -234,8 +346,66 @@ pub fn validate_payload(body: &[u8]) -> Result<ValidatedImport, Refusal> {
     Ok(ValidatedImport { request_id: request_id.to_string(), received: raw_tabs.len(), rejected, tabs })
 }
 
+/// One conversation, all or nothing: unlike a batch of tabs, a conversation
+/// with a turn that isn't one is not a conversation to save in part.
+fn validate_conversation(object: &serde_json::Map<String, Value>, request_id: &str, body_len: usize) -> Result<ValidatedConversation, Refusal> {
+    if body_len > MAX_CONVERSATION_BODY_BYTES {
+        return Err(Refusal::TooLarge);
+    }
+    let conversation = object.get("conversation").and_then(Value::as_object).ok_or(Refusal::BadRequest)?;
+    let claimed = conversation.get("provider").and_then(Value::as_str).ok_or(Refusal::BadRequest)?;
+    let provider = AI_PROVIDERS.iter().copied().find(|known| *known == claimed).ok_or(Refusal::BadRequest)?;
+    let url = conversation.get("url").and_then(Value::as_str).and_then(web_address).ok_or(Refusal::BadRequest)?;
+    let title = match conversation.get("title") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(raw)) => clean_title(raw),
+        Some(_) => return Err(Refusal::BadRequest),
+    };
+    let truncated = match conversation.get("truncated") {
+        None => false,
+        Some(flag) => flag.as_bool().ok_or(Refusal::BadRequest)?,
+    };
+
+    let raw_turns = conversation.get("turns").and_then(Value::as_array).ok_or(Refusal::BadRequest)?;
+    if raw_turns.len() > MAX_CONVERSATION_TURNS {
+        return Err(Refusal::TooManyTurns);
+    }
+    let mut turns = Vec::with_capacity(raw_turns.len());
+    let mut total = 0usize;
+    for raw in raw_turns {
+        let role = match raw.get("role").and_then(Value::as_str) {
+            Some("user") => "user",
+            Some("assistant") => "assistant",
+            _ => return Err(Refusal::BadRequest),
+        };
+        let text = raw.get("text").and_then(Value::as_str).ok_or(Refusal::BadRequest)?;
+        let chars = text.chars().count();
+        if chars > MAX_TURN_CHARS {
+            return Err(Refusal::TooLarge);
+        }
+        total += chars;
+        if total > MAX_CONVERSATION_CHARS {
+            return Err(Refusal::TooLarge);
+        }
+        // An empty bubble (an image-only turn, a turn still loading) is no turn at all.
+        if text.trim().is_empty() {
+            continue;
+        }
+        turns.push(ConversationTurn { role, text: text.to_string() });
+    }
+    if turns.is_empty() {
+        return Err(Refusal::EmptyConversation);
+    }
+
+    Ok(ValidatedConversation { request_id: request_id.to_string(), provider, url, title, turns, truncated })
+}
+
+/// The ways a conversation's save can come out (`CaptureSaveResult` in
+/// src/hooks/use-extension-memory.ts).
+const SAVE_OUTCOMES: [&str; 4] = ["added", "updated", "unchanged", "kept"];
+
 /// What the webview reports once the person has answered.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportOutcome {
     /// "done", "cancelled" or "failed".
@@ -249,6 +419,15 @@ pub struct ImportOutcome {
     pub duplicates: usize,
     #[serde(default)]
     pub failed: usize,
+    /// A conversation only: what saving it did — one of SAVE_OUTCOMES.
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// A conversation only: the turns Hubble kept.
+    #[serde(default)]
+    pub turns: usize,
+    /// A conversation only: it was too long, so only the first part was kept.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 /* ------------------------------------------------------------------ *
@@ -258,8 +437,8 @@ pub struct ImportOutcome {
 enum Stage {
     /// Issued; nothing submitted yet.
     Open,
-    /// A batch is waiting for the person.
-    Waiting(ValidatedImport),
+    /// A batch or a conversation is waiting for the person.
+    Waiting(ImportRequest),
     /// Answered (or expired); waiting for the extension to collect it.
     Finished(Value),
 }
@@ -293,23 +472,41 @@ fn same_token(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn result_json(request: &ValidatedImport, status: &str, outcome: Option<&ImportOutcome>) -> Value {
-    let (added, duplicates, failed, project) = match outcome {
-        Some(o) => (o.added, o.duplicates, o.failed, o.project.clone()),
-        None => (0, 0, 0, None),
-    };
-    json!({
-        "status": status,
-        "result": {
-            "requestId": request.request_id,
-            "success": status == "done" && added + duplicates > 0,
-            "received": request.received,
-            "added": added,
-            "duplicates": duplicates,
-            "failed": failed,
-            "project": project,
+fn result_json(request: &ImportRequest, status: &str, outcome: Option<&ImportOutcome>) -> Value {
+    let project = outcome.and_then(|o| o.project.clone());
+    match request {
+        ImportRequest::Tabs(request) => {
+            let (added, duplicates, failed) = outcome.map_or((0, 0, 0), |o| (o.added, o.duplicates, o.failed));
+            json!({
+                "status": status,
+                "result": {
+                    "kind": "tabs",
+                    "requestId": request.request_id,
+                    "success": status == "done" && added + duplicates > 0,
+                    "received": request.received,
+                    "added": added,
+                    "duplicates": duplicates,
+                    "failed": failed,
+                    "project": project,
+                }
+            })
         }
-    })
+        ImportRequest::Conversation(request) => {
+            let saved = outcome.and_then(|o| o.saved.clone());
+            json!({
+                "status": status,
+                "result": {
+                    "kind": "conversation",
+                    "requestId": request.request_id,
+                    "success": status == "done" && saved.is_some(),
+                    "saved": saved,
+                    "turns": outcome.map_or(0, |o| o.turns),
+                    "truncated": outcome.is_some_and(|o| o.truncated),
+                    "project": project,
+                }
+            })
+        }
+    }
 }
 
 impl Bridge {
@@ -358,8 +555,8 @@ impl Bridge {
         }
     }
 
-    /// Queues a validated batch on its session. Returns the request id.
-    pub fn submit(&mut self, id: &str, token: Option<&str>, body: &[u8], now: Instant) -> Result<ValidatedImport, Refusal> {
+    /// Queues a validated batch or conversation on its session.
+    pub fn submit(&mut self, id: &str, token: Option<&str>, body: &[u8], now: Instant) -> Result<ImportRequest, Refusal> {
         let session = self.authorized(id, token, now)?;
         if !matches!(session.stage, Stage::Open) {
             return Err(Refusal::Conflict);
@@ -376,7 +573,7 @@ impl Bridge {
         let session = self.authorized(id, token, now)?;
         let answer = match &session.stage {
             Stage::Open => json!({ "status": "open" }),
-            Stage::Waiting(request) => json!({ "status": "waiting", "requestId": request.request_id }),
+            Stage::Waiting(request) => json!({ "status": "waiting", "requestId": request.request_id() }),
             Stage::Finished(result) => result.clone(),
         };
         if matches!(session.stage, Stage::Finished(_)) {
@@ -391,7 +588,7 @@ impl Bridge {
     pub fn take(&mut self, now: Instant) -> Vec<Value> {
         self.sweep(now);
         self.webview_ready = true;
-        let mut waiting: Vec<(&Session, &ValidatedImport)> = self
+        let mut waiting: Vec<(&Session, &ImportRequest)> = self
             .sessions
             .values()
             .filter_map(|session| match &session.stage {
@@ -420,11 +617,28 @@ impl Bridge {
         let session = self
             .sessions
             .values_mut()
-            .find(|session| matches!(&session.stage, Stage::Waiting(request) if request.request_id == request_id))
+            .find(|session| matches!(&session.stage, Stage::Waiting(request) if request.request_id() == request_id))
             .ok_or_else(|| "This request has expired.".to_string())?;
         let Stage::Waiting(request) = &session.stage else { unreachable!() };
-        if outcome.added + outcome.duplicates + outcome.failed > request.received {
-            return Err("The counts don't add up.".into());
+        match request {
+            ImportRequest::Tabs(tabs) => {
+                if outcome.added + outcome.duplicates + outcome.failed > tabs.received {
+                    return Err("The counts don't add up.".into());
+                }
+            }
+            ImportRequest::Conversation(conversation) => {
+                if outcome.added + outcome.duplicates + outcome.failed > 0 || outcome.turns > conversation.turns.len() {
+                    return Err("The counts don't add up.".into());
+                }
+                let saved_ok = match (&outcome.status[..], outcome.saved.as_deref()) {
+                    ("done", Some(saved)) => SAVE_OUTCOMES.contains(&saved),
+                    ("done", None) => false,
+                    (_, saved) => saved.is_none(),
+                };
+                if !saved_ok {
+                    return Err("Unknown outcome.".into());
+                }
+            }
         }
         let outcome = ImportOutcome {
             project: outcome.project.map(|name| name.chars().filter(|c| !c.is_control()).take(120).collect()),
@@ -498,7 +712,7 @@ pub fn read_request(stream: &mut impl Read) -> Result<HttpRequest, u16> {
         Some((_, value)) => value.parse::<usize>().map_err(|_| 400u16)?,
         None => 0,
     };
-    if length > MAX_BODY_BYTES {
+    if length > MAX_REQUEST_BYTES {
         return Err(413);
     }
 
@@ -568,7 +782,8 @@ pub fn write_response(stream: &mut impl Write, response: &HttpResponse) -> std::
 /// What the app shell does after a request was queued.
 #[derive(Debug, PartialEq)]
 pub enum Effect {
-    Queued { request_id: String, tabs: usize },
+    /// `items` is tabs for a batch, turns for a conversation.
+    Queued { request_id: String, kind: &'static str, items: usize },
 }
 
 fn refusal(refusal: Refusal, allow_origin: Option<String>) -> HttpResponse {
@@ -608,7 +823,13 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
         ("GET", ["v1", "hello"]) => (
             HttpResponse {
                 status: 200,
-                body: json!({ "app": "hubble-desktop", "protocol": PROTOCOL_VERSION, "ready": bridge.webview_ready(), "maxTabs": MAX_TABS }),
+                body: json!({
+                    "app": "hubble-desktop",
+                    "protocol": PROTOCOL_VERSION,
+                    "ready": bridge.webview_ready(),
+                    "maxTabs": MAX_TABS,
+                    "kinds": PAYLOAD_KINDS,
+                }),
                 allow_origin: allow,
             },
             None,
@@ -629,19 +850,18 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
         },
         ("POST", ["v1", "sessions", id, "import"]) => match bridge.submit(id, bearer(request), &request.body, now) {
             Ok(queued) => {
-                let tabs = queued.tabs.len();
-                log(
-                    "import-queued",
-                    &[("requestId", &queued.request_id), ("tabs", &tabs.to_string()), ("rejected", &queued.rejected.to_string())],
-                );
-                (
-                    HttpResponse {
-                        status: 202,
-                        body: json!({ "status": "waiting", "requestId": queued.request_id, "accepted": tabs, "rejected": queued.rejected }),
-                        allow_origin: allow,
-                    },
-                    Some(Effect::Queued { request_id: queued.request_id, tabs }),
-                )
+                let (request_id, kind, items) = (queued.request_id().to_string(), queued.kind(), queued.items());
+                let body = match &queued {
+                    ImportRequest::Tabs(batch) => {
+                        log("import-queued", &[("requestId", &request_id), ("tabs", &items.to_string()), ("rejected", &batch.rejected.to_string())]);
+                        json!({ "status": "waiting", "requestId": request_id, "kind": kind, "accepted": items, "rejected": batch.rejected })
+                    }
+                    ImportRequest::Conversation(conversation) => {
+                        log("conversation-queued", &[("requestId", &request_id), ("provider", conversation.provider), ("turns", &items.to_string())]);
+                        json!({ "status": "waiting", "requestId": request_id, "kind": kind, "turns": items })
+                    }
+                };
+                (HttpResponse { status: 202, body, allow_origin: allow }, Some(Effect::Queued { request_id, kind, items }))
             }
             Err(r) => {
                 log("import-refused", &[("reason", r.reason())]);
@@ -726,8 +946,8 @@ fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u
     let _ = write_response(&mut stream, &response);
     let _ = stream.shutdown(Shutdown::Both);
 
-    if let Some(Effect::Queued { request_id, tabs }) = effect {
-        let _ = app.emit(REQUESTED_EVENT, json!({ "requestId": request_id, "tabs": tabs }));
+    if let Some(Effect::Queued { request_id, kind, items }) = effect {
+        let _ = app.emit(REQUESTED_EVENT, json!({ "requestId": request_id, "kind": kind, "items": items }));
         focus_main_window(app);
     }
 }
@@ -754,10 +974,17 @@ pub fn desktop_import_finish(
     let mut bridge = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let status = outcome.status.clone();
     let counts = format!("{}/{}/{}", outcome.added, outcome.duplicates, outcome.failed);
+    let saved = outcome.saved.clone().unwrap_or_default();
     let result = bridge.finish(&request_id, outcome, Instant::now());
     log(
         "import-finished",
-        &[("requestId", &request_id), ("status", &status), ("added/duplicates/failed", &counts), ("recorded", if result.is_ok() { "yes" } else { "no" })],
+        &[
+            ("requestId", &request_id),
+            ("status", &status),
+            ("added/duplicates/failed", &counts),
+            ("saved", &saved),
+            ("recorded", if result.is_ok() { "yes" } else { "no" }),
+        ],
     );
     result
 }
@@ -779,6 +1006,26 @@ mod tests {
 
     fn tab(url: &str) -> Value {
         json!({ "url": url, "title": "A page" })
+    }
+
+    fn tabs_of(body: &[u8]) -> Result<ValidatedImport, Refusal> {
+        match validate_payload(body)? {
+            ImportRequest::Tabs(batch) => Ok(batch),
+            ImportRequest::Conversation(_) => panic!("not a batch of tabs"),
+        }
+    }
+
+    fn turn(role: &str, text: &str) -> Value {
+        json!({ "role": role, "text": text })
+    }
+
+    fn chat(turns: Value) -> Vec<u8> {
+        json!({
+            "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "conversation",
+            "conversation": { "provider": "chatgpt", "url": "https://chatgpt.com/c/abc-123", "title": "Photosynthesis", "turns": turns },
+        })
+        .to_string()
+        .into_bytes()
     }
 
     fn request(method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
@@ -809,7 +1056,7 @@ mod tests {
     }
 
     fn done(added: usize, duplicates: usize, failed: usize) -> ImportOutcome {
-        ImportOutcome { status: "done".into(), project: Some("Research".into()), added, duplicates, failed }
+        ImportOutcome { status: "done".into(), project: Some("Research".into()), added, duplicates, failed, ..Default::default() }
     }
 
     #[test]
@@ -819,7 +1066,7 @@ mod tests {
         let (id, token) = open(&bridge, now);
         let (response, effect) = submit(&bridge, &id, &token, &payload(json!([tab("https://example.com/a"), tab("https://example.org/b")])), now);
         assert_eq!(response.status, 202);
-        assert_eq!(effect, Some(Effect::Queued { request_id: "req-12345678".into(), tabs: 2 }));
+        assert_eq!(effect, Some(Effect::Queued { request_id: "req-12345678".into(), kind: "tabs", items: 2 }));
         assert_eq!(poll(&bridge, &id, &token, now).body["status"], "waiting");
 
         let pending = bridge.lock().unwrap().take(now);
@@ -918,8 +1165,150 @@ mod tests {
         let tabs: Vec<Value> = (0..=MAX_TABS).map(|i| tab(&format!("https://example.com/{i}"))).collect();
         assert_eq!(validate_payload(&payload(json!(tabs))), Err(Refusal::TooManyTabs));
         let max: Vec<Value> = (0..MAX_TABS).map(|i| tab(&format!("https://example.com/{i}"))).collect();
-        assert_eq!(validate_payload(&payload(json!(max))).unwrap().tabs.len(), MAX_TABS);
-        assert_eq!(validate_payload(&vec![b' '; MAX_BODY_BYTES + 1]), Err(Refusal::TooLarge));
+        assert_eq!(tabs_of(&payload(json!(max))).unwrap().tabs.len(), MAX_TABS);
+        assert_eq!(validate_payload(&vec![b' '; MAX_REQUEST_BYTES + 1]), Err(Refusal::TooLarge));
+        // A batch of tabs keeps its own, smaller limit under the conversation-sized one.
+        let padded = json!({ "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "tabs": [tab("https://a.example")], "pad": "x".repeat(MAX_BODY_BYTES) });
+        assert_eq!(validate_payload(padded.to_string().as_bytes()), Err(Refusal::TooLarge));
+    }
+
+    #[test]
+    fn a_conversation_travels_from_session_to_result() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let (id, token) = open(&bridge, now);
+        let (response, effect) = submit(&bridge, &id, &token, &chat(json!([turn("user", "Hi"), turn("assistant", "Hello")])), now);
+        assert_eq!(response.status, 202);
+        assert_eq!(response.body["kind"], "conversation");
+        assert_eq!(response.body["turns"], 2);
+        assert_eq!(effect, Some(Effect::Queued { request_id: "req-12345678".into(), kind: "conversation", items: 2 }));
+
+        let pending = bridge.lock().unwrap().take(now);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["kind"], "conversation");
+        assert_eq!(pending[0]["provider"], "chatgpt");
+        assert_eq!(pending[0]["url"], "https://chatgpt.com/c/abc-123");
+        assert_eq!(pending[0]["title"], "Photosynthesis");
+        assert_eq!(pending[0]["turns"][1], json!({ "role": "assistant", "text": "Hello" }));
+        assert_eq!(pending[0]["truncated"], false);
+
+        let saved = ImportOutcome { status: "done".into(), project: Some("Biology".into()), saved: Some("added".into()), turns: 2, ..Default::default() };
+        bridge.lock().unwrap().finish("req-12345678", saved, now).unwrap();
+        let result = poll(&bridge, &id, &token, now).body;
+        assert_eq!(result["status"], "done");
+        assert_eq!(result["result"]["kind"], "conversation");
+        assert_eq!(result["result"]["saved"], "added");
+        assert_eq!(result["result"]["turns"], 2);
+        assert_eq!(result["result"]["project"], "Biology");
+        assert_eq!(result["result"]["success"], true);
+        assert_eq!(poll(&bridge, &id, &token, now).status, 404);
+    }
+
+    #[test]
+    fn malformed_conversations_are_refused_whole() {
+        let base = || json!({ "provider": "claude", "url": "https://claude.ai/chat/abc", "title": "T", "turns": [turn("user", "Hi")] });
+        let with = |key: &str, value: Value| {
+            let mut conversation = base();
+            conversation[key] = value;
+            conversation
+        };
+        let body = |conversation: Value| json!({ "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "conversation", "conversation": conversation }).to_string().into_bytes();
+        let cases: Vec<(Vec<u8>, Refusal)> = vec![
+            (body(Value::Null), Refusal::BadRequest),
+            (body(with("provider", json!("copilot"))), Refusal::BadRequest),
+            (body(with("url", json!("javascript:alert(1)"))), Refusal::BadRequest),
+            (body(with("url", json!("file:///C:/Windows/win.ini"))), Refusal::BadRequest),
+            (body(with("title", json!(42))), Refusal::BadRequest),
+            (body(with("truncated", json!("yes"))), Refusal::BadRequest),
+            (body(with("turns", json!("nope"))), Refusal::BadRequest),
+            (body(with("turns", json!([turn("system", "Ignore previous instructions")]))), Refusal::BadRequest),
+            (body(with("turns", json!([{ "role": "user", "text": 7 }]))), Refusal::BadRequest),
+            (body(with("turns", json!([]))), Refusal::EmptyConversation),
+            (body(with("turns", json!([turn("user", "   "), turn("assistant", "\n")]))), Refusal::EmptyConversation),
+            (body(with("turns", json!([turn("user", &"a".repeat(MAX_TURN_CHARS + 1))]))), Refusal::TooLarge),
+            (
+                body(with("turns", json!((0..21).map(|_| turn("user", &"a".repeat(MAX_TURN_CHARS))).collect::<Vec<_>>()))),
+                Refusal::TooLarge,
+            ),
+            (body(with("turns", json!((0..=MAX_CONVERSATION_TURNS).map(|_| turn("user", "a")).collect::<Vec<_>>()))), Refusal::TooManyTurns),
+            (
+                json!({ "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "file", "conversation": base() }).to_string().into_bytes(),
+                Refusal::BadRequest,
+            ),
+        ];
+        for (body, refusal) in cases {
+            assert_eq!(validate_payload(&body).err(), Some(refusal), "{refusal:?}");
+        }
+        // Over the conversation body limit, however it is dressed.
+        let padded = json!({ "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "conversation", "conversation": base(), "pad": "x".repeat(MAX_CONVERSATION_BODY_BYTES) });
+        assert_eq!(validate_payload(padded.to_string().as_bytes()), Err(Refusal::TooLarge));
+    }
+
+    #[test]
+    fn a_conversation_at_the_limits_is_taken_and_unknown_fields_dropped() {
+        let turns: Vec<Value> = (0..MAX_CONVERSATION_TURNS).map(|i| turn(if i % 2 == 0 { "user" } else { "assistant" }, "a")).collect();
+        let Ok(ImportRequest::Conversation(validated)) = validate_payload(&chat(json!(turns))) else { panic!("refused") };
+        assert_eq!(validated.turns.len(), MAX_CONVERSATION_TURNS);
+
+        let body = json!({
+            "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "conversation",
+            "conversation": {
+                "provider": "gemini", "url": "https://gemini.google.com/app/abc", "title": format!("A\u{0007}{}", "t".repeat(MAX_TITLE_CHARS + 10)),
+                "truncated": true, "cookies": "secret",
+                "turns": [{ "role": "user", "text": "Q", "html": "<b>x</b>" }, turn("assistant", " "), turn("assistant", "A")],
+            }
+        });
+        let Ok(ImportRequest::Conversation(validated)) = validate_payload(body.to_string().as_bytes()) else { panic!("refused") };
+        let value = serde_json::to_value(&validated).unwrap();
+        assert_eq!(value["turns"], json!([{ "role": "user", "text": "Q" }, { "role": "assistant", "text": "A" }]));
+        assert_eq!(value["title"].as_str().unwrap().chars().count(), MAX_TITLE_CHARS);
+        assert!(!value["title"].as_str().unwrap().contains('\u{0007}'));
+        assert_eq!(value["truncated"], true);
+        assert!(value.get("cookies").is_none());
+    }
+
+    #[test]
+    fn the_webview_cannot_report_an_impossible_conversation_outcome() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let (id, token) = open(&bridge, now);
+        submit(&bridge, &id, &token, &chat(json!([turn("user", "Hi")])), now);
+        let finish = |outcome: ImportOutcome| bridge.lock().unwrap().finish("req-12345678", outcome, now);
+        let done = |saved: Option<&str>, turns: usize| ImportOutcome { status: "done".into(), saved: saved.map(Into::into), turns, ..Default::default() };
+        assert!(finish(done(None, 1)).is_err());
+        assert!(finish(done(Some("deleted"), 1)).is_err());
+        assert!(finish(done(Some("added"), 2)).is_err());
+        assert!(finish(ImportOutcome { added: 1, ..done(Some("added"), 1) }).is_err());
+        assert!(finish(ImportOutcome { status: "cancelled".into(), saved: Some("added".into()), ..Default::default() }).is_err());
+        // Cancelling saves nothing, and says so.
+        finish(ImportOutcome { status: "cancelled".into(), ..Default::default() }).unwrap();
+        let result = poll(&bridge, &id, &token, now).body;
+        assert_eq!(result["status"], "cancelled");
+        assert_eq!(result["result"]["success"], false);
+        assert_eq!(result["result"]["saved"], Value::Null);
+    }
+
+    #[test]
+    fn a_conversation_nobody_answers_expires_into_a_result() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let (id, token) = open(&bridge, now);
+        submit(&bridge, &id, &token, &chat(json!([turn("user", "Hi")])), now);
+        let later = now + REQUEST_TTL + Duration::from_secs(1);
+        assert!(bridge.lock().unwrap().take(later).is_empty());
+        let result = poll(&bridge, &id, &token, later).body;
+        assert_eq!(result["status"], "expired");
+        assert_eq!(result["result"]["kind"], "conversation");
+    }
+
+    #[test]
+    fn hello_says_which_kinds_this_bridge_takes() {
+        let bridge = Mutex::new(Bridge::default());
+        let hello = route(&bridge, &request("GET", "/v1/hello", &[], b""), PORT, Instant::now()).0;
+        assert_eq!(hello.body["kinds"], json!(["tabs", "conversation"]));
+        // An explicit "tabs" kind is the same as none.
+        let explicit = json!({ "version": 1, "requestId": "req-12345678", "source": "chrome-extension", "kind": "tabs", "tabs": [tab("https://a.example")] });
+        assert!(matches!(validate_payload(explicit.to_string().as_bytes()), Ok(ImportRequest::Tabs(_))));
     }
 
     #[test]
@@ -935,7 +1324,7 @@ mod tests {
             json!({ "title": "no url" }),
             json!({ "url": "http://example.org/fine", "title": "x".repeat(MAX_TITLE_CHARS + 50), "favicon": "data:image/png;base64,AAAA" }),
         ]));
-        let validated = validate_payload(&body).unwrap();
+        let validated = tabs_of(&body).unwrap();
         assert_eq!(validated.received, 8);
         assert_eq!(validated.rejected, 6);
         assert_eq!(validated.tabs.len(), 2);
@@ -946,7 +1335,7 @@ mod tests {
     #[test]
     fn unknown_fields_are_not_carried_forward() {
         let body = payload(json!([{ "url": "https://example.com", "title": "T", "windowId": 4, "cookies": "secret", "favicon": "https://example.com/f.ico" }]));
-        let validated = validate_payload(&body).unwrap();
+        let validated = tabs_of(&body).unwrap();
         let value = serde_json::to_value(&validated.tabs[0]).unwrap();
         assert_eq!(value, json!({ "url": "https://example.com", "title": "T", "favicon": "https://example.com/f.ico" }));
     }
@@ -1021,7 +1410,7 @@ mod tests {
         let now = Instant::now();
         let (id, token) = open(&bridge, now);
         submit(&bridge, &id, &token, &payload(json!([tab("https://example.com")])), now);
-        let cancelled = ImportOutcome { status: "cancelled".into(), project: None, added: 0, duplicates: 0, failed: 0 };
+        let cancelled = ImportOutcome { status: "cancelled".into(), project: None, added: 0, duplicates: 0, failed: 0, ..Default::default() };
         bridge.lock().unwrap().finish("req-12345678", cancelled, now).unwrap();
         let result = poll(&bridge, &id, &token, now).body;
         assert_eq!(result["status"], "cancelled");
@@ -1035,7 +1424,7 @@ mod tests {
         let (id, token) = open(&bridge, now);
         submit(&bridge, &id, &token, &payload(json!([tab("https://example.com")])), now);
         assert!(bridge.lock().unwrap().finish("req-12345678", done(5, 0, 0), now).is_err());
-        let odd = ImportOutcome { status: "deleted-everything".into(), project: None, added: 0, duplicates: 0, failed: 0 };
+        let odd = ImportOutcome { status: "deleted-everything".into(), project: None, added: 0, duplicates: 0, failed: 0, ..Default::default() };
         assert!(bridge.lock().unwrap().finish("req-12345678", odd, now).is_err());
         assert!(bridge.lock().unwrap().finish("req-unknown1", done(1, 0, 0), now).is_err());
     }
@@ -1078,7 +1467,7 @@ mod tests {
 
         let chunked = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
         assert_eq!(read_request(&mut &chunked[..]).unwrap_err(), 411);
-        let huge = format!("POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_BODY_BYTES + 1);
+        let huge = format!("POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_REQUEST_BYTES + 1);
         assert_eq!(read_request(&mut huge.as_bytes()).unwrap_err(), 413);
         let endless = vec![b'a'; MAX_HEADER_BYTES * 2];
         assert_eq!(read_request(&mut &endless[..]).unwrap_err(), 431);

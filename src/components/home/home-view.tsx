@@ -7,6 +7,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { BrandMark } from "@/components/brand-mark"
 import { ProviderBadge } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { subjectName, subjectUpdatedAt } from "@/lib/product/subjects"
 import { KNOWLEDGE_TYPE_LABEL, knowledgeCounts, knowledgeItemsOf } from "@/lib/memory/items"
 import { formatRelativeTime } from "@/lib/time-format"
@@ -59,6 +60,8 @@ export function HomeView({
     return all.sort((a, b) => b.item.addedAt - a.item.addedAt).slice(0, 8)
   }, [subjects])
 
+  const isDesktop = useIsDesktop()
+
   return (
     <div className="min-h-screen" data-home>
       {onOpenSidebar && (
@@ -79,7 +82,7 @@ export function HomeView({
             <Button type="button" size="lg" onClick={onNewSubject}>
               <Plus /> New project
             </Button>
-            <p className="text-meta text-tertiary">No sign-in needed. Everything stays in this browser.</p>
+            <p className="text-meta text-tertiary">No sign-in needed. Everything stays {isDesktop ? "on this computer" : "in this browser"}.</p>
           </section>
         ) : (
           <>
