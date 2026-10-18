@@ -120,7 +120,7 @@ export function ExtensionSection() {
           label="Hubble for Chrome"
           description={
             isDesktop
-              ? "Sends tabs here: in Chrome, right-click a tab → Hubble → Add to Hubble Desktop."
+              ? "Sends tabs here: in Chrome, right-click a tab → Hubble → Add to Hubble Desktop. Save to Hubble on an AI chat saves here while this app is open."
               : "Save tabs and AI conversations from Chrome."
           }
         >
@@ -312,7 +312,7 @@ export function DesktopSection() {
       <SectionStack>
         <FieldRow
           label="This install"
-          description={desktop ? "Hubble for Chrome adds tabs here. To keep a conversation's text, paste it." : "You're using Hubble in the browser."}
+          description={desktop ? "Hubble for Chrome adds tabs here, and saves AI conversations here while this app is open." : "You're using Hubble in the browser."}
         >
           <Badge variant="default">{desktop ? "Desktop" : "Web"}</Badge>
         </FieldRow>

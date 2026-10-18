@@ -2,7 +2,7 @@
 // Hubble page sends back. Pure parts of ai-panel.js, then the Save button
 // itself with only chrome.runtime/storage mocked.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MSG_CAPTURE_CONVERSATION, MSG_MEMORY_REQUEST } from "../src/config.js";
+import { MSG_CAPTURE_CONVERSATION, MSG_DESKTOP_STATUS, MSG_MEMORY_REQUEST } from "../src/config.js";
 import { captureError, describeCapture, initAiPanel, readHits, readPanelProjects } from "./ai-panel.js";
 
 describe("describeCapture", () => {
@@ -38,7 +38,8 @@ describe("the Save button on a ChatGPT conversation", () => {
   const TAB = { id: 7, url: "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f", active: true };
   let captures;
 
-  function mount(captureAnswer) {
+  /** `desktop`: what background.js says about Hubble Desktop; `hubbleOpen`: whether a Hubble tab answers. */
+  function mount(captureAnswer, { desktop, hubbleOpen = true } = {}) {
     // The AI section of popup.html, as the popup has it.
     document.body.innerHTML = `<section id="ai-section" hidden><p id="ai-page"></p><select id="ai-project-select"></select>
       <button id="capture-button" disabled>Save this conversation</button><button id="ai-open-hubble-button" hidden>Open Hubble</button>
@@ -53,8 +54,10 @@ describe("the Save button on a ChatGPT conversation", () => {
           if (type === MSG_CAPTURE_CONVERSATION) {
             captures.push(payload);
             await new Promise((resolve) => setTimeout(resolve, 20));
-            return captureAnswer;
+            return typeof captureAnswer === "function" ? captureAnswer(payload) : captureAnswer;
           }
+          if (type === MSG_DESKTOP_STATUS) return desktop;
+          if (type === MSG_MEMORY_REQUEST && !hubbleOpen) return { ok: false, error: "no-hubble-tab" };
           if (type === MSG_MEMORY_REQUEST && payload.kind === "projects") return { ok: true, result: { projects: [{ id: "phys", name: "Physics" }] } };
           if (type === MSG_MEMORY_REQUEST) return { ok: true, result: { hits: [] } };
           return undefined;
@@ -98,5 +101,46 @@ describe("the Save button on a ChatGPT conversation", () => {
     button().click();
     await settle();
     expect(status()).toBe("There are no messages in this conversation yet. If it's still loading, wait a moment and try again.");
+  });
+
+  describe("with Hubble Desktop open", () => {
+    const DESKTOP = { ok: true, available: true, conversations: true, seen: true };
+
+    it("saves to Hubble Desktop with no project chosen here, and names the project chosen there", async () => {
+      await mount({ ok: true, result: { outcome: "added", turns: 4, project: "Biology", desktop: true } }, { desktop: DESKTOP, hubbleOpen: false });
+      expect(button().textContent).toBe("Save to Hubble Desktop");
+      expect(button().disabled).toBe(false);
+      expect(status()).toBe("Hubble Desktop is open. You'll choose the project there.");
+      expect(document.getElementById("ai-open-hubble-button").hidden).toBe(true);
+      button().click();
+      expect(status()).toBe("Choose a project in Hubble Desktop…");
+      await settle();
+      expect(captures).toEqual([{ tabId: 7 }]);
+      expect(status()).toBe("Saved to Biology · 4 turns");
+    });
+
+    it("says nothing was saved when the person cancels there", async () => {
+      await mount({ ok: false, error: "desktop-cancelled" }, { desktop: DESKTOP });
+      button().click();
+      await settle();
+      expect(status()).toBe("Nothing saved — cancelled in Hubble Desktop.");
+    });
+
+    it("goes back to Hubble on the web when Hubble Desktop closed in the meantime", async () => {
+      await mount((payload) => (payload.workspaceId ? { ok: true, result: { outcome: "added", turns: 2 } } : { ok: false, error: "no-project" }), { desktop: DESKTOP, hubbleOpen: false });
+      button().click();
+      await settle();
+      expect(button().textContent).toBe("Save this conversation");
+      expect(status()).toBe("Hubble Desktop isn't open any more. Choose a project to save to Hubble on the web.");
+      expect(button().disabled).toBe(true);
+    });
+
+    it("leaves Save to Hubble on the web when Hubble Desktop predates conversations", async () => {
+      await mount({ ok: true, result: { outcome: "added", turns: 10 } }, { desktop: { ...DESKTOP, conversations: false } });
+      expect(button().textContent).toBe("Save this conversation");
+      button().click();
+      await settle();
+      expect(captures).toEqual([{ tabId: 7, workspaceId: "phys" }]);
+    });
   });
 });

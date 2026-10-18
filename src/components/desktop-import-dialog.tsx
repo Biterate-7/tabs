@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { DesktopImportRequest } from "@/lib/desktop/import-protocol"
+import { aiProviderName } from "@/lib/providers/registry"
+import type { DesktopImportRequest, DesktopTabsRequest } from "@/lib/desktop/import-protocol"
 
 export type DesktopImportProject = { id: string; name: string }
 
@@ -30,20 +31,48 @@ function hostOf(url: string): string {
 }
 
 /** "github.com, nytimes.com and 7 more" — enough to recognise the batch, nothing to read. */
-function previewLine(request: DesktopImportRequest): string {
+function previewLine(request: DesktopTabsRequest): string {
   const hosts = [...new Set(request.tabs.map((tab) => hostOf(tab.url)))]
   const shown = hosts.slice(0, 3)
   const more = request.tabs.length - request.tabs.filter((tab) => shown.includes(hostOf(tab.url))).length
   return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ")
 }
 
+/** The words for what arrived: a batch of tabs, or one conversation. */
+function describeRequest(request: DesktopImportRequest) {
+  if (request.kind === "conversation") {
+    const turns = request.conversation.turns.length
+    return {
+      title: "Save a conversation to Hubble",
+      // Its title, the app it came from and its length: enough to recognise it, nothing of what it says.
+      description: `From ${aiProviderName(request.conversation.provider)} in Chrome · ${request.conversation.title} · ${turns} message${turns === 1 ? "" : "s"}`,
+      verb: "Save",
+      fallback: "Save conversation",
+      note: request.truncated ? "It's very long, so only the first part will be kept." : null,
+    }
+  }
+  const count = request.tabs.length
+  return {
+    title: `Add ${count} tab${count === 1 ? "" : "s"} to Hubble`,
+    description: `From Chrome · ${previewLine(request)}`,
+    verb: "Add",
+    fallback: "Add tabs",
+    note:
+      request.rejected > 0
+        ? `${request.rejected} ${request.rejected === 1 ? "tab isn't a web page and" : "tabs aren't web pages and"} won't be added.`
+        : null,
+  }
+}
+
 /**
- * Chrome → Hubble Desktop: "Add 12 tabs to Hubble — choose a project". Shown
- * when the Hubble extension sends tabs here (src/hooks/use-desktop-import.ts).
- * Nothing is imported until the person presses Add; Cancel imports nothing.
- * The project open in Hubble is chosen to begin with.
+ * Chrome → Hubble Desktop: "Add 12 tabs to Hubble — choose a project", or
+ * "Save a conversation to Hubble". Shown when the Hubble extension sends tabs
+ * or a ChatGPT / Claude / Gemini / Perplexity conversation here
+ * (src/hooks/use-desktop-import.ts). Nothing is saved until the person
+ * presses Add or Save; Cancel saves nothing. The project open in Hubble is
+ * chosen to begin with.
  *
- * Render it keyed by the request id, so each batch starts fresh.
+ * Render it keyed by the request id, so each request starts fresh.
  */
 export function DesktopImportDialog({
   request,
@@ -55,40 +84,46 @@ export function DesktopImportDialog({
   request: DesktopImportRequest
   projects: readonly DesktopImportProject[]
   currentProjectId: string | undefined
-  /** Imports the batch; false when the chosen project no longer exists. */
-  onAdd: (request: DesktopImportRequest, choice: DesktopImportChoice) => boolean
+  /** Imports the batch or saves the conversation; false when the chosen project no longer exists. */
+  onAdd: (request: DesktopImportRequest, choice: DesktopImportChoice) => boolean | Promise<boolean>
   onCancel: (request: DesktopImportRequest) => void
 }) {
   const [selected, setSelected] = useState<string>(() => (projects.find((project) => project.id === currentProjectId) ?? projects[0])?.id ?? NEW_PROJECT)
   const [newName, setNewName] = useState("")
   const [error, setError] = useState<string | null>(null)
+  // Saving a conversation takes a moment: one press, then wait for it.
+  const [saving, setSaving] = useState(false)
 
-  const count = request.tabs.length
+  const words = describeRequest(request)
+  const hasContent = request.kind === "conversation" || request.tabs.length > 0
   const creating = selected === NEW_PROJECT
   const chosen = projects.find((project) => project.id === selected)
-  const canAdd = count > 0 && (creating ? newName.trim().length > 0 : Boolean(chosen))
+  const canAdd = !saving && hasContent && (creating ? newName.trim().length > 0 : Boolean(chosen))
   const target = creating ? newName.trim() || "a new project" : chosen?.name
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault()
     if (!canAdd) return
-    const ok = onAdd(request, creating ? { newProject: newName.trim() } : { workspaceId: selected })
-    if (!ok) setError("That project isn't in Hubble any more. Choose another.")
+    setSaving(true)
+    const ok = await onAdd(request, creating ? { newProject: newName.trim() } : { workspaceId: selected })
+    // Answered: the dialog is about to close. Otherwise the person chooses again.
+    if (!ok) {
+      setSaving(false)
+      setError("That project isn't in Hubble any more. Choose another.")
+    }
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onCancel(request)}>
+    <Dialog open onOpenChange={(open) => !open && !saving && onCancel(request)}>
       <DialogContent className="sm:max-w-md">
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>
-              Add {count} tab{count === 1 ? "" : "s"} to Hubble
-            </DialogTitle>
-            <DialogDescription>From Chrome · {previewLine(request)}</DialogDescription>
+            <DialogTitle>{words.title}</DialogTitle>
+            <DialogDescription className="break-words">{words.description}</DialogDescription>
           </DialogHeader>
 
-          <fieldset className="mt-4 flex flex-col gap-1">
-            <legend className="mb-1.5 text-meta text-muted-foreground">Add to</legend>
+          <fieldset className="mt-4 flex flex-col gap-1" disabled={saving}>
+            <legend className="mb-1.5 text-meta text-muted-foreground">{request.kind === "conversation" ? "Save to" : "Add to"}</legend>
             <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto" role="radiogroup" aria-label="Project">
               {projects.map((project) => (
                 <label
@@ -139,11 +174,7 @@ export function DesktopImportDialog({
             ) : null}
           </fieldset>
 
-          {request.rejected > 0 ? (
-            <p className="mt-3 text-meta text-muted-foreground">
-              {request.rejected} {request.rejected === 1 ? "tab isn't a web page and" : "tabs aren't web pages and"} won&apos;t be added.
-            </p>
-          ) : null}
+          {words.note ? <p className="mt-3 text-meta text-muted-foreground">{words.note}</p> : null}
           {error ? (
             <p role="alert" className="mt-3 text-meta text-destructive">
               {error}
@@ -151,11 +182,11 @@ export function DesktopImportDialog({
           ) : null}
 
           <DialogFooter className="mt-4">
-            <Button type="button" variant="ghost" onClick={() => onCancel(request)}>
+            <Button type="button" variant="ghost" disabled={saving} onClick={() => onCancel(request)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!canAdd}>
-              {target ? `Add to ${target}` : "Add tabs"}
+              {saving ? "Saving…" : target ? `${words.verb} to ${target}` : words.fallback}
             </Button>
           </DialogFooter>
         </form>

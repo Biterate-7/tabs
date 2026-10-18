@@ -10,9 +10,12 @@
 
 import {
   DesktopError,
+  buildDesktopConversation,
   buildDesktopPayload,
   describeDesktopPhase,
   describeDesktopResult,
+  describeDesktopSave,
+  describeDesktopSavePhase,
   findDesktop,
   sendToDesktop,
   waitForDesktop,
@@ -80,6 +83,60 @@ export function createDesktopAdd(deps) {
     } catch (err) {
       const reason = err instanceof DesktopError ? err.reason : "desktop-not-responding";
       log("desktop-add-failed", { reason, detail: err instanceof Error ? err.message : String(err) });
+      return await finish({ reason });
+    } finally {
+      running = false;
+    }
+  };
+}
+
+// One "Save this conversation" into Hubble Desktop:
+//
+//   Hubble Desktop open (and new enough to take conversations)?
+//     no  → { fallback: true }: the caller saves to Hubble on the web, as before
+//     yes → hand the conversation over → wait while the person picks a project
+//           in Hubble → say how it went, in the AI app's page and to the popup
+//
+// Unlike adding tabs, this never opens Hubble Desktop: where Save goes follows
+// what is open, so a person who only uses Hubble on the web is never sent to
+// an app they didn't start.
+
+/**
+ * @param deps.show   (toast) => Promise<void> the toast in the AI app's page
+ * @param deps.fetch, deps.sleep, deps.now, deps.log
+ * @returns save({ provider, url, title, turns, truncated }) → the outcome, or { fallback: true, reason }
+ */
+export function createDesktopSave(deps) {
+  const { show, fetch, sleep, now = Date.now, log = () => {} } = deps;
+  let running = false;
+
+  async function finish(outcome) {
+    const toast = { ...describeDesktopSave(outcome), final: true };
+    await show(toast);
+    log("desktop-save-finished", { status: outcome.status ?? outcome.reason, saved: outcome.saved, turns: outcome.turns });
+    return { ...outcome, toast };
+  }
+
+  return async function save(capture) {
+    const desktop = await findDesktop({ fetch }).catch(() => undefined);
+    if (!desktop?.conversations) {
+      log("desktop-save-skipped", { found: Boolean(desktop) });
+      return { fallback: true, reason: desktop ? "desktop-too-old" : "desktop-not-open" };
+    }
+    if (running) return finish({ reason: "already-running" });
+    running = true;
+    try {
+      const { payload, turns, truncated } = buildDesktopConversation(capture);
+      // Counts only: what the conversation says is never logged.
+      log("desktop-save-started", { requestId: payload.requestId, provider: payload.conversation.provider, turns, truncated, port: desktop.port });
+      await show(describeDesktopSavePhase("connecting"));
+      const session = await sendToDesktop({ port: desktop.port, payload, fetch });
+      await show(describeDesktopSavePhase("waiting"));
+      const result = await waitForDesktopResult({ session, fetch, sleep, now, onTick: () => show(describeDesktopSavePhase("waiting")) });
+      return await finish(result);
+    } catch (err) {
+      const reason = err instanceof DesktopError ? err.reason : "desktop-not-responding";
+      log("desktop-save-failed", { reason, detail: err instanceof Error ? err.message : String(err) });
       return await finish({ reason });
     } finally {
       running = false;

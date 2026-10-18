@@ -20,6 +20,7 @@ describe("Settings in Hubble Desktop", () => {
     setDesktop(true)
     render(<ExtensionSection />)
     expect(screen.getByText(/right-click a tab → Hubble → Add to Hubble Desktop/)).toBeTruthy()
+    expect(screen.getByText(/Save to Hubble on an AI chat saves here while this app is open/)).toBeTruthy()
     expect(screen.queryByText("Not connected")).toBeNull()
     expect(screen.getByRole("link", { name: /Download/ })).toBeTruthy()
   })

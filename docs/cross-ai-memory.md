@@ -176,7 +176,7 @@ grown conversation is brought up to date.
 
 ## 6. Hubble for Chrome
 
-`extension/` 0.6.1. The popup's AI section (`popup/ai-panel.js`) appears on a
+`extension/` 0.7.0. The popup's AI section (`popup/ai-panel.js`) appears on a
 conversation page of a known AI app:
 
 ```
@@ -194,6 +194,12 @@ popup ──► background ──► content script (Hubble tab) ──► Hubbl
 - Failures say what to do: *not a conversation page*, *Hubble isn't open*,
   *this page's layout isn't recognised — paste it in Hubble instead*,
   *the project was deleted*, *no message box — copied instead*.
+- **Hubble Desktop open:** Save goes there instead — over its loopback
+  bridge, not the Hubble page — and the person picks the project in Hubble
+  Desktop ([desktop-import.md](desktop-import.md)). The webview re-reads it
+  with the same `readConversationCapture` and saves it with the same save.
+  Search and context ("Use your knowledge here") stay with Hubble on the web:
+  the bridge only takes things in.
 
 ## 7. Web, desktop and connectors
 

@@ -259,8 +259,11 @@ instead: "Add browser tabs" and Settings → Chrome extension name the
 extension's **Hubble → Add to Hubble Desktop** menu item, and Import from
 history explains that it works on the web.
 
-Tabs reach the desktop app through its own loopback bridge instead — see
-[desktop-import.md](desktop-import.md).
+Tabs, and AI conversations saved with the extension's **Save to Hubble**
+while Hubble Desktop is open, reach the desktop app through its own loopback
+bridge instead — see [desktop-import.md](desktop-import.md). The bridge only
+takes things in: searching a project or building context from it for an AI
+chat stays with Hubble on the web.
 
 The actual dump flow today is:
 
@@ -378,6 +381,7 @@ The website's behaviour is unchanged by that audit.
 | Add browser tabs (list Chrome's tabs) | Works with extension | Not possible; **fixed** to say how, at once (was a 2.5 s wait, then web-only advice) | Driven in the app |
 | Import from history | Works with extension | Not possible; **fixed** to say so up front (was 15 s, then "install the extension") | Driven in the app |
 | Smart Organize: open Chrome tabs | Works with extension | Not possible; message **fixed** to point at an action that exists | Driven in the app |
-| Save a conversation from an AI site (extension) | Works | Not possible; Settings → Desktop app says to paste instead | Code review |
+| Save a conversation from an AI site (extension) | Works | **Added** (extension 0.7.0) — while Hubble Desktop is open, Save goes there over the loopback bridge and the project is chosen in Hubble; otherwise to Hubble on the web, as before ([desktop-import.md](desktop-import.md)) | The extension's own `desktop-add.js` against the running app: new project, saved again (unchanged), grown (updated), cancel, not-a-conversation, unknown role refused, no read routes, tabs unchanged; the saved text found by project search |
+| Use your knowledge in an AI chat (extension search / context) | Works | Not possible by design: the bridge only takes things in, since any local program can pretend to be the extension | Code review |
 | Sign-in, sync, AI connectors | Works | Not available by design (see *Authentication*) | Settings copy checked |
 | Section organizing AI hints, title API | Works | Local fallback by design; no request is sent | *unit* |

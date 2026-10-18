@@ -2,14 +2,22 @@
 //
 // Hubble Desktop runs a small bridge on this computer's loopback address
 // (src-tauri/src/import_bridge.rs). Nothing here goes near the Hubble website
-// or any server: the tabs travel from this extension to 127.0.0.1 and into
-// the desktop app, where the person picks the project they go to.
+// or any server: tabs, or one AI conversation, travel from this extension to
+// 127.0.0.1 and into the desktop app, where the person picks the project they
+// go to.
 //
 //   findDesktop()        GET  /v1/hello on each bridge port — is Hubble Desktop open?
 //   (not open)           open hubble://import (the installer registered it) and ask again
+//                        — for tabs only: a conversation's Save then goes to Hubble on the web
 //   sendToDesktop()      POST /v1/sessions → { sessionId, token }
 //                        POST /v1/sessions/:id/import  Authorization: Bearer <token>
+//                        (buildDesktopPayload: tabs; buildDesktopConversation: a conversation)
 //   waitForDesktopResult GET  /v1/sessions/:id until the person has answered in Hubble
+//
+// The bridge only takes things in. Searching a project or building context
+// from it ("Use your knowledge here") stays with Hubble on the web: any local
+// program can pretend to be this extension, so the bridge never answers with
+// anything the person saved.
 //
 // Everything here is pure apart from the `fetch` and `sleep` it is handed, so
 // it is tested without a browser or a desktop app (desktop.test.js).
@@ -50,7 +58,18 @@ export const DESKTOP_REQUEST_TIMEOUT_MS = 4000;
 export const DESKTOP_RESULT_POLL_MS = 700;
 export const DESKTOP_DECISION_TIMEOUT_MS = 185000;
 
+// One conversation at most what Hubble keeps of one: CONVERSATION_LIMITS in
+// src/lib/conversations/types.ts, MAX_CONVERSATION_* in the Rust bridge. A
+// longer conversation is cut here, and Hubble says only the first part was
+// kept, the same as when it is saved to Hubble on the web.
+export const DESKTOP_MAX_TURNS = 4000;
+export const DESKTOP_MAX_TURN_CHARS = 100000;
+export const DESKTOP_MAX_CONVERSATION_CHARS = 2000000;
+// The largest conversation request the bridge takes (MAX_CONVERSATION_BODY_BYTES).
+export const DESKTOP_MAX_CONVERSATION_BYTES = 8 * 1024 * 1024;
+
 const MAX_TITLE_CHARS = 500;
+const AI_PROVIDERS = new Set(["chatgpt", "claude", "gemini", "perplexity"]);
 
 /** A failure with a stable reason the toast and popup turn into words. */
 export class DesktopError extends Error {
@@ -103,6 +122,72 @@ export function buildDesktopPayload(chromeTabs, requestId = newRequestId()) {
   };
 }
 
+// A lone half of a surrogate pair is not valid JSON text to the bridge's
+// parser: whatever the page held, or a cut made here, it becomes U+FFFD.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function wellFormed(text) {
+  return text.replace(LONE_SURROGATE, "\uFFFD");
+}
+
+/** At most `max` UTF-16 units, never ending on half a character. */
+function cut(text, max) {
+  if (text.length <= max) return text;
+  const end = /[\uD800-\uDBFF]/.test(text[max - 1]) ? max - 1 : max;
+  return text.slice(0, end);
+}
+
+const encoder = new TextEncoder();
+
+/**
+ * One conversation the person asked to save, as Hubble Desktop takes it:
+ * the app it came from, its address, its title and its turns — role and
+ * text, nothing else the page had. `capture` is what checkPageRead
+ * (ai-pages.js) let through.
+ *
+ * Cut to DESKTOP_MAX_* here rather than refused there, and `truncated` says
+ * so. Text is counted in UTF-16 units, which is never fewer than the
+ * characters the bridge counts.
+ */
+export function buildDesktopConversation(capture, requestId = newRequestId()) {
+  const provider = AI_PROVIDERS.has(capture?.provider) ? capture.provider : undefined;
+  let truncated = capture?.truncated === true;
+  const raw = Array.isArray(capture?.turns) ? capture.turns : [];
+  if (raw.length > DESKTOP_MAX_TURNS) truncated = true;
+
+  const turns = [];
+  let left = DESKTOP_MAX_CONVERSATION_CHARS;
+  for (const turn of raw.slice(0, DESKTOP_MAX_TURNS)) {
+    if (!turn || (turn.role !== "user" && turn.role !== "assistant") || typeof turn.text !== "string" || !turn.text.trim()) continue;
+    if (left <= 0) {
+      truncated = true;
+      break;
+    }
+    const room = Math.min(DESKTOP_MAX_TURN_CHARS, left);
+    if (turn.text.length > room) truncated = true;
+    const text = wellFormed(cut(turn.text, room));
+    turns.push({ role: turn.role, text });
+    left -= text.length;
+  }
+
+  const title = typeof capture?.title === "string" ? wellFormed(cut(capture.title.trim(), MAX_TITLE_CHARS)) : "";
+  const build = () => ({
+    version: DESKTOP_PROTOCOL_VERSION,
+    requestId,
+    source: "chrome-extension",
+    kind: "conversation",
+    conversation: { ...(provider ? { provider } : {}), url: capture?.url, ...(title ? { title } : {}), turns, truncated },
+  });
+  // Text that is mostly escapes or wide characters can still be too many bytes: the latest turns go first.
+  let payload = build();
+  while (turns.length > 1 && encoder.encode(JSON.stringify(payload)).length > DESKTOP_MAX_CONVERSATION_BYTES) {
+    turns.splice(Math.max(1, Math.floor(turns.length * 0.9)));
+    truncated = true;
+    payload = build();
+  }
+  return { payload, turns: turns.length, truncated };
+}
+
 function bridgeUrl(port, path) {
   return `http://127.0.0.1:${port}${path}`;
 }
@@ -129,7 +214,8 @@ async function request(fetchFn, url, init = {}, timeoutMs = DESKTOP_REQUEST_TIME
 
 /**
  * Asks every bridge port at once whether Hubble Desktop is there. Resolves
- * `{ port, ready }` — `ready` once its window has loaded — or undefined.
+ * `{ port, ready, conversations }` — `ready` once its window has loaded,
+ * `conversations` when it is new enough to take one — or undefined.
  * Something else answering on one of the ports is not Hubble and is ignored.
  */
 export async function findDesktop({ fetch: fetchFn = globalThis.fetch, timeoutMs = DESKTOP_PROBE_TIMEOUT_MS } = {}) {
@@ -137,7 +223,9 @@ export async function findDesktop({ fetch: fetchFn = globalThis.fetch, timeoutMs
     DESKTOP_BRIDGE_PORTS.map(async (port) => {
       try {
         const { ok, body } = await request(fetchFn, bridgeUrl(port, "/v1/hello"), { method: "GET" }, timeoutMs);
-        if (ok && body?.app === "hubble-desktop" && body.protocol === DESKTOP_PROTOCOL_VERSION) return { port, ready: body.ready === true };
+        if (ok && body?.app === "hubble-desktop" && body.protocol === DESKTOP_PROTOCOL_VERSION) {
+          return { port, ready: body.ready === true, conversations: Array.isArray(body.kinds) && body.kinds.includes("conversation") };
+        }
       } catch {
         // Nothing on this port.
       }
@@ -186,26 +274,38 @@ export async function sendToDesktop({ port, payload, fetch: fetchFn = globalThis
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
     body: JSON.stringify(payload),
   });
-  if (!sent.ok) throw new DesktopError(refusalReason(sent.status, sent.body), `Import refused (${sent.status}: ${sent.body?.reason ?? "no reason"}).`);
+  if (!sent.ok) throw new DesktopError(refusalReason(sent.status, sent.body), `Request refused (${sent.status}: ${sent.body?.reason ?? "no reason"}).`);
   return { ...session, requestId: payload.requestId, accepted: Number(sent.body?.accepted) || 0, rejected: Number(sent.body?.rejected) || 0 };
 }
 
-/** A result as the bridge reported it, re-checked: known status, whole-number counts, a short project name. */
+const SAVE_OUTCOMES = new Set(["added", "updated", "unchanged", "kept"]);
+
+/**
+ * A result as the bridge reported it, re-checked: known status, whole-number
+ * counts, a short project name — and for a conversation, a known save
+ * outcome, its turns and whether it was cut.
+ */
 export function readDesktopResult(raw, fallbackRequestId) {
   const status = ["done", "cancelled", "expired", "failed"].includes(raw?.status) ? raw.status : undefined;
   if (!status) return undefined;
   const result = raw.result ?? {};
   const count = (value) => (Number.isInteger(value) && value >= 0 ? value : 0);
-  return {
+  const common = {
     status,
     requestId: typeof result.requestId === "string" ? result.requestId : fallbackRequestId,
     success: result.success === true,
-    received: count(result.received),
-    added: count(result.added),
-    duplicates: count(result.duplicates),
-    failed: count(result.failed),
     ...(typeof result.project === "string" && result.project ? { project: result.project.slice(0, 120) } : {}),
   };
+  if (result.kind === "conversation") {
+    return {
+      ...common,
+      kind: "conversation",
+      ...(SAVE_OUTCOMES.has(result.saved) ? { saved: result.saved } : {}),
+      turns: count(result.turns),
+      truncated: result.truncated === true,
+    };
+  }
+  return { ...common, received: count(result.received), added: count(result.added), duplicates: count(result.duplicates), failed: count(result.failed) };
 }
 
 /**
@@ -297,6 +397,56 @@ export function describeDesktopResult(outcome) {
     default:
       return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or use Hubble Web instead.", actions: ["retry", "web"] };
   }
+}
+
+/**
+ * The words for a finished "Save this conversation" into Hubble Desktop —
+ * the toast in the AI app's page. The popup says the same in its own words
+ * (popup/ai-panel.js), when it is still open to say it.
+ */
+export function describeDesktopSave(outcome) {
+  if (outcome?.status === "done" && outcome.saved) {
+    const project = outcome.project || "your project";
+    const turns = outcome.turns > 0 ? plural(outcome.turns, "turn") : undefined;
+    const cutNote = outcome.truncated ? "very long, so only the first part was kept" : undefined;
+    const detail = [turns, cutNote].filter(Boolean).join(" · ") || undefined;
+    switch (outcome.saved) {
+      case "updated":
+        return { tone: "done", title: `Updated in ${project}`, detail };
+      case "unchanged":
+        return { tone: "same", title: `Already saved in ${project}`, detail: "Nothing new since." };
+      case "kept":
+        return { tone: "same", title: `Kept the longer copy in ${project}`, detail: "Scroll to the top to load the whole conversation, then save again." };
+      default:
+        return { tone: "done", title: `Saved to ${project}`, detail };
+    }
+  }
+  switch (outcome?.status ?? outcome?.reason) {
+    case "cancelled":
+      return { tone: "same", title: "Nothing saved", detail: "Cancelled in Hubble Desktop." };
+    case "expired":
+      return { tone: "error", title: "Nothing saved", detail: "No project was chosen in Hubble Desktop in time." };
+    case "done":
+    case "failed":
+      return { tone: "error", title: "Couldn't save the conversation", detail: "Hubble Desktop couldn't keep it. Try again." };
+    case "desktop-busy":
+      return { tone: "error", title: "Hubble Desktop is busy", detail: "Finish what's open in Hubble Desktop, then try again." };
+    case "already-running":
+      return { tone: "error", title: "Still saving the last conversation", detail: "Choose a project in Hubble Desktop first." };
+    case "invalid-payload":
+      return { tone: "error", title: "Couldn't save the conversation", detail: "Hubble Desktop couldn't take it. Reload the page and try again." };
+    case "desktop-not-responding":
+    case "desktop-session-lost":
+    default:
+      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or close Hubble Desktop to save to Hubble on the web." };
+  }
+}
+
+/** The toast while a conversation is on its way to Hubble Desktop. */
+export function describeDesktopSavePhase(phase) {
+  return phase === "waiting"
+    ? { tone: "working", title: "Save to Hubble", detail: "Choose a project in Hubble Desktop." }
+    : { tone: "working", title: "Connecting to Hubble Desktop…" };
 }
 
 /** The toast while a desktop add is on its way, per phase. */

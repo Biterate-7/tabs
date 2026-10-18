@@ -85,7 +85,7 @@ import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useDesktopImport } from "@/hooks/use-desktop-import"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { desktopImport } from "@/lib/platform"
-import { outcomeFromIngestion, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
+import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
 import { DesktopImportDialog, type DesktopImportChoice } from "@/components/desktop-import-dialog"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
 import { describeOrganizationStage } from "@/lib/organize/lifecycle"
@@ -1054,10 +1054,17 @@ export function AppShell() {
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
   // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
   const quickAdd = useExtensionQuickAdd({ workspaces: store?.workspaces, currentWorkspaceId: currentWorkspace?.id })
-  // Chrome → Hubble Desktop (handleDesktopImport below): batches the extension sent straight to this app.
+  // Chrome → Hubble Desktop (handleDesktopImport below): tabs and conversations the extension sent straight to this app.
   const isDesktopShell = useIsDesktop()
-  const desktopImports = useDesktopImport(isDesktopShell ? desktopImport() : undefined, hydrated && store !== null, () =>
-    toast.info("Tabs from Chrome weren't added", { description: "No project was chosen in time. Add them again from Chrome." })
+  const desktopImports = useDesktopImport(
+    isDesktopShell ? desktopImport() : undefined,
+    hydrated && store !== null,
+    (request) =>
+      request.kind === "conversation"
+        ? toast.info("The conversation from Chrome wasn't saved", { description: "No project was chosen in time. Save it again from Chrome." })
+        : toast.info("Tabs from Chrome weren't added", { description: "No project was chosen in time. Add them again from Chrome." }),
+    // A conversation from Chrome: the same save as the extension's Save on the web.
+    (workspaceId, input, truncated) => saveCapturedConversation(workspaceId, input, truncated)
   )
 
   /*
@@ -1113,14 +1120,16 @@ export function AppShell() {
   }
 
   /*
-    Chrome → Hubble Desktop: tabs the extension sent straight to this app
-    (src-tauri/src/import_bridge.rs). Rust holds each batch until this store
-    can take it; the person picks a project in DesktopImportDialog, and the
-    batch goes through handleAddSources — the same pipeline, duplicate rule,
-    persistence and toast as a drop or the extension's "Add to project" on
-    the web. Nothing on the web: there is no bridge there.
+    Chrome → Hubble Desktop: tabs and AI conversations the extension sent
+    straight to this app (src-tauri/src/import_bridge.rs). Rust holds each
+    request until this store can take it; the person picks a project in
+    DesktopImportDialog. A batch of tabs goes through handleAddSources — the
+    same pipeline, duplicate rule, persistence and toast as a drop or the
+    extension's "Add to project" on the web. A conversation goes through
+    saveCapturedConversation — the same save, duplicate rule and toast as the
+    extension's Save on the web. Nothing on the web: there is no bridge there.
   */
-  function handleDesktopImport(request: DesktopImportRequest, choice: DesktopImportChoice): boolean {
+  function handleDesktopImport(request: DesktopImportRequest, choice: DesktopImportChoice): boolean | Promise<boolean> {
     let latest = storeRef.current
     if (!latest) return false
     let workspaceId: string
@@ -1135,16 +1144,30 @@ export function AppShell() {
       if (!latest.workspaces.some((workspace) => workspace.id === choice.workspaceId)) return false
       workspaceId = choice.workspaceId
     }
+    if (request.kind === "conversation") return saveDesktopConversation(request, workspaceId)
     const outcomes = handleAddSources(workspaceId, request.tabs, "extension")
     desktopImports.answer(request.requestId, outcomeFromIngestion(request, outcomes, workspaceNamed(workspaceId)))
-    // Land on the project the tabs went to, so they are seen arriving.
+    showDesktopImportProject(workspaceId)
+    return true
+  }
+
+  /** One conversation from Chrome: saved (useDesktopImport answers the bridge), then shown where it went. */
+  function saveDesktopConversation(request: DesktopConversationRequest, workspaceId: string): Promise<boolean> {
+    return desktopImports.saveCapture(request, workspaceId, workspaceNamed(workspaceId)).then((saved) => {
+      if (saved.ok) showDesktopImportProject(workspaceId)
+      // A project that vanished meanwhile: the dialog asks again.
+      return saved.ok || saved.reason !== "project-missing"
+    })
+  }
+
+  /** Land on the project a desktop import went to, so what arrived is seen arriving. */
+  function showDesktopImportProject(workspaceId: string) {
     const after = storeRef.current
     if (after && after.currentId !== workspaceId) {
       persist(switchWorkspace(after, workspaceId))
       recordWorkspaceVisit()
     }
     setView("workspace")
-    return true
   }
 
   function workspaceTabById(workspaceId: string, tabId: string | undefined): Tab | undefined {

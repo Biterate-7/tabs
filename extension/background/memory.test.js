@@ -13,14 +13,38 @@ const CHAT_URL = "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb";
 
 let listeners;
 let pageRequests;
+// Save asks Hubble Desktop first, over loopback: never the real network here.
+const realFetch = globalThis.fetch;
+let bridgeRequests;
 
 function fakeTab(over) {
   return { id: 7, windowId: 10, url: CHAT_URL, title: "Thesis feedback - Claude", status: "complete", ...over };
 }
 
+function json(status, body) {
+  return { status, ok: status >= 200 && status < 300, json: async () => body };
+}
+
+/** Hubble Desktop's bridge on its first port, saving whatever it is sent into "Biology". */
+function openHubbleDesktop() {
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    const { pathname, port } = new URL(url);
+    if (port !== "41517") throw new TypeError("Failed to fetch");
+    bridgeRequests.push({ method: init.method ?? "GET", pathname, body: init.body ? JSON.parse(init.body) : undefined });
+    if (pathname === "/v1/hello") return json(200, { app: "hubble-desktop", protocol: 1, ready: true, kinds: ["tabs", "conversation"] });
+    if (pathname === "/v1/sessions") return json(201, { sessionId: "s1", token: "tok" });
+    if (pathname.endsWith("/import")) return json(202, { status: "waiting", kind: "conversation", turns: 2 });
+    return json(200, { status: "done", result: { kind: "conversation", requestId: bridgeRequests[2].body.requestId, success: true, saved: "added", turns: 2, truncated: false, project: "Biology" } });
+  });
+}
+
 beforeEach(() => {
   listeners = [];
   pageRequests = [];
+  bridgeRequests = [];
+  globalThis.fetch = vi.fn(async () => {
+    throw new TypeError("Failed to fetch");
+  });
   globalThis.chrome = {
     runtime: { id: EXTENSION_ID, onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
     tabs: {
@@ -50,6 +74,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete globalThis.chrome;
+  globalThis.fetch = realFetch;
   vi.resetModules();
 });
 
@@ -61,6 +86,32 @@ async function ask(message, sender = POPUP) {
     if (!kept.includes(true)) resolve(undefined);
   });
 }
+
+describe("Save to Hubble with Hubble Desktop open", () => {
+  it("sends the conversation to Hubble Desktop, not the Hubble page, and says where the person put it", async () => {
+    openHubbleDesktop();
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
+    expect(answer).toEqual({ ok: true, result: { outcome: "added", turns: 2, truncated: false, project: "Biology", desktop: true } });
+    expect(pageRequests).toEqual([]);
+    const sent = bridgeRequests.find((request) => request.pathname.endsWith("/import"));
+    // Chrome's own address and the provider it names; role and text only.
+    expect(sent.body).toMatchObject({
+      kind: "conversation",
+      source: "chrome-extension",
+      conversation: { provider: "claude", url: CHAT_URL, title: "Thesis feedback - Claude", turns: [{ role: "user", text: "Is it arguable?" }, { role: "assistant", text: "Yes." }], truncated: false },
+    });
+  });
+
+  it("needs no project chosen in the popup, but Hubble on the web does", async () => {
+    openHubbleDesktop();
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toMatchObject({ ok: true, result: { desktop: true } });
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toEqual({ ok: false, error: "no-project" });
+    expect(pageRequests).toEqual([]);
+  });
+});
 
 describe("Save to Hubble", () => {
   it("reads only the conversation tab it was given, then hands it to the Hubble page with Chrome's own address", async () => {
