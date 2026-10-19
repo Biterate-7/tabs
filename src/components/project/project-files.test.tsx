@@ -5,7 +5,9 @@ import { ProjectHome } from "./project-home"
 import { AddMenu } from "./add-menu"
 import { MemoryActionsProvider } from "@/components/memory/memory-actions"
 import { composeFileNote } from "@/lib/files/note"
-import { putContent, resetContentStoreForTests } from "@/lib/resources/content-store"
+import { putContent, putFile, resetContentStoreForTests } from "@/lib/resources/content-store"
+import { fakePdfView } from "@/lib/files/__fixtures__/fake-pdf-view"
+import { mathExamPdf } from "@/lib/files/__fixtures__/pdf"
 import type { MemoryActions } from "@/components/memory/memory-actions"
 import type { ProjectFileActions } from "./project-home"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
@@ -19,6 +21,10 @@ import type { Workspace } from "@/lib/workspace/types"
  * reader, and search into a file's pages. The upload pipeline itself is
  * tested in hooks/use-file-uploads.test.tsx; here it is a stub.
  */
+
+// The reader draws the kept original with pdf.js; here a fake page column stands in (real drawing: lib/files/pdf-render.test.ts).
+const openPdfView = vi.hoisted(() => vi.fn())
+vi.mock("@/lib/files/pdf-view", async (original) => ({ ...(await original<typeof import("@/lib/files/pdf-view")>()), openPdfView }))
 
 const NOW = Date.UTC(2026, 9, 18, 12)
 const resources: ResourceActions = { retry: vi.fn(), attachPdf: vi.fn(), attachTranscript: vi.fn(async () => ({})), forget: vi.fn() }
@@ -63,6 +69,7 @@ function renderHome(workspace: Workspace, files: Partial<ProjectFileActions> = {
 }
 
 afterEach(() => {
+  openPdfView.mockReset()
   localStorage.clear()
   resetContentStoreForTests()
 })
@@ -166,22 +173,47 @@ describe("files in the project", () => {
     expect(home.notes.remove).toHaveBeenCalledWith(["n1"])
   })
 
-  it("open in a reader that shows the text page by page, as text", async () => {
+  async function keepOriginal(noteId: string, name: string, pageTexts: string[]) {
+    await putFile("w", noteId, mathExamPdf().buffer, { name, type: "application/pdf", now: NOW })
+    openPdfView.mockImplementation(async () => fakePdfView(pageTexts))
+  }
+
+  it("open in a reader that draws the original pages, not a transcript of their text", async () => {
     const user = userEvent.setup()
     await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Introduction.", "<b>Entropy</b> always increases.", ""] })
+    await keepOriginal("n1", "Lecture 4.pdf", ["Introduction.", "<b>Entropy</b> always increases.", ""])
     renderHome(project([lecture]))
     await user.click(screen.getByRole("button", { name: "Read Lecture 4" }))
     const dialog = within(await screen.findByRole("dialog", { name: "Lecture 4" }))
     expect(dialog.getByText("Lecture 4.pdf")).toBeTruthy()
-    expect(await dialog.findByText("<b>Entropy</b> always increases.")).toBeTruthy()
-    expect(dialog.getByRole("article", { name: "Page 2" })).toBeTruthy()
-    expect(dialog.getByText("No text on this page.")).toBeTruthy()
+    // Every page is a page: a picture with its own text laid invisibly over it.
+    expect(await dialog.findByRole("article", { name: "Page 3" })).toBeTruthy()
+    expect(dialog.getAllByRole("article")).toHaveLength(3)
+    expect(document.querySelectorAll("[data-file-dialog] canvas")).toHaveLength(3)
+    expect(dialog.getByText("Page 1 of 3")).toBeTruthy()
+    // The extracted-text transcript is not the reader: no text section, no per-page text headings.
+    expect(dialog.queryByRole("region", { name: "Text from the file" })).toBeNull()
+    expect(dialog.queryByText("No text on this page.")).toBeNull()
     expect(document.querySelector("[data-file-dialog] b")).toBeNull()
+    expect(openPdfView).toHaveBeenCalledOnce()
+  })
+
+  it("draws a scanned PDF's pages even though Hubble has no text for it", async () => {
+    const user = userEvent.setup()
+    await keepOriginal("n2", "Scanned handout.pdf", ["", ""])
+    renderHome(project([scan]))
+    await user.click(screen.getByRole("button", { name: "Read Scanned handout" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Scanned handout" }))
+    expect(await dialog.findByRole("article", { name: "Page 2" })).toBeTruthy()
+    expect(dialog.getAllByRole("article")).toHaveLength(2)
+    expect(dialog.queryByRole("alert")).toBeNull()
   })
 
   it("are found by what their pages say, and a hit opens the file at that page", async () => {
     const user = userEvent.setup()
-    await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Introduction.", "Entropy always increases in an isolated system.", "The third law."] })
+    const pages = ["Introduction.", "Entropy always increases in an isolated system.", "The third law."]
+    await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages })
+    await keepOriginal("n1", "Lecture 4.pdf", pages)
     renderHome(project([lecture, scan]))
     await user.type(screen.getByPlaceholderText("Search Physics HL…"), "isolated system")
     const results = within(await screen.findByRole("list", { name: "Search results" }))
@@ -189,6 +221,44 @@ describe("files in the project", () => {
     await user.click(hit)
     const dialog = await screen.findByRole("dialog", { name: "Lecture 4" })
     await waitFor(() => expect(within(dialog).getByRole("article", { name: "Page 2" })).toBeTruthy())
+    // The reader was opened on the page the hit named, and carries the searched words to mark there.
+    expect(within(dialog).getByText("Page 2 of 3")).toBeTruthy()
+  })
+
+  it("says so, and offers the text Hubble read, when the original is no longer on this device", async () => {
+    const user = userEvent.setup()
+    await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Introduction.", "Entropy always increases."] })
+    renderHome(project([lecture]))
+    await user.click(screen.getByRole("button", { name: "Read Lecture 4" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Lecture 4" }))
+    expect((await dialog.findByRole("alert")).textContent).toMatch(/original file isn't on this device/)
+    expect(await dialog.findByText("Entropy always increases.")).toBeTruthy()
+    expect(dialog.getByText(/Showing the text Hubble read/)).toBeTruthy()
+    expect(openPdfView).not.toHaveBeenCalled()
+  })
+
+  it("says so, and offers the text Hubble read, when the original can't be opened as a PDF", async () => {
+    const user = userEvent.setup()
+    const { PdfViewError } = await import("@/lib/files/pdf-view")
+    await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Introduction.", "Entropy always increases."] })
+    await putFile("w", "n1", mathExamPdf().buffer, { name: "Lecture 4.pdf", type: "application/pdf", now: NOW })
+    openPdfView.mockRejectedValue(new PdfViewError("damaged", "This PDF is damaged and can't be shown."))
+    renderHome(project([lecture]))
+    await user.click(screen.getByRole("button", { name: "Read Lecture 4" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Lecture 4" }))
+    expect((await dialog.findByRole("alert")).textContent).toBe("This PDF is damaged and can't be shown.")
+    expect(await dialog.findByText("Entropy always increases.")).toBeTruthy()
+  })
+
+  it("says so when the kept file isn't a PDF at all, without handing it to the PDF reader", async () => {
+    const user = userEvent.setup()
+    await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Introduction."] })
+    await putFile("w", "n1", new TextEncoder().encode("<html>not a pdf</html>").buffer as ArrayBuffer, { name: "Lecture 4.pdf", type: "application/pdf", now: NOW })
+    renderHome(project([lecture]))
+    await user.click(screen.getByRole("button", { name: "Read Lecture 4" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Lecture 4" }))
+    expect((await dialog.findByRole("alert")).textContent).toMatch(/damaged/)
+    expect(openPdfView).not.toHaveBeenCalled()
   })
 })
 

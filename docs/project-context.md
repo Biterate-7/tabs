@@ -302,11 +302,41 @@ before the item exists and the text before the item says ready. A reading
 cut short by a reload is picked up again from the kept original, at most
 three times in all, then says it was interrupted.
 
-**Reader and actions.** A file opens in a reader that shows its text page by
-page (as text, never markup); a search hit opens it at its page. *Download
-original* gives the file back — a download on the web, a native Save dialog
-in Hubble Desktop (`export_file`: the bytes as the raw IPC body, a suggested
-name in a header, never a path).
+**Reader and actions.** A file opens in a reader that shows the *original*,
+not a transcript of its text (`components/project/file-reader.tsx`). Two
+separate things, deliberately: the kept original bytes are what is *drawn*;
+the text Hubble extracted is what is *searched and quoted to an AI*.
+
+- **PDF** — every page drawn from the kept original with pdf.js
+  (`lib/files/pdf-view.ts`, `pdf-viewer.tsx`): layout, equations, diagrams,
+  graphs and scans as authored, in a continuous scrolling column with zoom
+  and fit-to-width. Only pages near the screen hold a canvas; the rest are
+  empty boxes of the right size, so a 900-page file opens at once. The page's
+  text is laid invisibly over its picture so words can be selected, and a
+  search hit opens at its page with the searched words marked (CSS Custom
+  Highlight API). A scanned PDF (no extractable text) is drawn like any other.
+  pdf.js runs in a bundled module worker and reads its fonts, colour and
+  decoder data from `/pdfjs` — copied from `node_modules` into `public/pdfjs`
+  by `scripts/copy-pdfjs-assets.mjs` before `dev` and `build`, so nothing is
+  fetched from a third party and the desktop app (static export) has them.
+  The desktop CSP is unchanged (no `'wasm-unsafe-eval'`): where WebAssembly
+  is refused, pdf.js falls back to its JavaScript decoders, served from the
+  same `/pdfjs` folder.
+- **Word (.docx)** — a formatted *preview* (mammoth, on demand): headings,
+  emphasis, lists, tables, embedded pictures. Fonts and page layout are not
+  reproduced, and the reader says so. The converter's HTML is rebuilt as
+  React elements from an allowlist, never inserted.
+- **Markdown** — formatted from the original (marked's parser, rendered as
+  React; raw HTML shown as text, links limited to http/https/mailto,
+  pictures not fetched).
+- **Text, CSV, JSON, HTML** — the text Hubble read, as text (HTML is never run).
+- If the original is gone from this device or can't be drawn (damaged, not
+  really a PDF, password-protected) the reader says so and shows the extracted
+  text instead — never a blank dialog.
+
+*Download original* gives the file back — a download on the web, a native Save
+dialog in Hubble Desktop (`export_file`: the bytes as the raw IPC body, a
+suggested name in a header, never a path).
 
 ## 6. Searching sources
 
