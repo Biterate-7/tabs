@@ -158,11 +158,11 @@ describe("files in the project", () => {
     expect(card("n2").queryByRole("button", { name: /again/ })).toBeNull()
     expect(card("n4").getByText("Reading…")).toBeTruthy()
     // Only a ready file can be used in an AI chat.
-    expect(card("n4").queryByRole("button", { name: /in an AI chat/ })).toBeNull()
+    expect(card("n4").queryByRole("button", { name: / in AI$/ })).toBeNull()
 
     await user.click(card("n3").getByRole("button", { name: "Read notes again" }))
     expect(home.files.retry).toHaveBeenCalledWith("n3")
-    await user.click(card("n1").getByRole("button", { name: "Use Lecture 4 in an AI chat" }))
+    await user.click(card("n1").getByRole("button", { name: "Use Lecture 4 in AI" }))
     expect(home.memory.reuse).toHaveBeenCalledWith({ workspaceId: "w", refs: [{ kind: "note", noteId: "n1" }] })
 
     await user.click(card("n1").getByRole("button", { name: "More actions for Lecture 4" }))
@@ -262,7 +262,7 @@ describe("files in the project", () => {
   })
 })
 
-describe("Use in AI chat with uploaded files", () => {
+describe("Use in AI with uploaded files", () => {
   it("takes every file at once, quotes the ones Hubble read with their pages, and names the ones it couldn't", async () => {
     const { ReuseDialog } = await import("@/components/memory/reuse-dialog")
     const user = userEvent.setup()
@@ -270,11 +270,11 @@ describe("Use in AI chat with uploaded files", () => {
     const scan = file("n2", "Scanned handout.pdf", { status: "partial", error: { code: "no_text", message: "No text found — this PDF may be a scan. Hubble can't read scanned pages.", retryable: false } })
     await putContent("w", "n1", { kind: "pdf", extractedAt: NOW, pages: ["Heat engines.", "Entropy always increases in an isolated system."] })
     render(<ReuseDialog open onOpenChange={vi.fn()} workspace={project([lecture, scan])} initialRefs={[]} />)
-    const dialog = within(await screen.findByRole("dialog", { name: "Use in AI chat" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Use in AI" }))
     expect(dialog.getByText("no text")).toBeTruthy()
     await user.click(dialog.getByRole("button", { name: "Select all" }))
-    await user.type(dialog.getByPlaceholderText("Optional — picks the most relevant parts"), "entropy")
-    const preview = dialog.getByLabelText("Text to paste into an AI chat") as HTMLTextAreaElement
+    await user.type(dialog.getByLabelText("Instructions"), "entropy")
+    const preview = dialog.getByLabelText("Message for the AI app") as HTMLTextAreaElement
     await waitFor(() => expect(preview.value).toContain("> (p. 2) Entropy always increases in an isolated system."))
     expect(preview.value).toContain("_uploaded file “Lecture 4.pdf”, 2 pages")
     expect(preview.value).toContain("say which document — and the page")

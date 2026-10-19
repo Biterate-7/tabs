@@ -79,7 +79,7 @@ export function TabInspector({
                         onOpenChange(false)
                       }}
                     >
-                      <MessageSquareShare /> Use in AI chat
+                      <MessageSquareShare /> Use in AI
                     </Button>
                   )}
                   <IconButton aria-label="Open tab" tooltip="Open in new tab" className="size-7" onClick={() => onOpenTab(node.id)}>

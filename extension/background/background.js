@@ -37,6 +37,8 @@ import {
   PAGE_READY_WAIT_MS,
 } from "../src/config.js";
 import { aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
+import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_TIMING } from "../src/ai-transfer.js";
+import { hubbleTransferStep } from "../src/ai-transfer-page.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
@@ -337,7 +339,7 @@ async function deliverImportToTab(tabId, importId, payload, context = {}) {
 // (the page might never finish loading — blocked request, offline, etc.)
 // and an onRemoved listener (the user might close the tab before it loads).
 // Either one always cleans up both listeners.
-function waitForTabComplete(tabId) {
+function waitForTabComplete(tabId, timeoutMs = TAB_READY_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let settled = false;
 
@@ -362,7 +364,7 @@ function waitForTabComplete(tabId) {
       if (removedTabId === tabId) finish("removed");
     }
 
-    const timer = setTimeout(() => finish("timeout"), TAB_READY_TIMEOUT_MS);
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
 
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
@@ -1509,4 +1511,147 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   return undefined;
+});
+
+// ---------------------------------------------------------------------------
+// Use in AI: a transfer the person started in Hubble — chosen context and
+// uploaded files into a new ChatGPT, Claude, Gemini or Perplexity chat
+// (src/ai-transfer.js runs it; src/ai-transfer-page.js is each step in the
+// AI app's page).
+//
+//   Hubble page -> content script -> here (only from a Hubble tab) -> runner
+//   progress:  runner -> chrome.tabs.sendMessage(that Hubble tab) -> page
+//
+// Access to an AI app is an optional host permission, asked for the first
+// time it is needed, in permissions/grant.html — Chrome only asks from a
+// click in an extension page. Nothing the transfer carries is logged.
+// ---------------------------------------------------------------------------
+
+/** Waiting permission windows, by opId. */
+const permissionWaits = new Map();
+
+function permissionContains(origins) {
+  return chrome.permissions.contains({ origins }).catch(() => false);
+}
+
+/** Opens the permission window and resolves with the person's answer: "granted", "denied" or "timeout". */
+async function requestProviderPermission(provider, origins, opId) {
+  let windowId;
+  try {
+    const created = await chrome.windows.create({
+      url: chrome.runtime.getURL(`permissions/grant.html?provider=${encodeURIComponent(provider)}&op=${encodeURIComponent(opId)}`),
+      type: "popup",
+      width: 480,
+      height: 440,
+      focused: true,
+    });
+    windowId = created?.id;
+  } catch (err) {
+    log("ai-permission-window-failed", { detail: errorMessage(err) });
+    return "denied";
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = async (answer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      permissionWaits.delete(opId);
+      chrome.permissions.onAdded?.removeListener(onAdded);
+      chrome.windows.onRemoved?.removeListener(onRemoved);
+      // The grant itself is the truth, whatever the window said.
+      resolve((await permissionContains(origins)) ? "granted" : answer);
+    };
+    const onAdded = () => {
+      void permissionContains(origins).then((has) => has && finish("granted"));
+    };
+    const onRemoved = (removedId) => {
+      if (removedId === windowId) void finish("denied");
+    };
+    const timer = setTimeout(() => {
+      if (Number.isInteger(windowId)) chrome.windows.remove(windowId).catch(() => {});
+      void finish("timeout");
+    }, TRANSFER_TIMING.permissionMs);
+    permissionWaits.set(opId, (granted) => void finish(granted ? "granted" : "denied"));
+    chrome.permissions.onAdded?.addListener(onAdded);
+    chrome.windows.onRemoved?.addListener(onRemoved);
+  });
+}
+
+/**
+ * Keeps the service worker awake while a transfer waits on a page or on the
+ * person (an extension API call resets Chrome's idle timer). The transfer's
+ * record in chrome.storage.session is what survives if it stops anyway.
+ */
+function keepWorkerAlive() {
+  const timer = setInterval(() => {
+    chrome.runtime.getPlatformInfo?.().catch?.(() => {});
+  }, 20000);
+  return () => clearInterval(timer);
+}
+
+const transfers = createTransferRunner({
+  tabs: {
+    query: (query) => chrome.tabs.query(query),
+    get: (tabId) => chrome.tabs.get(tabId),
+    create: (props) => chrome.tabs.create(props),
+    update: (tabId, props) => chrome.tabs.update(tabId, props),
+  },
+  windows: { update: (windowId, props) => chrome.windows.update(windowId, props) },
+  hasPermission: permissionContains,
+  requestPermission: requestProviderPermission,
+  waitForTab: waitForTabComplete,
+  step: async (tabId, name, args) => {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: hubbleTransferStep, args: [name, args] });
+    return injection?.result;
+  },
+  store: {
+    get: async (key) => (await chrome.storage.session.get(key))?.[key],
+    set: (key, value) => chrome.storage.session.set({ [key]: value }),
+  },
+  now: () => Date.now(),
+  log,
+  keepAlive: keepWorkerAlive,
+});
+
+/** Whether a message came from Hubble's own page (its top frame), the only place a transfer may start. */
+function fromHubblePage(sender) {
+  if (sender?.id !== chrome.runtime.id || !Number.isInteger(sender?.tab?.id) || (sender.frameId ?? 0) !== 0) return false;
+  try {
+    return new URL(sender.url || sender.tab.url || "").origin === TABDUMP_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === MSG_AI_PERMISSION_ANSWER) {
+    // Only the extension's own permission window answers.
+    const page = typeof sender?.url === "string" ? sender.url : "";
+    if (sender?.id !== chrome.runtime.id || sender?.tab?.url?.startsWith?.("http") || !page.startsWith(chrome.runtime.getURL("permissions/grant.html"))) return undefined;
+    permissionWaits.get(message.payload?.opId)?.(message.payload?.granted === true);
+    safeSendResponse(sendResponse, { ok: true });
+    return undefined;
+  }
+
+  if (message?.type !== MSG_AI_TRANSFER) return undefined;
+  const opId = typeof message.payload?.opId === "string" ? message.payload.opId.slice(0, 100) : "";
+  if (!fromHubblePage(sender)) {
+    safeSendResponse(sendResponse, { opId, ok: false, error: "invalid" });
+    return undefined;
+  }
+  const read = readTransferRequest(message.payload);
+  if (!read.ok) {
+    safeSendResponse(sendResponse, { opId, ok: false, error: "invalid" });
+    return undefined;
+  }
+  const hubbleTabId = sender.tab.id;
+  const report = (state) => {
+    chrome.tabs.sendMessage(hubbleTabId, { type: MSG_AI_TRANSFER_PROGRESS, payload: { opId: read.request.opId, state } }).catch(() => {});
+  };
+  transfers
+    .run(read.request, { senderTab: sender.tab, report })
+    .then((result) => safeSendResponse(sendResponse, result))
+    .catch(() => safeSendResponse(sendResponse, { opId: read.request.opId, ok: false, error: "failed" }));
+  return true;
 });

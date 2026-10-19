@@ -15,16 +15,20 @@ function SegmentedControl<T extends string>({
   options,
   className,
   size = "default",
+  label,
 }: {
   value: T
   onValueChange: (value: T) => void
   options: readonly SegmentedOption<T>[]
   className?: string
   size?: "default" | "sm"
+  /** The group's accessible name, when nothing visible labels it. */
+  label?: string
 }) {
   return (
     <div
       role="radiogroup"
+      aria-label={label}
       className={cn("inline-flex w-fit items-center gap-0.5 rounded-full bg-surface-hover p-0.5", className)}
     >
       {options.map((option) => {

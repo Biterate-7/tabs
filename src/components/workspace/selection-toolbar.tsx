@@ -88,8 +88,8 @@ export function SelectionToolbar({
           </DropdownMenu>
         )}
         {onUseInAi && (
-          <Button variant="secondary" size="sm" className="mr-1 shrink-0" aria-label="Use selected tabs in an AI chat" onClick={onUseInAi}>
-            <MessageSquareShare /> Use in AI chat
+          <Button variant="secondary" size="sm" className="mr-1 shrink-0" aria-label="Use selected tabs in AI" onClick={onUseInAi}>
+            <MessageSquareShare /> Use in AI
           </Button>
         )}
         <DropdownMenu>

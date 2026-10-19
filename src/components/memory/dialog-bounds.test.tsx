@@ -30,7 +30,7 @@ describe("long text never pushes a dialog off-screen", () => {
   it("reuse: the dialog fits the viewport and the preview scrolls inside it", () => {
     render(<ReuseDialog open onOpenChange={vi.fn()} workspace={workspace} initialRefs={[]} />)
     expectViewportBounded(document.querySelector<HTMLElement>("[data-reuse-dialog]")!)
-    expectCapped(screen.getByLabelText("Text to paste into an AI chat"))
+    expectCapped(screen.getByLabelText("Message for the AI app"))
   })
 
   it("capture: the dialog fits the viewport and a pasted conversation scrolls inside it", () => {

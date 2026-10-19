@@ -304,7 +304,7 @@ export function ProjectHome(props: ProjectHomeProps) {
           {addMenu("lg", "default")}
           {memory && items.length + workspace.tabs.length > 0 && (
             <Button type="button" size="lg" variant="secondary" onClick={() => reuse(chosen.length > 0 ? chosen.map((item) => item.ref) : [])}>
-              <MessageSquareShare /> {chosen.length > 0 ? `Use ${chosen.length} in AI chat` : "Use in AI chat"}
+              <MessageSquareShare /> {chosen.length > 0 ? `Use ${chosen.length} in AI` : "Use in AI"}
             </Button>
           )}
         </div>
@@ -424,7 +424,7 @@ export function ProjectHome(props: ProjectHomeProps) {
                 <>
                   {memory && (
                     <Button type="button" size="sm" variant="secondary" onClick={() => reuse(chosen.map((item) => item.ref))}>
-                      <MessageSquareShare /> Use in AI chat
+                      <MessageSquareShare /> Use in AI
                     </Button>
                   )}
                   <Button type="button" size="sm" variant="ghost" onClick={removeChosen}>

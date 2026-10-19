@@ -277,7 +277,7 @@ export function SourceDetailsDialog({
           {/* A video's reader offers its own "Try again" for errors a retry could fix. */}
           {memory && (
             <Button type="button" variant="ghost" onClick={() => memory.reuse({ workspaceId, refs: [{ kind: "source", tabId: tab.id }] })}>
-              <MessageSquareShare /> Use in AI chat
+              <MessageSquareShare /> Use in AI
             </Button>
           )}
           {(resource.status === "failed" || resource.status === "partial") && !isConversation && !(isYouTube && resource.error?.retryable) && (

@@ -40,7 +40,7 @@ export function useMemoryActions(): MemoryActions | null {
 }
 
 /** The menu item, for any dropdown that acts on something in a project. */
-export function UseInAiMenuItem({ selection, label = "Use in AI chat…" }: { selection: MemorySelection; label?: string }) {
+export function UseInAiMenuItem({ selection, label = "Use in AI…" }: { selection: MemorySelection; label?: string }) {
   const actions = useMemoryActions()
   if (!actions) return null
   return (
