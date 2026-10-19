@@ -1,6 +1,6 @@
 import { providerOfUrl } from "@/lib/providers/registry";
 import type { AiProviderId } from "@/lib/providers/registry";
-import type { NoteOrigin, ProjectNote } from "@/lib/notes/notes";
+import type { NoteFile, NoteKind, NoteOrigin, ProjectNote } from "@/lib/notes/notes";
 import type { ConversationCaptureMethod, ResourceKind, ResourceOrigin, ResourceStatus } from "@/lib/resources/types";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
@@ -50,6 +50,10 @@ export type KnowledgeItem = {
   userNote?: string;
   /** Why there is no text, in Hubble's words. */
   problem?: string;
+  /** An uploaded file's own name (its item has no address). */
+  fileName?: string;
+  /** An uploaded file's PDF page count. */
+  pages?: number;
 };
 
 export const KNOWLEDGE_TYPE_LABEL: Record<KnowledgeItemType, string> = {
@@ -61,6 +65,14 @@ export const KNOWLEDGE_TYPE_LABEL: Record<KnowledgeItemType, string> = {
   link: "Link",
   note: "Note",
   excerpt: "Excerpt",
+};
+
+/** A project note's kind in words. */
+export const NOTE_KIND_LABEL: Record<NoteKind, string> = {
+  note: "Note",
+  excerpt: "Excerpt",
+  conversation: "AI conversation",
+  file: "File",
 };
 
 function typeOfKind(kind: ResourceKind): KnowledgeItemType {
@@ -118,7 +130,30 @@ export function itemOfSavedTab(workspaceId: string, tab: Tab): KnowledgeItem {
   };
 }
 
+/** An uploaded file: a PDF or a document, read like a source and listed with them. */
+function itemOfFile(workspaceId: string, note: ProjectNote, file: NoteFile): KnowledgeItem {
+  return {
+    ref: { kind: "note", noteId: note.id },
+    id: note.id,
+    workspaceId,
+    type: file.format === "pdf" ? "pdf" : "document",
+    title: note.title,
+    addedAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    hasText: file.status === "ready" && note.chars > 0,
+    // A file being read is "processing", as a source is: the same counts and words everywhere.
+    status: file.status,
+    origin: "upload",
+    chars: note.chars,
+    fileName: file.name,
+    ...(file.pages ? { pages: file.pages } : {}),
+    ...(note.tags ? { tags: note.tags } : {}),
+    ...(file.status !== "ready" && file.error ? { problem: file.error.message } : {}),
+  };
+}
+
 export function itemOfNote(workspaceId: string, note: ProjectNote): KnowledgeItem {
+  if (note.kind === "file" && note.file) return itemOfFile(workspaceId, note, note.file);
   let domain: string | undefined;
   if (note.sourceUrl) {
     try {
@@ -131,7 +166,7 @@ export function itemOfNote(workspaceId: string, note: ProjectNote): KnowledgeIte
     ref: { kind: "note", noteId: note.id },
     id: note.id,
     workspaceId,
-    type: note.kind === "conversation" ? "conversation" : note.kind,
+    type: note.kind === "conversation" ? "conversation" : note.kind === "excerpt" ? "excerpt" : "note",
     title: note.title,
     ...(note.sourceUrl ? { url: note.sourceUrl } : {}),
     ...(domain ? { domain } : {}),

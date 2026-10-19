@@ -13,7 +13,7 @@ import type { PlatformAdapter } from "./types";
  * used; it lives here now so both of them, and the desktop adapter, share
  * one definition of "save this text as a file".
  */
-export function downloadViaAnchor(filename: string, text: string, mimeType: string): boolean {
+export function downloadViaAnchor(filename: string, text: string | Uint8Array<ArrayBuffer>, mimeType: string): boolean {
   try {
     const blob = new Blob([text], { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -51,5 +51,9 @@ export const webPlatform: PlatformAdapter = {
 
   async saveTextFile(filename: string, text: string, mimeType: string): Promise<boolean> {
     return downloadViaAnchor(filename, text, mimeType);
+  },
+
+  async saveFile(filename: string, bytes: Uint8Array, mimeType: string): Promise<boolean> {
+    return downloadViaAnchor(filename, new Uint8Array(bytes), mimeType);
   },
 };

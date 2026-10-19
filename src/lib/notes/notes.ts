@@ -1,6 +1,9 @@
 import { isAiProviderId } from "@/lib/providers/registry";
 import { isSafeOpenUrl } from "@/lib/browser/protocol";
+import { cleanFileName, FILE_FORMATS } from "@/lib/files/formats";
+import type { FileFormat } from "@/lib/files/formats";
 import type { AiProviderId } from "@/lib/providers/registry";
+import type { ResourceError } from "@/lib/resources/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 
 /**
@@ -13,6 +16,10 @@ import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
  *   note          something they wrote
  *   excerpt       a passage they kept from somewhere (a page, an AI answer)
  *   conversation  an AI conversation pasted or imported without its address
+ *   file          a document uploaded from their device (a PDF, a Word file,
+ *                 notes in Markdown) — lib/files. Unlike the others it is
+ *                 *read* after it is added, so it carries a status like a
+ *                 source's, and its original bytes are kept beside its text.
  *
  * ## What is stored where
  *
@@ -27,14 +34,44 @@ import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
  * storage outlives the code that wrote it.
  */
 
-export type NoteKind = "note" | "excerpt" | "conversation";
+export type NoteKind = "note" | "excerpt" | "conversation" | "file";
 
-export const NOTE_KINDS: readonly NoteKind[] = ["note", "excerpt", "conversation"] as const;
+export const NOTE_KINDS: readonly NoteKind[] = ["note", "excerpt", "conversation", "file"] as const;
 
-/** How a note arrived: written in Hubble, pasted, from a file, or saved from a page by Hubble for Chrome. */
-export type NoteOrigin = "manual" | "paste" | "import" | "capture";
+/** How a note arrived: written in Hubble, pasted, from a file, saved from a page by Hubble for Chrome, or uploaded as a document. */
+export type NoteOrigin = "manual" | "paste" | "import" | "capture" | "upload";
 
-export const NOTE_ORIGINS: readonly NoteOrigin[] = ["manual", "paste", "import", "capture"] as const;
+export const NOTE_ORIGINS: readonly NoteOrigin[] = ["manual", "paste", "import", "capture", "upload"] as const;
+
+/**
+ * An uploaded file's reading, in the same honest words as a source's:
+ *
+ *   processing  Hubble is reading it now (and reads it again from the kept
+ *               original after a reload, so nothing stays "Reading…")
+ *   ready       its text is in the content store: searchable, quotable
+ *   partial     kept, but it has no text to read (a scan, an empty file)
+ *   failed      it couldn't be read; `error.retryable` says whether trying
+ *               again could help
+ */
+export type NoteFileStatus = "processing" | "ready" | "partial" | "failed";
+
+export const NOTE_FILE_STATUSES: readonly NoteFileStatus[] = ["processing", "ready", "partial", "failed"] as const;
+
+export type NoteFile = {
+  /** The file's own name, cleaned (lib/files/formats.ts `cleanFileName`). */
+  name: string;
+  format: FileFormat;
+  /** Bytes of the original. */
+  size: number;
+  status: NoteFileStatus;
+  /** A PDF's page count. */
+  pages?: number;
+  /** The text was cut to the storage bound. */
+  truncated?: boolean;
+  error?: ResourceError;
+  /** Readings started so far; bounds automatic re-reads after a reload. */
+  attempts?: number;
+};
 
 export type ProjectNote = {
   id: string;
@@ -55,6 +92,8 @@ export type ProjectNote = {
   turns?: number;
   /** The person's own words for finding it again. */
   tags?: string[];
+  /** Present exactly when `kind` is "file". */
+  file?: NoteFile;
 };
 
 export const NOTE_LIMITS = {
@@ -84,6 +123,30 @@ export function cleanTags(raw: unknown): string[] {
   return out;
 }
 
+/** An uploaded file's record, re-read; `undefined` when it is not one. */
+export function readNoteFile(raw: unknown): NoteFile | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const name = typeof source.name === "string" ? cleanFileName(source.name) : "";
+  const format = FILE_FORMATS.includes(source.format as FileFormat) ? (source.format as FileFormat) : undefined;
+  const size = count(source.size);
+  const status = NOTE_FILE_STATUSES.includes(source.status as NoteFileStatus) ? (source.status as NoteFileStatus) : undefined;
+  if (!name || !format || size === undefined || !status) return undefined;
+  const file: NoteFile = { name, format, size, status };
+  const pages = count(source.pages);
+  if (pages !== undefined && pages > 0) file.pages = pages;
+  if (source.truncated === true) file.truncated = true;
+  const attempts = count(source.attempts);
+  if (attempts !== undefined && attempts > 0) file.attempts = Math.min(attempts, 100);
+  const error = source.error as Record<string, unknown> | undefined;
+  if (error && typeof error === "object" && typeof error.code === "string" && /^[a-z_]{1,40}$/.test(error.code) && typeof error.message === "string" && error.message.trim()) {
+    file.error = { code: error.code as ResourceError["code"], message: error.message.trim().slice(0, 500), retryable: error.retryable === true };
+  }
+  // Only a file that is not ready says why.
+  if (status === "ready") delete file.error;
+  return file;
+}
+
 /** One stored note, re-read; `undefined` when it is not one. */
 export function readProjectNote(raw: unknown): ProjectNote | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -96,7 +159,10 @@ export function readProjectNote(raw: unknown): ProjectNote | undefined {
   const contentHash = typeof source.contentHash === "string" && /^[0-9a-f]{16}$/.test(source.contentHash) ? source.contentHash : undefined;
   const chars = count(source.chars);
   if (!id || !kind || !origin || !title || createdAt === undefined || !contentHash || chars === undefined) return undefined;
+  const file = kind === "file" ? readNoteFile(source.file) : undefined;
+  if (kind === "file" && !file) return undefined;
   const note: ProjectNote = { id, kind, title, origin, createdAt, updatedAt: time(source.updatedAt) ?? createdAt, contentHash, chars };
+  if (file) note.file = file;
   if (isAiProviderId(source.provider)) note.provider = source.provider;
   if (typeof source.sourceUrl === "string" && source.sourceUrl.length <= 4000 && isSafeOpenUrl(source.sourceUrl)) note.sourceUrl = source.sourceUrl;
   const turns = count(source.turns);
@@ -150,7 +216,7 @@ export function updateProjectNote(
   store: WorkspaceStore,
   workspaceId: string,
   noteId: string,
-  patch: Partial<Pick<ProjectNote, "title" | "tags" | "contentHash" | "chars" | "turns">>,
+  patch: Partial<Pick<ProjectNote, "title" | "tags" | "contentHash" | "chars" | "turns" | "file">>,
   now: number
 ): WorkspaceStore {
   return withNotes(
@@ -172,5 +238,11 @@ export function removeProjectNotes(store: WorkspaceStore, workspaceId: string, n
 
 /** A note with the same body already in the project — what a second paste of the same text finds. */
 export function findNoteByHash(workspace: Pick<Workspace, "notes">, hash: string): ProjectNote | undefined {
-  return (workspace.notes ?? []).find((note) => note.contentHash === hash);
+  // An uploaded file's hash is over its bytes, not its text: never what a paste is compared with.
+  return (workspace.notes ?? []).find((note) => note.kind !== "file" && note.contentHash === hash);
+}
+
+/** The same file (by its bytes) already in the project — what a second upload of it finds. */
+export function findFileByHash(workspace: Pick<Workspace, "notes">, hash: string): ProjectNote | undefined {
+  return (workspace.notes ?? []).find((note) => note.kind === "file" && note.contentHash === hash);
 }

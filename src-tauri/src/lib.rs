@@ -66,6 +66,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_external,
             commands::export_text_file,
+            commands::export_file,
             import_bridge::desktop_import_take,
             import_bridge::desktop_import_finish
         ])
@@ -102,6 +103,12 @@ pub fn run() {
                 .min_inner_size(940.0, 600.0)
                 .resizable(true)
                 .visible(true)
+                // Tauri's own drop handler swallows files dropped on the
+                // window, so the page never saw them: without it, a file
+                // dragged from Explorer onto a project uploads it (the page
+                // handles every drop itself, and a drop it doesn't handle
+                // would be a file: navigation, which on_navigation refuses).
+                .disable_drag_drop_handler()
                 .on_navigation(move |url| {
                     if is_internal(&url) {
                         return true;

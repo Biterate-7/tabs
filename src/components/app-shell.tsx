@@ -43,6 +43,7 @@ import { useTranscriptSearch } from "@/hooks/use-transcript-search"
 import { PlayCircle, Search } from "lucide-react"
 import { forgetProjectActivity, recordProjectEvent } from "@/lib/projects/activity"
 import { useResourceProcessing } from "@/hooks/use-resource-processing"
+import { useFileUploads } from "@/hooks/use-file-uploads"
 import { ProjectHome, ProjectPage } from "@/components/project/project-home"
 import type { NoteActions } from "@/components/project/project-home"
 import { ReuseDialog } from "@/components/memory/reuse-dialog"
@@ -166,7 +167,7 @@ type OrganizeOutcome = { ok: true; report: OrganizeReport | undefined } | { ok: 
 
 const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   "invalid-json": "That file isn't valid JSON.",
-  "invalid-schema": "That file doesn't look like a Hubble export. (To import AI conversations, open a project and choose Add → Import a file.)",
+  "invalid-schema": "That file doesn't look like a Hubble export. (To import AI conversations, open a project and choose Add → Import AI chats.)",
   "unsupported-version": "That export was made with a newer version of Hubble.",
 }
 
@@ -1079,6 +1080,14 @@ export function AppShell() {
     },
     enabled: hydrated,
   })
+  const fileUploads = useFileUploads({
+    store,
+    getStore: () => storeRef.current,
+    commit: (next) => {
+      commitStore(next)
+    },
+    enabled: hydrated,
+  })
   // What the subject page gets: the same actions, noting which sources the person supplied content for.
   const sourceActions: typeof resources = {
     ...resources,
@@ -1290,6 +1299,11 @@ export function AppShell() {
         onAddSources={(inputs, origin) => handleAddSources(workspace.id, inputs, origin)}
         resources={sourceActions}
         notes={noteActions}
+        files={{
+          upload: (files, onOutcome) => fileUploads.upload(workspace.id, files, onOutcome),
+          retry: (noteId) => fileUploads.retry(workspace.id, noteId),
+          download: (noteId) => void handleDownloadFile(workspace.id, noteId),
+        }}
         onRenameSource={(tabId, title) => handleRenameSource(workspace.id, tabId, title)}
         onRemoveSources={(tabIds) => handleRemoveSources(workspace.id, tabIds)}
         onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
@@ -1423,7 +1437,14 @@ export function AppShell() {
     return true
   }
 
-  /** Removes notes; their text is forgotten once the toast closes without Undo — the same rule as a source's. */
+  /** An uploaded file's original, saved back out. Says so only when it can't be — a cancelled Save dialog is not a failure. */
+  async function handleDownloadFile(workspaceId: string, noteId: string) {
+    const result = await fileUploads.download(workspaceId, noteId)
+    if (result === "missing") toast.error("The original file isn't on this device any more", { description: "Its text is still here. Upload the file again to keep a copy." })
+    else if (result === "not-saved" && !isDesktopShell) toast.error("The file couldn't be saved. Try again.")
+  }
+
+  /** Removes notes (and uploaded files); their text and originals are forgotten once the toast closes without Undo — the same rule as a source's. */
   function handleRemoveNotes(workspaceId: string, noteIds: string[]) {
     const before = storeRef.current
     const workspace = before?.workspaces.find((entry) => entry.id === workspaceId)
@@ -1437,7 +1458,9 @@ export function AppShell() {
     const forgetUnlessUndone = () => {
       if (!undone) void deleteContent(workspaceId, noteIds).catch(() => undefined)
     }
-    toast(`Removed ${removed.length === 1 ? removed[0]!.title : plural(removed.length, "note", "notes")} from ${subjectName(workspace)}`, {
+    const onlyFiles = removed.every((note) => note.kind === "file")
+    toast(`Removed ${removed.length === 1 ? removed[0]!.title : plural(removed.length, onlyFiles ? "file" : "note", onlyFiles ? "files" : "notes")} from ${subjectName(workspace)}`, {
+      ...(onlyFiles ? { description: "The file on your device is untouched." } : {}),
       action: {
         label: "Undo",
         onClick: () => {

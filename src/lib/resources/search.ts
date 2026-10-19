@@ -48,7 +48,7 @@ export type ProjectSearchHit =
   | { type: "note"; noteId: string; location: SearchLocation; snippet: string; score: number };
 
 /** What search reads of a note: its record. The body comes from `contents`, by the note's id. */
-export type SearchableNote = Pick<ProjectNote, "id" | "title" | "tags">;
+export type SearchableNote = Pick<ProjectNote, "id" | "title" | "tags"> & Partial<Pick<ProjectNote, "kind">>;
 
 const MAX_HITS = 50;
 const SNIPPET_RADIUS = 80;
@@ -299,8 +299,9 @@ export function searchProject(input: {
     if (note.tags && note.tags.length > 0) pushNote(note.id, { kind: "tags" }, note.tags.join(" "), 6);
     const content = input.contents.get(note.id);
     if (!content) continue;
-    // A note is the person's own words: its body outranks extracted page text.
-    if (content.text) pushNote(note.id, { kind: "text" }, content.text, 2);
+    // A note is the person's own words: its body outranks extracted page text. An uploaded file's text is extracted text.
+    if (content.text) pushNote(note.id, { kind: "text" }, content.text, note.kind === "file" ? 1 : 2);
+    content.pages?.forEach((page, index) => pushNote(note.id, { kind: "page", page: index + 1 }, page, 1));
     content.turns?.forEach((turn, index) => pushNote(note.id, { kind: "turn", turn: index, role: turn.role }, turn.text, 1));
   }
 

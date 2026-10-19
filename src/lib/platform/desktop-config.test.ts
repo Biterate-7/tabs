@@ -180,19 +180,21 @@ describe("the Rust shell", () => {
     expect(commandsRs).not.toMatch(/fn\s+\w+\([^)]*path:\s*String/);
   });
 
-  it("exposes exactly four commands to the frontend", () => {
+  it("exposes exactly five commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    // The two originals, then the Chrome import (see import_bridge.rs): take
-    // the batches waiting for the person, and record their answer. No shell,
-    // fs or process command, and no agent runtime.
+    // The two originals and saving an uploaded file's original back out (a
+    // name and bytes, never a path), then the Chrome import (see
+    // import_bridge.rs): take the batches waiting for the person, and record
+    // their answer. No shell, fs or process command, and no agent runtime.
     expect(names).toEqual([
       "commands::open_external",
       "commands::export_text_file",
+      "commands::export_file",
       "import_bridge::desktop_import_take",
       "import_bridge::desktop_import_finish",
     ]);

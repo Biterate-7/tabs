@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, FileUp, Link2, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
+import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, FileInput, FileText, FileUp, Link2, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { NoteCard } from "@/components/memory/note-card"
@@ -16,6 +16,9 @@ import { ProjectActivity } from "./project-activity"
 import { AddMenu } from "./add-menu"
 import { AddSourceDialog } from "./add-source-dialog"
 import { SourceDetailsDialog } from "./source-details-dialog"
+import { FileCard } from "./file-card"
+import { FileDetailsDialog } from "./file-details-dialog"
+import { UploadFilesDialog, useUploadRows } from "./upload-files-dialog"
 import type { TranscriptSeek } from "./video-transcript"
 import { ProjectDropOverlay, useExternalDrop } from "./project-drop-zone"
 import { SourceKindIcon } from "./source-status"
@@ -35,6 +38,7 @@ import type { KnowledgeItem, KnowledgeItemRef } from "@/lib/memory/items"
 import type { ProjectNote } from "@/lib/notes/notes"
 import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
+import type { UploadOutcome } from "@/hooks/use-file-uploads"
 import type { AiProviderId } from "@/lib/providers/registry"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
@@ -51,6 +55,13 @@ const FILTERS: { id: Filter; label: string; matches: (item: KnowledgeItem, tab?:
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
+/** What the project page needs for uploaded files (hooks/use-file-uploads.ts, bound to this project). */
+export type ProjectFileActions = {
+  upload: (files: readonly File[], onOutcome: (index: number, outcome: UploadOutcome) => void) => Promise<UploadOutcome[]>
+  retry: (noteId: string) => void
+  download: (noteId: string) => void
+}
+
 /** What the project page needs to change a note. */
 export type NoteActions = {
   update: (noteId: string, patch: { title?: string; tags?: string[] }) => void
@@ -65,6 +76,8 @@ export type ProjectHomeProps = {
   onAddSources: (inputs: ResourceInput[], origin: ResourceOrigin) => IngestOutcome[]
   resources: ResourceActions
   notes: NoteActions
+  /** Upload files from this device. Absent: not offered. */
+  files?: ProjectFileActions
   onRenameSource: (tabId: string, title: string) => void
   onRemoveSources: (tabIds: string[]) => void
   onOpenSource: (tab: Tab) => void
@@ -110,7 +123,9 @@ export function ProjectHome(props: ProjectHomeProps) {
   const events = useProjectActivity(workspace.id)
   const [addOpen, setAddOpen] = useState(false)
   const [details, setDetails] = useState<{ tabId: string; rename: boolean; seek?: TranscriptSeek; turn?: number } | null>(null)
-  const [openNote, setOpenNote] = useState<{ noteId: string; turn?: number } | null>(null)
+  const [openNote, setOpenNote] = useState<{ noteId: string; turn?: number; page?: number } | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const uploads = useUploadRows((files, onOutcome) => (props.files ? props.files.upload(files, onOutcome) : Promise.resolve([])))
   const [filter, setFilter] = useState<Filter>("all")
   const [query, setQuery] = useState("")
   const [showActivity, setShowActivity] = useState(false)
@@ -153,20 +168,28 @@ export function ProjectHome(props: ProjectHomeProps) {
     return searchProject({ query, tabs: shownTabs, contents: contents.get(workspace.id) ?? new Map(), notes: shownNotes, limit: 30 })
   }, [searching, query, filter, workspace.tabs, workspace.notes, workspace.id, contents, visible])
 
+  function startUpload(files: readonly File[]) {
+    uploads.add(files)
+    setUploadOpen(true)
+  }
+
   const handleDrop = (dropped: DroppedResources) => {
     if (dropped.inputs.length > 0) {
       props.onAddSources(dropped.inputs, "chrome")
       setDropNotice(null)
     } else if (dropped.files.length > 0) {
-      // A file has no address to keep; it belongs to a PDF resource waiting for it.
+      // A single PDF named like a PDF link that is waiting for its file completes that link; any other file is uploaded.
       const waiting = workspace.tabs.filter((tab) => tab.resource?.kind === "pdf" && tab.resource.status !== "ready")
-      const pdf = dropped.files.find((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))
-      const match = pdf ? (waiting.find((tab) => tab.resource!.meta?.fileName === pdf.name || decodeURIComponent(tab.url).toLowerCase().endsWith(`/${pdf.name.toLowerCase()}`)) ?? (waiting.length === 1 ? waiting[0] : undefined)) : undefined
+      const pdf = dropped.files.length === 1 ? dropped.files.find((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) : undefined
+      const match = pdf ? waiting.find((tab) => tab.resource!.meta?.fileName === pdf.name || safeDecode(tab.url).toLowerCase().endsWith(`/${pdf.name.toLowerCase()}`)) : undefined
       if (pdf && match) {
         void resources.attachPdf(workspace.id, match.id, pdf)
         setDropNotice(null)
+      } else if (props.files) {
+        startUpload(dropped.files)
+        setDropNotice(null)
       } else {
-        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "To import a file, use Add → Import a file.")
+        setDropNotice(pdf ? "Add the PDF's link first, then drop the file on it." : "Files can't be added here.")
       }
     } else {
       setDropNotice("That couldn't be added. Try a link instead.")
@@ -183,6 +206,13 @@ export function ProjectHome(props: ProjectHomeProps) {
 
   const reuse = (refs: readonly KnowledgeItemRef[]) => memory?.reuse({ workspaceId: workspace.id, refs })
   const pasteFor = (tab: Tab) => props.onCapture("conversation", { link: tab.url, ...(tab.resource?.meta?.provider ? { provider: tab.resource.meta.provider } : {}) })
+  const fileActions = {
+    onOpen: (note: ProjectNote) => setOpenNote({ noteId: note.id }),
+    ...(memory ? { onUseInAi: (note: ProjectNote) => reuse([{ kind: "note", noteId: note.id }]) } : {}),
+    onDownload: (note: ProjectNote) => props.files?.download(note.id),
+    onRetry: (note: ProjectNote) => props.files?.retry(note.id),
+    onRemove: (note: ProjectNote) => props.notes.remove([note.id]),
+  }
   const cardActions = {
     onOpen: props.onOpenSource,
     ...(memory ? { onUseInAi: (tab: Tab) => reuse([{ kind: "source", tabId: tab.id }]) } : {}),
@@ -224,6 +254,7 @@ export function ProjectHome(props: ProjectHomeProps) {
       onAdd={(inputs) => props.onAddSources(inputs, "manual")}
       onOpenLink={() => setAddOpen(true)}
       onCapture={(mode) => props.onCapture(mode)}
+      {...(props.files ? { onUpload: () => setUploadOpen(true) } : {})}
       size={size}
       variant={variant}
       {...(props.quickAdd ? { quickAdd: props.quickAdd } : {})}
@@ -304,6 +335,11 @@ export function ProjectHome(props: ProjectHomeProps) {
             <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
               <Link2 /> Add a link
             </Button>
+            {props.files && (
+              <Button type="button" variant="secondary" onClick={() => setUploadOpen(true)}>
+                <FileUp /> Upload files
+              </Button>
+            )}
           </div>
           <p className="flex flex-wrap items-center gap-1.5 text-meta text-tertiary">
             <Puzzle aria-hidden className="size-3.5" /> Or save from
@@ -406,7 +442,7 @@ export function ProjectHome(props: ProjectHomeProps) {
               tabOf={(tabId) => tabById.get(tabId)}
               noteOf={(noteId) => noteById.get(noteId)}
               onOpen={(tabId, seek, turn) => setDetails({ tabId, rename: false, ...(seek ? { seek } : {}), ...(turn !== undefined ? { turn } : {}) })}
-              onOpenNote={(noteId, turn) => setOpenNote({ noteId, ...(turn !== undefined ? { turn } : {}) })}
+              onOpenNote={(noteId, turn, page) => setOpenNote({ noteId, ...(turn !== undefined ? { turn } : {}), ...(page !== undefined ? { page } : {}) })}
               {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
               working={working}
             />
@@ -419,6 +455,7 @@ export function ProjectHome(props: ProjectHomeProps) {
                 if (item.ref.kind === "note") {
                   const note = noteById.get(item.ref.noteId)
                   if (!note) return null
+                  if (note.kind === "file" && note.file) return <FileCard key={item.id} note={note} now={now} actions={fileActions} {...(selection ? { selection } : {})} />
                   return (
                     <NoteCard
                       key={item.id}
@@ -486,7 +523,41 @@ export function ProjectHome(props: ProjectHomeProps) {
           {...(details?.turn !== undefined ? { focusTurn: details.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}
         />
       )}
-      {detailNote && (
+      <UploadFilesDialog
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          setUploadOpen(open)
+          if (!open) uploads.clearFinished()
+        }}
+        projectName={projectName}
+        rows={uploads.rows}
+        notes={workspace.notes ?? []}
+        onChoose={uploads.add}
+        onAgain={uploads.again}
+        onRetry={(noteId) => props.files?.retry(noteId)}
+        onOpenFile={(noteId) => {
+          setUploadOpen(false)
+          uploads.clearFinished()
+          setOpenNote({ noteId })
+        }}
+      />
+      {detailNote?.kind === "file" && detailNote.file && (
+        <FileDetailsDialog
+          key={detailNote.id}
+          note={detailNote}
+          workspaceId={workspace.id}
+          onOpenChange={(open) => !open && setOpenNote(null)}
+          onDownload={(note) => props.files?.download(note.id)}
+          onRetry={(note) => props.files?.retry(note.id)}
+          onRemove={(note) => {
+            setOpenNote(null)
+            props.notes.remove([note.id])
+          }}
+          {...(openNote?.page !== undefined ? { focusPage: openNote.page } : {})}
+          {...(query.trim() ? { terms: searchTerms(query) } : focusTerms.length > 0 ? { terms: focusTerms } : {})}
+        />
+      )}
+      {detailNote && detailNote.kind !== "file" && (
         <NoteDialog
           note={detailNote}
           workspaceId={workspace.id}
@@ -517,7 +588,7 @@ function CaptureInvite({ onCapture }: { onCapture: ProjectHomeProps["onCapture"]
         <ClipboardPaste /> Paste
       </Button>
       <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("import")}>
-        <FileUp /> Import
+        <FileInput /> Import
       </Button>
     </p>
   )
@@ -559,7 +630,7 @@ function SearchResults({
   tabOf: (tabId: string) => Tab | undefined
   noteOf: (noteId: string) => ProjectNote | undefined
   onOpen: (tabId: string, seek?: TranscriptSeek, turn?: number) => void
-  onOpenNote: (noteId: string, turn?: number) => void
+  onOpenNote: (noteId: string, turn?: number, page?: number) => void
   onOpenAt?: (tab: Tab, url: string) => void
   /** Items still being read: their content can't be searched yet. */
   working: number
@@ -587,10 +658,12 @@ function SearchResults({
             const note = noteOf(hit.noteId)
             if (!note) return null
             const where = describeLocation(location)
+            const page = location.kind === "page" ? location.page : undefined
+            const NoteIcon = note.kind === "file" ? FileText : NotebookPen
             return (
               <li key={`n-${hit.noteId}-${index}`} className="flex items-start gap-1 pr-2 hover:bg-surface-hover" data-search-hit={location.kind}>
-                <button type="button" className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none" onClick={() => onOpenNote(note.id, turn)}>
-                  <NotebookPen aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <button type="button" className="flex min-w-0 flex-1 items-start gap-2 p-2 text-left focus-visible:bg-surface-hover focus-visible:outline-none" onClick={() => onOpenNote(note.id, turn, page)}>
+                  <NoteIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-body-sm text-foreground">
                       {note.title}
@@ -680,6 +753,15 @@ function BriefForm({ description, focus, onSave, onCancel }: { description: stri
       </div>
     </form>
   )
+}
+
+/** An address with its escapes decoded — or as it is, when they are malformed. */
+function safeDecode(url: string): string {
+  try {
+    return decodeURIComponent(url)
+  } catch {
+    return url
+  }
 }
 
 /** "Alt+Shift+H" as Chrome reports it → "Alt + Shift + H". */
