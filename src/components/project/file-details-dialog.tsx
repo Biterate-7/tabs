@@ -190,7 +190,7 @@ export function FileDetailsDialog({
             </Button>
             {memory && file.status === "ready" && (
               <Button type="button" variant="secondary" onClick={() => memory.reuse({ workspaceId, refs: [{ kind: "note", noteId: note.id }] })}>
-                <MessageSquareShare /> Use in AI chat
+                <MessageSquareShare /> Use in AI
               </Button>
             )}
           </div>

@@ -85,7 +85,7 @@ export function FileCard({
           Read
         </Button>
         {actions.onUseInAi && file.status === "ready" && (
-          <IconButton className="size-6" aria-label={`Use ${note.title} in an AI chat`} tooltip="Use in AI chat" onClick={() => actions.onUseInAi!(note)}>
+          <IconButton className="size-6" aria-label={`Use ${note.title} in AI`} tooltip="Use in AI" onClick={() => actions.onUseInAi!(note)}>
             <MessageSquareShare />
           </IconButton>
         )}

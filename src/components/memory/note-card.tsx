@@ -62,7 +62,7 @@ export function NoteCard({
           Read
         </Button>
         {onUseInAi && (
-          <IconButton className="size-6" aria-label={`Use ${note.title} in an AI chat`} tooltip="Use in AI chat" onClick={onUseInAi}>
+          <IconButton className="size-6" aria-label={`Use ${note.title} in AI`} tooltip="Use in AI" onClick={onUseInAi}>
             <MessageSquareShare />
           </IconButton>
         )}

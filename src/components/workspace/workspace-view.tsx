@@ -877,7 +877,7 @@ export function WorkspaceView({
     ? [
         {
           id: "memory-use-selection",
-          label: selectedCount > 0 ? `Use ${selectedLabel} in AI chat` : "Use selected tabs in AI chat",
+          label: selectedCount > 0 ? `Use ${selectedLabel} in AI` : "Use selected tabs in AI",
           group: "Memory",
           icon: MessageSquareShare,
           disabled: selectedCount === 0,
@@ -887,7 +887,7 @@ export function WorkspaceView({
         ...workspaceCollections.map(
           (collection): Command => ({
             id: `memory-use-collection-${collection.id}`,
-            label: `Use "${collection.name}" in an AI chat`,
+            label: `Use "${collection.name}" in AI`,
             group: "Memory",
             icon: MessageSquareShare,
             keywords: ["collection", "context", "memory"],

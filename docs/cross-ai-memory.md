@@ -107,13 +107,17 @@ context for any AI app. Pure: no clock, no storage.
   read (a scan, still reading, damaged) is named with the reason and nothing
   from it is quoted — the AI is never handed a file as if it had been read.
 
-The **Use in AI chat** dialog (`components/memory/reuse-dialog.tsx`) shows the
-whole text, editable, before anything leaves Hubble, and copies it. In Hubble
-for Chrome, **Use Hubble in this chat** builds the same bundle (from the open
-Hubble page) and either **copies** it or **inserts** it into the AI app's
-message box (`insertIntoComposer`). Insert never presses send; it confirms the
-text is in the box and otherwise copies and says so. The two are recorded
-differently (`memory_copied` / `memory_inserted`); nothing is ever submitted.
+The **Use in AI** dialog (`components/memory/reuse-dialog.tsx`) shows the
+whole message, editable, before anything leaves Hubble. With Hubble for Chrome
+it opens a new chat in the chosen app and puts the message there — attaching
+uploaded files' originals where the app takes them — and sends it only when
+the person chose **Send automatically** for that transfer; without the
+extension (and in Hubble Desktop) it copies the message and opens the app.
+See [use-in-ai.md](./use-in-ai.md). In Hubble for Chrome's popup, **Use Hubble
+in this chat** builds the same bundle (from the open Hubble page) and either
+**copies** it or **inserts** it into the message box of the tab in front
+(`insertIntoComposer`), never sending. The two are recorded differently
+(`memory_copied` / `memory_inserted`).
 
 ## 5. Provider capabilities
 
@@ -128,7 +132,9 @@ the real MCP wire format with the official SDK client, not the vendor's app.
 | Save from the page (Hubble for Chrome) | yes · fixture | yes · fixture | yes · fixture | yes · fixture |
 | Import the app's export | `conversations.json` · fixture | `conversations.json` · fixture | **no** (Takeout is activity, not conversations) | **no** (no account export; a thread's Markdown export imports as text) |
 | Paste | yes · fixture | yes · fixture | yes · fixture | yes · fixture |
-| Insert into the message box (never sends) | yes · fixture | yes · fixture | yes · fixture | yes · fixture |
+| Insert into the message box (Use in AI, popup Insert) | yes · fixture · live signed out | yes · fixture | yes · fixture · live signed out | yes · fixture · live signed out |
+| Attach an uploaded file's original (Use in AI) | yes · fixture (live signed out: asks to log in) | yes · fixture | yes · fixture (live signed out: not shown) | yes · fixture (live signed out: asks to sign in) |
+| Send automatically, when chosen (Use in AI) | yes · fixture · live signed out | yes · fixture | yes · fixture · live signed out | yes · fixture · live signed out |
 | The app reads Hubble (MCP connector) | yes · protocol | yes · protocol | where Google offers custom apps · protocol | **no** |
 | Automatic sync | **no** | **no** | **no** | **no** |
 
@@ -210,7 +216,7 @@ grown conversation is brought up to date.
 
 ## 6. Hubble for Chrome
 
-`extension/` 0.7.0. The popup's AI section (`popup/ai-panel.js`) appears on a
+`extension/` 0.8.0. The popup's AI section (`popup/ai-panel.js`) appears on a
 conversation page of a known AI app:
 
 ```
@@ -223,8 +229,10 @@ popup ──► background ──► content script (Hubble tab) ──► Hubbl
   content script only relays (15 s timeout). Before the store is ready the
   page answers `not-ready`.
 - Reading and inserting run with `chrome.scripting.executeScript` in the one
-  tab the person is on, after their click. No host permissions and no content
-  script on AI sites.
+  tab the person is on, after their click (`activeTab`). No content script on
+  AI sites. **Use in AI** (started from the Hubble page) needs the app's
+  optional host permission, asked for once in a small window
+  ([use-in-ai.md](./use-in-ai.md#permissions)).
 - Failures say what to do: *not a conversation page*, *Hubble isn't open*,
   *this page's layout isn't recognised — paste it in Hubble instead*,
   *the project was deleted*, *no message box — copied instead*.
@@ -238,8 +246,8 @@ popup ──► background ──► content script (Hubble tab) ──► Hubbl
 ## 7. Web, desktop and connectors
 
 - **Web**: everything above.
-- **Desktop**: projects, notes, paste and import, search and *Use in AI chat*
-  (copy) work offline. Hubble for Chrome cannot reach the desktop webview, so
+- **Desktop**: projects, notes, paste and import, search and *Use in AI*
+  (copy and open the app in the default browser) work offline. Hubble for Chrome cannot reach the desktop webview, so
   *Save to Hubble* and insert are Chrome-only; tabs sent to Desktop arrive as
   links, and an AI conversation sent that way is saved as a link that asks
   for its text (paste it, or save it from the page in Hubble on the web).
@@ -251,8 +259,9 @@ popup ──► background ──► content script (Hubble tab) ──► Hubbl
 ## 8. Privacy
 
 Local-first: saved text stays in the browser or desktop app that saved it.
-Nothing is sent to an AI app except the context the person copies or
-inserts, after seeing it. The local loop log counts milestones
+Nothing is sent to an AI app except the context the person copies, inserts or
+transfers (with the files they chose), after seeing it; it is submitted only
+when they chose Send automatically for that transfer. The local loop log counts milestones
 (`conversation_captured`, `search_used`, `memory_copied`, …) with the AI app's
 id and a time — never content, titles or addresses — and is never sent.
 
@@ -280,6 +289,7 @@ history tables in Postgres are left untouched; nothing reads them.
 npx vitest run src/lib/conversations src/lib/memory src/lib/notes src/lib/providers
 npx vitest run src/hooks/use-extension-memory.test.tsx extension/src/ai-pages.test.js
 npx vitest run src/lib/storage/legacy-agent-data.test.ts
+npx vitest run src/lib/ai-transfer extension/src/ai-transfer.test.js extension/src/ai-transfer-page.test.js
 ```
 
 The provider DOM readers are tested against fixtures shaped like each app's

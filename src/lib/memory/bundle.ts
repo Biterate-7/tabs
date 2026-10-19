@@ -74,8 +74,8 @@ export const BUNDLE_LIMITS = {
 export type BundleItemReport = {
   ref: KnowledgeItemRef;
   title: string;
-  /** quoted: text included · titled: named only (no text, or out of budget) · missing: no longer in the project */
-  status: "quoted" | "titled" | "missing";
+  /** quoted: text included · attached: its original travels with the message as a file · titled: named only (no text, or out of budget) · missing: no longer in the project */
+  status: "quoted" | "attached" | "titled" | "missing";
   /** Why an item is only named. */
   reason?: "no-text" | "budget";
   /** Characters of its text included. */
@@ -104,6 +104,14 @@ export type BundleInput = {
   request?: string;
   includeBrief?: boolean;
   budget?: number;
+  /**
+   * Uploaded files whose originals are attached to the same message (by
+   * `refKey`). Each is named as attached instead of quoted, so the AI reads
+   * the file itself and the text isn't sent twice. Only the caller knows
+   * whether an attachment happened: a file that wasn't attached must not be
+   * listed here.
+   */
+  attached?: ReadonlySet<string>;
 };
 
 function clean(text: string, max?: number): string {
@@ -358,7 +366,8 @@ export function buildMemoryBundle(input: BundleInput): MemoryBundle {
     else groups.sources.push(item);
   }
 
-  const withText = resolved.filter((item) => item.hasText && input.contents.has(item.id));
+  const attached = (item: KnowledgeItem) => Boolean(item.fileName && input.attached?.has(refKey(item.ref)));
+  const withText = resolved.filter((item) => item.hasText && input.contents.has(item.id) && !attached(item));
   const fixed = head.join("\n").length + (request ? request.length + 40 : 0) + 400;
   let left = Math.max(0, budget - fixed);
   const cap = Math.floor(budget * BUNDLE_LIMITS.itemShare);
@@ -384,6 +393,12 @@ export function buildMemoryBundle(input: BundleInput): MemoryBundle {
     const lines = [`#### ${heading}`, `_${originLine(item)}_`];
     const link = linkLine(item);
     if (link) lines.push(link);
+    if (attached(item)) {
+      reports.push({ ref: item.ref, title: item.title, status: "attached", chars: 0 });
+      lines.push(`(The original file, “${line(item.fileName!, 255)}”, is attached to this message.)`);
+      if (item.userNote) lines.push(`My note on it: ${line(item.userNote, 500)}`);
+      return lines.join("\n");
+    }
     if (!item.hasText || !content) {
       noText += 1;
       reports.push({ ref: item.ref, title: item.title, status: "titled", reason: "no-text", chars: 0 });

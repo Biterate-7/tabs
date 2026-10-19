@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hubble",
-  "version": "0.7.1",
+  "version": "0.8.1",
   "description": "Save AI conversations and tabs to your Hubble projects, and use what you saved in ChatGPT, Claude, Gemini and Perplexity.",
   "minimum_chrome_version": "102",
   "action": {
@@ -26,6 +26,7 @@
     }
   },
   "host_permissions": ["http://localhost:3000/*", "http://127.0.0.1:41517/*", "http://127.0.0.1:41518/*", "http://127.0.0.1:41519/*"],
+  "optional_host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*", "https://gemini.google.com/*", "https://www.perplexity.ai/*", "https://perplexity.ai/*"],
   "content_scripts": [
     {
       "matches": ["http://localhost:3000/*"],

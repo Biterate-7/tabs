@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AI_PROVIDER_IDS, AI_PROVIDERS, aiProviderName, conversationRefOf, conversationUrlFor, isAiProviderId, providerOfUrl } from "./registry";
+import { AI_PROVIDER_IDS, AI_PROVIDERS, aiProviderName, conversationRefOf, conversationUrlFor, isAiProviderId, isNewChatUrl, providerOfUrl } from "./registry";
 
 /**
  * The provider registry is what Hubble claims about each AI app. These tests
@@ -65,5 +65,36 @@ describe("capabilities", () => {
     expect(aiProviderName("grok")).toBe("AI");
     expect(isAiProviderId("perplexity")).toBe(true);
     expect(isAiProviderId("claude-code")).toBe(false);
+  });
+});
+
+describe("Use in AI targets", () => {
+  it.each([
+    ["chatgpt", "https://chatgpt.com/"],
+    ["claude", "https://claude.ai/new"],
+    ["gemini", "https://gemini.google.com/app"],
+    ["perplexity", "https://www.perplexity.ai/"],
+  ] as const)("%s starts a new chat at its official address, %s", (id, url) => {
+    expect(AI_PROVIDERS[id].homeUrl).toBe(url);
+    expect(isNewChatUrl(id, url)).toBe(true);
+    expect(providerOfUrl(url)).toBe(id);
+  });
+
+  it("never takes a conversation, another provider's page, or plain http as a new chat", () => {
+    expect(isNewChatUrl("chatgpt", "https://chatgpt.com/c/6720a1b2-1111")).toBe(false);
+    expect(isNewChatUrl("claude", "https://chatgpt.com/")).toBe(false);
+    expect(isNewChatUrl("claude", "http://claude.ai/new")).toBe(false);
+    expect(isNewChatUrl("gemini", "https://gemini.google.com/app/1a2b3c4d5e6f")).toBe(false);
+  });
+
+  it("keeps every message limit within what the extension accepts, and says how transfer claims were checked", () => {
+    for (const id of AI_PROVIDER_IDS) {
+      const provider = AI_PROVIDERS[id];
+      expect(provider.transfer.messageChars).toBeLessThanOrEqual(200_000);
+      expect(provider.transfer.maxFiles).toBeGreaterThan(0);
+      for (const capability of [provider.capabilities.insert, provider.capabilities.attachFiles, provider.capabilities.autoSubmit]) {
+        expect(capability.verified).not.toBe("none");
+      }
+    }
   });
 });

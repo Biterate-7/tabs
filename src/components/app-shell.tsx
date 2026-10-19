@@ -2024,6 +2024,10 @@ export function AppShell() {
             recordLoopMilestone("memory_copied")
             recordProjectEvent({ workspaceId: reuseWorkspace.id, kind: "memory_reused", count: items })
           }}
+          onTransferred={({ items, provider }) => {
+            recordLoopMilestone("memory_inserted", { provider })
+            recordProjectEvent({ workspaceId: reuseWorkspace.id, kind: "memory_reused", count: items })
+          }}
         />
       )}
       {capture && captureWorkspace && (

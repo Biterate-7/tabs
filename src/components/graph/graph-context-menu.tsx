@@ -200,7 +200,7 @@ export function GraphContextMenu({
         <>
           <div className="-mx-1 my-1 h-px bg-border" />
           <button type="button" role="menuitem" className={ITEM_CLASS} onClick={onUseInAi}>
-            <MessageSquareShare /> Use in AI chat
+            <MessageSquareShare /> Use in AI
           </button>
         </>
       )}

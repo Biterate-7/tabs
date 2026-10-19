@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Allow Hubble for Chrome</title>
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <link rel="stylesheet" href="grant.css" />
+  </head>
+  <body class="grant">
+    <header class="popup__header">
+      <img class="popup__brand-mark" src="../icons/icon32.png" alt="" />
+      <span class="popup__title">Hubble for Chrome</span>
+    </header>
+    <main class="popup__body grant__body">
+      <h1 class="grant__heading" id="grant-heading">Let Hubble use this AI app?</h1>
+      <p id="grant-why">To put what you chose in Hubble into a new chat, Hubble for Chrome needs access to this site.</p>
+      <ul class="grant__list">
+        <li>Used only when you click <strong>Use in AI</strong> in Hubble.</li>
+        <li>It opens a new chat, types your message and attaches your files there.</li>
+        <li>It presses send only when you chose <strong>Send automatically</strong>.</li>
+        <li>It doesn't read your other chats. You can remove access in Chrome's extension settings.</li>
+      </ul>
+      <p class="grant__status" id="grant-status" role="status" hidden></p>
+      <div class="grant__actions">
+        <button type="button" class="popup__button popup__button--secondary" id="grant-cancel">Not now</button>
+        <button type="button" class="popup__button" id="grant-allow">Allow</button>
+      </div>
+    </main>
+    <script type="module" src="grant.js"></script>
+  </body>
+</html>

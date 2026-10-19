@@ -5,7 +5,7 @@
  * the codebase follows: product logic never asks. A handful of narrow
  * seams ask — `src/lib/platform/index.ts`, `src/lib/platform/api-base.ts`,
  * `src/lib/browser/open-tab.ts`, `src/lib/browser/bridge.ts`,
- * `src/lib/auth/client.ts` — plus views that word a capability differently
+ * `src/lib/auth/client.ts`, `src/lib/ai-transfer/client.ts` — plus views that word a capability differently
  * (through `useIsDesktop`), and everything else stays identical on both
  * platforms, because it genuinely is identical.
  *
