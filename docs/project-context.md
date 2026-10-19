@@ -319,7 +319,9 @@ the text Hubble extracted is what is *searched and quoted to an AI*.
   decoder data from `/pdfjs` — copied from `node_modules` into `public/pdfjs`
   by `scripts/copy-pdfjs-assets.mjs` before `dev` and `build`, so nothing is
   fetched from a third party and the desktop app (static export) has them.
-  The desktop CSP allows `'wasm-unsafe-eval'` for those decoders.
+  The desktop CSP is unchanged (no `'wasm-unsafe-eval'`): where WebAssembly
+  is refused, pdf.js falls back to its JavaScript decoders, served from the
+  same `/pdfjs` folder.
 - **Word (.docx)** — a formatted *preview* (mammoth, on demand): headings,
   emphasis, lists, tables, embedded pictures. Fonts and page layout are not
   reproduced, and the reader says so. The converter's HTML is rebuilt as
