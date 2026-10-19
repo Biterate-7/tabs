@@ -180,11 +180,16 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         // A code block's language label goes on its fence, not into the text.
         if (!verbatim && node.nextElementSibling && node.nextElementSibling.matches("pre") && labelOf(node.nextElementSibling) === node) return;
         // A formula (KaTeX) as the TeX it was written in, not its rendered glyphs followed by that TeX.
-        const tex = !verbatim && node.matches(".katex, math") && node.querySelector('annotation[encoding="application/x-tex"]');
+        // Gemini also keeps the TeX on the formula's wrapper (data-math), read there first: it is there even when KaTeX's MathML copy is not.
+        const wrapped = !verbatim && node.matches(".math-inline[data-math], .math-block[data-math]") && (node.getAttribute("data-math") || "").trim();
+        const annotation = !wrapped && !verbatim && node.matches(".katex, math") && node.querySelector('annotation[encoding="application/x-tex"]');
+        const tex = wrapped || (annotation && annotation.textContent.trim());
         if (tex) {
-          const display = node.closest(".katex-display") || node.matches('math[display="block"]') || node.querySelector('math[display="block"]');
+          const display = wrapped
+            ? node.matches(".math-block") || node.querySelector(".katex-display")
+            : node.closest(".katex-display") || node.matches('math[display="block"]') || node.querySelector('math[display="block"]');
           if (display) breakTo(2);
-          out += display ? `$$${tex.textContent.trim()}$$` : `$${tex.textContent.trim()}$`;
+          out += display ? `$$${tex}$$` : `$${tex}$`;
           if (display) breakTo(2);
           return;
         }

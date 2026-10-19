@@ -892,3 +892,35 @@
 .pdf-text-layer ::selection {
   background: rgb(0 100 255 / 0.3);
 }
+
+/* ---- Formulas in rich text (components/rich-text) ------------------------
+   KaTeX's own stylesheet comes with the component; these fit it to Hubble.
+   Formulas take the text colour around them, so every theme reads them, and
+   sit a little larger than the 13px body so sub- and superscripts stay
+   legible. A display formula wider than its message scrolls on its own
+   instead of widening the dialog; it carries no card or border. */
+.rich-text {
+  /* Its content never sizes what holds it: a wide formula, code block or
+     table would otherwise stretch a dialog past a phone's width (a scroller's
+     content still counts toward its min-content width) instead of scrolling
+     inside its message. */
+  contain: inline-size;
+}
+.rich-text .katex {
+  font-size: 1.12em;
+  color: inherit;
+}
+.rich-math-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Room for tall glyphs (\int, \sum, \boxed) so the scroller never clips them. */
+  padding: 0.125em 0;
+}
+.rich-math-display .katex-display {
+  margin: 0.25em 0;
+}
+.rich-math-display .katex-display > .katex {
+  max-width: none;
+}
