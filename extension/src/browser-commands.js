@@ -14,6 +14,8 @@
 const MAX_URLS_PER_COMMAND = 50;
 const MAX_TAB_IDS_PER_COMMAND = 200;
 const MAX_HISTORY_RESULTS = 5000;
+// Mirrors MAX_SESSION_TABS in src/lib/sessions/types.ts.
+export const MAX_SESSION_TABS = 200;
 
 /**
  * Safelist, not a blocklist: only ever open http/https URLs. This is
@@ -107,6 +109,27 @@ export const BROWSER_COMMAND_VALIDATORS = {
       return fail(`\`urls\` must be a non-empty array of up to ${MAX_URLS_PER_COMMAND} http(s) URLs.`);
     }
     return ok({ urls: args.urls, newWindow: Boolean(args?.newWindow) });
+  },
+
+  /**
+   * Sessions: reopen a saved session in a new window. `requestId` lets
+   * browser-actions.js answer a repeated request with the first one's result
+   * instead of opening the tabs again. Every address is checked here, and the
+   * count is bounded, so a page can never make this open an arbitrary number
+   * of tabs or anything but an ordinary web page.
+   */
+  open_session(args) {
+    const requestId = args?.requestId;
+    if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 100) {
+      return fail("`requestId` must be a non-empty string of up to 100 characters.");
+    }
+    const tabs = args?.tabs;
+    const valid = (tab) =>
+      tab !== null && typeof tab === "object" && isSafeOpenUrl(tab.url) && (tab.pinned === undefined || typeof tab.pinned === "boolean");
+    if (!isNonEmptyArray(tabs, valid, MAX_SESSION_TABS)) {
+      return fail(`\`tabs\` must be a non-empty array of up to ${MAX_SESSION_TABS} http(s) URLs.`);
+    }
+    return ok({ requestId, tabs: tabs.map((tab) => ({ url: tab.url, pinned: tab.pinned === true })) });
   },
 
   close_tab(args) {

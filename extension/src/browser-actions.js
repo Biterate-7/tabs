@@ -130,6 +130,72 @@ export async function openTabs(args) {
   return { opened, failed };
 }
 
+// Sessions: the launches this worker has already run, by requestId, so the
+// same request arriving twice (a double click, a retried relay, two Hubble
+// tabs) is answered with the first run's result instead of opening the tabs
+// again. Bounded; the oldest are forgotten first.
+const sessionOpens = new Map();
+const MAX_REMEMBERED_SESSION_OPENS = 50;
+
+function errorText(err) {
+  return err instanceof Error ? err.message : "Failed to open.";
+}
+
+async function runOpenSession(tabs) {
+  const failed = [];
+  let opened = 0;
+  let windowId;
+
+  // A new window for the whole session: the person's current tabs are never
+  // closed, moved or navigated. The first tab that opens creates it.
+  let index = 0;
+  for (; index < tabs.length && windowId === undefined; index += 1) {
+    const { url, pinned } = tabs[index];
+    try {
+      const win = await chrome.windows.create({ url, focused: true });
+      windowId = win.id;
+      opened += 1;
+      const first = win.tabs?.[0];
+      if (pinned && first?.id !== undefined) await chrome.tabs.update(first.id, { pinned: true }).catch(() => {});
+    } catch (err) {
+      failed.push({ index, url, error: errorText(err) });
+    }
+  }
+
+  // One at a time, in order: Chrome keeps the order they are created in, and nothing floods it.
+  for (; index < tabs.length; index += 1) {
+    const { url, pinned } = tabs[index];
+    try {
+      await chrome.tabs.create({ windowId, url, active: false, pinned });
+      opened += 1;
+    } catch (err) {
+      failed.push({ index, url, error: errorText(err) });
+    }
+  }
+
+  return { windowId, opened, failed };
+}
+
+/**
+ * Sessions: opens a saved session's tabs, in order, in a new window. A
+ * repeated requestId gets the first run's result (marked `duplicate`) and
+ * opens nothing.
+ */
+export async function openSession(args) {
+  const earlier = sessionOpens.get(args.requestId);
+  if (earlier) return { ...(await earlier), duplicate: true };
+
+  const run = runOpenSession(args.tabs);
+  sessionOpens.set(args.requestId, run);
+  if (sessionOpens.size > MAX_REMEMBERED_SESSION_OPENS) sessionOpens.delete(sessionOpens.keys().next().value);
+  return run;
+}
+
+/** Test-only: forget remembered launches. */
+export function __resetSessionOpensForTests() {
+  sessionOpens.clear();
+}
+
 export async function closeTab(args) {
   await chrome.tabs.get(args.tabId); // throws if the tab no longer exists
   await chrome.tabs.remove(args.tabId);
@@ -218,6 +284,7 @@ export const BROWSER_ACTION_HANDLERS = {
   get_history: getHistory,
   open_url: openUrl,
   open_tabs: openTabs,
+  open_session: openSession,
   close_tab: closeTab,
   close_tabs: closeTabs,
   pin_tab: pinTab,

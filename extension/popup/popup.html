@@ -73,6 +73,27 @@
           </section>
           <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble to add this tab to a project.</p>
 
+          <!-- Sessions: keep this window's tabs as they are, to reopen together later from Hubble. -->
+          <section id="session-section" class="popup__session" aria-labelledby="session-heading">
+            <h2 id="session-heading" class="popup__subheading">Save session</h2>
+            <p class="popup__muted popup__detail">Keep these tabs to reopen together later. Nothing is closed.</p>
+            <input id="session-name" class="popup__input" type="text" maxlength="120" placeholder="Name (optional)" aria-label="Session name" />
+            <label id="session-project-row" class="popup__switch" hidden>
+              <span class="popup__switch-label">Project</span>
+              <select id="session-project" class="popup__select" aria-label="Project for this session">
+                <option value="">None</option>
+              </select>
+            </label>
+            <label id="session-windows-row" class="popup__check" hidden>
+              <input id="session-all-windows" type="checkbox" />
+              <span id="session-windows-label">Include tabs from all windows</span>
+            </label>
+            <div class="popup__row">
+              <button id="save-session-button" class="popup__button popup__button--secondary">Save session</button>
+            </div>
+            <p id="session-status" class="popup__muted popup__detail" role="status" hidden></p>
+          </section>
+
           <!-- The plain dump: every tab in this window, into Hubble as it always was. -->
           <section class="popup__dump" aria-label="Save this window">
             <p class="popup__count"><span id="tab-count">0</span> tabs in this window</p>

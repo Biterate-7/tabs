@@ -9,6 +9,10 @@ import { knowledgeItemsOf } from "@/lib/memory/items"
 import { searchKnowledge } from "@/lib/memory/search"
 import { BUNDLE_LENGTH_BUDGET, EXTENSION_SEARCH_LIMIT, MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE, providerOrUndefined, readPageRequest } from "@/lib/memory/extension-protocol"
 import { subjectName } from "@/lib/product/subjects"
+import { createId } from "@/lib/id"
+import { suggestSessionName } from "@/lib/sessions/capture"
+import { cleanSessionName, createSession } from "@/lib/sessions/model"
+import { writeSessions } from "@/lib/sessions/persistence"
 import type { ConversationInput } from "@/lib/conversations/types"
 import type { ExtensionSearchHit, PageRequest } from "@/lib/memory/extension-protocol"
 import type { AiProviderId } from "@/lib/providers/registry"
@@ -31,7 +35,8 @@ export type ExtensionMemoryHandlers = {
 
 /**
  * Answers Hubble for Chrome's memory requests (lib/memory/extension-protocol.ts):
- * list projects, save a captured conversation, search, build context.
+ * list projects, save a captured conversation, search, build context — and
+ * save a session of Chrome tabs (lib/sessions).
  *
  * Mounted once, by the shell, once the store can take writes (`ready`).
  * Before that, requests are left unanswered and the extension's own timeout
@@ -124,6 +129,26 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
             budget: BUNDLE_LENGTH_BUDGET[request.args.length ?? "standard"],
           })
           return { ok: true, result: { text: bundle.text, chars: bundle.chars, omitted: bundle.omitted, providers: bundle.providers } }
+        }
+        case "save-session": {
+          const { name, workspaceId, tabs } = request.args
+          const project = workspaceId ? store.workspaces.find((workspace) => workspace.id === workspaceId) : undefined
+          if (workspaceId && !project) return { ok: false, error: "project-missing" }
+          const now = Date.now()
+          const saved = writeSessions((state) =>
+            createSession(
+              state,
+              {
+                name: cleanSessionName(name) || suggestSessionName({ ...(project ? { projectName: subjectName(project) } : {}), now }),
+                tabs,
+                ...(project ? { workspaceId: project.id } : {}),
+              },
+              { now, mintId: createId }
+            )
+          )
+          if (!saved.ok) return { ok: false, error: saved.error === "empty" ? "session-empty" : saved.error }
+          // Tabs the page refused (an address that is not an ordinary web page) are counted, never hidden.
+          return { ok: true, result: { id: saved.value.id, name: saved.value.name, tabs: saved.value.tabs.length, dropped: tabs.length - saved.value.tabs.length } }
         }
         case "reused": {
           const provider = providerOrUndefined(request.args.provider)
