@@ -19,6 +19,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { ProviderMark } from "@/components/memory/provider-mark"
+import { RichText } from "@/components/rich-text/rich-text"
 import { useOptionalAuth } from "@/components/auth/auth-provider"
 import { SignInDialog } from "@/components/auth/sign-in-dialog"
 import { useIntegrations, useProjectMemory } from "@/hooks/use-integrations"
@@ -525,7 +526,12 @@ function ProjectMemoryPanel({ data }: { data: IntegrationsData }) {
             <div className="mt-3 flex flex-col gap-2">
               {!memory.context && memory.notesTotal === 0 && <p className="text-body-sm text-muted-foreground">Nothing saved for this project.</p>}
               {memory.context?.goal && <p className="text-body-sm text-foreground"><span className="text-muted-foreground">Goal:</span> {memory.context.goal}</p>}
-              {memory.context?.summary && <p className="text-body-sm whitespace-pre-wrap text-foreground"><span className="text-muted-foreground">Summary:</span> {memory.context.summary}</p>}
+              {memory.context?.summary && (
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-body-sm text-muted-foreground">Summary</p>
+                  <RichText source={memory.context.summary} />
+                </div>
+              )}
               {memory.context && memory.context.decisions.length > 0 && (
                 <div>
                   <p className="text-body-sm text-muted-foreground">Decisions</p>
@@ -556,7 +562,9 @@ function ProjectMemoryPanel({ data }: { data: IntegrationsData }) {
                             Delete
                           </Button>
                         </div>
-                        <p className="mt-1 line-clamp-4 text-body-sm whitespace-pre-wrap text-muted-foreground">{note.body}</p>
+                        <div className="mt-1 max-h-32 overflow-y-auto">
+                          <RichText source={note.body} />
+                        </div>
                       </li>
                     ))}
                   </ul>

@@ -2,17 +2,20 @@
 
 import { useEffect, useRef } from "react"
 import { ProviderMark } from "./provider-mark"
+import { RichText } from "@/components/rich-text/rich-text"
 import { aiProviderName } from "@/lib/providers/registry"
-import { markMatches } from "@/lib/resources/search"
 import { cn } from "@/lib/utils"
 import type { AiProviderId } from "@/lib/providers/registry"
 import type { ConversationTurn } from "@/lib/resources/types"
 
 /**
- * A saved AI conversation, turn by turn, as it was saved — plain text, never
- * rendered as markup (it is someone else's words and an AI's output, shown
- * as data). The person's turns and the AI's are told apart by label and
- * tone, not by colour alone.
+ * A saved AI conversation, turn by turn, as it was saved. Each turn's text is
+ * formatted as the AI app showed it — paragraphs, lists, tables, code and
+ * typeset formulas (components/rich-text) — from the stored text, which is
+ * never changed. It is someone else's words and an AI's output, so it is
+ * never inserted as HTML: links go only to the web, pictures are not
+ * fetched. The person's turns and the AI's are told apart by label and tone,
+ * not by colour alone.
  *
  * Long conversations scroll inside the view; \`focusTurn\` (from a search
  * result) scrolls that turn into view and marks the search words in it.
@@ -43,7 +46,7 @@ export function ConversationView({
     return (
       <div className={cn("max-h-96 overflow-y-auto rounded-md border border-subtle bg-background p-3", className)} data-conversation-view="text">
         <p className="mb-1 text-meta text-tertiary">Kept as one block of text — who said what wasn&apos;t marked.</p>
-        <p className="text-body-sm whitespace-pre-wrap text-foreground">{text ?? ""}</p>
+        <RichText source={text ?? ""} />
       </div>
     )
   }
@@ -56,25 +59,13 @@ export function ConversationView({
             key={index}
             ref={index === focusTurn ? focused : undefined}
             data-role={turn.role}
-            className={cn("flex flex-col gap-1 rounded-md px-3 py-2", mine ? "bg-surface-hover" : "border border-subtle", index === focusTurn && "ring-2 ring-ring/60")}
+            className={cn("flex min-w-0 flex-col gap-1 rounded-md px-3 py-2", mine ? "bg-surface-hover" : "border border-subtle", index === focusTurn && "ring-2 ring-ring/60")}
           >
             <span className="flex items-center gap-1.5 text-meta text-tertiary">
               {!mine && provider ? <ProviderMark provider={provider} size={12} /> : null}
               {mine ? "You" : ai}
             </span>
-            <p className="text-body-sm whitespace-pre-wrap text-foreground">
-              {index === focusTurn && terms.length > 0
-                ? markMatches(turn.text, terms).map((part, key) =>
-                    part.match ? (
-                      <mark key={key} className="rounded-xs bg-surface-active px-0.5 text-foreground">
-                        {part.text}
-                      </mark>
-                    ) : (
-                      <span key={key}>{part.text}</span>
-                    )
-                  )
-                : turn.text}
-            </p>
+            <RichText source={turn.text} {...(index === focusTurn && terms.length > 0 ? { terms } : {})} />
           </li>
         )
       })}

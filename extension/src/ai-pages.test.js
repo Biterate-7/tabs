@@ -365,6 +365,22 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
     expect(read.turns[1].text).toBe("Newton's second law: $F_{\\text{net}} = ma$.\n\n$$E_k = \\frac{1}{2}mv^2$$");
   });
 
+  it("keeps Gemini's formulas as the TeX on their wrapper, with or without KaTeX's MathML copy", async () => {
+    // Gemini wraps each KaTeX formula in .math-inline / .math-block carrying the TeX as data-math. Here the
+    // drawn formula has no MathML annotation, so its glyphs ("32θ=sinθ") are all the page would otherwise give.
+    const glyphs = (text) => `<span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="mord">${text}</span></span></span></span>`;
+    const doc = page(
+      `<user-query><div class="query-text"><p class="query-text-line">Solve it</p></div></user-query>
+       <model-response><message-content><div class="markdown">` +
+        `<p>Rearrange <span class="math-inline" data-math="\\frac{3}{2}\\theta = \\sin\\theta">${glyphs("32θ=sinθ")}</span> first.</p>` +
+        `<div class="math-block" data-math="\\boxed{\\theta = 0}"><span class="katex-display">${glyphs("θ=0")}</span></div>` +
+        `</div></message-content></model-response>`
+    );
+    expect((await readConversationFromPage(doc, "https://gemini.google.com/app/ed0431c2728ddb16")).turns[1].text).toBe(
+      "Rearrange $\\frac{3}{2}\\theta = \\sin\\theta$ first.\n\n$$\\boxed{\\theta = 0}$$"
+    );
+  });
+
   it("says no-messages — the paste fallback — when the message keys are gone, though the page has text", async () => {
     const doc = page(
       `<main><div data-thread-find-target="conversation"><div data-turn-key="t1"><div><div>What caused WW1?</div></div><div><div>Militarism and alliances.</div></div></div></div>

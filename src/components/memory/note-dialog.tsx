@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
-import { ExternalLink, MessageSquareShare, Trash2 } from "lucide-react"
+import { ExternalLink, MessageSquareShare, Pencil, Trash2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { captureLine, ConversationView } from "./conversation-view"
+import { RichText } from "@/components/rich-text/rich-text"
 import { ProviderBadge } from "./provider-mark"
 import { useMemoryActions } from "./memory-actions"
 import { getContent } from "@/lib/resources/content-store"
@@ -140,25 +141,28 @@ export function NoteDialog({
             </p>
           ) : note.kind === "conversation" ? (
             <ConversationView turns={loaded.turns} {...(loaded.text ? { text: loaded.text } : {})} {...(note.provider ? { provider: note.provider } : {})} {...(focusTurn !== undefined ? { focusTurn } : {})} {...(terms ? { terms } : {})} />
+          ) : draft === null ? (
+            <>
+              <div className="max-h-[50dvh] min-h-20 overflow-y-auto rounded-md border border-subtle bg-background p-3" role="document" aria-label="Note text" tabIndex={0}>
+                {loaded.text?.trim() ? <RichText source={loaded.text} /> : <p className="text-body-sm text-tertiary">No text yet.</p>}
+              </div>
+              {editable && (
+                <Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => setDraft(loaded.text ?? "")}>
+                  <Pencil /> Edit text
+                </Button>
+              )}
+            </>
           ) : (
             <>
-              <Textarea
-                aria-label="Note text"
-                className="max-h-[50dvh] min-h-40 overflow-y-auto text-body-sm"
-                value={draft ?? loaded.text ?? ""}
-                readOnly={!editable}
-                onChange={(event) => setDraft(event.target.value)}
-              />
-              {draft !== null && (
-                <div className="mt-2 flex gap-2">
-                  <Button type="button" size="sm" onClick={() => void saveText()}>
-                    Save text
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>
-                    Discard changes
-                  </Button>
-                </div>
-              )}
+              <Textarea aria-label="Note text" className="max-h-[50dvh] min-h-40 overflow-y-auto text-body-sm" value={draft} autoFocus onChange={(event) => setDraft(event.target.value)} />
+              <div className="mt-2 flex gap-2">
+                <Button type="button" size="sm" onClick={() => void saveText()}>
+                  Save text
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>
+                  Discard changes
+                </Button>
+              </div>
             </>
           )}
         </section>
