@@ -846,3 +846,49 @@
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
+
+/* ---- PDF reader -------------------------------------------------------
+   An uploaded PDF is drawn onto a canvas (components/project/pdf-viewer);
+   its text sits over the picture, invisible, so it can be selected and a
+   search hit marked. These are the few rules of pdf.js's text layer that
+   make that work — spans positioned and scaled by pdf.js itself — so the
+   layer is correct without shipping the full viewer stylesheet. Pages are
+   paper: white with dark ink in every theme. */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  opacity: 1;
+  transform-origin: 0 0;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  color-scheme: only light;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.pdf-text-layer > :not(.markedContent),
+.pdf-text-layer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-text-layer .markedContent {
+  display: contents;
+}
+.pdf-text-layer ::selection {
+  background: rgb(0 100 255 / 0.3);
+}

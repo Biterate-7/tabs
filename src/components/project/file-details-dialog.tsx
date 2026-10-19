@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Download, MessageSquareShare, RotateCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { StatusLine } from "./source-status"
 import { fileContentLine } from "./file-card"
+import { FileReader, showsOriginal } from "./file-reader"
 import { getContent } from "@/lib/resources/content-store"
 import { markMatches } from "@/lib/resources/search"
 import { canRereadFile } from "@/lib/files/note"
@@ -36,13 +37,16 @@ function Marked({ text, terms }: { text: string; terms?: readonly string[] }) {
 const PAGE_STEP = 25
 
 /**
- * An uploaded file: what Hubble read from it, as plain text — page by page
- * for a PDF, so a passage can be found by the page an AI answer cites — and
- * what can be done with it: download the original, read it again when that
- * could help, use it in an AI chat, remove it.
+ * An uploaded file, read as the document it is: a PDF is drawn page by page
+ * from the kept original (equations, diagrams and scans as authored), Word
+ * and Markdown files are formatted, and what can be done with it sits below:
+ * download the original, read it again when that could help, use it in an AI
+ * chat, remove it.
  *
- * The text is the file's, not Hubble's: drawn as text (never markup), and
- * only what is stored on this device.
+ * The text Hubble extracted is a separate thing — it powers search and AI
+ * chat, and is shown here, page by page as plain text, only for formats that
+ * are text already or when the original can't be drawn. It is the file's, not
+ * Hubble's: drawn as text (never markup), and only what is stored on this device.
  */
 export function FileDetailsDialog({
   note,
@@ -66,11 +70,14 @@ export function FileDetailsDialog({
 }) {
   const memory = useMemoryActions()
   const file = note.file!
+  const reader = showsOriginal(file)
+  const [unavailable, setUnavailable] = useState(false)
+  const showText = file.status === "ready" && (!reader || unavailable)
   const [content, setContent] = useState<{ key: string; value: ResourceContent | null } | null>(null)
   const [shown, setShown] = useState(Math.max(PAGE_STEP, focusPage ?? 0))
   const focusRef = useRef<HTMLElement | null>(null)
 
-  const key = file.status === "ready" ? `${note.id}@${note.updatedAt}` : null
+  const key = showText ? `${note.id}@${note.updatedAt}` : null
   useEffect(() => {
     if (!key) return
     let cancelled = false
@@ -87,12 +94,16 @@ export function FileDetailsDialog({
     if (loaded && focusPage) focusRef.current?.scrollIntoView({ block: "start" })
   }, [loaded, focusPage])
 
+  const onUnavailable = useCallback(() => setUnavailable(true), [])
   const pages = loaded?.pages
   const added = new Date(note.createdAt).toLocaleDateString()
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl" data-file-dialog={note.id}>
+      <DialogContent
+        className={reader ? "flex h-[calc(100dvh-2rem)] flex-col sm:max-w-5xl" : "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl"}
+        data-file-dialog={note.id}
+      >
         <DialogHeader>
           <DialogTitle className="truncate">{note.title}</DialogTitle>
           <DialogDescription className="flex min-w-0 flex-wrap items-center gap-x-1.5">
@@ -107,8 +118,24 @@ export function FileDetailsDialog({
 
         <StatusLine status={file.status} {...(file.status === "ready" ? { detail: fileContentLine(note, file) } : file.error ? { detail: file.error.message } : {})} />
 
-        {file.status === "ready" && (
-          <section aria-label="Text from the file" className="mt-1 flex flex-col gap-4">
+        {reader && (
+          <section aria-label="Document" className="flex min-h-0 flex-1 flex-col gap-2">
+            <FileReader
+              workspaceId={workspaceId}
+              noteId={note.id}
+              updatedAt={note.updatedAt}
+              file={file}
+              title={note.title}
+              onUnavailable={onUnavailable}
+              {...(focusPage ? { focusPage } : {})}
+              {...(terms ? { terms } : {})}
+            />
+          </section>
+        )}
+
+        {showText && (
+          <section aria-label="Text from the file" className={reader ? "flex min-h-0 flex-col gap-4 overflow-y-auto" : "mt-1 flex flex-col gap-4"}>
+            {reader && <p className="text-meta text-tertiary">Showing the text Hubble read from this file instead.</p>}
             {loaded === undefined ? (
               <p className="text-body-sm text-muted-foreground">Loading…</p>
             ) : loaded === null ? (
