@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isAiProviderId } from "@/lib/providers/registry";
+import { MAX_SESSION_TABS } from "@/lib/sessions/types";
 import type { KnowledgeItemRef } from "./items";
 import type { AiProviderId } from "@/lib/providers/registry";
 
@@ -23,6 +24,8 @@ import type { AiProviderId } from "@/lib/providers/registry";
  *   search    find items to reuse, in one project or every project
  *   bundle    build the context text for chosen items (lib/memory/bundle.ts)
  *   reused    the person copied or inserted context — recorded locally
+ *   save-session  save the tabs the extension read from a Chrome window as a
+ *                 session (lib/sessions) — addresses, titles and icons only
  */
 
 export const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
@@ -35,6 +38,14 @@ const ref = z.union([
   z.object({ kind: z.literal("source"), tabId: id }),
   z.object({ kind: z.literal("note"), noteId: id }),
 ]);
+
+/** One tab of a session the extension read from Chrome. Re-read again by lib/sessions/model.ts before it is kept. */
+const sessionTab = z.object({
+  url: z.string().min(1).max(4000),
+  title: z.string().max(2000).optional(),
+  favicon: z.string().max(9000).optional(),
+  pinned: z.boolean().optional(),
+});
 
 const requestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("projects"), args: z.object({}).loose().optional() }),
@@ -59,6 +70,14 @@ const requestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("reused"),
     args: z.object({ workspaceId: id, items: z.number().int().min(0).max(50), provider: z.string().max(40).optional(), how: z.enum(["copied", "inserted"]) }),
+  }),
+  z.object({
+    kind: z.literal("save-session"),
+    args: z.object({
+      name: z.string().max(500).optional(),
+      workspaceId: id.optional(),
+      tabs: z.array(sessionTab).min(1).max(MAX_SESSION_TABS),
+    }),
   }),
 ]);
 

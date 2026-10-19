@@ -63,6 +63,9 @@ export const DESKTOP_UNREACHABLE = "desktop-unreachable";
  * been removed — the extension still implements handlers for them, but
  * nothing here calls them anymore. `get_history` is the exception to that
  * "three actions" count: it backs History Dump (src/lib/browser/history.ts).
+ * Sessions (src/lib/sessions/restore.ts) send `open_session` to reopen a saved
+ * session in a new window, falling back to `open_tabs` on an extension that
+ * predates it.
  */
 export type BrowserActionName =
   | "list_browser_tabs"
@@ -71,6 +74,7 @@ export type BrowserActionName =
   | "get_history"
   | "open_url"
   | "open_tabs"
+  | "open_session"
   | "close_tab"
   | "close_tabs"
   | "pin_tab"

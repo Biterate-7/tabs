@@ -13,9 +13,11 @@ import {
   MSG_DESKTOP_STATUS,
   MSG_DESKTOP_ACTION,
   DESKTOP_STATE_KEY,
+  MSG_SAVE_SESSION,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { readStoredTarget } from "../src/quick-add.js";
+import { describeLeftOut, describeSaveFailure } from "../src/sessions.js";
 import { initAiPanel } from "./ai-panel.js";
 
 const els = {
@@ -50,6 +52,14 @@ const els = {
   desktopSelectedButton: document.getElementById("desktop-selected-button"),
   desktopWindowButton: document.getElementById("desktop-window-button"),
   webButton: document.getElementById("web-button"),
+  sessionName: document.getElementById("session-name"),
+  sessionProjectRow: document.getElementById("session-project-row"),
+  sessionProject: document.getElementById("session-project"),
+  sessionWindowsRow: document.getElementById("session-windows-row"),
+  sessionWindowsLabel: document.getElementById("session-windows-label"),
+  sessionAllWindows: document.getElementById("session-all-windows"),
+  saveSessionButton: document.getElementById("save-session-button"),
+  sessionStatus: document.getElementById("session-status"),
 };
 
 const ALL_STATES = [els.loading, els.ready, els.dumping, els.success, els.error];
@@ -188,6 +198,7 @@ async function renderQuickAddHint() {
 }
 
 async function renderProjects(listed) {
+  renderSessionProjects(listed);
   if (!els.projectSection) return;
   const remembered = await rememberedProject();
   // No Hubble tab to ask: the project Hubble last had open is still where a tab goes (Hubble opens to take it).
@@ -263,6 +274,94 @@ async function addToProject(scope) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sessions: save this window's tabs (or every window's) as a named session in
+// Hubble, to reopen together later. background.js reads the tabs and Hubble
+// stores them; "Saved" is only ever Hubble's own answer.
+// ---------------------------------------------------------------------------
+
+// Web pages in this window (browser pages are never saved).
+let readableInWindow = 0;
+let otherWindows = 0;
+let sessionInFlight = false;
+let sessionSaved = false;
+
+function updateSessionButton() {
+  if (!els.saveSessionButton) return;
+  const anything = readableInWindow > 0 || (els.sessionAllWindows?.checked && otherWindows > 0);
+  els.saveSessionButton.disabled = sessionInFlight || sessionSaved || !anything;
+}
+
+/** "Include tabs from all 3 windows" — only when there is more than one ordinary window. */
+async function renderSessionWindows() {
+  if (!els.sessionWindowsRow) return;
+  try {
+    const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    const normal = windows.filter((win) => !win.incognito);
+    otherWindows = normal.filter((win) => win.id !== currentWindowId).length;
+    if (normal.length > 1) {
+      els.sessionWindowsLabel.textContent = `Include tabs from all ${normal.length} windows`;
+      els.sessionWindowsRow.hidden = false;
+    }
+  } catch {
+    // This window alone is still saved.
+  }
+  updateSessionButton();
+}
+
+/** The person's projects, as an optional home for the session. Hidden when Hubble didn't list any. */
+function renderSessionProjects(listed) {
+  if (!els.sessionProject || !Array.isArray(listed) || listed.length === 0) return;
+  els.sessionProject.length = 1;
+  for (const project of listed) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    els.sessionProject.appendChild(option);
+  }
+  els.sessionProjectRow.hidden = false;
+}
+
+function showSessionStatus(text, tone) {
+  els.sessionStatus.textContent = text;
+  if (tone) els.sessionStatus.dataset.tone = tone;
+  else delete els.sessionStatus.dataset.tone;
+  els.sessionStatus.hidden = !text;
+}
+
+async function saveSession() {
+  if (sessionInFlight || sessionSaved) return;
+  sessionInFlight = true;
+  updateSessionButton();
+  els.saveSessionButton.textContent = "Saving…";
+  showSessionStatus("", undefined);
+  const name = els.sessionName.value.trim();
+  const workspaceId = els.sessionProject?.value || undefined;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MSG_SAVE_SESSION,
+      payload: { windowId: currentWindowId, allWindows: Boolean(els.sessionAllWindows?.checked), ...(name ? { name } : {}), ...(workspaceId ? { workspaceId } : {}) },
+    });
+    const leftOut = describeLeftOut(response?.leftOut ?? {});
+    if (response?.ok) {
+      sessionSaved = true;
+      const count = response.session.tabs;
+      els.saveSessionButton.textContent = "Saved";
+      showSessionStatus(`Saved “${response.session.name}” · ${count} ${count === 1 ? "tab" : "tabs"}. Reopen it from Sessions in Hubble.${leftOut ? ` ${leftOut}` : ""}`, undefined);
+    } else {
+      els.saveSessionButton.textContent = "Save session";
+      showSessionStatus(`${describeSaveFailure(response?.error)}${leftOut ? ` ${leftOut}` : ""}`, "error");
+    }
+  } catch {
+    els.saveSessionButton.textContent = "Save session";
+    // The background may have finished without being able to answer: say where to look rather than guess.
+    showSessionStatus("Lost contact with the Hubble extension. Check Sessions in Hubble before saving again.", "error");
+  } finally {
+    sessionInFlight = false;
+    updateSessionButton();
+  }
+}
+
 function updateReadyUi(tabs, existingUrls) {
   els.tabCount.textContent = String(tabs.length);
   renderPreview(tabs);
@@ -304,6 +403,9 @@ async function detectTabs() {
   };
 
   updateReadyUi(payload.tabs, undefined);
+  readableInWindow = payload.tabs.length;
+  updateSessionButton();
+  void renderSessionWindows();
   showState(els.ready);
   void renderDesktop(payload.tabs.length);
   // On an AI app: save this conversation, or use Hubble here.
@@ -743,6 +845,11 @@ function watchDumpPhase() {
 }
 
 els.dumpButton.addEventListener("click", dumpTabs);
+els.saveSessionButton?.addEventListener("click", () => void saveSession());
+els.sessionAllWindows?.addEventListener("change", updateSessionButton);
+els.sessionName?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") void saveSession();
+});
 els.projectSelect?.addEventListener("change", () => {
   const target = chosenProject();
   if (target) rememberProject(target);

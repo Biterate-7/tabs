@@ -35,6 +35,7 @@ import {
   MSG_INSERT_CONTEXT,
   MSG_PAGE_REQUEST,
   PAGE_READY_WAIT_MS,
+  MSG_SAVE_SESSION,
 } from "../src/config.js";
 import { aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
 import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_TIMING } from "../src/ai-transfer.js";
@@ -42,6 +43,7 @@ import { hubbleTransferStep } from "../src/ai-transfer-page.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
+import { buildSessionCapture } from "../src/sessions.js";
 import { validateBrowserCommand } from "../src/browser-commands.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 import {
@@ -1468,6 +1470,34 @@ async function insertContext({ tabId, text }) {
 
 const MEMORY_KINDS = new Set(["projects", "search", "bundle", "reused"]);
 
+/**
+ * Sessions: "Save session" from the popup. Reads the tabs of the popup's
+ * window (or every ordinary window), then asks the Hubble page to store them
+ * — opening Hubble in the background when no tab has it, since the person
+ * just asked. Success is only ever Hubble's answer that it stored them.
+ */
+async function saveSession({ windowId, allWindows, name, workspaceId }) {
+  let windows;
+  try {
+    windows = allWindows ? await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] }) : [await chrome.windows.get(windowId, { populate: true })];
+  } catch (err) {
+    log("session-read-failed", { detail: errorMessage(err) });
+    return { ok: false, error: "window-unreadable" };
+  }
+  if (!allWindows && windows[0]?.incognito) return { ok: false, error: "private-window" };
+  const { tabs, restricted, privateTabs, tooMany } = buildSessionCapture(windows, TABDUMP_ORIGIN);
+  const leftOut = { restricted, privateTabs, tooMany };
+  if (tabs.length === 0) return { ok: false, error: "empty", leftOut };
+  const answer = await askHubblePage("save-session", { tabs, ...(name ? { name } : {}), ...(workspaceId ? { workspaceId } : {}) }, { openIfMissing: true });
+  if (!answer.ok) return { ok: false, error: answer.error, leftOut };
+  const saved = answer.result ?? {};
+  return {
+    ok: true,
+    session: { name: typeof saved.name === "string" ? saved.name : "", tabs: Number.isInteger(saved.tabs) ? saved.tabs : 0 },
+    leftOut: { ...leftOut, dropped: Number.isInteger(saved.dropped) ? saved.dropped : 0 },
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Only this extension's own popup: a page can't message the extension, and a content script isn't asked to.
   if (sender?.id !== chrome.runtime.id || sender?.tab) return undefined;
@@ -1493,6 +1523,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return undefined;
     }
     askHubblePage(kind, message.payload?.args ?? {}, { openIfMissing: message.payload?.openIfMissing === true })
+      .then((answer) => safeSendResponse(sendResponse, answer))
+      .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
+    return true;
+  }
+
+  if (message?.type === MSG_SAVE_SESSION) {
+    const { windowId, allWindows, name, workspaceId } = message.payload ?? {};
+    const validName = name === undefined || (typeof name === "string" && name.length <= 500);
+    const validProject = workspaceId === undefined || (typeof workspaceId === "string" && workspaceId.length > 0 && workspaceId.length <= 200);
+    if ((!allWindows && !Number.isInteger(windowId)) || !validName || !validProject) {
+      safeSendResponse(sendResponse, { ok: false, error: "invalid" });
+      return undefined;
+    }
+    saveSession({ windowId, allWindows: allWindows === true, name: name?.trim() || undefined, workspaceId })
       .then((answer) => safeSendResponse(sendResponse, answer))
       .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
     return true;

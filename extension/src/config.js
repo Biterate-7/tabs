@@ -258,3 +258,10 @@ export const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
 export const PAGE_REQUEST_TIMEOUT_MS = 15000;
 // How long the background keeps asking a page that says it isn't ready yet (it is still loading your projects).
 export const PAGE_READY_WAIT_MS = 12000;
+
+// Sessions: popup -> background: "save the tabs of this window (or every
+// window) as a session in Hubble". The background reads the tabs and hands
+// them to the Hubble page as a `save-session` page request; the page stores
+// them (src/lib/sessions). Opening a session goes the other way, as the
+// `open_session` browser command (src/browser-actions.js).
+export const MSG_SAVE_SESSION = "HUBBLE_SAVE_SESSION";

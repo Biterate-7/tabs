@@ -7,6 +7,7 @@ import {
   Clock,
   History,
   House,
+  Layers,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -30,7 +31,7 @@ import type { Workspace } from "@/lib/workspace/types"
  * Which destination is on screen. Mirrors the `view` union in app-shell —
  * the rail only needs to know enough to light the right row.
  */
-export type SidebarView = "home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump"
+export type SidebarView = "home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump" | "sessions"
 
 /** Destinations that live under "More" — tools most people never need to find. */
 const MORE_VIEWS: readonly SidebarView[] = ["favorites", "recents", "history-dump"]
@@ -59,6 +60,7 @@ function saveMoreOpen(open: boolean): void {
  *     Hubble
  *     [Search]
  *     Projects
+ *     Sessions
  *     Graph
  *     PROJECTS
  *       History HL
@@ -104,6 +106,7 @@ export function AppSidebar({
   onOpenSettings,
   onOpenWorkspace,
   onOpenHome,
+  onOpenSessions,
   currentView = "workspace",
   onOpenSearch,
   embedded = false,
@@ -134,6 +137,8 @@ export function AppSidebar({
   onOpenWorkspace?: () => void
   /** Projects (Home). Absent: no Projects row (the landing demo, which has no Home). */
   onOpenHome?: () => void
+  /** Saved sessions of Chrome tabs. Absent: no Sessions row (Hubble Desktop, the landing demo). */
+  onOpenSessions?: () => void
   /** The destination currently on screen, used to mark the active row. */
   currentView?: SidebarView
   /** Opens the knowledge search page — the rail's search field is its front door. */
@@ -247,6 +252,9 @@ export function AppSidebar({
           <nav aria-label="Main" className="flex flex-col gap-px">
             {onOpenHome && (
               <SidebarItem label="Projects" icon={<House />} current={activeIs("home")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHome)} />
+            )}
+            {onOpenSessions && (
+              <SidebarItem label="Sessions" icon={<Layers />} current={activeIs("sessions")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenSessions)} />
             )}
             <SidebarItem
               label="Graph"

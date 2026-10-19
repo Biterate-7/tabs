@@ -6,6 +6,7 @@ import { FirstRunLanding } from "@/components/marketing/first-run-landing"
 import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { HomeView } from "@/components/home/home-view"
+import { SessionsView } from "@/components/sessions/sessions-view"
 import { SearchView } from "@/components/search/search-view"
 import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, subjectName, visibleSubjects } from "@/lib/product/subjects"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
@@ -206,7 +207,7 @@ export function AppShell() {
     project's page; "search" searches every project. Everything else is
     reached from the rail, the palette or a link.
   */
-  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump">("home")
+  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
   /**
    * Which settings section the next visit to Settings opens on.
    *
@@ -226,6 +227,8 @@ export function AppShell() {
   const [capture, setCapture] = useState<{ workspaceId: string; mode: CaptureMode; nonce: number; prefill?: { link?: string; provider?: AiProviderId } } | null>(null)
   /** What the Search page opens with (a query from the palette, a project's scope). */
   const [searchStart, setSearchStart] = useState<{ query: string; workspaceId?: string; nonce: number }>({ query: "", nonce: 0 })
+  // Each entry to Sessions remounts it; `save` opens "Save current session" there (Home's first-session prompt).
+  const [sessionsStart, setSessionsStart] = useState<{ save: boolean; nonce: number }>({ save: false, nonce: 0 })
   /** An item to open on a project's page (from Search or Home), at a conversation's turn when given. */
   const [focusItem, setFocusItem] = useState<{ workspaceId: string; ref: KnowledgeItemRef; turn?: number; terms?: readonly string[]; nonce: number } | null>(null)
   // The local loop log: coming back to Hubble is a return — counted at most once per half hour, never sent anywhere.
@@ -1514,6 +1517,11 @@ export function AppShell() {
     setView("workspace")
   }
 
+  function openSessions(options?: { save?: boolean }) {
+    setSessionsStart({ save: options?.save === true, nonce: Date.now() })
+    setView("sessions")
+  }
+
   function openSearch(query = "", workspaceId?: string) {
     setSearchStart({ query, nonce: Date.now(), ...(workspaceId ? { workspaceId } : {}) })
     setView("search")
@@ -1804,6 +1812,20 @@ export function AppShell() {
         onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
         onOpenSearch={() => openSearch()}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
+        // Sessions reopen Chrome tabs, which Hubble Desktop can't reach.
+        {...(isDesktopShell ? {} : { onOpenSessions: openSessions })}
+      />
+    )
+  }
+
+  if (view === "sessions") {
+    return (
+      <SessionsView
+        key={sessionsStart.nonce}
+        projects={subjects.map((workspace) => ({ id: workspace.id, name: subjectName(workspace) }))}
+        now={now}
+        openSaveOnMount={sessionsStart.save}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
       />
     )
   }
@@ -2054,6 +2076,7 @@ export function AppShell() {
         onOpenSubject={openSubject}
         onCreate={handleCreateWorkspace}
         onOpenHome={() => setView("home")}
+        {...(isDesktopShell ? {} : { onOpenSessions: () => openSessions() })}
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}

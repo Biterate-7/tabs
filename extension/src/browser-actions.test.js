@@ -8,8 +8,10 @@ import {
   listBrowserTabs,
   listBrowserWindows,
   moveTabsToWindow,
+  openSession,
   openTabs,
   openUrl,
+  __resetSessionOpensForTests,
   pinTab,
   unpinTab,
 } from "./browser-actions.js";
@@ -315,5 +317,64 @@ describe("createBrowserWindow", () => {
     chrome.windows.create.mockResolvedValue({ id: 6, focused: true, incognito: false, type: "normal", tabs: [] });
     await createBrowserWindow({ urls: [], focused: true });
     expect(chrome.windows.create).toHaveBeenCalledWith({ url: undefined, focused: true });
+  });
+});
+
+describe("openSession", () => {
+  beforeEach(() => __resetSessionOpensForTests());
+
+  const tabs = [
+    { url: "https://a.example/", pinned: true },
+    { url: "https://b.example/", pinned: false },
+    { url: "https://c.example/", pinned: false },
+  ];
+
+  it("opens every tab in order in one new window, never touching the current tabs", async () => {
+    chrome.windows.create.mockResolvedValue({ id: 42, tabs: [{ id: 100 }] });
+    chrome.tabs.update.mockResolvedValue({});
+    chrome.tabs.create.mockImplementation(async ({ url }) => fakeTab({ url }));
+
+    const result = await openSession({ requestId: "r1", tabs });
+
+    expect(chrome.windows.create).toHaveBeenCalledWith({ url: "https://a.example/", focused: true });
+    expect(chrome.tabs.update).toHaveBeenCalledWith(100, { pinned: true });
+    expect(chrome.tabs.create.mock.calls.map(([args]) => args)).toEqual([
+      { windowId: 42, url: "https://b.example/", active: false, pinned: false },
+      { windowId: 42, url: "https://c.example/", active: false, pinned: false },
+    ]);
+    expect(chrome.tabs.remove).not.toHaveBeenCalled();
+    expect(chrome.tabs.query).not.toHaveBeenCalled();
+    expect(result).toEqual({ windowId: 42, opened: 3, failed: [] });
+  });
+
+  it("keeps going when one tab fails and reports which", async () => {
+    chrome.windows.create.mockResolvedValue({ id: 42, tabs: [{ id: 100 }] });
+    chrome.tabs.update.mockResolvedValue({});
+    chrome.tabs.create.mockRejectedValueOnce(new Error("Blocked by policy")).mockResolvedValueOnce(fakeTab());
+
+    const result = await openSession({ requestId: "r2", tabs });
+    expect(result.opened).toBe(2);
+    expect(result.failed).toEqual([{ index: 1, url: "https://b.example/", error: "Blocked by policy" }]);
+  });
+
+  it("opens the window with the next tab when the first cannot be opened", async () => {
+    chrome.windows.create.mockRejectedValueOnce(new Error("nope")).mockResolvedValueOnce({ id: 7, tabs: [{ id: 1 }] });
+    chrome.tabs.create.mockResolvedValue(fakeTab());
+
+    const result = await openSession({ requestId: "r3", tabs });
+    expect(chrome.windows.create).toHaveBeenCalledTimes(2);
+    expect(chrome.tabs.create).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ windowId: 7, opened: 2, failed: [{ index: 0, url: "https://a.example/", error: "nope" }] });
+  });
+
+  it("answers a repeated request with the first result and opens nothing again", async () => {
+    chrome.windows.create.mockResolvedValue({ id: 42, tabs: [{ id: 100 }] });
+    chrome.tabs.update.mockResolvedValue({});
+    chrome.tabs.create.mockResolvedValue(fakeTab());
+
+    const [first, second] = await Promise.all([openSession({ requestId: "same", tabs }), openSession({ requestId: "same", tabs })]);
+    expect(chrome.windows.create).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.create).toHaveBeenCalledTimes(2);
+    expect(second).toEqual({ ...first, duplicate: true });
   });
 });

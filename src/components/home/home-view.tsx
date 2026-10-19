@@ -7,6 +7,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { BrandMark } from "@/components/brand-mark"
 import { ProviderBadge } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { FirstSessionPrompt, ResumeSessionCard } from "@/components/sessions/resume-card"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { subjectName, subjectUpdatedAt } from "@/lib/product/subjects"
 import { KNOWLEDGE_TYPE_LABEL, knowledgeCounts, knowledgeItemsOf } from "@/lib/memory/items"
@@ -26,6 +27,9 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  *     Recently saved
  *       ◇ Causes of WW1 — ChatGPT · History HL
  *
+ * Above it, once a session of Chrome tabs is saved, "Pick up where you left
+ * off" with one Resume button (components/sessions/resume-card.tsx).
+ *
  * The page is its title, its projects and one primary action. With no
  * projects it says what Hubble is for in one sentence and offers one button.
  * Nothing here asks for an AI to be connected: Hubble works without any.
@@ -40,6 +44,7 @@ export function HomeView({
   onOpenItem,
   onOpenSearch,
   onOpenSidebar,
+  onOpenSessions,
 }: {
   /** The person's projects (workspaces), excluding an untouched default. */
   subjects: readonly Workspace[]
@@ -53,6 +58,8 @@ export function HomeView({
   onOpenItem: (workspaceId: string, ref: KnowledgeItemRef) => void
   onOpenSearch?: () => void
   onOpenSidebar?: () => void
+  /** The Sessions page. Absent (Hubble Desktop, which can't reach Chrome): no resume card. */
+  onOpenSessions?: (options?: { save?: boolean }) => void
 }) {
   const recent = useMemo(() => {
     const all: { workspace: Workspace; item: KnowledgeItem }[] = []
@@ -72,6 +79,7 @@ export function HomeView({
         </header>
       )}
       <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-8 sm:py-20">
+        {onOpenSessions && <ResumeSessionCard now={now} onOpenSessions={onOpenSessions} />}
         {subjects.length === 0 ? (
           <section aria-label="Get started" className="flex flex-col items-start gap-5 pt-6 sm:pt-12">
             <BrandMark className="size-7 text-foreground" />
@@ -161,6 +169,7 @@ export function HomeView({
                 </ul>
               </section>
             )}
+            {onOpenSessions && <FirstSessionPrompt onOpenSessions={onOpenSessions} />}
           </>
         )}
       </main>

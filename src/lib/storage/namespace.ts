@@ -61,6 +61,9 @@ export const SCOPED_STORAGE_KEYS = [
   // what Hubble read, when it was reused. Scoped: it is one person's record
   // of their own projects.
   "tabdump:project-activity:v1",
+  // Saved browser sessions (see src/lib/sessions/persistence.ts): the
+  // addresses and titles of one person's open tabs.
+  "tabdump:tab-sessions:v1",
 ] as const;
 
 /**

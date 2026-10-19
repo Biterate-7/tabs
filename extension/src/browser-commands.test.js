@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALLOWED_BROWSER_ACTIONS, isSafeOpenUrl, validateBrowserCommand } from "./browser-commands.js";
+import { ALLOWED_BROWSER_ACTIONS, MAX_SESSION_TABS, isSafeOpenUrl, validateBrowserCommand } from "./browser-commands.js";
 
 describe("isSafeOpenUrl", () => {
   it("allows http and https urls", () => {
@@ -41,6 +41,7 @@ describe("validateBrowserCommand", () => {
         "get_history",
         "open_url",
         "open_tabs",
+        "open_session",
         "close_tab",
         "close_tabs",
         "pin_tab",
@@ -164,5 +165,35 @@ describe("get_history validation", () => {
     expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: 0 }).ok).toBe(false);
     expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: -5 }).ok).toBe(false);
     expect(validateBrowserCommand("get_history", { startTime: 0, maxResults: "lots" }).ok).toBe(false);
+  });
+});
+
+describe("open_session", () => {
+  const tabs = [{ url: "https://a.example/" }, { url: "https://b.example/", pinned: true }];
+
+  it("accepts a request id and ordinary web addresses, normalising pinned", () => {
+    expect(validateBrowserCommand("open_session", { requestId: "r1", tabs })).toEqual({
+      ok: true,
+      args: { requestId: "r1", tabs: [{ url: "https://a.example/", pinned: false }, { url: "https://b.example/", pinned: true }] },
+    });
+  });
+
+  it("refuses a missing or oversized request id", () => {
+    expect(validateBrowserCommand("open_session", { tabs }).ok).toBe(false);
+    expect(validateBrowserCommand("open_session", { requestId: "x".repeat(101), tabs }).ok).toBe(false);
+  });
+
+  it("refuses any address that is not an ordinary web page", () => {
+    for (const url of ["javascript:alert(1)", "chrome://settings", "file:///etc/passwd", "data:text/html,x"]) {
+      expect(validateBrowserCommand("open_session", { requestId: "r", tabs: [{ url: "https://a.example/" }, { url }] }).ok).toBe(false);
+    }
+    expect(validateBrowserCommand("open_session", { requestId: "r", tabs: [{ url: "https://a.example/", pinned: "yes" }] }).ok).toBe(false);
+  });
+
+  it("refuses an empty launch and one larger than a session holds", () => {
+    expect(validateBrowserCommand("open_session", { requestId: "r", tabs: [] }).ok).toBe(false);
+    const many = Array.from({ length: MAX_SESSION_TABS + 1 }, (_, i) => ({ url: `https://example.com/${i}` }));
+    expect(validateBrowserCommand("open_session", { requestId: "r", tabs: many }).ok).toBe(false);
+    expect(validateBrowserCommand("open_session", { requestId: "r", tabs: many.slice(0, MAX_SESSION_TABS) }).ok).toBe(true);
   });
 });
