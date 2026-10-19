@@ -282,7 +282,7 @@ export function resolveGraphLayoutInput(
     ? buildDependencyEdges(scopedTabs, dependencies)
     : [];
   const degreeById = buildDegreeMap(relationEdges, dependencyEdges);
-  const clusterTree = buildClusterTree(scopedTabs, sections, collections);
+  const clusterTree = buildClusterTree(scopedTabs, sections, collections, workspaceLookup);
 
   return {
     nodes,

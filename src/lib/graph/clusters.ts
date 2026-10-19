@@ -4,6 +4,8 @@ import type { Collection } from "@/lib/collections/types";
 import { sectionPath } from "@/lib/sections/relations";
 import { LARGE_SHARE_THRESHOLD, COMPACT_MAX_COUNT } from "@/lib/sections/tree";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
+import { subjectName } from "@/lib/product/subjects";
+import type { WorkspaceLookup } from "./relations";
 import {
   CLUSTER_LAYOUT_MODE,
   computeClusterRegions,
@@ -40,6 +42,8 @@ export type ClusterTree = {
 };
 
 const LEGACY_PREFIX = "legacy:";
+const PROJECT_PREFIX = "project:";
+const NO_WORKSPACES: WorkspaceLookup = new Map();
 
 function legacyCategoryKey(tab: Tab): string {
   return tab.category?.trim() || "other";
@@ -57,13 +61,27 @@ function legacyCategoryLabel(key: string): string {
  * the same fallback buildGraphEdges has always used for tabs that predate
  * Sections. Exported so the "category" edge reason and this module's
  * cluster boundaries can never disagree about what "same category" means.
+ *
+ * A tab with neither (no section, no confident category — which is every
+ * source added to a project from a PDF, an upload or an unrecognised site)
+ * falls back to the project (Workspace) that holds it: `"project:<id>"`.
+ * Without `workspaceOf` that fallback was one global `"legacy:other"`, which
+ * pooled every project's unorganized sources into a single "Other" cluster
+ * and chained "category" edges across projects that have nothing in common.
+ * Only a tab no workspace holds (a deleted project, a caller without a
+ * lookup) still lands in "Other".
  */
-export function resolveCategoryKey(tab: Tab, sections: Section[]): string {
+export function resolveCategoryKey(tab: Tab, sections: Section[], workspaceOf: WorkspaceLookup = NO_WORKSPACES): string {
   if (tab.sectionId) {
     const path = sectionPath(sections, tab.sectionId);
     if (path.length > 0) return path[0].id;
   }
-  return `${LEGACY_PREFIX}${legacyCategoryKey(tab)}`;
+  const legacyKey = legacyCategoryKey(tab);
+  if (legacyKey === "other") {
+    const projectId = workspaceOf.get(tab.id)?.id;
+    if (projectId) return `${PROJECT_PREFIX}${projectId}`;
+  }
+  return `${LEGACY_PREFIX}${legacyKey}`;
 }
 
 /** The subcategory-level Section a tab belongs to, if any — only a tab whose sectionId resolves at least two levels deep (a real Subcategory or Project section) has one. Legacy-category tabs never do; there's no data to subdivide them by. */
@@ -91,11 +109,19 @@ function presenceOf(totalTabCount: number, totalTabs: number): ClusterPresence {
  * parent" is a deliberate simplification, not a claim that the collection
  * belongs exclusively to that category.
  *
+ * A tab with no section and no confident category clusters under the project
+ * that holds it, labelled with that project's name — see resolveCategoryKey.
+ *
  * Pure and deterministic: the same tabs/sections/collections always produce
  * a structurally identical tree, which is what lets computeClusterAnchors
  * seed stable, reproducible positions without persisting anything new.
  */
-export function buildClusterTree(tabs: Tab[], sections: Section[], collections: Collection[]): ClusterTree {
+export function buildClusterTree(
+  tabs: Tab[],
+  sections: Section[],
+  collections: Collection[],
+  workspaceOf: WorkspaceLookup = NO_WORKSPACES
+): ClusterTree {
   const sectionsById = new Map(sections.map((s) => [s.id, s]));
   const clusterPathOfTab = new Map<string, string[]>();
 
@@ -107,14 +133,17 @@ export function buildClusterTree(tabs: Tab[], sections: Section[], collections: 
   const subcategoriesByCategory = new Map<string, Set<string>>();
 
   for (const tab of tabs) {
-    const categoryKey = resolveCategoryKey(tab, sections);
+    const categoryKey = resolveCategoryKey(tab, sections, workspaceOf);
     const categoryId = `cat:${categoryKey}`;
     if (!categoryLabel.has(categoryKey)) {
+      const project = categoryKey.startsWith(PROJECT_PREFIX) ? workspaceOf.get(tab.id) : undefined;
       categoryLabel.set(
         categoryKey,
-        categoryKey.startsWith(LEGACY_PREFIX)
-          ? legacyCategoryLabel(categoryKey.slice(LEGACY_PREFIX.length))
-          : (sectionsById.get(categoryKey)?.name ?? "Other")
+        project
+          ? subjectName(project)
+          : categoryKey.startsWith(LEGACY_PREFIX)
+            ? legacyCategoryLabel(categoryKey.slice(LEGACY_PREFIX.length))
+            : (sectionsById.get(categoryKey)?.name ?? "Other")
       );
     }
 

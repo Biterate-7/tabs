@@ -175,7 +175,7 @@ export function makeGraph(
   const lookup = buildWorkspaceLookup(data.workspaces);
   const nodes = buildGraphNodes(data.tabs, lookup);
   const edges = buildGraphEdges(data.tabs, lookup, DEFAULT_CONNECTION_FILTERS, [], data.sections);
-  const tree = buildClusterTree(data.tabs, data.sections, data.collections);
+  const tree = buildClusterTree(data.tabs, data.sections, data.collections, lookup);
   const anchors = computeClusterAnchors(tree);
   const regions = computeClusterRegions(tree);
 

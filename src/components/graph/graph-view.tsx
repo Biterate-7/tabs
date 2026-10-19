@@ -152,8 +152,8 @@ export function GraphView({
   // linking tabs on opposite sides of the canvas. See relations.ts's
   // buildChainOrder. It does not change which tabs are related.
   const clusterTree = useMemo(
-    () => buildClusterTree(scopedTabs, allSections, allCollections),
-    [scopedTabs, allSections, allCollections]
+    () => buildClusterTree(scopedTabs, allSections, allCollections, workspaceLookup),
+    [scopedTabs, allSections, allCollections, workspaceLookup]
   )
   const clusterAnchors = useMemo(() => computeClusterAnchors(clusterTree), [clusterTree])
 
