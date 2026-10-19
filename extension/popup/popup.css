@@ -403,3 +403,38 @@ body {
   color: rgb(var(--fg-rgb) / 0.55);
   font-size: 11px;
 }
+
+/* ---- Sessions: save this window's tabs to reopen later ------------------ */
+.popup__session {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(var(--fg-rgb) / 0.1);
+}
+
+.popup__session .popup__input {
+  margin-top: 0;
+}
+
+.popup__state .popup__session p {
+  margin: 0;
+}
+
+.popup__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgb(var(--fg-rgb) / 0.7);
+}
+
+.popup__session [data-tone="error"] {
+  color: var(--error);
+}
+
+.popup__switch[hidden],
+.popup__check[hidden] {
+  display: none;
+}

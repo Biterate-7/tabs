@@ -110,7 +110,7 @@ read actions — answer from a browser snapshot the page already fetched. It
 never touches `chrome.*` itself; only this extension does that, and only for
 the fixed allowlist in `extension/src/browser-commands.js`:
 `list_browser_tabs`, `get_active_tab`, `list_browser_windows`, `open_url`,
-`open_tabs`, `close_tab`, `close_tabs`, `pin_tab`, `unpin_tab`,
+`open_tabs`, `open_session`, `close_tab`, `close_tabs`, `pin_tab`, `unpin_tab`,
 `move_tabs_to_window`, `create_browser_window`. There is no "run arbitrary
 JavaScript" or "click this element" command, and never will be as part of
 this allowlist design — see AGENTS.md's Chrome Browser Control spec for the
@@ -204,6 +204,19 @@ removed in Chrome's extension settings; the next transfer asks again.
 extension lists the provider origins under `host_permissions` instead, which
 stands in for the person's grant. Put the QA Chrome profile on a short path:
 under a long one, IndexedDB fails to open on Windows.
+
+## Sessions: save a window, reopen it later
+
+The popup's **Save session** reads the tabs of its window (or every ordinary
+window, when ticked) and hands them to the Hubble page as a `save-session`
+page request; the page stores them (`src/lib/sessions`). Private windows are
+never read, and browser pages (chrome://, new tabs) are left out and counted.
+"Saved" is only ever the page's answer. Reopening goes the other way: the page
+sends `open_session`, which opens the tabs in order in a **new** window
+(never touching the current tabs), is capped at 200 http(s) addresses, and
+answers a repeated request id with its first result instead of opening the
+tabs twice. No new permissions: `tabs` already covers both. See
+`docs/sessions.md`.
 
 ## Changing the Hubble origin
 

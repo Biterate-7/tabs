@@ -7,6 +7,7 @@ import { BROWSER_MESSAGE_SOURCE } from "@/lib/browser/protocol"
 import { applyConversationSave, planConversationSave } from "@/lib/conversations/save"
 import { MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE } from "@/lib/memory/extension-protocol"
 import { putContent, resetContentStoreForTests } from "@/lib/resources/content-store"
+import { __resetSessionsForTests, getSessionsSnapshot } from "@/lib/sessions/persistence"
 import type { WorkspaceStore } from "@/lib/workspace/types"
 
 /**
@@ -134,5 +135,41 @@ describe("useExtensionMemory", () => {
     ask("r11", "projects", undefined, "https://evil.example")
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(posted.some((entry) => entry.requestId === "r11")).toBe(false)
+  })
+})
+
+describe("useExtensionMemory — save-session", () => {
+  beforeEach(() => {
+    localStorage.clear()
+    __resetSessionsForTests()
+  })
+
+  it("stores the tabs the extension read as a session, named after its project", async () => {
+    mount(await world())
+    ask("s1", "save-session", { workspaceId: "ia", tabs: [{ url: "https://a.example/", title: "A" }, { url: "https://b.example/", pinned: true }] })
+    const answer = (await answerTo("s1")) as { ok: boolean; result: { id: string; name: string; tabs: number; dropped: number } }
+    expect(answer.ok).toBe(true)
+    expect(answer.result).toMatchObject({ tabs: 2, dropped: 0 })
+    expect(answer.result.name).toMatch(/^History IA — /)
+    const [saved] = getSessionsSnapshot().sessions
+    expect(saved).toMatchObject({ id: answer.result.id, workspaceId: "ia" })
+    expect(saved.tabs.map((tab) => tab.url)).toEqual(["https://a.example/", "https://b.example/"])
+  })
+
+  it("keeps a name given in the popup, and counts addresses it refused", async () => {
+    mount(await world())
+    ask("s2", "save-session", { name: "WW1 essay", tabs: [{ url: "https://a.example/" }, { url: "javascript:alert(1)" }] })
+    expect(await answerTo("s2")).toMatchObject({ ok: true, result: { name: "WW1 essay", tabs: 1, dropped: 1 } })
+  })
+
+  it("stores nothing for a project that is gone, an empty capture or a malformed request", async () => {
+    mount(await world())
+    ask("s3", "save-session", { workspaceId: "gone", tabs: [{ url: "https://a.example/" }] })
+    ask("s4", "save-session", { tabs: [{ url: "chrome://settings" }] })
+    ask("s5", "save-session", { tabs: [] })
+    expect(await answerTo("s3")).toMatchObject({ ok: false, error: "project-missing" })
+    expect(await answerTo("s4")).toMatchObject({ ok: false, error: "session-empty" })
+    expect(await answerTo("s5")).toMatchObject({ ok: false, error: "invalid" })
+    expect(getSessionsSnapshot().sessions).toEqual([])
   })
 })
