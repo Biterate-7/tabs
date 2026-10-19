@@ -43,8 +43,8 @@ export function GraphCollectionPanel({
         <div className="flex items-center gap-0.5">
           {memory && (
             <IconButton
-              aria-label="Use this collection in an AI chat"
-              tooltip="Use in AI chat"
+              aria-label="Use this collection in AI"
+              tooltip="Use in AI"
               className="size-7"
               onClick={() => memory.reuse({ workspaceId: collection.workspaceId, collectionIds: [collection.id] })}
             >

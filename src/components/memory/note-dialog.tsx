@@ -181,7 +181,7 @@ export function NoteDialog({
             )}
             {memory && (
               <Button type="button" variant="secondary" onClick={() => memory.reuse({ workspaceId, refs: [{ kind: "note", noteId: note.id }] })}>
-                <MessageSquareShare /> Use in AI chat
+                <MessageSquareShare /> Use in AI
               </Button>
             )}
           </div>

@@ -112,7 +112,7 @@ export function ResourceCard({
           <ExternalLink /> {provider ? `Open in ${aiProviderName(provider)}` : "Open"}
         </Button>
         {actions.onUseInAi && !needsCapture && (
-          <IconButton className="size-6" aria-label={`Use ${title} in an AI chat`} tooltip="Use in AI chat" onClick={() => actions.onUseInAi!(tab)}>
+          <IconButton className="size-6" aria-label={`Use ${title} in AI`} tooltip="Use in AI" onClick={() => actions.onUseInAi!(tab)}>
             <MessageSquareShare />
           </IconButton>
         )}

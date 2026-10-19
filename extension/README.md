@@ -181,6 +181,30 @@ change. The only new permission is `host_permissions` for the three loopback
 bridge ports. See `docs/desktop-import.md` for the protocol and the bridge's
 security model.
 
+## Use in AI: Hubble → a new ChatGPT, Claude, Gemini or Perplexity chat
+
+Started from Hubble's **Use in AI** dialog, never from here: the page posts
+`HUBBLE_AI_TRANSFER` (message, all-text alternative, uploaded files'
+originals as base64), the content script relays it, and the background
+(`src/ai-transfer.js`) opens or reuses a new-chat tab and runs the in-page
+steps (`src/ai-transfer-page.js`: probe → attach → insert → submit only when
+the person chose Send automatically), reporting progress back to that Hubble
+tab. Full design and what was verified where: [docs/use-in-ai.md](../docs/use-in-ai.md).
+
+**Permissions.** The four apps' origins are `optional_host_permissions` —
+nothing is asked at install. The first transfer to an app opens
+`permissions/grant.html`, which says what the access is for (a new chat, the
+message, the files; send only when chosen; other chats aren't read) and asks
+Chrome for that one app's origins when the person clicks **Allow**. Chrome only
+shows a permission prompt in answer to a click in an extension page, which is
+why it is a window and not a prompt from the Hubble page. Access can be
+removed in Chrome's extension settings; the next transfer asks again.
+
+**QA.** Automation can't answer Chrome's permission prompt: a QA copy of the
+extension lists the provider origins under `host_permissions` instead, which
+stands in for the person's grant. Put the QA Chrome profile on a short path:
+under a long one, IndexedDB fails to open on Windows.
+
 ## Changing the Hubble origin
 
 **Production:** usually nothing to edit. A Vercel production build bakes in

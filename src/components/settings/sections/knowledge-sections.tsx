@@ -34,6 +34,8 @@ const CAPABILITY_ROWS: { key: keyof ProviderCapabilities; label: string }[] = [
   { key: "exportImport", label: "Import an export" },
   { key: "paste", label: "Paste a conversation" },
   { key: "insert", label: "Type into the chat box" },
+  { key: "attachFiles", label: "Attach uploaded files" },
+  { key: "autoSubmit", label: "Send automatically (when chosen)" },
   { key: "connector", label: "AI connector (MCP)" },
   { key: "autoSync", label: "Keep in sync automatically" },
 ]
@@ -80,7 +82,7 @@ export function AiAppsSection() {
                 </th>
                 {AI_PROVIDER_IDS.map((id) => {
                   const capability = AI_PROVIDERS[id].capabilities[key]
-                  const detail = [capability.note, capability.supported ? VERIFIED_WORDS[capability.verified] : ""].filter(Boolean).join(" ")
+                  const detail = [capability.note, capability.supported ? VERIFIED_WORDS[capability.verified] : "", capability.liveCheck ?? ""].filter(Boolean).join(" ")
                   const state = capability.supported ? "Available" : "Not available"
                   const spoken = detail.startsWith(state) ? detail : `${state}. ${detail}`.trim()
                   return (

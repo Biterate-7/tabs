@@ -354,7 +354,7 @@ export function PrivacySection() {
         >
           <span />
         </FieldRow>
-        <FieldRow label="Using context in an AI chat" description="You choose what goes in and copy it yourself. The AI app receives only that text.">
+        <FieldRow label="Using context in an AI chat" description="You choose what goes in. Hubble for Chrome puts it in a new chat for you to review, or you copy it — it is sent only when you choose Send automatically. The AI app receives only that message and any files you attach.">
           <span />
         </FieldRow>
       </SectionStack>

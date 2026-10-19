@@ -201,7 +201,7 @@ function SearchHitRow({
       </button>
       <div className="mt-2 flex shrink-0 gap-0.5">
         {onUseInAi && (
-          <IconButton aria-label={`Use ${title} in an AI chat`} tooltip="Use in AI chat" onClick={onUseInAi}>
+          <IconButton aria-label={`Use ${title} in AI`} tooltip="Use in AI" onClick={onUseInAi}>
             <MessageSquareShare />
           </IconButton>
         )}

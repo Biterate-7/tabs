@@ -62,7 +62,7 @@ export function buildGlobalCommands(
       ? [
           {
             id: "memory-use-project",
-            label: `Use ${current.name} in AI chat`,
+            label: `Use ${current.name} in AI`,
             group: "Memory" as const,
             icon: MessageSquareShare,
             onSelect: actions.reuseCurrent,

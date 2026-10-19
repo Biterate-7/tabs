@@ -69,7 +69,7 @@ describe("ProjectHome", () => {
     expect(screen.getByText("Cuban Missile Crisis.", { exact: false })).toBeTruthy()
     expect(screen.getAllByRole("button", { name: /^Add/ }).length).toBeGreaterThan(0)
     // Nothing to reuse yet, so no "Use in AI chat".
-    expect(screen.queryByRole("button", { name: "Use in AI chat" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Use in AI" })).toBeNull()
     // An empty project has no activity to show yet.
     expect(screen.queryByRole("button", { name: /Recent activity/ })).toBeNull()
     expect(document.body.textContent).not.toMatch(/agent|Connect AI|command centre/i)
@@ -246,7 +246,7 @@ describe("ProjectHome", () => {
     const user = userEvent.setup()
     const workspace = project(["https://a.example/one"])
     const props = renderHome(workspace)
-    await user.click(screen.getByRole("button", { name: /^Use .* in an AI chat$/ }))
+    await user.click(screen.getByRole("button", { name: /^Use .* in AI$/ }))
     expect(props.memory.reuse).toHaveBeenCalledWith({ workspaceId: "w", refs: [{ kind: "source", tabId: workspace.tabs[0]!.id }] })
     await user.click(screen.getByRole("button", { name: /More actions for/ }))
     await user.click(await screen.findByRole("menuitem", { name: /^Remove/ }))

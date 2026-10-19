@@ -20,6 +20,13 @@ const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
 const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
 const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
 const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
+// Use in AI (src/ai-transfer.js; the page side is src/lib/ai-transfer/protocol.ts).
+const MSG_AI_TRANSFER = "HUBBLE_AI_TRANSFER";
+const MSG_AI_TRANSFER_PROGRESS = "HUBBLE_AI_TRANSFER_PROGRESS";
+const MSG_AI_TRANSFER_RESULT = "HUBBLE_AI_TRANSFER_RESULT";
+const MSG_AI_TRANSFER_HELLO = "HUBBLE_AI_TRANSFER_HELLO";
+const MSG_AI_TRANSFER_HELLO_RESULT = "HUBBLE_AI_TRANSFER_HELLO_RESULT";
+const AI_TRANSFER_PROTOCOL = 1;
 // Mirrors config.js PAGE_REQUEST_TIMEOUT_MS.
 const PAGE_REQUEST_TIMEOUT_MS = 15000;
 
@@ -386,6 +393,41 @@ onExtensionMessage((message, _sender, sendResponse) => {
     window.location.origin
   );
   return true;
+});
+
+// Use in AI: the page hands one transfer to the background and hears its
+// progress and result, matched by opId. A transport only — background.js
+// checks the request again and accepts it only from a Hubble tab. Nothing
+// here reads or logs what the transfer carries.
+onPageMessage((event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.source !== window) return;
+  const data = event.data;
+  if (!data || data.source !== MESSAGE_SOURCE) return;
+
+  if (data.type === MSG_AI_TRANSFER_HELLO) {
+    const requestId = typeof data.payload?.requestId === "string" ? data.payload.requestId.slice(0, 100) : null;
+    window.postMessage({ source: MESSAGE_SOURCE, type: MSG_AI_TRANSFER_HELLO_RESULT, payload: { requestId, protocol: AI_TRANSFER_PROTOCOL } }, window.location.origin);
+    return;
+  }
+
+  if (data.type !== MSG_AI_TRANSFER) return;
+  const opId = typeof data.payload?.opId === "string" ? data.payload.opId.slice(0, 100) : "";
+  if (!opId) return;
+  const answer = (payload) => window.postMessage({ source: MESSAGE_SOURCE, type: MSG_AI_TRANSFER_RESULT, payload }, window.location.origin);
+  chrome.runtime
+    .sendMessage({ type: MSG_AI_TRANSFER, payload: data.payload })
+    .then((response) => answer(response && typeof response === "object" ? { ...response, opId } : { opId, ok: false, error: "interrupted" }))
+    // The worker stopped (or the extension was reloaded) before it answered.
+    .catch(() => answer({ opId, ok: false, error: "interrupted" }));
+});
+
+onExtensionMessage((message) => {
+  if (message?.type !== MSG_AI_TRANSFER_PROGRESS) return undefined;
+  const { opId, state } = message.payload ?? {};
+  if (typeof opId !== "string" || typeof state !== "string") return undefined;
+  window.postMessage({ source: MESSAGE_SOURCE, type: MSG_AI_TRANSFER_PROGRESS, payload: { opId, state } }, window.location.origin);
+  return undefined;
 });
 
 log(alreadyRegistered ? "duplicate-copy-inert" : "message-listener-ready");
