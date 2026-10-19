@@ -172,10 +172,11 @@ const CHAIN_KEY_SEPARATOR = "\u0000";
 function buildChainOrder(
   tabs: Tab[],
   sections: Section[],
+  workspaceOf: WorkspaceLookup,
   anchorOf?: ChainAnchorOf
 ): (id: string) => string {
   const categoryOf = new Map<string, string>();
-  for (const tab of tabs) categoryOf.set(tab.id, resolveCategoryKey(tab, sections));
+  for (const tab of tabs) categoryOf.set(tab.id, resolveCategoryKey(tab, sections, workspaceOf));
 
   let clusterRank: Map<string, number> | null = null;
   if (anchorOf) {
@@ -235,7 +236,7 @@ export function buildGraphEdges(
   // Shared by every chained group below, so all five relationship types lay
   // their chains along the same category → domain → id ordering the layout is
   // itself built around. See chainEdges.
-  const chainOrder = buildChainOrder(tabs, sections, clusterAnchorOf);
+  const chainOrder = buildChainOrder(tabs, sections, workspaceOf, clusterAnchorOf);
 
   if (filters.domain) {
     const byDomain = new Map<string, string[]>();
@@ -269,7 +270,7 @@ export function buildGraphEdges(
     // boundary can never disagree about "same category."
     const byCategory = new Map<string, string[]>();
     for (const tab of tabs) {
-      const key = resolveCategoryKey(tab, sections);
+      const key = resolveCategoryKey(tab, sections, workspaceOf);
       const list = byCategory.get(key);
       if (list) list.push(tab.id);
       else byCategory.set(key, [tab.id]);
