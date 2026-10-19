@@ -263,11 +263,15 @@ describe("paletteFilter", () => {
         openSearch: noop,
         reuseCurrent: noop,
         capture: noop,
+        saveFromAi: noop,
       },
       { workspaces: [{ id: "w", name: "History IA", tabs: [], createdAt: 0, updatedAt: 0 }], currentId: "w" }
     )
     const ids = commands.map((command) => command.id)
-    expect(ids).toEqual(expect.arrayContaining(["go-home", "go-search", "go-graph", "memory-use-project", "capture-conversation", "capture-note", "capture-import"]))
+    expect(ids).toEqual(expect.arrayContaining(["go-home", "go-search", "go-graph", "memory-use-project", "save-from-ai", "capture-note", "capture-import"]))
+    // AI conversations come in through Hubble for Chrome, never pasted.
+    expect(ids).not.toContain("capture-conversation")
+    expect(commands.map((command) => command.label).join("\n")).not.toMatch(/paste/i)
     expect(commands.map((command) => `${command.id} ${command.label} ${(command.keywords ?? []).join(" ")}`).join("\n")).not.toMatch(/agent|command centre|runtime/i)
   })
 

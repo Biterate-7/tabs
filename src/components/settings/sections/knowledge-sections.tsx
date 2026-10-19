@@ -32,7 +32,6 @@ import type { Workspace } from "@/lib/workspace/types"
 const CAPABILITY_ROWS: { key: keyof ProviderCapabilities; label: string }[] = [
   { key: "pageCapture", label: "Save from the page" },
   { key: "exportImport", label: "Import an export" },
-  { key: "paste", label: "Paste a conversation" },
   { key: "insert", label: "Type into the chat box" },
   { key: "attachFiles", label: "Attach uploaded files" },
   { key: "autoSubmit", label: "Send automatically (when chosen)" },
@@ -109,7 +108,7 @@ export function AiAppsSection() {
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-meta text-tertiary">If saving from a page stops working, paste the conversation instead.</p>
+      <p className="mt-3 text-meta text-tertiary">If saving from a page stops working, reload the page and save again, or import the app&apos;s export.</p>
     </div>
   )
 }

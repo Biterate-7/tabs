@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AppWindow, ChevronDown, ClipboardPaste, FileInput, FileUp, Link2, Loader2, NotebookPen, Plus } from "lucide-react"
+import { AppWindow, ChevronDown, FileInput, FileUp, Link2, Loader2, MessageSquareText, NotebookPen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -32,7 +32,7 @@ function formatKeys(shortcut: string): string {
  * + Add — the one way in to a project.
  *
  *     + Add ▾
- *       Paste a conversation      (from any AI app)
+ *       AI conversation           (how: Save to Hubble in Hubble for Chrome)
  *       Write a note
  *       Import AI chats           (a ChatGPT or Claude export, Markdown, text)
  *       ─────
@@ -42,19 +42,22 @@ function formatKeys(shortcut: string): string {
  *
  * Links and tabs go through the same ingestion as everything else (the
  * shell's handleAddSources): the same duplicate rule, the same reading in
- * the background, the same toast with Undo. Conversations and notes go
- * through the capture dialog and the one conversation save
- * (lib/conversations/save.ts). Uploaded files go through the upload dialog
- * and the one file pipeline (hooks/use-file-uploads.ts). Saving the open conversation in an AI app is
- * Hubble for Chrome's job, from that page. Dragging a link or the address bar
- * onto the page still works too; it just isn't something anyone has to read
- * about first.
+ * the background, the same toast with Undo — and an AI conversation's
+ * address is refused there (planIngestion). Notes and export files go
+ * through the capture dialog; an export's conversations through the one
+ * conversation save (lib/conversations/save.ts). Uploaded files go through
+ * the upload dialog and the one file pipeline (hooks/use-file-uploads.ts).
+ * An AI conversation is saved by Hubble for Chrome, from its own page: "AI
+ * conversation" says how (SaveFromAiDialog). Dragging a link or the address
+ * bar onto the page still works too; it just isn't something anyone has to
+ * read about first.
  */
 export function AddMenu({
   subjectName,
   onAdd,
   onOpenLink,
   onCapture,
+  onSaveFromAi,
   onUpload,
   quickAdd,
   size = "lg",
@@ -64,8 +67,10 @@ export function AddMenu({
   onAdd: (inputs: ResourceInput[]) => IngestOutcome[]
   /** Opens the paste-a-link dialog (owned by the subject page, which also opens it from elsewhere). */
   onOpenLink: () => void
-  /** Opens the capture dialog (paste a conversation, write a note, import a file). Absent: those entries are not offered. */
+  /** Opens the capture dialog (write a note, import a file). Absent: those entries are not offered. */
   onCapture?: (mode: CaptureMode) => void
+  /** Opens how to save an AI conversation with Hubble for Chrome. Absent: not offered. */
+  onSaveFromAi?: () => void
   /** Opens the Upload files dialog. Absent: not offered. */
   onUpload?: () => void
   /** Present once Hubble for Chrome has said it is here (see use-extension-quick-add). */
@@ -85,11 +90,13 @@ export function AddMenu({
           }
         />
         <DropdownMenuContent align="end" className="min-w-52">
+          {onSaveFromAi && (
+            <DropdownMenuItem onClick={onSaveFromAi}>
+              <MessageSquareText /> AI conversation
+            </DropdownMenuItem>
+          )}
           {onCapture && (
             <>
-              <DropdownMenuItem onClick={() => onCapture("conversation")}>
-                <ClipboardPaste /> Paste a conversation
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onCapture("note")}>
                 <NotebookPen /> Write a note
               </DropdownMenuItem>
@@ -314,7 +321,7 @@ function BrowserTabsDialog({
                 onOpenLink()
               }}
             >
-              Add a link instead
+              Add links instead
             </Button>
           ) : null}
         </DialogFooter>

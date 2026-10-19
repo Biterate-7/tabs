@@ -1,12 +1,13 @@
 "use client"
 
 import { useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { CheckSquare, ChevronDown, ChevronLeft, ClipboardPaste, FileInput, FileText, FileUp, Link2, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Puzzle, Search, Sparkles, Trash2, X } from "lucide-react"
+import { CheckSquare, ChevronDown, ChevronLeft, FileInput, FileText, FileUp, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Search, Sparkles, Trash2, X } from "lucide-react"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { NoteCard } from "@/components/memory/note-card"
 import { NoteDialog } from "@/components/memory/note-dialog"
 import { ProviderBadge } from "@/components/memory/provider-mark"
+import { SaveFromAiCard, SaveFromAiDialog, SaveFromAiInvite } from "@/components/memory/save-from-ai"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
@@ -39,7 +40,6 @@ import type { ProjectNote } from "@/lib/notes/notes"
 import type { ResourceInput, ResourceOrigin } from "@/lib/resources/types"
 import type { ResourceActions } from "@/hooks/use-resource-processing"
 import type { UploadOutcome } from "@/hooks/use-file-uploads"
-import type { AiProviderId } from "@/lib/providers/registry"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -84,8 +84,8 @@ export type ProjectHomeProps = {
   /** Open a resource at an address Hubble built for it — a video at a moment. */
   onOpenSourceAt?: (tab: Tab, url: string) => void
   onUpdateBrief?: (brief: { description: string; focus: string }) => void
-  /** Opens the capture dialog: paste a conversation (optionally for a saved link), write a note, import a file. */
-  onCapture: (mode: CaptureMode, prefill?: { link?: string; provider?: AiProviderId }) => void
+  /** Opens the capture dialog: write a note, or import a file. AI conversations come in through Hubble for Chrome (SaveFromAiCard). */
+  onCapture: (mode: CaptureMode) => void
   /** Shown under the empty state, behind "Paste a list of tabs": the older dump-everything input. */
   emptyExtra?: ReactNode
   /**
@@ -135,6 +135,7 @@ export function ProjectHome(props: ProjectHomeProps) {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [saveFromAiOpen, setSaveFromAiOpen] = useState(false)
   // Arriving with an item to open (Search, Home): opened once per request — adjusting state during render, not in an effect.
   const [seenFocus, setSeenFocus] = useState<number | undefined>(undefined)
   const [focusTerms, setFocusTerms] = useState<readonly string[]>([])
@@ -205,7 +206,6 @@ export function ProjectHome(props: ProjectHomeProps) {
   const detailNote: ProjectNote | null = openNote ? (noteById.get(openNote.noteId) ?? null) : null
 
   const reuse = (refs: readonly KnowledgeItemRef[]) => memory?.reuse({ workspaceId: workspace.id, refs })
-  const pasteFor = (tab: Tab) => props.onCapture("conversation", { link: tab.url, ...(tab.resource?.meta?.provider ? { provider: tab.resource.meta.provider } : {}) })
   const fileActions = {
     onOpen: (note: ProjectNote) => setOpenNote({ noteId: note.id }),
     ...(memory ? { onUseInAi: (note: ProjectNote) => reuse([{ kind: "note", noteId: note.id }]) } : {}),
@@ -216,7 +216,6 @@ export function ProjectHome(props: ProjectHomeProps) {
   const cardActions = {
     onOpen: props.onOpenSource,
     ...(memory ? { onUseInAi: (tab: Tab) => reuse([{ kind: "source", tabId: tab.id }]) } : {}),
-    onPasteConversation: pasteFor,
     onRename: (tab: Tab) => setDetails({ tabId: tab.id, rename: true }),
     onRemove: (tab: Tab) => props.onRemoveSources([tab.id]),
     onRetry: (tab: Tab) => resources.retry(workspace.id, tab.id),
@@ -254,6 +253,7 @@ export function ProjectHome(props: ProjectHomeProps) {
       onAdd={(inputs) => props.onAddSources(inputs, "manual")}
       onOpenLink={() => setAddOpen(true)}
       onCapture={(mode) => props.onCapture(mode)}
+      onSaveFromAi={() => setSaveFromAiOpen(true)}
       {...(props.files ? { onUpload: () => setUploadOpen(true) } : {})}
       size={size}
       variant={variant}
@@ -325,15 +325,10 @@ export function ProjectHome(props: ProjectHomeProps) {
       ) : items.length === 0 ? (
         <div className="flex flex-col items-start gap-4 rounded-md border border-dashed border-strong px-5 py-8" data-project-empty>
           <p className="text-h2 text-foreground">Nothing saved yet</p>
+          <SaveFromAiCard />
           <div className="flex flex-wrap gap-2" data-capture-invite>
-            <Button type="button" variant="secondary" onClick={() => props.onCapture("conversation")}>
-              <ClipboardPaste /> Paste a conversation
-            </Button>
             <Button type="button" variant="secondary" onClick={() => props.onCapture("note")}>
               <NotebookPen /> Write a note
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
-              <Link2 /> Add a link
             </Button>
             {props.files && (
               <Button type="button" variant="secondary" onClick={() => setUploadOpen(true)}>
@@ -341,13 +336,6 @@ export function ProjectHome(props: ProjectHomeProps) {
               </Button>
             )}
           </div>
-          <p className="flex flex-wrap items-center gap-1.5 text-meta text-tertiary">
-            <Puzzle aria-hidden className="size-3.5" /> Or save from
-            {(["chatgpt", "claude", "gemini", "perplexity"] as const).map((provider) => (
-              <ProviderBadge key={provider} provider={provider} />
-            ))}
-            with Hubble for Chrome
-          </p>
           {props.quickAdd && (
             <p className="hidden text-meta text-tertiary md:block" data-add-hint data-quick-add-target={projectName}>
               In Chrome: right-click a tab → Add to {projectName}
@@ -503,6 +491,7 @@ export function ProjectHome(props: ProjectHomeProps) {
       )}
 
       <AddSourceDialog open={addOpen} onOpenChange={setAddOpen} projectName={projectName} onAdd={(inputs) => props.onAddSources(inputs, "manual")} />
+      <SaveFromAiDialog open={saveFromAiOpen} onOpenChange={setSaveFromAiOpen} />
       {detailTab?.resource && (
         <SourceDetailsDialog
           tab={detailTab}
@@ -514,10 +503,6 @@ export function ProjectHome(props: ProjectHomeProps) {
           onOpen={props.onOpenSource}
           onAttachPdf={async (tab, file) => void (await resources.attachPdf(workspace.id, tab.id, file))}
           onAttachTranscript={(tab, text) => resources.attachTranscript(workspace.id, tab.id, text)}
-          onPasteConversation={(tab) => {
-            setDetails(null)
-            pasteFor(tab)
-          }}
           {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
           {...(details?.seek ? { seek: details.seek } : {})}
           {...(details?.turn !== undefined ? { focusTurn: details.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}
@@ -577,20 +562,15 @@ export function ProjectHome(props: ProjectHomeProps) {
 
 /**
  * A project with things in it but no AI conversation yet: one quiet line
- * with the two ways to bring one in. Saving from the AI app itself is
- * Hubble for Chrome's, and is offered there.
+ * with the ways to bring one in — Hubble for Chrome, or an export file.
  */
 function CaptureInvite({ onCapture }: { onCapture: ProjectHomeProps["onCapture"] }) {
   return (
-    <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-body-sm text-muted-foreground" data-capture-invite>
-      <span className="mr-1">No AI conversations yet</span>
-      <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("conversation")}>
-        <ClipboardPaste /> Paste
-      </Button>
+    <SaveFromAiInvite>
       <Button type="button" size="xs" variant="ghost" onClick={() => onCapture("import")}>
         <FileInput /> Import
       </Button>
-    </p>
+    </SaveFromAiInvite>
   )
 }
 

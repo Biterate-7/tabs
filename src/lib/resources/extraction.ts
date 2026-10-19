@@ -89,3 +89,14 @@ export function isExtractionResponse(value: unknown): value is ExtractionRespons
   if (record.ok === false) return Boolean(record.error && typeof record.error === "object");
   return record.ok === true && typeof record.kind === "string" && (record.status === "ready" || record.status === "partial") && typeof record.finalUrl === "string";
 }
+
+/**
+ * Why a saved AI conversation has no text: Hubble never reads one from its
+ * address — that would need the person's account — so its text arrives only
+ * from the open page (Hubble for Chrome) or an export file.
+ */
+export const CONVERSATION_NEEDS_CAPTURE: ResourceError = {
+  code: "needs_capture",
+  message: "Saved as a link only. Hubble can't read an AI conversation from its address — open it and use Save to Hubble in Hubble for Chrome.",
+  retryable: false,
+};

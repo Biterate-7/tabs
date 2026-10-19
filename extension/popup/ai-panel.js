@@ -21,11 +21,11 @@ import { readStoredTarget } from "../src/quick-add.js";
 export const CAPTURE_ERRORS = {
   "not-supported": "Hubble can save conversations from ChatGPT, Claude, Gemini and Perplexity.",
   "not-a-conversation": "Open a conversation to save it — this page isn't one.",
-  "no-messages": "Hubble couldn't find the messages on this page (the app may have changed its layout). Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
+  "no-messages": "Hubble couldn't find the messages on this page (the app may have changed its layout). Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
   "empty-conversation": "There are no messages in this conversation yet. If it's still loading, wait a moment and try again.",
-  empty: "Hubble couldn't find the messages on this page. Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
-  "page-unreadable": "Chrome didn't let Hubble read this page. Reload it and try again, or paste the conversation in Hubble.",
-  "read-failed": "Hubble couldn't read this conversation's layout. Copy the conversation and paste it in Hubble: Add → Paste a conversation.",
+  empty: "Hubble couldn't find the messages on this page. Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
+  "page-unreadable": "Chrome didn't let Hubble read this page. Reload it and try again.",
+  "read-failed": "Hubble couldn't read this conversation's layout. Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
   "project-missing": "That project isn't in Hubble any more. Choose another one.",
   "storage-failed": "Hubble couldn't keep the conversation on this device, so nothing was saved. Try again.",
   invalid: "That didn't come through as a conversation. Reload the page and try again.",
@@ -57,7 +57,7 @@ export function describeCapture(result, projectName) {
   const cut = result?.truncated ? " · very long, so only the first part was kept" : "";
   // A long Claude or Perplexity chat keeps only the messages near the screen on the page, wherever it is scrolled.
   const older = result?.partial
-    ? ". Only the part of this chat loaded on the page was saved — long chats load a few messages at a time. To keep all of it, import the app's data export or paste the conversation in Hubble."
+    ? ". Only the part of this chat loaded on the page was saved — long chats load a few messages at a time. To keep all of it, import the app's data export in Hubble: Add → Import AI chats."
     : result?.olderNotLoaded
       ? ". Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them."
       : "";

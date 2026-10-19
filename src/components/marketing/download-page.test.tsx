@@ -171,8 +171,8 @@ describe("/download content", () => {
 
   it("explains web vs desktop honestly, and does not imply projects carry over", () => {
     render(<DownloadPage />)
-    // Saving from an AI app's page is Hubble for Chrome's, which cannot reach the desktop app.
-    expect(screen.getByText(/AI conversations arrive as links,\s+and you paste or import their text/)).toBeTruthy()
+    // Saving from an AI app's page is Hubble for Chrome's, which reaches the desktop app while it is open.
+    expect(screen.getByText(/saves AI conversations to\s+it while it's open/)).toBeTruthy()
     expect(screen.getByText(/keeps its own projects on your computer, separate from your browser/)).toBeTruthy()
     expect(screen.getByText(/Nothing carries over from this website/)).toBeTruthy()
     // The page collects nothing.

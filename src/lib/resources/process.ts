@@ -1,5 +1,5 @@
 import { publicApiUrl } from "@/lib/platform/api-base";
-import { EXTRACTION_ERRORS, isExtractionResponse } from "./extraction";
+import { CONVERSATION_NEEDS_CAPTURE, EXTRACTION_ERRORS, isExtractionResponse } from "./extraction";
 import { extractPdfText, PdfUnreadableError } from "./pdf";
 import { cleanLanguageTag, normalizeTranscript, parseTranscript } from "./transcript";
 import type { ExtractionRequest, ExtractionResponse } from "./extraction";
@@ -106,17 +106,6 @@ function settle(resource: TabResource, patch: Partial<TabResource>, now: number)
   if (next.status === "ready") delete next.error;
   return next;
 }
-
-/**
- * Why a saved AI conversation has no text: Hubble never reads one from its
- * address — that would need the person's account — so its text arrives only
- * from the open page (Hubble for Chrome), an export file, or a paste.
- */
-export const CONVERSATION_NEEDS_CAPTURE: ResourceError = {
-  code: "needs_capture",
-  message: "Saved as a link only. Hubble can't read an AI conversation from its address — open it and use Save to Hubble in Hubble for Chrome, or paste it.",
-  retryable: false,
-};
 
 export async function processSource(workspaceId: string, tab: Tab, deps: ProcessDeps): Promise<ProcessResult> {
   const resource = tab.resource!;

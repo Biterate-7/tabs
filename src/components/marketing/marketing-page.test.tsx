@@ -33,8 +33,9 @@ describe("MarketingPage", () => {
     const cards = Object.fromEntries([...row.querySelectorAll("li")].map((li) => [li.querySelector("li > span:first-child > span:last-child")!.textContent, li.textContent]))
     expect(cards.ChatGPT).toContain("Save from the page · Import export")
     expect(cards.Claude).toContain("Save from the page · Import export")
-    expect(cards.Gemini).toContain("Save from the page · Paste")
-    expect(cards.Perplexity).toContain("Save from the page · Paste")
+    expect(cards.Gemini).toContain("Save from the page")
+    expect(cards.Perplexity).toContain("Save from the page")
+    expect(row.textContent).not.toMatch(/paste/i)
     expect(document.body.textContent).not.toMatch(/\bsync(s|ed|ing)? (automatically|your (chats|conversations))/i)
   })
 

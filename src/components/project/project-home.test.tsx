@@ -73,16 +73,55 @@ describe("ProjectHome", () => {
     // An empty project has no activity to show yet.
     expect(screen.queryByRole("button", { name: /Recent activity/ })).toBeNull()
     expect(document.body.textContent).not.toMatch(/agent|Connect AI|command centre/i)
-    await user.click(screen.getByRole("button", { name: "Paste a conversation" }))
-    expect(props.onCapture).toHaveBeenCalledWith("conversation")
+    // AI conversations come in through Hubble for Chrome: no pasting one, no adding its link.
+    expect(screen.queryByRole("button", { name: /paste/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /add a link/i })).toBeNull()
+    const cta = document.querySelector<HTMLElement>("[data-project-empty] [data-save-from-ai]")!
+    expect(cta.getAttribute("data-save-from-ai")).toBe("install")
+    expect(within(cta).getByText("Bring your AI conversations into Hubble")).toBeTruthy()
+    expect(within(cta).getByText("Save conversations from your supported AI tools directly to Hubble with the Chrome extension.")).toBeTruthy()
+    expect(within(cta).getByRole("button", { name: "Get the Chrome Extension" })).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "Write a note" }))
     expect(props.onCapture).toHaveBeenCalledWith("note")
+  })
+
+  it("+ Add → AI conversation says how Hubble for Chrome saves one, instead of a paste box", async () => {
+    const user = userEvent.setup()
+    const props = renderHome(project())
+    await user.click(document.querySelector<HTMLElement>("[data-add-menu]")!)
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim())
+    expect(items).toContain("AI conversation")
+    expect(items.join(" ")).not.toMatch(/paste/i)
+    await user.click(screen.getByRole("menuitem", { name: "AI conversation" }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByRole("heading", { name: "Bring your AI conversations into Hubble" })).toBeTruthy()
+    expect(within(dialog).getByRole("list", { name: "How it works" }).querySelectorAll("li")).toHaveLength(4)
+    expect(props.onCapture).not.toHaveBeenCalled()
+  })
+
+  it("a conversation saved as a link only points at Hubble for Chrome, not a paste", async () => {
+    const user = userEvent.setup()
+    let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [{ ...project(), tabs: [] }] }
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" }], "extension", NOW)!.store
+    const workspace = store.workspaces[0]!
+    workspace.tabs = workspace.tabs.map((tab) => ({ ...tab, resource: { ...tab.resource!, status: "partial", error: { code: "needs_capture", message: "Saved as a link only. … or paste it.", retryable: false } } }))
+    renderHome(workspace)
+    const card = document.querySelector<HTMLElement>("[data-source-card]")!
+    expect(within(card).queryByRole("button", { name: /paste/i })).toBeNull()
+    // Older records kept words that offered a paste; they read as today's.
+    expect(card.textContent).not.toMatch(/paste/i)
+    expect(card.textContent).toContain("Save to Hubble in Hubble for Chrome")
+    await user.click(within(card).getByRole("button", { name: "Causes of the crisis" }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).queryByRole("button", { name: /paste/i })).toBeNull()
+    expect(within(dialog).getByRole("button", { name: "Get the Chrome Extension" })).toBeTruthy()
+    expect(within(dialog).getByRole("button", { name: "Open in ChatGPT" })).toBeTruthy()
   })
 
   it("counts what it knows by kind, and filters to AI conversations", async () => {
     const user = userEvent.setup()
     let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [{ ...project(), tabs: [] }] }
-    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" }, { url: "https://a.example/one", title: "An article" }], "manual", NOW)!.store
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" }, { url: "https://a.example/one", title: "An article" }], "extension", NOW)!.store
     const workspace = store.workspaces[0]!
     workspace.notes = [{ id: "n1", kind: "note", title: "My thesis", origin: "manual", createdAt: NOW, updatedAt: NOW, contentHash: "h", chars: 10 }]
     renderHome(workspace)

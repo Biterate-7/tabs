@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, type FormEvent } from "react"
-import { AlertCircle, CheckCircle2, FileUp, Info } from "lucide-react"
+import { AlertCircle, CheckCircle2, FileUp } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,13 +11,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { parseConversationText } from "@/lib/conversations/parse-text"
 import { cleanLine, titleFromText } from "@/lib/conversations/clean"
 import { IMPORT_FILE_MESSAGES, readImportFile } from "@/lib/conversations/import-file"
-import { AI_PROVIDERS, AI_PROVIDER_IDS, aiProviderName, conversationRefOf, isAiProviderId } from "@/lib/providers/registry"
+import { AI_PROVIDERS, AI_PROVIDER_IDS, aiProviderName, isAiProviderId } from "@/lib/providers/registry"
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
 import type { ConversationInput } from "@/lib/conversations/types"
 import type { NoteDraft } from "@/lib/notes/compose"
 import type { AiProviderId } from "@/lib/providers/registry"
 
-export type CaptureMode = "conversation" | "note" | "import"
+export type CaptureMode = "note" | "import"
 
 /** What saving a batch of conversations did — every count real, nothing rounded up to success. */
 export type ConversationSaveSummary = {
@@ -34,12 +34,13 @@ export type NoteSaveResult = { ok: true; duplicate: boolean } | { ok: false; mes
 const NOT_FROM_AI = "none"
 
 /**
- * Bringing knowledge in by hand — for everything Hubble for Chrome can't
- * reach, or a person would rather paste:
+ * Bringing knowledge in by hand:
  *
- *   Paste a conversation   from any AI app; split into turns when it says who spoke
  *   Write a note           their own words, or a passage they want to keep
  *   Import AI chats        a ChatGPT or Claude export (conversations.json), or Markdown/text
+ *
+ * An AI conversation on screen is saved by Hubble for Chrome, from its own
+ * page (SaveFromAiCard) — there is no pasting one in.
  *
  * Every path previews what will be saved before it is, and reports what
  * actually happened after — added, updated, already there, or why not.
@@ -48,8 +49,7 @@ export function CaptureDialog({
   open,
   onOpenChange,
   projectName,
-  initialMode = "conversation",
-  prefill,
+  initialMode = "note",
   onSaveConversations,
   onSaveNote,
 }: {
@@ -57,8 +57,6 @@ export function CaptureDialog({
   onOpenChange: (open: boolean) => void
   projectName: string
   initialMode?: CaptureMode
-  /** For a conversation saved as a link only: its address and app, so the pasted text fills that item in. */
-  prefill?: { link?: string; provider?: AiProviderId }
   onSaveConversations: (inputs: ConversationInput[]) => Promise<ConversationSaveSummary>
   onSaveNote: (draft: NoteDraft) => Promise<NoteSaveResult>
 }) {
@@ -67,9 +65,7 @@ export function CaptureDialog({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Conversation
-  const [provider, setProvider] = useState<AiProviderId>(prefill?.provider ?? "chatgpt")
-  const [link, setLink] = useState(prefill?.link ?? "")
+  const [link, setLink] = useState("")
   const [title, setTitle] = useState("")
   const [text, setText] = useState("")
   // Note
@@ -90,29 +86,25 @@ export function CaptureDialog({
     setNoteFrom(NOT_FROM_AI)
   }
 
-  const linkRef = link.trim() ? conversationRefOf(link.trim()) : undefined
-  const linkProblem = link.trim() && !linkRef ? `That isn't a link to one ${aiProviderName(provider)} conversation. Leave it empty, or paste the conversation's own address.` : undefined
-  const effectiveProvider: AiProviderId = linkRef?.provider ?? provider
-  const parsed = useMemo(() => (mode === "conversation" || imported ? parseConversationText(imported?.text ?? text) : undefined), [mode, imported, text])
+  const parsed = useMemo(() => (imported ? parseConversationText(imported.text) : undefined), [imported])
 
-  function conversationInput(source: string, fileName?: string, from: AiProviderId = effectiveProvider): ConversationInput | undefined {
+  function conversationInput(source: string, fileName: string, from: AiProviderId): ConversationInput | undefined {
     const result = parseConversationText(source)
     if (result.turns.length === 0 && !result.text) return undefined
     const firstText = result.turns[0]?.text ?? result.text ?? ""
     return {
       provider: from,
-      title: cleanLine(title) || (fileName ? cleanLine(fileName.replace(/\.(md|markdown|txt)$/i, "")) : "") || titleFromText(firstText, `${aiProviderName(from)} conversation`),
-      ...(linkRef ? { url: linkRef.url, conversationId: linkRef.conversationId } : {}),
+      title: cleanLine(fileName.replace(/\.(md|markdown|txt)$/i, "")) || titleFromText(firstText, `${aiProviderName(from)} conversation`),
       turns: result.turns,
       ...(result.text ? { text: result.text } : {}),
       method: "paste",
     }
   }
 
-  async function saveConversation(source: string, fileName?: string, from?: AiProviderId) {
+  async function saveConversation(source: string, fileName: string, from: AiProviderId) {
     const input = conversationInput(source, fileName, from)
     if (!input) {
-      setError("There's nothing to save — paste the conversation first.")
+      setError("There's nothing to save in that file.")
       return
     }
     setBusy(true)
@@ -186,13 +178,7 @@ export function CaptureDialog({
   function submit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
-    if (mode === "conversation") {
-      if (linkProblem) {
-        setError(linkProblem)
-        return
-      }
-      void saveConversation(text)
-    } else if (mode === "note") void saveNote(text)
+    if (mode === "note") void saveNote(text)
     else if (imported) {
       if (noteFrom === NOT_FROM_AI) void saveNote(imported.text, imported.fileName)
       else if (isAiProviderId(noteFrom)) void saveConversation(imported.text, imported.fileName, noteFrom)
@@ -224,7 +210,6 @@ export function CaptureDialog({
               if (next === "import") setNoteFrom("chatgpt")
             }}
             options={[
-              { value: "conversation", label: "Paste a conversation" },
               { value: "note", label: "Write a note" },
               { value: "import", label: "Import AI chats" },
             ]}
@@ -234,39 +219,6 @@ export function CaptureDialog({
             <p role="status" className="flex items-start gap-2 rounded-md border border-subtle bg-card p-3 text-body-sm text-foreground">
               <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> {done}
             </p>
-          ) : mode === "conversation" ? (
-            <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                  From
-                  <Select value={effectiveProvider} onValueChange={(value) => isAiProviderId(value) && setProvider(value)} options={providerOptions} />
-                </label>
-                <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                  <span>
-                    Link <span className="text-tertiary">· optional</span>
-                  </span>
-                  <Input value={link} onChange={(event) => setLink(event.target.value)} placeholder={`${AI_PROVIDERS[effectiveProvider].homeUrl}…`} inputMode="url" />
-                </label>
-              </div>
-              <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                <span>
-                  Title <span className="text-tertiary">· optional</span>
-                </span>
-                <Input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} />
-              </label>
-              <label className="flex flex-col gap-1 text-meta text-muted-foreground">
-                Conversation
-                <Textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} className="max-h-[45dvh] min-h-48 overflow-y-auto text-body-sm" placeholder={"You: …\nChatGPT: …"} />
-              </label>
-              {text.trim() && parsed && (
-                <p className="flex items-start gap-1.5 text-meta text-muted-foreground" data-parse-preview>
-                  <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  {parsed.structured
-                    ? `${parsed.turns.length} turns: ${parsed.turns.filter((turn) => turn.role === "user").length} from you, ${parsed.turns.filter((turn) => turn.role === "assistant").length} from ${aiProviderName(effectiveProvider)}`
-                    : `No "You:" / "${aiProviderName(effectiveProvider)}:" labels — saved as one block of text`}
-                </p>
-              )}
-            </>
           ) : mode === "note" ? (
             <>
               <div className="grid gap-2 sm:grid-cols-2">

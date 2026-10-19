@@ -22,6 +22,9 @@ export function inputsFromText(text: string): ResourceInput[] {
   return out
 }
 
+/** Why an AI conversation's address wasn't added by hand (see planIngestion). */
+export const CONVERSATION_LINK_WORDS = "AI conversations are saved from the chat itself, with Save to Hubble in Hubble for Chrome"
+
 export function outcomeWords(outcome: IngestOutcome, projectName: string): string {
   switch (outcome.status) {
     case "added":
@@ -31,7 +34,11 @@ export function outcomeWords(outcome: IngestOutcome, projectName: string): strin
     case "duplicate":
       return `Already in ${projectName}`
     case "invalid":
-      return outcome.reason === "unsupported-scheme" ? "Only web pages, PDFs and videos online can be added" : "That isn't a web address"
+      return outcome.reason === "conversation-link"
+        ? CONVERSATION_LINK_WORDS
+        : outcome.reason === "unsupported-scheme"
+          ? "Only web pages, PDFs and videos online can be added"
+          : "That isn't a web address"
   }
 }
 
@@ -107,8 +114,8 @@ export function AddSourceDialog({
         ) : (
           <form onSubmit={submit}>
             <DialogHeader>
-              <DialogTitle>Add a link</DialogTitle>
-              <DialogDescription>Web pages, PDFs or YouTube videos — one per line.</DialogDescription>
+              <DialogTitle>Add links</DialogTitle>
+              <DialogDescription>Web pages, PDFs or YouTube videos — one per line. AI conversations are saved with Hubble for Chrome.</DialogDescription>
             </DialogHeader>
             <label htmlFor="add-source-urls" className="sr-only">
               Addresses to add

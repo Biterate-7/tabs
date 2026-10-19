@@ -56,8 +56,6 @@ export type ProviderCapabilities = {
   pageCapture: ProviderCapability;
   /** Import the provider's own data-export file. */
   exportImport: ProviderCapability;
-  /** Paste a conversation or excerpt into Hubble. */
-  paste: ProviderCapability;
   /** Put chosen Hubble context into the provider's message box (Use in AI, and the extension popup). */
   insert: ProviderCapability;
   /** Attach an uploaded file's original (a PDF, a Word document…) to the message, as the person would. */
@@ -103,12 +101,6 @@ export type AiProvider = {
   capabilities: ProviderCapabilities;
 };
 
-const PASTE: ProviderCapability = {
-  supported: true,
-  verified: "fixture",
-  note: "Paste the conversation (or part of it) and Hubble saves it as text, split into turns when it can tell who said what.",
-};
-
 const NO_SYNC: ProviderCapability = {
   supported: false,
   verified: "none",
@@ -144,7 +136,6 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
         verified: "fixture",
         note: "Import conversations.json from ChatGPT's own data export. Each conversation becomes one saved conversation, linked to its original address.",
       },
-      paste: PASTE,
       insert: { supported: true, verified: "fixture", note: INSERT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} typed into a new chat (its plain message box, signed out) and read back; a draft in an open tab was left alone and a new tab used instead.` },
       attachFiles: { supported: true, verified: "fixture", note: ATTACH_NOTE, liveCheck: `${LIVE_SIGNED_OUT} ChatGPT took the file from its file input and asked to log in to upload, so Hubble reported it not attached and typed the text version. Attaching while signed in has not been checked.` },
       autoSubmit: { supported: true, verified: "fixture", note: SUBMIT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} sent a test message and saw the message box empty and the chat open.` },
@@ -173,7 +164,6 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
         verified: "fixture",
         note: "Import conversations.json from Claude's own data export. Each conversation becomes one saved conversation, linked to its original address.",
       },
-      paste: PASTE,
       insert: { supported: true, verified: "fixture", note: INSERT_NOTE, liveCheck: "Not checked on the live site: signed out, claude.ai sends a new chat to its sign-in page (with a human check Hubble never touches), which Hubble reports as sign-in required." },
       attachFiles: { supported: true, verified: "fixture", note: ATTACH_NOTE },
       autoSubmit: { supported: true, verified: "fixture", note: SUBMIT_NOTE },
@@ -199,9 +189,8 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
       exportImport: {
         supported: false,
         verified: "none",
-        note: "Not available: Google Takeout exports Gemini activity, not conversations Hubble can read reliably. Save each conversation from the page, or paste it.",
+        note: "Not available: Google Takeout exports Gemini activity, not conversations Hubble can read reliably. Save each conversation from the page with Hubble for Chrome.",
       },
-      paste: PASTE,
       insert: { supported: true, verified: "fixture", note: INSERT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} typed into a new chat (Quill editor) with its line breaks, and read back.` },
       attachFiles: { supported: true, verified: "fixture", note: ATTACH_NOTE, liveCheck: `${LIVE_SIGNED_OUT} Gemini did not show a pasted or dropped file, so Hubble reported it not attached and typed the text version. Attaching while signed in has not been checked.` },
       autoSubmit: { supported: true, verified: "fixture", note: SUBMIT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} sent a test message and saw the message box empty.` },
@@ -227,9 +216,8 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
       exportImport: {
         supported: false,
         verified: "none",
-        note: "Not available: Perplexity has no account export. A thread's own Export → Markdown can be imported as a Markdown file or pasted.",
+        note: "Not available: Perplexity has no account export. A thread's own Export → Markdown can be imported as a Markdown file.",
       },
-      paste: PASTE,
       insert: { supported: true, verified: "fixture", note: INSERT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} typed into a new thread (Lexical editor) with its line breaks, and read back.` },
       attachFiles: { supported: true, verified: "fixture", note: ATTACH_NOTE, liveCheck: `${LIVE_SIGNED_OUT} Perplexity took the file from its file input and asked to sign in to upload, so Hubble reported it not attached and typed the text version. Attaching while signed in has not been checked.` },
       autoSubmit: { supported: true, verified: "fixture", note: SUBMIT_NOTE, liveCheck: `${LIVE_SIGNED_OUT} sent a test message and saw the thread open.` },

@@ -125,7 +125,7 @@ describe("searching a project's videos", () => {
   it("respects the kind filter: AI conversations leaves the videos and the web page out", async () => {
     const workspace = await subject()
     let store: WorkspaceStore = { version: 1, currentId: "w", workspaces: [workspace] }
-    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/energy-chat-1", title: "Energy questions" }], "manual", NOW)!.store
+    store = ingestResources(store, "w", [{ url: "https://chatgpt.com/c/energy-chat-1", title: "Energy questions" }], "extension", NOW)!.store
     const chat = store.workspaces[0]!.tabs.at(-1)!
     const summary = await putContent("w", chat.id, {
       kind: "conversation",

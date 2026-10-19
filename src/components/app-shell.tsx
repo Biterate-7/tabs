@@ -50,6 +50,8 @@ import type { NoteActions } from "@/components/project/project-home"
 import { ReuseDialog } from "@/components/memory/reuse-dialog"
 import { CaptureDialog } from "@/components/memory/capture-dialog"
 import type { CaptureMode, ConversationSaveSummary, NoteSaveResult } from "@/components/memory/capture-dialog"
+import { SaveFromAiDialog } from "@/components/memory/save-from-ai"
+import { CONVERSATION_LINK_WORDS } from "@/components/project/add-source-dialog"
 import { MemoryActionsProvider } from "@/components/memory/memory-actions"
 import type { MemoryActions, MemorySelection } from "@/components/memory/memory-actions"
 import { applyConversationSave, planConversationSave } from "@/lib/conversations/save"
@@ -63,7 +65,6 @@ import type { ConversationInput } from "@/lib/conversations/types"
 import type { ConversationSave } from "@/lib/conversations/save"
 import type { NoteDraft } from "@/lib/notes/compose"
 import type { KnowledgeItemRef } from "@/lib/memory/items"
-import type { AiProviderId } from "@/lib/providers/registry"
 import { ProjectActionsProvider } from "@/components/project/project-actions"
 import type { ProjectActions } from "@/components/project/project-actions"
 import { TabInput } from "@/components/tab-input"
@@ -223,8 +224,10 @@ export function AppShell() {
 
   /** "Use in AI chat": the context builder, open on one project with these items chosen. */
   const [reuse, setReuse] = useState<{ workspaceId: string; refs: KnowledgeItemRef[]; nonce: number } | null>(null)
-  /** The capture dialog: paste a conversation, write a note, import a file — into one project. */
-  const [capture, setCapture] = useState<{ workspaceId: string; mode: CaptureMode; nonce: number; prefill?: { link?: string; provider?: AiProviderId } } | null>(null)
+  /** The capture dialog: write a note, import a file — into one project. */
+  const [capture, setCapture] = useState<{ workspaceId: string; mode: CaptureMode; nonce: number } | null>(null)
+  /** How to save AI conversations with Hubble for Chrome, from the command palette. */
+  const [saveFromAiOpen, setSaveFromAiOpen] = useState(false)
   /** What the Search page opens with (a query from the palette, a project's scope). */
   const [searchStart, setSearchStart] = useState<{ query: string; workspaceId?: string; nonce: number }>({ query: "", nonce: 0 })
   // Each entry to Sessions remounts it; `save` opens "Save current session" there (Home's first-session prompt).
@@ -1212,9 +1215,11 @@ export function AppShell() {
     const invalid = plan.outcomes.find((outcome) => outcome.status === "invalid")
     toast.error(counts.invalid === 1 ? "That item couldn't be added." : `${counts.invalid} items couldn't be added.`, {
       description:
-        invalid?.status === "invalid" && invalid.reason === "unsupported-scheme"
-          ? "Only web pages, PDFs and videos with a web address can be added."
-          : "Drop links, tabs or the address bar from Chrome, or paste web addresses.",
+        invalid?.status === "invalid" && invalid.reason === "conversation-link"
+          ? `${CONVERSATION_LINK_WORDS}.`
+          : invalid?.status === "invalid" && invalid.reason === "unsupported-scheme"
+            ? "Only web pages, PDFs and videos with a web address can be added."
+            : "Drop links, tabs or the address bar from Chrome, or paste web addresses.",
     })
   }
 
@@ -1312,7 +1317,7 @@ export function AppShell() {
         onOpenSource={(tab) => handleOpenSource(workspace.id, tab.id)}
         onOpenSourceAt={(tab, url) => handleOpenSource(workspace.id, tab.id, url)}
         onUpdateBrief={(brief) => handleUpdateWorkspaceBrief(workspace.id, brief)}
-        onCapture={(mode, prefill) => openCapture(workspace.id, mode, prefill)}
+        onCapture={(mode) => openCapture(workspace.id, mode)}
         {...(focus ? { focusItem: { ref: focus.ref, nonce: focus.nonce, ...(focus.turn !== undefined ? { turn: focus.turn } : {}), ...(focus.terms ? { terms: focus.terms } : {}) } } : {})}
         {...(quickAdd ? { quickAdd } : {})}
         {...(emptyExtra ? { emptyExtra } : {})}
@@ -1479,8 +1484,8 @@ export function AppShell() {
     })
   }
 
-  function openCapture(workspaceId: string, mode: CaptureMode, prefill?: { link?: string; provider?: AiProviderId }) {
-    setCapture({ workspaceId, mode, nonce: Date.now(), ...(prefill ? { prefill } : {}) })
+  function openCapture(workspaceId: string, mode: CaptureMode) {
+    setCapture({ workspaceId, mode, nonce: Date.now() })
   }
 
   /** "Use in AI chat" from anywhere: the chosen things, as items of one project. Collections become their saved tabs. */
@@ -1986,6 +1991,7 @@ export function AppShell() {
           organizeOpenTabs: () => setOrganizeOpenTabs(true),
           reuseCurrent: () => openReuse({ workspaceId: currentWorkspace.id }),
           capture: (mode) => openCapture(currentWorkspace.id, mode),
+          saveFromAi: () => setSaveFromAiOpen(true),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
@@ -2059,11 +2065,11 @@ export function AppShell() {
           onOpenChange={(open) => !open && setCapture(null)}
           projectName={subjectName(captureWorkspace)}
           initialMode={capture.mode}
-          {...(capture.prefill ? { prefill: capture.prefill } : {})}
           onSaveConversations={(inputs) => saveConversations(captureWorkspace.id, inputs)}
           onSaveNote={(draft) => handleSaveNote(captureWorkspace.id, draft)}
         />
       )}
+      <SaveFromAiDialog open={saveFromAiOpen} onOpenChange={setSaveFromAiOpen} />
       <AppSidebar
         onOpenSearch={() => openSearch()}
         workspaces={subjects}

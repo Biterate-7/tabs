@@ -2,6 +2,7 @@
 
 import { AlertCircle, Check, CheckCircle2, Circle, FileText, Globe, Link2, Loader2, MessagesSquare, PlayCircle, Film, FileType2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { CONVERSATION_NEEDS_CAPTURE } from "@/lib/resources/extraction"
 import type { ResourceKind, ResourceStatus, TabResource } from "@/lib/resources/types"
 
 /** One glyph per kind, so a list of sources reads at a glance. */
@@ -35,7 +36,9 @@ export function contentLine(resource: TabResource): string | undefined {
  */
 export function SourceStatus({ resource, compact = false }: { resource: TabResource; compact?: boolean }) {
   const { status } = resource
-  const detail = status === "ready" ? contentLine(resource) : status === "partial" || status === "failed" ? resource.error?.message : undefined
+  // A link-only conversation's words are today's, not the ones saved with it (older ones offered a paste Hubble no longer has).
+  const error = resource.error?.code === "needs_capture" ? CONVERSATION_NEEDS_CAPTURE : resource.error
+  const detail = status === "ready" ? contentLine(resource) : status === "partial" || status === "failed" ? error?.message : undefined
   return <StatusLine status={status} {...(detail ? { detail } : {})} compact={compact} />
 }
 

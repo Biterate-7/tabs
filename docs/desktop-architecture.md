@@ -370,7 +370,7 @@ The website's behaviour is unchanged by that audit.
 | External links (`target="_blank"`, `window.open`) | Works | **Fixed** — default browser | A local server received the request (trusted click) |
 | Universal search (Ctrl+K) | Works | Works | Driven in the app |
 | Graph | Works | Works | Canvas rendered |
-| Paste a conversation, notes | Works | Works | Driven in the app |
+| Notes | Works | Works | Driven in the app |
 | Use in AI chat → Copy | Works | Works | Windows clipboard read back, then restored |
 | Export (all / projects only) | Browser download | Native Save dialog | Dialog appeared; cancelling left the app quiet |
 | Import projects (.json) | Works | Works | File set on the input; "Imported 1 project" |

@@ -26,7 +26,7 @@ export type IngestOutcome =
   | { status: "adopted"; input: ResourceInput; tabId: string; kind: ResourceKind }
   /** Already a source in this project — nothing was added. */
   | { status: "duplicate"; input: ResourceInput; tabId: string }
-  | { status: "invalid"; input: ResourceInput; reason: "not-a-url" | "unsupported-scheme" };
+  | { status: "invalid"; input: ResourceInput; reason: "not-a-url" | "unsupported-scheme" | "conversation-link" };
 
 export type IngestionPlan = {
   workspaceId: string;
@@ -38,6 +38,15 @@ export type IngestionPlan = {
 };
 
 export const MAX_INGEST_BATCH = 200;
+
+/**
+ * The doors a person types, pastes or drops an address through. An AI
+ * conversation's address is refused there: Hubble can't read one from its
+ * address, so it would only ever be a link — its text comes from the open
+ * page, through Save to Hubble in Hubble for Chrome. The extension's own
+ * doors ("extension") and tabs already in Hubble ("import") still bring one in.
+ */
+const TYPED_ORIGINS: ReadonlySet<ResourceOrigin> = new Set(["manual", "chrome"]);
 
 export function newResource(kind: ResourceKind, origin: ResourceOrigin, now: number, mimeType?: string): TabResource {
   return { kind, origin, status: "pending", addedAt: now, updatedAt: now, ...(mimeType ? { meta: { mimeType } } : {}) };
@@ -91,6 +100,10 @@ export function planIngestion(input: {
       continue;
     }
     const kind = detectResourceType({ url: tab.url, ...(entry.mimeType ? { mimeType: entry.mimeType } : {}) });
+    if (kind === "conversation" && TYPED_ORIGINS.has(origin)) {
+      outcomes.push({ status: "invalid", input: entry, reason: "conversation-link" });
+      continue;
+    }
     if (existing) {
       adopted.push(existing.id);
       // Later inputs with the same address are duplicates of the adopted source.

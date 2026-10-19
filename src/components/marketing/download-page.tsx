@@ -26,7 +26,7 @@ const STEPS = [
   { title: "Install Hubble", body: "Run the Hubble installer." },
   { title: "Open Hubble", body: "Like any other app on your computer." },
   { title: "Make a project", body: "One per course, essay or piece of work." },
-  { title: "Bring things in", body: "Paste conversations, import a ChatGPT or Claude export, or add tabs from Chrome." },
+  { title: "Bring things in", body: "Save AI conversations and tabs with Hubble for Chrome, or import a ChatGPT or Claude export." },
   { title: "Reuse them", body: "Search, then copy the parts you choose into your next AI chat." },
 ] as const
 
@@ -136,8 +136,8 @@ export function DownloadPage() {
               <article className="m-card flex flex-col px-[17.5px] pt-[15.9px] pb-5">
                 <h3 className="m-body text-foreground">Hubble Desktop</h3>
                 <p className="m-body text-muted-foreground">
-                  Hubble as an app on your computer. Hubble for Chrome can send it tabs; AI conversations arrive as links,
-                  and you paste or import their text.
+                  Hubble as an app on your computer. Hubble for Chrome can send it tabs, and saves AI conversations to
+                  it while it&apos;s open.
                 </p>
                 <p className="m-small mt-3 text-muted-foreground">
                   Hubble Desktop keeps its own projects on your computer, separate from your browser.
