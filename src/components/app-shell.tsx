@@ -12,6 +12,11 @@ import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, subjectNam
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
 import { GraphView } from "@/components/graph/graph-view"
+import { KnowledgeGraphView } from "@/components/knowledge-graph/knowledge-graph-view"
+import { LibraryView } from "@/components/library/library-view"
+import { AiView } from "@/components/ai/ai-view"
+import { useBrowserConnected } from "@/hooks/use-tab-sessions"
+import type { AiProviderId } from "@/lib/providers/registry"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { HistoryDumpView } from "@/components/workspace/history-dump-view"
@@ -208,7 +213,9 @@ export function AppShell() {
     project's page; "search" searches every project. Everything else is
     reached from the rail, the palette or a link.
   */
-  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
+  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "tab-map" | "ai" | "library" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
+  /** A node the Graph selects when it opens ("Show in graph"). */
+  const [graphFocus, setGraphFocus] = useState<{ nodeId: string; nonce: number } | undefined>(undefined)
   /**
    * Which settings section the next visit to Settings opens on.
    *
@@ -223,7 +230,7 @@ export function AppShell() {
   const [settingsReturn, setSettingsReturn] = useState<Exclude<typeof view, "settings">>("home")
 
   /** "Use in AI chat": the context builder, open on one project with these items chosen. */
-  const [reuse, setReuse] = useState<{ workspaceId: string; refs: KnowledgeItemRef[]; nonce: number } | null>(null)
+  const [reuse, setReuse] = useState<{ workspaceId: string; refs: KnowledgeItemRef[]; provider?: AiProviderId; nonce: number } | null>(null)
   /** The capture dialog: write a note, import a file — into one project. */
   const [capture, setCapture] = useState<{ workspaceId: string; mode: CaptureMode; nonce: number } | null>(null)
   /** How to save AI conversations with Hubble for Chrome, from the command palette. */
@@ -1318,6 +1325,11 @@ export function AppShell() {
         onOpenSourceAt={(tab, url) => handleOpenSource(workspace.id, tab.id, url)}
         onUpdateBrief={(brief) => handleUpdateWorkspaceBrief(workspace.id, brief)}
         onCapture={(mode) => openCapture(workspace.id, mode)}
+        onRename={(name) => handleRenameWorkspace(workspace.id, name)}
+        allWorkspaces={store?.workspaces ?? NO_WORKSPACES}
+        onOpenProject={openSubject}
+        onShowInGraph={showInGraph}
+        showSessions={!isDesktopShell}
         {...(focus ? { focusItem: { ref: focus.ref, nonce: focus.nonce, ...(focus.turn !== undefined ? { turn: focus.turn } : {}), ...(focus.terms ? { terms: focus.terms } : {}) } } : {})}
         {...(quickAdd ? { quickAdd } : {})}
         {...(emptyExtra ? { emptyExtra } : {})}
@@ -1512,7 +1524,7 @@ export function AppShell() {
       }
     }
     for (const tab of workspace.tabs) if (tabIds.has(tab.id)) refs.push({ kind: "source", tabId: tab.id })
-    setReuse({ workspaceId: workspace.id, refs, nonce: Date.now() })
+    setReuse({ workspaceId: workspace.id, refs, nonce: Date.now(), ...(selection.provider ? { provider: selection.provider } : {}) })
   }
 
   /** Opens an item where it lives: its project, its reader — or, for a saved tab Hubble holds no text for, the page itself. */
@@ -1674,9 +1686,22 @@ export function AppShell() {
    * that screen is where the error, "Try again" and "Open graph anyway" live.
    * It still doesn't render the graph.
    */
+  /** The Graph: every project and what connects them. Never gated — it draws from saved records, not from the tab organizer. */
   function handleOpenGraph() {
+    setGraphFocus(undefined)
+    setView("graph")
+  }
+
+  /** Opens the Graph with one thing selected: a project (p:<id>) or an item. */
+  function showInGraph(nodeId: string) {
+    setGraphFocus({ nodeId, nonce: Date.now() })
+    setView("graph")
+  }
+
+  /** The map of saved tabs (the original graph), gated on the organizer as it always was. */
+  function handleOpenTabMap() {
     if (readiness.graphAvailable || readiness.state.status === "error") {
-      setView("graph")
+      setView("tab-map")
       return
     }
     toast.info(describeOrganizationStage(readiness.state), {
@@ -1830,6 +1855,8 @@ export function AppShell() {
         onOpenSidebar={() => setMobileSidebarOpen(true)}
         // Sessions reopen Chrome tabs, which Hubble Desktop can't reach.
         {...(isDesktopShell ? {} : { onOpenSessions: openSessions })}
+        onUseInAi={(workspaceId) => openReuse({ workspaceId })}
+        onShowInGraph={showInGraph}
       />
     )
   }
@@ -1864,6 +1891,56 @@ export function AppShell() {
   }
 
   if (view === "graph") {
+    return (
+      <KnowledgeGraphView
+        workspaces={subjects}
+        now={now}
+        // Sessions reopen Chrome tabs, which Hubble Desktop can't reach.
+        showSessions={!isDesktopShell}
+        onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
+        onOpenProject={openSubject}
+        onUseInAi={(workspaceId, refs) => openReuse({ workspaceId, refs })}
+        onOpenUrl={(url) => void openTab(url)}
+        {...(isDesktopShell ? {} : { onOpenSessions: () => openSessions() })}
+        onNewProject={() => setNewWorkspaceOpen(true)}
+        {...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { onOpenTabMap: handleOpenTabMap } : {})}
+        tabMapLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
+        tabMapLockedReason={readiness.label}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
+        {...(graphFocus ? { focus: graphFocus } : {})}
+      />
+    )
+  }
+
+  if (view === "library") {
+    return (
+      <LibraryView
+        workspaces={subjects}
+        now={now}
+        onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
+        onUseInAi={(workspaceId, refs) => openReuse({ workspaceId, refs })}
+        onOpenUrl={(url) => void openTab(url)}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
+      />
+    )
+  }
+
+  if (view === "ai") {
+    return (
+      <AiView
+        workspaces={subjects}
+        now={now}
+        onUseInAi={(workspaceId, refs, provider) => openReuse({ workspaceId, refs, provider })}
+        onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
+        onOpenUrl={(url) => void openTab(url)}
+        onSaveFromAi={() => setSaveFromAiOpen(true)}
+        onOpenAiApps={() => openSettings("ai-apps")}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
+      />
+    )
+  }
+
+  if (view === "tab-map") {
     // The gate, at the transition itself rather than inside the canvas: while
     // a dump is organizing, laying out or settling, GraphView is not rendered
     // at all — so there is no partially-organized graph underneath anything,
@@ -1872,13 +1949,13 @@ export function AppShell() {
       return (
         <OrganizationPreparationView
           state={readiness.state}
-          onClose={() => setView("workspace")}
+          onClose={() => setView("graph")}
           onRetry={retryDumpOrganization}
           onOpenAnyway={readiness.dismissError}
         />
       )
     }
-    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("workspace")} />
+    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("graph")} />
   }
 
   if (view === "settings") {
@@ -2003,6 +2080,10 @@ export function AppShell() {
           reuseCurrent: () => openReuse({ workspaceId: currentWorkspace.id }),
           capture: (mode) => openCapture(currentWorkspace.id, mode),
           saveFromAi: () => setSaveFromAiOpen(true),
+          goAi: () => setView("ai"),
+          goLibrary: () => setView("library"),
+          ...(isDesktopShell ? {} : { goSessions: () => openSessions() }),
+          ...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { openTabMap: handleOpenTabMap } : {}),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
@@ -2098,8 +2179,17 @@ export function AppShell() {
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}
         onOpenGraph={handleOpenGraph}
-        graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
-        graphLockedReason={readiness.label}
+        {...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { onOpenTabMap: handleOpenTabMap } : {})}
+        tabMapLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
+        tabMapLockedReason={readiness.label}
+        onOpenAi={() => setView("ai")}
+        onOpenLibrary={() => setView("library")}
+        onOpenCommandMenu={paletteHost.open}
+        createActions={{
+          ...(subjects.length > 0 ? { onWriteNote: () => openCapture(currentWorkspace.id, "note"), onImportChats: () => openCapture(currentWorkspace.id, "import") } : {}),
+          ...(isDesktopShell ? {} : { onSaveSession: () => openSessions({ save: true }) }),
+        }}
+        status={<ShellStatus canPersist={canPersist} desktop={isDesktopShell} onOpenExtension={() => openSettings("extension")} />}
         onOpenSettings={() => openSettings()}
         onOpenWorkspace={() => setView("workspace")}
         currentView={view}
@@ -2134,9 +2224,7 @@ export function AppShell() {
             onClear={handleClear}
             currentWorkspace={currentWorkspace}
             allWorkspaces={store.workspaces}
-            onOpenGraph={handleOpenGraph}
-            graphLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
-            graphLockedReason={readiness.label}
+            onOpenGraph={() => showInGraph(`p:${currentWorkspace.id}`)}
             organizationStatus={
               <div className="flex items-center gap-2">
                 <OrganizationStatusBar
@@ -2184,5 +2272,34 @@ export function AppShell() {
     </MemoryActionsProvider>
     </ProjectActionsProvider>
     </CommandPaletteHostContext.Provider>
+  )
+}
+
+/**
+ * The rail's status line: the one connection that changes what Hubble can
+ * do (Hubble for Chrome on the web), or a storage problem that means nothing
+ * will be kept. Quiet when all is well; a link to the fix when it is not.
+ */
+function ShellStatus({ canPersist, desktop, onOpenExtension }: { canPersist: boolean; desktop: boolean; onOpenExtension: () => void }) {
+  const connected = useBrowserConnected()
+  if (!canPersist) {
+    return (
+      <p role="status" className="flex items-center gap-2 text-meta text-warning">
+        <span aria-hidden className="size-1.5 rounded-full bg-warning" /> Not saving: storage is off
+      </p>
+    )
+  }
+  if (desktop) {
+    return (
+      <p className="flex items-center gap-2 text-meta text-tertiary">
+        <span aria-hidden className="size-1.5 rounded-full bg-success" /> Saved on this computer
+      </p>
+    )
+  }
+  return (
+    <button type="button" onClick={onOpenExtension} className="flex w-full items-center gap-2 rounded-xs text-left text-meta text-tertiary outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-shell-status={connected ? "connected" : "disconnected"}>
+      <span aria-hidden className={connected ? "size-1.5 rounded-full bg-success" : "size-1.5 rounded-full border border-strong"} />
+      {connected ? "Hubble for Chrome connected" : "Hubble for Chrome not connected"}
+    </button>
   )
 }

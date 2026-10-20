@@ -48,12 +48,12 @@ beforeEach(() => {
 });
 
 describe("AppSidebar", () => {
-  it("leads with search, Projects, Graph and the projects themselves", () => {
+  it("leads with search, Home, Graph and the projects themselves", () => {
     renderSidebar({ onOpenHome: vi.fn(), onOpenSearch: vi.fn() });
 
     expect(screen.getByRole("button", { name: "Search" })).toBeTruthy();
     const main = screen.getByRole("navigation", { name: "Main" });
-    expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Projects", "Graph"]);
+    expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Home", "Graph"]);
     const projects = screen.getByRole("navigation", { name: "Projects" });
     expect(projects.textContent).toContain("History HL");
     expect(projects.textContent).toContain("Math AA HL");
@@ -105,7 +105,7 @@ describe("AppSidebar", () => {
   it("does not mark a project current while Home is on screen", () => {
     renderSidebar({ currentView: "home", onOpenHome: vi.fn() });
     expect(screen.getByRole("button", { name: "Open History HL" }).getAttribute("aria-current")).toBeNull();
-    expect(screen.getByRole("button", { name: "Projects" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("makes a new project from the rail and its dialog", async () => {
@@ -209,7 +209,7 @@ describe("AppSidebar", () => {
     const onOpenHome = vi.fn();
     renderSidebar({ mobileOpen: true, onMobileOpenChange, onOpenHome });
 
-    await user.click(screen.getByRole("button", { name: "Projects" }));
+    await user.click(screen.getByRole("button", { name: "Home" }));
 
     expect(onOpenHome).toHaveBeenCalledOnce();
     expect(onMobileOpenChange).toHaveBeenCalledWith(false);
@@ -224,6 +224,52 @@ describe("AppSidebar", () => {
 
     expect(onMobileOpenChange).toHaveBeenCalledWith(false);
     expect(onToggleCollapsed).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppSidebar destinations and creation", () => {
+  it("lists AI, Library and Sessions as places when the shell offers them", () => {
+    renderSidebar({ onOpenHome: vi.fn(), onOpenAi: vi.fn(), onOpenLibrary: vi.fn(), onOpenSessions: vi.fn() });
+    const main = screen.getByRole("navigation", { name: "Main" });
+    expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Home", "Graph", "AI", "Library", "Sessions"]);
+  });
+
+  it("keeps the Tab map under More, disabled with its reason while tabs are being organized", async () => {
+    const user = userEvent.setup();
+    const onOpenTabMap = vi.fn();
+    renderSidebar({ onOpenTabMap, tabMapLocked: true, tabMapLockedReason: "Organizing your tabs…" });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const row = screen.getByRole("button", { name: "Tab map" }) as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+  });
+
+  it("creates from the + menu: a project, a note, a session", async () => {
+    const user = userEvent.setup();
+    const onWriteNote = vi.fn();
+    const onSaveSession = vi.fn();
+    renderSidebar({ createActions: { onWriteNote, onSaveSession } });
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Write a note" }));
+    expect(onWriteNote).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Save browser session" }));
+    expect(onSaveSession).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(await screen.findByRole("menuitem", { name: "New project" }));
+    expect(await screen.findByLabelText("Project name")).toBeTruthy();
+  });
+
+  it("opens the command menu from the rail", async () => {
+    const user = userEvent.setup();
+    const onOpenCommandMenu = vi.fn();
+    renderSidebar({ onOpenSearch: vi.fn(), onOpenCommandMenu });
+    await user.click(screen.getByRole("button", { name: "Command menu" }));
+    expect(onOpenCommandMenu).toHaveBeenCalledOnce();
+  });
+
+  it("shows the status line above Settings", () => {
+    renderSidebar({ status: <span>Hubble for Chrome connected</span> });
+    expect(screen.getByText("Hubble for Chrome connected")).toBeTruthy();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { HomeView } from "./home-view"
 import type { Tab } from "@/lib/tabs/types"
@@ -46,7 +46,7 @@ function renderHome(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
   return props
 }
 
-describe("Projects (Home)", () => {
+describe("Home", () => {
   it("with no projects, says what Hubble is for in one sentence and offers one button", async () => {
     const user = userEvent.setup()
     const props = renderHome()
@@ -79,7 +79,8 @@ describe("Projects (Home)", () => {
   it("lists what was saved recently across projects, with its AI app, and opens it", async () => {
     const user = userEvent.setup()
     const props = renderHome({ subjects: [project("h", "History HL", [source("a", "Causes of WW1", NOW, "chatgpt")])] })
-    const row = screen.getByRole("button", { name: /Causes of WW1/ })
+    const recent = within(screen.getByRole("region", { name: "Recently saved" }))
+    const row = recent.getByRole("button", { name: /Causes of WW1/ })
     expect(row.textContent).toContain("ChatGPT")
     await user.click(row)
     expect(props.onOpenItem).toHaveBeenCalledWith("h", { kind: "source", tabId: "a" })
@@ -97,5 +98,41 @@ describe("Projects (Home)", () => {
   it("says nothing about agents, runtimes or sessions", () => {
     renderHome({ subjects: [project("h", "History HL", [source("a", "Causes of WW1", NOW, "chatgpt")])] })
     expect(document.body.textContent).not.toMatch(/agent|runtime|session|command centre/i)
+  })
+})
+
+describe("Home: continue working", () => {
+  it("anchors on the project something last happened in, and opens its latest item directly", async () => {
+    const user = userEvent.setup()
+    const props = renderHome({
+      subjects: [project("old", "Old project", [source("o", "Older reading", NOW - 5 * 86_400_000)]), project("h", "History HL", [source("a", "Causes of WW1", NOW - 60_000, "chatgpt"), source("b", "Britannica", NOW - 3_600_000)])],
+    })
+    const card = within(screen.getByRole("region", { name: "Continue" }))
+    expect(card.getByText("History HL")).toBeTruthy()
+    await user.click(card.getByRole("button", { name: "Open Causes of WW1" }))
+    expect(props.onOpenItem).toHaveBeenCalledWith("h", { kind: "source", tabId: "a" })
+    await user.click(card.getByRole("button", { name: /^Britannica/ }))
+    expect(props.onOpenItem).toHaveBeenLastCalledWith("h", { kind: "source", tabId: "b" })
+  })
+
+  it("greets by the hour, and offers the project to the Graph and to Use in AI", async () => {
+    const user = userEvent.setup()
+    const onShowInGraph = vi.fn()
+    const onUseInAi = vi.fn()
+    renderHome({ subjects: [project("h", "History HL", [source("a", "Causes of WW1", NOW, "chatgpt")])], onShowInGraph, onUseInAi })
+    expect(screen.getByRole("heading", { level: 1, name: "Good evening" })).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: /Show in graph/ }))
+    expect(onShowInGraph).toHaveBeenCalledWith("p:h")
+    await user.click(screen.getByRole("button", { name: /Use in AI/ }))
+    expect(onUseInAi).toHaveBeenCalledWith("h")
+  })
+
+  it("says what arrived since the last visit, from the visit log", () => {
+    window.localStorage.setItem("tabdump:loop-log:v1", JSON.stringify({ version: 1, records: [{ kind: "workspace_revisited", at: NOW - 30 * 3_600_000 }], seen: [] }))
+    renderHome({ subjects: [project("h", "History HL", [source("a", "Causes of WW1", NOW - 3_600_000, "chatgpt"), source("b", "Britannica", NOW - 40 * 3_600_000)])] })
+    const since = within(screen.getByRole("region", { name: "Since you were last here" }))
+    expect(since.getByText("Causes of WW1")).toBeTruthy()
+    expect(since.queryByText("Britannica")).toBeNull()
+    window.localStorage.clear()
   })
 })

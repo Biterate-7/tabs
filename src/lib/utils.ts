@@ -27,6 +27,7 @@ import { extendTailwindMerge } from "tailwind-merge"
 const TYPE_CLASSES = [
   "display",
   "statement",
+  "title",
   "h1",
   "h2",
   "body",

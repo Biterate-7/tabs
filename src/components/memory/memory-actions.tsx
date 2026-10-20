@@ -4,6 +4,7 @@ import { createContext, useContext } from "react"
 import { MessageSquareShare } from "lucide-react"
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import type { KnowledgeItemRef } from "@/lib/memory/items"
+import type { AiProviderId } from "@/lib/providers/registry"
 
 /**
  * "Use in AI chat": the one action every surface offers on things it shows —
@@ -23,6 +24,8 @@ export type MemorySelection = {
   /** Saved tabs, by id — sources or not (a plain saved tab is offered by its title and link). */
   tabIds?: readonly string[]
   collectionIds?: readonly string[]
+  /** The AI app to start with, when it was chosen before the dialog opened (the AI page). */
+  provider?: AiProviderId
 }
 
 export type MemoryActions = {

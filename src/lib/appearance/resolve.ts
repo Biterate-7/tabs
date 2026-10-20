@@ -74,6 +74,44 @@ function linkColor(settings: AppearanceSettings, colors: ThemeColors): string {
   window casts a long, soft two-stage shadow (28px/70px over 14px/32px). The
   other levels scale around it so the Shape setting still reads as one dial.
 */
+/*
+  On an ink ground a 14% black shadow is invisible — depth there comes from
+  the surface stepping up in luminance and a lit top edge. The dark levels
+  are the same shapes cast much deeper, so a floating panel still separates
+  from a near-black page.
+*/
+const DARK_SHADOW_LEVELS: Record<AppearanceSettings["shape"]["shadowIntensity"], { sm: string; md: string; lg: string }> = {
+  none: { sm: "none", md: "none", lg: "none" },
+  subtle: {
+    sm: "0 1px 2px rgb(0 0 0 / 0.2)",
+    md: "0 6px 16px -6px rgb(0 0 0 / 0.4)",
+    lg: "0 18px 40px rgb(0 0 0 / 0.35)",
+  },
+  normal: {
+    sm: "0 1px 2px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(0 0 0 / 0.15)",
+    md: "0 14px 36px -10px rgb(0 0 0 / 0.55), 0 3px 8px -3px rgb(0 0 0 / 0.35)",
+    lg: "0 32px 80px -12px rgb(0 0 0 / 0.6), 0 12px 28px -8px rgb(0 0 0 / 0.4)",
+  },
+  strong: {
+    sm: "0 2px 4px rgb(0 0 0 / 0.45)",
+    md: "0 10px 24px -4px rgb(0 0 0 / 0.65), 0 4px 8px -4px rgb(0 0 0 / 0.5)",
+    lg: "0 28px 56px -8px rgb(0 0 0 / 0.75), 0 10px 20px -10px rgb(0 0 0 / 0.6)",
+  },
+};
+
+/*
+  Identity colours for the kinds of things a project holds — the graph's
+  node encodings, list glyphs and filter chips all draw from these, so a
+  conversation is the same blue everywhere. Polarity-aware: light pastels on
+  ink, deeper tones of the same hues on paper, each legible as a 12px glyph
+  on its own ground. Fixed across themes like the category accents: they
+  identify, they do not decorate.
+*/
+const KIND_COLORS = {
+  dark: { conversation: "#8ab4ff", source: "#6fd3c1", file: "#e2b77a", note: "#c4a9ff", session: "#f29fb3" },
+  light: { conversation: "#2f5bd3", source: "#0f7f6f", file: "#94600f", note: "#6b46c1", session: "#b4325a" },
+} as const;
+
 const SHADOW_LEVELS: Record<AppearanceSettings["shape"]["shadowIntensity"], { sm: string; md: string; lg: string }> = {
   none: { sm: "none", md: "none", lg: "none" },
   subtle: {
@@ -189,7 +227,8 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
   const border = borderStep(colors.border, colors.background, settings.shape.borderIntensity, edge);
   const borderSubtle = borderStep(colors.borderSubtle, colors.background, settings.shape.borderIntensity, edge);
   const borderStrong = borderStep(colors.borderStrong, colors.background, settings.shape.borderIntensity, edge);
-  const shadows = SHADOW_LEVELS[settings.shape.shadowIntensity];
+  const shadows = (isDark ? DARK_SHADOW_LEVELS : SHADOW_LEVELS)[settings.shape.shadowIntensity];
+  const kinds = KIND_COLORS[isDark ? "dark" : "light"];
 
   return {
     // ---- legacy shadcn-style vars (every existing Tailwind class keeps working) ----
@@ -251,10 +290,16 @@ export function appearanceToCssVars(settings: AppearanceSettings, colors: ThemeC
       edge is brighter than its surface on a dark ground and can only be
       read as a soft inner shadow on a light one.
     */
-    "--surface-highlight": "transparent",
+    "--surface-highlight": isDark ? "rgb(255 255 255 / 0.045)" : "rgb(255 255 255 / 0.75)",
     // The dim behind a modal: deeper on ink, lighter on paper, so the page
     // recedes by about the same perceived amount in both polarities.
-    "--overlay": isDark ? "rgb(0 0 0 / 0.5)" : "rgb(20 18 11 / 0.2)",
+    "--overlay": isDark ? "rgb(3 4 6 / 0.62)" : "rgb(16 20 28 / 0.22)",
+    "--polarity": isDark ? "dark" : "light",
+    "--kind-conversation": kinds.conversation,
+    "--kind-source": kinds.source,
+    "--kind-file": kinds.file,
+    "--kind-note": kinds.note,
+    "--kind-session": kinds.session,
     "--text-secondary": colors.textSecondary,
     "--text-disabled": colors.textDisabled,
     "--accent-hover": colors.accentHover,
