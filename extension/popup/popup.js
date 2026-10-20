@@ -16,6 +16,7 @@ import {
   MSG_SAVE_SESSION,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
+import { pageFingerprint } from "../src/tab-matching.js";
 import { readStoredTarget } from "../src/quick-add.js";
 import { describeLeftOut, describeSaveFailure } from "../src/sessions.js";
 import { initAiPanel } from "./ai-panel.js";
@@ -895,12 +896,32 @@ async function init() {
 
   // A quick add (the tab's right-click menu, the shortcut) already said how it went in its own toast:
   // replaying it here would only bounce the person to Hubble when they opened the popup for something else.
-  if (state?.finishedAt !== undefined && state.via !== "quick-add" && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS) {
+  if (state?.finishedAt !== undefined && state.via !== "quick-add" && Date.now() - state.finishedAt < DUMP_RESULT_FRESH_MS && (await replaysHere(state))) {
     renderDumpOutcome(state);
     return;
   }
 
   detectTabs();
+}
+
+/**
+ * Whether a just-finished run's result belongs over the page this popup was
+ * opened on. A failure always does: it claims nothing, and says how to try
+ * again. A success only over the very page it was for (the same tab, at the
+ * same address): after "Add this tab" on one ChatGPT chat, opening the popup
+ * on another chat must show that chat — saveable — not "Already in …" for
+ * the last one.
+ */
+export async function replaysHere(state) {
+  if (state.ok !== true) return true;
+  const shown = state.shownTab;
+  if (!shown || !Number.isInteger(shown.id) || typeof shown.page !== "string") return false;
+  try {
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return active?.id === shown.id && typeof active.url === "string" && pageFingerprint(active.url) === shown.page;
+  } catch {
+    return false;
+  }
 }
 
 init();

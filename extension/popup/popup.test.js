@@ -13,6 +13,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DUMP_RUNNING_STALE_MS } from "../src/config.js";
+import { pageFingerprint } from "../src/tab-matching.js";
+
+// The page a run was for, as background.js records it: the popup's mocked active tab (id 1, https://a.com).
+const SHOWN = { id: 1, page: pageFingerprint("https://a.com") };
 
 const POPUP_HTML = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "popup.html"), "utf8");
 
@@ -333,6 +337,7 @@ describe("focus handoff", () => {
       accepted: 4,
       focusTabId: 77,
       focusWindowId: 3,
+      shownTab: SHOWN,
       finishedAt: Date.now(),
     };
     await import("./popup.js");
@@ -536,14 +541,34 @@ describe("recovering dump state on a fresh popup open", () => {
   });
 
   it("shows a just-finished successful dump's result instead of silently resetting to the ready state", async () => {
-    sessionStore.tabdump_dump_state = { status: "done", ok: true, count: 4, finishedAt: Date.now() };
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, count: 4, shownTab: SHOWN, finishedAt: Date.now() };
     await importPopup();
 
     await vi.waitFor(() => {
       expect(document.getElementById("state-success").hidden).toBe(false);
     });
     expect(document.getElementById("success-count").textContent).toBe("4");
-    expect(chrome.tabs.query).not.toHaveBeenCalled();
+    // Only the page it was for was checked; the window's tabs were never re-read.
+    expect(chrome.tabs.query).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.query).toHaveBeenCalledWith({ active: true, currentWindow: true });
+  });
+
+  it("never replays a finished success over a different page: the tab moved to another chat, or another tab is in front", async () => {
+    // Regression: after "Add this tab" on ChatGPT chat A, the popup opened on chat B showed "Already in …" for A.
+    for (const shownTab of [{ id: 1, page: pageFingerprint("https://chatgpt.com/c/6720a1b2-1111-2222") }, { id: 2, page: SHOWN.page }, undefined]) {
+      vi.resetModules();
+      setPopupDom();
+      sessionStore.tabdump_dump_state = { status: "done", ok: true, accepted: 0, count: 1, alreadyInProject: 1, target: { workspaceId: "ws", name: "Mathematics AA HL" }, ...(shownTab ? { shownTab } : {}), startedAt: Date.now(), finishedAt: Date.now() };
+      await loadPopup();
+      expect(document.getElementById("state-ready").hidden).toBe(false);
+      expect(document.getElementById("state-success").hidden).toBe(true);
+    }
+  });
+
+  it("still replays a just-finished failure wherever it opens: it claims nothing, and says how to try again", async () => {
+    sessionStore.tabdump_dump_state = { status: "error", ok: false, reason: "delivery-failed", count: 1, shownTab: { id: 9, page: "00000000" }, startedAt: Date.now(), finishedAt: Date.now() };
+    await importPopup();
+    await vi.waitFor(() => expect(document.getElementById("state-error").hidden).toBe(false));
   });
 
   it("ignores a stale finished record and proceeds with normal tab detection", async () => {
@@ -806,7 +831,7 @@ describe("after a quick add", () => {
   });
 
   it("still replays a fresh result from the popup's own run", async () => {
-    sessionStore.tabdump_dump_state = { status: "done", ok: true, accepted: 1, count: 1, target: { workspaceId: "ws", name: "History IA" }, startedAt: Date.now(), finishedAt: Date.now() };
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, accepted: 1, count: 1, target: { workspaceId: "ws", name: "History IA" }, shownTab: SHOWN, startedAt: Date.now(), finishedAt: Date.now() };
     await import("./popup.js");
     await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
     expect(document.getElementById("success-project").textContent).toBe("Added 1 source to History IA");
@@ -815,7 +840,7 @@ describe("after a quick add", () => {
 
 describe("adding selected tabs to a project", () => {
   it("does not count a tab already in the project as one that couldn't be read", async () => {
-    sessionStore.tabdump_dump_state = { status: "done", ok: true, count: 3, accepted: 2, alreadyInProject: 1, target: { workspaceId: "ws", name: "History IA" }, startedAt: Date.now(), finishedAt: Date.now() };
+    sessionStore.tabdump_dump_state = { status: "done", ok: true, count: 3, accepted: 2, alreadyInProject: 1, target: { workspaceId: "ws", name: "History IA" }, shownTab: SHOWN, startedAt: Date.now(), finishedAt: Date.now() };
     await import("./popup.js");
     await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
     expect(document.getElementById("success-project").textContent).toBe("Added 2 sources to History IA");

@@ -3,6 +3,7 @@
 // chrome.* mocked, like background.test.js.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TABDUMP_ORIGIN, MSG_ADD_TO_PROJECT } from "../src/config.js";
+import { pageFingerprint } from "../src/tab-matching.js";
 
 const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
 const MSG_DUMP_TABS = "DUMP_TABS";
@@ -107,6 +108,13 @@ describe("Add to project", () => {
     await send(await listener(), { type: MSG_DUMP_TABS, payload: { windowId: 10 } });
     expect(delivered[0].target).toBeUndefined();
     expect(delivered[0].tabs).toHaveLength(3);
+  });
+
+  it("remembers which page the run was for — by fingerprint, never by address — so a later popup replays it only there", async () => {
+    await send(await listener(), { type: MSG_ADD_TO_PROJECT, payload: { windowId: 10, scope: "current", target: TARGET } });
+    const state = sessionStore.tabdump_dump_state;
+    expect(state).toMatchObject({ status: "done", shownTab: { id: 1, page: pageFingerprint("https://www.britannica.com/event/Cuban-missile-crisis") } });
+    expect(JSON.stringify(state)).not.toContain("britannica");
   });
 
   it("drops anything in a target beyond an id and a name", async () => {

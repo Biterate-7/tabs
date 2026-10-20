@@ -4,7 +4,7 @@
 // failure paths (an unrecognised layout, no message box) to an honest
 // reason instead of a guess.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AI_PAGE_HOSTS, aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "./ai-pages.js";
+import { AI_PAGE_HOSTS, aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, isConversationUrl, readConversationFromPage } from "./ai-pages.js";
 import { AI_PROVIDERS, AI_PROVIDER_IDS, conversationRefOf, providerOfUrl } from "../../src/lib/providers/registry";
 
 function page(html, title = "") {
@@ -33,6 +33,51 @@ describe("which pages are AI conversations", () => {
   ])("agrees with the web app about %s", (url) => {
     expect(isConversationUrl(url)).toBe(Boolean(conversationRefOf(url)));
     expect(aiProviderOf(url)).toBe(providerOfUrl(url));
+  });
+});
+
+// The identity every save, duplicate check and "already saved" line uses — the same answers in the extension and
+// the web app, for every provider and address shape either knows.
+describe("which conversation an address names", () => {
+  const ADDRESSES = [
+    "https://chatgpt.com/c/6720a1b2-1111-2222",
+    "https://chatgpt.com/c/6720a1b2-1111-2222/?model=gpt-4o#x",
+    "https://chat.openai.com/c/6720a1b2-1111-2222",
+    "https://chatgpt.com/g/g-abc-tutor/c/6720a1b2-1111-2222",
+    "https://chatgpt.com/c/6720A1B2-1111-2222",
+    "https://chatgpt.com/uc/6720a1b2-1111-2222",
+    "https://chatgpt.com/share/6720a1b2-1111-2222",
+    "https://chatgpt.com/c/short",
+    "https://chatgpt.com/",
+    "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb",
+    "https://claude.ai/chat/0b6f6d3e-aaaa-bbbc",
+    "https://claude.ai/share/0b6f6d3e-aaaa-bbbb",
+    "https://claude.ai/new",
+    "https://gemini.google.com/app/1a2b3c4d5e6f",
+    "https://gemini.google.com/app/1a2b3c4d5e6f?hl=en",
+    "https://gemini.google.com/gem/study-buddy/1a2b3c4d5e6f",
+    "https://gemini.google.com/share/1a2b3c4d5e6f",
+    "https://gemini.google.com/app",
+    "https://www.perplexity.ai/search/why-is-the-sky-blue-x1y2z3",
+    "https://perplexity.ai/search/why-is-the-sky-blue-x1y2z3/",
+    "https://www.perplexity.ai/library",
+    "https://example.com/c/6720a1b2-1111-2222",
+    "not a url",
+  ];
+
+  it.each(ADDRESSES)("agrees with the web app's conversationRefOf about %s", (url) => {
+    const ref = conversationRefOf(url);
+    expect(conversationIdentityOf(url)).toEqual(ref ? { provider: ref.provider, conversationId: ref.conversationId, url: ref.url, key: ref.key } : undefined);
+  });
+
+  it("gives two conversations of one app two identities, and one conversation one identity however its address is written", () => {
+    const key = (url) => conversationIdentityOf(url)?.key;
+    expect(key("https://chatgpt.com/c/6720a1b2-1111-2222")).not.toBe(key("https://chatgpt.com/c/68f0c3d4-aaaa-bbbb"));
+    expect(key("https://claude.ai/chat/0b6f6d3e-aaaa-bbbb")).not.toBe(key("https://claude.ai/chat/0b6f6d3e-aaaa-bbbc"));
+    expect(key("https://gemini.google.com/app/1a2b3c4d5e6f")).not.toBe(key("https://gemini.google.com/app/1a2b3c4d5e6a"));
+    expect(key("https://www.perplexity.ai/search/why-x1y2z3")).not.toBe(key("https://www.perplexity.ai/search/why-q9r8s7"));
+    expect(key("https://chat.openai.com/c/6720a1b2-1111-2222/?model=gpt-4o")).toBe(key("https://chatgpt.com/c/6720a1b2-1111-2222"));
+    expect(key("https://chatgpt.com/")).toBeUndefined();
   });
 });
 
@@ -232,7 +277,7 @@ describe("insertIntoComposer", () => {
 // every Save end in "couldn't find the messages".
 const SIGNED_IN = "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f";
 
-function unitTurn(index, question, answer) {
+function unitTurn(index, question, answer, chat = "") {
   return `<div data-turn-key="69ff8060-e2b1-46e6-b070-f80adac4016${index}">
     <div data-content-search-turn-key="fallback-turn-${index}">
       <div aria-label="Sent" role="separator" data-markdown-copy="exclude"><time><span>11:2${index}</span></time></div>
@@ -240,7 +285,7 @@ function unitTurn(index, question, answer) {
         <div><div>
           <h4>You said:</h4>
           <div data-chatgpt-search-unit-key="fallback-turn-${index}:0:user" data-content-search-unit-key="fallback-turn-${index}:0:user" data-chatgpt-search-message-ids="">
-            <div><div data-user-message-bubble="true"><div><div><div data-search-result-target=""><div><div style="white-space: pre-wrap">${question}</div></div></div></div></div></div>
+            <div><div data-user-message-bubble="true"><div><div><div data-search-result-target=""><div><div style="white-space: pre-wrap">${question}</div></div></div></div></div></div></div>
             <div><span data-state="closed"><button aria-label="Copy message"><svg><path></path></svg></button></span><span data-state="closed"><button aria-label="Edit message"><svg><path></path></svg></button></span></div>
           </div>
         </div>
@@ -248,7 +293,7 @@ function unitTurn(index, question, answer) {
           <span data-chatgpt-agent-turn-start=""></span>
           <div data-content-search-unit-key="fallback-turn-${index}:1:assistant" data-chatgpt-search-unit-key="fallback-turn-${index}:1:assistant" data-chatgpt-search-message-ids="">
             <h4 data-conversation-role="assistant">ChatGPT said:</h4>
-            <div><div data-chatgpt-selection-message-id="m${index}"><div data-markdown-text-style="assistant-message"><div data-dil-source-message-id="" data-chatgpt-copy-reference="0" data-markdown-copy="contents"><div><div hidden=""></div><div data-theme="dark"><div data-d-inline-reveal="" data-d-direction="col">${answer}</div></div></div></div></div></div>
+            <div><div${chat ? ` data-chatgpt-selection-conversation-id="${chat}"` : ""} data-chatgpt-selection-message-id="m${index}"><div data-markdown-text-style="assistant-message"><div data-dil-source-message-id="" data-chatgpt-copy-reference="0" data-markdown-copy="contents"><div><div hidden=""></div><div data-theme="dark"><div data-d-inline-reveal="" data-d-direction="col">${answer}</div></div></div></div></div></div>
           </div>
         </div></div>
         <div><span data-state="closed"><button aria-label="Copy">Copy</button></span><span data-state="closed"><button aria-label="Rate">Good response</button></span></div>
@@ -431,6 +476,36 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
     ]);
     // Reading again (a retry, a second click) starts from nothing.
     expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toEqual(first);
+  });
+
+  it("reads only the open chat when ChatGPT keeps the one you came from in the page", async () => {
+    // Seen live 2026-10-15: after switching chats in the app, the previous chat stays mounted on an inactive page,
+    // its questions intact and its replies emptied. Saving chat B read both, and chat A's questions led B's save.
+    const previous = "6ad08116-edd8-83ec-b032-cde25a3651ae";
+    const open = "6ad062bc-2bcc-83e8-9305-06038d74964f";
+    const doc = page(
+      `<div data-app-shell-active-page="false"><main><div data-thread-find-target="conversation">
+         ${unitTurn(0, "Reply with a Python code block.", "", previous)}${unitTurn(1, "State Newton's second law.", "", previous)}
+       </div></main></div>
+       <div data-app-shell-active-page="true"><main><div data-thread-find-target="conversation">
+         ${unitTurn(0, "What caused WW1?", text("Militarism and alliances."), open)}
+       </div></main></div>`
+    );
+    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({
+      ok: true,
+      turns: [
+        { role: "user", text: "What caused WW1?" },
+        { role: "assistant", text: "Militarism and alliances." },
+      ],
+    });
+  });
+
+  it("leaves out a turn tagged with another conversation's id, wherever it sits", async () => {
+    const doc = signedInPage([unitTurn(0, "A question from another chat", text("Its reply."), "6ad08116-edd8-83ec-b032-cde25a3651ae"), unitTurn(1, "What caused WW1?", text("Militarism."), "6ad062bc-2bcc-83e8-9305-06038d74964f")]);
+    expect((await readConversationFromPage(doc, SIGNED_IN, 0)).turns).toEqual([
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism." },
+    ]);
   });
 
   it("says when ChatGPT has not loaded the older messages above the ones on screen", async () => {

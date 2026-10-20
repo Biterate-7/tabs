@@ -68,6 +68,27 @@ describe("useExtensionWorkspaceQuery", () => {
     ])
   })
 
+  it("tells AI conversations apart by conversation, not by app: chat A is in, chat B from the same app is not", async () => {
+    const saved = "https://chatgpt.com/c/6720a1b2-1111-2222-3333-444455556666"
+    const tabs = [makeTab({ id: "1", url: saved, normalizedUrl: saved, domain: "chatgpt.com" })]
+    renderHook(() => useExtensionWorkspaceQuery(tabs))
+
+    const reply = await askForReply(() => {
+      postFromContentScript({
+        source: "tabdump-extension",
+        type: "TABDUMP_CHECK_IMPORTED",
+        payload: {
+          requestId: "r7",
+          urls: ["https://chatgpt.com/c/6720a1b2-1111-2222-3333-444455556666?model=gpt-4o", "https://chatgpt.com/c/68f0c3d4-aaaa-bbbb-cccc-ddddeeeeffff", "https://chatgpt.com/"],
+        },
+      })
+    })
+
+    expect((reply.data as { payload: { existingUrls: string[] } }).payload.existingUrls).toEqual([
+      "https://chatgpt.com/c/6720a1b2-1111-2222-3333-444455556666?model=gpt-4o",
+    ])
+  })
+
   it("returns an empty existingUrls list when nothing matches", async () => {
     renderHook(() => useExtensionWorkspaceQuery([]))
 

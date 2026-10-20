@@ -68,6 +68,14 @@ export type ProviderCapabilities = {
   autoSync: ProviderCapability;
 };
 
+/**
+ * Which kind of page names a conversation. Ids are only ever compared within
+ * one kind: a share link has an id of its own (a snapshot someone shared, not
+ * the chat it came from), and ChatGPT's signed-out `/uc/` chats are not known
+ * to share ids with signed-in `/c/` ones — so neither is folded into a chat.
+ */
+export type ConversationPageKind = "chat" | "share" | "signed-out";
+
 export type AiProvider = {
   id: AiProviderId;
   /** What the person calls it. */
@@ -92,10 +100,11 @@ export type AiProvider = {
     maxFiles: number;
   };
   /**
-   * Path patterns of one conversation (or thread), first capture group = its id.
+   * Path patterns of one conversation (or thread), first capture group = its id,
+   * and which kind of page each is (`ConversationPageKind`).
    * Anything else on the host (settings, the home page, a library) is not a conversation.
    */
-  conversationPaths: readonly RegExp[];
+  conversationPaths: readonly { path: RegExp; kind: ConversationPageKind }[];
   /** Which export file `exportImport` reads, in the vendor's words. */
   exportFile?: string;
   capabilities: ProviderCapabilities;
@@ -127,7 +136,12 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     newChatPaths: [/^\/$/],
     transfer: { messageChars: 60_000, maxFiles: 10 },
     // /uc/ is a signed-out conversation (seen live 2026-10-14).
-    conversationPaths: [/^\/(?:g\/[^/]+\/)?c\/([A-Za-z0-9-]{8,80})\/?$/, /^\/uc\/([A-Za-z0-9-]{8,80})\/?$/, /^\/share\/([A-Za-z0-9-]{8,80})\/?$/],
+    // A chat inside a GPT (/g/<gpt>/c/<id>) is the chat /c/<id>: the id is the conversation's own, not the GPT's.
+    conversationPaths: [
+      { path: /^\/(?:g\/[^/]+\/)?c\/([A-Za-z0-9-]{8,80})\/?$/, kind: "chat" },
+      { path: /^\/uc\/([A-Za-z0-9-]{8,80})\/?$/, kind: "signed-out" },
+      { path: /^\/share\/([A-Za-z0-9-]{8,80})\/?$/, kind: "share" },
+    ],
     exportFile: "conversations.json from ChatGPT's data export (Settings → Data controls → Export data)",
     capabilities: {
       pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
@@ -155,7 +169,10 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     homeUrl: "https://claude.ai/new",
     newChatPaths: [/^\/new\/?$/],
     transfer: { messageChars: 60_000, maxFiles: 10 },
-    conversationPaths: [/^\/chat\/([A-Za-z0-9-]{8,80})\/?$/, /^\/share\/([A-Za-z0-9-]{8,80})\/?$/],
+    conversationPaths: [
+      { path: /^\/chat\/([A-Za-z0-9-]{8,80})\/?$/, kind: "chat" },
+      { path: /^\/share\/([A-Za-z0-9-]{8,80})\/?$/, kind: "share" },
+    ],
     exportFile: "conversations.json from Claude's data export (Settings → Privacy → Export data)",
     capabilities: {
       pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
@@ -183,7 +200,12 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     homeUrl: "https://gemini.google.com/app",
     newChatPaths: [/^\/app\/?$/],
     transfer: { messageChars: 30_000, maxFiles: 10 },
-    conversationPaths: [/^\/app\/([A-Za-z0-9_-]{6,80})\/?$/, /^\/gem\/[^/]+\/([A-Za-z0-9_-]{6,80})\/?$/, /^\/share\/([A-Za-z0-9_-]{6,80})\/?$/],
+    // A chat with a Gem (/gem/<gem>/<id>) is keyed by its id like any other: the id is random, so it can only ever name that one chat.
+    conversationPaths: [
+      { path: /^\/app\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "chat" },
+      { path: /^\/gem\/[^/]+\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "chat" },
+      { path: /^\/share\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "share" },
+    ],
     capabilities: {
       pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
       exportImport: {
@@ -210,7 +232,7 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     homeUrl: "https://www.perplexity.ai/",
     newChatPaths: [/^\/$/],
     transfer: { messageChars: 15_000, maxFiles: 10 },
-    conversationPaths: [/^\/search\/([A-Za-z0-9._-]{6,200})\/?$/],
+    conversationPaths: [{ path: /^\/search\/([A-Za-z0-9._-]{6,200})\/?$/, kind: "chat" }],
     capabilities: {
       pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
       exportImport: {
@@ -268,26 +290,42 @@ export type ConversationRef = {
   provider: AiProviderId;
   /** The provider's own id for the conversation, from its address. */
   conversationId: string;
-  /** The address without query or fragment — what Hubble keys a saved conversation on. */
+  /** The address without query or fragment — the one stored and opened. */
   url: string;
+  /**
+   * Which conversation this is, as Hubble compares them: provider, kind of
+   * page and id — `chatgpt:chat:6720a1b2-…`. Two addresses with the same key
+   * are one conversation (chat.openai.com and chatgpt.com, a GPT's path, a
+   * `?model=` or a trailing slash change nothing); two ids are never the same
+   * conversation, whatever their titles. See `conversationKeyOf`.
+   */
+  key: string;
 };
 
 /**
  * The conversation an address names, or `undefined` when it names none (a
- * provider's home page, settings, another site).
+ * provider's home page, settings, another site). Never guessed: an address
+ * whose path is not one of the provider's conversation pages names none, so
+ * nothing on a provider's home page or domain is ever taken for a chat.
  */
 export function conversationRefOf(url: string): ConversationRef | undefined {
   const parsed = parse(url);
   if (!parsed) return undefined;
   const provider = providerOfUrl(url);
   if (!provider) return undefined;
-  for (const pattern of AI_PROVIDERS[provider].conversationPaths) {
-    const match = pattern.exec(parsed.pathname);
+  for (const { path, kind } of AI_PROVIDERS[provider].conversationPaths) {
+    const match = path.exec(parsed.pathname);
     if (match?.[1]) {
-      return { provider, conversationId: match[1], url: `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}` };
+      // Ids are compared exactly: case and every character count, so two similar ids stay two conversations.
+      return { provider, conversationId: match[1], url: `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`, key: `${provider}:${kind}:${match[1]}` };
     }
   }
   return undefined;
+}
+
+/** `conversationRefOf(url)?.key`: which conversation an address names, or `undefined` for any other page. */
+export function conversationKeyOf(url: string): string | undefined {
+  return conversationRefOf(url)?.key;
 }
 
 /**

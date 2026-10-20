@@ -1,7 +1,7 @@
 import { buildTabsFromBrowserImport } from "@/lib/tabs/browser-import";
 import { markDuplicates } from "@/lib/tabs/duplicates";
 import { detectResourceType } from "./detect";
-import { resourceKey } from "./url";
+import { sourceKey } from "./url";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace, WorkspaceStore } from "@/lib/workspace/types";
 import type { ResourceInput, ResourceKind, ResourceOrigin, TabResource } from "./types";
@@ -74,7 +74,7 @@ export function planIngestion(input: {
   const { workspace, origin, now } = input;
   const byKey = new Map<string, Tab>();
   for (const tab of workspace.tabs) {
-    const key = resourceKey(tab.url);
+    const key = sourceKey(tab.url);
     // A source wins over a plain tab with the same address: it is what a duplicate should point at.
     if (key && (!byKey.has(key) || (tab.resource && !byKey.get(key)!.resource))) byKey.set(key, tab);
   }
@@ -88,7 +88,7 @@ export function planIngestion(input: {
     const [tab] = buildTabsFromBrowserImport([
       { url: entry.url, ...(entry.title ? { title: entry.title } : {}), ...(entry.favicon ? { favicon: entry.favicon } : {}) },
     ]);
-    const key = tab ? resourceKey(tab.url) : undefined;
+    const key = tab ? sourceKey(tab.url) : undefined;
     if (!tab || !key) {
       outcomes.push({ status: "invalid", input: entry, reason: invalidReason(entry.url) });
       continue;

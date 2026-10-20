@@ -37,7 +37,8 @@ import {
   PAGE_READY_WAIT_MS,
   MSG_SAVE_SESSION,
 } from "../src/config.js";
-import { aiProviderOf, checkPageRead, insertIntoComposer, isConversationUrl, readConversationFromPage } from "../src/ai-pages.js";
+import { pageFingerprint } from "../src/tab-matching.js";
+import { aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
 import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_TIMING } from "../src/ai-transfer.js";
 import { hubbleTransferStep } from "../src/ai-transfer-page.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
@@ -478,9 +479,13 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
   const scope = tabIds ? "tabs" : options.scope === "current" || options.scope === "selected" ? options.scope : "window";
   log("dump-started", { excludeCount: excludeUrls?.length ?? 0, importId, scope, toProject: Boolean(target) });
 
+  // The tab the person was looking at when the run started (its id and a fingerprint of its address — never the
+  // address): a popup opened later replays this run's result only over that same page, never over another
+  // conversation the tab or window has moved to since.
+  let shownTab;
   async function persist(patch) {
     // `via` lets the popup tell a quick add (already reported by its own toast) from a run it should replay.
-    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...(options.via ? { via: options.via } : {}), ...patch });
+    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...(options.via ? { via: options.via } : {}), ...(shownTab ? { shownTab } : {}), ...patch });
   }
 
   await persist({ status: "running", phase: DUMP_PHASE.QUERYING_TABS });
@@ -488,6 +493,8 @@ async function dumpTabs(excludeUrls, windowId, options = {}) {
   let chromeTabs;
   try {
     chromeTabs = tabIds ? await getTabs(tabIds) : await chrome.tabs.query(scopeQuery(scope, windowId));
+    const active = Array.isArray(chromeTabs) ? chromeTabs.find((tab) => tab?.active && Number.isInteger(tab.id) && typeof tab.url === "string") : undefined;
+    if (active) shownTab = { id: active.id, page: pageFingerprint(active.url) };
   } catch (err) {
     const result = { ok: false, status: "error", reason: "tab-query-failed", count: 0, detail: errorMessage(err) };
     log("tab-query-failed", result.detail);
@@ -1366,22 +1373,22 @@ async function askHubblePage(kind, args, { openIfMissing = false } = {}) {
   }
 }
 
-// Where the current desktop save reports (the AI app's tab), and what it last showed there.
-let saveToastTabId;
-let saveShown;
+// What each AI app's tab last showed of its desktop save: each save reports in its own tab, so two at once never cross.
+const saveShown = new Map();
 
-/** A desktop save's progress or outcome, as a toast in the AI app's page — only when its words change. */
-async function showSaveToast(toast) {
+/** A desktop save's progress or outcome, as a toast in the AI app's page `tabId` — only when its words change. */
+async function showSaveToast(tabId, toast) {
   const { final, ...words } = toast;
   const view = { ...words, ...(final ? { dismissAfterMs: toast.tone === "error" ? 15000 : 6000 } : {}) };
   const key = JSON.stringify(view);
-  if (key === saveShown) return;
-  saveShown = key;
-  await showToast(saveToastTabId, view);
+  if (saveShown.get(tabId) === key) return;
+  saveShown.set(tabId, key);
+  if (final) saveShown.delete(tabId);
+  await showToast(tabId, view);
 }
 
 const desktopSave = createDesktopSave({
-  show: showSaveToast,
+  show: async () => {},
   fetch: (...args) => globalThis.fetch(...args),
   sleep,
   log,
@@ -1399,12 +1406,21 @@ function answerFromDesktop(outcome) {
   return { ok: false, error: ["cancelled", "expired", "failed", "done"].includes(reason) ? `desktop-${reason === "done" ? "failed" : reason}` : reason };
 }
 
+// The conversations being saved right now, by identity (conversationIdentityOf): the same one twice is refused
+// while the first is still on its way, and any other conversation — from the same app or not — is never held up.
+const capturesInFlight = new Set();
+
 /**
  * Saves the conversation in `tabId`: to Hubble Desktop when it is open (the
  * person picks the project there), otherwise to `workspaceId` through the
  * Hubble page, as before.
+ *
+ * `expectedKey` is the conversation the popup showed. When the tab has moved
+ * to another conversation since (a chat switched inside the app, back or
+ * forward), nothing is saved and the popup is told (`tab-changed`), so a
+ * click on "Save" for one chat never saves a different one.
  */
-async function captureConversation({ tabId, workspaceId }) {
+async function captureConversation({ tabId, workspaceId, expectedKey }) {
   let tab;
   try {
     tab = await chrome.tabs.get(tabId);
@@ -1412,7 +1428,19 @@ async function captureConversation({ tabId, workspaceId }) {
     return { ok: false, error: "tab-gone" };
   }
   if (!tab?.url || !aiProviderOf(tab.url)) return { ok: false, error: "not-supported" };
-  if (!isConversationUrl(tab.url)) return { ok: false, error: "not-a-conversation" };
+  const identity = conversationIdentityOf(tab.url);
+  if (!identity) return { ok: false, error: "not-a-conversation" };
+  if (expectedKey !== undefined && expectedKey !== identity.key) return { ok: false, error: "tab-changed" };
+  if (capturesInFlight.has(identity.key)) return { ok: false, error: "already-saving" };
+  capturesInFlight.add(identity.key);
+  try {
+    return await captureIdentified(tabId, tab, identity, workspaceId);
+  } finally {
+    capturesInFlight.delete(identity.key);
+  }
+}
+
+async function captureIdentified(tabId, tab, identity, workspaceId) {
   let read;
   try {
     const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
@@ -1428,13 +1456,21 @@ async function captureConversation({ tabId, workspaceId }) {
     log("capture-read-refused", { reason: checked.error, provider: aiProviderOf(tab.url), detail: typeof read?.detail === "string" ? read.detail : read == null ? "no result" : undefined });
     return { ok: false, error: checked.error };
   }
-  log("capture-read", { provider: aiProviderOf(tab.url), turns: checked.turns.length, partial: checked.partial });
+  // The page moved to another conversation while it was read (a chat switched in the app): what was read may be
+  // either chat's, so nothing is saved.
+  if (typeof read?.url === "string" && conversationIdentityOf(read.url)?.key !== identity.key) {
+    log("capture-read-moved", { provider: identity.provider });
+    return { ok: false, error: "tab-changed" };
+  }
+  log("capture-read", { provider: identity.provider, turns: checked.turns.length, partial: checked.partial });
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
   const capture = { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns };
 
-  saveToastTabId = tabId;
-  saveShown = undefined;
-  const viaDesktop = await desktopSave({ ...capture, provider: aiProviderOf(tab.url), truncated: read?.truncated === true });
+  saveShown.delete(tabId);
+  const viaDesktop = await desktopSave(
+    { ...capture, provider: identity.provider, key: identity.key, truncated: read?.truncated === true },
+    { show: (toast) => showSaveToast(tabId, toast) }
+  );
   if (!viaDesktop.fallback) {
     return withReadNotes(answerFromDesktop(viaDesktop), checked);
   }
@@ -1468,7 +1504,7 @@ async function insertContext({ tabId, text }) {
   }
 }
 
-const MEMORY_KINDS = new Set(["projects", "search", "bundle", "reused"]);
+const MEMORY_KINDS = new Set(["projects", "saved", "search", "bundle", "reused"]);
 
 /**
  * Sessions: "Save session" from the popup. Reads the tabs of the popup's
@@ -1505,12 +1541,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === MSG_CAPTURE_CONVERSATION) {
     const tabId = message.payload?.tabId;
     const workspaceId = message.payload?.workspaceId;
+    const expectedKey = message.payload?.expectedKey;
     // No project is fine: Hubble Desktop asks for one. Hubble on the web needs one (captureConversation says so).
-    if (!Number.isInteger(tabId) || (workspaceId !== undefined && (typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200))) {
+    if (
+      !Number.isInteger(tabId) ||
+      (workspaceId !== undefined && (typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200)) ||
+      (expectedKey !== undefined && (typeof expectedKey !== "string" || !expectedKey || expectedKey.length > 300))
+    ) {
       safeSendResponse(sendResponse, { ok: false, error: "invalid" });
       return undefined;
     }
-    captureConversation({ tabId, workspaceId })
+    captureConversation({ tabId, workspaceId, ...(expectedKey !== undefined ? { expectedKey } : {}) })
       .then((answer) => safeSendResponse(sendResponse, answer))
       .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
     return true;

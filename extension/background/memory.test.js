@@ -280,8 +280,81 @@ describe("Save to Hubble on Claude, Gemini and Perplexity, signed in (2026-10-16
   });
 });
 
+// Regression: after saving one chat, a second chat from the same app must save as itself, never be blocked by the first.
+describe("Save to Hubble, one conversation at a time — never one app at a time", () => {
+  const A = "https://chatgpt.com/c/6720a1b2-1111-2222-3333-444455556666";
+  const B = "https://chatgpt.com/c/68f0c3d4-aaaa-bbbb-cccc-ddddeeeeffff";
+  const KEY_A = "chatgpt:chat:6720a1b2-1111-2222-3333-444455556666";
+  /** Tab 7 shows A, tab 8 shows B; the page reader reads whichever tab it is given. */
+  function twoChats() {
+    chrome.tabs.get.mockImplementation(async (id) => fakeTab({ id, url: id === 8 ? B : A, title: id === 8 ? "Integration by substitution - ChatGPT" : "Integration by parts - ChatGPT" }));
+    chrome.scripting.executeScript.mockImplementation(async ({ target, func }) => {
+      if (func?.name !== "readConversationFromPage") return [{ result: null }];
+      const url = target.tabId === 8 ? B : A;
+      return [{ result: { ok: true, provider: "chatgpt", url, title: "", turns: [{ role: "user", text: `Question in ${url}` }, { role: "assistant", text: "An answer." }] } }];
+    });
+  }
+
+  it("saves chat A and then chat B from the same app, each with its own address", async () => {
+    twoChats();
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths", expectedKey: KEY_A } })).toMatchObject({ ok: true });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 8, workspaceId: "maths" } })).toMatchObject({ ok: true });
+    expect(pageRequests.map((request) => request.args.capture.url)).toEqual([A, B]);
+  });
+
+  it("refuses the same conversation while it is still saving, but never holds up another one", async () => {
+    twoChats();
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    chrome.tabs.sendMessage.mockImplementation(async (tabId, message) => {
+      if (message?.type !== MSG_PAGE_REQUEST) return undefined;
+      pageRequests.push({ tabId, ...message.payload });
+      if (message.payload.args.capture.url === A) await gate;
+      return { ok: true, result: { outcome: "added", title: "x", turns: 2, truncated: false } };
+    });
+    const first = ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths" } });
+    await vi.waitFor(() => expect(pageRequests).toHaveLength(1));
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths" } })).toEqual({ ok: false, error: "already-saving" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 8, workspaceId: "maths" } })).toMatchObject({ ok: true });
+    release();
+    expect(await first).toMatchObject({ ok: true });
+    // Finished: A can be saved again.
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths" } })).toMatchObject({ ok: true });
+    expect(pageRequests.map((request) => request.args.capture.url)).toEqual([A, B, A]);
+  });
+
+  it("saves nothing when the tab is no longer on the conversation the popup showed", async () => {
+    twoChats();
+    // The popup showed A; the tab has since moved to B.
+    chrome.tabs.get.mockImplementation(async (id) => fakeTab({ id, url: B }));
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths", expectedKey: KEY_A } })).toEqual({ ok: false, error: "tab-changed" });
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(pageRequests).toEqual([]);
+  });
+
+  it("saves nothing when the page moved to another conversation while it was being read", async () => {
+    twoChats();
+    chrome.scripting.executeScript.mockResolvedValue([{ result: { ok: true, provider: "chatgpt", url: B, title: "", turns: [{ role: "user", text: "Which chat is this?" }] } }]);
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths" } })).toEqual({ ok: false, error: "tab-changed" });
+    expect(pageRequests).toEqual([]);
+  });
+
+  it("refuses an expectedKey that is not a short string", async () => {
+    for (const expectedKey of [42, "", "x".repeat(301)]) {
+      expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "maths", expectedKey } })).toEqual({ ok: false, error: "invalid" });
+    }
+  });
+
+  it("asks the Hubble page where this one conversation is saved", async () => {
+    await ask({ type: MSG_MEMORY_REQUEST, payload: { kind: "saved", args: { url: A } } });
+    expect(pageRequests).toEqual([expect.objectContaining({ kind: "saved", args: { url: A } })]);
+    // Never opens Hubble to find out.
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("Use Hubble in this chat", () => {
-  it("relays only the four memory requests to the Hubble page", async () => {
+  it("relays only the memory requests it knows to the Hubble page", async () => {
     await ask({ type: MSG_MEMORY_REQUEST, payload: { kind: "search", args: { query: "thesis" } } });
     expect(pageRequests.map((request) => request.kind)).toEqual(["search"]);
     expect(await ask({ type: MSG_MEMORY_REQUEST, payload: { kind: "capture", args: {} } })).toEqual({ ok: false, error: "invalid" });

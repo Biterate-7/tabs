@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import { conversationKeyOf } from "@/lib/providers/registry"
 import { normalizeUrl } from "@/lib/tabs/normalize"
 import type { Tab } from "@/lib/tabs/types"
 
@@ -59,8 +60,12 @@ export function useExtensionWorkspaceQuery(tabs: Tab[], projects: readonly Exten
       if (typeof requestId !== "string" || !Array.isArray(urls)) return
 
       const existingNormalized = new Set(tabsRef.current.map((t) => t.normalizedUrl))
+      // An AI conversation is here when that conversation is (its provider and id), whatever its address's query or host alias.
+      const existingConversations = new Set(tabsRef.current.flatMap((t) => conversationKeyOf(t.url) ?? []))
       const existingUrls = urls.filter((url): url is string => {
         if (typeof url !== "string") return false
+        const conversation = conversationKeyOf(url)
+        if (conversation) return existingConversations.has(conversation)
         const normalized = tryNormalize(url)
         return normalized !== null && existingNormalized.has(normalized)
       })
