@@ -265,17 +265,17 @@ export const THEME_REGISTRY: ThemeDefinition[] = [
   // The default. The id stays "midnight" on purpose: it is what every
   // existing install has persisted, so keeping it is what carries those users
   // onto the Hubble system palette instead of stranding them on the old one.
-  systemTheme("midnight", "Hubble Dark", "The Hubble system palette — warm ink.", {
+  systemTheme("midnight", "Hubble Dark", "The Hubble system palette — graphite and starlight.", {
     isDark: true,
-    bg: "#14120b",
-    card: "#1b1913",
-    elevated: "#201e18",
-    fg: "#edecec",
-    link: "#eb5600",
-    success: "#3fae83",
-    warning: "#d9a441",
-    error: "#e5667f",
-    info: "#7ea6d6",
+    bg: "#0b0c0f",
+    card: "#121418",
+    elevated: "#171a1f",
+    fg: "#e8eaef",
+    link: "#8ab4ff",
+    success: "#4cc38a",
+    warning: "#e0b354",
+    error: "#f0717f",
+    info: "#8ab4ff",
   }),
   theme("graphite", "Graphite", "dark", "Neutral gray-on-gray, almost no color.", {
     isDark: true,
@@ -344,17 +344,17 @@ export const THEME_REGISTRY: ThemeDefinition[] = [
 
   // ---- Light ----------------------------------------------------------
   // The same system in its paper polarity — the reference's own default.
-  systemTheme("hubble-light", "Hubble Light", "The Hubble system palette — warm paper.", {
+  systemTheme("hubble-light", "Hubble Light", "The Hubble system palette — cool paper.", {
     isDark: false,
-    bg: "#f7f7f4",
-    card: "#f2f1ed",
-    elevated: "#fbfbf9",
-    fg: "#26251e",
-    link: "#b83c00",
-    success: "#17775a",
+    bg: "#f6f7f9",
+    card: "#eef0f3",
+    elevated: "#ffffff",
+    fg: "#14161b",
+    link: "#2f5bd3",
+    success: "#13795b",
     warning: "#8a5a0e",
-    error: "#bf2a50",
-    info: "#3a6a9f",
+    error: "#c22f4a",
+    info: "#2f5bd3",
   }),
   theme("paper", "Paper", "light", "Bright white with crisp ink-black text.", {
     isDark: false,

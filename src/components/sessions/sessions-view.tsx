@@ -30,7 +30,8 @@ import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { createId } from "@/lib/id"
 import { createTimestamp } from "@/lib/timestamps"
 import { describeWriteError, lastActivityLabel } from "@/lib/sessions/messages"
-import { deleteSession, duplicateSession, renameSession, sortByActivity } from "@/lib/sessions/model"
+import { deleteSession, duplicateSession, hostOf, renameSession, sortByActivity } from "@/lib/sessions/model"
+import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { writeSessions } from "@/lib/sessions/persistence"
 import { MAX_SESSION_NAME_CHARS } from "@/lib/sessions/types"
 import { SaveSessionDialog } from "./save-session-dialog"
@@ -118,9 +119,9 @@ export function SessionsView({
           </IconButton>
         </header>
       )}
-      <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-8 sm:py-20">
+      <main className="mx-auto w-full max-w-3xl px-4 pt-8 pb-16 animate-enter sm:px-8 sm:pt-14">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-          <h1 className="text-statement text-foreground">Sessions</h1>
+          <h1 className="text-display text-foreground">Sessions</h1>
           {!isDesktop && (
             <div className="flex flex-wrap gap-2">
               {sessions.length > 1 && (
@@ -158,11 +159,20 @@ export function SessionsView({
           <p className="mt-6 text-body text-muted-foreground">No session matches “{query.trim()}”.</p>
         ) : (
           <ul aria-label="Saved sessions" className="mt-6 flex flex-col gap-2">
-            {shown.map((session) => {
+            {shown.map((session, index) => {
               const project = session.workspaceId ? projectName.get(session.workspaceId) : undefined
               const meta = [plural(session.tabs.length, "tab", "tabs"), lastActivityLabel(session, now), project ?? ""].filter(Boolean)
+              const hosts = [...new Set(session.tabs.map((tab) => hostOf(tab.url)).filter(Boolean))]
               return (
-                <li key={session.id} className="flex min-w-0 items-center gap-2 rounded-md border border-subtle bg-card px-3 py-3 sm:px-4">
+                <li key={session.id} className="group flex min-w-0 items-center gap-3 rounded-lg border border-subtle bg-card px-3 py-3 transition-[border-color,box-shadow] duration-(--duration-fast) ease-(--ease-color) hover:border-strong hover:shadow-(--shadow-sm) animate-rise sm:px-4" style={{ ["--stagger" as string]: index }}>
+                  {/* A glance at what it holds: the first few sites' own icons. */}
+                  <span aria-hidden className="flex shrink-0 -space-x-1.5 max-sm:hidden">
+                    {session.tabs.slice(0, 4).map((tab) => (
+                      <span key={tab.id} className="grid size-6 place-items-center rounded-full border border-subtle bg-background">
+                        <TabFavicon domain={hostOf(tab.url)} icon={tab.favicon} size={14} />
+                      </span>
+                    ))}
+                  </span>
                   <button
                     type="button"
                     disabled={isDesktop}
@@ -172,6 +182,12 @@ export function SessionsView({
                   >
                     <span className="block truncate text-h2 text-foreground">{session.name}</span>
                     <span className="block truncate text-meta text-tertiary">{meta.join(" · ")}</span>
+                    {hosts.length > 0 && (
+                      <span className="mt-0.5 block truncate text-meta text-muted-foreground">
+                        {hosts.slice(0, 3).join(", ")}
+                        {hosts.length > 3 ? ` +${hosts.length - 3}` : ""}
+                      </span>
+                    )}
                   </button>
                   {!isDesktop && (
                     <Button type="button" size="default" onClick={() => setDialog({ kind: "launch", sessionIds: [session.id] })} aria-label={`Start ${session.name}`}>

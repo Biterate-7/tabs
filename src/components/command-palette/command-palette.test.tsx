@@ -200,8 +200,8 @@ describe("CommandPalette site icons", () => {
     await flush()
 
     for (const [label, glyph] of [
-      ["Go to Projects", "lucide-house"],
-      ["Go to Graph", "lucide-waypoints"],
+      ["Go to Home", "lucide-house"],
+      ["Go to Graph", "lucide-orbit"],
       ["AI apps", "lucide-messages-square"],
       ["Physics", "lucide-boxes"],
       ["New project", "lucide-folder-plus"],

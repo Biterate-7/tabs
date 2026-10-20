@@ -7,7 +7,7 @@ import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Highlighted } from "@/components/project/project-home"
-import { ProviderBadge } from "@/components/memory/provider-mark"
+import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { useProjectContents } from "@/hooks/use-project-contents"
 import { searchKnowledge } from "@/lib/memory/search"
@@ -101,7 +101,7 @@ export function SearchView({
 
   return (
     <div className="min-h-screen" data-search-view>
-      <header className="flex h-12 items-center gap-2 border-b border-subtle px-4">
+      <header className="sticky top-0 z-(--hb-z-sticky) flex h-12 items-center gap-2 border-b border-subtle bg-[color-mix(in_oklab,var(--background)_82%,transparent)] px-4 backdrop-blur-md">
         {onOpenSidebar && (
           <IconButton aria-label="Open sidebar" className="md:hidden" onClick={onOpenSidebar}>
             <PanelLeftOpen />
@@ -109,11 +109,11 @@ export function SearchView({
         )}
         <h1 className="text-h2 text-foreground">Search</h1>
       </header>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 pt-8 pb-16 animate-enter sm:px-6 sm:pt-12">
         <label className="relative">
           <span className="sr-only">Search conversations, notes and saved pages</span>
-          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-tertiary" />
-          <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Conversations, notes, pages…" className="h-10 pl-9 text-body" />
+          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-tertiary" />
+          <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Conversations, notes, pages…" className="h-12 rounded-lg pl-10 text-[15px] shadow-(--shadow-sm)" />
         </label>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -130,6 +130,7 @@ export function SearchView({
           <div className="flex flex-wrap gap-1" role="group" aria-label="From AI app">
             {AI_PROVIDER_IDS.map((id) => (
               <Button key={id} type="button" size="xs" variant={providers.has(id) ? "secondary" : "ghost"} aria-pressed={providers.has(id)} onClick={() => toggleProvider(id)}>
+                <ProviderMark provider={id} size={12} />
                 {AI_PROVIDERS[id].name}
               </Button>
             ))}

@@ -402,7 +402,7 @@ describe("AppShell workspaces", () => {
     await user.click(await screen.findByRole("button", { name: "Delete project" }));
 
     // Back on Home, without it.
-    expect(await screen.findByRole("heading", { name: "Projects", level: 1 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeTruthy();
     expect((await screen.findAllByText("General")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Second")).toBeNull();
   });
@@ -797,6 +797,8 @@ describe("AppShell Settings navigation", () => {
 
     expect(screen.queryByRole("button", { name: "Agent World" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Agent World settings" })).toBeNull();
-    for (const name of [/command cent(re|er)/i, /^AI chats$/i, /^AI activity$/i, /^AI$/, /agents?/i]) expect(screen.queryByRole("button", { name })).toBeNull();
+    // "AI" is a destination again, but a different one: using saved context in ChatGPT, Claude,
+    // Gemini or Perplexity (components/ai/ai-view.tsx) — no agent, run or chat of Hubble's own.
+    for (const name of [/command cent(re|er)/i, /^AI chats$/i, /^AI activity$/i, /agents?/i]) expect(screen.queryByRole("button", { name })).toBeNull();
   });
 });

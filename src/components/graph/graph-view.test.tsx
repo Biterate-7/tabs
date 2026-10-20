@@ -66,7 +66,7 @@ describe("GraphView", () => {
     render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByText("GRAPH")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Back to project" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to Graph" })).toBeTruthy();
     expect(screen.getByPlaceholderText("Search tabs...")).toBeTruthy();
   });
 
@@ -76,7 +76,7 @@ describe("GraphView", () => {
     const store = makeStore([makeTab({ id: "a", domain: "github.com" }), makeTab({ id: "b", domain: "github.com" })]);
     render(<GraphViewHarness store={store} onStoreUpdate={vi.fn()} onClose={onClose} />);
 
-    await user.click(screen.getByRole("button", { name: "Back to project" }));
+    await user.click(screen.getByRole("button", { name: "Back to Graph" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

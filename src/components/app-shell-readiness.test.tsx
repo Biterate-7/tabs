@@ -71,17 +71,17 @@ function postExtensionImport(urls: string[]) {
   );
 }
 
-/** Hubble opens on Home: open the subject, and the rail's More, where the Graph lives. */
+/** Hubble opens on Home: open the subject, and the rail's More, where the Tab map (the saved-tab graph the gate guards) lives. */
 async function openSubjectWithMore() {
   const user = userEvent.setup();
   const rail = await screen.findByRole("navigation", { name: "Projects" });
   await user.click(within(rail).getByRole("button", { name: "Open General" }));
   await screen.findByPlaceholderText("Search tabs...");
-  if (!screen.queryByRole("button", { name: "Graph" })) await user.click(screen.getByRole("button", { name: "More" }));
+  if (!screen.queryByRole("button", { name: "Tab map" })) await user.click(screen.getByRole("button", { name: "More" }));
 }
 
 function graphButton(): HTMLButtonElement {
-  return screen.getByRole("button", { name: "Graph" }) as HTMLButtonElement;
+  return screen.getByRole("button", { name: "Tab map" }) as HTMLButtonElement;
 }
 
 beforeEach(() => {
@@ -123,7 +123,7 @@ describe("Graph View readiness gate", () => {
     expect(graphButton().disabled).toBe(false);
 
     await user.click(graphButton());
-    expect(await screen.findByRole("button", { name: "Back to project" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Back to Graph" })).toBeTruthy();
   });
 
   it("locks the graph for the whole dump — through the \"Other\" stage — and unlocks it only once the layout has settled", async () => {
@@ -167,7 +167,7 @@ describe("Graph View readiness gate", () => {
     graphButton().removeAttribute("disabled");
     await user.click(graphButton());
 
-    expect(screen.queryByRole("button", { name: "Back to project" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to Graph" })).toBeNull();
     expect(screen.getByPlaceholderText("Search tabs...")).toBeTruthy();
   });
 
@@ -211,7 +211,7 @@ describe("Graph View readiness gate", () => {
     // The error screen is reachable, and it is not the graph.
     await user.click(graphButton());
     expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Back to project" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to Graph" })).toBeNull();
 
     // Retrying re-runs the same organization rather than requiring a re-dump.
     await user.click(screen.getByRole("button", { name: "Try again" }));

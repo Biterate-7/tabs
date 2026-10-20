@@ -1,7 +1,15 @@
 "use client"
 
 import { useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { CheckSquare, ChevronDown, ChevronLeft, FileInput, FileText, FileUp, MessageSquareShare, NotebookPen, PanelLeftOpen, Play, Search, Sparkles, Trash2, X } from "lucide-react"
+import { ArrowUpRight, CheckSquare, ChevronDown, ChevronLeft, FileInput, FileText, FileUp, History, MessageSquareShare, NotebookPen, Orbit, PanelLeftOpen, Play, Search, Trash2, X } from "lucide-react"
+import { KindGlyph } from "@/components/ui/kind-glyph"
+import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
+import { useTabSessions } from "@/hooks/use-tab-sessions"
+import { connectedProjects } from "@/lib/knowledge-graph/related"
+import { itemActivityAt, itemKind } from "@/lib/memory/kinds"
+import { sortByActivity } from "@/lib/sessions/model"
+import { formatRelativeTime } from "@/lib/time-format"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
 import { useMemoryActions } from "@/components/memory/memory-actions"
 import { NoteCard } from "@/components/memory/note-card"
@@ -96,6 +104,15 @@ export type ProjectHomeProps = {
   quickAdd?: { shortcut: string }
   /** An item to open on arrival (from Search or Home): its reader, at a conversation's turn when given. A new nonce opens it again. */
   focusItem?: { ref: KnowledgeItemRef; turn?: number; terms?: readonly string[]; nonce: number }
+  /** Renames the project from its title. Absent: the title is plain text. */
+  onRename?: (name: string) => void
+  /** Every project, for "Connected to" (shared sources). */
+  allWorkspaces?: readonly Workspace[]
+  onOpenProject?: (workspaceId: string) => void
+  /** Opens the Graph focused on a node (this project: `p:<id>`). */
+  onShowInGraph?: (nodeId: string) => void
+  /** Sessions saved for this project, with Resume. False in Hubble Desktop. */
+  showSessions?: boolean
 }
 
 /**
@@ -148,6 +165,13 @@ export function ProjectHome(props: ProjectHomeProps) {
   }
 
   const projectName = subjectName(workspace)
+  const { sessions: allSessions } = useTabSessions()
+  const launcher = useSessionLaunch()
+  const session = useMemo(() => (props.showSessions ? sortByActivity(allSessions.filter((entry) => entry.workspaceId === workspace.id))[0] : undefined), [props.showSessions, allSessions, workspace.id])
+  const related = useMemo(() => (props.allWorkspaces ? connectedProjects(props.allWorkspaces, workspace.id).slice(0, 3) : []), [props.allWorkspaces, workspace.id])
+  const lastItem = useMemo(() => [...items].sort((a, b) => itemActivityAt(b) - itemActivityAt(a))[0], [items])
+  const lastActive = lastItem ? itemActivityAt(lastItem) : undefined
+  const [renaming, setRenaming] = useState(false)
   const tabById = useMemo(() => new Map(workspace.tabs.map((tab) => [tab.id, tab])), [workspace.tabs])
   const noteById = useMemo(() => new Map((workspace.notes ?? []).map((note) => [note.id, note])), [workspace.notes])
   const working = items.filter((item) => item.status === "pending" || item.status === "processing").length
@@ -266,11 +290,29 @@ export function ProjectHome(props: ProjectHomeProps) {
       <ProjectDropOverlay active={active} projectName={projectName} />
 
       {/* The project, and the two things to do with it. */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 animate-enter sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
+        <WorkspaceAvatar workspace={workspace} size={44} className="mt-0.5 max-sm:hidden" />
         <div className="min-w-0">
-          <h1 className="truncate text-statement text-foreground" data-subject-title>
-            {projectName}
-          </h1>
+          {renaming && props.onRename ? (
+            <RenameTitle
+              name={workspace.name}
+              onDone={(name) => {
+                setRenaming(false)
+                if (name && name !== workspace.name) props.onRename!(name)
+              }}
+            />
+          ) : (
+            <h1 className="truncate text-statement text-foreground" data-subject-title>
+              {props.onRename ? (
+                <button type="button" className="max-w-full truncate rounded-xs text-left outline-none hover:underline hover:decoration-border-strong hover:underline-offset-4 focus-visible:ring-2 focus-visible:ring-ring/60" title="Rename" onClick={() => setRenaming(true)}>
+                  {projectName}
+                </button>
+              ) : (
+                projectName
+              )}
+            </h1>
+          )}
           {editingBrief && props.onUpdateBrief ? (
             <BriefForm
               description={workspace.brief?.description ?? ""}
@@ -299,6 +341,19 @@ export function ProjectHome(props: ProjectHomeProps) {
               </button>
             )
           )}
+          {items.length > 0 && (
+            <p className="mt-2 text-meta text-tertiary" data-project-summary>
+              {[
+                counts.conversations > 0 ? plural(counts.conversations, "conversation", "conversations") : "",
+                counts.sources > 0 ? plural(counts.sources, "source or file", "sources and files") : "",
+                counts.notes > 0 ? plural(counts.notes, "note", "notes") : "",
+                lastActive ? `active ${formatRelativeTime(lastActive, now)?.toLowerCase()}` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+        </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {addMenu("lg", "default")}
@@ -309,6 +364,83 @@ export function ProjectHome(props: ProjectHomeProps) {
           )}
         </div>
       </div>
+
+      {/* Where to pick up: the latest item, the session saved for this project, and what it connects to. */}
+      {items.length > 0 && (
+        <div className="grid grid-cols-1 gap-2 animate-enter md:grid-cols-3" data-project-overview>
+          {lastItem && (
+            <button
+              type="button"
+              onClick={() => (lastItem.ref.kind === "note" ? setOpenNote({ noteId: lastItem.ref.noteId }) : setDetails({ tabId: lastItem.ref.tabId, rename: false }))}
+              className="group flex min-w-0 flex-col gap-2 rounded-lg border border-subtle bg-card p-3.5 text-left outline-none transition-[border-color,box-shadow] duration-(--duration-fast) ease-(--ease-color) hover:border-strong hover:shadow-(--shadow-sm) focus-visible:ring-2 focus-visible:ring-ring/60"
+              aria-label={`Pick up: ${lastItem.title}`}
+            >
+              <span className="flex items-center justify-between text-eyebrow text-tertiary">
+                Pick up
+                <ArrowUpRight aria-hidden className="size-3.5 opacity-60 transition-transform duration-(--duration-fast) ease-(--ease-standard) group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              </span>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <KindGlyph kind={itemKind(lastItem)} type={lastItem.type} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-body text-foreground">{lastItem.title}</span>
+                  <span className="block truncate text-meta text-tertiary">{formatRelativeTime(itemActivityAt(lastItem), now)}</span>
+                </span>
+              </span>
+            </button>
+          )}
+          {session ? (
+            <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-subtle bg-card p-3.5" data-project-session>
+              <span className="text-eyebrow text-tertiary">Session</span>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <KindGlyph kind="session" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-body text-foreground">{session.name}</span>
+                  <span className="block truncate text-meta text-tertiary">
+                    {plural(session.tabs.length, "tab", "tabs")} · {formatRelativeTime(Math.max(session.updatedAt, session.lastRestoredAt ?? 0), now)}
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={launcher.pending}
+                  aria-label={`Resume ${session.name}`}
+                  onClick={() => void launcher.launch({ tabs: session.tabs.map((tab) => ({ url: tab.url, ...(tab.pinned ? { pinned: true } : {}) })), sessionIds: [session.id] })}
+                >
+                  <Play /> {launcher.pending ? "Opening…" : "Resume"}
+                </Button>
+              </span>
+            </div>
+          ) : null}
+          {(related.length > 0 || props.onShowInGraph) && (
+            <div className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-subtle bg-card p-3.5" data-project-related>
+              <span className="flex items-center justify-between text-eyebrow text-tertiary">
+                {related.length > 0 ? "Connected to" : "In the graph"}
+                {props.onShowInGraph && (
+                  <button type="button" className="flex items-center gap-1 normal-case tracking-normal text-tertiary outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" onClick={() => props.onShowInGraph!(`p:${workspace.id}`)}>
+                    <Orbit aria-hidden className="size-3" /> Show in graph
+                  </button>
+                )}
+              </span>
+              {related.length > 0 ? (
+                <ul className="flex flex-col">
+                  {related.map(({ workspace: other, shared }) => (
+                    <li key={other.id}>
+                      <button type="button" disabled={!props.onOpenProject} onClick={() => props.onOpenProject?.(other.id)} className="flex w-full min-w-0 items-center gap-2 rounded-xs py-0.5 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+                        <WorkspaceAvatar workspace={other} size={16} />
+                        <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{subjectName(other)}</span>
+                        <span className="shrink-0 text-meta text-tertiary">{plural(shared, "shared source", "shared sources")}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-body-sm text-muted-foreground">Nothing shared with another project yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {dropNotice && (
         <p role="alert" className="-mt-3 flex items-center gap-2 text-body-sm text-destructive">
@@ -366,9 +498,13 @@ export function ProjectHome(props: ProjectHomeProps) {
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="sr-only">Knowledge</h2>
             {filters.length > 0 ? (
-              <div className="flex flex-wrap gap-1" role="group" aria-label="Show">
+              <div className="flex flex-wrap gap-0.5 rounded-md border border-subtle bg-card p-0.5" role="group" aria-label="Show">
                 {filters.map((entry) => (
-                  <Button key={entry.id} type="button" size="xs" variant={filter === entry.id ? "secondary" : "ghost"} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
+                  <Button key={entry.id} type="button" size="sm" variant={filter === entry.id ? "secondary" : "ghost"} className={cn(filter === entry.id && "border-transparent shadow-(--shadow-sm)")} aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)}>
+                    {entry.id === "conversation" && <span aria-hidden className="size-1.5 rounded-full bg-kind-conversation" />}
+                    {entry.id === "source" && <span aria-hidden className="size-1.5 rounded-full bg-kind-source" />}
+                    {entry.id === "note" && <span aria-hidden className="size-1.5 rounded-full bg-kind-note" />}
+                    {entry.id === "attention" && <span aria-hidden className="size-1.5 rounded-full bg-warning" />}
                     {entry.label}
                     <span className="text-tertiary tabular-nums" data-filter-count>
                       {filterCounts.get(entry.id) ?? 0}
@@ -474,7 +610,7 @@ export function ProjectHome(props: ProjectHomeProps) {
             aria-expanded={showActivity}
             onClick={() => setShowActivity((open) => !open)}
           >
-            <Sparkles aria-hidden className="size-3.5" /> Recent activity
+            <History aria-hidden className="size-3.5" /> Recent activity
             <ChevronDown aria-hidden className={cn("size-3.5 transition-transform", showActivity && "rotate-180")} />
           </button>
           {showActivity && (
@@ -556,7 +692,37 @@ export function ProjectHome(props: ProjectHomeProps) {
           {...(openNote?.turn !== undefined ? { focusTurn: openNote.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}
         />
       )}
+      <LaunchConfirmDialog request={launcher.confirming} onConfirm={() => void launcher.confirm()} onCancel={launcher.cancel} />
     </section>
+  )
+}
+
+/** The project's name, edited where it is shown: Enter keeps it, Escape (or an empty name) changes nothing. */
+function RenameTitle({ name, onDone }: { name: string; onDone: (name: string | undefined) => void }) {
+  const [draft, setDraft] = useState(name)
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        onDone(draft.trim() || undefined)
+      }}
+    >
+      <Input
+        autoFocus
+        aria-label="Project name"
+        value={draft}
+        maxLength={80}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => onDone(draft.trim() || undefined)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault()
+            onDone(undefined)
+          }
+        }}
+        className="h-10 w-[min(32rem,80vw)] text-statement"
+      />
+    </form>
   )
 }
 
@@ -783,16 +949,22 @@ export function ProjectPage({
       : undefined
   return (
     <div className="min-h-screen">
-      <header className="flex h-12 items-center gap-2 border-b border-subtle px-4">
+      <header className="sticky top-0 z-(--hb-z-sticky) flex h-12 items-center gap-2 border-b border-subtle bg-[color-mix(in_oklab,var(--background)_82%,transparent)] px-4 backdrop-blur-md">
         {onOpenSidebar && (
           <Button type="button" size="icon-sm" variant="ghost" className="md:hidden" aria-label="Open sidebar" onClick={onOpenSidebar}>
             <PanelLeftOpen />
           </Button>
         )}
         {onBack ? (
-          <Button type="button" variant="ghost" size="sm" className="-ml-1.5 mr-auto" onClick={onBack}>
-            <ChevronLeft /> Projects
-          </Button>
+          <nav aria-label="Breadcrumb" className="mr-auto flex min-w-0 items-center gap-1 text-body-sm">
+            <Button type="button" variant="ghost" size="sm" className="-ml-1.5" onClick={onBack}>
+              <ChevronLeft /> Home
+            </Button>
+            <span aria-hidden className="text-tertiary">/</span>
+            <span className="truncate px-1 text-foreground" aria-current="page">
+              {subjectName(workspace)}
+            </span>
+          </nav>
         ) : (
           <span className="mr-auto truncate text-h2 text-foreground">{subjectName(workspace)}</span>
         )}

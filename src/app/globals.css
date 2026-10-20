@@ -100,6 +100,16 @@
   --color-editor-text: var(--editor-text);
   --color-editor-placeholder: var(--editor-placeholder);
   --color-favorite-accent: var(--favorite-accent);
+  /* What a thing is — conversation, source, file, note, session. Written
+     polarity-aware by resolve.ts; see KIND_COLORS there. */
+  --color-kind-conversation: var(--kind-conversation);
+  --color-kind-source: var(--kind-source);
+  --color-kind-file: var(--kind-file);
+  --color-kind-note: var(--kind-note);
+  --color-kind-session: var(--kind-session);
+  --shadow-panel: var(--shadow-md), inset 0 1px 0 var(--surface-highlight);
+  --shadow-window: var(--shadow-lg), inset 0 1px 0 var(--surface-highlight);
+  --ease-out: var(--ease-standard);
 }
 
 /*
@@ -133,33 +143,33 @@
 :root {
   /* Pre-hydration fallback = the default theme (Hubble Dark). Overwritten at
      runtime by AppearanceProvider from the active theme. */
-  --background: #14120b;
-  --foreground: #edecec;
-  --card: #1b1913;
-  --card-foreground: #edecec;
-  --popover: #201e18;
-  --popover-foreground: #edecec;
+  --background: #0b0c0f;
+  --foreground: #e8eaef;
+  --card: #121418;
+  --card-foreground: #e8eaef;
+  --popover: #171a1f;
+  --popover-foreground: #e8eaef;
   /* The primary fill is the foreground itself: ink on paper, never a
      coloured slab. Colour lives in --link. */
-  --primary: #edecec;
-  --primary-foreground: #14120b;
-  --secondary: #2b2923;
-  --secondary-foreground: #edecec;
-  --muted: #1b1913;
-  --muted-foreground: #9a9895;
-  --accent: #201e18;
-  --accent-foreground: #edecec;
-  --destructive: #e5667f;
-  --border: #2a2822;
-  --input: #3f3d37;
-  --ring: #8f8d8a;
-  --text-tertiary: #7a7874;
-  --accent-text: #edecec;
-  --link: #eb5600;
-  --success: #3fae83;
-  --success-foreground: #14120b;
-  --warning: #d9a441;
-  --warning-foreground: #14120b;
+  --primary: #e8eaef;
+  --primary-foreground: #0b0c0f;
+  --secondary: #1f2228;
+  --secondary-foreground: #e8eaef;
+  --muted: #121418;
+  --muted-foreground: #9599a3;
+  --accent: #181b20;
+  --accent-foreground: #e8eaef;
+  --destructive: #f0717f;
+  --border: #22252b;
+  --input: #363a42;
+  --ring: #8b8f98;
+  --text-tertiary: #737781;
+  --accent-text: #e8eaef;
+  --link: #8ab4ff;
+  --success: #4cc38a;
+  --success-foreground: #0b0c0f;
+  --warning: #e0b354;
+  --warning-foreground: #0b0c0f;
   /* destructive/remove actions outside confirm dialogs (bulk remove, etc.) */
   --danger: var(--destructive);
   --danger-foreground: #ffffff;
@@ -185,25 +195,47 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: #1b1913;
-  --sidebar-foreground: #edecec;
-  --sidebar-primary: #edecec;
-  --sidebar-primary-foreground: #14120b;
-  --sidebar-accent: #201e18;
-  --sidebar-accent-foreground: #edecec;
-  --sidebar-border: #211f19;
-  --sidebar-ring: #8f8d8a;
+  --sidebar: #121418;
+  --sidebar-foreground: #e8eaef;
+  --sidebar-primary: #e8eaef;
+  --sidebar-primary-foreground: #0b0c0f;
+  --sidebar-accent: #181b20;
+  --sidebar-accent-foreground: #e8eaef;
+  --sidebar-border: #1c1f24;
+  --sidebar-ring: #8b8f98;
 
   --radius: 0.5rem;
-  /* Motion, measured: 140ms on a spring-shaped ease-out with no overshoot
-     for anything that moves; the plain material ease for colour changes. */
+  --kind-conversation: #8ab4ff;
+  --kind-source: #6fd3c1;
+  --kind-file: #e2b77a;
+  --kind-note: #c4a9ff;
+  --kind-session: #f29fb3;
+  /* ---- Motion system (docs/design-system.md › Motion) ------------------
+     Three curves, four durations. Everything that moves uses one of them.
+
+       --ease-standard   decelerate, no overshoot — things arriving or
+                         changing place: panels, focus, camera moves.
+       --ease-spring     a critically-damped spring expressed as linear():
+                         a touch of follow-through, never a bounce — reserved
+                         for direct manipulation and selection feedback.
+       --ease-color      the material ease — colour, opacity, borders.
+
+       fast    140ms  hover, press, colour
+       base    200ms  menus, popovers, inline reveals
+       slow    320ms  panels, page-level entrances
+       focus   560ms  the graph camera travelling to a selection
+
+     Durations multiply by the Motion settings, so Animations: Off and the
+     OS reduced-motion preference reach every one of them. */
   --ease-standard: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-color: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: linear(0, 0.1 4.3%, 0.36 10.7%, 0.68 19.6%, 0.86 27.8%, 0.96 37%, 1.005 47%, 1.01 58%, 1.003 72%, 1);
   --tabdump-transition-scale: 1;
   --motion-scale: 1;
   --duration-fast: calc(140ms * var(--tabdump-transition-scale) * var(--motion-scale));
-  --duration-base: calc(150ms * var(--tabdump-transition-scale) * var(--motion-scale));
-  --duration-slow: calc(250ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-base: calc(200ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-slow: calc(320ms * var(--tabdump-transition-scale) * var(--motion-scale));
+  --duration-focus: calc(560ms * var(--tabdump-transition-scale) * var(--motion-scale));
   /* The folder-open sequence (category-folder.tsx) plays once per click, so
      it can afford to be a touch longer than the base duration scale — but it
      hands off to CategoryPage's own view-pop-in entrance immediately after
@@ -219,21 +251,21 @@
 
   /* ---- Appearance system semantic tokens (src/lib/appearance) ---- */
   --background-secondary: var(--sidebar);
-  --background-tertiary: #1a1a1e;
+  --background-tertiary: #15171b;
   --surface: var(--card);
   --surface-hover: var(--accent);
   --surface-active: var(--secondary);
-  --surface-selected: #282620;
+  --surface-selected: #1d2026;
   --surface-elevated: var(--popover);
-  --surface-highlight: transparent;
-  --overlay: rgb(0 0 0 / 0.5);
+  --surface-highlight: rgb(255 255 255 / 0.045);
+  --overlay: rgb(3 4 6 / 0.62);
   --text-secondary: var(--muted-foreground);
   --text-disabled: color-mix(in oklch, var(--muted-foreground), transparent 40%);
   --accent-hover: color-mix(in oklch, var(--primary), white 12%);
   --accent-active: color-mix(in oklch, var(--primary), black 16%);
   --accent-subtle: color-mix(in oklch, var(--primary), var(--background) 84%);
   --border-subtle: var(--border);
-  --border-strong: #3f3d37;
+  --border-strong: #363a42;
   --success-subtle: color-mix(in oklch, var(--success), var(--background) 85%);
   --warning-subtle: color-mix(in oklch, var(--warning), var(--background) 85%);
   --error: var(--destructive);
@@ -505,6 +537,85 @@
 
 @utility text-content {
   font-family: var(--tabdump-font-content);
+}
+
+/* Page title (22px display face): every destination opens with one. */
+@utility text-title {
+  font-family: var(--hb-font-display);
+  font-size: calc(var(--hb-text-22) * var(--tabdump-font-scale));
+  line-height: 1.25;
+  letter-spacing: var(--hb-tracking-22);
+  font-weight: 500;
+  text-wrap: balance;
+}
+
+/* ---- Motion utilities (see the motion tokens on :root) ------------------
+   `animate-enter` is a destination arriving: it rises 6px into place. List
+   rows use `animate-rise` with `--stagger` (their index, capped by the
+   caller) so a list settles top-down in one short wave rather than every
+   row moving at once. Both are opacity/transform only. */
+@utility animate-enter {
+  animation: spatial-enter var(--duration-slow) var(--ease-standard) both;
+}
+
+@utility animate-rise {
+  animation: hb-rise var(--duration-slow) var(--ease-standard) both;
+  animation-delay: calc(min(var(--stagger, 0), 10) * 28ms);
+}
+
+@utility animate-fade {
+  animation: hb-fade var(--duration-base) var(--ease-color) both;
+}
+
+@keyframes hb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hb-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hb-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hb-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A floating panel: the elevated surface, a hairline, its shadow and a lit
+   top edge. Inspectors, previews and the palette share it. */
+@utility surface-panel {
+  background-color: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--surface-highlight);
 }
 
 @layer components {

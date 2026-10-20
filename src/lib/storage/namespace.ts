@@ -64,6 +64,10 @@ export const SCOPED_STORAGE_KEYS = [
   // Saved browser sessions (see src/lib/sessions/persistence.ts): the
   // addresses and titles of one person's open tabs.
   "tabdump:tab-sessions:v1",
+  // The knowledge graph's node positions and camera (see
+  // src/lib/knowledge-graph/persistence.ts): ids and coordinates only, but
+  // the shape of one person's work, so it partitions with the rest.
+  "tabdump:knowledge-graph:v1",
 ] as const;
 
 /**

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
-import { ChevronLeft, Group, MoreHorizontal, Pencil, Sparkles, Trash2, Waypoints, PanelLeftOpen, Eraser } from "lucide-react"
+import { ChevronLeft, Group, MoreHorizontal, Orbit, Pencil, Sparkles, Trash2, PanelLeftOpen, Eraser } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import {
@@ -93,7 +93,7 @@ export function WorkspaceHeader({
   collections?: Collection[]
 }) {
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-background">
+    <header className="sticky top-0 z-20 border-b border-subtle bg-[color-mix(in_oklab,var(--background)_82%,transparent)] backdrop-blur-md">
       <div className="px-4 py-2 sm:py-0">
         <div className="flex min-h-12 flex-wrap items-center gap-2">
           {onOpenSidebar && (
@@ -104,9 +104,19 @@ export function WorkspaceHeader({
 
           <div className="mr-auto flex min-w-0 items-center gap-2">
             {onBack ? (
-              <Button type="button" variant="ghost" size="sm" className="-ml-1.5" onClick={onBack}>
-                <ChevronLeft /> Projects
-              </Button>
+              <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-body-sm">
+                <Button type="button" variant="ghost" size="sm" className="-ml-1.5" onClick={onBack}>
+                  <ChevronLeft /> Home
+                </Button>
+                {currentWorkspace && (
+                  <>
+                    <span aria-hidden className="text-tertiary">/</span>
+                    <span className="truncate px-1 text-foreground" aria-current="page">
+                      {subjectName(currentWorkspace)}
+                    </span>
+                  </>
+                )}
+              </nav>
             ) : (
               currentWorkspace && <span className="truncate text-h2 text-foreground">{subjectName(currentWorkspace)}</span>
             )}
@@ -145,7 +155,7 @@ export function WorkspaceHeader({
               )}
               {onOpenGraph && (
                 <DropdownMenuItem disabled={graphLocked} onClick={onOpenGraph}>
-                  <Waypoints /> {graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : "Graph view"}
+                  <Orbit /> {graphLocked ? (graphLockedReason ?? "Organizing your tabs…") : "Show in graph"}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={onCleanup}>

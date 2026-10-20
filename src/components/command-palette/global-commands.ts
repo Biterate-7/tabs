@@ -1,4 +1,4 @@
-import { Boxes, Clock, Database, FileUp, FolderPlus, Globe, Group, House, Keyboard, MessageSquareShare, MessagesSquare, Moon, NotebookPen, Palette, Cable, ScanSearch, Search, Settings, Star, Sun, Type, Waypoints } from "lucide-react"
+import { Layers, Library, Orbit, Boxes, Clock, Database, FileUp, FolderPlus, Globe, Group, House, Keyboard, MessageSquareShare, MessagesSquare, Moon, NotebookPen, Palette, Cable, ScanSearch, Search, Settings, Star, Sun, Type, Waypoints } from "lucide-react"
 import type { Workspace } from "@/lib/workspace/types"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { CaptureMode } from "@/components/memory/capture-dialog"
@@ -38,6 +38,14 @@ export type GlobalCommandActions = {
   saveFromAi?: () => void
   /** Smart Organize for the tabs open in Chrome. Present inside the shell. */
   organizeOpenTabs?: () => void
+  /** The AI page. Present inside the shell. */
+  goAi?: () => void
+  /** The Library. Present inside the shell. */
+  goLibrary?: () => void
+  /** Saved browser sessions. Present where sessions exist (not Hubble Desktop). */
+  goSessions?: () => void
+  /** The map of saved tabs. Present when there are saved tabs. */
+  openTabMap?: () => void
 }
 
 /** How many saved tabs the palette indexes. Past this, search the workspace itself. */
@@ -50,10 +58,14 @@ export function buildGlobalCommands(
   const current = data.workspaces.find((w) => w.id === data.currentId)
 
   const navigation: Command[] = [
-    ...(actions.goHome ? [{ id: "go-home", label: "Go to Projects", group: "Navigation" as const, icon: House, onSelect: actions.goHome, keywords: ["home", "start", "subjects"] }] : []),
+    ...(actions.goHome ? [{ id: "go-home", label: "Go to Home", group: "Navigation" as const, icon: House, onSelect: actions.goHome, keywords: ["home", "start", "projects", "continue"] }] : []),
     ...(actions.openSearch ? [{ id: "go-search", label: "Search", group: "Navigation" as const, icon: Search, onSelect: () => actions.openSearch?.(), keywords: ["find", "memory", "conversations", "notes"] }] : []),
     { id: "go-workspace", label: current ? `Go to ${current.name}` : "Go to project", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["workspace", "project", "tabs"] },
-    { id: "go-graph", label: "Go to Graph", group: "Navigation", icon: Waypoints, onSelect: actions.openGraph, keywords: ["relationships", "map", "knowledge graph"] },
+    { id: "go-graph", label: "Go to Graph", group: "Navigation", icon: Orbit, onSelect: actions.openGraph, keywords: ["relationships", "map", "knowledge graph", "connections"] },
+    ...(actions.goAi ? [{ id: "go-ai", label: "Go to AI", group: "Navigation" as const, icon: MessageSquareShare, onSelect: actions.goAi, keywords: ["chatgpt", "claude", "gemini", "perplexity", "use in ai", "context"] }] : []),
+    ...(actions.goLibrary ? [{ id: "go-library", label: "Go to Library", group: "Navigation" as const, icon: Library, onSelect: actions.goLibrary, keywords: ["conversations", "files", "documents", "notes", "sources"] }] : []),
+    ...(actions.goSessions ? [{ id: "go-sessions", label: "Go to Sessions", group: "Navigation" as const, icon: Layers, onSelect: actions.goSessions, keywords: ["tabs", "restore", "resume", "browser"] }] : []),
+    ...(actions.openTabMap ? [{ id: "go-tab-map", label: "Go to Tab map", group: "Navigation" as const, icon: Waypoints, onSelect: actions.openTabMap, keywords: ["saved tabs", "sections", "domains"] }] : []),
     { id: "go-favorites", label: "Go to Favorites", group: "Navigation", icon: Star, onSelect: actions.openFavorites },
     { id: "go-recents", label: "Go to Recent", group: "Navigation", icon: Clock, onSelect: actions.openRecents },
     { id: "go-history-dump", label: "Import from history", group: "Navigation", icon: ScanSearch, onSelect: actions.openHistoryDump, keywords: ["history dump"] },

@@ -81,6 +81,7 @@ export function ReuseDialog({
   onOpenChange,
   workspace,
   initialRefs,
+  initialProvider,
   onCopied,
   onTransferred,
 }: {
@@ -89,6 +90,8 @@ export function ReuseDialog({
   workspace: Workspace
   /** What was chosen where the dialog was opened from. Empty: the person picks here. */
   initialRefs: readonly KnowledgeItemRef[]
+  /** Start on this AI app instead of the last one used. */
+  initialProvider?: AiProviderId
   onCopied?: (info: { items: number; chars: number }) => void
   /** A transfer reached the AI app's message box (and was sent, when `sent`). */
   onTransferred?: (info: { items: number; provider: AiProviderId; sent: boolean }) => void
@@ -109,7 +112,7 @@ export function ReuseDialog({
   const [filter, setFilter] = useState("")
   const [length, setLength] = useState<Length>("standard")
   const [includeBrief, setIncludeBrief] = useState(true)
-  const [provider, setProviderState] = useState<AiProviderId>(rememberedProvider)
+  const [provider, setProviderState] = useState<AiProviderId>(() => initialProvider ?? rememberedProvider())
   const [mode, setMode] = useState<TransferMode>("prepare")
   const [attachOriginals, setAttachOriginals] = useState(true)
   const [asFile, setAsFile] = useState(false)
