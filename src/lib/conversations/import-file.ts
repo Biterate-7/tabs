@@ -26,7 +26,7 @@ export type ImportFileResult =
   | { ok: false; reason: ImportFileFailure };
 
 export const IMPORT_FILE_MESSAGES: Record<ImportFileFailure, string> = {
-  "too-large": `That file is larger than ${Math.round(CONVERSATION_LIMITS.importBytes / (1024 * 1024))} MB. Import a smaller export, or paste the conversations you need.`,
+  "too-large": `That file is larger than ${Math.round(CONVERSATION_LIMITS.importBytes / (1024 * 1024))} MB. Import a smaller export.`,
   "unsupported-type": "Hubble can import a ChatGPT or Claude conversations.json, or a .md or .txt file.",
   zip: "That's the zipped export. Unzip it first, then choose conversations.json from inside.",
   unreadable: "That file couldn't be read. Try choosing it again.",

@@ -29,7 +29,7 @@
 // message elements each app uses — ChatGPT's as a list of layouts, tried in
 // order — and fail with a reason rather than guess: a page with no readable
 // messages is "no-messages", never an empty save. The popup then offers the
-// fallback — paste the conversation in Hubble.
+// fallback — reload and save again, or import the app's export in Hubble.
 
 export const AI_PAGE_HOSTS = {
   chatgpt: ["chatgpt.com", "chat.openai.com"],

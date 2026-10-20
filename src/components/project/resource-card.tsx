@@ -1,6 +1,6 @@
 "use client"
 
-import { ClipboardPaste, Copy, ExternalLink, FileUp, Info, MessageSquareShare, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
+import { Copy, ExternalLink, FileUp, Info, MessageSquareShare, MoreHorizontal, Pencil, RotateCw, Trash2, Captions } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconButton } from "@/components/ui/icon-button"
@@ -24,8 +24,6 @@ export type SourceActions = {
   onOpen: (tab: Tab) => void
   /** "Use in AI chat" with this one item. */
   onUseInAi?: (tab: Tab) => void
-  /** A conversation saved as a link only: paste its text. */
-  onPasteConversation?: (tab: Tab) => void
   onRename: (tab: Tab) => void
   onRemove: (tab: Tab) => void
   onRetry: (tab: Tab) => void
@@ -115,11 +113,6 @@ export function ResourceCard({
           <IconButton className="size-6" aria-label={`Use ${title} in AI`} tooltip="Use in AI" onClick={() => actions.onUseInAi!(tab)}>
             <MessageSquareShare />
           </IconButton>
-        )}
-        {needsCapture && actions.onPasteConversation && (
-          <Button type="button" size="xs" variant="ghost" onClick={() => actions.onPasteConversation!(tab)} aria-label={`Paste the conversation for ${title}`}>
-            <ClipboardPaste /> Paste conversation
-          </Button>
         )}
         {needsFile && (
           <Button type="button" size="xs" variant="ghost" onClick={() => actions.onDetails(tab)} aria-label={`Upload the PDF for ${title}`}>

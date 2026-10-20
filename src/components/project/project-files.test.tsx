@@ -78,9 +78,9 @@ describe("+ Add → Upload files", () => {
   it("is offered in the Add menu, apart from importing AI chats", async () => {
     const user = userEvent.setup()
     const onUpload = vi.fn()
-    render(<AddMenu subjectName="Physics HL" onAdd={() => []} onOpenLink={vi.fn()} onCapture={vi.fn()} onUpload={onUpload} />)
+    render(<AddMenu subjectName="Physics HL" onAdd={() => []} onOpenLink={vi.fn()} onCapture={vi.fn()} onSaveFromAi={vi.fn()} onUpload={onUpload} />)
     await user.click(screen.getByRole("button", { name: /^Add/ }))
-    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim())).toEqual(["Paste a conversation", "Write a note", "Import AI chats", "Upload files", "Browser tabs", "Link"])
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim())).toEqual(["AI conversation", "Write a note", "Import AI chats", "Upload files", "Browser tabs", "Link"])
     await user.click(screen.getByRole("menuitem", { name: "Upload files" }))
     expect(onUpload).toHaveBeenCalledOnce()
   })

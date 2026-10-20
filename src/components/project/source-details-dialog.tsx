@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { Captions, ClipboardPaste, ExternalLink, FileUp, MessageSquareShare, RotateCw } from "lucide-react"
+import { Captions, ExternalLink, FileUp, MessageSquareShare, RotateCw } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,6 +11,7 @@ import { VideoTranscript, type TranscriptSeek } from "./video-transcript"
 import { captureLine, ConversationView } from "@/components/memory/conversation-view"
 import { ProviderBadge } from "@/components/memory/provider-mark"
 import { useMemoryActions } from "@/components/memory/memory-actions"
+import { GetExtensionButton, useSaveFromAiState } from "@/components/memory/save-from-ai"
 import { aiProviderName, providerOfUrl } from "@/lib/providers/registry"
 import { isDesktop } from "@/lib/platform/detect"
 import { getContent } from "@/lib/resources/content-store"
@@ -57,7 +58,6 @@ export function SourceDetailsDialog({
   seek,
   focusTurn,
   terms,
-  onPasteConversation,
 }: {
   tab: Tab | null
   workspaceId: string
@@ -69,8 +69,6 @@ export function SourceDetailsDialog({
   /** Open a conversation at a turn (from search), with the search words marked there. */
   focusTurn?: number
   terms?: readonly string[]
-  /** A conversation saved as a link only: paste its text (opens the capture dialog). */
-  onPasteConversation?: (tab: Tab) => void
   onOpenChange: (open: boolean) => void
   onRename: (tab: Tab, title: string) => void
   onRetry: (tab: Tab) => void
@@ -97,6 +95,7 @@ export function SourceDetailsDialog({
     setMessage(null)
   }
 
+  const saveFromAi = useSaveFromAiState()
   const contentKey = tab && resource?.content ? `${tab.id}@${resource.content.extractedAt}` : null
   useEffect(() => {
     if (!tab || !contentKey) return
@@ -213,11 +212,11 @@ export function SourceDetailsDialog({
           {isConversation && resource.status !== "ready" && (
             <section aria-label="Save the conversation's text" className="rounded-md border border-subtle p-3">
               <p className="text-body-sm text-foreground">Only the link is saved.</p>
-              <p className="text-meta text-muted-foreground">Paste the conversation, or save it from the page with Hubble for Chrome.</p>
-              {onPasteConversation && (
-                <Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => onPasteConversation(tab)}>
-                  <ClipboardPaste /> Paste the conversation
-                </Button>
+              <p className="text-meta text-muted-foreground">Open it, then choose Save to Hubble in Hubble for Chrome to save its text.</p>
+              {saveFromAi !== "connected" && (
+                <div className="mt-2">
+                  <GetExtensionButton size="sm" variant="secondary" />
+                </div>
               )}
             </section>
           )}

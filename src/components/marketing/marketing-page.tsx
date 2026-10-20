@@ -121,7 +121,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
           <FeatureSection
             id="capture"
             title="Save the conversation, not just the link."
-            body="On ChatGPT, Claude, Gemini or Perplexity, open Hubble for Chrome and choose Save to Hubble: the conversation on screen goes into the project you pick, with its link and where it came from. Save it again later and Hubble updates it instead of adding a copy. Prefer not to install anything? Paste a conversation, or import your ChatGPT or Claude export."
+            body="On ChatGPT, Claude, Gemini or Perplexity, open Hubble for Chrome and choose Save to Hubble: the conversation on screen goes into the project you pick, with its link and where it came from. Save it again later and Hubble updates it instead of adding a copy. Already have a history? Import your ChatGPT or Claude export."
             link={extensionLink}
             stage={
               <Stage>
@@ -210,7 +210,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
 /** What Hubble does with each AI app, read from the provider registry so the row cannot claim more than Hubble does. */
 const WORKS_WITH: { name: string; note: string; mark: ReactNode }[] = AI_PROVIDER_IDS.map((id) => {
   const provider = AI_PROVIDERS[id]
-  const parts = [provider.capabilities.pageCapture.supported ? "Save from the page" : "", provider.capabilities.exportImport.supported ? "Import export" : "Paste"].filter(Boolean)
+  const parts = [provider.capabilities.pageCapture.supported ? "Save from the page" : "", provider.capabilities.exportImport.supported ? "Import export" : ""].filter(Boolean)
   return { name: provider.name, note: parts.join(" · "), mark: <ProviderMark provider={id} size={16} /> }
 })
 

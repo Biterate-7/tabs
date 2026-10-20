@@ -33,9 +33,9 @@ describe("long text never pushes a dialog off-screen", () => {
     expectCapped(screen.getByLabelText("Message for the AI app"))
   })
 
-  it("capture: the dialog fits the viewport and a pasted conversation scrolls inside it", () => {
+  it("capture: the dialog fits the viewport and a long note scrolls inside it", () => {
     const save = vi.fn()
-    render(<CaptureDialog open onOpenChange={vi.fn()} projectName="History IA" initialMode="conversation" onSaveConversations={save} onSaveNote={save} />)
+    render(<CaptureDialog open onOpenChange={vi.fn()} projectName="History IA" initialMode="note" onSaveConversations={save} onSaveNote={save} />)
     expectViewportBounded(document.querySelector<HTMLElement>("[data-capture-dialog]")!)
     expectCapped(document.querySelector<HTMLElement>("[data-capture-dialog] textarea")!)
   })

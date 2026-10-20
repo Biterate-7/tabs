@@ -1,4 +1,4 @@
-import { Boxes, ClipboardPaste, Clock, Database, FileUp, FolderPlus, Globe, Group, House, Keyboard, MessageSquareShare, MessagesSquare, Moon, NotebookPen, Palette, Cable, ScanSearch, Search, Settings, Star, Sun, Type, Waypoints } from "lucide-react"
+import { Boxes, Clock, Database, FileUp, FolderPlus, Globe, Group, House, Keyboard, MessageSquareShare, MessagesSquare, Moon, NotebookPen, Palette, Cable, ScanSearch, Search, Settings, Star, Sun, Type, Waypoints } from "lucide-react"
 import type { Workspace } from "@/lib/workspace/types"
 import type { SettingsSection } from "@/components/settings/appearance-settings-view"
 import type { CaptureMode } from "@/components/memory/capture-dialog"
@@ -34,6 +34,8 @@ export type GlobalCommandActions = {
   reuseCurrent?: () => void
   /** The capture dialog on the current project. Present inside the shell. */
   capture?: (mode: CaptureMode) => void
+  /** How to save AI conversations with Hubble for Chrome. Present inside the shell. */
+  saveFromAi?: () => void
   /** Smart Organize for the tabs open in Chrome. Present inside the shell. */
   organizeOpenTabs?: () => void
 }
@@ -70,9 +72,11 @@ export function buildGlobalCommands(
           },
         ]
       : []),
+    ...(actions.saveFromAi
+      ? [{ id: "save-from-ai", label: "Save AI conversations with Hubble for Chrome", group: "Memory" as const, icon: MessagesSquare, onSelect: actions.saveFromAi, keywords: ["save", "import", "chatgpt", "claude", "gemini", "perplexity", "chat", "extension"] }]
+      : []),
     ...(actions.capture && current
       ? [
-          { id: "capture-conversation", label: `Paste a conversation into ${current.name}`, group: "Memory" as const, icon: ClipboardPaste, onSelect: () => actions.capture?.("conversation"), keywords: ["save", "chatgpt", "claude", "gemini", "perplexity", "chat"] },
           { id: "capture-note", label: `Write a note in ${current.name}`, group: "Memory" as const, icon: NotebookPen, onSelect: () => actions.capture?.("note"), keywords: ["excerpt", "decision", "idea"] },
           { id: "capture-import", label: `Import AI chats into ${current.name}`, group: "Memory" as const, icon: FileUp, onSelect: () => actions.capture?.("import"), keywords: ["conversations.json", "export", "file"] },
         ]

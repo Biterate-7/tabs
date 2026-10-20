@@ -219,7 +219,7 @@ describe("buildMemoryBundle", () => {
 
   it("names a link-only conversation without inventing its text", () => {
     const { store, contents } = world();
-    const ingested = ingestResources(store, "ia", [{ url: "https://claude.ai/chat/0b6f6d3e-7777", title: "Unsaved chat" }], "manual", NOW)!;
+    const ingested = ingestResources(store, "ia", [{ url: "https://claude.ai/chat/0b6f6d3e-7777", title: "Unsaved chat" }], "extension", NOW)!;
     const tab = ingested.store.workspaces[0]!.tabs.at(-1)!;
     const item = findKnowledgeItem(ingested.store.workspaces[0]!, { kind: "source", tabId: tab.id })!;
     expect(item.hasText).toBe(false);

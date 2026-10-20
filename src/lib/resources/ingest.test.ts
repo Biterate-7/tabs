@@ -81,6 +81,25 @@ describe("ingestResources", () => {
     expect(projectSources(result.store.workspaces[0]!)).toHaveLength(2);
   });
 
+  it("refuses an AI conversation's address typed, pasted or dropped by hand — Hubble for Chrome saves those", () => {
+    const chat = { url: "https://chatgpt.com/c/abc-12345678", title: "Causes of the crisis" };
+    const page = { url: "https://www.britannica.com/event/Cuban-missile-crisis" };
+    for (const origin of ["manual", "chrome"] as const) {
+      const result = ingestResources(store(), "a", [chat, page], origin, NOW)!;
+      expect(result.plan.outcomes.map((outcome) => outcome.status === "invalid" ? outcome.reason : outcome.status)).toEqual(["conversation-link", "added"]);
+      expect(projectSources(result.store.workspaces[0]!).map((tab) => tab.resource!.kind)).toEqual(["webpage"]);
+    }
+    // Not even by adopting a plain tab with that address.
+    const adopted = ingestResources(store([plain(chat.url)]), "a", [chat], "manual", NOW)!;
+    expect(adopted.plan.outcomes[0]).toMatchObject({ status: "invalid", reason: "conversation-link" });
+    expect(projectSources(adopted.store.workspaces[0]!)).toEqual([]);
+    // The extension's own doors, and tabs already in Hubble, still bring one in.
+    for (const origin of ["extension", "import"] as const) {
+      const result = ingestResources(store(), "a", [chat], origin, NOW)!;
+      expect(result.plan.outcomes[0]).toMatchObject({ status: "added", kind: "conversation" });
+    }
+  });
+
   it("never touches a project it was not given", () => {
     const shared = "https://shared.example/doc";
     const result = ingestResources(store([], [plain(shared)]), "a", [{ url: shared }], "chrome", NOW)!;
