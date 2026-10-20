@@ -21,6 +21,9 @@ import type { AiProviderId } from "@/lib/providers/registry";
  *
  *   projects  the person's projects, by id and name
  *   capture   save a conversation the extension read from an AI app's page
+ *   saved     where one conversation (by its address's identity) is already
+ *             saved: project ids, names and the item's title — so the popup
+ *             shows that conversation's own state, never its app's
  *   search    find items to reuse, in one project or every project
  *   bundle    build the context text for chosen items (lib/memory/bundle.ts)
  *   reused    the person copied or inserted context — recorded locally
@@ -54,6 +57,7 @@ const requestSchema = z.discriminatedUnion("kind", [
     // The capture itself is re-read by lib/conversations/capture.ts; here only its envelope.
     args: z.object({ workspaceId: id, capture: z.unknown() }),
   }),
+  z.object({ kind: z.literal("saved"), args: z.object({ url: z.string().min(1).max(4000) }) }),
   z.object({
     kind: z.literal("search"),
     args: z.object({ query: z.string().max(500), workspaceId: id.optional() }),

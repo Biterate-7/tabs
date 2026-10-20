@@ -1,3 +1,4 @@
+import { conversationKeyOf } from "@/lib/providers/registry";
 import { youtubeVideoId } from "./detect";
 
 /**
@@ -79,6 +80,20 @@ export function resourceKey(input: string): string | undefined {
     .sort(([a, av], [b, bv]) => (a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0));
   const query = params.length > 0 ? `?${new URLSearchParams(params).toString()}` : "";
   return `${host}${port}${path}${query}`;
+}
+
+/**
+ * What a project tells its sources apart by: an AI conversation by which
+ * conversation it is — its provider and id (`conversationKeyOf`), so
+ * chat.openai.com and chatgpt.com, `?model=…` or a GPT's path are one chat,
+ * and two chats from one provider are never one source — and anything else by
+ * its address (`resourceKey`). Derived from the stored address every time, so
+ * sources saved before it existed compare the same way and nothing is
+ * migrated.
+ */
+export function sourceKey(input: string): string | undefined {
+  const conversation = conversationKeyOf(input.trim());
+  return conversation ? `conversation:${conversation}` : resourceKey(input);
 }
 
 /** Whether two addresses are the same source. Malformed input is never the same as anything. */

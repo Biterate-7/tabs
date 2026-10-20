@@ -65,6 +65,29 @@ graph links kept; a plain saved tab with the same address becomes the
 conversation. **Projects are separate**: the same conversation in two projects
 is two items.
 
+**Which conversation it is** is its provider, kind of page and id, from the
+address — `conversationRefOf(url).key` in `lib/providers/registry.ts`, e.g.
+`chatgpt:chat:6720a1b2-…` — never the provider, host or title. Two chats
+from ChatGPT are two items; one chat at `chat.openai.com` or `chatgpt.com`,
+with `?model=…`, a fragment, a trailing slash, or inside a GPT
+(`/g/<gpt>/c/<id>`) is one. A share link and ChatGPT's signed-out `/uc/`
+chats are their own kinds, never folded into a chat. Ids compare exactly
+(case and every character). An address that is not a conversation page (an
+app's home page, a new chat with no id yet) names none, so nothing is ever
+matched against it. Every comparison uses this one rule through
+`sourceKey` (`lib/resources/url.ts`): a save, "Add this tab" / "Add
+selected tabs" (`planIngestion`), the popup's "already imported" count, and
+its "already saved" line (`lib/conversations/lookup.ts`). It is derived from
+the stored address each time, so nothing saved earlier is migrated.
+`extension/src/ai-pages.js` `conversationIdentityOf` gives the same answers
+(held together by `ai-pages.test.js`).
+
+Two saves of one conversation at once (two clicks, or Chrome and Hubble
+Desktop) keep one copy: `applyConversationSave` adds nothing when another
+save added that conversation while this one wrote its text. The extension
+also refuses a second save of the same conversation while the first is
+running (`already-saving`), and never holds up a different one.
+
 Characters that hide or reorder text (zero-width, bidi overrides, controls)
 are removed on every door (`lib/conversations/clean.ts`). Saved text is never
 executed, followed or treated as an instruction.
@@ -221,8 +244,22 @@ conversation page of a known AI app:
 
 ```
 popup ──► background ──► content script (Hubble tab) ──► Hubble page
-   HUBBLE_PAGE_REQUEST { requestId, kind, args }    kinds: projects · capture · search · bundle · reused
+   HUBBLE_PAGE_REQUEST { requestId, kind, args }    kinds: projects · capture · saved · search · bundle · reused
 ```
+
+- **This tab's conversation, always.** The section shows the conversation
+  the tab is on — its title, and (when a Hubble tab can say: kind `saved`)
+  where *that* conversation is already saved — never its app's. When the tab
+  moves to another chat while the popup is open (`chrome.tabs.onUpdated`),
+  the panel starts over for it. Save sends the conversation it showed
+  (`expectedKey`); a tab that has moved since, or a page that changed chat
+  while it was read, saves nothing (`tab-changed`). A save still running for
+  one chat never disables saving another. A finished "Add this tab" or dump
+  result is replayed on the next popup open only over the very page it was
+  for (same tab, same address — kept as a fingerprint, never the address).
+- After a switch inside ChatGPT, the chat you came from stays mounted
+  (`data-app-shell-active-page="false"`); the reader reads only the active
+  page and leaves out turns tagged with another conversation's id.
 
 - The page answers (`hooks/use-extension-memory.ts`); every request is
   re-read with a closed schema (`lib/memory/extension-protocol.ts`), and the

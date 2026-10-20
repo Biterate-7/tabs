@@ -68,3 +68,15 @@ export function findMatchingTab(tabs, targetUrl) {
 
   return matches.find((tab) => tab.active) ?? matches[0];
 }
+
+/**
+ * A short fingerprint of a page's exact address — for remembering which page
+ * something was for without keeping the address itself (the dump record in
+ * chrome.storage.session holds no URLs). Equality only: FNV-1a, 8 hex chars.
+ */
+export function pageFingerprint(url) {
+  const text = String(url ?? "");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  return hash.toString(16).padStart(8, "0");
+}

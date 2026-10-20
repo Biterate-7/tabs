@@ -237,14 +237,32 @@ describe("Save this conversation to Hubble Desktop", () => {
     expect((await save(conversation)).reason).not.toBe("already-running");
   });
 
-  it("saves one conversation at a time", async () => {
+  it("saves one copy of a conversation at a time, and never holds up a different conversation", async () => {
     let release;
-    const hubble = desktopForSave({ answer: (payload) => (release ? { status: "done", result: { kind: "conversation", saved: "added", turns: payload.conversation.turns.length, project: "Biology" } } : undefined) });
+    const other = { ...conversation, url: "https://claude.ai/chat/9f8e7d6c-4e5f-6789-abcd-ef0123456789", key: "claude:chat:9f8e7d6c-4e5f-6789-abcd-ef0123456789" };
+    const first = { ...conversation, key: "claude:chat:0a1b2c3d-4e5f-6789-abcd-ef0123456789" };
+    const hubble = desktopForSave({
+      answer: (payload) => (release || payload.conversation.url === other.url ? { status: "done", result: { kind: "conversation", saved: "added", turns: payload.conversation.turns.length, project: "Biology" } } : undefined),
+    });
     const { save } = saveHarness(hubble);
-    const first = save(conversation);
+    const pending = save(first);
     await vi.waitFor(() => expect(hubble.sent).toHaveLength(1));
-    expect((await save(conversation)).reason).toBe("already-running");
+    // The same conversation again — even at a harmlessly different address — waits for the first.
+    expect((await save({ ...first, url: `${first.url}?ref=x` })).reason).toBe("already-running");
+    // Another conversation from the same app goes straight through; Hubble Desktop queues it.
+    await expect(save(other)).resolves.toMatchObject({ status: "done", saved: "added" });
     release = true;
-    await expect(first).resolves.toMatchObject({ status: "done", saved: "added" });
+    await expect(pending).resolves.toMatchObject({ status: "done", saved: "added" });
+    expect(hubble.sent.map((payload) => payload.conversation.url)).toEqual([first.url, other.url]);
+    // Nothing of the key travels to Hubble Desktop.
+    expect(hubble.sent.every((payload) => !("key" in payload.conversation))).toBe(true);
+  });
+
+  it("reports each save in its own place when told where", async () => {
+    const { save, shown } = saveHarness();
+    const own = [];
+    await save(conversation, { show: async (toast) => own.push(toast) });
+    expect(shown).toEqual([]);
+    expect(own.map((toast) => toast.title)).toEqual(["Connecting to Hubble Desktop…", "Save to Hubble", "Saved to Biology"]);
   });
 });

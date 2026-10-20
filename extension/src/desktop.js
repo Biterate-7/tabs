@@ -432,7 +432,7 @@ export function describeDesktopSave(outcome) {
     case "desktop-busy":
       return { tone: "error", title: "Hubble Desktop is busy", detail: "Finish what's open in Hubble Desktop, then try again." };
     case "already-running":
-      return { tone: "error", title: "Still saving the last conversation", detail: "Choose a project in Hubble Desktop first." };
+      return { tone: "error", title: "Already saving this conversation", detail: "Choose a project for it in Hubble Desktop first." };
     case "invalid-payload":
       return { tone: "error", title: "Couldn't save the conversation", detail: "Hubble Desktop couldn't take it. Reload the page and try again." };
     case "desktop-not-responding":

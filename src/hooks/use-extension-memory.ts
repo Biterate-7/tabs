@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import { BROWSER_MESSAGE_SOURCE } from "@/lib/browser/protocol"
 import { readConversationCapture } from "@/lib/conversations/capture"
+import { findSavedConversation } from "@/lib/conversations/lookup"
 import { getProjectContents } from "@/lib/resources/content-store"
 import { buildMemoryBundle } from "@/lib/memory/bundle"
 import { knowledgeItemsOf } from "@/lib/memory/items"
@@ -73,6 +74,13 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
           if (!read.ok) return { ok: false, error: read.reason }
           const saved = await handlersRef.current.saveCapture(request.args.workspaceId, read.conversation, read.truncated)
           return saved.ok ? { ok: true, result: { outcome: saved.outcome, title: saved.title, turns: read.conversation.turns.length, truncated: read.truncated } } : { ok: false, error: saved.reason }
+        }
+        case "saved": {
+          // This one conversation's places, never its app's: an address that names no conversation answers none.
+          const places = findSavedConversation(store, request.args.url)
+          if (!places) return { ok: true, result: { conversation: false, saved: [] } }
+          const names = new Map(store.workspaces.map((workspace) => [workspace.id, subjectName(workspace)]))
+          return { ok: true, result: { conversation: true, saved: places.map((place) => ({ ...place, projectName: names.get(place.workspaceId) ?? "" })) } }
         }
         case "search": {
           const { query, workspaceId } = request.args

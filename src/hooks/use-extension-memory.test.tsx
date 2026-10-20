@@ -82,6 +82,24 @@ describe("useExtensionMemory", () => {
     })
   })
 
+  it("says where one conversation is saved — that conversation only, never another from the same app", async () => {
+    mount(await world())
+    ask("s1", "saved", { url: "https://claude.ai/chat/0b6f6d3e-2222/?ref=sidebar" })
+    expect(await answerTo("s1")).toEqual({
+      requestId: "s1",
+      ok: true,
+      result: { conversation: true, saved: [{ workspaceId: "ia", projectName: "History IA", tabId: expect.any(String), title: "Alliances", hasText: true }] },
+    })
+    // Another Claude chat: in no project, though a Claude chat is saved.
+    ask("s2", "saved", { url: "https://claude.ai/chat/9a8b7c6d-3333" })
+    expect(await answerTo("s2")).toEqual({ requestId: "s2", ok: true, result: { conversation: true, saved: [] } })
+    // Claude's home page names no conversation: nothing is claimed for it.
+    ask("s3", "saved", { url: "https://claude.ai/new" })
+    expect(await answerTo("s3")).toEqual({ requestId: "s3", ok: true, result: { conversation: false, saved: [] } })
+    ask("s4", "saved", {})
+    expect(await answerTo("s4")).toEqual({ requestId: "s4", ok: false, error: "invalid" })
+  })
+
   it("says it is not ready rather than answering from an unloaded store", async () => {
     mount(await world(), false)
     ask("r2", "projects")

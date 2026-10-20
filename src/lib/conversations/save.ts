@@ -1,5 +1,5 @@
 import { boundContent, summarizeContent } from "@/lib/resources/content-store";
-import { resourceKey } from "@/lib/resources/url";
+import { sourceKey } from "@/lib/resources/url";
 import { buildTabsFromBrowserImport } from "@/lib/tabs/browser-import";
 import { markDuplicates } from "@/lib/tabs/duplicates";
 import { addProjectNote, findNoteByHash } from "@/lib/notes/notes";
@@ -34,6 +34,12 @@ import type { WorkspaceStore } from "@/lib/workspace/types";
  *               title (which the person may have renamed), notes,
  *               collections and graph links
  *   added       new to this project
+ *
+ * "The same conversation" is the same provider and conversation id
+ * (`sourceKey`, from lib/providers/registry's `conversationKeyOf`) — never
+ * the same provider, site or title. Two chats from ChatGPT are two items;
+ * one chat reached at chat.openai.com and chatgpt.com, or with `?model=…`,
+ * is one.
  *
  * Projects are separate: the same conversation saved into two projects is
  * two items, each only in its own project.
@@ -108,11 +114,11 @@ export function planConversationSave(
   if (!workspace) return undefined;
   const hash = contentHash(input);
 
-  const key = input.url ? resourceKey(input.url) : undefined;
+  const key = input.url ? sourceKey(input.url) : undefined;
   if (input.url && key) {
     const content = contentOf(input, "conversation", now);
     // A saved source wins over a plain tab with the same address, as in every ingestion.
-    const matches = workspace.tabs.filter((tab) => resourceKey(tab.url) === key);
+    const matches = workspace.tabs.filter((tab) => sourceKey(tab.url) === key);
     const existing = matches.find((tab) => tab.resource) ?? matches[0];
     if (existing) {
       if (existing.resource?.kind === "conversation" && existing.resource.status === "ready" && existing.resource.meta?.contentHash === hash) {
@@ -160,16 +166,21 @@ export function planConversationSave(
 
 /**
  * The store with a planned save applied, against the store as it is now. An
- * unchanged save, or one whose project has gone, changes nothing.
+ * unchanged save, or one whose project has gone, changes nothing — and so
+ * does a new item for a conversation that another save added to the project
+ * while this one was writing its text (two clicks, or Chrome and Hubble
+ * Desktop at once): the project keeps one copy, never two.
  */
 export function applyConversationSave(store: WorkspaceStore, plan: ConversationSave, now: number): WorkspaceStore {
   if (plan.outcome === "unchanged" || plan.outcome === "kept") return store;
   if (plan.target === "note") return addProjectNote(store, plan.workspaceId, plan.note, now);
   let changed = false;
+  const key = sourceKey(plan.tab.url);
   const workspaces = store.workspaces.map((workspace) => {
     if (workspace.id !== plan.workspaceId) return workspace;
-    changed = true;
     const present = workspace.tabs.some((tab) => tab.id === plan.id);
+    if (!present && key && workspace.tabs.some((tab) => tab.resource?.kind === "conversation" && sourceKey(tab.url) === key)) return workspace;
+    changed = true;
     const tabs = present ? workspace.tabs.map((tab) => (tab.id === plan.id ? plan.tab : tab)) : [...workspace.tabs, plan.tab];
     return { ...workspace, tabs: markDuplicates(tabs), updatedAt: now };
   });

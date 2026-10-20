@@ -40,11 +40,24 @@ export const AI_PAGE_HOSTS = {
 
 export const AI_PROVIDER_NAMES = { chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", perplexity: "Perplexity" };
 
+// Each conversation page: its path (first group = the conversation's id) and its kind. Ids are only compared within
+// one kind — a share link's id is the share's, and ChatGPT's signed-out /uc/ chats are not known to share ids with /c/.
 const CONVERSATION_PATHS = {
-  chatgpt: [/^\/(?:g\/[^/]+\/)?c\/[A-Za-z0-9-]{8,80}\/?$/, /^\/uc\/[A-Za-z0-9-]{8,80}\/?$/, /^\/share\/[A-Za-z0-9-]{8,80}\/?$/],
-  claude: [/^\/chat\/[A-Za-z0-9-]{8,80}\/?$/, /^\/share\/[A-Za-z0-9-]{8,80}\/?$/],
-  gemini: [/^\/app\/[A-Za-z0-9_-]{6,80}\/?$/, /^\/gem\/[^/]+\/[A-Za-z0-9_-]{6,80}\/?$/, /^\/share\/[A-Za-z0-9_-]{6,80}\/?$/],
-  perplexity: [/^\/search\/[A-Za-z0-9._-]{6,200}\/?$/],
+  chatgpt: [
+    { path: /^\/(?:g\/[^/]+\/)?c\/([A-Za-z0-9-]{8,80})\/?$/, kind: "chat" },
+    { path: /^\/uc\/([A-Za-z0-9-]{8,80})\/?$/, kind: "signed-out" },
+    { path: /^\/share\/([A-Za-z0-9-]{8,80})\/?$/, kind: "share" },
+  ],
+  claude: [
+    { path: /^\/chat\/([A-Za-z0-9-]{8,80})\/?$/, kind: "chat" },
+    { path: /^\/share\/([A-Za-z0-9-]{8,80})\/?$/, kind: "share" },
+  ],
+  gemini: [
+    { path: /^\/app\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "chat" },
+    { path: /^\/gem\/[^/]+\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "chat" },
+    { path: /^\/share\/([A-Za-z0-9_-]{6,80})\/?$/, kind: "share" },
+  ],
+  perplexity: [{ path: /^\/search\/([A-Za-z0-9._-]{6,200})\/?$/, kind: "chat" }],
 };
 
 /** The AI app this address belongs to, or undefined. */
@@ -60,12 +73,33 @@ export function aiProviderOf(url) {
   return Object.keys(AI_PAGE_HOSTS).find((id) => AI_PAGE_HOSTS[id].includes(host));
 }
 
+/**
+ * Which conversation an address names — { provider, conversationId, url, key }
+ * — or undefined for any other page (an app's home page, settings, a new chat
+ * that has no id yet, another site). The same answers as `conversationRefOf`
+ * in src/lib/providers/registry.ts (ai-pages.test.js holds them together).
+ *
+ * `key` is what tells conversations apart: provider, kind of page and id
+ * ("chatgpt:chat:6720a1b2-…"). chat.openai.com or chatgpt.com, a `?model=`,
+ * a fragment or a trailing slash change nothing; a different id is always a
+ * different conversation, whatever its title. Never the provider or host
+ * alone: nothing here says "this app already has a saved chat".
+ */
+export function conversationIdentityOf(url) {
+  const provider = aiProviderOf(url);
+  if (!provider) return undefined;
+  const parsed = new URL(url);
+  for (const { path, kind } of CONVERSATION_PATHS[provider]) {
+    const match = path.exec(parsed.pathname);
+    // Ids are compared exactly — case and every character — so two similar ids stay two conversations.
+    if (match?.[1]) return { provider, conversationId: match[1], url: `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`, key: `${provider}:${kind}:${match[1]}` };
+  }
+  return undefined;
+}
+
 /** Whether this address is one conversation (not the app's home page or settings). */
 export function isConversationUrl(url) {
-  const provider = aiProviderOf(url);
-  if (!provider) return false;
-  const path = new URL(url).pathname;
-  return CONVERSATION_PATHS[provider].some((pattern) => pattern.test(path));
+  return conversationIdentityOf(url) !== undefined;
 }
 
 /**
@@ -260,6 +294,24 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       return [el];
     };
 
+    // Where this conversation is. After a switch inside the app, ChatGPT keeps the chat you came from in the
+    // page (data-app-shell-active-page="false", seen live 2026-10-15): its questions keep their text, its
+    // replies are emptied. Saving chat B then led with chat A's questions. Only the active page is read, and a
+    // turn tagged with another conversation's id is left out.
+    const marks = provider === "chatgpt" ? [...page.querySelectorAll("[data-app-shell-active-page]")] : [];
+    const active = outermost(marks.filter((mark) => mark.getAttribute("data-app-shell-active-page") === "true"));
+    const roots = active.length > 0 ? active : [page];
+    const within = (selector) => roots.flatMap((root) => [...root.querySelectorAll(selector)]);
+    const chatId = (/^\/(?:g\/[^/]+\/)?c\/([A-Za-z0-9-]{8,80})\/?$/.exec(new URL(address).pathname) || [])[1];
+    const ownChat = (el) => {
+      if (!chatId) return true;
+      const turn = el.closest("[data-turn-key]") || el;
+      const ids = [...turn.querySelectorAll("[data-chatgpt-selection-conversation-id]")]
+        .filter((tagged) => !turn.matches("[data-turn-key]") || tagged.closest("[data-turn-key]") === turn)
+        .map((tagged) => tagged.getAttribute("data-chatgpt-selection-conversation-id"));
+      return ids.length === 0 || ids.includes(chatId);
+    };
+
     let firstMessage;
     let partial = false;
     if (provider === "chatgpt") {
@@ -277,9 +329,9 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         },
       ];
       for (const layout of LAYOUTS) {
-        for (const el of outermost([...page.querySelectorAll(layout.messages)])) {
+        for (const el of outermost(within(layout.messages))) {
           const role = layout.roleOf(el);
-          if (role !== "user" && role !== "assistant") continue;
+          if ((role !== "user" && role !== "assistant") || !ownChat(el)) continue;
           firstMessage = firstMessage || el;
           push(role, bodyOf(el, ['[data-markdown-copy="contents"]', "[data-assistant-markdown-root]", ".markdown", "[data-user-message-bubble]", ".whitespace-pre-wrap"]));
         }
@@ -313,7 +365,7 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     if (turns.length === 0) {
       // Empty only when the conversation area is there and holds nothing but a loading notice. Turns or
       // text Hubble could not read are a layout it no longer understands, never "no messages".
-      const thread = provider === "chatgpt" && found === 0 && page.querySelector('[data-thread-find-target="conversation"], [data-conversation-transcript]');
+      const thread = provider === "chatgpt" && found === 0 && within('[data-thread-find-target="conversation"], [data-conversation-transcript]')[0];
       const notices = thread ? [...thread.querySelectorAll('[role="status"]')].map((status) => status.textContent || "") : [];
       const empty = thread && !thread.querySelector("[data-turn-key], li") && !notices.reduce((text, notice) => text.replace(notice, ""), thread.textContent || "").trim();
       return { ok: false, reason: empty ? "empty-conversation" : "no-messages", provider };

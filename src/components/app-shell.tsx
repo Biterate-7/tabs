@@ -1366,11 +1366,22 @@ export function AppShell() {
     }
     if (kept.length > 0) {
       let latest = storeRef.current
-      if (!latest) return { ...summary, failed: summary.failed + kept.length }
+      if (!latest || !latest.workspaces.some((workspace) => workspace.id === workspaceId)) return { ...summary, failed: summary.failed + kept.length }
       const at = createTimestamp()
-      for (const plan of kept) latest = applyConversationSave(latest, plan, at)
-      persist(latest)
+      // A conversation another save added while this one wrote its text is left as that save made it: one copy, never two.
+      const applied: ConversationSave[] = []
       for (const plan of kept) {
+        const next = applyConversationSave(latest, plan, at)
+        if (next === latest) {
+          summary.unchanged += 1
+          summary.titles.push(plan.target === "note" ? plan.note.title : (plan.tab.title ?? ""))
+          continue
+        }
+        latest = next
+        applied.push(plan)
+      }
+      if (applied.length > 0) persist(latest)
+      for (const plan of applied) {
         if (plan.outcome === "added") summary.added += 1
         else summary.updated += 1
         summary.titles.push(plan.target === "note" ? plan.note.title : (plan.tab.title ?? ""))
