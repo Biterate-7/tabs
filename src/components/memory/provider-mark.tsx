@@ -40,6 +40,11 @@ const LOGOS: Record<AiProviderId, Logo> = {
   perplexity: { src: "/brand/providers/perplexity.png", fill: 1, round: true },
 }
 
+/** The supplied logo for an AI app, for surfaces that paint it themselves (the graph's canvas). */
+export function providerLogo(provider: string | null | undefined): Readonly<Logo> | undefined {
+  return isAiProviderId(provider) ? LOGOS[provider] : undefined
+}
+
 /**
  * The provider's logo in a `size`px box. A provider this build does not know
  * draws nothing — never another provider's logo.
