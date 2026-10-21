@@ -210,6 +210,17 @@
   --kind-file: #e2b77a;
   --kind-note: #c4a9ff;
   --kind-session: #f29fb3;
+  /* The Graph's own light: rose and crimson filaments, a blush highlight,
+     an ember for depth and the warm white of its brightest points. Not part
+     of any theme's palette (themes never write these), the way the provider
+     logos are not: it is what the galaxy is lit by. The canvas derives its
+     ink-on-paper variants from these on light themes. */
+  --graph-filament: #d24868;
+  --graph-rose: #ec8298;
+  --graph-blush: #f7c6cf;
+  --graph-ember: #8e2440;
+  --graph-starlight: #f3ebe4;
+  --graph-hub: #e9c27c;
   /* ---- Motion system (docs/design-system.md › Motion) ------------------
      Three curves, four durations. Everything that moves uses one of them.
 

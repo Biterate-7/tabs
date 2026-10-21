@@ -1,12 +1,15 @@
 "use client"
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react"
+import { worldPoint } from "@/lib/knowledge-graph/galaxy"
 import { nodeRadius } from "@/lib/knowledge-graph/layout"
-import { clampZoom, fitCamera, mixCamera, screenToWorld, SpatialGrid, worldToScreen, zoomAt } from "@/lib/knowledge-graph/view"
+import { baseLens, cameraOn, fitLens, panLens, project, zoomAtLens } from "@/lib/knowledge-graph/projection"
+import type { Lens } from "@/lib/knowledge-graph/projection"
+import { clampZoom, mixCamera, SpatialGrid } from "@/lib/knowledge-graph/view"
 import type { Camera, Insets } from "@/lib/knowledge-graph/view"
 import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
-import { drawScene, readPalette } from "./renderer"
-import type { Palette } from "./renderer"
+import { drawScene, orbitRadii, readPalette, RenderCache } from "./renderer"
+import type { Hit, Palette } from "./renderer"
 
 export type GraphCanvasHandle = {
   /** Frames the given nodes (all of them when omitted) in the free part of the view. */
@@ -23,9 +26,11 @@ type Props = {
   nodes: readonly KnowledgeNode[]
   edges: readonly KnowledgeEdge[]
   positions: Readonly<Record<string, Point>>
-  projectItems: ReadonlyMap<string, number>
   selected?: string
-  selectedProject?: string
+  /** The project hub lit as the galaxy's core (the chosen project, or the selection's). */
+  core?: string
+  /** The scope at the origin, joined to every hub. Absent when one project is chosen. */
+  root?: { label: string; detail: string }
   hovered?: string
   focused?: string
   matches: ReadonlySet<string>
@@ -35,43 +40,64 @@ type Props = {
   initialCamera?: Camera
   insets: Insets
   reducedMotion: boolean
+  /** Covered (the list view) or leaving: hold the ambient motion. */
+  paused?: boolean
   onHover: (id: string | undefined, point?: Point) => void
   onSelect: (id: string | undefined) => void
   onOpen: (id: string) => void
   onCameraChange?: (camera: Camera) => void
 }
 
-const QUIET = 0.16
-const CAMERA_MS = 560
-const PULSE_MS = 900
-const DIVE_MS = 260
-const REVEAL_MS = 900
+const QUIET = 0.14
+const CAMERA_MS = 620
+const DIVE_MS = 280
+const REVEAL_S = 2.1
+/** Ambient motion runs at about 30fps (20 for a large library); interaction gets every frame. */
+const AMBIENT_FRAME_MS = 32
+const AMBIENT_FRAME_MS_LARGE = 50
+const LARGE = 1200
+/** How far the pointer sways the camera: radians of yaw and tilt at the canvas's edges. */
+const SWAY_YAW = 0.05
+const SWAY_TILT = 0.035
 
 /**
- * The knowledge graph's surface: a canvas, drawn only when something
- * changed. There is no animation loop at rest — a frame is requested by a
- * prop change, a pointer move that changes what is under it, or an
- * animation in flight (the camera travelling, emphasis fading, the
- * selection's one signal), and the loop stops itself the frame those end.
+ * The knowledge galaxy's surface: one canvas, one animation loop.
  *
- * Panning, wheel/pinch zoom and clicks are handled here; what a click
- * *means* (select, open) is the parent's. Keyboard traversal lives in the
- * parent too, which owns the focusable element around this canvas.
+ * With motion allowed, the loop runs while the galaxy is on screen and the
+ * page is visible — particles drift, the core breathes, the camera sways a
+ * little toward the pointer — at about 30fps, and at full rate only while
+ * something is actually moving (a camera tween, a drag, emphasis easing,
+ * nodes arriving or leaving). Hidden, covered, scrolled away or with motion
+ * reduced, it draws only when something changes, exactly once.
+ *
+ * Nothing here re-renders React per frame: the loop reads the latest props
+ * from a ref and keeps its own state (camera, lens sway, emphasis, presence,
+ * the lit core) in refs. Panning, wheel/pinch zoom and clicks are handled
+ * here against the frame just drawn; what a click *means* is the parent's.
  */
 export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(function KnowledgeGraphCanvas(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewport = useRef({ width: 0, height: 0 })
   const dpr = useRef(1)
-  const camera = useRef<Camera>(props.initialCamera ?? { x: 0, y: 0, k: 0.8 })
+  const camera = useRef<Camera>(props.initialCamera ?? { x: 0, y: 0, k: 0.7 })
   const tween = useRef<{ from: Camera; to: Camera; start: number; duration: number; then?: () => void } | null>(null)
+  const sway = useRef({ yaw: 0, tilt: 0, targetYaw: 0, targetTilt: 0 })
+  const lens = useRef<Lens>({ tilt: 0.9, yaw: 0, focal: 1000 })
   const emphasis = useRef(new Map<string, number>())
-  const pulse = useRef<{ start: number } | null>(null)
-  // The opening reveal: starts on the first frame drawn, plays once.
+  const presence = useRef(new Map<string, number>())
+  const coreness = useRef(new Map<string, number>())
+  // The opening: starts on the first frame drawn, plays once.
   const reveal = useRef<{ start: number } | "done" | null>(null)
+  const clock = useRef({ time: 0, last: 0 })
   const palette = useRef<Palette | null>(null)
+  const cache = useRef<RenderCache | null>(null)
+  const hits = useRef<{ list: Hit[]; grid: SpatialGrid | null }>({ list: [], grid: null })
   const raf = useRef(0)
-  const lastFrame = useRef(0)
+  const lastDraw = useRef(0)
+  const busyUntil = useRef(0)
+  const inView = useRef(true)
+  const pageVisible = useRef(true)
   const cameraSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // The latest props, read by the frame and the event handlers without re-binding them.
   const latest = useRef(props)
@@ -79,114 +105,212 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     latest.current = props
   })
 
-  const grid = useMemo(() => {
-    const entries: { id: string; x: number; y: number; r: number }[] = []
-    for (const node of props.nodes) {
-      const p = props.positions[node.id]
-      if (p) entries.push({ id: node.id, x: p.x, y: p.y, r: nodeRadius(node) })
+  // What is drawn: the current nodes plus any still fading out, at their last known places.
+  const world = useRef({ nodes: [] as readonly KnowledgeNode[], edges: [] as readonly KnowledgeEdge[], positions: new Map<string, Point>(), orbits: [] as number[], source: null as null | { nodes: readonly KnowledgeNode[]; edges: readonly KnowledgeEdge[]; positions: Readonly<Record<string, Point>> } })
+  const syncWorld = useCallback(() => {
+    const p = latest.current
+    const w = world.current
+    if (w.source && w.source.nodes === p.nodes && w.source.edges === p.edges && w.source.positions === p.positions) return
+    const first = w.source === null
+    const ids = new Set(p.nodes.map((node) => node.id))
+    const leaving = first ? [] : w.nodes.filter((node) => !ids.has(node.id) && (presence.current.get(node.id) ?? 0) > 0.02)
+    const positions = new Map<string, Point>()
+    for (const node of leaving) {
+      const at = w.positions.get(node.id)
+      if (at) positions.set(node.id, at)
     }
-    return SpatialGrid.from(entries)
-  }, [props.nodes, props.positions])
-  const gridRef = useRef(grid)
-  useEffect(() => {
-    gridRef.current = grid
-  }, [grid])
+    for (const [id, at] of Object.entries(p.positions)) positions.set(id, at)
+    const nodes = leaving.length > 0 ? [...p.nodes, ...leaving] : p.nodes
+    const all = new Set(nodes.map((node) => node.id))
+    const edgeIds = new Set(p.edges.map((edge) => edge.id))
+    const leavingEdges = first ? [] : w.edges.filter((edge) => !edgeIds.has(edge.id) && all.has(edge.source) && all.has(edge.target) && (!ids.has(edge.source) || !ids.has(edge.target)))
+    for (const node of p.nodes) if (!presence.current.has(node.id)) presence.current.set(node.id, first || p.reducedMotion ? 1 : 0)
+    world.current = { nodes, edges: leavingEdges.length > 0 ? [...p.edges, ...leavingEdges] : p.edges, positions, orbits: orbitRadii(p.nodes, positions), source: { nodes: p.nodes, edges: p.edges, positions: p.positions } }
+  }, [])
 
   const notifyCamera = useCallback(() => {
     if (cameraSaveTimer.current) clearTimeout(cameraSaveTimer.current)
-    cameraSaveTimer.current = setTimeout(() => latest.current.onCameraChange?.(camera.current), 400)
+    cameraSaveTimer.current = setTimeout(() => {
+      cameraSaveTimer.current = null
+      latest.current.onCameraChange?.(camera.current)
+    }, 400)
   }, [])
 
-  const frame = useCallback((time: number) => {
-    raf.current = 0
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext("2d")
-    if (!canvas || !ctx || viewport.current.width === 0) return
-    const p = latest.current
-    const dt = lastFrame.current ? Math.min(64, time - lastFrame.current) : 16
-    lastFrame.current = time
-    let animating = false
+  const restingLens = useCallback((): Lens => baseLens(viewport.current), [])
 
-    if (tween.current) {
-      const t = (time - tween.current.start) / tween.current.duration
-      camera.current = mixCamera(tween.current.from, tween.current.to, t)
-      if (t >= 1) {
-        const done = tween.current.then
-        tween.current = null
-        notifyCamera()
-        done?.()
-      } else animating = true
-    }
-
-    // Emphasis eases toward its target — quieting the unrelated, never hiding it.
-    const rate = p.reducedMotion ? 1 : 1 - Math.exp(-dt / 90)
-    for (const node of p.nodes) {
-      const target = p.emphasised === null || p.emphasised.has(node.id) ? 1 : QUIET
-      const current = emphasis.current.get(node.id) ?? target
-      const next = current + (target - current) * rate
-      if (Math.abs(target - next) > 0.005) animating = true
-      emphasis.current.set(node.id, Math.abs(target - next) <= 0.005 ? target : next)
-    }
-
-    let revealT: number | undefined
-    if (reveal.current === null) reveal.current = p.reducedMotion ? "done" : { start: time }
-    if (reveal.current !== "done") {
-      const t = (time - reveal.current.start) / REVEAL_MS
-      if (t >= 1.45) reveal.current = "done"
-      else {
-        revealT = t
-        animating = true
+  const frame = useCallback(
+    (now: number) => {
+      raf.current = 0
+      const canvas = canvasRef.current
+      const ctx = canvas?.getContext("2d")
+      if (!canvas || !ctx || viewport.current.width === 0) return
+      const p = latest.current
+      const ambient = !p.reducedMotion && !p.paused && inView.current && pageVisible.current
+      const interacting = now < busyUntil.current || tween.current !== null
+      // Ambient-only frames are throttled; skip this one and wait for the next.
+      if (ambient && !interacting && lastDraw.current && now - lastDraw.current < (p.nodes.length > LARGE ? AMBIENT_FRAME_MS_LARGE : AMBIENT_FRAME_MS) && reveal.current === "done") {
+        raf.current = requestAnimationFrame(frame)
+        return
       }
-    }
+      const dt = lastDraw.current ? Math.min(64, now - lastDraw.current) : 16
+      lastDraw.current = now
+      syncWorld()
+      const w = world.current
+      let animating = false
 
-    let pulseT: number | undefined
-    if (pulse.current) {
-      const t = (time - pulse.current.start) / PULSE_MS
-      if (t >= 1) pulse.current = null
-      else {
-        pulseT = t
-        animating = true
+      if (tween.current) {
+        const t = (now - tween.current.start) / tween.current.duration
+        camera.current = mixCamera(tween.current.from, tween.current.to, t)
+        if (t >= 1) {
+          const done = tween.current.then
+          tween.current = null
+          notifyCamera()
+          done?.()
+        } else animating = true
       }
-    }
 
-    if (!palette.current) palette.current = readPalette()
-    drawScene(ctx, {
-      nodes: p.nodes,
-      edges: p.edges,
-      positions: p.positions,
-      camera: camera.current,
-      viewport: viewport.current,
-      dpr: dpr.current,
-      palette: palette.current,
-      emphasis: emphasis.current,
-      ...(p.selected ? { selected: p.selected } : {}),
-      ...(p.selectedProject ? { selectedProject: p.selectedProject } : {}),
-      ...(p.hovered ? { hovered: p.hovered } : {}),
-      ...(p.focused ? { focused: p.focused } : {}),
-      matches: p.matches,
-      highlighted: p.highlighted,
-      ...(pulseT !== undefined ? { pulse: pulseT } : {}),
-      ...(revealT !== undefined ? { reveal: revealT } : {}),
-      projectItems: p.projectItems,
-      now: Date.now(),
-    })
-    if (animating) raf.current = requestAnimationFrame(frame)
-    else lastFrame.current = 0
-  }, [notifyCamera])
+      // Emphasis, presence and the lit core all ease toward their targets.
+      const rate = p.reducedMotion ? 1 : 1 - Math.exp(-dt / 110)
+      const live = new Set(p.nodes.map((node) => node.id))
+      for (const node of w.nodes) {
+        const eTarget = p.emphasised === null || p.emphasised.has(node.id) ? 1 : QUIET
+        const e = emphasis.current.get(node.id) ?? eTarget
+        const eNext = Math.abs(eTarget - e) <= 0.004 ? eTarget : e + (eTarget - e) * rate
+        if (eNext !== eTarget) animating = true
+        emphasis.current.set(node.id, eNext)
+
+        const pTarget = live.has(node.id) ? 1 : 0
+        const pr = presence.current.get(node.id) ?? pTarget
+        const prNext = Math.abs(pTarget - pr) <= 0.01 ? pTarget : pr + (pTarget - pr) * rate * 0.7
+        if (prNext !== pTarget) animating = true
+        presence.current.set(node.id, prNext)
+
+        if (node.kind === "project") {
+          const cTarget = p.core === node.id ? 1 : 0
+          const c = coreness.current.get(node.id) ?? cTarget
+          const cNext = Math.abs(cTarget - c) <= 0.004 ? cTarget : c + (cTarget - c) * rate * 0.6
+          if (cNext !== cTarget) animating = true
+          coreness.current.set(node.id, cNext)
+        }
+      }
+      // Gone and faded: drop them.
+      if (w.nodes.length !== p.nodes.length && w.nodes.some((node) => !live.has(node.id) && (presence.current.get(node.id) ?? 0) === 0)) {
+        for (const node of w.nodes) if (!live.has(node.id) && (presence.current.get(node.id) ?? 0) === 0) presence.current.delete(node.id)
+        world.current = { ...w, nodes: p.nodes, edges: p.edges, source: null }
+        syncWorld()
+      }
+
+      // The lens: resting tilt for this viewport, plus the pointer's sway, plus the opening swing.
+      const s = sway.current
+      const swayRate = 1 - Math.exp(-dt / 500)
+      if (ambient) {
+        s.yaw += (s.targetYaw - s.yaw) * swayRate
+        s.tilt += (s.targetTilt - s.tilt) * swayRate
+        if (Math.abs(s.targetYaw - s.yaw) > 0.0004 || Math.abs(s.targetTilt - s.tilt) > 0.0004) animating = true
+      } else {
+        s.yaw = 0
+        s.tilt = 0
+      }
+      const rest = restingLens()
+      let revealT: number | undefined
+      if (reveal.current === null) reveal.current = p.reducedMotion ? "done" : { start: now }
+      let swing = 0
+      if (reveal.current !== "done") {
+        const t = (now - reveal.current.start) / 1000
+        if (t >= REVEAL_S || p.reducedMotion) reveal.current = "done"
+        else {
+          revealT = (t / REVEAL_S) * 1.6
+          swing = Math.pow(1 - t / REVEAL_S, 3)
+          animating = true
+        }
+      }
+      lens.current = { tilt: rest.tilt + s.tilt - swing * 0.32, yaw: s.yaw - swing * 0.35, focal: rest.focal }
+
+      if (ambient) clock.current.time += dt / 1000
+
+      if (!palette.current) palette.current = readPalette()
+      if (!cache.current) {
+        cache.current = new RenderCache()
+        cache.current.onAsset = () => invalidateRef.current()
+      }
+      const view = swing > 0 ? { ...camera.current, k: camera.current.k * (1 - swing * 0.14) } : camera.current
+      const drawnHits = drawScene(
+        ctx,
+        {
+          nodes: w.nodes,
+          edges: w.edges,
+          positions: w.positions,
+          camera: view,
+          lens: lens.current,
+          viewport: viewport.current,
+          dpr: dpr.current,
+          palette: palette.current,
+          emphasis: emphasis.current,
+          presence: presence.current,
+          coreness: coreness.current,
+          ...(p.selected ? { selected: p.selected } : {}),
+          ...(p.hovered ? { hovered: p.hovered } : {}),
+          ...(p.focused ? { focused: p.focused } : {}),
+          ...(p.root ? { root: p.root } : {}),
+          matches: p.matches,
+          highlighted: p.highlighted,
+          time: clock.current.time,
+          ambient,
+          ...(revealT !== undefined ? { reveal: revealT } : {}),
+          orbits: w.orbits,
+          now: Date.now(),
+        },
+        cache.current
+      )
+      hits.current = { list: drawnHits, grid: null }
+      if (animating || ambient) raf.current = requestAnimationFrame(frame)
+      else lastDraw.current = 0
+    },
+    [notifyCamera, restingLens, syncWorld]
+  )
 
   const invalidate = useCallback(() => {
     if (!raf.current) raf.current = requestAnimationFrame(frame)
   }, [frame])
-
-  // Any change to what is drawn asks for one frame.
-  useEffect(invalidate, [invalidate, props.nodes, props.edges, props.positions, props.selected, props.hovered, props.focused, props.matches, props.highlighted, props.emphasised])
-
-  // A new selection sends its one signal out along its relationships.
+  const invalidateRef = useRef(invalidate)
   useEffect(() => {
-    if (!props.selected || props.reducedMotion) return
-    pulse.current = { start: performance.now() }
-    invalidate()
-  }, [props.selected, props.reducedMotion, invalidate])
+    invalidateRef.current = invalidate
+  }, [invalidate])
+
+  /** Marks the next stretch as interactive: full frame rate until it ends. */
+  const busy = useCallback(
+    (ms = 300) => {
+      busyUntil.current = performance.now() + ms
+      invalidate()
+    },
+    [invalidate]
+  )
+
+  // Any change to what is drawn asks for a frame (and restarts the loop if motion was held).
+  useEffect(invalidate, [invalidate, props.nodes, props.edges, props.positions, props.selected, props.core, props.root, props.hovered, props.focused, props.matches, props.highlighted, props.emphasised, props.paused, props.reducedMotion])
+
+  // Camera bounds: the galaxy plus a margin, so the view can never drift off into empty space.
+  const bounds = useMemo(() => {
+    let minX = 0
+    let minY = 0
+    let maxX = 0
+    let maxY = 0
+    for (const at of Object.values(props.positions)) {
+      minX = Math.min(minX, at.x)
+      minY = Math.min(minY, at.y)
+      maxX = Math.max(maxX, at.x)
+      maxY = Math.max(maxY, at.y)
+    }
+    return { minX: minX - 320, minY: minY - 320, maxX: maxX + 320, maxY: maxY + 320 }
+  }, [props.positions])
+  const boundsRef = useRef(bounds)
+  useEffect(() => {
+    boundsRef.current = bounds
+  }, [bounds])
+  const bounded = useCallback((c: Camera): Camera => {
+    const b = boundsRef.current
+    return { k: clampZoom(c.k), x: Math.min(b.maxX, Math.max(b.minX, c.x)), y: Math.min(b.maxY, Math.max(b.minY, c.y)) }
+  }, [])
 
   const animateTo = useCallback(
     (to: Camera, options: { duration?: number; then?: () => void } = {}) => {
@@ -204,6 +328,11 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     [invalidate, notifyCamera]
   )
 
+  const pointOf = useCallback((node: KnowledgeNode) => {
+    syncWorld()
+    return worldPoint(node, world.current.positions)
+  }, [syncWorld])
+
   useImperativeHandle(
     ref,
     () => ({
@@ -211,11 +340,13 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
         const p = latest.current
         const chosen = ids ? p.nodes.filter((node) => ids.includes(node.id)) : p.nodes
         const points = chosen.flatMap((node) => {
-          const at = p.positions[node.id]
-          return at ? [{ ...at, r: nodeRadius(node) + (node.kind === "project" ? 40 : 18) }] : []
+          const at = pointOf(node)
+          return at ? [{ ...at, r: nodeRadius(node) + (node.kind === "project" ? 40 : 16) }] : []
         })
+        // The whole galaxy includes its core.
+        if (!ids && p.root) points.push({ x: 0, y: 0, z: 0, r: 70 })
         if (points.length === 0) return
-        const target = fitCamera(points, viewport.current, { insets: p.insets, padding: 56, maxZoom: options.maxZoom ?? (ids && ids.length <= 2 ? 2.2 : 1.6) })
+        const target = fitLens(points, viewport.current, restingLens(), { insets: p.insets, padding: 48, maxZoom: options.maxZoom ?? (ids ? 2.4 : 1.6) })
         if (options.animate === false) {
           camera.current = target
           notifyCamera()
@@ -224,32 +355,36 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       },
       zoomBy(factor) {
         const c = camera.current
-        animateTo({ ...c, k: clampZoom(c.k * factor) }, { duration: 220 })
+        animateTo({ ...c, k: clampZoom(c.k * factor) }, { duration: 240 })
       },
       getCamera: () => camera.current,
       screenOf(id) {
-        const at = latest.current.positions[id]
-        return at ? worldToScreen(at, camera.current, viewport.current) : undefined
+        const node = latest.current.nodes.find((entry) => entry.id === id)
+        const at = node ? pointOf(node) : undefined
+        const on = at ? project(at, camera.current, viewport.current, lens.current) : undefined
+        return on ? { x: on.x, y: on.y } : undefined
       },
       diveInto(id, then) {
-        const at = latest.current.positions[id]
+        const node = latest.current.nodes.find((entry) => entry.id === id)
+        const at = node ? pointOf(node) : undefined
         if (!at || latest.current.reducedMotion) {
           then()
           return
         }
-        animateTo({ x: at.x, y: at.y, k: clampZoom(Math.max(camera.current.k * 1.8, 2.4)) }, { duration: DIVE_MS, then })
+        animateTo(cameraOn(at, Math.max(camera.current.k * 1.8, 2.4), lens.current), { duration: DIVE_MS, then })
       },
     }),
-    [animateTo, invalidate, notifyCamera]
+    [animateTo, invalidate, notifyCamera, pointOf, restingLens]
   )
 
-  // ---- size, theme ----
+  // ---- size, theme, visibility ----
   useEffect(() => {
     const container = containerRef.current
     const canvas = canvasRef.current
     if (!container || !canvas) return
     const resize = () => {
       const rect = container.getBoundingClientRect()
+      // Capped: past 2× the extra pixels cost fill rate and buy nothing at these stroke widths.
       dpr.current = Math.min(2, window.devicePixelRatio || 1)
       viewport.current = { width: rect.width, height: rect.height }
       canvas.width = Math.max(1, Math.round(rect.width * dpr.current))
@@ -264,21 +399,39 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     // A theme change rewrites :root's inline style: read the palette again.
     const themeObserver = new MutationObserver(() => {
       palette.current = null
+      cache.current = null
       invalidate()
     })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "class"] })
+    // Off screen or in a background tab, the ambient loop stops.
+    const intersection =
+      typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver(([entry]) => {
+            inView.current = entry?.isIntersecting ?? true
+            invalidate()
+          })
+    intersection?.observe(container)
+    const onVisibility = () => {
+      pageVisible.current = document.visibilityState !== "hidden"
+      lastDraw.current = 0
+      invalidate()
+    }
+    document.addEventListener("visibilitychange", onVisibility)
     return () => {
       observer.disconnect()
       themeObserver.disconnect()
+      intersection?.disconnect()
+      document.removeEventListener("visibilitychange", onVisibility)
     }
   }, [invalidate])
 
-  // ---- pointer: pan, pinch, wheel, hover, click ----
+  // ---- pointer: pan, pinch, wheel, hover, click, sway ----
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const pointers = new Map<number, Point>()
-    let drag: { start: Point; camera: Camera; moved: boolean; hit?: string } | null = null
+    let drag: { start: Point; camera: Camera; lens: Lens; moved: boolean; hit?: string } | null = null
     let pinch: { distance: number; camera: Camera; mid: Point } | null = null
     let hoverId: string | undefined
 
@@ -286,9 +439,14 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       const rect = canvas.getBoundingClientRect()
       return { x: event.clientX - rect.left, y: event.clientY - rect.top }
     }
+    // Hit-testing is against where things were last drawn: what you see is what you click.
     const hitAt = (point: Point) => {
-      const world = screenToWorld(point, camera.current, viewport.current)
-      return gridRef.current.hit(world.x, world.y, 6 / camera.current.k)
+      const h = hits.current
+      if (!h.grid) h.grid = SpatialGrid.from(h.list, 48)
+      return h.grid.hit(point.x, point.y, 7)
+    }
+    const endReveal = () => {
+      if (reveal.current !== null && reveal.current !== "done") reveal.current = "done"
     }
 
     const onPointerDown = (event: PointerEvent) => {
@@ -297,6 +455,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       const point = local(event)
       pointers.set(event.pointerId, point)
       tween.current = null
+      endReveal()
       if (pointers.size === 2) {
         const [a, b] = [...pointers.values()] as [Point, Point]
         pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), camera: camera.current, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }
@@ -304,7 +463,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
         return
       }
       const hit = hitAt(point)
-      drag = { start: point, camera: camera.current, moved: false, ...(hit ? { hit } : {}) }
+      drag = { start: point, camera: camera.current, lens: lens.current, moved: false, ...(hit ? { hit } : {}) }
     }
 
     const onPointerMove = (event: PointerEvent) => {
@@ -313,8 +472,8 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       if (pinch && pointers.size === 2) {
         const [a, b] = [...pointers.values()] as [Point, Point]
         const distance = Math.hypot(a.x - b.x, a.y - b.y)
-        camera.current = zoomAt(pinch.camera, pinch.mid, pinch.camera.k * (distance / Math.max(1, pinch.distance)), viewport.current)
-        invalidate()
+        camera.current = bounded(zoomAtLens(pinch.camera, pinch.mid, pinch.camera.k * (distance / Math.max(1, pinch.distance)), viewport.current, lens.current))
+        busy()
         return
       }
       if (drag) {
@@ -329,10 +488,16 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
           }
         }
         if (drag.moved) {
-          camera.current = { ...drag.camera, x: drag.camera.x - dx / drag.camera.k, y: drag.camera.y - dy / drag.camera.k }
-          invalidate()
+          camera.current = bounded(panLens(drag.camera, drag.start, point, viewport.current, drag.lens))
+          busy()
         }
         return
+      }
+      // The camera leans a little toward the pointer: depth you can feel, never enough to chase.
+      if (event.pointerType === "mouse" && viewport.current.width > 0) {
+        sway.current.targetYaw = (point.x / viewport.current.width - 0.5) * SWAY_YAW
+        sway.current.targetTilt = (point.y / viewport.current.height - 0.5) * SWAY_TILT
+        invalidate()
       }
       const hit = hitAt(point)
       canvas.style.cursor = hit ? "pointer" : "grab"
@@ -363,6 +528,9 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     }
 
     const onLeave = () => {
+      sway.current.targetYaw = 0
+      sway.current.targetTilt = 0
+      invalidate()
       if (hoverId) {
         hoverId = undefined
         latest.current.onHover(undefined)
@@ -372,16 +540,17 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
       tween.current = null
+      endReveal()
       const point = local(event)
       // A trackpad's sideways scroll pans; a wheel (or a pinch, which arrives as ctrl+wheel) zooms.
       if (!event.ctrlKey && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-        camera.current = { ...camera.current, x: camera.current.x + event.deltaX / camera.current.k, y: camera.current.y + event.deltaY / camera.current.k }
+        camera.current = bounded(panLens(camera.current, point, { x: point.x - event.deltaX, y: point.y - event.deltaY }, viewport.current, lens.current))
       } else {
         const scale = event.deltaMode === 1 ? 0.05 : 0.0018
         const factor = Math.exp(-event.deltaY * (event.ctrlKey ? scale * 4 : scale))
-        camera.current = zoomAt(camera.current, point, camera.current.k * factor, viewport.current)
+        camera.current = bounded(zoomAtLens(camera.current, point, camera.current.k * factor, viewport.current, lens.current))
       }
-      invalidate()
+      busy()
       notifyCamera()
     }
 
@@ -406,14 +575,18 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       canvas.removeEventListener("wheel", onWheel)
       canvas.removeEventListener("dblclick", onDoubleClick)
     }
-  }, [invalidate, notifyCamera])
+  }, [bounded, busy, invalidate, notifyCamera])
 
-  // Nothing keeps running once the graph is gone.
+  // Nothing keeps running once the graph is gone. A camera change still waiting to be saved is saved now.
   useEffect(
     () => () => {
       if (raf.current) cancelAnimationFrame(raf.current)
       raf.current = 0
-      if (cameraSaveTimer.current) clearTimeout(cameraSaveTimer.current)
+      if (cameraSaveTimer.current) {
+        clearTimeout(cameraSaveTimer.current)
+        cameraSaveTimer.current = null
+        latest.current.onCameraChange?.(camera.current)
+      }
     },
     []
   )

@@ -14,6 +14,13 @@ import type { Point } from "./types";
 const STORAGE_KEY = "tabdump:knowledge-graph:v1";
 /** A ceiling on what is kept: positions for nodes that no longer exist are pruned on save. */
 const MAX_POSITIONS = 20_000;
+/**
+ * Which layout produced the stored positions. The galaxy (3) places items on
+ * arms around their project; positions from the earlier force layout would
+ * strand them between arms, so they are dropped once, with the camera that
+ * framed them.
+ */
+const LAYOUT_GENERATION = 3;
 
 export type KnowledgeGraphState = {
   version: 1;
@@ -29,7 +36,8 @@ export function loadKnowledgeGraphState(): KnowledgeGraphState {
   try {
     const raw = window.localStorage.getItem(scopedKey(STORAGE_KEY));
     if (!raw) return { version: 1, positions: {} };
-    const parsed = JSON.parse(raw) as Partial<KnowledgeGraphState>;
+    const parsed = JSON.parse(raw) as Partial<KnowledgeGraphState> & { layout?: unknown };
+    if (parsed.layout !== LAYOUT_GENERATION) return { version: 1, positions: {} };
     const positions: Record<string, Point> = {};
     for (const [id, p] of Object.entries(parsed.positions ?? {})) {
       if (p && finite(p.x) && finite(p.y)) positions[id] = { x: p.x, y: p.y };
@@ -52,7 +60,7 @@ export function saveKnowledgeGraphState(state: KnowledgeGraphState, liveIds: Rea
     count += 1;
   }
   try {
-    window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify({ version: 1, positions, ...(state.camera ? { camera: state.camera } : {}) }));
+    window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify({ version: 1, layout: LAYOUT_GENERATION, positions, ...(state.camera ? { camera: state.camera } : {}) }));
   } catch {
     // A layout is a convenience: the next visit lays out again.
   }

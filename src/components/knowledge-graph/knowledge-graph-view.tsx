@@ -200,11 +200,14 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
     return null
   }, [selected, neighbours, query, matches, hover])
 
-  const projectItems = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const node of graph.nodes) if (node.kind === "project") map.set(node.id, node.size ?? 0)
-    return map
-  }, [graph])
+  // The galaxy's core: all projects, joined to each by a spoke — or, with one project chosen, that project.
+  const root = useMemo(() => {
+    if (projectFilter !== "all") return undefined
+    const projects = graph.nodes.filter((node) => node.kind === "project").length
+    const items = graph.nodes.length - projects
+    return { label: "All projects", detail: `${projects} ${projects === 1 ? "PROJECT" : "PROJECTS"} · ${items} ${items === 1 ? "ITEM" : "ITEMS"}` }
+  }, [graph, projectFilter])
+  const coreProject = selectedNode ? (selectedNode.kind === "project" ? selectedNode.id : selectedNode.projectId ? `p:${selectedNode.projectId}` : undefined) : projectFilter !== "all" ? `p:${projectFilter}` : undefined
 
   const insets: Insets = selectedNode ? (wide ? { right: INSPECTOR_W + 24, top: 56 } : { bottom: Math.round(size.height * 0.55), top: 96 }) : { top: wide ? 56 : 96, bottom: 56 }
 
@@ -220,6 +223,15 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
     if (!focusRequest || !positions) return
     canvas.current?.fit(focusRequest.ids)
   }, [focusRequest, positions])
+
+  // Choosing a project travels to it; going back to all projects frames the whole galaxy.
+  const framedFilter = useRef(projectFilter)
+  useEffect(() => {
+    if (!positions || framedFilter.current === projectFilter) return
+    framedFilter.current = projectFilter
+    if (projectFilter === "all") canvas.current?.fit()
+    else canvas.current?.fit(visible.nodes.filter((node) => node.id === `p:${projectFilter}` || node.projectId === projectFilter).map((node) => node.id))
+  }, [projectFilter, positions, visible.nodes])
 
   function frameIdsFor(id: string): string[] {
     const near = [...(neighbours.get(id) ?? [])].filter((other) => visible.ids.has(other))
@@ -416,9 +428,10 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
             nodes={visible.nodes}
             edges={visible.edges}
             positions={positions}
-            projectItems={projectItems}
             {...(selected ? { selected } : {})}
-            {...(selectedNode ? { selectedProject: selectedNode.kind === "project" ? selectedNode.id : selectedNode.projectId ? `p:${selectedNode.projectId}` : undefined } : {})}
+            {...(coreProject ? { core: coreProject } : {})}
+            {...(root ? { root } : {})}
+            paused={mode === "list" || leaving}
             {...(hover ? { hovered: hover.id } : {})}
             {...(focused ? { focused } : {})}
             matches={matches}
@@ -699,17 +712,23 @@ function Arranging({ progress }: { progress: number }) {
   )
 }
 
-/** The Hubble orbit, drawn once: the graph's empty and loading states. */
+/** The galaxy in miniature, drawn once: the graph's empty and loading states. */
 function EmptyOrbit({ spinning = false }: { spinning?: boolean }) {
   return (
-    <svg aria-hidden viewBox="0 0 96 96" className={cn("size-20 text-foreground", spinning && "motion-safe:animate-[spin_6s_linear_infinite]")}>
-      <circle cx="48" cy="48" r="40" fill="none" stroke="currentColor" strokeOpacity="0.14" strokeDasharray="2 5" />
-      <circle cx="48" cy="48" r="24" fill="none" stroke="currentColor" strokeOpacity="0.22" />
-      <circle cx="48" cy="48" r="7" fill="var(--card)" stroke="currentColor" strokeOpacity="0.6" />
-      <circle cx="72" cy="48" r="3.5" fill="var(--kind-conversation)" />
-      <rect x="24" y="22" width="6" height="6" rx="2" fill="var(--kind-source)" />
-      <path d="M44 84 l5 -5 l5 5 l-5 5 z" fill="var(--kind-note)" />
-      <circle cx="85" cy="30" r="2.5" fill="var(--kind-file)" />
+    <svg aria-hidden viewBox="0 0 96 96" className={cn("size-20 text-foreground", spinning && "motion-safe:animate-[spin_9s_linear_infinite]")}>
+      <ellipse cx="48" cy="52" rx="44" ry="17" fill="none" stroke="currentColor" strokeOpacity="0.14" />
+      <ellipse cx="48" cy="52" rx="26" ry="10" fill="none" stroke="currentColor" strokeOpacity="0.2" />
+      <g stroke="var(--graph-filament)" strokeOpacity="0.55" strokeWidth="0.6" fill="none">
+        <path d="M48 50 L70 30 M70 30 Q78 20 84 12 M70 30 Q80 24 88 20 M70 30 Q76 16 78 8" />
+        <path d="M48 50 L28 34 M28 34 Q20 24 14 18 M28 34 Q18 30 10 30 M28 34 Q24 20 22 12" />
+        <path d="M48 50 L58 72 M58 72 Q62 82 66 90 M58 72 Q68 80 74 84" />
+      </g>
+      <g fill="var(--graph-hub)">
+        <circle cx="70" cy="30" r="1.8" />
+        <circle cx="28" cy="34" r="1.8" />
+        <circle cx="58" cy="72" r="1.6" />
+      </g>
+      <rect x="44.5" y="46.5" width="7" height="7" fill="var(--graph-filament)" fillOpacity="0.25" stroke="var(--graph-blush)" strokeWidth="0.8" transform="rotate(20 48 50)" />
     </svg>
   )
 }

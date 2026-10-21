@@ -87,8 +87,10 @@ Rules:
 4. Durations scale with Settings → Motion; Animations: Off and the OS's
    reduced-motion preference reach CSS automatically and script through
    `useReducedMotion()`.
-5. Nothing loops while the interface is idle. The graph draws only when
-   something changed.
+5. Nothing loops while the interface is idle — with one exception: the
+   Graph's slow ambient light (particles along filaments, the core's
+   breathing), and only while it is on screen, the page is visible and motion
+   is allowed. Otherwise it too draws only when something changed.
 
 ## The Graph
 
@@ -103,31 +105,63 @@ session was saved for a project; a session has a saved page open. Nothing is
 inferred to make the picture fuller. Saved tabs without content stay in the
 **Tab map** (the original graph, under More), which keeps its organizer gate.
 
-**Encoding.** Kind = colour *and* shape (circle conversation, rounded square
-source, folded page file, diamond note, hexagon session), so nothing relies on
-colour alone. Projects are rings with an inner orbit; each holds a territory —
-a faint pool of cool light with a dotted orbit at its edge. Recent items carry
-a thin ring. Unread/failed items are drawn hollow and dashed, never hidden.
+**The galaxy.** A real perspective camera (`projection.ts`) looks down at a
+tilted plane. At the origin is the **core** — the scope being looked at, "All
+projects" — a small cube of light inside nested orbital rings, joined to every
+project by a spoke. With one project chosen there is no root; that project's
+hub is lit as the core instead (and a selection lights its own project's hub).
+Each project is a **hub**: a warm-gold point inside two fine hexagons. Its
+items fan out *away from the core* as a cone of rose-crimson filaments, one
+sub-fan per kind, newest nearest the hub. Fans rise (a few fall) as they reach
+out, so the whole reads as a dome; the depth is real geometry (`galaxy.ts`),
+derived from ids and positions, never stored. The palette is the Graph's own
+light — `--graph-filament / rose / blush / ember / starlight / hub` in
+`globals.css` — over the theme's ground; on light themes the canvas derives an
+ink-on-paper variant from the same tokens.
 
-**Layout.** Golden-angle spiral of project territories relaxed by collision,
-with projects that share sources pulled together; items settle by kind sector
-and recency inside their territory. Deterministic (hashed seeds), sliced so it
-never blocks a frame, and append-only: remembered positions are reused, so a
-new conversation finds a place without moving anything else.
+**Encoding.** Kind = tint *and* shape (particle conversation — the AI app's
+own logo up close — point with a fine cross source, square file, diamond note,
+hexagon session), tints mostly starlight so the filaments carry the colour.
+Recent items carry a thin rose ring. Unread/failed items are drawn hollow,
+never hidden. Relationships between items are **bridges** arching out of the
+dome in warm white; containment is a stem of fine parallel strands that leave
+their hub together along the fan's axis and part toward their items.
 
-**Level of detail.** Far: projects and names. Middle: emphasised items named.
-Near (≥115%): every item that has room is named. Labels are placed greedily by
-priority and never overlap.
+**Layout.** Hubs share the ring around the core: each takes an arc that grows
+with its fan and sits as far out as that arc needs, with related projects
+(shared sources, sessions) placed side by side. Items take closed-form slots
+in their sub-fan. Deterministic, sliced so it never blocks a frame, and
+append-only: remembered positions are reused exactly (layout generation 3 in
+`persistence.ts`), a new project takes the widest gap and a new item the free
+slot nearest its rank, so nothing else moves.
+
+**Level of detail.** Far: the core, hubs and their names. Middle: emphasised
+items named. Near: every item that has room is named. Labels are placed
+greedily by priority and never overlap; a hub's name sits on a short leader
+line with its count beneath in mono.
+
+**Motion.** The opening grows the spokes from the core and each fan from its
+hub, systems lighting in order outward, while the camera swings into place.
+At rest, sparse particles drift along stems, spokes, bridges and orbits; the
+core breathes over eight seconds; the camera leans a little toward the
+pointer. A selection lights its relationships with slower, brighter sparks
+travelling outward. Arriving and departing nodes (filters, new saves) fade
+rather than pop. Reduced motion: no opening, no drift, no sway — the
+selection's sparks hold still.
 
 **Interaction.** Hover previews; click selects, quiets the rest, travels the
-camera to the selection and its relationships, and sends one signal along
-each relationship; double-click or Enter opens the real thing (conversation
-reader, file preview, project, session restore). The inspector lists metadata,
+camera to the selection and its relationships; double-click or Enter opens the
+real thing (conversation reader, file preview, project, session restore).
+Choosing a project in the filter travels to it. The inspector lists metadata,
 relationships (each one a way to travel on) and actions; Back returns to the
 previous selection. Search, kind and project filters, zoom/fit, arrow-key
 traversal with a live region, and a List view of the same data make the whole
-graph usable without the canvas.
+graph usable without the canvas. Panning is bounded to the galaxy.
 
-**Performance.** Hit-testing through a spatial grid; off-screen nodes are
-culled; bloom is skipped past 900 nodes and many-body repulsion past 1,500.
-Resize/theme observers and every listener and frame are released on unmount.
+**Performance.** Strokes are batched into one path per colour and brightness;
+glows are pre-rendered sprites, never shadowBlur; device pixel ratio is capped
+at 2. Hit-testing runs against the frame just drawn through a spatial grid.
+The ambient loop runs at ~30fps (20 past 1,200 nodes), full rate only while
+something moves, and stops when the canvas is off screen, the tab is hidden,
+the List covers it or motion is reduced. Resize/theme/visibility observers and
+every listener and frame are released on unmount.
