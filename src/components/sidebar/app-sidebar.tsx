@@ -31,7 +31,7 @@ import { SidebarItem, SidebarSectionLabel } from "@/components/ui/sidebar-item"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { subjectName } from "@/lib/product/subjects"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
@@ -385,7 +385,7 @@ export function AppSidebar({
                       >
                         {/* The project on screen is marked by a short bar as well as tone. */}
                         {isOpen && !railCollapsed && <span aria-hidden className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-link" />}
-                        <WorkspaceAvatar workspace={w} size={16} />
+                        <ProjectIcon workspace={w} size={16} />
                         {showLabels && <span className="min-w-0 flex-1 truncate text-body">{name}</span>}
                         {showLabels && count > 0 && <span className="shrink-0 text-meta text-tertiary tabular-nums opacity-0 transition-opacity group-hover/project:opacity-100 group-aria-[current=page]/project:opacity-100">{count}</span>}
                       </button>

@@ -13,7 +13,7 @@ import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog"
 import type { NewProjectBrief } from "@/components/workspace/new-workspace-dialog"
 import { RenameWorkspaceDialog } from "@/components/workspace/rename-workspace-dialog"
 import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-dialog"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { cn } from "@/lib/utils"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -65,7 +65,7 @@ export function WorkspaceSwitcher({
                 className="mx-auto flex size-7 shrink-0 items-center justify-center rounded-xs transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover"
                 aria-label="Switch workspace"
               >
-                <WorkspaceAvatar workspace={current ?? { name: "" }} size={20} />
+                <ProjectIcon workspace={current ?? { name: "" }} size={20} />
               </button>
             ) : (
               <button
@@ -73,7 +73,7 @@ export function WorkspaceSwitcher({
                 className="flex h-[30px] w-full min-w-0 items-center gap-2 rounded-xs px-2 text-left transition-colors duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover aria-expanded:bg-surface-hover"
                 aria-label="Switch workspace"
               >
-                <WorkspaceAvatar workspace={current ?? { name: "" }} size={16} />
+                <ProjectIcon workspace={current ?? { name: "" }} size={16} />
                 <span className="min-w-0 flex-1 truncate text-body font-medium text-foreground">
                   {current?.name ?? "Workspace"}
                 </span>
@@ -87,7 +87,7 @@ export function WorkspaceSwitcher({
             <DropdownMenuItem key={w.id} onClick={() => onSwitch(w.id)} className="justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1.5">
                 <Check className={cn("size-3.5 shrink-0", w.id !== currentId && "invisible")} />
-                <WorkspaceAvatar workspace={w} size={16} />
+                <ProjectIcon workspace={w} size={16} />
                 <span className="truncate">{w.name}</span>
               </span>
               <span className="shrink-0 text-meta text-tertiary">{w.tabs.length}</span>

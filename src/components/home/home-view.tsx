@@ -9,7 +9,7 @@ import { ItemIcon } from "@/components/memory/item-icon"
 import { pageIconOf } from "@/lib/memory/item-icon"
 import { BrandMark } from "@/components/brand-mark"
 import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
 import { activityRows, describeProjectEvent } from "@/components/project/project-activity"
 import { ProjectGalaxy } from "./project-galaxy"
@@ -376,7 +376,7 @@ function ContinueCard({
             Continue
           </p>
           <button type="button" onClick={() => onOpenSubject(workspace.id)} aria-label={`Open ${name}`} className="group mt-2 flex w-fit max-w-full items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 rounded-md">
-            <WorkspaceAvatar workspace={workspace} size={36} />
+            <ProjectIcon workspace={workspace} size={36} />
             <span className="min-w-0">
               <span className="block truncate text-title text-foreground group-hover:underline group-hover:decoration-border-strong group-hover:underline-offset-4">{name}</span>
               <span className="block truncate text-body-sm text-muted-foreground">{focus || `${plural(items.length, "item", "items")} · active ${formatRelativeTime(pulse.lastAt, now)?.toLowerCase()}`}</span>
@@ -466,7 +466,7 @@ function ProjectRow({ pulse, now, onOpen }: { pulse: ProjectPulse; now: number; 
       aria-label={`Open ${name}`}
       className="group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left outline-none transition-[background-color] duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60"
     >
-      <WorkspaceAvatar workspace={workspace} size={28} />
+      <ProjectIcon workspace={workspace} size={28} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body text-foreground">{name}</span>
         <span className="block truncate text-meta text-tertiary">{parts.length === 0 ? "Empty" : parts.join(" · ")}</span>

@@ -40,6 +40,10 @@ export type KnowledgeNode = {
   tabCount?: number;
   /** Projects only: how many items it holds (sizes the node). */
   size?: number;
+  /** Projects only: the image the user uploaded as the project's icon (`Workspace.logo`). Absent means the generated glyph. */
+  logo?: string;
+  /** Projects only: the brief's words, which pick the generated glyph when the title names no subject. */
+  context?: string;
   /** The most recent time anything happened to it. */
   at: number;
   /** Failed to read, still being read — drawn as unsettled, never hidden. */
