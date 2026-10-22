@@ -293,8 +293,8 @@ export function ProjectHome(props: ProjectHomeProps) {
 
       {/* The project, and the two things to do with it. */}
       <div className="flex flex-col gap-4 animate-enter sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-4">
-        <ProjectIcon workspace={workspace} size={44} className="mt-0.5 max-sm:hidden" />
+        <div className="flex min-w-0 items-start gap-3">
+        <ProjectIcon workspace={workspace} size={24} className="mt-1.5 max-sm:hidden" />
         <div className="min-w-0">
           {renaming && props.onRename ? (
             <RenameTitle

@@ -383,9 +383,7 @@ export function AppSidebar({
                           isOpen ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                         )}
                       >
-                        {/* The project on screen is marked by a short bar as well as tone. */}
-                        {isOpen && !railCollapsed && <span aria-hidden className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-link" />}
-                        <ProjectIcon workspace={w} size={16} />
+                        <ProjectIcon workspace={w} size={16} className={cn(isOpen ? "text-foreground" : "group-hover/project:text-foreground")} />
                         {showLabels && <span className="min-w-0 flex-1 truncate text-body">{name}</span>}
                         {showLabels && count > 0 && <span className="shrink-0 text-meta text-tertiary tabular-nums opacity-0 transition-opacity group-hover/project:opacity-100 group-aria-[current=page]/project:opacity-100">{count}</span>}
                       </button>

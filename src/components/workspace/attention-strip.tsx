@@ -28,7 +28,7 @@ export function AttentionStrip({
 
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2">
-      <AlertCircle className="size-4 shrink-0 text-link" aria-hidden />
+      <AlertCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <p className="text-body-sm text-foreground">{message}</p>
       <Button
         variant="ghost"

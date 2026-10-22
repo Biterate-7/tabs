@@ -368,15 +368,13 @@ function ContinueCard({
   const focus = workspace.brief?.focus || workspace.brief?.description
   return (
     <section aria-labelledby="home-continue" className="relative mt-8 overflow-hidden rounded-xl border border-border bg-card shadow-(--shadow-panel) animate-enter" data-continue={workspace.id}>
-      {/* A pool of light behind the galaxy — the one atmospheric touch on Home. */}
-      <div aria-hidden className="pointer-events-none absolute -top-24 -right-24 size-[420px] rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--link)_12%,transparent),transparent)]" />
       <div className="relative flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-stretch">
         <div className="flex min-w-0 flex-1 flex-col">
           <p id="home-continue" className="text-eyebrow text-tertiary">
             Continue
           </p>
           <button type="button" onClick={() => onOpenSubject(workspace.id)} aria-label={`Open ${name}`} className="group mt-2 flex w-fit max-w-full items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 rounded-md">
-            <ProjectIcon workspace={workspace} size={36} />
+            <ProjectIcon workspace={workspace} size={20} />
             <span className="min-w-0">
               <span className="block truncate text-title text-foreground group-hover:underline group-hover:decoration-border-strong group-hover:underline-offset-4">{name}</span>
               <span className="block truncate text-body-sm text-muted-foreground">{focus || `${plural(items.length, "item", "items")} · active ${formatRelativeTime(pulse.lastAt, now)?.toLowerCase()}`}</span>
@@ -466,7 +464,7 @@ function ProjectRow({ pulse, now, onOpen }: { pulse: ProjectPulse; now: number; 
       aria-label={`Open ${name}`}
       className="group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left outline-none transition-[background-color] duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60"
     >
-      <ProjectIcon workspace={workspace} size={28} />
+      <ProjectIcon workspace={workspace} size={20} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body text-foreground">{name}</span>
         <span className="block truncate text-meta text-tertiary">{parts.length === 0 ? "Empty" : parts.join(" · ")}</span>

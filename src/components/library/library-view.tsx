@@ -5,7 +5,7 @@ import { ArrowUpRight, ChevronDown, ExternalLink, MessageSquareShare, Search } f
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
-import { KindGlyph, KIND_BG_CLASS, KIND_TEXT_CLASS } from "@/components/ui/kind-glyph"
+import { KindGlyph, KIND_BG_CLASS } from "@/components/ui/kind-glyph"
 import { ItemIcon } from "@/components/memory/item-icon"
 import { pageIconOf } from "@/lib/memory/item-icon"
 import { PageHeader } from "@/components/ui/page-header"
@@ -196,7 +196,7 @@ export function LibraryView({
 
         {shown.length === 0 ? (
           <div className="mt-16 flex flex-col items-center gap-2 text-center animate-fade">
-            {tab !== "all" && <KindGlyph kind={tab} tile className="size-10" />}
+            {tab !== "all" && <KindGlyph kind={tab} className="text-tertiary" />}
             <p className="text-body text-foreground">{entries.length === 0 ? "Nothing saved yet" : terms.length > 0 ? "Nothing matches that" : `No ${TAB_LABEL[tab].toLowerCase()} here yet`}</p>
             <p className="max-w-sm text-body-sm text-muted-foreground">
               {tab === "conversation"
@@ -262,7 +262,7 @@ function LibraryRow({ entry, now, also, onOpen, onUseInAi, onOpenUrl }: { entry:
             {also.length > 0 && <span className="text-muted-foreground"> · Also in {also.map(subjectName).join(", ")}</span>}
           </span>
         </span>
-        <span className="flex w-28 shrink-0 justify-end max-sm:hidden">{item.provider ? <ProviderBadge provider={item.provider} /> : <span className={cn("text-meta", KIND_TEXT_CLASS[kind])}>{KNOWLEDGE_TYPE_LABEL[item.type]}</span>}</span>
+        <span className="flex w-28 shrink-0 justify-end max-sm:hidden">{item.provider ? <ProviderBadge provider={item.provider} /> : <span className="text-meta text-tertiary">{KNOWLEDGE_TYPE_LABEL[item.type]}</span>}</span>
         <span className="w-20 shrink-0 text-right text-meta text-tertiary max-md:hidden">{formatRelativeTime(item.addedAt, now)}</span>
       </button>
       {item.url && kind === "conversation" && (
