@@ -34,7 +34,7 @@ import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/
  * stroke() calls; glows are pre-rendered sprites, never shadowBlur.
  */
 
-type RGB = readonly [number, number, number]
+export type RGB = readonly [number, number, number]
 
 export type Palette = {
   /** The ground everything is drawn on: the theme's own, taken a step deeper on ink themes. */
@@ -1158,7 +1158,7 @@ function shorten(label: string): string {
  * Pre-rendered light: a soft gaussian-ish glow ("soft"), a tight spark
  * ("spark") and a very wide falloff for haze ("haze"), each per colour.
  */
-function sprite(cache: RenderCache, color: RGB, kind: "soft" | "spark" | "haze"): HTMLCanvasElement {
+export function sprite(cache: RenderCache, color: RGB, kind: "soft" | "spark" | "haze"): HTMLCanvasElement {
   const key = `${kind}:${color.join(",")}`
   let canvas = cache.sprites.get(key)
   if (canvas) return canvas
@@ -1296,7 +1296,7 @@ export function readPalette(element: Element = document.documentElement): Palett
   }
 }
 
-function parseColor(value: string): RGB | undefined {
+export function parseColor(value: string): RGB | undefined {
   const text = value.trim()
   const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
   if (hex) {
@@ -1315,7 +1315,7 @@ function parseColor(value: string): RGB | undefined {
   return undefined
 }
 
-function mix(a: RGB, b: RGB, t: number): RGB {
+export function mix(a: RGB, b: RGB, t: number): RGB {
   return [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)]
 }
 

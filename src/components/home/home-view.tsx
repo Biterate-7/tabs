@@ -10,7 +10,7 @@ import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
 import { activityRows, describeProjectEvent } from "@/components/project/project-activity"
-import { ProjectConstellation } from "./project-constellation"
+import { ProjectGalaxy } from "./project-galaxy"
 import { ResumeSessionCard } from "@/components/sessions/resume-card"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
@@ -37,7 +37,7 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  *     Good evening                              [+ New project] [Search] …
  *     Tuesday 20 October · 3 new since yesterday
  *
- *     ┌ Continue ─────────────────────────────────────────── (constellation) ┐
+ *     ┌ Continue ────────────────────────────────────────────────── (galaxy) ┐
  *     │ Thesis — Urban heat islands                                          │
  *     │ Chapter 3: methods                                                   │
  *     │ Last: Regression design for canopy cover…  ChatGPT · 2 hr  [Open]    │
@@ -336,8 +336,9 @@ function SectionHeading({ id, children, action }: { id: string; children: React.
 /**
  * The anchor of Home: the project something last happened in. Its latest
  * item opens its reader in one click; the session saved for it reopens its
- * tabs; and the constellation on the right is the project itself — one mark
- * per thing it holds, in the Graph's own encoding.
+ * tabs; and the galaxy on the right is the project itself — one star per
+ * thing it holds, in the Graph's own encoding. Where the card is too narrow
+ * to share (phones, tablets) it is the card's header, bled to its edges.
  */
 function ContinueCard({
   pulse,
@@ -365,9 +366,9 @@ function ContinueCard({
   const focus = workspace.brief?.focus || workspace.brief?.description
   return (
     <section aria-labelledby="home-continue" className="relative mt-8 overflow-hidden rounded-xl border border-border bg-card shadow-(--shadow-panel) animate-enter" data-continue={workspace.id}>
-      {/* A pool of light behind the constellation — the one atmospheric touch on Home. */}
+      {/* A pool of light behind the galaxy — the one atmospheric touch on Home. */}
       <div aria-hidden className="pointer-events-none absolute -top-24 -right-24 size-[420px] rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--link)_12%,transparent),transparent)]" />
-      <div className="relative flex flex-col gap-6 p-5 sm:p-7 md:flex-row md:items-stretch">
+      <div className="relative flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-stretch">
         <div className="flex min-w-0 flex-1 flex-col">
           <p id="home-continue" className="text-eyebrow text-tertiary">
             Continue
@@ -432,9 +433,11 @@ function ContinueCard({
             )}
           </div>
         </div>
-        <div className="hidden items-center justify-center text-foreground md:flex md:w-[220px]">
-          <ProjectConstellation items={items} label={name} size={188} />
-        </div>
+        <ProjectGalaxy
+          items={items}
+          seed={workspace.id}
+          className="relative order-first -mx-5 -mt-5 h-44 [mask-image:linear-gradient(to_bottom,black_72%,transparent)] sm:-mx-7 sm:-mt-7 sm:h-48 lg:order-none lg:my-[-1.75rem] lg:mr-[-1.75rem] lg:ml-0 lg:h-auto lg:min-h-64 lg:w-[300px] lg:shrink-0 lg:[mask-image:linear-gradient(to_right,transparent,black_22%)] xl:w-[360px]"
+        />
       </div>
     </section>
   )
