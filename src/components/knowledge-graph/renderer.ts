@@ -1,5 +1,7 @@
 import { providerLogo } from "@/components/memory/provider-mark"
 import { peekFaviconImage, requestFavicon } from "@/lib/favicon/client"
+import { contrast, darkBackground, DEFAULT_GRAPH_COLORS, hexToRgb } from "@/lib/knowledge-graph/appearance"
+import type { GraphColors, GraphEffects } from "@/lib/knowledge-graph/appearance"
 import { HUB_INNER, bridgeControls, cubicAt, hashUnit, outwardAngle, reachOf as fanReach, spokeControls, stemControls, worldPoint } from "@/lib/knowledge-graph/galaxy"
 import type { FanKind, Point3 } from "@/lib/knowledge-graph/galaxy"
 import { nodeRadius } from "@/lib/knowledge-graph/layout"
@@ -47,11 +49,27 @@ export type Palette = {
   tertiary: string
   focus: string
   kinds: Record<FanKind, RGB>
+  // Each field is one role of the galaxy's light; graph appearance (lib/knowledge-graph/appearance.ts) recolours them by role.
+  /** Connections: a project's stems. */
   filament: RGB
+  /** Connections: bridges between items. */
+  bridge: RGB
+  /** Connections: the core's spokes to each hub. */
+  spoke: RGB
+  /** Accent: rings, the selection's dial, sparks' tails. */
   rose: RGB
+  /** Accent, lightest: the selection, lit relationships, beads, the core's edges. */
   blush: RGB
+  /** Accent, deepest: the core's faces; on light themes, what blush is on dark. */
+  accent: RGB
+  /** Glow: the core's bloom, the lit haze, a hub's illumination. */
+  glow: RGB
+  /** Glow, deepest: the galaxy's haze. */
   ember: RGB
+  /** Space: stars, orbits, dials, leaders. */
   starlight: RGB
+  /** Nodes: outlines and bright hearts. */
+  node: RGB
   /** The warm gold of a project hub. */
   hub: RGB
   displayFont: string
@@ -96,6 +114,8 @@ export type Scene = {
    */
   root?: { label: string; detail: string }
   now: number
+  /** The person's chosen strengths: glow, stars, connections, node size, labels, space. */
+  effects: GraphEffects
 }
 
 export type Hit = { id: string; x: number; y: number; r: number }
@@ -153,8 +173,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, cache: Re
 
   const light: GlobalCompositeOperation = palette.dark ? "lighter" : "source-over"
   ctx.globalCompositeOperation = light
-  drawStars(ctx, scene, cache)
-  drawHaze(ctx, scene, projected, reach, cache)
+  if (scene.effects.space) {
+    drawStars(ctx, scene, cache)
+    drawHaze(ctx, scene, projected, reach, cache)
+  }
   drawOrbits(ctx, scene)
   drawSystems(ctx, scene, projected, cache)
   const curves = drawFilaments(ctx, scene, projected, reach)
@@ -206,7 +228,7 @@ function projectNodes(scene: Scene, reach: ReadonlyMap<string, number>): Map<str
     const at = project(w, camera, viewport, lens)
     if (!at) continue
     const worldR = nodeRadius(node)
-    const r = node.kind === "project" ? clamp(worldR * at.scale, 3.2, 17) : clamp(worldR * at.scale, 0.9, 6.5)
+    const r = (node.kind === "project" ? clamp(worldR * at.scale, 3.2, 17) : clamp(worldR * at.scale, 0.9, 6.5)) * scene.effects.nodeScale
     const emphasis = scene.emphasis.get(node.id) ?? 1
     let there = scene.presence.get(node.id) ?? 1
     if (scene.reveal !== undefined) there *= revealOf(node, w, anchors, reach, furthest, scene.reveal)
@@ -243,10 +265,11 @@ function growthOf(stage: number, along: number): number {
 function drawStars(ctx: CanvasRenderingContext2D, scene: Scene, cache: RenderCache) {
   const { viewport, camera, lens, palette } = scene
   const { width, height } = viewport
-  const key = `${Math.round(width / 80)}x${Math.round(height / 80)}`
+  const density = scene.effects.stars
+  const key = `${Math.round(width / 80)}x${Math.round(height / 80)}x${density.toFixed(2)}`
   if (cache.starsKey !== key) {
     cache.starsKey = key
-    const count = Math.round(clamp((width * height) / 6500, 60, 360))
+    const count = Math.round(clamp((width * height) / 6500, 60, 360) * density)
     cache.stars = Array.from({ length: count }, (_, i) => {
       const layer = i % 3
       return {
@@ -278,17 +301,17 @@ function drawStars(ctx: CanvasRenderingContext2D, scene: Scene, cache: RenderCac
 /** A very faint haze around each system, warmer and brighter around the lit core. */
 function drawHaze(ctx: CanvasRenderingContext2D, scene: Scene, projected: Map<string, PNode>, reach: ReadonlyMap<string, number>, cache: RenderCache) {
   const { palette, viewport } = scene
-  const strength = palette.dark ? 1 : 0.45
+  const strength = (palette.dark ? 1 : 0.45) * scene.effects.glow
   const centre = project({ x: 0, y: 0, z: 0 }, scene.camera, viewport, scene.lens)
   const outer = scene.orbits.length > 0 ? scene.orbits[scene.orbits.length - 1]! : 0
   if (centre && outer > 0) {
     const radius = outer * centre.scale * 0.95
-    ctx.globalAlpha = 0.07 * strength
+    ctx.globalAlpha = clamp(0.07 * strength, 0, 1)
     ctx.drawImage(sprite(cache, palette.ember, "haze"), centre.x - radius, centre.y - radius, radius * 2, radius * 2)
     if (scene.root) {
       const close = Math.max(60, 150 * centre.scale)
-      ctx.globalAlpha = 0.12 * strength
-      ctx.drawImage(sprite(cache, palette.filament, "haze"), centre.x - close, centre.y - close, close * 2, close * 2)
+      ctx.globalAlpha = clamp(0.12 * strength, 0, 1)
+      ctx.drawImage(sprite(cache, palette.glow, "haze"), centre.x - close, centre.y - close, close * 2, close * 2)
     }
   }
   for (const entry of projected.values()) {
@@ -296,8 +319,8 @@ function drawHaze(ctx: CanvasRenderingContext2D, scene: Scene, projected: Map<st
     const radius = (reach.get(entry.node.id) ?? 80) * entry.scale * 1.2
     if (!onScreen(entry.x, entry.y, radius, viewport)) continue
     const lit = entry.core
-    ctx.globalAlpha = (0.025 + 0.1 * lit) * strength * (0.4 + 0.6 * entry.e)
-    ctx.drawImage(sprite(cache, lit > 0.5 ? palette.filament : palette.ember, "haze"), entry.x - radius, entry.y - radius, radius * 2, radius * 2)
+    ctx.globalAlpha = clamp((0.025 + 0.1 * lit) * strength * (0.4 + 0.6 * entry.e), 0, 1)
+    ctx.drawImage(sprite(cache, lit > 0.5 ? palette.glow : palette.ember, "haze"), entry.x - radius, entry.y - radius, radius * 2, radius * 2)
   }
   ctx.globalAlpha = 1
 }
@@ -457,10 +480,11 @@ function drawCube(ctx: CanvasRenderingContext2D, scene: Scene, cache: RenderCach
   const half = clamp(15 * centre.scale, 10, 22) / centre.scale
   ctx.globalCompositeOperation = palette.dark ? "lighter" : "source-over"
   const bloom = half * centre.scale * 7
-  ctx.globalAlpha = 0.32 * show * breathe * (palette.dark ? 1 : 0.4)
-  ctx.drawImage(sprite(cache, palette.filament, "soft"), centre.x - bloom, centre.y - bloom, bloom * 2, bloom * 2)
+  const intensity = scene.effects.glow
+  ctx.globalAlpha = clamp(0.32 * show * breathe * (palette.dark ? 1 : 0.4) * intensity, 0, 1)
+  ctx.drawImage(sprite(cache, palette.glow, "soft"), centre.x - bloom, centre.y - bloom, bloom * 2, bloom * 2)
   const glow = half * centre.scale * 2.6
-  ctx.globalAlpha = 0.55 * show * (palette.dark ? 1 : 0.4)
+  ctx.globalAlpha = clamp(0.55 * show * (palette.dark ? 1 : 0.4) * Math.sqrt(intensity), 0, 1)
   ctx.drawImage(sprite(cache, palette.blush, "soft"), centre.x - glow, centre.y - glow, glow * 2, glow * 2)
 
   const turn = 0.6 + scene.time * 0.035
@@ -485,7 +509,7 @@ function drawCube(ctx: CanvasRenderingContext2D, scene: Scene, cache: RenderCach
     [0, 2, 6, 4],
     [1, 3, 7, 5],
   ]
-  ctx.fillStyle = rgb(palette.filament)
+  ctx.fillStyle = rgb(palette.accent)
   for (const face of faces) {
     ctx.beginPath()
     face.forEach((index, i) => (i === 0 ? ctx.moveTo(corners[index]!.x, corners[index]!.y) : ctx.lineTo(corners[index]!.x, corners[index]!.y)))
@@ -493,7 +517,7 @@ function drawCube(ctx: CanvasRenderingContext2D, scene: Scene, cache: RenderCach
     ctx.globalAlpha = 0.07 * show * breathe
     ctx.fill()
   }
-  ctx.strokeStyle = rgb(palette.dark ? palette.blush : palette.filament)
+  ctx.strokeStyle = rgb(palette.dark ? palette.blush : palette.accent)
   ctx.lineWidth = 0.9
   ctx.globalAlpha = 0.75 * show
   ctx.beginPath()
@@ -561,13 +585,15 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
   const dark = palette.dark
   const large = scene.nodes.length > LARGE
   const width = clamp(0.55 + camera.k * 0.22, 0.55, 1.15)
+  // How strongly the person wants relationships drawn; the selection's own stay as they are.
+  const strength = scene.effects.connections
   const stems = new Batch(rgb(palette.filament), width)
-  const bridges = new Batch(rgb(dark ? palette.starlight : palette.ember), width * 0.9)
+  const bridges = new Batch(rgb(palette.bridge), width * 0.9)
   const litStems = new Batch(rgb(palette.blush), width * 1.35)
-  const litBridges = new Batch(rgb(dark ? palette.starlight : palette.ember), width * 1.3)
+  const litBridges = new Batch(rgb(palette.bridge), width * 1.3)
   const ties = new Batch(rgb(palette.hub), width)
   const litTies = new Batch(rgb(palette.hub), width * 1.4)
-  const spokes = new Batch(rgb(dark ? palette.blush : palette.filament), width)
+  const spokes = new Batch(rgb(palette.spoke), width)
   const flows: Flow[] = []
   const anchors = new Map<string, Point>()
   let furthest = 1
@@ -638,17 +664,17 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
         continue
       }
       if (tie) {
-        ties.curve((dark ? 0.3 : 0.4) * strandShare * tone * e, curve)
+        ties.curve((dark ? 0.3 : 0.4) * strandShare * tone * e * strength, curve)
       } else if (stem) {
-        const alpha = (dark ? 0.3 : 0.32) * (1 + 0.7 * core) * strandShare * tone * e * (large ? 0.7 : 1)
+        const alpha = (dark ? 0.3 : 0.32) * (1 + 0.7 * core) * strandShare * tone * e * (large ? 0.7 : 1) * strength
         stems.curve(alpha, curve)
       } else {
-        const alpha = (dark ? 0.17 : 0.24) * strandShare * tone * e
+        const alpha = (dark ? 0.17 : 0.24) * strandShare * tone * e * strength
         bridges.curve(alpha, curve)
       }
     }
   }
-  if (scene.root) drawSpokes(scene, projected, flows, scene.reveal === undefined ? 1 : clamp(scene.reveal / 0.5, 0, 1), spokes)
+  if (scene.root) drawSpokes(scene, projected, flows, scene.reveal === undefined ? 1 : clamp(scene.reveal / 0.5, 0, 1), spokes, strength)
   spokes.flush(ctx)
   stems.flush(ctx)
   bridges.flush(ctx)
@@ -665,7 +691,7 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
  * project belongs to the scope the core stands for. A spoke to a chosen or
  * hovered project brightens with it.
  */
-function drawSpokes(scene: Scene, projected: Map<string, PNode>, flows: Flow[], show: number, batch: Batch) {
+function drawSpokes(scene: Scene, projected: Map<string, PNode>, flows: Flow[], show: number, batch: Batch, strength: number) {
   const { camera, viewport, lens, palette } = scene
   const origin = { x: 0, y: 0, z: 14 }
   const from = project(origin, camera, viewport, lens)
@@ -682,7 +708,7 @@ function drawSpokes(scene: Scene, projected: Map<string, PNode>, flows: Flow[], 
     if (show < 1) curve = sliceCurve(curve, show)
     const lit = scene.selected === entry.node.id || scene.hovered === entry.node.id
     const tone = (1 + entry.tone) / 2
-    batch.curve((palette.dark ? 0.2 : 0.26) * (lit ? 2.4 : 1) * tone * e, curve)
+    batch.curve((palette.dark ? 0.2 : 0.26) * (lit ? 2.4 * Math.max(1, strength) : strength) * tone * e, curve)
     flows.push({ curve, id: `spoke:${entry.node.id}`, target: entry.node.id, lit: false, core: 0, kind: "spoke", e, tone })
   }
 }
@@ -716,7 +742,8 @@ function sliceCurve(c: Curve, t: number): Curve {
 function drawParticles(ctx: CanvasRenderingContext2D, scene: Scene, flows: Flow[], cache: RenderCache) {
   const { palette } = scene
   const t = scene.time
-  const glow = sprite(cache, palette.dark ? palette.rose : palette.filament, "spark")
+  const glow = sprite(cache, palette.dark ? palette.rose : palette.accent, "spark")
+  const halo = scene.effects.glow
   let ambientBudget = scene.nodes.length > LARGE ? 90 : 220
   for (const flow of flows) {
     let count = 0
@@ -765,7 +792,7 @@ function drawParticles(ctx: CanvasRenderingContext2D, scene: Scene, flows: Flow[
         const a = alpha * fade * (1 - tail * 0.24)
         if (tail === 0) {
           const radius = flow.lit ? 6 : 4.2
-          ctx.globalAlpha = a * (palette.dark ? 0.9 : 0.5)
+          ctx.globalAlpha = clamp(a * (palette.dark ? 0.9 : 0.5) * halo, 0, 1)
           ctx.drawImage(glow, x - radius, y - radius, radius * 2, radius * 2)
           ctx.globalAlpha = a
           ctx.fillStyle = rgb(palette.dark ? palette.blush : palette.ember)
@@ -814,7 +841,7 @@ function drawItem(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, cac
   if (palette.dark) {
     ctx.globalCompositeOperation = "lighter"
     const halo = r * (lifted ? 6.5 : 4.4)
-    ctx.globalAlpha = (lifted ? 0.42 : 0.13) * alpha
+    ctx.globalAlpha = clamp((lifted ? 0.42 : 0.13) * alpha * scene.effects.glow, 0, 1)
     ctx.drawImage(sprite(cache, tint, "soft"), x - halo, y - halo, halo * 2, halo * 2)
     ctx.globalCompositeOperation = "source-over"
   }
@@ -841,7 +868,7 @@ function drawItem(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, cac
     const size = r * 2.3
     const pad = size * 0.16
     ctx.globalAlpha = Math.min(1, alpha * 1.05)
-    ctx.fillStyle = rgb(palette.dark ? palette.starlight : [255, 255, 255])
+    ctx.fillStyle = rgb(palette.dark ? palette.node : [255, 255, 255])
     ctx.beginPath()
     ctx.roundRect(x - size / 2 - pad, y - size / 2 - pad, size + pad * 2, size + pad * 2, size * 0.26)
     ctx.fill()
@@ -907,7 +934,7 @@ function drawItem(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, cac
   }
   if (kind === "conversation" && r > 1.8 && palette.dark) {
     ctx.globalAlpha = alpha
-    ctx.fillStyle = rgb(palette.starlight)
+    ctx.fillStyle = rgb(palette.node)
     ctx.beginPath()
     ctx.arc(x, y, r * 0.42, 0, Math.PI * 2)
     ctx.fill()
@@ -946,22 +973,23 @@ function drawAnchor(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, c
 
   if (palette.dark || lit > 0) {
     ctx.globalCompositeOperation = palette.dark ? "lighter" : "source-over"
+    const intensity = scene.effects.glow
     const wide = r * (3.2 + 4 * lit)
-    ctx.globalAlpha = (0.16 + 0.2 * lit * breathe) * alpha * (palette.dark ? 1 : 0.35)
-    ctx.drawImage(sprite(cache, palette.filament, "soft"), x - wide, y - wide, wide * 2, wide * 2)
+    ctx.globalAlpha = clamp((0.16 + 0.2 * lit * breathe) * alpha * (palette.dark ? 1 : 0.35) * intensity, 0, 1)
+    ctx.drawImage(sprite(cache, palette.glow, "soft"), x - wide, y - wide, wide * 2, wide * 2)
     const close = r * (1.5 + 1.4 * lit)
-    ctx.globalAlpha = (0.22 + 0.45 * lit) * alpha * (palette.dark ? 1 : 0.3)
+    ctx.globalAlpha = clamp((0.22 + 0.45 * lit) * alpha * (palette.dark ? 1 : 0.3) * Math.sqrt(intensity), 0, 1)
     ctx.drawImage(sprite(cache, palette.hub, "soft"), x - close, y - close, close * 2, close * 2)
     ctx.globalCompositeOperation = "source-over"
   }
 
   const turn = spin + scene.time * 0.05 * (0.3 + lit)
   ctx.lineWidth = 0.9
-  ctx.strokeStyle = rgb(palette.starlight)
+  ctx.strokeStyle = rgb(palette.node)
   ctx.globalAlpha = (0.26 + 0.45 * lit) * alpha
   polygon(ctx, x, y, r, 6, turn)
   ctx.stroke()
-  ctx.strokeStyle = rgb(palette.dark ? palette.blush : palette.filament)
+  ctx.strokeStyle = rgb(palette.dark ? palette.blush : palette.accent)
   ctx.globalAlpha = (0.22 + 0.45 * lit) * alpha
   polygon(ctx, x, y, r * 0.62, 6, -turn * 1.6 + Math.PI / 6)
   ctx.stroke()
@@ -1004,7 +1032,7 @@ function drawMarks(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode) {
   if (scene.matches.has(node.id) && scene.selected !== node.id) ring(r + gap, palette.rose, 1.1, 0.85)
   if (scene.hovered === node.id && scene.selected !== node.id) ring(r + gap, palette.starlight, 1, 0.5)
   if (scene.selected === node.id) {
-    ring(r + gap, palette.dark ? palette.blush : palette.filament, 1.3, 0.95)
+    ring(r + gap, palette.dark ? palette.blush : palette.accent, 1.3, 0.95)
     // A slow dial around what you chose: four arcs turning once a minute.
     const turn = scene.time * 0.1
     ctx.globalAlpha = 0.5
@@ -1051,6 +1079,8 @@ function drawVignette(ctx: CanvasRenderingContext2D, { viewport, palette }: Scen
  */
 function drawLabels(ctx: CanvasRenderingContext2D, scene: Scene, projected: Map<string, PNode>, cache: RenderCache) {
   const { palette, viewport } = scene
+  // With labels hidden, only what is chosen or pointed at is named.
+  const labels = scene.effects.labels
   const candidates: { entry: PNode; priority: number }[] = []
   for (const entry of projected.values()) {
     if (entry.e <= 0.05 || !onScreen(entry.x, entry.y, 0, viewport)) continue
@@ -1058,6 +1088,7 @@ function drawLabels(ctx: CanvasRenderingContext2D, scene: Scene, projected: Map<
     let priority = -1
     if (scene.selected === id) priority = 100
     else if (scene.hovered === id) priority = 95
+    else if (!labels) priority = -1
     else if (scene.matches.has(id)) priority = 80
     else if (entry.node.kind === "project") priority = 70 + entry.core * 5
     else if (scene.selected && (scene.emphasis.get(id) ?? 1) > 0.9) priority = 60
@@ -1086,7 +1117,7 @@ function drawLabels(ctx: CanvasRenderingContext2D, scene: Scene, projected: Map<
 
   // The core's name, centred beneath it, before anything else claims the space.
   const core = scene.root ? project({ x: 0, y: 0, z: 0 }, scene.camera, viewport, scene.lens) : undefined
-  if (scene.root && core && onScreen(core.x, core.y, 0, viewport)) {
+  if (labels && scene.root && core && onScreen(core.x, core.y, 0, viewport)) {
     const show = scene.reveal === undefined ? 1 : clamp((scene.reveal - 0.2) / 0.5, 0, 1)
     const font = `500 13px ${palette.displayFont}`
     const detailFont = `500 9px ${palette.monoFont}`
@@ -1242,7 +1273,8 @@ function siteIconFor(domain: string): HTMLImageElement | undefined {
 function logoFor(cache: RenderCache, provider: string, palette: Palette): HTMLImageElement | HTMLCanvasElement | undefined {
   const logo = providerLogo(provider)
   if (!logo) return undefined
-  const key = `${provider}:${palette.dark ? "d" : "l"}`
+  const tint = palette.dark ? palette.node : palette.ember
+  const key = `${provider}:${logo.mono ? tint.join(",") : palette.dark ? "d" : "l"}`
   const held = cache.logos.get(key)
   if (held === "loading" || held === "failed") return undefined
   if (held) return held
@@ -1267,7 +1299,7 @@ function logoFor(cache: RenderCache, provider: string, palette: Palette): HTMLIm
       ctx.restore()
       if (logo.mono) {
         ctx.globalCompositeOperation = "source-in"
-        ctx.fillStyle = rgb(palette.dark ? palette.starlight : palette.ember)
+        ctx.fillStyle = rgb(tint)
         ctx.fillRect(0, 0, size, size)
       }
       ready = canvas
@@ -1282,31 +1314,77 @@ function logoFor(cache: RenderCache, provider: string, palette: Palette): HTMLIm
 
 // ---------------------------------------------------------------- palette
 
-/** Reads the live theme and the Graph's own light off the document; derives ink variants on light themes. */
-export function readPalette(element: Element = document.documentElement): Palette {
+/** Reads the live theme and the Graph's own light off the document, with the person's colours over it (see resolvePalette). */
+export function readPalette(element: Element = document.documentElement, colors: GraphColors = DEFAULT_GRAPH_COLORS): Palette {
   const style = getComputedStyle(element)
-  const v = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback
-  const dark = v("--polarity", "dark") !== "light"
-  const background = v("--background", "#0b0c0f")
-  const ground = parseColor(background) ?? [11, 12, 15]
-  const starlight = parseColor(v("--graph-starlight", "#f3ebe4")) ?? [243, 235, 228]
-  const ink: RGB = [28, 22, 26]
-  const tone = (raw: RGB, darken: number): RGB => (dark ? raw : mix(raw, ink, darken))
-  const filament = tone(parseColor(v("--graph-filament", "#d24868")) ?? [210, 72, 104], 0.18)
-  const rose = tone(parseColor(v("--graph-rose", "#ec8298")) ?? [236, 130, 152], 0.3)
-  const blush = tone(parseColor(v("--graph-blush", "#f7c6cf")) ?? [247, 198, 207], 0.55)
-  const ember = tone(parseColor(v("--graph-ember", "#8e2440")) ?? [142, 36, 64], 0.1)
-  const hub = tone(parseColor(v("--graph-hub", "#e9c27c")) ?? [233, 194, 124], 0.45)
-  // Kinds keep the theme's hue but are drawn mostly in starlight: restrained, never a neon legend.
-  const kind = (name: string, fallback: RGB): RGB => {
-    const raw = parseColor(v(name, "")) ?? fallback
-    return dark ? mix(raw, starlight, 0.66) : mix(raw, ink, 0.2)
+  return resolvePalette((name) => style.getPropertyValue(name).trim(), colors)
+}
+
+const BLACK: RGB = [0, 0, 0]
+const WHITE: RGB = [255, 255, 255]
+const INK: RGB = [28, 22, 26]
+
+/**
+ * The galaxy's light from the theme's tokens and the person's colours.
+ *
+ * A colour left to Hubble is exactly the token's light; one the person set
+ * recolours its role — accent, connections, nodes, glow, background — with
+ * that role's lighter and deeper tones derived from it. Ink variants are
+ * derived on light themes; a custom background is always a dark one, so it
+ * turns the galaxy dark whatever the theme. Once anything is customised,
+ * every line, node and label colour is kept legible on the ground: lifted
+ * toward light (or ink) until it clears a contrast floor.
+ */
+export function resolvePalette(read: (name: string) => string, colors: GraphColors = DEFAULT_GRAPH_COLORS): Palette {
+  const v = (name: string, fallback: string) => read(name) || fallback
+  const token = (name: string, fallback: RGB): RGB => parseColor(read(name)) ?? fallback
+  const custom = (role: keyof GraphColors): RGB | undefined => {
+    const hex = colors[role]
+    return hex ? hexToRgb(hex) : undefined
   }
+  const accent = custom("accent")
+  const link = custom("connections")
+  const nodes = custom("nodes")
+  const light = custom("glow")
+  const customGround = colors.background ? darkBackground(colors.background).rgb : undefined
+
+  const dark = customGround ? true : v("--polarity", "dark") !== "light"
+  const themeBackground = v("--background", "#0b0c0f")
+  const background = customGround ? rgb(customGround) : dark ? rgb(mix(parseColor(themeBackground) ?? [11, 12, 15], BLACK, 0.35)) : themeBackground
+  const starlightRaw = token("--graph-starlight", [243, 235, 228])
+  const starlight = dark ? starlightRaw : INK
+  const tone = (raw: RGB, darken: number): RGB => (dark ? raw : mix(raw, INK, darken))
+
+  // Hubble's own light, as the tokens give it.
+  const own = {
+    filament: tone(token("--graph-filament", [210, 72, 104]), 0.18),
+    rose: tone(token("--graph-rose", [236, 130, 152]), 0.3),
+    blush: tone(token("--graph-blush", [247, 198, 207]), 0.55),
+    ember: tone(token("--graph-ember", [142, 36, 64]), 0.1),
+    hub: tone(token("--graph-hub", [233, 194, 124]), 0.45),
+  }
+
+  const ground = parseColor(background) ?? BLACK
+  const guarded = customGround !== undefined || accent !== undefined || link !== undefined || nodes !== undefined || light !== undefined
+  const toward = dark ? WHITE : INK
+  const keep = (color: RGB, floor = 3): RGB => (guarded ? legible(color, ground, floor, toward) : color)
+  const keepText = (css: string, floor: number): string => {
+    const color = guarded ? parseColor(css) : undefined
+    return color ? rgb(legible(color, ground, floor, toward)) : css
+  }
+
+  // Kinds keep the theme's hue but are drawn mostly in starlight (or the person's node colour): restrained, never a neon legend.
+  const kind = (name: string, fallback: RGB): RGB => {
+    const raw = token(name, fallback)
+    return keep(dark ? mix(raw, nodes ?? starlightRaw, 0.66) : mix(nodes ? mix(raw, nodes, 0.4) : raw, INK, 0.2))
+  }
+  // A light theme's ink would only be lifted to the floor on a dark custom ground: the galaxy takes Hubble Dark's text instead.
+  const text = (name: string, ownDark: string) => (customGround && v("--polarity", "dark") === "light" ? ownDark : v(name, ownDark))
   return {
-    background: dark ? rgb(mix(ground, [0, 0, 0], 0.35)) : background,
-    foreground: v("--foreground", "#e8eaef"),
-    muted: v("--muted-foreground", "#9599a3"),
-    tertiary: v("--text-tertiary", "#737781"),
+    background,
+    foreground: keepText(text("--foreground", "#e8eaef"), 4.5),
+    muted: keepText(text("--muted-foreground", "#9599a3"), 4.5),
+    tertiary: keepText(text("--text-tertiary", "#737781"), 3),
     focus: v("--focus", "#8b8f98"),
     kinds: {
       conversation: kind("--kind-conversation", [138, 180, 255]),
@@ -1315,17 +1393,32 @@ export function readPalette(element: Element = document.documentElement): Palett
       note: kind("--kind-note", [196, 169, 255]),
       session: kind("--kind-session", [242, 159, 179]),
     },
-    filament,
-    rose,
-    blush,
-    ember,
-    hub,
-    starlight: dark ? starlight : ink,
+    filament: keep(link ? tone(link, 0.18) : own.filament),
+    bridge: keep(link ? (dark ? mix(link, starlightRaw, 0.55) : tone(mix(link, INK, 0.35), 0.1)) : dark ? starlight : own.ember),
+    spoke: keep(link ? (dark ? mix(link, WHITE, 0.45) : tone(link, 0.18)) : dark ? own.blush : own.filament),
+    rose: keep(accent ? tone(accent, 0.3) : own.rose),
+    blush: keep(accent ? tone(mix(accent, WHITE, 0.55), 0.55) : own.blush),
+    accent: keep(accent ? tone(accent, 0.18) : own.filament),
+    glow: light ? tone(light, 0.18) : own.filament,
+    ember: light ? tone(mix(light, BLACK, 0.4), 0.1) : own.ember,
+    hub: keep(accent ? tone(mix(accent, WHITE, 0.3), 0.45) : own.hub),
+    starlight,
+    node: keep(nodes ? tone(nodes, 0.6) : starlight),
     displayFont: v("--hb-font-display", "system-ui") || "system-ui",
     uiFont: v("--tabdump-font-ui", "system-ui") || "system-ui",
     monoFont: v("--font-mono", "ui-monospace, monospace") || "ui-monospace, monospace",
     dark,
   }
+}
+
+/** `color`, or the nearest step from it toward `toward` that reads against `ground` at `floor`:1 or better. */
+function legible(color: RGB, ground: RGB, floor: number, toward: RGB): RGB {
+  if (contrast(color, ground) >= floor) return color
+  for (let step = 1; step < 10; step++) {
+    const next = mix(color, toward, step / 10)
+    if (contrast(next, ground) >= floor) return next
+  }
+  return toward
 }
 
 export function parseColor(value: string): RGB | undefined {

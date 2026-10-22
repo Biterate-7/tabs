@@ -2,6 +2,8 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react"
 import { subscribeFavicons } from "@/lib/favicon/client"
+import { graphEffects } from "@/lib/knowledge-graph/appearance"
+import type { GraphAppearance, GraphEffects } from "@/lib/knowledge-graph/appearance"
 import { worldPoint } from "@/lib/knowledge-graph/galaxy"
 import { nodeRadius } from "@/lib/knowledge-graph/layout"
 import { baseLens, cameraOn, fitLens, panLens, project, zoomAtLens } from "@/lib/knowledge-graph/projection"
@@ -41,6 +43,8 @@ type Props = {
   initialCamera?: Camera
   insets: Insets
   reducedMotion: boolean
+  /** The person's colours and effects. With animation off, nothing ambient runs: the galaxy is drawn only when it changes. */
+  appearance: GraphAppearance
   /** Covered (the list view) or leaving: hold the ambient motion. */
   paused?: boolean
   onHover: (id: string | undefined, point?: Point) => void
@@ -94,6 +98,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
   const reveal = useRef<{ start: number } | "done" | null>(null)
   const clock = useRef({ time: 0, last: 0 })
   const palette = useRef<Palette | null>(null)
+  const effects = useRef<{ source: GraphAppearance; value: GraphEffects } | null>(null)
   const cache = useRef<RenderCache | null>(null)
   const hits = useRef<{ list: Hit[]; grid: SpatialGrid | null }>({ list: [], grid: null })
   const raf = useRef(0)
@@ -148,7 +153,8 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       const ctx = canvas?.getContext("2d")
       if (!canvas || !ctx || viewport.current.width === 0) return
       const p = latest.current
-      const ambient = !p.reducedMotion && !p.paused && inView.current && pageVisible.current
+      const still = p.reducedMotion || !p.appearance.animation
+      const ambient = !still && !p.paused && inView.current && pageVisible.current
       const interacting = now < busyUntil.current || tween.current !== null
       // Ambient-only frames are throttled; skip this one and wait for the next.
       if (ambient && !interacting && lastDraw.current && now - lastDraw.current < (p.nodes.length > LARGE ? AMBIENT_FRAME_MS_LARGE : AMBIENT_FRAME_MS) && reveal.current === "done") {
@@ -216,11 +222,11 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       }
       const rest = restingLens()
       let revealT: number | undefined
-      if (reveal.current === null) reveal.current = p.reducedMotion ? "done" : { start: now }
+      if (reveal.current === null) reveal.current = still ? "done" : { start: now }
       let swing = 0
       if (reveal.current !== "done") {
         const t = (now - reveal.current.start) / 1000
-        if (t >= REVEAL_S || p.reducedMotion) reveal.current = "done"
+        if (t >= REVEAL_S || still) reveal.current = "done"
         else {
           revealT = (t / REVEAL_S) * 1.6
           swing = Math.pow(1 - t / REVEAL_S, 3)
@@ -231,7 +237,8 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
 
       if (ambient) clock.current.time += dt / 1000
 
-      if (!palette.current) palette.current = readPalette()
+      if (!palette.current) palette.current = readPalette(undefined, p.appearance.colors)
+      if (effects.current?.source !== p.appearance) effects.current = { source: p.appearance, value: graphEffects(p.appearance) }
       if (!cache.current) {
         cache.current = new RenderCache()
         cache.current.onAsset = () => invalidateRef.current()
@@ -262,6 +269,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
           ...(revealT !== undefined ? { reveal: revealT } : {}),
           orbits: w.orbits,
           now: Date.now(),
+          effects: effects.current.value,
         },
         cache.current
       )
@@ -293,7 +301,13 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
   useEffect(() => subscribeFavicons(invalidate), [invalidate])
 
   // Any change to what is drawn asks for a frame (and restarts the loop if motion was held).
-  useEffect(invalidate, [invalidate, props.nodes, props.edges, props.positions, props.selected, props.core, props.root, props.hovered, props.focused, props.matches, props.highlighted, props.emphasised, props.paused, props.reducedMotion])
+  useEffect(invalidate, [invalidate, props.nodes, props.edges, props.positions, props.selected, props.core, props.root, props.hovered, props.focused, props.matches, props.highlighted, props.emphasised, props.paused, props.reducedMotion, props.appearance])
+
+  // New colours: the palette is derived again on the next frame. Nothing is laid out again; the camera stays.
+  useEffect(() => {
+    palette.current = null
+    invalidate()
+  }, [invalidate, props.appearance.colors])
 
   // Camera bounds: the galaxy plus a margin, so the view can never drift off into empty space.
   const bounds = useMemo(() => {
