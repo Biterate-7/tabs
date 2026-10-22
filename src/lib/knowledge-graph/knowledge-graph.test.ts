@@ -228,3 +228,46 @@ describe("view helpers", () => {
     expect(searchNodes(graph.nodes, "launch paper", (id) => names.get(id)).map((node) => node.label)).toEqual(["The paper again"]);
   });
 });
+
+describe("saved tabs and the relationships people make between them", () => {
+  const plain = (id: string, url: string, title: string): Tab => ({ id, url, normalizedUrl: url, domain: new URL(url).hostname, title, createdAt: T });
+  const dumps = workspace("w4", "Reading", [plain("d1", "https://github.com/acme/repo", "acme/repo"), plain("d2", PAPER, "Paper, as a tab"), plain("d3", "https://blog.example/post", "A post")]);
+  const all = [thesis, launch, dumps];
+
+  it("makes one node per saved tab, in its own project, under the id a source would have", () => {
+    const graph = buildKnowledgeGraph({ workspaces: all });
+    const node = graph.nodes.find((entry) => entry.id === itemNodeId("w4", "s:d1"));
+    expect(node).toMatchObject({ kind: "source", savedTab: true, projectId: "w4", label: "acme/repo" });
+    expect(graph.nodes.filter((entry) => entry.savedTab)).toHaveLength(3);
+    // No tab appears twice, and a project counts what it holds.
+    expect(new Set(graph.nodes.map((entry) => entry.id)).size).toBe(graph.nodes.length);
+    expect(graph.nodes.find((entry) => entry.id === projectNodeId("w4"))?.size).toBe(3);
+    // A source Hubble has read is not also a saved tab.
+    expect(graph.nodes.find((entry) => entry.id === itemNodeId("w1", "s:t1"))?.savedTab).toBeUndefined();
+  });
+
+  it("connects a saved tab to the same page saved as a source elsewhere", () => {
+    const graph = buildKnowledgeGraph({ workspaces: all });
+    const tab = itemNodeId("w4", "s:d2");
+    expect(graph.edges.some((edge) => edge.kind === "same-source" && (edge.source === tab || edge.target === tab))).toBe(true);
+  });
+
+  it("draws links and dependencies by tab id, directed for dependencies, and drops any whose tab is gone", () => {
+    const graph = buildKnowledgeGraph({
+      workspaces: all,
+      links: [{ a: "d1", b: "t2", createdAt: T }, { a: "d1", b: "gone", createdAt: T }],
+      dependencies: [{ id: "dep-d3::d1", parentTabId: "d3", childTabId: "d1", type: "reference", createdAt: T }, { id: "dep-x::d1", parentTabId: "x", childTabId: "d1", createdAt: T }],
+    });
+    const linked = graph.edges.filter((edge) => edge.kind === "linked");
+    expect(linked).toHaveLength(1);
+    expect([linked[0]!.source, linked[0]!.target].sort()).toEqual([itemNodeId("w1", "s:t2"), itemNodeId("w4", "s:d1")].sort());
+    const depends = graph.edges.filter((edge) => edge.kind === "depends-on");
+    expect(depends).toEqual([{ id: `depends-on:${itemNodeId("w4", "s:d3")}|${itemNodeId("w4", "s:d1")}`, source: itemNodeId("w4", "s:d3"), target: itemNodeId("w4", "s:d1"), kind: "depends-on", dependency: { id: "dep-d3::d1", type: "reference" } }]);
+  });
+
+  it("gives an undated tab its project's date, never the epoch", () => {
+    const undated = workspace("w5", "Old", [{ id: "u1", url: "https://old.example/", normalizedUrl: "https://old.example/", domain: "old.example", title: "Old" }]);
+    const graph = buildKnowledgeGraph({ workspaces: [undated] });
+    expect(graph.nodes.find((entry) => entry.id === itemNodeId("w5", "s:u1"))?.at).toBe(T);
+  });
+});

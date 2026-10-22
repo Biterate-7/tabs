@@ -3,11 +3,13 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react"
 import { ArrowUpRight, CheckSquare, ChevronDown, ChevronLeft, FileInput, FileText, FileUp, History, MessageSquareShare, NotebookPen, Orbit, PanelLeftOpen, Play, Search, Trash2, X } from "lucide-react"
 import { KindGlyph } from "@/components/ui/kind-glyph"
+import { ItemIcon } from "@/components/memory/item-icon"
+import { pageIconOf } from "@/lib/memory/item-icon"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { connectedProjects } from "@/lib/knowledge-graph/related"
-import { itemActivityAt, itemKind } from "@/lib/memory/kinds"
+import { itemActivityAt } from "@/lib/memory/kinds"
 import { sortByActivity } from "@/lib/sessions/model"
 import { formatRelativeTime } from "@/lib/time-format"
 import { SubjectActionsMenu, type SubjectMenuActions } from "@/components/workspace/workspace-header"
@@ -380,7 +382,7 @@ export function ProjectHome(props: ProjectHomeProps) {
                 <ArrowUpRight aria-hidden className="size-3.5 opacity-60 transition-transform duration-(--duration-fast) ease-(--ease-standard) group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </span>
               <span className="flex min-w-0 items-center gap-2.5">
-                <KindGlyph kind={itemKind(lastItem)} type={lastItem.type} />
+                <ItemIcon item={lastItem} favicon={pageIconOf(workspace, lastItem)} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-body text-foreground">{lastItem.title}</span>
                   <span className="block truncate text-meta text-tertiary">{formatRelativeTime(itemActivityAt(lastItem), now)}</span>

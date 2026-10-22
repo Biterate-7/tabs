@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
 import { KindGlyph, KIND_BG_CLASS, KIND_TEXT_CLASS } from "@/components/ui/kind-glyph"
+import { ItemIcon } from "@/components/memory/item-icon"
+import { pageIconOf } from "@/lib/memory/item-icon"
 import { PageHeader } from "@/components/ui/page-header"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
@@ -252,7 +254,7 @@ function LibraryRow({ entry, now, also, onOpen, onUseInAi, onOpenUrl }: { entry:
   return (
     <div className="group flex items-center gap-1 rounded-md pr-1 transition-[background-color] duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover">
       <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
-        <KindGlyph kind={kind} type={item.type} />
+        <ItemIcon item={item} favicon={pageIconOf(workspace, item)} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-body text-foreground">{item.title}</span>
           <span className="block truncate text-meta text-tertiary">

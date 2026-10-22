@@ -11,8 +11,8 @@ import { SearchView } from "@/components/search/search-view"
 import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, subjectName, visibleSubjects } from "@/lib/product/subjects"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
-import { GraphView } from "@/components/graph/graph-view"
 import { KnowledgeGraphView } from "@/components/knowledge-graph/knowledge-graph-view"
+import type { KnowledgeGraphTabActions } from "@/components/knowledge-graph/knowledge-graph-view"
 import { LibraryView } from "@/components/library/library-view"
 import { AiView } from "@/components/ai/ai-view"
 import { useBrowserConnected } from "@/hooks/use-tab-sessions"
@@ -30,6 +30,7 @@ import {
   deleteSectionInWorkspace,
   deleteWorkspace,
   getCurrentWorkspace,
+  moveTabsBetweenWorkspaces,
   renameSectionInWorkspace,
   renameWorkspace,
   switchWorkspace,
@@ -96,11 +97,7 @@ import { desktopImport } from "@/lib/platform"
 import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
 import { DesktopImportDialog, type DesktopImportChoice } from "@/components/desktop-import-dialog"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
-import { describeOrganizationStage } from "@/lib/organize/lifecycle"
-import { OrganizationPreparationView, OrganizationStatusBar } from "@/components/organization-preparation"
-import { computeLayoutKey, createLayoutPrecompute, resolveGraphLayoutInput } from "@/lib/graph/precompute"
-import { loadGraphState, pruneGraphState, saveGraphState } from "@/lib/graph/persistence"
-import { computeFitCamera } from "@/lib/graph/layout"
+import { OrganizationStatusBar } from "@/components/organization-preparation"
 import { useOptionalAuth } from "@/components/auth/auth-provider"
 import { useSyncEngine, useWorkspaceSyncState } from "@/hooks/use-sync-engine"
 import { SyncIndicator } from "@/components/sync/sync-indicator"
@@ -139,14 +136,6 @@ const SIDEBAR_COLLAPSED_KEY = "tabdump:sidebar-collapsed:v1"
 const RECENTLY_ADDED_DURATION_MS = 6000
 /** Stable while the store loads, so the transcript search's memo holds. */
 const NO_WORKSPACES: Workspace[] = []
-
-/**
- * How many physics ticks the layout precompute runs per macrotask. Small
- * enough that a 300-tab settle never blocks the main thread long enough to
- * freeze the preparation UI, large enough that the whole settle (~200 ticks
- * from a full reheat) takes a handful of yields rather than hundreds.
- */
-const SETTLE_TICKS_PER_SLICE = 40
 
 function loadSidebarCollapsed(): boolean {
   try {
@@ -213,7 +202,7 @@ export function AppShell() {
     project's page; "search" searches every project. Everything else is
     reached from the rail, the palette or a link.
   */
-  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "tab-map" | "ai" | "library" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
+  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "ai" | "library" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
   /** A node the Graph selects when it opens ("Show in graph"). */
   const [graphFocus, setGraphFocus] = useState<{ nodeId: string; nonce: number } | undefined>(undefined)
   /**
@@ -386,7 +375,7 @@ export function AppShell() {
    *
    * Collections and dependencies are read from their own localStorage stores
    * rather than from React state, because they live in hooks mounted further
-   * down the tree (WorkspaceView/GraphView) and are not available here.
+   * down the tree (WorkspaceView, the Graph) and are not available here.
    */
   const sync = useSyncEngine({
     userId: auth?.user?.id ?? null,
@@ -732,12 +721,12 @@ export function AppShell() {
   }
 
   /**
-   * The whole dump lifecycle for one generation: organization (including the
-   * slow "Other" tail) followed by the layout/settle half, which the effect
-   * below picks up. Every dump entry point goes through here, so there is
+   * The whole dump lifecycle for one generation: organization, including the
+   * slow "Other" tail. Every dump entry point goes through here, so there is
    * exactly one place where a dump can be declared finished — and it is
    * reached only when the pipeline's promise has actually resolved, never on
-   * a timer.
+   * a timer. (There is no layout half any more: the Graph places tabs as
+   * they arrive and never moves what it has placed.)
    */
   async function runDumpOrganization(
     generation: number,
@@ -753,10 +742,7 @@ export function AppShell() {
       readiness.fail(generation, "Couldn't finish organizing your tabs.")
       return outcome
     }
-    // Data organization is done. The graph is still locked: nodes have not
-    // been placed and the physics has not run, and both are part of
-    // readiness — see the settle effect below, which this hands off to.
-    readiness.startSettling(generation)
+    readiness.complete(generation)
     return outcome
   }
 
@@ -769,99 +755,6 @@ export function AppShell() {
     const generation = readiness.begin(last.tabs.length)
     runDumpOrganization(generation, last.workspaceId, last.tabs, last.sections)
   }
-
-  /**
-   * The layout/settle half of readiness, run headlessly: the graph's real
-   * simulation is stepped to rest against the FINAL organized store, and the
-   * resulting positions are written to the persisted graph state before the
-   * Graph View is ever allowed to mount. GraphCanvas then adopts them
-   * verbatim (engine.ts's setNodes prefers a saved position over any seed),
-   * so the first frame the user sees is the settled one instead of the start
-   * of a three-second on-screen re-layout.
-   *
-   * Sliced across macrotasks rather than run in one blocking pass, so the
-   * preparation UI keeps painting while a few hundred tabs settle.
-   *
-   * Deliberately keyed on status+generation only: a title resolving (or any
-   * other unrelated store write) mid-settle must not restart the settle,
-   * which is why the store is read through a ref.
-   */
-  useEffect(() => {
-    if (readiness.state.status !== "settling") return
-    const generation = readiness.state.generation
-    const currentStore = storeRef.current
-    if (!currentStore) return
-
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-
-    const validTabIds = new Set(currentStore.workspaces.flatMap((w) => w.tabs.map((t) => t.id)))
-    const validWorkspaceIds = new Set(currentStore.workspaces.map((w) => w.id))
-    const tabWorkspaceOf = new Map<string, string>()
-    for (const w of currentStore.workspaces) for (const t of w.tabs) tabWorkspaceOf.set(t.id, w.id)
-
-    const graphState = pruneGraphState(loadGraphState(), validTabIds)
-    // Same prune the collection store applies on read, so the precompute
-    // clusters exactly the collections GraphView will show.
-    const collections = pruneCollectionState(loadCollectionState(), validWorkspaceIds, tabWorkspaceOf).collections
-    const dependencies = loadDependencyState().dependencies
-
-    const layoutInput = resolveGraphLayoutInput(currentStore.workspaces, dependencies, collections, graphState)
-    const precompute = createLayoutPrecompute(layoutInput)
-    // Physics is actually running now — a distinct, real stage from
-    // "arranging" (deriving nodes/edges/clusters, which the lines above just
-    // did). Reported through startSettling rather than advance() so the
-    // status stays `settling` and this effect doesn't re-enter itself.
-    readiness.startSettling(generation, "settling")
-
-    function runSlice() {
-      if (cancelled) return
-      const done = precompute.step(SETTLE_TICKS_PER_SLICE)
-      if (!done) {
-        timer = setTimeout(runSlice, 0)
-        return
-      }
-      const result = precompute.result()
-      // A dump changes how much world the layout occupies, so the camera
-      // saved before it would frame the wrong part of a graph the user has
-      // not seen yet — the first frame has to show the finished graph, not a
-      // corner of it. Only after a settle: reopening the graph later still
-      // restores wherever the user themselves left the camera.
-      const framed = layoutInput.nodes
-        .map((node) => result.positions[node.id])
-        .filter((p): p is { x: number; y: number } => Boolean(p))
-        .map((p) => ({ ...p, radius: 0 }))
-      const camera =
-        framed.length > 0 && typeof window !== "undefined"
-          ? computeFitCamera(framed, window.innerWidth, window.innerHeight)
-          : graphState.settings.camera
-
-      // The layout key is what tells the canvas these positions are FINISHED
-      // for this exact graph, so it may open static instead of running the
-      // physics all over again in front of the user. Written only here, when
-      // a settle has actually completed.
-      saveGraphState({
-        ...graphState,
-        positions: result.positions,
-        boundaryOffsets: result.boundaryOffsets,
-        settings: { ...graphState.settings, camera },
-        layoutKey: computeLayoutKey(
-          layoutInput.clusterTree,
-          layoutInput.nodes.map((n) => n.id),
-          graphState.settings
-        ),
-      })
-      readiness.complete(generation)
-    }
-
-    runSlice()
-
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readiness.state.status, readiness.state.generation])
 
   function handleCreateSection(parentId: string | null, name: string) {
     if (!store || !currentWorkspace) return
@@ -1031,7 +924,7 @@ export function AppShell() {
     const generation = readiness.begin(imported.length)
     runDumpOrganization(generation, nextWorkspace.id, imported, nextWorkspace.sections ?? [])
     // From Home or AI, land on the subject the tabs went into, so they are seen arriving (as a Desktop import does).
-    // Anywhere else — the Graph above all, which has its own preparation screen for this — stays put.
+    // Anywhere else — the Graph above all, where they arrive in their project's fan — stays put.
     setView((current) => (current === "home" || current === "search" ? "workspace" : current))
     // Organization is gated and asynchronous, but the ack is not: the count
     // answers "how many tabs did this shell take", which is settled the
@@ -1676,17 +1569,39 @@ export function AppShell() {
   }
 
   /**
-   * The single funnel every Graph View entry point (sidebar button, header
-   * button, header dropdown, command palette) already went through — now
-   * gated. The buttons are also visibly disabled while a dump runs, but the
-   * check lives here too: disabling a control is a hint, not an enforcement,
-   * and this is the transition that must not happen.
-   *
-   * A failed dump is allowed through to the preparation screen deliberately —
-   * that screen is where the error, "Try again" and "Open graph anyway" live.
-   * It still doesn't render the graph.
+   * What the Graph can do to a saved tab. Each is the same write the project
+   * view makes, against the latest committed store, so a change made in the
+   * Graph is indistinguishable from one made there.
    */
-  /** The Graph: every project and what connects them. Never gated — it draws from saved records, not from the tab organizer. */
+  const graphTabActions: KnowledgeGraphTabActions = {
+    open: (workspaceId, tabId, options) => {
+      const latest = storeRef.current
+      const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+      const tab = workspace?.tabs.find((entry) => entry.id === tabId)
+      if (!latest || !workspace || !tab) return
+      void openTab(tab.url, options)
+      // Opened from Hubble: it belongs in Recents, as an open from the project view does.
+      commitStore(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((entry) => (entry.id === tabId ? { ...entry, lastAccessedAt: Date.now() } : entry))))
+    },
+    update: (workspaceId, tabId, patch) => {
+      const latest = storeRef.current
+      const workspace = latest?.workspaces.find((entry) => entry.id === workspaceId)
+      if (!latest || !workspace) return
+      persist(updateWorkspaceTabs(latest, workspaceId, workspace.tabs.map((entry) => (entry.id === tabId ? { ...entry, ...patch } : entry))))
+    },
+    move: (workspaceId, tabIds, targetWorkspaceId) => {
+      const latest = storeRef.current
+      if (!latest) return
+      const result = moveTabsBetweenWorkspaces(latest, tabIds, targetWorkspaceId, workspaceId)
+      if (result.moved.length === 0) return
+      persist(result.store)
+      const target = result.store.workspaces.find((entry) => entry.id === targetWorkspaceId)
+      toast.success(`Moved to ${target ? subjectName(target) : "project"}`)
+    },
+    remove: handleRemoveSources,
+  }
+
+  /** The Graph: every project, everything in them — saved tabs included — and what connects them. Never gated: it draws from saved records, not from the tab organizer. */
   function handleOpenGraph() {
     setGraphFocus(undefined)
     setView("graph")
@@ -1696,17 +1611,6 @@ export function AppShell() {
   function showInGraph(nodeId: string) {
     setGraphFocus({ nodeId, nonce: Date.now() })
     setView("graph")
-  }
-
-  /** The map of saved tabs (the original graph), gated on the organizer as it always was. */
-  function handleOpenTabMap() {
-    if (readiness.graphAvailable || readiness.state.status === "error") {
-      setView("tab-map")
-      return
-    }
-    toast.info(describeOrganizationStage(readiness.state), {
-      description: "The graph opens once your tabs are organized.",
-    })
   }
 
   /*
@@ -1903,9 +1807,8 @@ export function AppShell() {
         onOpenUrl={(url) => void openTab(url)}
         {...(isDesktopShell ? {} : { onOpenSessions: () => openSessions() })}
         onNewProject={() => setNewWorkspaceOpen(true)}
-        {...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { onOpenTabMap: handleOpenTabMap } : {})}
-        tabMapLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
-        tabMapLockedReason={readiness.label}
+        allWorkspaces={store.workspaces}
+        tabActions={graphTabActions}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
         {...(graphFocus ? { focus: graphFocus } : {})}
       />
@@ -1938,24 +1841,6 @@ export function AppShell() {
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />
     )
-  }
-
-  if (view === "tab-map") {
-    // The gate, at the transition itself rather than inside the canvas: while
-    // a dump is organizing, laying out or settling, GraphView is not rendered
-    // at all — so there is no partially-organized graph underneath anything,
-    // and nothing for a stray click to reach.
-    if (!readiness.graphAvailable) {
-      return (
-        <OrganizationPreparationView
-          state={readiness.state}
-          onClose={() => setView("graph")}
-          onRetry={retryDumpOrganization}
-          onOpenAnyway={readiness.dismissError}
-        />
-      )
-    }
-    return <GraphView store={store} onStoreUpdate={persist} onClose={() => setView("graph")} />
   }
 
   if (view === "settings") {
@@ -2083,7 +1968,6 @@ export function AppShell() {
           goAi: () => setView("ai"),
           goLibrary: () => setView("library"),
           ...(isDesktopShell ? {} : { goSessions: () => openSessions() }),
-          ...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { openTabMap: handleOpenTabMap } : {}),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
@@ -2179,9 +2063,6 @@ export function AppShell() {
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}
         onOpenGraph={handleOpenGraph}
-        {...(store.workspaces.some((workspace) => workspace.tabs.length > 0) ? { onOpenTabMap: handleOpenTabMap } : {})}
-        tabMapLocked={!readiness.graphAvailable && readiness.state.status !== "error"}
-        tabMapLockedReason={readiness.label}
         onOpenAi={() => setView("ai")}
         onOpenLibrary={() => setView("library")}
         onOpenCommandMenu={paletteHost.open}

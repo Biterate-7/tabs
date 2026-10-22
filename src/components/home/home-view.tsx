@@ -5,6 +5,8 @@ import { AlertCircle, ArrowRight, ArrowUpRight, Group, MessageSquareShare, Orbit
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { KindGlyph, KIND_BG_CLASS } from "@/components/ui/kind-glyph"
+import { ItemIcon } from "@/components/memory/item-icon"
+import { pageIconOf } from "@/lib/memory/item-icon"
 import { BrandMark } from "@/components/brand-mark"
 import { ProviderBadge, ProviderMark } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
@@ -206,7 +208,7 @@ export function HomeView({
                 <ul className="mt-2 flex flex-col">
                   {recent.map(({ workspace, item }) => (
                     <li key={`${workspace.id}:${item.id}`}>
-                      <ItemRow item={item} projectName={subjectName(workspace)} now={now} onOpen={() => onOpenItem(workspace.id, item.ref)} />
+                      <ItemRow item={item} favicon={pageIconOf(workspace, item)} projectName={subjectName(workspace)} now={now} onOpen={() => onOpenItem(workspace.id, item.ref)} />
                     </li>
                   ))}
                 </ul>
@@ -221,7 +223,7 @@ export function HomeView({
                 <ul className="mt-2 flex flex-col">
                   {changes.items.map(({ workspace, item }) => (
                     <li key={`${workspace.id}:${item.id}`}>
-                      <ItemRow item={item} projectName={subjectName(workspace)} now={now} compact onOpen={() => onOpenItem(workspace.id, item.ref)} />
+                      <ItemRow item={item} favicon={pageIconOf(workspace, item)} projectName={subjectName(workspace)} now={now} compact onOpen={() => onOpenItem(workspace.id, item.ref)} />
                     </li>
                   ))}
                 </ul>
@@ -388,7 +390,7 @@ function ContinueCard({
                 className="group flex w-full min-w-0 items-center gap-3 rounded-lg border border-subtle bg-background/60 px-3 py-2.5 text-left outline-none transition-[border-color,background-color] duration-(--duration-fast) ease-(--ease-color) hover:border-strong hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/60"
                 aria-label={`Open ${last.title}`}
               >
-                <KindGlyph kind={itemKind(last)} type={last.type} tile />
+                <ItemIcon item={last} favicon={pageIconOf(workspace, last)} tile />
                 <span className="min-w-0 flex-1">
                   <span className="block text-meta text-tertiary">Last touched · {formatRelativeTime(itemActivityAt(last), now)}</span>
                   <span className="block truncate text-body text-foreground">{last.title}</span>
@@ -401,7 +403,7 @@ function ContinueCard({
                   {more.map((item) => (
                     <li key={item.id}>
                       <button type="button" onClick={() => onOpenItem(workspace.id, item.ref)} className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-3 py-1.5 text-left outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60">
-                        <KindGlyph kind={itemKind(item)} type={item.type} className="size-3.5" />
+                        <ItemIcon item={item} favicon={pageIconOf(workspace, item)} size={14} className="size-3.5" />
                         <span className="min-w-0 flex-1 truncate text-body-sm text-muted-foreground">{item.title}</span>
                         <span className="shrink-0 text-meta text-tertiary">{formatRelativeTime(itemActivityAt(item), now)}</span>
                       </button>
@@ -487,14 +489,14 @@ function KindBar({ items }: { items: readonly KnowledgeItem[] }) {
   )
 }
 
-function ItemRow({ item, projectName, now, onOpen, compact = false }: { item: KnowledgeItem; projectName: string; now: number; onOpen: () => void; compact?: boolean }) {
+function ItemRow({ item, favicon, projectName, now, onOpen, compact = false }: { item: KnowledgeItem; favicon?: string; projectName: string; now: number; onOpen: () => void; compact?: boolean }) {
   return (
     <button
       type="button"
       onClick={onOpen}
       className="group flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-1.5 text-left outline-none transition-[background-color] duration-(--duration-fast) ease-(--ease-color) hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/60"
     >
-      <KindGlyph kind={itemKind(item)} type={item.type} />
+      <ItemIcon item={item} {...(favicon ? { favicon } : {})} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body text-foreground">{item.title}</span>
         {compact && <span className="block truncate text-meta text-tertiary">{projectName}</span>}

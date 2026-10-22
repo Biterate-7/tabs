@@ -22,7 +22,6 @@ import {
   Search,
   Settings,
   Star,
-  Waypoints,
 } from "lucide-react"
 import { AccountSection } from "@/components/auth/account-section"
 import { BrandMark } from "@/components/brand-mark"
@@ -46,7 +45,6 @@ export type SidebarView =
   | "search"
   | "workspace"
   | "graph"
-  | "tab-map"
   | "ai"
   | "library"
   | "settings"
@@ -56,7 +54,7 @@ export type SidebarView =
   | "sessions"
 
 /** Destinations that live under "More" — tools most people never need to find. */
-const MORE_VIEWS: readonly SidebarView[] = ["favorites", "recents", "history-dump", "tab-map"]
+const MORE_VIEWS: readonly SidebarView[] = ["favorites", "recents", "history-dump"]
 
 const MORE_OPEN_KEY = "hubble:sidebar-more:v1"
 
@@ -96,7 +94,7 @@ export type SidebarCreateActions = {
  *       Thesis — Urban heat          12
  *       IB History                    9
  *       + New project
- *     More ›   Favorites, Recent, Import from history, Tab map
+ *     More ›   Favorites, Recent, Import from history
  *     ─────
  *     ● Chrome connected
  *     Settings
@@ -111,8 +109,8 @@ export type SidebarCreateActions = {
  *
  * ## Progressive disclosure
  *
- * Favorites, Recent, Import from history and the Tab map are kept and one
- * click away under "More", closed by default. The group opens itself
+ * Favorites, Recent and Import from history are kept and one click away
+ * under "More", closed by default. (Saved tabs are mapped in the Graph.) The group opens itself
  * whenever one of its destinations is on screen, so the current row is never
  * hidden, and remembers being opened by hand.
  *
@@ -134,9 +132,6 @@ export function AppSidebar({
   onOpenRecents,
   onOpenHistoryDump,
   onOpenGraph,
-  onOpenTabMap,
-  tabMapLocked = false,
-  tabMapLockedReason,
   onOpenSettings,
   onOpenWorkspace,
   onOpenHome,
@@ -167,12 +162,6 @@ export function AppSidebar({
   onOpenRecents: () => void
   onOpenHistoryDump: () => void
   onOpenGraph: () => void
-  /** The map of saved tabs (the older graph). Absent: not offered. */
-  onOpenTabMap?: () => void
-  /** True while a dump is still being organized/laid out — see lib/organize/lifecycle.ts. Disabled rather than hidden. */
-  tabMapLocked?: boolean
-  /** What the tab map is waiting on, used as the disabled row's tooltip. */
-  tabMapLockedReason?: string
   onOpenSettings: () => void
   /** Returns to the current workspace from any other destination. */
   onOpenWorkspace?: () => void
@@ -440,18 +429,6 @@ export function AppSidebar({
                 <SidebarItem label="Favorites" icon={<Star />} current={activeIs("favorites")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenFavorites)} />
                 <SidebarItem label="Recent" icon={<Clock />} current={activeIs("recents")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenRecents)} />
                 <SidebarItem label="Import from history" icon={<History />} current={activeIs("history-dump")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHistoryDump)} />
-                {onOpenTabMap && (
-                  <SidebarItem
-                    label="Tab map"
-                    icon={<Waypoints />}
-                    current={activeIs("tab-map")}
-                    collapsed={railCollapsed}
-                    touch={touch}
-                    disabled={tabMapLocked}
-                    tooltip={tabMapLocked ? (tabMapLockedReason ?? "Organizing your tabs…") : undefined}
-                    onClick={go(onOpenTabMap)}
-                  />
-                )}
               </nav>
             )}
           </div>

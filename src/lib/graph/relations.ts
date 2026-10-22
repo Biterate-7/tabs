@@ -94,9 +94,9 @@ function chainEdges(
 
 /**
  * Where a tab's cluster sits in the world, for `buildChainOrder`. Supplied by
- * the caller (graph-view.tsx already computes exactly this, via
- * `computeClusterAnchors`) rather than derived here, so this module keeps no
- * dependency on the layout it is ordering against.
+ * a caller that lays tabs out by category (none does today: the Graph groups
+ * by project), rather than derived here, so this module keeps no dependency
+ * on any layout it is ordering against.
  */
 export type ChainAnchorOf = (tabId: string) => { x: number; y: number } | undefined;
 
@@ -152,10 +152,9 @@ function serpentineRanks(points: Map<string, { x: number; y: number }>): Map<str
 /**
  * Sort keys for `chainEdges`, one per tab: "where the layout puts this tab",
  * coarse to fine. A chain sorted by this walks cluster by cluster along a
- * serpentine sweep of the canvas and, within a cluster, domain by domain —
- * the same nesting the cluster tree and the boundary boxes use (see
- * clusters.ts), so a chained pair is almost always a pair that already shares
- * a boundary box, and the pairs that aren't are spatial neighbours.
+ * serpentine sweep of the canvas and, within a cluster, domain by domain, so
+ * a chained pair is almost always a pair that already sits together, and the
+ * pairs that aren't are spatial neighbours.
  *
  * Without `anchorOf` the sweep is unavailable and clusters fall back to being
  * ordered by category key. That is still locality-preserving WITHIN a cluster
@@ -344,10 +343,8 @@ export function buildDependencyEdges(tabs: Tab[], dependencies: TabDependency[])
 
 /**
  * Maps every tab id touched by at least one edge to its total degree (plain
- * edges plus dependency edges, both endpoints counted). Shared by GraphCanvas
- * (node-size "connections" mode) and Tab Peek (the "N connections" line) so
- * both read the exact same notion of "how connected is this tab" rather than
- * keeping two counting implementations in sync by hand.
+ * edges plus dependency edges, both endpoints counted), for Tab Peek's
+ * "N connections" line.
  */
 export function buildDegreeMap(edges: GraphEdge[], dependencyEdges: GraphDependencyEdge[]): Map<string, number> {
   const map = new Map<string, number>();

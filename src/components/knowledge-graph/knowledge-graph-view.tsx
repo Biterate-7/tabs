@@ -2,43 +2,76 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { KeyboardEvent as ReactKeyboardEvent } from "react"
-import { ChevronDown, ListTree, Maximize2, Minus, Network, PanelLeftOpen, Plus, Search, Waypoints, X } from "lucide-react"
+import { toast } from "sonner"
+import { ArrowUpRight, ChevronDown, Copy, ListTree, Maximize2, MessageSquareShare, Minus, Network, PanelLeftOpen, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
-import { KindGlyph, KIND_BG_CLASS } from "@/components/ui/kind-glyph"
+import { KIND_BG_CLASS } from "@/components/ui/kind-glyph"
 import { Kbd } from "@/components/ui/kbd"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
+import { GraphLinkDialog } from "@/components/graph/graph-link-dialog"
+import type { GraphLinkDialogMode } from "@/components/graph/graph-link-dialog"
+import { GatherDialog } from "@/components/workspace/gather-dialog"
+import { useCollectionStore } from "@/hooks/use-collection-store"
+import { useDependencyStore } from "@/hooks/use-dependency-store"
+import { useTabLinks } from "@/hooks/use-tab-links"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { useReducedMotion } from "@/hooks/use-reduced-motion"
-import { adjacency, buildKnowledgeGraph } from "@/lib/knowledge-graph/build"
+import { getCollectionForTab, getCollectionsForWorkspace } from "@/lib/collections/relations"
+import { validateAddTabToCollection } from "@/lib/collections/validation"
+import { dependenciesOf } from "@/lib/dependencies/relations"
+import { validateDependency } from "@/lib/dependencies/validation"
+import { buildGraphNodes, buildWorkspaceLookup } from "@/lib/graph/relations"
+import { adjacency, buildKnowledgeGraph, itemNodeId } from "@/lib/knowledge-graph/build"
 import { createKnowledgeLayout } from "@/lib/knowledge-graph/layout"
 import { loadKnowledgeGraphState, saveKnowledgeGraphState } from "@/lib/knowledge-graph/persistence"
 import { nodeInDirection, searchNodes } from "@/lib/knowledge-graph/view"
 import { subjectName } from "@/lib/product/subjects"
+import { copyText } from "@/lib/workspace/export"
 import { cn } from "@/lib/utils"
+import type { DependencyType } from "@/lib/dependencies/types"
 import type { Camera, Direction, Insets } from "@/lib/knowledge-graph/view"
-import type { GraphNodeKind, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
+import type { GraphNodeKind, KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
 import type { KnowledgeItemRef } from "@/lib/memory/items"
+import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import { KnowledgeGraphCanvas } from "./knowledge-graph-canvas"
 import type { GraphCanvasHandle } from "./knowledge-graph-canvas"
 import { GraphInspector } from "./graph-inspector"
 import { GraphHoverCard } from "./graph-hover-card"
 import { GraphList } from "./graph-list"
+import { NodeIcon } from "./node-icon"
+import { TabMenuItems } from "./tab-actions"
+import type { GraphTab, GraphTabActions } from "./tab-actions"
 import { announceNode, NODE_KIND_LABEL } from "./describe"
 
-type FilterKind = Exclude<GraphNodeKind, "project">
-const FILTER_KINDS: readonly FilterKind[] = ["conversation", "source", "file", "note", "session"]
-const FILTER_LABEL: Record<FilterKind, string> = { conversation: "Conversations", source: "Sources", file: "Files", note: "Notes", session: "Sessions" }
-const ALL_KINDS: Record<FilterKind, boolean> = { conversation: true, source: true, file: true, note: true, session: true }
+/** What the "Show" chips filter by: each kind of node, with saved tabs apart from the sources Hubble has read. */
+type FilterKind = Exclude<GraphNodeKind, "project"> | "tab"
+const FILTER_KINDS: readonly FilterKind[] = ["conversation", "source", "tab", "file", "note", "session"]
+const FILTER_LABEL: Record<FilterKind, string> = { conversation: "Conversations", source: "Sources", tab: "Saved tabs", file: "Files", note: "Notes", session: "Sessions" }
+const ALL_KINDS: Record<FilterKind, boolean> = { conversation: true, source: true, tab: true, file: true, note: true, session: true }
+const filterOf = (node: KnowledgeNode): FilterKind | undefined => (node.kind === "project" ? undefined : node.savedTab ? "tab" : node.kind)
 const INSPECTOR_W = 344
 /** How many neighbours a selection frames; a hub with hundreds frames its nearest. */
 const FRAME_LIMIT = 40
 
+/** Changes to saved tabs, made through the shell so they land exactly as the project view's would. */
+export type KnowledgeGraphTabActions = {
+  open: (workspaceId: string, tabId: string, options?: { newTab?: boolean }) => void
+  update: (workspaceId: string, tabId: string, patch: Partial<Pick<Tab, "notes" | "isFavorite">>) => void
+  move: (workspaceId: string, tabIds: string[], targetWorkspaceId: string) => void
+  remove: (workspaceId: string, tabIds: string[]) => void
+}
+
 export type KnowledgeGraphViewProps = {
   workspaces: readonly Workspace[]
+  /**
+   * Every workspace in the store. The stores of tab relationships
+   * (collections, dependencies, links) are kept in step with where every
+   * tab lives, so they must see all of them. Defaults to `workspaces`.
+   */
+  allWorkspaces?: readonly Workspace[]
   now: number
   /** Sessions are part of the graph where they exist (not in Hubble Desktop). */
   showSessions: boolean
@@ -48,10 +81,8 @@ export type KnowledgeGraphViewProps = {
   onOpenUrl: (url: string) => void
   onOpenSessions?: () => void
   onNewProject?: () => void
-  /** The older map of saved tabs. Absent: not offered. */
-  onOpenTabMap?: () => void
-  tabMapLocked?: boolean
-  tabMapLockedReason?: string
+  /** Absent: saved tabs can be explored, not changed. */
+  tabActions?: KnowledgeGraphTabActions
   onOpenSidebar?: () => void
   /** A node to select on arrival ("Show in graph"). A new nonce selects it again. */
   focus?: { nodeId: string; nonce: number }
@@ -60,22 +91,41 @@ export type KnowledgeGraphViewProps = {
 /**
  * The Graph: everything the person keeps, as one connected space.
  *
- * Projects hold neighbourhoods; conversations, sources, files, notes and
- * browser sessions sit in them and connect across them wherever the records
- * prove a relationship. Selecting anything brings it and its relationships
- * forward, quiets the rest, travels the camera there and opens an inspector
- * with what Hubble knows and what can be done; opening it goes to the real
- * thing. Search, filters, zoom, a keyboard path through every node and a
- * list view of the same data make it usable without the canvas at all.
+ * Projects hold neighbourhoods; conversations, sources, files, notes, every
+ * tab saved into a project and browser sessions sit in them and connect
+ * across them wherever the records prove a relationship — and wherever the
+ * person drew one themselves (a link, a dependency). Selecting anything
+ * brings it and its relationships forward, quiets the rest, travels the
+ * camera there and opens an inspector with what Hubble knows and what can
+ * be done; opening it goes to the real thing. A saved tab can be managed
+ * here as in its project: opened, noted, favourited, filed in a collection,
+ * moved, linked, removed — from the inspector or by right-clicking it.
+ * Search, filters, zoom, a keyboard path through every node and a list view
+ * of the same data make it usable without the canvas at all.
  */
 export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   const { workspaces, now } = props
+  const allWorkspaces = props.allWorkspaces ?? workspaces
   const { sessions: allSessions } = useTabSessions()
   const sessions = useMemo(() => (props.showSessions ? allSessions : []), [props.showSessions, allSessions])
   const launcher = useSessionLaunch()
   const reducedMotion = useReducedMotion()
 
-  const graph = useMemo(() => buildKnowledgeGraph({ workspaces, sessions }), [workspaces, sessions])
+  // ---- saved tabs and the relationships the person made between them ----
+  const tabIndex = useMemo(() => {
+    const map = new Map<string, { workspace: Workspace; tab: Tab }>()
+    for (const workspace of allWorkspaces) for (const tab of workspace.tabs) map.set(tab.id, { workspace, tab })
+    return map
+  }, [allWorkspaces])
+  const validTabIds = useMemo(() => new Set(tabIndex.keys()), [tabIndex])
+  const dependencyStore = useDependencyStore(validTabIds)
+  const collectionStore = useCollectionStore(allWorkspaces)
+  const tabLinks = useTabLinks(validTabIds)
+
+  const graph = useMemo(
+    () => buildKnowledgeGraph({ workspaces, sessions, links: tabLinks.links, dependencies: dependencyStore.dependencies }),
+    [workspaces, sessions, tabLinks.links, dependencyStore.dependencies]
+  )
   const byId = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph])
   const neighbours = useMemo(() => adjacency(graph), [graph])
   const edgesOf = useMemo(() => {
@@ -164,8 +214,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   // ---- what is shown ----
   const visible = useMemo(() => {
     const keep = new Set<string>()
+    const shown = (node: KnowledgeNode) => {
+      const filter = filterOf(node)
+      return !filter || kinds[filter]
+    }
     for (const node of graph.nodes) {
-      if (node.kind !== "project" && !kinds[node.kind]) continue
+      if (!shown(node)) continue
       if (projectFilter === "all") keep.add(node.id)
       else if (node.id === `p:${projectFilter}` || node.projectId === projectFilter) keep.add(node.id)
     }
@@ -174,7 +228,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
       for (const id of [...keep]) {
         for (const other of neighbours.get(id) ?? []) {
           const node = byId.get(other)
-          if (node && (node.kind === "project" || kinds[node.kind])) keep.add(other)
+          if (node && shown(node)) keep.add(other)
         }
       }
     }
@@ -184,10 +238,15 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   }, [graph, kinds, projectFilter, neighbours, byId])
 
   const counts = useMemo(() => {
-    const out: Record<FilterKind, number> = { conversation: 0, source: 0, file: 0, note: 0, session: 0 }
-    for (const node of graph.nodes) if (node.kind !== "project" && (projectFilter === "all" || node.projectId === projectFilter)) out[node.kind] += 1
+    const out: Record<FilterKind, number> = { conversation: 0, source: 0, tab: 0, file: 0, note: 0, session: 0 }
+    for (const node of graph.nodes) {
+      const filter = filterOf(node)
+      if (filter && (projectFilter === "all" || node.projectId === projectFilter)) out[filter] += 1
+    }
     return out
   }, [graph, projectFilter])
+  // Saved tabs get a chip of their own only where there are any: most people's graphs have none.
+  const hasSavedTabs = useMemo(() => graph.nodes.some((node) => node.savedTab), [graph])
 
   const results = useMemo(() => searchNodes(visible.nodes, query, (id) => names.get(id)), [visible.nodes, query, names])
   const matches = useMemo(() => new Set(results.map((node) => node.id)), [results])
@@ -233,6 +292,11 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
     else canvas.current?.fit(visible.nodes.filter((node) => node.id === `p:${projectFilter}` || node.projectId === projectFilter).map((node) => node.id))
   }, [projectFilter, positions, visible.nodes])
 
+  /** Asks the camera to frame `ids`. The nonce only has to differ from the last one, so the same frame can be asked for twice. */
+  function frame(ids: string[]) {
+    setFocusRequest((previous) => ({ ids, nonce: (previous?.nonce ?? 0) + 1 }))
+  }
+
   function frameIdsFor(id: string): string[] {
     const near = [...(neighbours.get(id) ?? [])].filter((other) => visible.ids.has(other))
     const node = byId.get(id)
@@ -243,7 +307,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
 
   function select(id: string | undefined, options: { fromHistory?: boolean; frame?: boolean } = {}) {
     if (id === selected) {
-      if (id && options.frame !== false) setFocusRequest({ ids: frameIdsFor(id), nonce: Date.now() })
+      if (id && options.frame !== false) frame(frameIdsFor(id))
       return
     }
     if (!options.fromHistory && selected && id) setHistory((list) => [...list.slice(-30), selected])
@@ -253,7 +317,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
       setFocused(id)
       const node = byId.get(id)
       if (node) setAnnouncement(`Selected ${announceNode(node, node.projectId ? names.get(node.projectId) : undefined, neighbours.get(id)?.size ?? 0, now)}`)
-      if (options.frame !== false) setFocusRequest({ ids: frameIdsFor(id), nonce: Date.now() })
+      if (options.frame !== false) frame(frameIdsFor(id))
     }
   }
 
@@ -279,6 +343,8 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
       if (session) void launcher.launch({ tabs: session.tabs.map((tab) => ({ url: tab.url, ...(tab.pinned ? { pinned: true } : {}) })), sessionIds: [session.id] })
       return
     }
+    // A saved tab opens as the page itself, in the browser: the graph stays where it is.
+    if (node.savedTab && node.projectId && node.item) return props.onOpenItem(node.projectId, node.item.ref)
     const go = () => {
       if (node.kind === "project") props.onOpenProject(node.id.slice(2))
       else if (node.projectId && node.item) props.onOpenItem(node.projectId, node.item.ref)
@@ -289,10 +355,148 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
     canvas.current?.diveInto(node.id, go)
   }
 
-  function useInAi(node: KnowledgeNode) {
+  function reuseInAi(node: KnowledgeNode) {
     if (!props.onUseInAi) return
     if (node.kind === "project") props.onUseInAi(node.id.slice(2), [])
     else if (node.projectId && node.item) props.onUseInAi(node.projectId, [node.item.ref])
+  }
+
+  // ---- saved tabs: what can be done to one from here ----
+  const [menu, setMenu] = useState<{ id: string; point: Point } | null>(null)
+  const [linkDialog, setLinkDialog] = useState<{ mode: GraphLinkDialogMode; tabId: string } | null>(null)
+  const [gather, setGather] = useState<{ workspaceId: string; tabId: string } | null>(null)
+  /** The node whose note is open for editing in the inspector. */
+  const [editingNote, setEditingNote] = useState<string | undefined>(undefined)
+  /** A selected tab on its way to another project: chosen again, and travelled to, once it lands there. */
+  const [following, setFollowing] = useState<{ id: string; project: string } | undefined>(undefined)
+  if (following && byId.has(following.id)) {
+    setFollowing(undefined)
+    setSelected(following.id)
+    setFocused(following.id)
+    frame([following.id, following.project])
+  }
+
+  /** The saved tab behind a node: any source, read or not, lives on a tab. */
+  function graphTabOf(node: KnowledgeNode | undefined): GraphTab | undefined {
+    if (!node?.item || node.item.ref.kind !== "source") return undefined
+    const entry = tabIndex.get(node.item.ref.tabId)
+    if (!entry) return undefined
+    const { workspace, tab } = entry
+    const collections = collectionStore.collections
+    const collection = getCollectionForTab(collections, tab.id)
+    const section = sectionPath(workspace, tab.sectionId)
+    return {
+      workspaceId: workspace.id,
+      tab,
+      ...(section ? { section } : {}),
+      ...(collection ? { collection: { id: collection.id, name: collection.name } } : {}),
+      collections: getCollectionsForWorkspace(collections, workspace.id)
+        .filter((entry) => entry.id !== collection?.id)
+        .map((entry) => ({ id: entry.id, name: entry.name })),
+      // Only a tab Hubble holds no text for moves: a read source's text is stored under its project, and would be left behind.
+      projects: tab.resource ? [] : workspaces.filter((entry) => entry.id !== workspace.id).map((entry) => ({ id: entry.id, name: names.get(entry.id) ?? entry.name })),
+    }
+  }
+
+  function tabActionsFor(node: KnowledgeNode, graphTab: GraphTab): GraphTabActions | undefined {
+    const actions = props.tabActions
+    if (!actions) return undefined
+    const { workspaceId, tab } = graphTab
+    return {
+      openPage: (newTab) => actions.open(workspaceId, tab.id, newTab ? { newTab: true } : undefined),
+      copy: (clean) => {
+        void copyText(clean ? tab.normalizedUrl : tab.url).then((ok) => (ok ? toast.success(clean ? "Clean link copied" : "Link copied") : toast.error("Couldn't copy the link")))
+      },
+      toggleFavorite: () => actions.update(workspaceId, tab.id, { isFavorite: !tab.isFavorite }),
+      editNote: () => {
+        if (selected !== node.id) select(node.id, { frame: false })
+        setEditingNote(node.id)
+      },
+      moveTo: (target) => {
+        // Its node becomes the one in the other project: the selection follows it there once it exists.
+        if (selected === node.id) setFollowing({ id: itemNodeId(target, `s:${tab.id}`), project: `p:${target}` })
+        actions.move(workspaceId, [tab.id], target)
+      },
+      addToCollection: (collectionId) => {
+        const collection = collectionStore.collections.find((entry) => entry.id === collectionId)
+        const validation = validateAddTabToCollection(collectionStore.collections, collectionId, tab.id, workspaceId)
+        if (!collection || !validation.ok) {
+          if (!validation.ok && validation.reason !== "duplicate") toast.error("Couldn't add that tab to the collection")
+          return
+        }
+        collectionStore.addTabToCollection(collectionId, tab.id)
+        toast.success(`Added to ${collection.name}`)
+      },
+      newCollection: () => setGather({ workspaceId, tabId: tab.id }),
+      leaveCollection: () => {
+        if (!graphTab.collection) return
+        collectionStore.removeTabFromCollection(graphTab.collection.id, tab.id)
+        toast.success(`Removed from ${graphTab.collection.name}`)
+      },
+      linkTo: () => setLinkDialog({ mode: "link", tabId: tab.id }),
+      addDependency: () => setLinkDialog({ mode: "dependency", tabId: tab.id }),
+      remove: () => {
+        if (selected === node.id) select(undefined)
+        // The shell removes it and offers Undo, exactly as the project view does.
+        actions.remove(workspaceId, [tab.id])
+      },
+    }
+  }
+
+  const tabIdOf = (id: string) => {
+    const ref = byId.get(id)?.item?.ref
+    return ref?.kind === "source" ? ref.tabId : undefined
+  }
+
+  function removeRelation(edge: KnowledgeEdge) {
+    const a = tabIdOf(edge.source)
+    const b = tabIdOf(edge.target)
+    if (!a || !b) return
+    if (edge.kind === "linked") {
+      tabLinks.remove(a, b)
+      toast.success("Link removed", { action: { label: "Undo", onClick: () => tabLinks.add(a, b) } })
+    } else if (edge.kind === "depends-on" && edge.dependency) {
+      const type = edge.dependency.type
+      dependencyStore.removeDependency(edge.dependency.id)
+      toast.success("Dependency removed", { action: { label: "Undo", onClick: () => dependencyStore.addDependency(a, b, type) } })
+    }
+  }
+
+  function setDependencyType(edge: KnowledgeEdge, type: DependencyType | undefined) {
+    if (edge.dependency) dependencyStore.updateDependencyType(edge.dependency.id, type)
+  }
+
+  // The pickers search every saved tab, in every project: a link or a dependency can cross projects.
+  const linkCandidates = useMemo(() => {
+    if (!linkDialog) return []
+    const lookup = buildWorkspaceLookup([...allWorkspaces])
+    return buildGraphNodes(
+      allWorkspaces.flatMap((workspace) => workspace.tabs),
+      lookup
+    ).filter((candidate) => candidate.id !== linkDialog.tabId)
+  }, [linkDialog, allWorkspaces])
+  const linkSource = linkDialog ? tabIndex.get(linkDialog.tabId) : undefined
+  const linkSourceNode = linkSource ? { id: linkSource.tab.id, tab: linkSource.tab, workspaceId: linkSource.workspace.id, workspaceName: linkSource.workspace.name } : null
+  const existingDependencies = useMemo(
+    () => (linkDialog?.mode === "dependency" ? new Set(dependenciesOf(linkDialog.tabId, dependencyStore.dependencies).map((dependency) => dependency.childTabId)) : undefined),
+    [linkDialog, dependencyStore.dependencies]
+  )
+
+  function addLink(targetTabId: string) {
+    if (!linkDialog) return
+    if (tabLinks.add(linkDialog.tabId, targetTabId)) toast.success("Tabs linked")
+    else toast.info("Already linked")
+  }
+
+  function addDependency(targetTabId: string, type: DependencyType | undefined) {
+    if (!linkDialog) return
+    const validation = validateDependency(dependencyStore.dependencies, linkDialog.tabId, targetTabId)
+    if (!validation.ok) {
+      toast.info(validation.reason === "self" ? "A tab can't depend on itself" : "Already a dependency")
+      return
+    }
+    dependencyStore.addDependency(linkDialog.tabId, targetTabId, type)
+    toast.success("Dependency added")
   }
 
   function moveFocus(direction: Direction) {
@@ -308,7 +512,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
     const at = canvas.current?.screenOf(next)
     if (at) setHover({ id: next, point: at })
     // Keep the keyboard's place in view.
-    if (at && (at.x < 40 || at.y < 80 || at.x > size.width - (selectedNode && wide ? INSPECTOR_W + 40 : 40) || at.y > size.height - 40)) setFocusRequest({ ids: [next], nonce: Date.now() })
+    if (at && (at.x < 40 || at.y < 80 || at.x > size.width - (selectedNode && wide ? INSPECTOR_W + 40 : 40) || at.y > size.height - 40)) frame([next])
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -375,6 +579,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   }
 
   const session = selectedNode?.kind === "session" ? sessions.find((entry) => entry.id === selectedNode.sessionId) : undefined
+  const selectedTab = graphTabOf(selectedNode)
+  const selectedTabActions = selectedNode && selectedTab ? tabActionsFor(selectedNode, selectedTab) : undefined
+  // A right-click on something since removed shows nothing.
+  const menuNode = menu ? byId.get(menu.id) : undefined
+  const menuTab = graphTabOf(menuNode)
+  const menuTabActions = menuNode && menuTab ? tabActionsFor(menuNode, menuTab) : undefined
   const hoverNode = hover && mode === "graph" ? byId.get(hover.id) : undefined
   const isEmpty = graph.nodes.length === 0
   const filteredOut = !isEmpty && visible.nodes.length === 0
@@ -448,6 +658,10 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
             onOpen={(id) => {
               const node = byId.get(id)
               if (node) open(node)
+            }}
+            onContextMenu={(id, point) => {
+              setHover(null)
+              setMenu({ id, point })
             }}
             onCameraChange={(camera) => {
               cameraRef.current = camera
@@ -531,7 +745,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
                       }}
                       className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left", index === resultIndex && "bg-surface-hover")}
                     >
-                      {node.kind === "project" ? <WorkspaceAvatar workspace={{ name: node.label }} size={16} /> : <KindGlyph kind={node.kind} {...(node.type ? { type: node.type } : {})} />}
+                      <NodeIcon node={node} />
                       <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{node.label}</span>
                       <span className="shrink-0 text-meta text-tertiary">{node.kind === "project" ? "Project" : node.projectId ? names.get(node.projectId) : NODE_KIND_LABEL[node.kind]}</span>
                     </button>
@@ -544,7 +758,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
         </div>
 
         <div role="group" aria-label="Show" className="pointer-events-auto surface-panel flex h-9 max-w-full items-center gap-0.5 overflow-x-auto px-1">
-          {FILTER_KINDS.filter((kind) => kind !== "session" || props.showSessions).map((kind) => (
+          {FILTER_KINDS.filter((kind) => (kind !== "session" || props.showSessions) && (kind !== "tab" || hasSavedTabs)).map((kind) => (
             <button
               key={kind}
               type="button"
@@ -555,7 +769,8 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
                 kinds[kind] ? "text-foreground hover:bg-surface-hover" : "text-tertiary opacity-70 hover:opacity-100"
               )}
             >
-              <span aria-hidden className={cn("size-2 rounded-full transition-opacity", KIND_BG_CLASS[kind], !kinds[kind] && "opacity-30")} />
+              {/* A saved tab is drawn hollow on the canvas (no text held), and so is its chip's dot. */}
+              <span aria-hidden className={cn("size-2 rounded-full transition-opacity", kind === "tab" ? "border border-kind-source" : KIND_BG_CLASS[kind], !kinds[kind] && "opacity-30")} />
               {FILTER_LABEL[kind]}
               <span className="text-meta text-tertiary tabular-nums">{counts[kind]}</span>
             </button>
@@ -592,7 +807,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
               onClick={() => {
                 setMode("graph")
                 // Back from the list with something chosen there: travel to it.
-                if (selected && mode !== "graph") setFocusRequest({ ids: frameIdsFor(selected), nonce: Date.now() })
+                if (selected && mode !== "graph") frame(frameIdsFor(selected))
               }}
             >
               <Network />
@@ -601,19 +816,6 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
               <ListTree />
             </IconButton>
           </div>
-          {props.onOpenTabMap && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="lg"
-              className="surface-panel h-9 border-border max-sm:hidden"
-              onClick={props.onOpenTabMap}
-              disabled={props.tabMapLocked}
-              title={props.tabMapLocked ? props.tabMapLockedReason : "Your saved tabs, mapped by site and section"}
-            >
-              <Waypoints /> Tab map
-            </Button>
-          )}
         </div>
       </div>
 
@@ -683,9 +885,20 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
           }}
           onSelect={(id) => select(id)}
           onOpen={open}
-          {...(props.onUseInAi ? { onUseInAi: useInAi } : {})}
+          {...(props.onUseInAi ? { onUseInAi: reuseInAi } : {})}
           onOpenUrl={props.onOpenUrl}
           {...(props.onOpenSessions ? { onOpenSessions: props.onOpenSessions } : {})}
+          {...(selectedTab ? { graphTab: selectedTab } : {})}
+          {...(selectedTabActions ? { tabActions: selectedTabActions } : {})}
+          {...(selectedTab && props.tabActions
+            ? {
+                onSaveNote: (text: string) => props.tabActions!.update(selectedTab.workspaceId, selectedTab.tab.id, { notes: text.trim() || undefined }),
+                editingNote: editingNote === selectedNode.id,
+                onEditNote: (editing: boolean) => setEditingNote(editing ? selectedNode.id : undefined),
+                onRemoveRelation: removeRelation,
+                onDependencyType: setDependencyType,
+              }
+            : {})}
           className={cn(
             "absolute z-20",
             wide ? "top-[60px] right-3 bottom-3 w-[344px] animate-[hb-panel-in_var(--duration-slow)_var(--ease-standard)_both]" : "inset-x-2 bottom-2 max-h-[55%] animate-[hb-sheet-in_var(--duration-slow)_var(--ease-standard)_both]"
@@ -693,12 +906,93 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
         />
       )}
 
+      {/* ---- right-click ---- */}
+      {menuNode && menu && (
+        <DropdownMenu open onOpenChange={(open) => !open && setMenu(null)}>
+          {/* Canvas pixels are not elements: the menu anchors to a point placed where the click was. */}
+          <DropdownMenuTrigger nativeButton={false} render={<span aria-hidden className="pointer-events-none absolute size-px" style={{ left: menu.point.x, top: menu.point.y }} />} />
+          <DropdownMenuContent align="start" className="w-56" aria-label={`Actions for ${menuNode.label}`}>
+            {!menuNode.savedTab && (
+              <DropdownMenuItem onClick={() => open(menuNode)}>
+                <ArrowUpRight /> {menuNode.kind === "project" ? "Open project" : menuNode.kind === "session" ? "Restore session" : `Open ${nodeTypeNoun(menuNode)}`}
+              </DropdownMenuItem>
+            )}
+            {props.onUseInAi && menuNode.kind !== "session" && (
+              <DropdownMenuItem onClick={() => reuseInAi(menuNode)}>
+                <MessageSquareShare /> Use in AI
+              </DropdownMenuItem>
+            )}
+            {menuTab && menuTabActions ? (
+              <>
+                <DropdownMenuSeparator />
+                <TabMenuItems graphTab={menuTab} actions={menuTabActions} />
+              </>
+            ) : (
+              menuNode.item?.url && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    void copyText(menuNode.item!.url!).then((ok) => (ok ? toast.success("Link copied") : toast.error("Couldn't copy the link")))
+                  }}
+                >
+                  <Copy /> Copy link
+                </DropdownMenuItem>
+              )
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      <GraphLinkDialog
+        open={linkDialog !== null}
+        onOpenChange={(next) => {
+          if (!next) setLinkDialog(null)
+        }}
+        mode={linkDialog?.mode ?? "link"}
+        sourceNode={linkSourceNode}
+        candidates={linkCandidates}
+        existingDependencyTargetIds={existingDependencies}
+        onLink={addLink}
+        onAddDependency={addDependency}
+      />
+      <GatherDialog
+        open={gather !== null}
+        onOpenChange={(next) => {
+          if (!next) setGather(null)
+        }}
+        tabCount={gather ? 1 : 0}
+        onConfirm={(name) => {
+          if (!gather) return
+          collectionStore.createCollection(gather.workspaceId, name, [gather.tabId])
+          toast.success(`Gathered into "${name}"`)
+          setGather(null)
+        }}
+      />
+
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
       <LaunchConfirmDialog request={launcher.confirming} onConfirm={() => void launcher.confirm()} onCancel={launcher.cancel} />
     </div>
   )
+}
+
+/** What a menu's "Open …" names: "conversation", "source", "file", "note". */
+function nodeTypeNoun(node: KnowledgeNode): string {
+  return node.kind === "conversation" ? "conversation" : node.kind === "file" ? "file" : node.kind === "note" ? "note" : "source"
+}
+
+/** Where a tab is filed, as its section's path: "School › Physics". */
+function sectionPath(workspace: Workspace, sectionId: string | undefined): string | undefined {
+  if (!sectionId) return undefined
+  const sections = new Map((workspace.sections ?? []).map((section) => [section.id, section]))
+  const path: string[] = []
+  let current = sections.get(sectionId)
+  // Sections are at most three deep; the bound only guards a corrupted loop.
+  while (current && path.length < 4) {
+    path.unshift(current.name)
+    current = current.parentId ? sections.get(current.parentId) : undefined
+  }
+  return path.length > 0 ? path.join(" › ") : undefined
 }
 
 function Arranging({ progress }: { progress: number }) {

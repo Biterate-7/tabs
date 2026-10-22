@@ -7,11 +7,9 @@ const BUCKET_ORDER: IntroTab["bucket"][] = ["projects", "research", "other"]
 type GraphNode = { id: string; x: number; y: number; bucket: IntroTab["bucket"] }
 type GraphEdge = { id: string; x1: number; y1: number; x2: number; y2: number; kind: "relation" | "dependency" }
 
-// Hand-placed, not physics-simulated — this is a decorative payoff, not a
-// second implementation of the real Graph View's force layout. Three loose
-// clusters (one per bucket) with a couple of cross-cluster "dependency"
-// edges, echoing the real GraphCanvas's actual palette (see
-// src/lib/graph/palette.ts: edge.domain / edgeDependency).
+// Hand-placed — this is a decorative payoff, not a second implementation of
+// the real Graph's layout. Three loose clusters (one per bucket) with a
+// couple of cross-cluster "dependency" edges.
 const GRAPH_NODES: GraphNode[] = [
   { id: "r1", x: 58, y: 48, bucket: "research" },
   { id: "r2", x: 38, y: 88, bucket: "research" },

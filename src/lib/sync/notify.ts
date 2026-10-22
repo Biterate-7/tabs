@@ -5,7 +5,7 @@
  * through `commitStore`, where Phase 5 diffs them. Collections and
  * dependencies do not: they have their own localStorage blobs behind
  * `useCollectionStore` / `useDependencyStore`, which are mounted deep in the
- * tree (WorkspaceView or GraphView) and are documented to have exactly one
+ * tree (WorkspaceView or the Graph) and are documented to have exactly one
  * live instance at a time — a second reactive instance would race on the same
  * key through its own debounced writer.
  *

@@ -18,9 +18,11 @@ const MAX_POSITIONS = 20_000;
  * Which layout produced the stored positions. The galaxy (3) places items on
  * arms around their project; positions from the earlier force layout would
  * strand them between arms, so they are dropped once, with the camera that
- * framed them.
+ * framed them. Generation 4 is the galaxy holding every saved tab (the Tab
+ * map merged into the Graph): fans sized for the old population would
+ * overlap once the tabs arrive, so the galaxy is laid out afresh, once.
  */
-const LAYOUT_GENERATION = 3;
+const LAYOUT_GENERATION = 4;
 
 export type KnowledgeGraphState = {
   version: 1;

@@ -3,6 +3,8 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { KnowledgeGraphView } from "./knowledge-graph-view"
 import { __resetSessionsForTests, SESSIONS_STORAGE_KEY } from "@/lib/sessions/persistence"
+import { defaultGraphState, loadGraphState, saveGraphState } from "@/lib/graph/persistence"
+import { loadDependencyState, saveDependencyState } from "@/lib/dependencies/persistence"
 import type { Tab } from "@/lib/tabs/types"
 import type { ProjectNote } from "@/lib/notes/notes"
 import type { Workspace } from "@/lib/workspace/types"
@@ -186,8 +188,128 @@ describe("KnowledgeGraphView", () => {
     expect(onNewProject).toHaveBeenCalledOnce()
   })
 
-  it("offers the tab map only when asked to, and respects its lock", () => {
-    renderGraph({ onOpenTabMap: vi.fn(), tabMapLocked: true, tabMapLockedReason: "Organizing your tabs…" })
-    expect((screen.getByRole("button", { name: /Tab map/ }) as HTMLButtonElement).disabled).toBe(true)
+  it("has no separate tab map to send anyone to", () => {
+    renderGraph()
+    expect(screen.queryByRole("button", { name: /Tab map/ })).toBeNull()
+  })
+})
+
+/** A tab saved into a project from a dump or an import: no resource, so Hubble holds no text for it. */
+function savedTab(id: string, url: string, title: string, extra: Partial<Tab> = {}): Tab {
+  return { id, url, normalizedUrl: url, domain: new URL(url).hostname, title, createdAt: NOW - 5000, ...extra }
+}
+
+describe("KnowledgeGraphView — saved tabs (the former tab map)", () => {
+  const research: Workspace = {
+    id: "w3",
+    name: "Research",
+    tabs: [
+      savedTab("s1", "https://github.com/acme/mindspace", "acme/mindspace", { sectionId: "sec-b", notes: "Read the README" }),
+      savedTab("s2", "https://www.youtube.com/watch?v=abc", "Talk video"),
+      savedTab("s3", "https://docs.example.org/guide?utm_source=x", "Guide", { normalizedUrl: "https://docs.example.org/guide" }),
+    ],
+    sections: [
+      { id: "sec-a", parentId: null, name: "Code", source: "user", createdAt: 0, updatedAt: 0 },
+      { id: "sec-b", parentId: "sec-a", name: "Repos", source: "user", createdAt: 0, updatedAt: 0 },
+    ],
+    createdAt: NOW - 50_000,
+    updatedAt: NOW,
+  }
+
+  function renderTabs(overrides: Partial<React.ComponentProps<typeof KnowledgeGraphView>> = {}) {
+    const tabActions = { open: vi.fn(), update: vi.fn(), move: vi.fn(), remove: vi.fn() }
+    const props = renderGraph({ workspaces: [thesis, research], tabActions, ...overrides })
+    return { ...props, tabActions }
+  }
+
+  async function selectSaved(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.click(screen.getByRole("button", { name: "List" }))
+    const region = await screen.findByRole("region", { name: "Research" })
+    await user.click(rowButton(region, title))
+    return screen.findByRole("complementary", { name: `Saved tab: ${title}` })
+  }
+
+  it("puts every saved tab in its own project, with a Saved tabs filter of its own", async () => {
+    const user = userEvent.setup()
+    renderTabs()
+    const show = screen.getByRole("group", { name: "Show" })
+    expect(within(show).getByRole("button", { name: /Saved tabs\s*3/ })).toBeTruthy()
+    // Sources Hubble has read are counted apart from saved tabs.
+    expect(within(show).getByRole("button", { name: /Sources\s*1/ })).toBeTruthy()
+
+    const inspector = await selectSaved(user, "acme/mindspace")
+    expect(within(inspector).getByRole("button", { name: "Research" })).toBeTruthy()
+    // Its section path and note, as the tab map showed them.
+    expect(within(inspector).getByText("Code › Repos")).toBeTruthy()
+    expect(within(inspector).getByText("Read the README")).toBeTruthy()
+
+    // Hiding saved tabs hides them, and nothing else.
+    await user.click(within(show).getByRole("button", { name: /Saved tabs/ }))
+    const region = screen.getByRole("region", { name: "Research" })
+    expect(within(region).queryByText("Talk video")).toBeNull()
+  })
+
+  it("opens a saved tab as the page itself, recorded through the shell", async () => {
+    const user = userEvent.setup()
+    const props = renderTabs()
+    const inspector = await selectSaved(user, "Talk video")
+    await user.click(within(inspector).getByRole("button", { name: "Open page" }))
+    expect(props.onOpenItem).toHaveBeenCalledWith("w3", { kind: "source", tabId: "s2" })
+    // The graph is still there: a page opening elsewhere is not a dive into it.
+    expect(screen.getByRole("complementary", { name: "Saved tab: Talk video" })).toBeTruthy()
+  })
+
+  it("favourites, notes, moves and removes a saved tab through the shell's own writes", async () => {
+    // Base UI keeps a submenu's backdrop at pointer-events: none while it opens, which jsdom cannot see past.
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const { tabActions } = renderTabs()
+    const inspector = await selectSaved(user, "Guide")
+
+    await user.click(within(inspector).getByRole("button", { name: "Add to favorites" }))
+    expect(tabActions.update).toHaveBeenCalledWith("w3", "s3", { isFavorite: true })
+
+    await user.click(within(inspector).getByRole("button", { name: "Add a note" }))
+    await user.type(within(inspector).getByRole("textbox", { name: "Note" }), "  check the API section  ")
+    await user.click(within(inspector).getByRole("button", { name: "Save note" }))
+    expect(tabActions.update).toHaveBeenLastCalledWith("w3", "s3", { notes: "check the API section" })
+
+    await user.click(within(inspector).getByRole("button", { name: "More actions" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Move to project" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Thesis" }))
+    expect(tabActions.move).toHaveBeenCalledWith("w3", ["s3"], "w1")
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull())
+
+    await user.click(within(inspector).getByRole("button", { name: "More actions" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Remove from project" }))
+    expect(tabActions.remove).toHaveBeenCalledWith("w3", ["s3"])
+  })
+
+  it("draws the links and dependencies the person made, and lets a link be undone", async () => {
+    const user = userEvent.setup()
+    saveGraphState({ ...defaultGraphState(), manualConnections: [{ a: "s1", b: "s2", createdAt: NOW }] })
+    saveDependencyState({ version: 1, dependencies: [{ id: "dep-s1::t1", parentTabId: "s1", childTabId: "t1", type: "research", createdAt: NOW }] })
+    renderTabs()
+    const inspector = await selectSaved(user, "acme/mindspace")
+    expect(within(inspector).getByText("Linked by you")).toBeTruthy()
+    expect(within(inspector).getByText("Depends on")).toBeTruthy()
+    // The dependency's kind travels with it.
+    expect(within(inspector).getAllByText("Research").length).toBeGreaterThan(0)
+
+    await user.click(within(inspector).getByRole("button", { name: "Remove link to Talk video" }))
+    await waitFor(() => expect(within(inspector).queryByText("Linked by you")).toBeNull())
+    expect(loadGraphState().manualConnections).toEqual([])
+    expect(loadDependencyState().dependencies).toHaveLength(1)
+  })
+
+  it("links two saved tabs from the picker, across projects, and keeps the link where it always lived", async () => {
+    const user = userEvent.setup()
+    renderTabs()
+    const inspector = await selectSaved(user, "Guide")
+    await user.click(within(inspector).getByRole("button", { name: "More actions" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Link to…" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByText("The paper"))
+    await waitFor(() => expect(loadGraphState().manualConnections).toEqual([expect.objectContaining({ a: "s3", b: "t1" })]))
+    expect(await within(inspector).findByText("Linked by you")).toBeTruthy()
   })
 })

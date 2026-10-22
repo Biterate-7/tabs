@@ -1,7 +1,6 @@
-import { KindGlyph } from "@/components/ui/kind-glyph"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import type { KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
 import { nodeFacts, nodeTypeLabel } from "./describe"
+import { NodeIcon } from "./node-icon"
 
 const WIDTH = 264
 
@@ -17,7 +16,7 @@ export function GraphHoverCard({ node, point, bounds, projectName, now, selected
   return (
     <div role="presentation" className="surface-panel pointer-events-none absolute z-20 animate-fade p-3" style={{ left, top, width: WIDTH }} data-graph-hover-card>
       <div className="flex items-center gap-2">
-        {node.kind === "project" ? <WorkspaceAvatar workspace={{ name: node.label }} size={16} /> : <KindGlyph kind={node.kind} {...(node.type ? { type: node.type } : {})} />}
+        <NodeIcon node={node} />
         <span className="min-w-0 flex-1 truncate text-meta text-tertiary">
           {nodeTypeLabel(node)}
           {projectName && node.kind !== "project" ? ` · ${projectName}` : ""}
@@ -25,7 +24,7 @@ export function GraphHoverCard({ node, point, bounds, projectName, now, selected
       </div>
       <p className="mt-1.5 line-clamp-2 text-body text-foreground">{node.label}</p>
       <p className="mt-1 text-meta text-muted-foreground">{nodeFacts(node, now).join(" · ")}</p>
-      <p className="mt-2 border-t border-subtle pt-2 text-meta text-tertiary">{selected ? "Double-click to open" : "Click for details · double-click to open"}</p>
+      <p className="mt-2 border-t border-subtle pt-2 text-meta text-tertiary">{selected ? "Double-click to open" : "Click for details · double-click to open"}{node.item?.ref.kind === "source" ? " · right-click for more" : ""}</p>
     </div>
   )
 }
