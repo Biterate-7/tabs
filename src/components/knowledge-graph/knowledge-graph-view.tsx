@@ -18,6 +18,7 @@ import { useDependencyStore } from "@/hooks/use-dependency-store"
 import { useTabLinks } from "@/hooks/use-tab-links"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { useReducedMotion } from "@/hooks/use-reduced-motion"
+import { useGraphAppearance } from "@/hooks/use-graph-appearance"
 import { getCollectionForTab, getCollectionsForWorkspace } from "@/lib/collections/relations"
 import { validateAddTabToCollection } from "@/lib/collections/validation"
 import { dependenciesOf } from "@/lib/dependencies/relations"
@@ -38,6 +39,7 @@ import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import { KnowledgeGraphCanvas } from "./knowledge-graph-canvas"
 import type { GraphCanvasHandle } from "./knowledge-graph-canvas"
+import { GraphAppearanceControl } from "./graph-appearance"
 import { GraphInspector } from "./graph-inspector"
 import { GraphHoverCard } from "./graph-hover-card"
 import { GraphList } from "./graph-list"
@@ -110,6 +112,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   const sessions = useMemo(() => (props.showSessions ? allSessions : []), [props.showSessions, allSessions])
   const launcher = useSessionLaunch()
   const reducedMotion = useReducedMotion()
+  const appearance = useGraphAppearance()
 
   // ---- saved tabs and the relationships the person made between them ----
   const tabIndex = useMemo(() => {
@@ -650,6 +653,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
             {...(saved.camera ? { initialCamera: saved.camera } : {})}
             insets={insets}
             reducedMotion={reducedMotion}
+            appearance={appearance}
             onHover={(id, point) => setHover(id && point ? { id, point } : null)}
             onSelect={(id) => {
               surface.current?.focus({ preventScroll: true })
@@ -815,6 +819,9 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
             <IconButton aria-label="List" tooltip="List" aria-pressed={mode === "list"} className={cn(mode === "list" && "bg-surface-selected text-foreground")} onClick={() => setMode("list")}>
               <ListTree />
             </IconButton>
+          </div>
+          <div className="surface-panel flex h-9 items-center px-1">
+            <GraphAppearanceControl reducedMotion={reducedMotion} />
           </div>
         </div>
       </div>
