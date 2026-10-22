@@ -17,10 +17,9 @@ describe("resolveProjectIcon", () => {
     expect(resolveProjectIcon("   ")).toEqual(DEFAULT_PROJECT_ICON);
   });
 
-  it("falls back to the brief when the title names no subject, and to an abstract glyph otherwise", () => {
+  it("falls back to the brief when the title names no subject, and to a plain folder otherwise", () => {
     expect(resolveProjectIcon("Fall term", "Calculus and linear algebra").glyph).toBe("math");
-    const abstract = ["nebula", "constellation", "comet", "ringed", "crescent", "star"];
-    expect(abstract).toContain(resolveProjectIcon("Zzyzx").glyph);
+    expect(resolveProjectIcon("Zzyzx").glyph).toBe("folder");
   });
 
   it("lets the title beat the brief", () => {

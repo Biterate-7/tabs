@@ -143,7 +143,7 @@ export function AiView({
                     const conversationCount = items.filter((item) => item.type === "conversation").length
                     return (
                       <li key={workspace.id} className="group flex items-center gap-3 rounded-md px-2 py-2 hover:bg-surface-hover animate-rise" style={{ ["--stagger" as string]: index }}>
-                        <ProjectIcon workspace={workspace} size={28} />
+                        <ProjectIcon workspace={workspace} size={20} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-body text-foreground">{subjectName(workspace)}</span>
                           <span className="block truncate text-meta text-tertiary">

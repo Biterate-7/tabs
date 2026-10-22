@@ -23,6 +23,7 @@ import {
   Merriweather,
 } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { LucideProvider } from "lucide-react";
 import { AppearanceProvider } from "@/components/appearance-provider";
 import { THEME_REGISTRY } from "@/lib/appearance/themes";
 import { siteOrigin } from "@/lib/site-url";
@@ -121,8 +122,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <AppearanceProvider>{children}</AppearanceProvider>
-        <Toaster position="bottom-right" />
+        {/* One stroke weight for every icon: 1.5 at 16px reads as fine line work beside 13px text, where Lucide's default 2 reads as bold. */}
+        <LucideProvider strokeWidth={1.5}>
+          <AppearanceProvider>{children}</AppearanceProvider>
+          <Toaster position="bottom-right" />
+        </LucideProvider>
       </body>
     </html>
   );
