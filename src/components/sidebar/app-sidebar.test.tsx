@@ -234,13 +234,13 @@ describe("AppSidebar destinations and creation", () => {
     expect([...main.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Home", "Graph", "AI", "Library", "Sessions"]);
   });
 
-  it("keeps the Tab map under More, disabled with its reason while tabs are being organized", async () => {
+  it("keeps Favorites, Recent and Import from history under More — and no separate tab map (saved tabs are in the Graph)", async () => {
     const user = userEvent.setup();
-    const onOpenTabMap = vi.fn();
-    renderSidebar({ onOpenTabMap, tabMapLocked: true, tabMapLockedReason: "Organizing your tabs…" });
+    renderSidebar();
     await user.click(screen.getByRole("button", { name: "More" }));
-    const row = screen.getByRole("button", { name: "Tab map" }) as HTMLButtonElement;
-    expect(row.disabled).toBe(true);
+    const more = screen.getByRole("navigation", { name: "More" });
+    expect([...more.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Favorites", "Recent", "Import from history"]);
+    expect(screen.queryByRole("button", { name: "Tab map" })).toBeNull();
   });
 
   it("creates from the + menu: a project, a note, a session", async () => {

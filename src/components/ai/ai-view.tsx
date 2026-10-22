@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import { ArrowUpRight, Check, Download, ExternalLink, MessageSquareShare, Minus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
-import { KindGlyph } from "@/components/ui/kind-glyph"
+import { ItemIcon } from "@/components/memory/item-icon"
 import { PageHeader } from "@/components/ui/page-header"
 import { ProviderMark } from "@/components/memory/provider-mark"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
@@ -171,7 +171,7 @@ export function AiView({
                   {conversations.slice(0, 10).map(({ workspace, item }) => (
                     <li key={`${workspace.id}:${item.id}`} className="group flex items-center gap-1 rounded-md pr-1 hover:bg-surface-hover">
                       <button type="button" onClick={() => onOpenItem(workspace.id, item.ref)} className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
-                        {item.provider ? <ProviderMark provider={item.provider} size={16} /> : <KindGlyph kind="conversation" />}
+                        <ItemIcon item={item} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-body text-foreground">{item.title}</span>
                           <span className="block truncate text-meta text-tertiary">

@@ -1,4 +1,4 @@
-import { knowledgeItemsOf } from "@/lib/memory/items";
+import { graphItemsOf } from "./build";
 import { sourceKey } from "@/lib/resources/url";
 import type { Workspace } from "@/lib/workspace/types";
 
@@ -12,7 +12,7 @@ export function connectedProjects(workspaces: readonly Workspace[], workspaceId:
   const keysOf = new Map<string, Set<string>>();
   for (const workspace of workspaces) {
     const keys = new Set<string>();
-    for (const item of knowledgeItemsOf(workspace)) {
+    for (const { item } of graphItemsOf(workspace)) {
       if (!item.url) continue;
       const key = sourceKey(item.url);
       if (key) keys.add(key);

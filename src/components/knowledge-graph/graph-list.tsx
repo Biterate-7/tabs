@@ -2,11 +2,11 @@
 
 import { ArrowUpRight } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
-import { KindGlyph } from "@/components/ui/kind-glyph"
 import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
 import { cn } from "@/lib/utils"
 import type { KnowledgeNode } from "@/lib/knowledge-graph/types"
 import { nodeFacts, nodeTypeLabel } from "./describe"
+import { NodeIcon } from "./node-icon"
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
@@ -90,7 +90,7 @@ function Row({ node, title, subtitle, selected, onSelect, onOpen, heading = fals
   return (
     <div className={cn("group flex items-center gap-1 rounded-md pr-1", selected ? "bg-surface-selected" : "hover:bg-surface-hover")}>
       <button type="button" aria-pressed={selected} onClick={() => onSelect(node.id)} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
-        {node.kind === "project" ? <WorkspaceAvatar workspace={{ name: title }} size={20} /> : <KindGlyph kind={node.kind} {...(node.type ? { type: node.type } : {})} />}
+        {node.kind === "project" ? <WorkspaceAvatar workspace={{ name: title }} size={20} /> : <NodeIcon node={node} />}
         <span className="min-w-0 flex-1">
           <Title className={cn("block truncate text-foreground", heading ? "text-h2" : "text-body")}>{title}</Title>
           <span className="block truncate text-meta text-tertiary">{subtitle}</span>

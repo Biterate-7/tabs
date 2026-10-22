@@ -98,12 +98,25 @@ Rules:
 `src/components/knowledge-graph` (canvas, inspector, list).
 
 **What it shows.** Projects, their items (conversations, sources, files,
-notes) and saved browser sessions. **Edges are only relationships the
-records prove**: an item belongs to a project; the same address
-(`sourceKey`) is saved in two projects; an excerpt quotes a saved page; a
-session was saved for a project; a session has a saved page open. Nothing is
-inferred to make the picture fuller. Saved tabs without content stay in the
-**Tab map** (the original graph, under More), which keeps its organizer gate.
+notes), every tab saved into a project (a tab dump or import Hubble holds no
+text for is a source drawn hollow, with a "Saved tabs" filter of its own) and
+saved browser sessions. **Edges are only relationships the records prove**:
+an item belongs to a project; the same address (`sourceKey`) is saved in two
+projects; an excerpt quotes a saved page; a session was saved for a project;
+a session has a saved page open — and the relationships the person made
+themselves between saved tabs, a link or a dependency, drawn as gold ties.
+Nothing is inferred to make the picture fuller.
+
+**One graph.** The Graph is the only graph: the old Tab map was merged into
+it. A saved tab is managed where it is drawn — opened, noted, favourited,
+filed in a collection, moved, linked, given a dependency or removed — from
+the inspector's More menu or by right-clicking it (`tab-actions.tsx`, one list
+for both). Links still live in `tabdump:graph:v1`'s `manualConnections`
+(`useTabLinks`), dependencies and collections in their own stores, so nothing
+saved before the merge is lost. Up close a source shows its site's favicon, as
+the Tab map's nodes did. Every list row that names an item (Home, Library, the
+Graph's lists) draws it with `ItemIcon`: its AI app's logo, its site's
+favicon, or its kind's glyph only when it has neither.
 
 **The galaxy.** A real perspective camera (`projection.ts`) looks down at a
 tilted plane. At the origin is the **core** — the scope being looked at, "All

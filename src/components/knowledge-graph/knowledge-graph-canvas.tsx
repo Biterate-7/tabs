@@ -1,6 +1,7 @@
 "use client"
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react"
+import { subscribeFavicons } from "@/lib/favicon/client"
 import { worldPoint } from "@/lib/knowledge-graph/galaxy"
 import { nodeRadius } from "@/lib/knowledge-graph/layout"
 import { baseLens, cameraOn, fitLens, panLens, project, zoomAtLens } from "@/lib/knowledge-graph/projection"
@@ -45,6 +46,8 @@ type Props = {
   onHover: (id: string | undefined, point?: Point) => void
   onSelect: (id: string | undefined) => void
   onOpen: (id: string) => void
+  /** A right-click (or long press) on a node, at that point on the canvas. */
+  onContextMenu?: (id: string, point: Point) => void
   onCameraChange?: (camera: Camera) => void
 }
 
@@ -285,6 +288,9 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     },
     [invalidate]
   )
+
+  // A site's icon arriving is a change to what is drawn.
+  useEffect(() => subscribeFavicons(invalidate), [invalidate])
 
   // Any change to what is drawn asks for a frame (and restarts the loop if motion was held).
   useEffect(invalidate, [invalidate, props.nodes, props.edges, props.positions, props.selected, props.core, props.root, props.hovered, props.focused, props.matches, props.highlighted, props.emphasised, props.paused, props.reducedMotion])
@@ -559,6 +565,16 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       if (hit) latest.current.onOpen(hit)
     }
 
+    const onContextMenu = (event: MouseEvent) => {
+      const point = local(event)
+      const hit = hitAt(point)
+      // Off a node, the browser's own menu: there is nothing of Hubble's there to act on.
+      if (!hit || !latest.current.onContextMenu) return
+      event.preventDefault()
+      drag = null
+      latest.current.onContextMenu(hit, point)
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown)
     canvas.addEventListener("pointermove", onPointerMove)
     canvas.addEventListener("pointerup", onPointerUp)
@@ -566,6 +582,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     canvas.addEventListener("pointerleave", onLeave)
     canvas.addEventListener("wheel", onWheel, { passive: false })
     canvas.addEventListener("dblclick", onDoubleClick)
+    canvas.addEventListener("contextmenu", onContextMenu)
     return () => {
       canvas.removeEventListener("pointerdown", onPointerDown)
       canvas.removeEventListener("pointermove", onPointerMove)
@@ -574,6 +591,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       canvas.removeEventListener("pointerleave", onLeave)
       canvas.removeEventListener("wheel", onWheel)
       canvas.removeEventListener("dblclick", onDoubleClick)
+      canvas.removeEventListener("contextmenu", onContextMenu)
     }
   }, [bounded, busy, invalidate, notifyCamera])
 

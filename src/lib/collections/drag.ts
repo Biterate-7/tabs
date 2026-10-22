@@ -1,7 +1,7 @@
 /**
  * Native HTML5 drag-and-drop (not a custom pointer system — TabCard rows are
- * plain DOM list items, unlike the graph's canvas nodes, which is why
- * GraphCanvas's pointer-based drag doesn't apply here) carrying a single tab
+ * plain DOM list items, unlike the graph's canvas nodes, which is why the
+ * canvas's pointer-based handling doesn't apply here) carrying a single tab
  * id from a TabCard drag source to a CollectionGroup drop target. Centralized
  * so the source and target never disagree on the MIME type string.
  */

@@ -44,7 +44,7 @@ function holdersOf(collections: readonly Collection[], tabIds: readonly string[]
  * Loads the collection store from localStorage once on mount and keeps it
  * saved as it changes — the same "load-once-per-mount, source of truth is
  * localStorage" pattern use-dependency-store.ts already established. Safe to
- * use from more than one call site (WorkspaceView and GraphView) because
+ * use from more than one call site (WorkspaceView and the Graph) because
  * Hubble only ever mounts one of them at a time — see app-shell.tsx's
  * `view` switch.
  *
@@ -57,7 +57,7 @@ function holdersOf(collections: readonly Collection[], tabIds: readonly string[]
  * the dependency store uses. A tab moved to a different workspace, or a
  * workspace getting deleted, is reflected here the very next render.
  */
-export function useCollectionStore(workspaces: Workspace[]) {
+export function useCollectionStore(workspaces: readonly Workspace[]) {
   const [rawCollections, setCollections] = useState<Collection[]>(() => {
     if (typeof window === "undefined") return defaultCollectionState().collections
     return loadCollectionState().collections

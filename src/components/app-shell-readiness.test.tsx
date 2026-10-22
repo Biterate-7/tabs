@@ -1,9 +1,10 @@
 /**
- * End-to-end coverage for the Graph View readiness gate: the graph must not
- * be reachable while a dump is still being organized, laid out or settled —
- * and specifically not while the pipeline is still working through the
- * leftover "Other" tabs, which is the slow tail that used to finish after the
- * user was already looking at the graph.
+ * End-to-end coverage for the dump organization lifecycle as the shell runs
+ * it: the workspace says which stage a dump is in — including the slow
+ * leftover "Other" tail — and stops saying so exactly when the pipeline
+ * finishes, never because a stale run finished; a failure says so and can be
+ * retried without dumping again. None of it gates the Graph, which draws
+ * saved tabs as they arrive (the separate tab map it once guarded is gone).
  *
  * The organization pipeline is mocked with a hand-controlled promise rather
  * than left to run: the whole point is to hold the app in the intermediate
@@ -71,17 +72,16 @@ function postExtensionImport(urls: string[]) {
   );
 }
 
-/** Hubble opens on Home: open the subject, and the rail's More, where the Tab map (the saved-tab graph the gate guards) lives. */
-async function openSubjectWithMore() {
+/** Hubble opens on Home: open the subject, where the organizer reports. */
+async function openSubject() {
   const user = userEvent.setup();
   const rail = await screen.findByRole("navigation", { name: "Projects" });
   await user.click(within(rail).getByRole("button", { name: "Open General" }));
   await screen.findByPlaceholderText("Search tabs...");
-  if (!screen.queryByRole("button", { name: "Tab map" })) await user.click(screen.getByRole("button", { name: "More" }));
 }
 
-function graphButton(): HTMLButtonElement {
-  return screen.getByRole("button", { name: "Tab map" }) as HTMLButtonElement;
+function organizerStatus(): HTMLElement | null {
+  return screen.queryAllByRole("status").find((element) => /Organizing|Receiving|Building groups|Couldn't finish/.test(element.textContent ?? "")) ?? null;
 }
 
 beforeEach(() => {
@@ -113,92 +113,63 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Graph View readiness gate", () => {
-  it("leaves the graph accessible when no dump is running", async () => {
-    const user = userEvent.setup();
+describe("dump organization lifecycle", () => {
+  it("reports each stage of a dump — through the \"Other\" tail — and clears once the pipeline finishes", async () => {
     seedStore(3);
     render(<AppShell />);
-
-    await openSubjectWithMore();
-    expect(graphButton().disabled).toBe(false);
-
-    await user.click(graphButton());
-    expect(await screen.findByRole("button", { name: "Back to Graph" })).toBeTruthy();
-  });
-
-  it("locks the graph for the whole dump — through the \"Other\" stage — and unlocks it only once the layout has settled", async () => {
-    seedStore(3);
-    render(<AppShell />);
-    await openSubjectWithMore();
+    await openSubject();
+    expect(organizerStatus()).toBeNull();
 
     postExtensionImport(["https://a.example.com", "https://b.example.com", "https://c.example.com"]);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => expect(organizerStatus()).not.toBeNull());
 
-    // Organizing: locked.
-    await waitFor(() => expect(graphButton().disabled).toBe(true));
-    expect(pending).toHaveLength(1);
-
-    // Still locked while the pipeline works through the leftover "Other"
-    // tabs — the specific window this whole gate exists for.
     pending[0].stage("other");
     expect(await screen.findByText('Organizing "Other" tabs…')).toBeTruthy();
-    expect(graphButton().disabled).toBe(true);
 
-    // Data organization done — still locked, because layout and physics are
-    // part of readiness too.
+    // Finished means finished: there is no layout half left to wait for.
     pending[0].finish();
-    await waitFor(() => expect(screen.getByText(/Arranging tabs…|Finalizing layout…/)).toBeTruthy());
-    expect(graphButton().disabled).toBe(true);
+    await waitFor(() => expect(organizerStatus()).toBeNull());
+  });
 
-    // Only now, after the settle completes.
-    await waitFor(() => expect(graphButton().disabled).toBe(false), { timeout: 10000 });
-  }, 15000);
-
-  it("refuses to enter the graph while organizing, even if the disabled control is bypassed", async () => {
+  it("keeps the Graph open to the person while a dump organizes", async () => {
     const user = userEvent.setup();
     seedStore(3);
     render(<AppShell />);
-    await openSubjectWithMore();
+    await openSubject();
 
     postExtensionImport(["https://a.example.com"]);
-    await waitFor(() => expect(graphButton().disabled).toBe(true));
+    await waitFor(() => expect(pending).toHaveLength(1));
 
-    // A disabled button is a hint; the gate is in the view transition itself.
-    // Fire the click the palette/keyboard path would produce.
-    graphButton().removeAttribute("disabled");
-    await user.click(graphButton());
-
-    expect(screen.queryByRole("button", { name: "Back to Graph" })).toBeNull();
-    expect(screen.getByPlaceholderText("Search tabs...")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    expect(await screen.findByRole("application", { name: /Knowledge graph/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Tab map" })).toBeNull();
   });
 
-  it("never lets a superseded dump's completion unlock the graph", async () => {
+  it("never lets a superseded dump's completion end the current one", async () => {
     seedStore(3);
     render(<AppShell />);
-    await openSubjectWithMore();
+    await openSubject();
 
     postExtensionImport(["https://a.example.com"]);
     await waitFor(() => expect(pending).toHaveLength(1));
     postExtensionImport(["https://b.example.com", "https://c.example.com"]);
     await waitFor(() => expect(pending).toHaveLength(2));
 
-    // The first, superseded dump finishes late. It must not unlock anything.
+    // The first, superseded dump finishes late. The second is still running.
     pending[0].finish();
-    await Promise.resolve();
-    await waitFor(() => expect(graphButton().disabled).toBe(true));
-    // Give the (stale) settle every chance to run and wrongly complete.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(graphButton().disabled).toBe(true);
+    expect(organizerStatus()).not.toBeNull();
 
-    // The live dump is what unlocks it.
     pending[1].finish();
-    await waitFor(() => expect(graphButton().disabled).toBe(false), { timeout: 10000 });
-  }, 15000);
+    await waitFor(() => expect(organizerStatus()).toBeNull());
+  });
 
-  it("surfaces an error instead of quietly exposing a half-organized graph", async () => {
+  it("surfaces a failure and retries the same organization without a re-dump", async () => {
     const user = userEvent.setup();
     seedStore(3);
     render(<AppShell />);
-    await openSubjectWithMore();
+    await openSubject();
 
     postExtensionImport(["https://a.example.com"]);
     await waitFor(() => expect(pending).toHaveLength(1));
@@ -207,13 +178,6 @@ describe("Graph View readiness gate", () => {
     pending[0].fail(new Error("organize exploded"));
 
     expect(await screen.findByText("Couldn't finish organizing your tabs.")).toBeTruthy();
-
-    // The error screen is reachable, and it is not the graph.
-    await user.click(graphButton());
-    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Back to Graph" })).toBeNull();
-
-    // Retrying re-runs the same organization rather than requiring a re-dump.
     await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(pending).toHaveLength(2));
   });

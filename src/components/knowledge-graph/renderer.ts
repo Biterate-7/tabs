@@ -1,10 +1,12 @@
 import { providerLogo } from "@/components/memory/provider-mark"
+import { peekFaviconImage, requestFavicon } from "@/lib/favicon/client"
 import { HUB_INNER, bridgeControls, cubicAt, hashUnit, outwardAngle, reachOf as fanReach, spokeControls, stemControls, worldPoint } from "@/lib/knowledge-graph/galaxy"
 import type { FanKind, Point3 } from "@/lib/knowledge-graph/galaxy"
 import { nodeRadius } from "@/lib/knowledge-graph/layout"
 import { project } from "@/lib/knowledge-graph/projection"
 import type { Lens } from "@/lib/knowledge-graph/projection"
 import type { Camera, Viewport } from "@/lib/knowledge-graph/view"
+import { PERSONAL_EDGE_KINDS } from "@/lib/knowledge-graph/types"
 import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
 
 /**
@@ -24,7 +26,8 @@ import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/
  *   light      particles drifting along filaments and orbits, brighter and
  *              quicker along the selection's own relationships
  *   nodes      far to near — anchors, the core's nucleus, items as small
- *              points of light shaped by kind
+ *              points of light shaped by kind; up close a conversation
+ *              shows its AI app's logo and a source its site's icon
  *   labels     greedy and collision-free, by priority, readable up close
  *
  * Every point is projected through a real perspective camera (projection.ts)
@@ -543,12 +546,13 @@ class Batch {
   }
 }
 
-type Flow = { curve: Curve; id: string; target: string; lit: boolean; core: number; kind: "stem" | "bridge" | "spoke"; e: number; tone: number }
+type Flow = { curve: Curve; id: string; target: string; lit: boolean; core: number; kind: "stem" | "bridge" | "tie" | "spoke"; e: number; tone: number }
 
 /**
  * Every relationship as fine curved strands. A project's own items hang off
  * it as stems that leave together along their arm and part toward their
- * items; a relationship between items is a bridge arching out of the plane.
+ * items; a relationship between items is a bridge arching out of the plane,
+ * drawn in the hubs' gold (a tie) when the person made it themselves.
  * Each is drawn as two or three near-parallel strands that meet at both
  * ends — at a distance one line, up close a fine braid.
  */
@@ -561,6 +565,8 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
   const bridges = new Batch(rgb(dark ? palette.starlight : palette.ember), width * 0.9)
   const litStems = new Batch(rgb(palette.blush), width * 1.35)
   const litBridges = new Batch(rgb(dark ? palette.starlight : palette.ember), width * 1.3)
+  const ties = new Batch(rgb(palette.hub), width)
+  const litTies = new Batch(rgb(palette.hub), width * 1.4)
   const spokes = new Batch(rgb(dark ? palette.blush : palette.filament), width)
   const flows: Flow[] = []
   const anchors = new Map<string, Point>()
@@ -581,6 +587,7 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
     const e = Math.min(scene.presence.get(a.node.id) ?? 1, scene.presence.get(b.node.id) ?? 1) * Math.min(a.emphasis, b.emphasis)
     if (e <= 0.004) continue
     const stem = (edge.kind === "contains" || edge.kind === "session-project") && a.node.kind === "project"
+    const tie = PERSONAL_EDGE_KINDS.has(edge.kind)
     const lit = scene.highlighted.has(edge.id)
     let controls: [Point3, Point3]
     if (stem) controls = stemControls(a.w, b.w, outwardAngle(a.w, a.node.id))
@@ -605,7 +612,7 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
     const main: Curve = { x0: a.x, y0: a.y, x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x3: b.x, y3: b.y }
     const tone = (a.tone + b.tone) / 2
     const core = stem ? a.core : Math.max(a.core * 0.5, b.core * 0.5)
-    flows.push({ curve: main, id: edge.id, target: edge.target, lit, core, kind: stem ? "stem" : "bridge", e, tone })
+    flows.push({ curve: main, id: edge.id, target: edge.target, lit, core, kind: stem ? "stem" : tie ? "tie" : "bridge", e, tone })
 
     // Strands: the centre line plus fine companions offset across the curve's middle.
     const strands = lit ? 3 : large ? 2 : camera.k < 0.3 ? 3 : 5
@@ -627,10 +634,12 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
       if (grow < 1) curve = sliceCurve(curve, grow)
       const strandShare = i === 0 ? 1 : i <= 2 ? 0.55 : 0.32
       if (lit) {
-        ;(stem ? litStems : litBridges).curve((i === 0 ? 0.42 : 0.1) * tone, curve)
+        ;(stem ? litStems : tie ? litTies : litBridges).curve((i === 0 ? 0.42 : 0.1) * tone, curve)
         continue
       }
-      if (stem) {
+      if (tie) {
+        ties.curve((dark ? 0.3 : 0.4) * strandShare * tone * e, curve)
+      } else if (stem) {
         const alpha = (dark ? 0.3 : 0.32) * (1 + 0.7 * core) * strandShare * tone * e * (large ? 0.7 : 1)
         stems.curve(alpha, curve)
       } else {
@@ -643,8 +652,10 @@ function drawFilaments(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
   spokes.flush(ctx)
   stems.flush(ctx)
   bridges.flush(ctx)
+  ties.flush(ctx)
   litStems.flush(ctx)
   litBridges.flush(ctx)
+  litTies.flush(ctx)
   ctx.globalAlpha = 1
   return flows
 }
@@ -721,7 +732,7 @@ function drawParticles(ctx: CanvasRenderingContext2D, scene: Scene, flows: Flow[
         count = 1
         speed = 0.022 + roll * 0.015
         brightness = 0.7
-      } else if (flow.kind === "bridge") {
+      } else if (flow.kind === "bridge" || flow.kind === "tie") {
         count = 1
         speed = 0.03
         brightness = 0.55
@@ -824,6 +835,19 @@ function drawItem(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, cac
     ctx.drawImage(logo, x - size / 2, y - size / 2, size, size)
     return
   }
+  // Up close, a source is its site: the icon the page itself declares, on a small light tile so a dark icon still reads.
+  const icon = kind === "source" && r >= 5.2 && node.item?.domain ? siteIconFor(node.item.domain) : undefined
+  if (icon) {
+    const size = r * 2.3
+    const pad = size * 0.16
+    ctx.globalAlpha = Math.min(1, alpha * 1.05)
+    ctx.fillStyle = rgb(palette.dark ? palette.starlight : [255, 255, 255])
+    ctx.beginPath()
+    ctx.roundRect(x - size / 2 - pad, y - size / 2 - pad, size + pad * 2, size + pad * 2, size * 0.26)
+    ctx.fill()
+    ctx.drawImage(icon, x - size / 2, y - size / 2, size, size)
+    return
+  }
 
   ctx.globalAlpha = node.unsettled ? alpha * 0.85 : Math.min(1, alpha * 1.05)
   ctx.fillStyle = rgb(tint)
@@ -863,7 +887,8 @@ function drawItem(ctx: CanvasRenderingContext2D, scene: Scene, entry: PNode, cac
       ctx.closePath()
       break
   }
-  if (node.unsettled || kind === "session") ctx.stroke()
+  // Hollow: a session (a frame of tabs), something still being read, a saved tab Hubble holds no text for.
+  if (node.unsettled || node.savedTab || kind === "session") ctx.stroke()
   else ctx.fill()
   if (kind === "session" && !node.unsettled) {
     ctx.beginPath()
@@ -1207,6 +1232,13 @@ function sprite(cache: RenderCache, color: RGB, kind: "soft" | "spark" | "haze")
  * Draws nothing until it has loaded — a conversation is its point of light
  * until then.
  */
+/** A site's icon, once lib/favicon/client.ts holds a verified one; asking is cheap and idempotent. The canvas redraws when one arrives. */
+function siteIconFor(domain: string): HTMLImageElement | undefined {
+  if (typeof Image === "undefined") return undefined
+  requestFavicon(domain)
+  return peekFaviconImage(domain) ?? undefined
+}
+
 function logoFor(cache: RenderCache, provider: string, palette: Palette): HTMLImageElement | HTMLCanvasElement | undefined {
   const logo = providerLogo(provider)
   if (!logo) return undefined

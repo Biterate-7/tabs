@@ -51,7 +51,8 @@ export function TabFavicon({
           src={src}
           alt=""
           referrerPolicy="no-referrer"
-          className="rounded-md"
+          // A wide or tall icon is shown whole, never cropped to the square.
+          className="rounded-md object-contain"
           onLoadingStatusChange={(status) => {
             if (status !== "error") return
             if (src === direct) setFailedIcon(direct)

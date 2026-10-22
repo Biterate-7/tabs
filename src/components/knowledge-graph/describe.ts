@@ -18,6 +18,7 @@ export const NODE_KIND_LABEL: Record<GraphNodeKind, string> = {
 export function nodeTypeLabel(node: KnowledgeNode): string {
   if (node.kind === "project" || node.kind === "session") return NODE_KIND_LABEL[node.kind]
   if (node.kind === "file") return node.type === "pdf" ? "PDF file" : "File"
+  if (node.savedTab) return "Saved tab"
   return node.type ? KNOWLEDGE_TYPE_LABEL[node.type] : NODE_KIND_LABEL[node.kind]
 }
 
