@@ -76,7 +76,16 @@ export function buildKnowledgeGraph({ workspaces, sessions = [], links = [], dep
     const projectId = projectNodeId(workspace.id);
     let latest = workspace.createdAt;
     for (const { item } of entries) latest = Math.max(latest, itemActivityAt(item));
-    nodes.push({ id: projectId, kind: "project", label: subjectName(workspace), size: entries.length, at: latest });
+    const context = [workspace.brief?.focus, workspace.brief?.description].filter(Boolean).join(" ");
+    nodes.push({
+      id: projectId,
+      kind: "project",
+      label: subjectName(workspace),
+      size: entries.length,
+      at: latest,
+      ...(typeof workspace.logo === "string" && workspace.logo ? { logo: workspace.logo } : {}),
+      ...(context ? { context } : {}),
+    });
 
     for (const { item, savedTab } of entries) {
       const kind = itemKind(item);

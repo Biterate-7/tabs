@@ -3,11 +3,11 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { Upload, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { processLogoFile } from "@/lib/workspace/logo"
 
 /**
- * The "Workspace Logo" field inside the workspace edit dialog (see
+ * The "Project icon" field inside the workspace edit dialog (see
  * rename-workspace-dialog.tsx): a preview, an upload/change action behind a
  * visually hidden file input, and a remove action shown only once a logo
  * exists. Upload and remove both take effect immediately via `onChange`
@@ -50,9 +50,9 @@ export function WorkspaceLogoUploader({
 
   return (
     <div className="mt-4">
-      <p className="text-label text-tertiary">Workspace logo</p>
+      <p className="text-label text-tertiary">Project icon</p>
       <div className="mt-2 flex items-center gap-3">
-        <WorkspaceAvatar workspace={{ name: workspaceName, logo }} size={48} />
+        <ProjectIcon workspace={{ name: workspaceName, logo }} size={48} />
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <Button
@@ -70,14 +70,14 @@ export function WorkspaceLogoUploader({
                 variant="ghost"
                 size="sm"
                 className="text-destructive hover:text-destructive"
-                aria-label="Remove workspace logo"
+                aria-label="Reset project icon"
                 onClick={handleRemove}
               >
-                <X /> Remove
+                <X /> Reset to default
               </Button>
             )}
           </div>
-          <p className="text-meta text-tertiary">PNG, JPG, WEBP, or SVG. Max 10MB.</p>
+          <p className="text-meta text-tertiary">PNG, JPG, WEBP or SVG up to 10MB. Reset for the generated icon.</p>
         </div>
       </div>
 
@@ -87,7 +87,7 @@ export function WorkspaceLogoUploader({
         accept="image/png,image/jpeg,image/webp,image/svg+xml"
         className="hidden"
         onChange={handleFileChange}
-        aria-label="Upload workspace logo"
+        aria-label="Upload project icon"
       />
 
       {error && (

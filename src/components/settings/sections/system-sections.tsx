@@ -24,7 +24,7 @@ import { useAppearanceContext } from "@/components/appearance-provider"
 import { EXTENSION_INSTALL_STEPS } from "@/components/extension-install-guide"
 import { RenameWorkspaceDialog } from "@/components/workspace/rename-workspace-dialog"
 import { DeleteWorkspaceDialog } from "@/components/workspace/delete-workspace-dialog"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { getOnboardingState } from "@/lib/onboarding"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
@@ -182,7 +182,7 @@ export function WorkspacesSection({ workspaces, currentId, onSwitch, onRename, o
       <SectionStack>
         {workspaces.map((w) => (
           <div key={w.id} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
-            <WorkspaceAvatar workspace={w} size={20} />
+            <ProjectIcon workspace={w} size={20} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-body text-foreground">{w.name}</p>
               <p className="text-meta text-tertiary">

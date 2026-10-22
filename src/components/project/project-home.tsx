@@ -5,7 +5,7 @@ import { ArrowUpRight, CheckSquare, ChevronDown, ChevronLeft, FileInput, FileTex
 import { KindGlyph } from "@/components/ui/kind-glyph"
 import { ItemIcon } from "@/components/memory/item-icon"
 import { pageIconOf } from "@/lib/memory/item-icon"
-import { WorkspaceAvatar } from "@/components/workspace/workspace-avatar"
+import { ProjectIcon } from "@/components/workspace/project-icon"
 import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use-session-launch"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { connectedProjects } from "@/lib/knowledge-graph/related"
@@ -294,7 +294,7 @@ export function ProjectHome(props: ProjectHomeProps) {
       {/* The project, and the two things to do with it. */}
       <div className="flex flex-col gap-4 animate-enter sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-4">
-        <WorkspaceAvatar workspace={workspace} size={44} className="mt-0.5 max-sm:hidden" />
+        <ProjectIcon workspace={workspace} size={44} className="mt-0.5 max-sm:hidden" />
         <div className="min-w-0">
           {renaming && props.onRename ? (
             <RenameTitle
@@ -429,7 +429,7 @@ export function ProjectHome(props: ProjectHomeProps) {
                   {related.map(({ workspace: other, shared }) => (
                     <li key={other.id}>
                       <button type="button" disabled={!props.onOpenProject} onClick={() => props.onOpenProject?.(other.id)} className="flex w-full min-w-0 items-center gap-2 rounded-xs py-0.5 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
-                        <WorkspaceAvatar workspace={other} size={16} />
+                        <ProjectIcon workspace={other} size={16} />
                         <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">{subjectName(other)}</span>
                         <span className="shrink-0 text-meta text-tertiary">{plural(shared, "shared source", "shared sources")}</span>
                       </button>
