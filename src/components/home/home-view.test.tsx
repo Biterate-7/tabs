@@ -89,7 +89,13 @@ describe("Home", () => {
   it("offers search and organizing open tabs once there are projects", async () => {
     const user = userEvent.setup()
     const props = renderHome({ subjects: [project("h", "History HL")], onOrganizeOpenTabs: vi.fn(), onOpenSearch: vi.fn() })
-    await user.click(screen.getByRole("button", { name: /Search/ }))
+    // One search control, in the body between the greeting and Continue — not in the quick actions.
+    const search = screen.getByRole("button", { name: "Search" })
+    expect(screen.getAllByRole("button", { name: /Search/ })).toHaveLength(1)
+    expect(search.textContent).toContain("Search everything...")
+    expect(within(screen.getByRole("group", { name: "Quick actions" })).queryByRole("button", { name: /Search/ })).toBeNull()
+    expect(search.compareDocumentPosition(document.querySelector("[data-continue]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await user.click(search)
     await user.click(screen.getByRole("button", { name: /Organize open tabs/ }))
     expect(props.onOpenSearch).toHaveBeenCalledOnce()
     expect(props.onOrganizeOpenTabs).toHaveBeenCalledOnce()

@@ -36,8 +36,11 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 /**
  * Home: where you were, what changed, what next.
  *
- *     Good evening                              [+ New project] [Search] …
+ *     Good evening                       [Organize open tabs] [+ New project]
  *     Tuesday 20 October · 3 new since yesterday
+ *
+ *     ┌ 🔍 Search everything...                                              ┐
+ *     └──────────────────────────────────────────────────────────────────────┘
  *
  *     ┌ Continue ────────────────────────────────────────────────── (galaxy) ┐
  *     │ Thesis — Urban heat islands                                          │
@@ -152,32 +155,30 @@ export function HomeView({
   return (
     <div className="min-h-screen" data-home>
       {mobileBar}
-      <main className="mx-auto w-full max-w-[1120px] px-4 pt-8 pb-16 sm:px-8 sm:pt-14">
+      <main className="mx-auto w-full max-w-[1120px] px-4 pt-4 pb-12 sm:px-8 sm:pt-8">
         {/* Greeting: the hour, the date, and what changed — nothing more. */}
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 animate-enter">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 animate-enter">
           <div className="min-w-0">
-            <h1 className="text-display text-foreground">{greetingFor(now)}</h1>
-            <p className="mt-1.5 text-body text-muted-foreground">
+            <h1 className="text-title text-foreground">{greetingFor(now)}</h1>
+            <p className="mt-1 text-body text-muted-foreground">
               {dateLine}
               {changeLine && <span className="text-tertiary"> · {changeLine}</span>}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Quick actions">
-            <Button type="button" size="lg" onClick={onNewSubject}>
-              <Plus /> New project
-            </Button>
-            {onOpenSearch && (
-              <Button type="button" size="lg" variant="secondary" onClick={onOpenSearch}>
-                <Search /> Search
-              </Button>
-            )}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick actions">
             {onOrganizeOpenTabs && (
-              <Button type="button" size="lg" variant="ghost" onClick={onOrganizeOpenTabs}>
+              <Button type="button" variant="ghost" onClick={onOrganizeOpenTabs}>
                 <Group /> Organize open tabs
               </Button>
             )}
+            <Button type="button" variant="secondary" onClick={onNewSubject}>
+              <Plus /> New project
+            </Button>
           </div>
         </div>
+
+        {/* Universal Search: the same search page the sidebar opens, from the middle of Home. */}
+        {onOpenSearch && <HomeSearch onOpen={onOpenSearch} />}
 
         <ContinueCard
           pulse={lead}
@@ -189,8 +190,8 @@ export function HomeView({
           {...(onShowInGraph ? { onShowInGraph } : {})}
         />
 
-        <div className="mt-10 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-w-0 flex-col gap-10">
+        <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex min-w-0 flex-col gap-8">
             <section aria-labelledby="home-projects">
               <SectionHeading id="home-projects">Projects</SectionHeading>
               <ul aria-label="Your projects" className="mt-2 flex flex-col">
@@ -216,7 +217,7 @@ export function HomeView({
             )}
           </div>
 
-          <aside className="flex min-w-0 flex-col gap-10" aria-label="Activity">
+          <aside className="flex min-w-0 flex-col gap-8" aria-label="Activity">
             {changes && changes.items.length > 0 ? (
               <section aria-labelledby="home-changes">
                 <SectionHeading id="home-changes">Since you were last here</SectionHeading>
@@ -320,6 +321,21 @@ export function HomeView({
   )
 }
 
+/** The search field of Home. A button, not an input: it opens the search page, where typing happens. */
+function HomeSearch({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label="Search"
+      className="group mt-5 flex h-12 w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-4 text-left text-body text-tertiary shadow-(--shadow-panel) outline-none transition-[border-color,color] duration-(--duration-fast) ease-(--ease-color) animate-enter hover:border-strong hover:text-muted-foreground focus-visible:border-strong focus-visible:ring-2 focus-visible:ring-ring/60"
+    >
+      <Search aria-hidden className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">Search everything...</span>
+    </button>
+  )
+}
+
 function SectionHeading({ id, children, action }: { id: string; children: React.ReactNode; action?: { label: string; onClick: () => void } }) {
   return (
     <div className="flex items-center justify-between gap-2 border-b border-subtle pb-2">
@@ -367,7 +383,7 @@ function ContinueCard({
   const more = items.slice(1, 4)
   const focus = workspace.brief?.focus || workspace.brief?.description
   return (
-    <section aria-labelledby="home-continue" className="relative mt-8 overflow-hidden rounded-xl border border-border bg-card shadow-(--shadow-panel) animate-enter" data-continue={workspace.id}>
+    <section aria-labelledby="home-continue" className="relative mt-5 overflow-hidden rounded-xl border border-border bg-card shadow-(--shadow-panel) animate-enter" data-continue={workspace.id}>
       <div className="relative flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-stretch">
         <div className="flex min-w-0 flex-1 flex-col">
           <p id="home-continue" className="text-eyebrow text-tertiary">
