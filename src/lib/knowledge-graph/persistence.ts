@@ -21,8 +21,10 @@ const MAX_POSITIONS = 20_000;
  * framed them. Generation 4 is the galaxy holding every saved tab (the Tab
  * map merged into the Graph): fans sized for the old population would
  * overlap once the tabs arrive, so the galaxy is laid out afresh, once.
+ * Generation 5 is the spiral galaxy: projects are clusters along its arms
+ * rather than hubs on a ring, so every place from before is dropped, once.
  */
-const LAYOUT_GENERATION = 4;
+const LAYOUT_GENERATION = 5;
 
 export type KnowledgeGraphState = {
   version: 1;
