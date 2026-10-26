@@ -4,14 +4,17 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { subscribeFavicons } from "@/lib/favicon/client"
 import { graphEffects } from "@/lib/knowledge-graph/appearance"
 import type { GraphAppearance, GraphEffects } from "@/lib/knowledge-graph/appearance"
-import { worldPoint } from "@/lib/knowledge-graph/galaxy"
-import { nodeRadius } from "@/lib/knowledge-graph/layout"
+import { galaxyExtent, worldPoint } from "@/lib/knowledge-graph/galaxy"
+import { nodeRadius, territoryRadius } from "@/lib/knowledge-graph/layout"
 import { baseLens, cameraOn, fitLens, panLens, project, zoomAtLens } from "@/lib/knowledge-graph/projection"
 import type { Lens } from "@/lib/knowledge-graph/projection"
 import { clampZoom, mixCamera, SpatialGrid } from "@/lib/knowledge-graph/view"
 import type { Camera, Insets } from "@/lib/knowledge-graph/view"
 import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
-import { drawScene, orbitRadii, readPalette, RenderCache } from "./renderer"
+import { galaxyField, galaxyNebulae } from "./galaxy-field"
+import type { Field, Nebula } from "./galaxy-field"
+import { GalaxyGL } from "./galaxy-gl"
+import { drawBack, drawFront, fieldColors, reachOf, readPalette, RenderCache } from "./renderer"
 import type { Hit, Palette } from "./renderer"
 
 export type GraphCanvasHandle = {
@@ -30,9 +33,9 @@ type Props = {
   edges: readonly KnowledgeEdge[]
   positions: Readonly<Record<string, Point>>
   selected?: string
-  /** The project hub lit as the galaxy's core (the chosen project, or the selection's). */
+  /** The project whose cluster is lit (the chosen project, or the selection's); the rest of the galaxy dims a little around it. */
   core?: string
-  /** The scope at the origin, joined to every hub. Absent when one project is chosen. */
+  /** The scope the galaxy's core stands for, named beneath it. Absent when one project is chosen. */
   root?: { label: string; detail: string }
   hovered?: string
   focused?: string
@@ -68,10 +71,16 @@ const SWAY_YAW = 0.05
 const SWAY_TILT = 0.035
 
 /**
- * The knowledge galaxy's surface: one canvas, one animation loop.
+ * The knowledge galaxy's surface: three stacked canvases, one animation loop.
+ *
+ * The back canvas holds space (the ground, far stars, gas, the orbits); the
+ * middle one is the galaxy's dust on the GPU (galaxy-gl.ts — or, without
+ * WebGL, drawn sparser on the back canvas instead); the front one holds
+ * everything the person keeps, and takes the pointer. All three are drawn
+ * in the same frame from the same camera.
  *
  * With motion allowed, the loop runs while the galaxy is on screen and the
- * page is visible — particles drift, the core breathes, the camera sways a
+ * page is visible — dust twinkles, the core breathes, the camera sways a
  * little toward the pointer — at about 30fps, and at full rate only while
  * something is actually moving (a camera tween, a drag, emphasis easing,
  * nodes arriving or leaving). Hidden, covered, scrolled away or with motion
@@ -79,12 +88,18 @@ const SWAY_TILT = 0.035
  *
  * Nothing here re-renders React per frame: the loop reads the latest props
  * from a ref and keeps its own state (camera, lens sway, emphasis, presence,
- * the lit core) in refs. Panning, wheel/pinch zoom and clicks are handled
+ * the lit cluster) in refs. Panning, wheel/pinch zoom and clicks are handled
  * here against the frame just drawn; what a click *means* is the parent's.
  */
 export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(function KnowledgeGraphCanvas(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const backRef = useRef<HTMLCanvasElement>(null)
+  const dustRef = useRef<HTMLCanvasElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const gpu = useRef<GalaxyGL | null>(null)
+  // The particle field: rebuilt only when the projects, their places or the palette change.
+  const field = useRef<{ field: Field; source: unknown; palette: Palette; sparse: boolean } | null>(null)
+  const focus = useRef({ x: 0, y: 0, r: 1, strength: 0 })
   const viewport = useRef({ width: 0, height: 0 })
   const dpr = useRef(1)
   const camera = useRef<Camera>(props.initialCamera ?? { x: 0, y: 0, k: 0.7 })
@@ -114,7 +129,7 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
   })
 
   // What is drawn: the current nodes plus any still fading out, at their last known places.
-  const world = useRef({ nodes: [] as readonly KnowledgeNode[], edges: [] as readonly KnowledgeEdge[], positions: new Map<string, Point>(), orbits: [] as number[], source: null as null | { nodes: readonly KnowledgeNode[]; edges: readonly KnowledgeEdge[]; positions: Readonly<Record<string, Point>> } })
+  const world = useRef({ nodes: [] as readonly KnowledgeNode[], edges: [] as readonly KnowledgeEdge[], positions: new Map<string, Point>(), extent: 380, nebulae: [] as Nebula[], source: null as null | { nodes: readonly KnowledgeNode[]; edges: readonly KnowledgeEdge[]; positions: Readonly<Record<string, Point>> } })
   const syncWorld = useCallback(() => {
     const p = latest.current
     const w = world.current
@@ -133,7 +148,10 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     const edgeIds = new Set(p.edges.map((edge) => edge.id))
     const leavingEdges = first ? [] : w.edges.filter((edge) => !edgeIds.has(edge.id) && all.has(edge.source) && all.has(edge.target) && (!ids.has(edge.source) || !ids.has(edge.target)))
     for (const node of p.nodes) if (!presence.current.has(node.id)) presence.current.set(node.id, first || p.reducedMotion ? 1 : 0)
-    world.current = { nodes, edges: leavingEdges.length > 0 ? [...p.edges, ...leavingEdges] : p.edges, positions, orbits: orbitRadii(p.nodes, positions), source: { nodes: p.nodes, edges: p.edges, positions: p.positions } }
+    // The galaxy's size is everything laid out, filtered or not: choosing one project does not shrink the galaxy around it.
+    const extent = galaxyExtent(Object.values(p.positions))
+    const nebulae = extent === w.extent && w.nebulae.length > 0 ? w.nebulae : galaxyNebulae(extent)
+    world.current = { nodes, edges: leavingEdges.length > 0 ? [...p.edges, ...leavingEdges] : p.edges, positions, extent, nebulae, source: { nodes: p.nodes, edges: p.edges, positions: p.positions } }
   }, [])
 
   const notifyCamera = useCallback(() => {
@@ -151,7 +169,8 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       raf.current = 0
       const canvas = canvasRef.current
       const ctx = canvas?.getContext("2d")
-      if (!canvas || !ctx || viewport.current.width === 0) return
+      const back = backRef.current?.getContext("2d")
+      if (!canvas || !ctx || !back || viewport.current.width === 0) return
       const p = latest.current
       const still = p.reducedMotion || !p.appearance.animation
       const ambient = !still && !p.paused && inView.current && pageVisible.current
@@ -243,37 +262,76 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
         cache.current = new RenderCache()
         cache.current.onAsset = () => invalidateRef.current()
       }
+
+      // The dust: built for the projects in view, where they are now, in this palette.
+      const sparse = gpu.current === null
+      if (!field.current || field.current.source !== w.source || field.current.palette !== palette.current || field.current.sparse !== sparse) {
+        const reach = reachOf(p.nodes, cache.current)
+        const clusters = p.nodes.flatMap((node) => {
+          const at = node.kind === "project" ? worldPoint(node, w.positions) : undefined
+          return at ? [{ id: node.id, x: at.x, y: at.y, z: at.z, reach: reach.get(node.id) ?? 30, count: node.size ?? 0 }] : []
+        })
+        const built = galaxyField(w.extent, clusters, fieldColors(palette.current), sparse ? 0.22 : 1)
+        field.current = { field: built, source: w.source, palette: palette.current, sparse }
+        gpu.current?.setField(built)
+      }
+
+      // The chosen cluster: everything outside it dims a little, easing in and out.
+      const coreNode = p.core ? p.nodes.find((node) => node.id === p.core) : undefined
+      const coreAt = coreNode ? worldPoint(coreNode, w.positions) : undefined
+      const f = focus.current
+      if (coreAt) {
+        f.x = coreAt.x
+        f.y = coreAt.y
+        f.r = (reachOf(p.nodes, cache.current).get(coreNode!.id) ?? 30) * 1.25 + 24
+      }
+      const fTarget = coreAt ? 0.6 : 0
+      const fNext = Math.abs(fTarget - f.strength) <= 0.004 ? fTarget : f.strength + (fTarget - f.strength) * rate * 0.6
+      if (fNext !== fTarget) animating = true
+      f.strength = fNext
+
       const view = swing > 0 ? { ...camera.current, k: camera.current.k * (1 - swing * 0.14) } : camera.current
-      const drawnHits = drawScene(
-        ctx,
-        {
-          nodes: w.nodes,
-          edges: w.edges,
-          positions: w.positions,
-          camera: view,
-          lens: lens.current,
-          viewport: viewport.current,
-          dpr: dpr.current,
-          palette: palette.current,
-          emphasis: emphasis.current,
-          presence: presence.current,
-          coreness: coreness.current,
-          ...(p.selected ? { selected: p.selected } : {}),
-          ...(p.hovered ? { hovered: p.hovered } : {}),
-          ...(p.focused ? { focused: p.focused } : {}),
-          ...(p.root ? { root: p.root } : {}),
-          matches: p.matches,
-          highlighted: p.highlighted,
-          time: clock.current.time,
-          ambient,
-          ...(revealT !== undefined ? { reveal: revealT } : {}),
-          orbits: w.orbits,
-          now: Date.now(),
-          effects: effects.current.value,
-        },
-        cache.current
-      )
-      hits.current = { list: drawnHits, grid: null }
+      const scene = {
+        nodes: w.nodes,
+        edges: w.edges,
+        positions: w.positions,
+        camera: view,
+        lens: lens.current,
+        viewport: viewport.current,
+        dpr: dpr.current,
+        palette: palette.current,
+        emphasis: emphasis.current,
+        presence: presence.current,
+        coreness: coreness.current,
+        ...(p.selected ? { selected: p.selected } : {}),
+        ...(p.hovered ? { hovered: p.hovered } : {}),
+        ...(p.focused ? { focused: p.focused } : {}),
+        ...(p.root ? { root: p.root } : {}),
+        matches: p.matches,
+        highlighted: p.highlighted,
+        time: clock.current.time,
+        ambient,
+        ...(revealT !== undefined ? { reveal: revealT } : {}),
+        extent: w.extent,
+        nebulae: w.nebulae,
+        now: Date.now(),
+        effects: effects.current.value,
+      }
+      drawBack(back, scene, cache.current, sparse ? field.current.field : undefined)
+      gpu.current?.draw({
+        camera: view,
+        lens: lens.current,
+        viewport: viewport.current,
+        dpr: dpr.current,
+        time: clock.current.time,
+        reveal: revealT === undefined ? 1 : Math.min(1, revealT / 1.6),
+        gain: Math.min(1.6, 0.55 + 0.45 * effects.current.value.glow),
+        // Dust grows a little as you come closer, never as fast as the stars do.
+        px: Math.min(1.7, Math.max(0.7, Math.pow(view.k, 0.32))) * Math.min(1.2, Math.max(0.85, Math.min(viewport.current.width, viewport.current.height) / 800)),
+        focus: f,
+        additive: palette.current.dark,
+      })
+      hits.current = { list: drawFront(ctx, scene, cache.current), grid: null }
       if (animating || ambient) raf.current = requestAnimationFrame(frame)
       else lastDraw.current = 0
     },
@@ -309,19 +367,10 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
     invalidate()
   }, [invalidate, props.appearance.colors])
 
-  // Camera bounds: the galaxy plus a margin, so the view can never drift off into empty space.
+  // Camera bounds: the galaxy's disc plus a margin, so the view can never drift off into empty space.
   const bounds = useMemo(() => {
-    let minX = 0
-    let minY = 0
-    let maxX = 0
-    let maxY = 0
-    for (const at of Object.values(props.positions)) {
-      minX = Math.min(minX, at.x)
-      minY = Math.min(minY, at.y)
-      maxX = Math.max(maxX, at.x)
-      maxY = Math.max(maxY, at.y)
-    }
-    return { minX: minX - 320, minY: minY - 320, maxX: maxX + 320, maxY: maxY + 320 }
+    const extent = galaxyExtent(Object.values(props.positions)) + 200
+    return { minX: -extent, minY: -extent, maxX: extent, maxY: extent }
   }, [props.positions])
   const boundsRef = useRef(bounds)
   useEffect(() => {
@@ -361,10 +410,13 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
         const chosen = ids ? p.nodes.filter((node) => ids.includes(node.id)) : p.nodes
         const points = chosen.flatMap((node) => {
           const at = pointOf(node)
-          return at ? [{ ...at, r: nodeRadius(node) + (node.kind === "project" ? 40 : 16) }] : []
+          return at ? [{ ...at, r: node.kind === "project" ? territoryRadius(node.size ?? 0) * 0.8 : nodeRadius(node) + 16 }] : []
         })
-        // The whole galaxy includes its core.
-        if (!ids && p.root) points.push({ x: 0, y: 0, z: 0, r: 70 })
+        // The whole galaxy is its disc, core to rim, with room around it.
+        if (!ids) {
+          const rim = world.current.extent * 0.9
+          for (let i = 0; i < 8; i++) points.push({ x: Math.cos((i / 8) * Math.PI * 2) * rim, y: Math.sin((i / 8) * Math.PI * 2) * rim, z: 0, r: 0 })
+        }
         if (points.length === 0) return
         const target = fitLens(points, viewport.current, restingLens(), { insets: p.insets, padding: 48, maxZoom: options.maxZoom ?? (ids ? 2.4 : 1.6) })
         if (options.animate === false) {
@@ -401,16 +453,24 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
   useEffect(() => {
     const container = containerRef.current
     const canvas = canvasRef.current
-    if (!container || !canvas) return
+    const back = backRef.current
+    const dust = dustRef.current
+    if (!container || !canvas || !back || !dust) return
+    // The dust's own GPU context; where there is none, the back canvas draws a sparser field instead.
+    gpu.current = GalaxyGL.create(dust)
+    container.dataset.galaxyRenderer = gpu.current ? "webgl" : "2d"
+    field.current = null
     const resize = () => {
       const rect = container.getBoundingClientRect()
       // Capped: past 2× the extra pixels cost fill rate and buy nothing at these stroke widths.
       dpr.current = Math.min(2, window.devicePixelRatio || 1)
       viewport.current = { width: rect.width, height: rect.height }
-      canvas.width = Math.max(1, Math.round(rect.width * dpr.current))
-      canvas.height = Math.max(1, Math.round(rect.height * dpr.current))
-      canvas.style.width = `${rect.width}px`
-      canvas.style.height = `${rect.height}px`
+      for (const layer of [back, dust, canvas]) {
+        layer.width = Math.max(1, Math.round(rect.width * dpr.current))
+        layer.height = Math.max(1, Math.round(rect.height * dpr.current))
+        layer.style.width = `${rect.width}px`
+        layer.style.height = `${rect.height}px`
+      }
       invalidate()
     }
     resize()
@@ -443,6 +503,8 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
       themeObserver.disconnect()
       intersection?.disconnect()
       document.removeEventListener("visibilitychange", onVisibility)
+      gpu.current?.dispose()
+      gpu.current = null
     }
   }, [invalidate])
 
@@ -625,7 +687,9 @@ export const KnowledgeGraphCanvas = forwardRef<GraphCanvasHandle, Props>(functio
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-hidden" data-knowledge-graph-canvas>
-      <canvas ref={canvasRef} aria-hidden className="block cursor-grab touch-none select-none" />
+      <canvas ref={backRef} aria-hidden className="pointer-events-none absolute inset-0 block" />
+      <canvas ref={dustRef} aria-hidden className="pointer-events-none absolute inset-0 block" />
+      <canvas ref={canvasRef} aria-hidden className="absolute inset-0 block cursor-grab touch-none select-none" />
     </div>
   )
 })

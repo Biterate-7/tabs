@@ -28,10 +28,10 @@ export type Projected = {
   s: number;
 };
 
-/** The resting lens for a viewport: tipped further on wide screens, where height is scarce. */
+/** The resting lens for a viewport: tipped further on wide screens, where height is scarce — about as far as the reference galaxy. */
 export function baseLens(viewport: Viewport): Lens {
   const aspect = viewport.width / Math.max(1, viewport.height);
-  const tilt = aspect >= 1.15 ? 0.9 : aspect >= 0.8 ? 0.74 : 0.58;
+  const tilt = aspect >= 1.15 ? 1.04 : aspect >= 0.8 ? 0.86 : 0.66;
   return { tilt, yaw: 0, focal: Math.max(viewport.width, viewport.height) * 1.2 };
 }
 
