@@ -124,6 +124,39 @@ describe("Use in AI with Hubble for Chrome", () => {
     expect(seen[0]!.payload.text).toBe(editor.value)
   })
 
+  it("typesets the math in a quoted physics explanation beside its Markdown, and sends the LaTeX as written", async () => {
+    const physics = [
+      "## Friction",
+      "The coefficient is \\( \\mu = \\frac{F_f}{R} \\) and **not** the force itself.",
+      "$$F_{\\text{net}} = F_{\\text{app}} - F_f$$",
+      "- Roots: $\\sqrt{x^2}$ and \\alpha is $\\alpha$",
+      "Display too: \\[ \\Delta x = \\frac{1}{2}at^2 \\]",
+      "Broken: $\\frac{1}{$ stays as written.",
+    ].join("\n\n")
+    await putContent("w", lecture.id, { kind: "pdf", extractedAt: NOW, pages: [physics] })
+    const user = userEvent.setup()
+    const { dialog } = renderDialog()
+    await user.click(await dialog.findByRole("checkbox", { name: "Attach original files" }))
+    const reading = await dialog.findByRole("region", { name: "Message for the AI app" })
+    await waitFor(() => expect(reading.querySelectorAll("[data-math]").length).toBeGreaterThanOrEqual(5))
+    // The valid formulas are typeset, with no LaTeX commands or delimiters left over …
+    expect(reading.querySelectorAll('[data-math="inline"]').length).toBeGreaterThanOrEqual(3)
+    expect(reading.querySelectorAll('[data-math="display"]').length).toBeGreaterThanOrEqual(2)
+    expect(reading.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(5)
+    const visible = [...reading.querySelectorAll("*")].filter((node) => !node.closest(".katex") && !node.closest("[data-math-error]")).map((node) => [...node.childNodes].filter((child) => child.nodeType === 3).map((child) => child.textContent).join("")).join(" ")
+    expect(visible).not.toMatch(/\\(frac|text|mu|sqrt|Delta)|\$\$|\\\(|\\\[|\*\*/)
+    // … the one that can't be parsed is shown as written, without breaking the rest.
+    expect(reading.querySelector("[data-math-error]")?.textContent).toBe("$\\frac{1}{$")
+    expect(reading.querySelector("strong")?.textContent).toBe("not")
+
+    await user.click(dialog.getByRole("button", { name: "Open in ChatGPT" }))
+    await waitFor(() => expect(seen).toHaveLength(1))
+    const sent = seen[0]!.payload.text as string
+    expect(sent).toContain("\\( \\mu = \\frac{F_f}{R} \\)")
+    expect(sent).toContain("$$F_{\\text{net}} = F_{\\text{app}} - F_f$$")
+    expect(sent).toContain("\\[ \\Delta x = \\frac{1}{2}at^2 \\]")
+  })
+
   it("sends only when the person chooses Send automatically, and says sent only when it was", async () => {
     answer = () => ({ ok: true, state: "submitted", attached: [], notAttached: [], usedFallback: false, reusedTab: true })
     const user = userEvent.setup()
