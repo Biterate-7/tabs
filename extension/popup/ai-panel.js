@@ -1,5 +1,17 @@
-import { MSG_CAPTURE_CONVERSATION, MSG_DESKTOP_STATUS, MSG_INSERT_CONTEXT, MSG_MEMORY_REQUEST, TARGET_PROJECT_KEY } from "../src/config.js";
+import {
+  CAPTURE_JOBS_KEY,
+  MSG_CAPTURE_CONVERSATION,
+  MSG_CAPTURE_RETRY,
+  MSG_CAPTURE_STATUS,
+  MSG_DESKTOP_STATUS,
+  MSG_INSERT_CONTEXT,
+  MSG_MEMORY_REQUEST,
+  PROJECTS_SNAPSHOT_KEY,
+  TARGET_PROJECT_KEY,
+} from "../src/config.js";
 import { AI_PROVIDER_NAMES, aiProviderOf, conversationIdentityOf } from "../src/ai-pages.js";
+import { publicJob, readCaptureJobs } from "../src/capture-queue.js";
+import { readProjectsSnapshot, reconcileSelection } from "../src/projects-sync.js";
 import { readStoredTarget } from "../src/quick-add.js";
 
 /**
@@ -56,10 +68,51 @@ export const CAPTURE_ERRORS = {
   "invalid-payload": "Hubble Desktop couldn't take this conversation. Reload the page and try again.",
   "desktop-not-responding": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
   "desktop-session-lost": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
+  // A save waiting in the extension (src/capture-queue.js) that could not be delivered.
+  "queue-full": "Too many conversations are waiting to be saved. Open Hubble so they can go in, then try again.",
+  expired: "Hubble wasn't opened for a day, so this conversation was never saved. Save it again.",
+  interrupted: "Saving was interrupted. Try again.",
+  "no-hubble-tab": "Hubble isn't open, so nothing was saved yet.",
 };
 
 export function captureError(reason) {
   return CAPTURE_ERRORS[reason] ?? CAPTURE_ERRORS.failed;
+}
+
+// Why a save is still waiting, in a few words: what it waits for is said after.
+const WAITING_WORDS = {
+  "no-hubble-tab": "Hubble isn't open",
+  "hubble-unreachable": "Hubble couldn't be opened",
+  "no-response": "Hubble didn't answer",
+  timeout: "Hubble didn't answer in time",
+  "not-ready": "Hubble was still loading",
+  interrupted: "saving was interrupted",
+  failed: "something went wrong",
+  "project-missing": "Hubble hadn't caught up with that project yet",
+};
+
+/**
+ * What a save job's state says, in words — never "Saved" for a job that is
+ * not: `saved` is the Hubble page's answer that the conversation is on disk.
+ * `now` is for "trying again in 15 s".
+ */
+export function describeCaptureJob(job, projectName, now = Date.now()) {
+  if (!job) return "";
+  const name = job.projectName || projectName || "your project";
+  if (job.status === "saved") return describeCapture(job.result, job.result?.project || name);
+  if (job.status === "saving") return `Saving to ${name}…`;
+  if (job.status === "queued") {
+    const why = WAITING_WORDS[job.error] ?? "it didn't go through";
+    const seconds = Number.isFinite(job.nextAttemptAt) ? Math.max(1, Math.round((job.nextAttemptAt - now) / 1000)) : undefined;
+    const when = seconds === undefined ? "when Hubble is open" : seconds < 60 ? `in ${seconds} s` : `in ${Math.round(seconds / 60)} min`;
+    return `Not saved yet — ${why}. Hubble for Chrome will try again ${when}.`;
+  }
+  return captureError(job.error);
+}
+
+/** Whether a job's state offers "Try again": waiting for a retry, or failed for a reason trying again can fix. */
+export function canRetryJob(job) {
+  return Boolean(job && (job.status === "queued" || (job.status === "failed" && job.retryable !== false)));
 }
 
 /**
@@ -159,6 +212,16 @@ function rememberProject(project) {
   }
 }
 
+/** The projects Hubble last reported (src/projects-sync.js): shown at once, before any Hubble tab is asked. */
+async function storedProjects() {
+  try {
+    const stored = await chrome.storage?.local?.get(PROJECTS_SNAPSHOT_KEY);
+    return readProjectsSnapshot(stored?.[PROJECTS_SNAPSHOT_KEY]);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Projects as the page listed them, re-checked. */
 export function readPanelProjects(raw) {
   if (!Array.isArray(raw)) return [];
@@ -211,6 +274,7 @@ export async function initAiPanel(activeTab, doc = document) {
   const savedState = el("ai-saved");
   const select = el("ai-project-select");
   const captureButton = el("capture-button");
+  const retryButton = el("capture-retry-button");
   const openButton = el("ai-open-hubble-button");
   const captureStatus = el("capture-status");
   const query = el("memory-query");
@@ -248,7 +312,8 @@ export async function initAiPanel(activeTab, doc = document) {
     copyButton.disabled = busy || chosen.size === 0 || !projectId();
   }
 
-  function fillProjects(projects, preferredId) {
+  // `autoPick`: a lone project is chosen for the person — never right after the one they had was deleted.
+  function fillProjects(projects, preferredId, { autoPick = true } = {}) {
     select.innerHTML = "";
     const placeholder = doc.createElement("option");
     placeholder.value = "";
@@ -260,7 +325,7 @@ export async function initAiPanel(activeTab, doc = document) {
       option.textContent = project.name;
       select.appendChild(option);
     }
-    select.value = projects.some((project) => project.id === preferredId) ? preferredId : projects.length === 1 ? projects[0].id : "";
+    select.value = projects.some((project) => project.id === preferredId) ? preferredId : projects.length === 1 && autoPick ? projects[0].id : "";
     updateButtons();
   }
 
@@ -271,13 +336,22 @@ export async function initAiPanel(activeTab, doc = document) {
 
   async function loadProjects(openIfMissing) {
     const remembered = await rememberedProject();
+    // What Hubble last reported, at once: a project made a moment ago is already here, whatever the Hubble tab is doing.
+    const cached = await storedProjects();
+    if (cached?.projects.length) fillProjects(cached.projects, select.value || remembered?.id || cached.currentId);
+    // Then the Hubble page itself, which always wins.
     const answer = await memory("projects", {}, openIfMissing);
     if (answer?.ok) {
       const projects = readPanelProjects(answer.result?.projects);
       openButton.hidden = true;
-      fillProjects(projects, remembered?.id ?? answer.result?.currentId);
+      fillProjects(projects, select.value || remembered?.id || answer.result?.currentId);
       if (projects.length === 0 && !toDesktop) say(captureStatus, "Make a project in Hubble first.");
       return true;
+    }
+    if (cached?.projects.length) {
+      // No Hubble tab answered, but its last report did: those projects still work — Hubble opens to take the save.
+      openButton.hidden = toDesktop;
+      return false;
     }
     // No Hubble open: the project last used still works — Hubble opens when the conversation is saved.
     fillProjects(remembered ? [{ id: remembered.id, name: remembered.name || "Your project" }] : [], remembered?.id);
@@ -285,6 +359,40 @@ export async function initAiPanel(activeTab, doc = document) {
     openButton.hidden = toDesktop;
     if (!toDesktop) say(captureStatus, remembered ? "Hubble isn't open; it will open to save the conversation." : "Open Hubble to choose a project.");
     return false;
+  }
+
+  /** Hubble reported a new list while the popup is open (a project made, renamed or deleted): shown now, choice kept. */
+  function followProjects(snapshot) {
+    if (!snapshot) return;
+    const selectedName = projectName();
+    const { selectedId, removed } = reconcileSelection(select.value, snapshot.projects);
+    fillProjects(snapshot.projects, selectedId, { autoPick: !removed });
+    if (!removed) return;
+    // The project it was set to is gone: nothing is saved or searched there, and the person is told why.
+    if (!savingThis()) say(captureStatus, `“${selectedName}” was deleted in Hubble. Choose another project.`);
+    chosen.clear();
+    hits = [];
+    renderHits();
+    updateButtons();
+  }
+
+  // The save job of the conversation on screen (src/capture-queue.js), as last shown.
+  let shownJob;
+  /** Shows a save job's state: saving, waiting to try again, saved (on disk in Hubble) or failed — with Try again when it helps. */
+  function showJob(job, { quietSaved = false } = {}) {
+    shownJob = job;
+    if (retryButton) retryButton.hidden = !canRetryJob(job);
+    if (!job || (quietSaved && job.status === "saved")) return;
+    say(captureStatus, describeCaptureJob(job, projectName()));
+  }
+
+  async function lookUpJob() {
+    const key = identity?.key;
+    if (!key || toDesktop) return showJob(undefined);
+    const answer = await send(MSG_CAPTURE_STATUS, { key });
+    if (identity?.key !== key || savingThis()) return;
+    // A save that finished a while ago is said by "Already saved in …" (lookUpSaved); a pending or failed one is said here.
+    showJob(answer?.ok ? answer.job : undefined, { quietSaved: true });
   }
 
   function renderHits() {
@@ -417,7 +525,9 @@ export async function initAiPanel(activeTab, doc = document) {
     saving.add(key);
     updateButtons();
     // Hubble Desktop comes to the front to ask for a project, which usually closes this popup: the page's toast then says how it went.
-    say(captureStatus, toDesktop ? "Choose a project in Hubble Desktop…" : "Saving…");
+    // On the web this is the read; "Saving to …" follows once the job is written (followJobs), "Saved" only on Hubble's answer.
+    say(captureStatus, toDesktop ? "Choose a project in Hubble Desktop…" : "Reading the conversation…");
+    if (retryButton) retryButton.hidden = true;
     const answer = await send(MSG_CAPTURE_CONVERSATION, { tabId: tab.id, expectedKey: key, ...(projectId() ? { workspaceId: projectId() } : {}) });
     saving.delete(key);
     // The tab moved on while this saved: the answer is about a conversation no longer on screen (Hubble's own toast said how it went).
@@ -425,15 +535,23 @@ export async function initAiPanel(activeTab, doc = document) {
       updateButtons();
       return;
     }
+    await reportCaptureAnswer(answer);
+  });
+
+  /** A save's answer, from Save or Try again: what it did, or why not — and Try again while it can still go in. */
+  async function reportCaptureAnswer(answer) {
+    shownJob = answer?.job;
+    if (retryButton) retryButton.hidden = !canRetryJob(answer?.job);
     if (answer?.ok) {
-      say(captureStatus, describeCapture(answer.result, answer.result?.project || projectName()));
+      say(captureStatus, describeCapture(answer.result, answer.result?.project || answer.job?.projectName || projectName()));
       if (!answer.result?.desktop) openButton.hidden = true;
       updateButtons();
       void lookUpSaved();
       void search();
       return;
     }
-    say(captureStatus, captureError(answer?.error));
+    // Not saved, but written down and still going in: say what it waits for, never that it is saved.
+    say(captureStatus, answer?.job ? describeCaptureJob(answer.job, projectName()) : captureError(answer?.error));
     // Hubble Desktop closed since this popup opened: back to choosing a project for Hubble on the web.
     if (answer?.error === "no-project" && toDesktop) {
       toDesktop = false;
@@ -444,7 +562,49 @@ export async function initAiPanel(activeTab, doc = document) {
       void lookUpSaved();
     }
     updateButtons();
+  }
+
+  retryButton?.addEventListener("click", async () => {
+    const job = shownJob;
+    if (!job?.id || !identity || job.key !== identity.key || savingThis()) return;
+    const key = identity.key;
+    saving.add(key);
+    retryButton.hidden = true;
+    updateButtons();
+    say(captureStatus, `Saving to ${job.projectName || projectName()}…`);
+    const answer = await send(MSG_CAPTURE_RETRY, { id: job.id });
+    saving.delete(key);
+    if (identity?.key !== key) {
+      updateButtons();
+      return;
+    }
+    await reportCaptureAnswer(answer);
   });
+
+  /**
+   * Save jobs change in chrome.storage.local as the background delivers them —
+   * saving, waiting, saved — including after this popup was closed and opened
+   * again. The one for the conversation on screen is shown as it changes.
+   */
+  function followJobs(raw) {
+    if (!identity || toDesktop) return;
+    const job = publicJob(readCaptureJobs(raw).find((entry) => entry.key === identity.key));
+    if (!job || (shownJob && job.id === shownJob.id && job.updatedAt === shownJob.updatedAt && job.status === shownJob.status)) return;
+    // While this popup's own Save is waiting for its answer, only progress is shown: the answer says the rest.
+    if (savingThis() && job.status !== "saving") return;
+    showJob(job);
+  }
+
+  try {
+    chrome.storage?.onChanged?.addListener((changes, areaName) => {
+      if (areaName !== "local") return;
+      if (changes?.[PROJECTS_SNAPSHOT_KEY]) followProjects(readProjectsSnapshot(changes[PROJECTS_SNAPSHOT_KEY].newValue));
+      if (changes?.[CAPTURE_JOBS_KEY]) followJobs(changes[CAPTURE_JOBS_KEY].newValue);
+    });
+  } catch {
+    // No storage events: the list and the save's state are still right each time the popup opens.
+  }
+
   openButton.addEventListener("click", async () => {
     say(captureStatus, "Opening Hubble…");
     const ok = await loadProjects(true);
@@ -486,6 +646,7 @@ export async function initAiPanel(activeTab, doc = document) {
     }
     lookupToken += 1;
     say(captureStatus, "");
+    showJob(undefined);
     if (savedState) say(savedState, "");
     if (!aiProviderOf(tab.url)) {
       // Not an AI app any more: nothing here to save.
@@ -505,6 +666,7 @@ export async function initAiPanel(activeTab, doc = document) {
     showDesktopTarget();
     updateButtons();
     void lookUpSaved();
+    void lookUpJob();
   }
   try {
     chrome.tabs?.onUpdated?.addListener((tabId, change, updated) => {
@@ -524,5 +686,7 @@ export async function initAiPanel(activeTab, doc = document) {
   showDesktopTarget();
   await loadProjects(false);
   void lookUpSaved();
+  // A save of this conversation started earlier — still going in, waiting to try again, or failed — is shown as it is.
+  void lookUpJob();
   return true;
 }

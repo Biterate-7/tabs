@@ -14,10 +14,12 @@ import {
   MSG_DESKTOP_ACTION,
   DESKTOP_STATE_KEY,
   MSG_SAVE_SESSION,
+  PROJECTS_SNAPSHOT_KEY,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { pageFingerprint } from "../src/tab-matching.js";
 import { readStoredTarget } from "../src/quick-add.js";
+import { readProjectsSnapshot } from "../src/projects-sync.js";
 import { describeLeftOut, describeSaveFailure } from "../src/sessions.js";
 import { initAiPanel } from "./ai-panel.js";
 
@@ -198,12 +200,31 @@ async function renderQuickAddHint() {
   els.quickAddHint.hidden = false;
 }
 
+/** The projects Hubble last reported (src/projects-sync.js), for when no Hubble tab answers in time. */
+async function storedProjects() {
+  try {
+    const stored = await chrome.storage?.local?.get(PROJECTS_SNAPSHOT_KEY);
+    return readProjectsSnapshot(stored?.[PROJECTS_SNAPSHOT_KEY])?.projects.map((project) => ({ ...project, sources: 0 }));
+  } catch {
+    return undefined;
+  }
+}
+
+// Each render supersedes the last: the snapshot shown at once never lands over the Hubble tab's own answer.
+let projectsRender = 0;
+
 async function renderProjects(listed) {
-  renderSessionProjects(listed);
+  const render = ++projectsRender;
+  // No Hubble tab answered: the list Hubble last reported (a project made a moment ago included) is the next best.
+  const known = listed ?? (await storedProjects());
+  renderSessionProjects(known);
   if (!els.projectSection) return;
   const remembered = await rememberedProject();
-  // No Hubble tab to ask: the project Hubble last had open is still where a tab goes (Hubble opens to take it).
-  const projects = listed ?? (remembered ? [{ id: remembered.id, name: remembered.name || "Your project", sources: 0 }] : undefined);
+  if (render !== projectsRender) return;
+  // A project already chosen in this popup stays chosen while it exists.
+  const keep = els.projectSelect?.value || remembered?.id;
+  // Nothing known at all: the project Hubble last had open is still where a tab goes (Hubble opens to take it).
+  const projects = known?.length ? known : remembered ? [{ id: remembered.id, name: remembered.name || "Your project", sources: 0 }] : undefined;
   if (!projects || projects.length === 0) {
     els.projectSection.hidden = true;
     if (els.projectUnavailable) els.projectUnavailable.hidden = projectTabs.current === 0;
@@ -221,8 +242,8 @@ async function renderProjects(listed) {
     option.textContent = project.name;
     els.projectSelect.appendChild(option);
   }
-  // The project open in Hubble (or last chosen here), and only one that still exists.
-  els.projectSelect.value = remembered && projects.some((project) => project.id === remembered.id) ? remembered.id : "";
+  // The project chosen here, else the one open in Hubble (or last chosen here) — and only one that still exists.
+  els.projectSelect.value = keep && projects.some((project) => project.id === keep) ? keep : "";
   els.projectSection.hidden = false;
   updateProjectButtons();
   void renderQuickAddHint();
@@ -413,6 +434,8 @@ async function detectTabs() {
   void initAiPanel(chromeTabs.find((tab) => tab.active)).catch(() => {});
 
   if (payload.tabs.length === 0) return;
+  // The projects Hubble last reported, at once; the Hubble tab's own answer replaces them below.
+  void renderProjects(undefined);
 
   const answer = await askHubble(payload.tabs.map((t) => t.url));
   // The user may have already clicked Dump by the time this resolves;
@@ -902,6 +925,17 @@ async function init() {
   }
 
   detectTabs();
+}
+
+// A project made, renamed or deleted in Hubble while this popup is open (src/projects-sync.js): the list follows.
+try {
+  chrome.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes?.[PROJECTS_SNAPSHOT_KEY] || els.ready?.hidden) return;
+    const snapshot = readProjectsSnapshot(changes[PROJECTS_SNAPSHOT_KEY].newValue);
+    if (snapshot) void renderProjects(snapshot.projects.map((project) => ({ ...project, sources: 0 })));
+  });
+} catch {
+  // No storage events: the list is right each time the popup opens.
 }
 
 /**

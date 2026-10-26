@@ -218,6 +218,15 @@ export function loadAnonymousWorkspaceStore(): WorkspaceStore | null {
   }
 }
 
+/**
+ * The localStorage key the store is kept under right now (it depends on the
+ * account). Every Hubble tab writes the whole store there, so a tab listens
+ * for `storage` events on it to take another tab's changes (see AppShell).
+ */
+export function workspaceStoreStorageKey(): string {
+  return scopedKey(WORKSPACE_STORE_KEY);
+}
+
 export function saveWorkspaceStore(store: WorkspaceStore): boolean {
   try {
     window.localStorage.setItem(scopedKey(WORKSPACE_STORE_KEY), JSON.stringify(store));

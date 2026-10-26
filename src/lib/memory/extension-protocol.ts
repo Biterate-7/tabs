@@ -33,6 +33,15 @@ import type { AiProviderId } from "@/lib/providers/registry";
 
 export const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
 export const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
+/**
+ * Posted by this page when its request listener attaches, and again when it
+ * can answer. The content script re-posts every request still waiting when
+ * it hears it: a request that reached the page before the listener existed
+ * (a Hubble tab the extension just opened, still hydrating) used to be lost
+ * and to cost the content script's whole timeout. Each requestId is answered
+ * once, so a re-post never acts twice.
+ */
+export const MSG_MEMORY_READY = "HUBBLE_MEMORY_READY";
 
 export const EXTENSION_SEARCH_LIMIT = 20;
 
@@ -55,7 +64,8 @@ const requestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("capture"),
     // The capture itself is re-read by lib/conversations/capture.ts; here only its envelope.
-    args: z.object({ workspaceId: id, capture: z.unknown() }),
+    // `captureId`: the extension's id for this save (extension/src/capture-queue.js), the same on every retry of it.
+    args: z.object({ workspaceId: id, captureId: id.optional(), capture: z.unknown() }),
   }),
   z.object({ kind: z.literal("saved"), args: z.object({ url: z.string().min(1).max(4000) }) }),
   z.object({

@@ -74,10 +74,13 @@ describe("useExtensionQuickAdd", () => {
       focus: { id: "ws-history" },
       projects: [{ id: "ws-history", name: "History IA" }, { id: "ws-physics", name: "Physics EE" }],
       visible: document.visibilityState === "visible",
+      revision: expect.any(Number),
     })
     rerender({ current: "ws-physics" })
     await vi.waitFor(() => expect(reports).toHaveLength(2))
     expect(reports[1]).toMatchObject({ focus: { id: "ws-physics" } })
+    // Each change is newer than the last, so the extension can tell a stale tab's report from a fresh one.
+    expect((reports[1] as { revision: number }).revision).toBeGreaterThan((reports[0] as { revision: number }).revision)
   })
 
   it("does not report again for a store write that changes neither the project nor any name", async () => {

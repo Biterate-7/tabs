@@ -36,7 +36,14 @@ import {
   MSG_PAGE_REQUEST,
   PAGE_READY_WAIT_MS,
   MSG_SAVE_SESSION,
+  CAPTURE_JOBS_KEY,
+  CAPTURE_RETRY_ALARM,
+  MSG_CAPTURE_STATUS,
+  MSG_CAPTURE_RETRY,
+  PROJECTS_SNAPSHOT_KEY,
 } from "../src/config.js";
+import { createCaptureQueue, publicJob } from "../src/capture-queue.js";
+import { PROJECT_EVENTS, applyProjectsReport, readProjectsReport, readProjectsSnapshot } from "../src/projects-sync.js";
 import { pageFingerprint } from "../src/tab-matching.js";
 import { aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
 import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_TIMING } from "../src/ai-transfer.js";
@@ -421,10 +428,14 @@ async function openHubbleTab() {
  * chosen: it can't mount the app shell, so handing it the payload would
  * always end in a wasted ack timeout followed by the fresh-tab fallback.
  * Opening a usable tab straight away is both faster and less confusing.
+ *
+ * A tab Chrome has discarded (Memory Saver) comes last: it has no page and no
+ * content script until it is reloaded, so asking it anything only ever fails.
  */
 function pickIngestibleTab(matches) {
   const appRoute = matches.filter((tab) => typeof tab.url === "string" && isAppRouteUrl(tab.url));
-  return appRoute.find((tab) => tab.active) ?? appRoute[0];
+  const live = appRoute.filter((tab) => !tab.discarded);
+  return live.find((tab) => tab.active) ?? live[0] ?? appRoute[0];
 }
 
 /**
@@ -1084,15 +1095,51 @@ async function quickAddShortcut() {
  * looking at in Hubble becomes quick add's target (see resolveTarget).
  * Answered with the shortcut, so Hubble can show the real one.
  */
+// Reports from several Hubble tabs land here one at a time, so two arriving together can't write over each other.
+let projectsChain = Promise.resolve();
+
+/**
+ * Keeps the extension's copy of the person's projects (src/projects-sync.js)
+ * current from one Hubble page report. Resolves to the project list the rest
+ * of the report should be judged against: the report's own when it is the
+ * newest, or the stored one when this tab had not caught up yet.
+ */
+function recordProjectsReport(payload) {
+  const run = projectsChain.then(async () => {
+    const report = readProjectsReport(payload);
+    // A page from before revisions existed: its list is all there is.
+    if (!report) return payload?.projects;
+    const stored = readProjectsSnapshot((await chrome.storage.local.get(PROJECTS_SNAPSHOT_KEY))?.[PROJECTS_SNAPSHOT_KEY]);
+    const applied = applyProjectsReport(stored, report, Date.now());
+    if (!applied.accepted) return applied.reason === "stale" ? stored.projects : report.projects;
+    await chrome.storage.local.set({ [PROJECTS_SNAPSHOT_KEY]: applied.snapshot });
+    if (applied.changes.length > 0) {
+      // Kinds and counts only: never a project's name.
+      const counts = {};
+      for (const change of applied.changes) counts[change.type] = (counts[change.type] ?? 0) + 1;
+      log("projects-changed", { revision: report.revision, projects: report.projects.length, ...counts });
+    }
+    const deleted = applied.changes.filter((change) => change.type === PROJECT_EVENTS.DELETED).map((change) => change.id);
+    if (deleted.length > 0) await captureQueue.projectsDeleted(deleted);
+    return report.projects;
+  });
+  projectsChain = run.catch(() => {});
+  return run;
+}
+
 async function handleProjectFocus(payload) {
   const stored = await chrome.storage.local.get([TARGET_PROJECT_KEY, HUBBLE_FOCUS_KEY]);
   const previous = readStoredTarget(stored?.[TARGET_PROJECT_KEY]);
   const focus = payload?.focus && typeof payload.focus.id === "string" ? { id: payload.focus.id } : undefined;
+  const projects = await recordProjectsReport(payload).catch((err) => {
+    log("projects-snapshot-failed", errorMessage(err));
+    return payload?.projects;
+  });
   const { target, lastFocusId } = resolveTarget({
     stored: previous,
     lastFocusId: typeof stored?.[HUBBLE_FOCUS_KEY] === "string" ? stored[HUBBLE_FOCUS_KEY] : undefined,
     focus,
-    projects: payload?.projects,
+    projects,
     visible: payload?.visible === true,
   });
   const changed = target?.id !== previous?.id || target?.name !== previous?.name;
@@ -1102,6 +1149,8 @@ async function handleProjectFocus(payload) {
   };
   if (Object.keys(writes).length > 0) await chrome.storage.local.set(writes);
   if (changed && !target) await chrome.storage.local.remove(TARGET_PROJECT_KEY);
+  // A Hubble page that reports is up and holds its projects: any conversation waiting to be saved can go now.
+  void flushCaptures("hubble-ready");
   return { ok: true, shortcut: await quickAddShortcut(), ...(target ? { target } : {}) };
 }
 
@@ -1342,6 +1391,16 @@ async function askHubblePage(kind, args, { openIfMissing = false } = {}) {
   } catch {
     tab = undefined;
   }
+  // Discarded by Chrome (Memory Saver): nothing is running there to answer. Reloaded only for something the person just asked for.
+  if (tab?.discarded) {
+    if (!openIfMissing) return { ok: false, error: "no-hubble-tab" };
+    try {
+      await chrome.tabs.reload(tab.id);
+      if ((await waitForTabComplete(tab.id)) === "removed") tab = undefined;
+    } catch {
+      tab = undefined;
+    }
+  }
   if (!tab) {
     if (!openIfMissing) return { ok: false, error: "no-hubble-tab" };
     try {
@@ -1474,10 +1533,12 @@ async function captureIdentified(tabId, tab, identity, workspaceId) {
   if (!viaDesktop.fallback) {
     return withReadNotes(answerFromDesktop(viaDesktop), checked);
   }
-  // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup.
+  // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup — as a job that is written
+  // down before it is delivered, so a closed popup, a stopped worker or a Hubble page that answers late loses nothing.
   if (!workspaceId) return { ok: false, error: "no-project" };
-  const answer = await askHubblePage("capture", { workspaceId, capture }, { openIfMissing: true });
-  return withReadNotes(answer, checked);
+  const notes = { ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) };
+  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes });
+  return answerFromJob(job);
 }
 
 /** What was saved was what was on screen; the popup says when that was not the whole chat. */
@@ -1485,6 +1546,85 @@ function withReadNotes(answer, checked) {
   if (!answer?.ok || !(checked.olderNotLoaded || checked.partial)) return answer;
   return { ...answer, result: { ...answer.result, ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) } };
 }
+
+/**
+ * A save job's state as the popup takes a save's answer. `ok: true` only for a
+ * job the Hubble page said is on disk; one still waiting says so (`queued`)
+ * along with why its last delivery failed, so the popup never shows "Saved"
+ * for something that is merely on its way.
+ */
+function answerFromJob(job) {
+  if (!job || (!job.status && job.error)) return { ok: false, error: job?.error ?? "failed" };
+  const view = publicJob(job);
+  const hubble = job.hubbleTabId !== undefined ? { hubbleTabId: job.hubbleTabId } : {};
+  if (job.status === "saved") return { ok: true, result: { ...job.result, ...(job.notes ?? {}) }, job: view, ...hubble };
+  return { ok: false, error: job.error ?? "failed", job: view, ...(job.status === "queued" || job.status === "saving" ? { queued: true } : {}), ...hubble };
+}
+
+/** A project's name as Hubble last reported it, so a save reopened later can still say where it went. */
+async function snapshotProjectName(workspaceId) {
+  return (await projectsSnapshot())?.projects.find((project) => project.id === workspaceId)?.name;
+}
+
+async function projectsSnapshot() {
+  try {
+    return readProjectsSnapshot((await chrome.storage.local.get(PROJECTS_SNAPSHOT_KEY))?.[PROJECTS_SNAPSHOT_KEY]);
+  } catch {
+    return undefined;
+  }
+}
+
+// chrome.storage.local, when this Chrome has it; the queue keeps working from memory when it doesn't.
+const captureStorage = {
+  get: async () => {
+    const local = globalThis.chrome?.storage?.local;
+    return local ? (await local.get(CAPTURE_JOBS_KEY))?.[CAPTURE_JOBS_KEY] : undefined;
+  },
+  set: async (jobs) => {
+    await globalThis.chrome?.storage?.local?.set({ [CAPTURE_JOBS_KEY]: jobs });
+  },
+};
+
+let captureRetryTimer;
+
+/**
+ * Wakes the queue for its next retry: a timer while this worker is awake, and
+ * an alarm in case Chrome stops the worker first (alarms are never sooner than
+ * 30 seconds, so the timer does the short waits).
+ */
+function scheduleCaptureRetry(at) {
+  clearTimeout(captureRetryTimer);
+  captureRetryTimer = setTimeout(() => void flushCaptures("timer"), Math.max(0, at - Date.now()));
+  try {
+    globalThis.chrome?.alarms?.create(CAPTURE_RETRY_ALARM, { when: Math.max(at, Date.now() + 30000) })?.catch?.(() => {});
+  } catch {
+    // No alarms: the timer, the next Hubble page report and the next worker start still deliver it.
+  }
+}
+
+const captureQueue = createCaptureQueue({
+  storage: captureStorage,
+  deliver: (job, { openIfMissing }) => askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing }),
+  schedule: scheduleCaptureRetry,
+  isProjectKnown: async (workspaceId) => Boolean((await projectsSnapshot())?.projects.some((project) => project.id === workspaceId)),
+  newId: newRequestId,
+  log,
+});
+
+function flushCaptures(reason) {
+  return captureQueue.flush({ reason }).catch((err) => log("capture-flush-failed", { reason, detail: errorMessage(err) }));
+}
+
+// Registered at module scope, as MV3 requires for an event that wakes a stopped worker.
+chrome.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm?.name === CAPTURE_RETRY_ALARM) void flushCaptures("alarm");
+});
+
+// A fresh worker (Chrome started, or the last one was stopped mid-save): pick up whatever was left waiting.
+void captureQueue
+  .reconcile()
+  .then(() => flushCaptures("startup"))
+  .catch((err) => log("capture-reconcile-failed", errorMessage(err)));
 
 async function insertContext({ tabId, text }) {
   if (typeof text !== "string" || text.length === 0 || text.length > 200000) return { inserted: false, reason: "invalid" };
@@ -1553,6 +1693,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     captureConversation({ tabId, workspaceId, ...(expectedKey !== undefined ? { expectedKey } : {}) })
       .then((answer) => safeSendResponse(sendResponse, answer))
+      .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
+    return true;
+  }
+
+  if (message?.type === MSG_CAPTURE_STATUS) {
+    const key = message.payload?.key;
+    if (typeof key !== "string" || !key || key.length > 300) {
+      safeSendResponse(sendResponse, { ok: false, error: "invalid" });
+      return undefined;
+    }
+    captureQueue
+      .forConversation(key)
+      .then((job) => safeSendResponse(sendResponse, { ok: true, ...(job ? { job } : {}) }))
+      .catch(() => safeSendResponse(sendResponse, { ok: false, error: "failed" }));
+    return true;
+  }
+
+  if (message?.type === MSG_CAPTURE_RETRY) {
+    const id = message.payload?.id;
+    if (typeof id !== "string" || !id || id.length > 100) {
+      safeSendResponse(sendResponse, { ok: false, error: "invalid" });
+      return undefined;
+    }
+    captureQueue
+      .retry(id)
+      .then((job) => safeSendResponse(sendResponse, job ? answerFromJob(job) : { ok: false, error: "not-found" }))
       .catch((err) => safeSendResponse(sendResponse, { ok: false, error: "failed", detail: errorMessage(err) }));
     return true;
   }
