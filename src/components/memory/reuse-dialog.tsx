@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Textarea } from "@/components/ui/textarea"
+import { RichText } from "@/components/rich-text/rich-text"
 import { ProviderBadge, ProviderMark } from "./provider-mark"
 import { useAiTransfer } from "@/hooks/use-ai-transfer"
 import { useProjectContents } from "@/hooks/use-project-contents"
@@ -118,7 +119,9 @@ export function ReuseDialog({
   const [asFile, setAsFile] = useState(false)
   const [draft, setDraft] = useState<string | null>(null)
   const [copy, setCopy] = useState<CopyState>({ status: "idle" })
+  const [editing, setEditing] = useState(false)
   const previewRef = useRef<HTMLTextAreaElement>(null)
+  const readingRef = useRef<HTMLDivElement>(null)
   const transfer = useAiTransfer(open)
   const support = transfer.support
   const canTransfer = support?.available === true
@@ -185,8 +188,13 @@ export function ReuseDialog({
       return true
     } catch {
       // The browser refused: select the text so a keyboard copy works, and say exactly that.
-      previewRef.current?.focus()
-      previewRef.current?.select()
+      if (previewRef.current) {
+        previewRef.current.focus()
+        previewRef.current.select()
+      } else if (readingRef.current) {
+        readingRef.current.focus()
+        window.getSelection()?.selectAllChildren(readingRef.current)
+      }
       setCopy({ status: "selected" })
       return false
     }
@@ -242,6 +250,7 @@ export function ReuseDialog({
       onOpenChange={(next) => {
         if (!next) {
           setDraft(null)
+          setEditing(false)
           setCopy({ status: "idle" })
         }
         onOpenChange(next)
@@ -368,23 +377,44 @@ export function ReuseDialog({
                 {plan.attachments.length > 0 && ` · ${plan.attachments.length} file${plan.attachments.length === 1 ? "" : "s"} attached`}
                 {loading && " · loading…"}
               </span>
-              {draft !== null && (
-                <Button type="button" size="xs" variant="ghost" onClick={() => setDraft(null)}>
-                  {stale ? "Rebuild from selection" : "Undo my edits"}
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                {draft !== null && (
+                  <Button type="button" size="xs" variant="ghost" onClick={() => setDraft(null)}>
+                    {stale ? "Rebuild from selection" : "Undo my edits"}
+                  </Button>
+                )}
+                {!nothingChosen && (
+                  <Button type="button" size="xs" variant="ghost" aria-pressed={editing} onClick={() => setEditing((current) => !current)}>
+                    {editing ? "Done" : "Edit"}
+                  </Button>
+                )}
+              </div>
             </div>
-            <Textarea
-              ref={previewRef}
-              aria-label="Message for the AI app"
-              className="max-h-[50dvh] min-h-64 flex-1 overflow-y-auto font-mono text-[12px] leading-relaxed"
-              value={nothingChosen && draft === null ? "" : text}
-              onChange={(event) => {
-                setDraft(event.target.value)
-                changed()
-              }}
-              disabled={nothingChosen && draft === null}
-            />
+            {editing || (nothingChosen && draft === null) ? (
+              <Textarea
+                ref={previewRef}
+                aria-label="Message for the AI app"
+                className="max-h-[50dvh] min-h-64 flex-1 overflow-y-auto text-body-sm"
+                value={nothingChosen && draft === null ? "" : text}
+                onChange={(event) => {
+                  setDraft(event.target.value)
+                  changed()
+                }}
+                disabled={nothingChosen && draft === null}
+              />
+            ) : (
+              // The message as read: its Markdown drawn as text. What is copied and sent is still `text`, unchanged.
+              <div
+                ref={readingRef}
+                role="region"
+                aria-label="Message for the AI app"
+                tabIndex={0}
+                data-message-preview
+                className="max-h-[50dvh] min-h-64 flex-1 overflow-y-auto rounded-md border border-border bg-background px-2.5 py-2 outline-none focus-visible:border-ring"
+              >
+                <RichText source={text} variant="message" />
+              </div>
+            )}
             <p className="text-meta text-tertiary" data-bundle-notes>
               {[
                 bundle.omitted.missing > 0 ? `${bundle.omitted.missing} chosen item${bundle.omitted.missing === 1 ? " is" : "s are"} no longer in ${name}` : "",

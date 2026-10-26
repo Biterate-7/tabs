@@ -274,6 +274,8 @@ describe("Use in AI with uploaded files", () => {
     expect(dialog.getByText("no text")).toBeTruthy()
     await user.click(dialog.getByRole("button", { name: "Select all" }))
     await user.type(dialog.getByLabelText("Instructions"), "entropy")
+    // The message is read as formatted text; its Markdown is what Edit shows, and what is sent.
+    await user.click(dialog.getByRole("button", { name: "Edit" }))
     const preview = dialog.getByLabelText("Message for the AI app") as HTMLTextAreaElement
     await waitFor(() => expect(preview.value).toContain("> (p. 2) Entropy always increases in an isolated system."))
     expect(preview.value).toContain("_uploaded file “Lecture 4.pdf”, 2 pages")

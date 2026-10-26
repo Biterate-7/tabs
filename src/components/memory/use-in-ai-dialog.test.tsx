@@ -103,6 +103,27 @@ describe("Use in AI with Hubble for Chrome", () => {
     expect(window.localStorage.getItem("hubble.useInAi.provider")).toBe("claude")
   })
 
+  it("shows the message as formatted text, keeps its Markdown for Edit, and sends the Markdown unchanged", async () => {
+    const user = userEvent.setup()
+    const { dialog } = renderDialog()
+    await user.click(await dialog.findByRole("checkbox", { name: "Attach original files" }))
+    const reading = await dialog.findByRole("region", { name: "Message for the AI app" })
+    await waitFor(() => expect(reading.textContent).toContain("Entropy always increases in an isolated system."))
+    expect(reading.textContent).not.toMatch(/^#|\*\*|^> /m)
+    expect(reading.querySelector("h1,h2,h3,h4,h5,h6")).toBeTruthy()
+    expect(reading.className).not.toContain("font-mono")
+
+    await user.click(dialog.getByRole("button", { name: "Edit" }))
+    const editor = dialog.getByLabelText("Message for the AI app") as HTMLTextAreaElement
+    expect(editor.className).not.toContain("font-mono")
+    expect(editor.value).toMatch(/^#/m)
+    await user.click(dialog.getByRole("button", { name: "Done" }))
+
+    await user.click(dialog.getByRole("button", { name: "Open in ChatGPT" }))
+    await waitFor(() => expect(seen).toHaveLength(1))
+    expect(seen[0]!.payload.text).toBe(editor.value)
+  })
+
   it("sends only when the person chooses Send automatically, and says sent only when it was", async () => {
     answer = () => ({ ok: true, state: "submitted", attached: [], notAttached: [], usedFallback: false, reusedTab: true })
     const user = userEvent.setup()
