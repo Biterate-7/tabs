@@ -120,7 +120,7 @@ describe("Save to Hubble", () => {
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
     expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }) });
     expect(pageRequests).toEqual([
-      expect.objectContaining({ tabId: 42, kind: "capture", args: { workspaceId: "ws-history", capture: { url: CHAT_URL, title: "Thesis feedback - Claude", turns: expect.any(Array) } } }),
+      expect.objectContaining({ tabId: 42, kind: "capture", args: { workspaceId: "ws-history", captureId: expect.any(String), capture: { url: CHAT_URL, title: "Thesis feedback - Claude", turns: expect.any(Array) } } }),
     ]);
   });
 
@@ -169,6 +169,7 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
         kind: "capture",
         args: {
           workspaceId: "ws-physics",
+          captureId: expect.any(String),
           capture: {
             url: CHATGPT_URL,
             title: "Admissions Strategy Assessment",
@@ -244,7 +245,7 @@ describe("Save to Hubble on Claude, Gemini and Perplexity, signed in (2026-10-16
     expect(pageRequests).toEqual([
       expect.objectContaining({
         kind: "capture",
-        args: { workspaceId: "ws-history", capture: { url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] } },
+        args: { workspaceId: "ws-history", captureId: expect.any(String), capture: { url, title, turns: [{ role: "user", text: "What caused WW1?" }, { role: "assistant", text: "Militarism and alliances." }] } },
       }),
     ]);
   });

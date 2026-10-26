@@ -258,6 +258,25 @@ export const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
 export const PAGE_REQUEST_TIMEOUT_MS = 15000;
 // How long the background keeps asking a page that says it isn't ready yet (it is still loading your projects).
 export const PAGE_READY_WAIT_MS = 12000;
+// Page -> content script: "my page-request listener is attached" (and again once it can answer). A request that
+// reached the page before its listener existed — a Hubble tab the extension just opened, still hydrating — was lost
+// and cost the content script's whole timeout; the content script now re-posts every request still waiting when it
+// hears this, and the page answers each requestId once.
+export const MSG_MEMORY_READY = "HUBBLE_MEMORY_READY";
+
+// Save to Hubble on the web as a durable job (src/capture-queue.js), in chrome.storage.local: written before it is
+// delivered, retried with a bounded backoff, "saved" only on the page's answer that it is on disk.
+export const CAPTURE_JOBS_KEY = "hubble_capture_jobs";
+// The alarm that wakes a stopped worker for the next retry (a timer covers it while the worker is awake).
+export const CAPTURE_RETRY_ALARM = "hubble-capture-retry";
+// Popup -> background: the state of the save of one conversation ({ key }), and "try that save again" ({ id }).
+export const MSG_CAPTURE_STATUS = "HUBBLE_CAPTURE_STATUS";
+export const MSG_CAPTURE_RETRY = "HUBBLE_CAPTURE_RETRY";
+
+// The person's projects as the Hubble page last reported them (src/projects-sync.js), in chrome.storage.local:
+// `{ revision, projects: [{ id, name }], currentId?, receivedAt }`. Every list of projects in the extension shows it
+// at once and follows it while open; a live answer from a Hubble tab still wins.
+export const PROJECTS_SNAPSHOT_KEY = "hubble_projects";
 
 // Sessions: popup -> background: "save the tabs of this window (or every
 // window) as a session in Hubble". The background reads the tabs and hands

@@ -414,3 +414,71 @@ describe("quick add relays", () => {
     expect(await response).toEqual({ ok: true, accepted: 0, reason: "project-missing" });
   });
 });
+
+// Regression: a capture sent to a Hubble tab the extension had just opened was
+// posted before the page's request listener existed, reached nothing, and cost
+// the whole PAGE_REQUEST_TIMEOUT_MS before failing as "timeout" — while the
+// conversation was simply lost.
+describe("page requests that arrive before the page listens", () => {
+  function askBackground(message) {
+    return new Promise((resolve) => {
+      for (const listener of onMessageListeners) {
+        if (listener(message, {}, resolve) === true) return;
+      }
+      resolve(undefined);
+    });
+  }
+
+  /** Every HUBBLE_PAGE_REQUEST the content script posts into the page, by requestId. */
+  function pageRequestsSeen() {
+    const seen = [];
+    const listener = (event) => {
+      if (event.data?.source === MESSAGE_SOURCE && event.data.type === CONFIG.MSG_PAGE_REQUEST) seen.push(event.data.payload.requestId);
+    };
+    window.addEventListener("message", listener);
+    return { seen, stop: () => window.removeEventListener("message", listener) };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("is posted again when the page says it is listening, and answered", async () => {
+    await loadContentScript();
+    const posts = pageRequestsSeen();
+    const answer = askBackground({ type: CONFIG.MSG_PAGE_REQUEST, payload: { requestId: "cap-1", kind: "capture", args: { workspaceId: "ws" } } });
+    await settle();
+    // Nobody heard that one: the page's listener didn't exist yet. Now it does, and says so.
+    expect(posts.seen).toEqual(["cap-1"]);
+    pagePosts(CONFIG.MSG_MEMORY_READY, {});
+    await vi.waitFor(() => expect(posts.seen).toEqual(["cap-1", "cap-1"]));
+    pagePosts(CONFIG.MSG_PAGE_RESPONSE, { requestId: "cap-1", ok: true, result: { outcome: "added" } });
+    expect(await answer).toEqual({ ok: true, result: { outcome: "added" } });
+    posts.stop();
+  });
+
+  it("re-posts only what is still waiting: an answered request is never sent again", async () => {
+    await loadContentScript();
+    const posts = pageRequestsSeen();
+    const answer = askBackground({ type: CONFIG.MSG_PAGE_REQUEST, payload: { requestId: "cap-2", kind: "projects" } });
+    await settle();
+    pagePosts(CONFIG.MSG_PAGE_RESPONSE, { requestId: "cap-2", ok: true, result: {} });
+    await answer;
+    pagePosts(CONFIG.MSG_MEMORY_READY, {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(posts.seen.filter((id) => id === "cap-2")).toEqual(["cap-2"]);
+    posts.stop();
+  });
+
+  it("relays the project report's revision, so the background can order reports from several tabs", async () => {
+    chrome.runtime.sendMessage.mockResolvedValue({ ok: true, shortcut: "" });
+    await loadContentScript();
+    pagePosts(CONFIG.MSG_PROJECT_FOCUS, { focus: { id: "ws" }, projects: [{ id: "ws", name: "W" }], visible: true, revision: 1234 });
+    await vi.waitFor(() => expect(chrome.runtime.sendMessage).toHaveBeenCalled());
+    expect(chrome.runtime.sendMessage.mock.calls[0][0].payload).toMatchObject({ revision: 1234 });
+  });
+
+  it("declares the ready message with config.js's value, and the web app agrees", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    expect(readFileSync(path.join(here, "content-script.js"), "utf8")).toContain(`const MSG_MEMORY_READY = ${JSON.stringify(CONFIG.MSG_MEMORY_READY)};`);
+    expect(readFileSync(path.join(here, "..", "..", "src", "lib", "memory", "extension-protocol.ts"), "utf8")).toContain(JSON.stringify(CONFIG.MSG_MEMORY_READY));
+  });
+});

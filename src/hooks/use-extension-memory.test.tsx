@@ -5,7 +5,7 @@ import { useExtensionMemory } from "./use-extension-memory"
 import type { ExtensionMemoryHandlers } from "./use-extension-memory"
 import { BROWSER_MESSAGE_SOURCE } from "@/lib/browser/protocol"
 import { applyConversationSave, planConversationSave } from "@/lib/conversations/save"
-import { MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE } from "@/lib/memory/extension-protocol"
+import { MSG_MEMORY_READY, MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE } from "@/lib/memory/extension-protocol"
 import { putContent, resetContentStoreForTests } from "@/lib/resources/content-store"
 import { __resetSessionsForTests, getSessionsSnapshot } from "@/lib/sessions/persistence"
 import type { WorkspaceStore } from "@/lib/workspace/types"
@@ -109,7 +109,7 @@ describe("useExtensionMemory", () => {
   it("re-reads a capture and saves it through the shell's one save", async () => {
     const { handlers } = mount(await world())
     ask("r3", "capture", { workspaceId: "phys", capture: { url: "https://chatgpt.com/c/6720a1b2-1111", title: "Energy - ChatGPT", turns: [{ role: "user", text: "What is work?" }, { role: "assistant", text: "Energy transferred." }] } })
-    expect(await answerTo("r3")).toEqual({ requestId: "r3", ok: true, result: { outcome: "added", title: "Energy", turns: 2, truncated: false } })
+    expect(await answerTo("r3")).toEqual({ requestId: "r3", ok: true, result: { outcome: "added", title: "Energy", turns: 2, truncated: false, project: "Physics" } })
     expect(handlers.saveCapture).toHaveBeenCalledWith("phys", expect.objectContaining({ provider: "chatgpt", method: "page" }), false)
   })
 
@@ -189,5 +189,60 @@ describe("useExtensionMemory — save-session", () => {
     expect(await answerTo("s4")).toMatchObject({ ok: false, error: "session-empty" })
     expect(await answerTo("s5")).toMatchObject({ ok: false, error: "invalid" })
     expect(getSessionsSnapshot().sessions).toEqual([])
+  })
+})
+
+// Delivery from the extension is at-least-once (the content script re-posts what is still waiting, and the
+// extension's save queue retries): every answer here has to be idempotent.
+describe("useExtensionMemory, delivered more than once", () => {
+  const CAPTURE = { url: "https://chatgpt.com/c/6720a1b2-1111", title: "Energy - ChatGPT", turns: [{ role: "user", text: "What is work?" }, { role: "assistant", text: "Energy transferred." }] }
+
+  function readyAnnouncements() {
+    return (window.postMessage as unknown as { mock: { calls: [{ type?: string }][] } }).mock.calls.filter(([message]) => message?.type === MSG_MEMORY_READY).length
+  }
+
+  it("says it is listening, and again once it can answer, so requests sent before then are posted again", async () => {
+    const { hook } = mount(await world(), false)
+    expect(readyAnnouncements()).toBe(1)
+    hook.rerender({ isReady: true })
+    expect(readyAnnouncements()).toBe(2)
+  })
+
+  it("acts on a requestId once, however many times it arrives", async () => {
+    const { handlers } = mount(await world())
+    ask("r-dup", "capture", { workspaceId: "phys", capture: CAPTURE })
+    ask("r-dup", "capture", { workspaceId: "phys", capture: CAPTURE })
+    await answerTo("r-dup")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(posted.filter((entry) => entry.requestId === "r-dup")).toHaveLength(1)
+    expect(handlers.saveCapture).toHaveBeenCalledTimes(1)
+  })
+
+  it("answers a retried save (same captureId) with the first save's answer — one copy, not two", async () => {
+    const { handlers } = mount(await world())
+    ask("r-a", "capture", { workspaceId: "phys", captureId: "cap-1", capture: CAPTURE })
+    ask("r-b", "capture", { workspaceId: "phys", captureId: "cap-1", capture: CAPTURE })
+    const [first, second] = [await answerTo("r-a"), await answerTo("r-b")]
+    expect(second).toEqual({ ...first, requestId: "r-b" })
+    expect(handlers.saveCapture).toHaveBeenCalledTimes(1)
+  })
+
+  it("lets a save that failed be tried again under the same captureId", async () => {
+    const saveCapture = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, reason: "storage-failed" })
+      .mockResolvedValueOnce({ ok: true, outcome: "added", title: "Energy" })
+    mount(await world(), true, { saveCapture })
+    ask("r-1", "capture", { workspaceId: "phys", captureId: "cap-2", capture: CAPTURE })
+    expect(await answerTo("r-1")).toMatchObject({ ok: false, error: "storage-failed" })
+    ask("r-2", "capture", { workspaceId: "phys", captureId: "cap-2", capture: CAPTURE })
+    expect(await answerTo("r-2")).toMatchObject({ ok: true, result: { outcome: "added" } })
+  })
+
+  it("saves only into this account's own projects: an id from anywhere else is refused, nothing written", async () => {
+    const { handlers } = mount(await world())
+    ask("r-other", "capture", { workspaceId: "someone-elses-project", captureId: "cap-3", capture: CAPTURE })
+    expect(await answerTo("r-other")).toMatchObject({ ok: false, error: "project-missing" })
+    expect(handlers.saveCapture).not.toHaveBeenCalled()
   })
 })

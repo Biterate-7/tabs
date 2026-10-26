@@ -32,6 +32,8 @@
             </label>
             <div class="popup__row">
               <button id="capture-button" class="popup__button" disabled>Save this conversation</button>
+              <!-- A save that is waiting or failed (src/capture-queue.js): delivered again now. -->
+              <button id="capture-retry-button" class="popup__button popup__button--secondary" hidden>Try again</button>
               <button id="ai-open-hubble-button" class="popup__button popup__button--secondary" hidden>Open Hubble</button>
             </div>
             <p id="capture-status" class="popup__muted popup__detail" role="status" hidden></p>

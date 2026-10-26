@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hubble",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Save AI conversations and tabs to your Hubble projects, and use what you saved in ChatGPT, Claude, Gemini and Perplexity.",
   "minimum_chrome_version": "102",
   "action": {
@@ -18,7 +18,7 @@
     "service_worker": "background/background.js",
     "type": "module"
   },
-  "permissions": ["tabs", "history", "storage", "scripting", "contextMenus", "activeTab"],
+  "permissions": ["tabs", "history", "storage", "scripting", "contextMenus", "activeTab", "alarms"],
   "commands": {
     "add-to-project": {
       "suggested_key": { "default": "Alt+Shift+H" },

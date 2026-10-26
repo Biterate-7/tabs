@@ -20,6 +20,7 @@ const MSG_SOURCE_STATUS = "TABDUMP_SOURCE_STATUS";
 const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
 const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
 const MSG_PAGE_RESPONSE = "HUBBLE_PAGE_RESPONSE";
+const MSG_MEMORY_READY = "HUBBLE_MEMORY_READY";
 // Use in AI (src/ai-transfer.js; the page side is src/lib/ai-transfer/protocol.ts).
 const MSG_AI_TRANSFER = "HUBBLE_AI_TRANSFER";
 const MSG_AI_TRANSFER_PROGRESS = "HUBBLE_AI_TRANSFER_PROGRESS";
@@ -252,7 +253,8 @@ onPageMessage((event) => {
     .then(() =>
       chrome.runtime.sendMessage({
         type: MSG_PROJECT_FOCUS,
-        payload: { focus: data.payload?.focus, projects: data.payload?.projects, visible: data.payload?.visible === true },
+        // `revision` orders reports from several Hubble tabs (src/projects-sync.js); background.js re-checks it.
+        payload: { focus: data.payload?.focus, projects: data.payload?.projects, visible: data.payload?.visible === true, revision: data.payload?.revision },
       })
     )
     .then((response) => {
@@ -360,6 +362,30 @@ onPageMessage((event) => {
 // conversation, search, build context) relayed into the page, and the page's
 // answer back — matched by requestId, bounded by a timeout. A transport only:
 // the page re-validates every request (src/lib/memory/extension-protocol.ts).
+//
+// Requests still waiting for an answer, by requestId. A request posted before
+// the page's listener exists (a Hubble tab the extension just opened, still
+// hydrating) reaches nothing — the same race the import handshake closed with
+// TABDUMP_PAGE_READY — so every waiting request is posted again when the page
+// announces MSG_MEMORY_READY. The page answers each requestId once, so a
+// request that did arrive the first time is never acted on twice.
+const waitingPageRequests = new Map();
+
+function postPageRequest(requestId, payload) {
+  window.postMessage(
+    { source: MESSAGE_SOURCE, type: MSG_PAGE_REQUEST, payload: { requestId, kind: payload?.kind, args: payload?.args } },
+    window.location.origin
+  );
+}
+
+onPageMessage((event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.source !== window) return;
+  const data = event.data;
+  if (!data || data.source !== MESSAGE_SOURCE || data.type !== MSG_MEMORY_READY) return;
+  for (const [requestId, payload] of waitingPageRequests) postPageRequest(requestId, payload);
+});
+
 onExtensionMessage((message, _sender, sendResponse) => {
   if (message?.type !== MSG_PAGE_REQUEST) return undefined;
   const requestId = typeof message.payload?.requestId === "string" ? message.payload.requestId : `${Date.now()}-${Math.random()}`;
@@ -369,6 +395,7 @@ onExtensionMessage((message, _sender, sendResponse) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    waitingPageRequests.delete(requestId);
     window.removeEventListener("message", handleResult);
     try {
       sendResponse(response);
@@ -388,10 +415,8 @@ onExtensionMessage((message, _sender, sendResponse) => {
 
   const timer = setTimeout(() => finish({ ok: false, error: "timeout" }), PAGE_REQUEST_TIMEOUT_MS);
   window.addEventListener("message", handleResult);
-  window.postMessage(
-    { source: MESSAGE_SOURCE, type: MSG_PAGE_REQUEST, payload: { requestId, kind: message.payload?.kind, args: message.payload?.args } },
-    window.location.origin
-  );
+  waitingPageRequests.set(requestId, message.payload);
+  postPageRequest(requestId, message.payload);
   return true;
 });
 

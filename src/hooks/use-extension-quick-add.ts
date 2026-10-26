@@ -27,7 +27,11 @@ import type { Workspace } from "@/lib/workspace/types"
  *   - reports the open project (id, plus every project's id and name so a
  *     remembered one can be renamed or found gone, and whether the page is
  *     visible) whenever it changes, whenever Hubble is looked at again, and
- *     whenever the extension's content script announces itself;
+ *     whenever the extension's content script announces itself. The report
+ *     is also the extension's live copy of the project list
+ *     (extension/src/projects-sync.js): it carries a `revision` — when this
+ *     page's list last changed — so a report from a tab that had not caught
+ *     up yet never replaces a newer one;
  *   - learns the extension's shortcut back, so the project home can say the
  *     real one (`quickAdd`, undefined until the extension answers);
  *   - answers "how far has reading got?" for given addresses in a project,
@@ -69,11 +73,15 @@ type ProjectRef = { id: string; name: string }
  * popup pick; a hidden tab (one the extension opened in the background) only
  * counts when it names a different project.
  */
-function reportProject(signature: string) {
+function reportProject(signature: string, revision: number) {
   const [focusId, projects] = JSON.parse(signature) as [string | null, ProjectRef[]]
   if (!focusId) return
   window.postMessage(
-    { source: BROWSER_MESSAGE_SOURCE, type: MSG_PROJECT_FOCUS, payload: { focus: { id: focusId }, projects, visible: document.visibilityState === "visible" } },
+    {
+      source: BROWSER_MESSAGE_SOURCE,
+      type: MSG_PROJECT_FOCUS,
+      payload: { focus: { id: focusId }, projects, visible: document.visibilityState === "visible", ...(revision > 0 ? { revision } : {}) },
+    },
     window.location.origin
   )
 }
@@ -90,9 +98,11 @@ export function useExtensionQuickAdd(options: { workspaces: readonly Workspace[]
   const signatureRef = useRef(signature)
   // eslint-disable-next-line react-hooks/refs
   signatureRef.current = signature
+  // When this page's list (or open project) last changed: set by the effect below, before it reports.
+  const revisionRef = useRef(0)
 
   useEffect(() => {
-    const report = () => reportProject(signatureRef.current)
+    const report = () => reportProject(signatureRef.current, revisionRef.current)
     // Coming back to Hubble makes the project on screen the current one again.
     const onVisible = () => {
       if (document.visibilityState === "visible") report()
@@ -134,7 +144,11 @@ export function useExtensionQuickAdd(options: { workspaces: readonly Workspace[]
     }
   }, [])
 
-  useEffect(() => reportProject(signature), [signature])
+  useEffect(() => {
+    // Strictly increasing within this page, even for two changes in the same millisecond.
+    revisionRef.current = Math.max(Date.now(), revisionRef.current + 1)
+    reportProject(signature, revisionRef.current)
+  }, [signature])
 
   return info
 }

@@ -280,6 +280,42 @@ popup ──► background ──► content script (Hubble tab) ──► Hubbl
   Search and context ("Use your knowledge here") stay with Hubble on the web:
   the bridge only takes things in.
 
+### Sync and save reliability (extension 0.8.3)
+
+Projects and conversations are local-first: the Hubble page's storage is the
+source of truth, and the extension only ever learns from it.
+
+- **Projects reach the extension as they change.** The page's
+  `TABDUMP_PROJECT_FOCUS` report (sent on every create/rename/delete, on
+  focus/visibility, and whenever the content script attaches — i.e. on
+  reconnect) carries a `revision`. `background.js` keeps the newest list in
+  `chrome.storage.local` (`hubble_projects`, `src/projects-sync.js`); older or
+  repeated reports are ignored, deletions fail any save still waiting for
+  that project. The popup shows that list at once and follows
+  `chrome.storage.onChanged` while open; a live answer from a Hubble tab
+  still wins. A deleted selected project is cleared and said, never swapped.
+- **Hubble tabs stay in step.** Each `AppShell` takes another tab's write of
+  the workspace store from the `storage` event (without writing it back), so
+  a stale tab neither answers the extension with an old list nor overwrites
+  a conversation another tab saved.
+- **Saves are durable jobs** (`src/capture-queue.js`, `hubble_capture_jobs`):
+  written before delivery; `saving` holds a 60 s lease; transient failures
+  (`timeout`, `no-response`, `not-ready`, …) retry at 2 s · 5 s · 15 s · 1 min ·
+  5 min, then fail; a closed Hubble waits for the next page report instead of
+  spending attempts. A fresh worker reconciles expired leases; an alarm wakes
+  a stopped worker. Each job's `captureId` travels with every delivery and the
+  page answers a repeat with its first answer, so retries never duplicate.
+  The popup says *Reading → Saving → Saved* (only on the page's answer that
+  it is on disk) or *Not saved yet … will try again* / the failure, with
+  **Try again**.
+- **Requests sent before the page listens are not lost.** The page posts
+  `HUBBLE_MEMORY_READY` when its listener attaches and when it becomes ready;
+  the content script re-posts every request still waiting, and the page acts
+  on each requestId once.
+- **"Saved" means on disk.** A conversation whose workspace write to
+  localStorage fails (quota) is undone in memory and answered
+  `storage-failed`.
+
 ## 7. Web, desktop and connectors
 
 - **Web**: everything above.

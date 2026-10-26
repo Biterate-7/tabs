@@ -8,7 +8,7 @@ import { getProjectContents } from "@/lib/resources/content-store"
 import { buildMemoryBundle } from "@/lib/memory/bundle"
 import { knowledgeItemsOf } from "@/lib/memory/items"
 import { searchKnowledge } from "@/lib/memory/search"
-import { BUNDLE_LENGTH_BUDGET, EXTENSION_SEARCH_LIMIT, MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE, providerOrUndefined, readPageRequest } from "@/lib/memory/extension-protocol"
+import { BUNDLE_LENGTH_BUDGET, EXTENSION_SEARCH_LIMIT, MSG_MEMORY_READY, MSG_PAGE_REQUEST, MSG_PAGE_RESPONSE, providerOrUndefined, readPageRequest } from "@/lib/memory/extension-protocol"
 import { subjectName } from "@/lib/product/subjects"
 import { createId } from "@/lib/id"
 import { suggestSessionName } from "@/lib/sessions/capture"
@@ -34,14 +34,31 @@ export type ExtensionMemoryHandlers = {
   onReused?: (info: { workspaceId: string; items: number; provider?: AiProviderId; how: "copied" | "inserted" }) => void
 }
 
+// How many requestIds and captureIds are remembered: far more than are ever in flight at once.
+const REMEMBERED = 100
+
+function remember<K, V>(map: Map<K, V>, key: K, value: V) {
+  map.set(key, value)
+  if (map.size > REMEMBERED) map.delete(map.keys().next().value as K)
+}
+
 /**
  * Answers Hubble for Chrome's memory requests (lib/memory/extension-protocol.ts):
  * list projects, save a captured conversation, search, build context — and
  * save a session of Chrome tabs (lib/sessions).
  *
- * Mounted once, by the shell, once the store can take writes (`ready`).
- * Before that, requests are left unanswered and the extension's own timeout
- * says Hubble isn't ready — never a guess.
+ * Mounted once, by the shell. Until the store can take writes (`ready`)
+ * every request is answered "not-ready" — never a guess — and the extension
+ * asks again.
+ *
+ * Delivery is at-least-once, so answering is idempotent:
+ *   - the page announces MSG_MEMORY_READY when it starts listening and when it
+ *     becomes ready, and the content script re-posts what is still waiting —
+ *     so each requestId is acted on once, however often it arrives;
+ *   - a capture carries the extension's `captureId`, the same on every retry
+ *     of one save: a retry after a lost answer gets the first save's answer,
+ *     not a second copy (and across a reload, the save's own content rule —
+ *     same conversation, same text: unchanged — does the same).
  */
 export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boolean) {
   const handlersRef = useRef(handlers)
@@ -52,6 +69,10 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
   readyRef.current = ready
 
   useEffect(() => {
+    // Requests already taken (by requestId), and the answer each save gave (by captureId).
+    const seen = new Map<string, true>()
+    const captures = new Map<string, Promise<{ ok: true; result: unknown } | { ok: false; error: string }>>()
+
     function respond(requestId: string, body: { ok: true; result: unknown } | { ok: false; error: string }) {
       window.postMessage({ source: BROWSER_MESSAGE_SOURCE, type: MSG_PAGE_RESPONSE, payload: { requestId, ...body } }, window.location.origin)
     }
@@ -69,11 +90,16 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
             },
           }
         case "capture": {
-          if (!store.workspaces.some((workspace) => workspace.id === request.args.workspaceId)) return { ok: false, error: "project-missing" }
-          const read = readConversationCapture(request.args.capture)
-          if (!read.ok) return { ok: false, error: read.reason }
-          const saved = await handlersRef.current.saveCapture(request.args.workspaceId, read.conversation, read.truncated)
-          return saved.ok ? { ok: true, result: { outcome: saved.outcome, title: saved.title, turns: read.conversation.turns.length, truncated: read.truncated } } : { ok: false, error: saved.reason }
+          const { captureId } = request.args
+          // The same save again (a retry whose first answer was lost): its first answer, while it held.
+          const earlier = captureId ? captures.get(captureId) : undefined
+          if (earlier) {
+            const first = await earlier.catch(() => undefined)
+            if (first?.ok) return first
+          }
+          const saving = saveCapture(store, request.args.workspaceId, request.args.capture)
+          if (captureId) remember(captures, captureId, saving)
+          return saving
         }
         case "saved": {
           // This one conversation's places, never its app's: an address that names no conversation answers none.
@@ -166,6 +192,18 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
       }
     }
 
+    // Only this account's own projects can be saved into; the save itself confirms the text and the project are on disk.
+    async function saveCapture(store: WorkspaceStore, workspaceId: string, capture: unknown): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
+      const workspace = store.workspaces.find((entry) => entry.id === workspaceId)
+      if (!workspace) return { ok: false, error: "project-missing" }
+      const read = readConversationCapture(capture)
+      if (!read.ok) return { ok: false, error: read.reason }
+      const saved = await handlersRef.current.saveCapture(workspaceId, read.conversation, read.truncated)
+      return saved.ok
+        ? { ok: true, result: { outcome: saved.outcome, title: saved.title, turns: read.conversation.turns.length, truncated: read.truncated, project: subjectName(workspace) } }
+        : { ok: false, error: saved.reason }
+    }
+
     function handleMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return
       if (event.source !== window) return
@@ -177,6 +215,9 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
         if (typeof requestId === "string" && requestId.length <= 100) respond(requestId, { ok: false, error: "invalid" })
         return
       }
+      // Delivered again (the content script re-posts what is waiting when this page says it is ready): taken once.
+      if (seen.has(envelope.requestId)) return
+      remember(seen, envelope.requestId, true)
       // Not able to answer yet: say so, rather than answer from an unloaded store.
       if (!readyRef.current) {
         respond(envelope.requestId, { ok: false, error: "not-ready" })
@@ -188,6 +229,16 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
     }
 
     window.addEventListener("message", handleMessage)
+    announceReady()
     return () => window.removeEventListener("message", handleMessage)
   }, [])
+
+  // Listening (above), and again once able to answer: anything the extension sent before now is posted again.
+  useEffect(() => {
+    if (ready) announceReady()
+  }, [ready])
+}
+
+function announceReady() {
+  window.postMessage({ source: BROWSER_MESSAGE_SOURCE, type: MSG_MEMORY_READY, payload: {} }, window.location.origin)
 }

@@ -137,7 +137,8 @@ describe("the Save button on a ChatGPT conversation", () => {
     button().click();
     button().click();
     expect(button().disabled).toBe(true);
-    expect(status()).toBe("Saving…");
+    // Capturing: the read comes first; "Saved" only on Hubble's answer.
+    expect(status()).toBe("Reading the conversation…");
     await settle();
     expect(captures).toEqual([{ tabId: 7, expectedKey: KEY, workspaceId: "phys" }]);
     expect(status()).toBe("Saved to Physics · 10 turns. Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them.");

@@ -20,7 +20,7 @@ import type { AiProviderId } from "@/lib/providers/registry"
 import { FavoritesView } from "@/components/workspace/favorites-view"
 import { RecentsView } from "@/components/workspace/recents-view"
 import { HistoryDumpView } from "@/components/workspace/history-dump-view"
-import { isStorageAvailable, saveWorkspaceStore } from "@/lib/workspace/persistence"
+import { isStorageAvailable, loadWorkspaceStore, saveWorkspaceStore, workspaceStoreStorageKey } from "@/lib/workspace/persistence"
 import { migrateToWorkspaceStore } from "@/lib/workspace/migration"
 import {
   addWorkspaces,
@@ -359,6 +359,11 @@ export function AppShell() {
   // it. Only commitStore and hydration touch it, and they are the only two
   // places that call setStore, so it cannot drift.
   const storeRef = useRef<WorkspaceStore | null>(null)
+  // Whether the last commit reached localStorage. A save that tells someone
+  // else it is done — a conversation from Hubble for Chrome — checks this
+  // rather than trusting that a commit is a write: a full or unavailable
+  // localStorage leaves the change in memory only, gone on the next reload.
+  const lastCommitPersistedRef = useRef(true)
 
   // Optional rather than required: this component renders in unit tests that
   // mount it without an AuthProvider, and signed-out is a normal state.
@@ -452,6 +457,35 @@ export function AppShell() {
     }
   }, [])
 
+  /*
+    Other Hubble tabs. Every tab holds the whole store in memory and writes all
+    of it on each commit, so without this a second tab kept its own stale copy:
+    the extension, asking whichever Hubble tab it found, missed a project made
+    in another one until that tab was reloaded — and the stale tab's next
+    commit wrote over whatever the other had saved meanwhile (a conversation
+    from Hubble for Chrome among them). Now another tab's write is taken here
+    as it lands: the `storage` event fires in every other same-origin tab.
+
+    Taken, not committed: writing it back would bounce between tabs, and the
+    sync engine already heard of it from the tab that made it. The project on
+    screen stays this tab's own unless it was deleted there.
+  */
+  useEffect(() => {
+    if (!hydrated) return
+    function onStorage(event: StorageEvent) {
+      if (event.storageArea !== window.localStorage || event.key !== workspaceStoreStorageKey() || event.newValue === null) return
+      const current = storeRef.current
+      const incoming = loadWorkspaceStore()
+      if (!current || !incoming) return
+      const keepCurrent = current.currentId !== incoming.currentId && incoming.workspaces.some((workspace) => workspace.id === current.currentId)
+      const adopted = keepCurrent ? { ...incoming, currentId: current.currentId } : incoming
+      storeRef.current = adopted
+      setStore(adopted)
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [hydrated])
+
   // Every mutation flows through here, so this is the single chokepoint that
   // keeps root sections aligned with each tab's flat category — see
   // syncSectionsWithCategories's doc comment for why that can otherwise
@@ -485,7 +519,7 @@ export function AppShell() {
     const previous = storeRef.current
     storeRef.current = next
     setStore(next)
-    if (canPersist) saveWorkspaceStore(next)
+    lastCommitPersistedRef.current = canPersist ? saveWorkspaceStore(next) : false
 
     // Synchronization is notified AFTER the commit has already succeeded,
     // and cannot affect it. Still synchronous and still not async: this
@@ -1285,7 +1319,15 @@ export function AppShell() {
         latest = next
         applied.push(plan)
       }
-      if (applied.length > 0) persist(latest)
+      if (applied.length > 0) {
+        const beforeSave = storeRef.current
+        persist(latest)
+        // Not on disk: undone in memory too, so neither this page nor the extension ever calls it saved.
+        if (!lastCommitPersistedRef.current) {
+          if (beforeSave) commitStore(beforeSave)
+          return { ...summary, failed: summary.failed + applied.length }
+        }
+      }
       for (const plan of applied) {
         if (plan.outcome === "added") summary.added += 1
         else summary.updated += 1
