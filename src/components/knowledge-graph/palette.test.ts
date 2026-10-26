@@ -5,12 +5,12 @@ import { mix, parseColor, resolvePalette } from "./renderer"
 import type { RGB } from "./renderer"
 
 const GRAPH_TOKENS = {
-  "--graph-filament": "#d24868",
-  "--graph-rose": "#ec8298",
-  "--graph-blush": "#f7c6cf",
-  "--graph-ember": "#8e2440",
-  "--graph-starlight": "#f3ebe4",
-  "--graph-hub": "#e9c27c",
+  "--graph-filament": "#7d8cff",
+  "--graph-rose": "#a9b8ff",
+  "--graph-blush": "#dfe6ff",
+  "--graph-ember": "#2a2f7a",
+  "--graph-starlight": "#eef2ff",
+  "--graph-hub": "#d6e0ff",
 }
 const DARK: Record<string, string> = {
   ...GRAPH_TOKENS,

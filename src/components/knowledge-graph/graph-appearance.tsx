@@ -42,10 +42,10 @@ function ownColors(): Record<GraphColorRole, string> {
   }
   const ground = parseColor(readPalette().background)
   return {
-    accent: hex("--graph-rose", "#EC8298"),
-    connections: hex("--graph-filament", "#D24868"),
-    nodes: hex("--graph-starlight", "#F3EBE4"),
-    glow: hex("--graph-filament", "#D24868"),
+    accent: hex("--graph-rose", "#A9B8FF"),
+    connections: hex("--graph-filament", "#7D8CFF"),
+    nodes: hex("--graph-starlight", "#EEF2FF"),
+    glow: hex("--graph-filament", "#7D8CFF"),
     background: ground ? rgbToHex(ground) : "#070809",
   }
 }
@@ -62,7 +62,7 @@ export function GraphAppearanceControl({ reducedMotion }: { reducedMotion: boole
   const appearance = useGraphAppearance()
   const [own, setOwn] = useState<Record<GraphColorRole, string> | null>(null)
   const preset = activePreset(appearance.colors)
-  const swatches = own ?? { accent: "#EC8298", connections: "#D24868", nodes: "#F3EBE4", glow: "#D24868", background: "#070809" }
+  const swatches = own ?? { accent: "#A9B8FF", connections: "#7D8CFF", nodes: "#EEF2FF", glow: "#7D8CFF", background: "#070809" }
   const background = appearance.colors.background ? darkBackground(appearance.colors.background) : undefined
 
   return (

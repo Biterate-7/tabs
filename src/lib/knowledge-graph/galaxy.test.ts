@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildKnowledgeGraph, projectNodeId } from "./build";
-import { FAN_WEDGE, outwardAngle, worldPoint } from "./galaxy";
-import { layoutKnowledgeGraph } from "./layout";
+import { armPoint, galaxyExtent, worldPoint } from "./galaxy";
+import { layoutKnowledgeGraph, territoryRadius } from "./layout";
 import { baseLens, cameraOn, fitLens, panLens, project, unproject, zoomAtLens } from "./projection";
 import type { Tab } from "@/lib/tabs/types";
 import type { Workspace } from "@/lib/workspace/types";
@@ -87,28 +87,59 @@ describe("projection", () => {
 });
 
 describe("galaxy layout", () => {
-  const graph = buildKnowledgeGraph({ workspaces: [workspace("alpha", 30), workspace("beta", 8), workspace("gamma", 1), workspace("delta", 0)] });
+  const graph = buildKnowledgeGraph({ workspaces: [workspace("alpha", 30), workspace("beta", 8), workspace("gamma", 1), workspace("delta", 0), workspace("epsilon", 12)] });
   const positions = layoutKnowledgeGraph(graph);
   const map = new Map(Object.entries(positions));
+  const projects = graph.nodes.filter((entry) => entry.kind === "project");
 
-  it("puts every project on a ring around the core, clear of it", () => {
-    for (const node of graph.nodes.filter((entry) => entry.kind === "project")) expect(Math.hypot(positions[node.id]!.x, positions[node.id]!.y)).toBeGreaterThan(100);
+  it("strings every project along one of the two arms, clear of the core", () => {
+    for (const node of projects) {
+      const at = positions[node.id]!;
+      const r = Math.hypot(at.x, at.y);
+      expect(r).toBeGreaterThan(100);
+      const onArm = [0, 1].some((arm) => {
+        const along = armPoint(arm, r);
+        return Math.hypot(along.x - at.x, along.y - at.y) < 1;
+      });
+      expect(onArm).toBe(true);
+    }
   });
 
-  it("fans every item out from its hub, away from the core", () => {
+  it("keeps clusters apart, and every item inside its own", () => {
+    const reach = (id: string) => territoryRadius(graph.nodes.filter((node) => node.projectId === id.slice(2) && node.kind !== "project").length);
+    for (const a of projects) {
+      for (const b of projects) {
+        if (a.id >= b.id) continue;
+        const pa = positions[a.id]!;
+        const pb = positions[b.id]!;
+        expect(Math.hypot(pa.x - pb.x, pa.y - pb.y)).toBeGreaterThan(Math.max(reach(a.id), reach(b.id)));
+      }
+    }
     for (const node of graph.nodes) {
       if (node.kind === "project" || !node.projectId) continue;
       const hub = positions[projectNodeId(node.projectId)]!;
       const at = positions[node.id]!;
-      const outward = outwardAngle(hub, projectNodeId(node.projectId));
-      let off = Math.atan2(at.y - hub.y, at.x - hub.x) - outward;
-      off = Math.atan2(Math.sin(off), Math.cos(off));
-      expect(Math.abs(off)).toBeLessThanOrEqual(FAN_WEDGE / 2 + 1e-6);
+      expect(Math.hypot(at.x - hub.x, at.y - hub.y)).toBeLessThanOrEqual(reach(projectNodeId(node.projectId)));
     }
   });
 
-  it("gives the same depth to the same records every time", () => {
+  it("starts an arm, next to the core, with the largest project", () => {
+    const distance = (id: string) => Math.hypot(positions[id]!.x, positions[id]!.y);
+    const nearer = projects.filter((node) => distance(node.id) < distance(projectNodeId("alpha")));
+    // Only the first cluster on the other arm can sit closer in.
+    expect(nearer.length).toBeLessThanOrEqual(1);
+  });
+
+  it("gives the same depth to the same records every time, in a thin disc", () => {
     const again = new Map(Object.entries(layoutKnowledgeGraph(graph)));
-    for (const node of graph.nodes) expect(worldPoint(node, again)).toEqual(worldPoint(node, map));
+    for (const node of graph.nodes) {
+      expect(worldPoint(node, again)).toEqual(worldPoint(node, map));
+      expect(Math.abs(worldPoint(node, map)!.z)).toBeLessThan(60);
+    }
+  });
+
+  it("reaches past everything laid out", () => {
+    const extent = galaxyExtent(Object.values(positions));
+    for (const at of Object.values(positions)) expect(Math.hypot(at.x, at.y)).toBeLessThan(extent);
   });
 });

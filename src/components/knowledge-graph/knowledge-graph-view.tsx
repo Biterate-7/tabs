@@ -34,11 +34,12 @@ import { cn } from "@/lib/utils"
 import type { DependencyType } from "@/lib/dependencies/types"
 import type { Camera, Direction, Insets } from "@/lib/knowledge-graph/view"
 import type { GraphNodeKind, KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
-import type { KnowledgeItemRef } from "@/lib/memory/items"
+import type { KnowledgeItem, KnowledgeItemRef } from "@/lib/memory/items"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
 import { KnowledgeGraphCanvas } from "./knowledge-graph-canvas"
 import type { GraphCanvasHandle } from "./knowledge-graph-canvas"
+import { ProjectGalaxy } from "@/components/home/project-galaxy"
 import { GraphAppearanceControl } from "./graph-appearance"
 import { GraphInspector } from "./graph-inspector"
 import { GraphHoverCard } from "./graph-hover-card"
@@ -255,14 +256,14 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   const matches = useMemo(() => new Set(results.map((node) => node.id)), [results])
 
   const highlighted = useMemo(() => new Set(selected ? (edgesOf.get(selected) ?? []).map((edge) => edge.id) : []), [selected, edgesOf])
+  // Hovering lifts only what is under the pointer (the canvas brightens it); it never dims the galaxy.
   const emphasised = useMemo<ReadonlySet<string> | null>(() => {
     if (selected) return new Set([selected, ...(neighbours.get(selected) ?? [])])
     if (query.trim() && matches.size > 0) return matches
-    if (hover) return new Set([hover.id, ...(neighbours.get(hover.id) ?? [])])
     return null
-  }, [selected, neighbours, query, matches, hover])
+  }, [selected, neighbours, query, matches])
 
-  // The galaxy's core: all projects, joined to each by a spoke — or, with one project chosen, that project.
+  // The galaxy's core stands for all projects — or, with one project chosen, that project's cluster is lit instead.
   const root = useMemo(() => {
     if (projectFilter !== "all") return undefined
     const projects = graph.nodes.filter((node) => node.kind === "project").length
@@ -1006,30 +1007,15 @@ function Arranging({ progress }: { progress: number }) {
   return (
     <div className="absolute inset-0 grid place-items-center" role="status">
       <div className="flex flex-col items-center gap-3">
-        <EmptyOrbit spinning />
+        <EmptyOrbit />
         <p className="text-meta text-tertiary">Arranging your graph{progress > 0 ? ` · ${Math.round(progress * 100)}%` : "…"}</p>
       </div>
     </div>
   )
 }
 
-/** The galaxy in miniature, drawn once: the graph's empty and loading states. */
-function EmptyOrbit({ spinning = false }: { spinning?: boolean }) {
-  return (
-    <svg aria-hidden viewBox="0 0 96 96" className={cn("size-20 text-foreground", spinning && "motion-safe:animate-[spin_9s_linear_infinite]")}>
-      <ellipse cx="48" cy="52" rx="44" ry="17" fill="none" stroke="currentColor" strokeOpacity="0.14" />
-      <ellipse cx="48" cy="52" rx="26" ry="10" fill="none" stroke="currentColor" strokeOpacity="0.2" />
-      <g stroke="var(--graph-filament)" strokeOpacity="0.55" strokeWidth="0.6" fill="none">
-        <path d="M48 50 L70 30 M70 30 Q78 20 84 12 M70 30 Q80 24 88 20 M70 30 Q76 16 78 8" />
-        <path d="M48 50 L28 34 M28 34 Q20 24 14 18 M28 34 Q18 30 10 30 M28 34 Q24 20 22 12" />
-        <path d="M48 50 L58 72 M58 72 Q62 82 66 90 M58 72 Q68 80 74 84" />
-      </g>
-      <g fill="var(--graph-hub)">
-        <circle cx="70" cy="30" r="1.8" />
-        <circle cx="28" cy="34" r="1.8" />
-        <circle cx="58" cy="72" r="1.6" />
-      </g>
-      <rect x="44.5" y="46.5" width="7" height="7" fill="var(--graph-filament)" fillOpacity="0.25" stroke="var(--graph-blush)" strokeWidth="0.8" transform="rotate(20 48 50)" />
-    </svg>
-  )
+/** The galaxy in miniature, with nothing in it yet: the graph's empty and loading states. */
+function EmptyOrbit() {
+  return <ProjectGalaxy items={NO_ITEMS} seed="hubble" className="h-36 w-64" />
 }
+const NO_ITEMS: readonly KnowledgeItem[] = []
