@@ -24,6 +24,7 @@
  * absence is the mistake this whole design exists to prevent.
  */
 
+import { accountFetch } from "@/lib/platform";
 import { buildWorkspaceUpserts, toWorkspacePayload } from "./serialize";
 import type { Collection } from "@/lib/collections/types";
 import type { TabDependency } from "@/lib/dependencies/types";
@@ -68,11 +69,11 @@ type Json = Record<string, unknown>;
 async function request(path: string, init: RequestInit): Promise<SyncResult<Json>> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await accountFetch(path, {
       ...init,
-      // The session cookie is HttpOnly and same-origin; nothing here reads
-      // or sends a token by hand.
-      credentials: "same-origin",
+      // The session cookie is HttpOnly and same-origin, and Hubble Desktop's
+      // device token stays in Rust (accountFetch); nothing here reads or
+      // sends a token by hand.
       headers: { "content-type": "application/json", ...(init.headers ?? {}) },
     });
   } catch {

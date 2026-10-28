@@ -261,14 +261,19 @@ describe("HistoryDumpView — extension errors", () => {
 })
 
 describe("HistoryDumpView — Hubble Desktop", () => {
-  it("says up front that history can't be read here, with no scan to start", () => {
+  it("scans only when asked, says it is waiting for Chrome, and shows what Chrome said when it didn't send", async () => {
     ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     try {
+      let answer!: (value: unknown) => void
+      fetchBrowserHistoryMock.mockReturnValue(new Promise((resolve) => (answer = resolve)))
       render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
-      expect(screen.getByText("Hubble Desktop can't read Chrome's history")).toBeTruthy()
-      expect(screen.getByText(/Add to Hubble Desktop/)).toBeTruthy()
-      expect(screen.queryByRole("button", { name: "Scan history" })).toBeNull()
       expect(fetchBrowserHistoryMock).not.toHaveBeenCalled()
+      await userEvent.setup().click(screen.getByRole("button", { name: "Scan history" }))
+      expect(await screen.findByText("Waiting for Chrome…")).toBeTruthy()
+      expect(screen.getByText(/Press Send there to share this range/)).toBeTruthy()
+      answer({ ok: false, reason: "error", error: "Not sent from Chrome." })
+      expect(await screen.findByText("Chrome didn't send your history.")).toBeTruthy()
+      expect(screen.getByText("Not sent from Chrome.")).toBeTruthy()
     } finally {
       delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     }

@@ -4,7 +4,9 @@ import Link from "next/link"
 import { BrandMark } from "@/components/brand-mark"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button"
+import { DesktopSignIn } from "@/components/auth/desktop-sign-in"
 import { useAuth } from "@/components/auth/auth-provider"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 
 /**
  * Hubble's own sign-in surface: Hubble's mark, Hubble's wording, and
@@ -28,6 +30,9 @@ export function SignInDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const { completeGoogleSignIn } = useAuth()
+  // Hubble Desktop can't host Google's button (its origin isn't one Google
+  // accepts); it signs in through the browser instead.
+  const desktop = useIsDesktop()
 
   async function handleCredential(credential: string): Promise<string | null> {
     const result = await completeGoogleSignIn(credential)
@@ -50,13 +55,19 @@ export function SignInDialog({
           </span>
           <DialogTitle>Sign in to Hubble</DialogTitle>
           <DialogDescription>
-            Signing in keeps your projects separate from anyone else on this browser.
+            {desktop
+              ? "Approve Hubble Desktop in your browser, where you use Hubble. Links and titles then sync with your account."
+              : "Signing in keeps your projects separate from anyone else on this browser."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col items-center gap-4 py-2">
-          <GoogleSignInButton onCredential={handleCredential} />
-        </div>
+        {desktop ? (
+          <DesktopSignIn onDone={() => onOpenChange(false)} />
+        ) : (
+          <div className="flex flex-col items-center gap-4 py-2">
+            <GoogleSignInButton onCredential={handleCredential} />
+          </div>
+        )}
 
         <p className="text-center text-meta text-tertiary">
           By continuing you agree to Hubble&apos;s{" "}

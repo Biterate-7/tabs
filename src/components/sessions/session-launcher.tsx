@@ -16,7 +16,7 @@ import { writeSessions } from "@/lib/sessions/persistence"
 import { MAX_SESSION_NAME_CHARS, MAX_SESSION_TABS } from "@/lib/sessions/types"
 import { formatDate } from "@/lib/time-format"
 import { SavedTabRow } from "./saved-tab-row"
-import type { LaunchRequest } from "./use-session-launch"
+import { useLaunchDestination, type LaunchRequest } from "./use-session-launch"
 import type { RestoreOutcome } from "@/lib/sessions/restore"
 import type { TabSession } from "@/lib/sessions/types"
 
@@ -24,7 +24,8 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 
 /**
  * Start session: choose one or more saved sessions, untick the tabs you don't
- * want, and open the rest together in a new Chrome window — or keep the
+ * want, and open the rest together in a new Chrome window (the default
+ * browser, in Hubble Desktop) — or keep the
  * combination as a session of its own.
  *
  * Works on the sessions as they were when it opened: what is on screen is
@@ -75,6 +76,7 @@ function LauncherBody({
   onLaunch: (request: LaunchRequest) => Promise<RestoreOutcome | undefined>
   onClose: () => void
 }) {
+  const destination = useLaunchDestination()
   // Frozen at opening: a session changed elsewhere meanwhile doesn't shift what you are choosing from.
   const [sessions] = useState(() => [...live])
   // In the order they were ticked: that order is the launch order.
@@ -213,7 +215,7 @@ function LauncherBody({
           </div>
         )}
         <p className="text-meta text-tertiary" role="status">
-          {plan.tabs.length === 0 ? "Nothing chosen yet." : `${plural(plan.tabs.length, "tab", "tabs")} · opens in a new Chrome window. Nothing is closed.`}
+          {plan.tabs.length === 0 ? "Nothing chosen yet." : `${plural(plan.tabs.length, "tab", "tabs")} · opens ${destination}. Nothing is closed.`}
           {plan.truncated && ` Only the first ${MAX_SESSION_TABS} open at once.`}
         </p>
         {saving && (

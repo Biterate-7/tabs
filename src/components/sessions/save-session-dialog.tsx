@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { sendBrowserCommand } from "@/lib/browser/bridge"
-import { DESKTOP_UNREACHABLE } from "@/lib/browser/protocol"
+import { readChromeTabs } from "@/lib/browser/read-tabs"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { EXTENSION_DOWNLOAD_URL, getExtensionInstallInfo } from "@/lib/extension-config"
 import { createId } from "@/lib/id"
 import { createTimestamp } from "@/lib/timestamps"
@@ -16,7 +16,6 @@ import { describeWriteError } from "@/lib/sessions/messages"
 import { createSession, replaceSessionTabs } from "@/lib/sessions/model"
 import { writeSessions } from "@/lib/sessions/persistence"
 import { MAX_SESSION_NAME_CHARS, MAX_SESSION_TABS } from "@/lib/sessions/types"
-import type { BrowserTabInfo, BrowserWindowInfo } from "@/lib/browser/protocol"
 import type { CapturableWindow } from "@/lib/sessions/capture"
 import type { TabSession } from "@/lib/sessions/types"
 
@@ -37,20 +36,19 @@ function useChromeWindows(attempt: number): ReadState {
   const [state, setState] = useState<ReadState>({ kind: "loading" })
   useEffect(() => {
     let alive = true
-    void Promise.all([
-      sendBrowserCommand<Record<string, never>, { tabs: BrowserTabInfo[] }>("list_browser_tabs", {}, { timeoutMs: 2500 }),
-      sendBrowserCommand<Record<string, never>, { windows: BrowserWindowInfo[] }>("list_browser_windows", {}, { timeoutMs: 2500 }),
-    ]).then(([tabs, windows]) => {
+    // In Hubble Desktop this goes through the browser, where the person
+    // approves sending their open tabs (readChromeTabs).
+    void readChromeTabs().then((reading) => {
       if (!alive) return
-      if (!tabs.ok) {
-        setState({ kind: "unavailable", desktop: tabs.error === DESKTOP_UNREACHABLE })
-        return
-      }
-      if (!windows.ok) {
+      if (reading.ok && reading.windows) {
+        setState({ kind: "ready", windows: capturableWindows(reading.tabs, reading.windows, reading.selfOrigin) })
+      } else if (reading.ok) {
         setState({ kind: "error", message: "Couldn't check which Chrome windows are private, so nothing was read." })
-        return
+      } else if (reading.reason === "unavailable") {
+        setState({ kind: "unavailable", desktop: false })
+      } else {
+        setState({ kind: "error", message: reading.reason === "declined" ? "Nothing was sent from Chrome." : (reading.message ?? "Chrome didn't send your tabs.") })
       }
-      setState({ kind: "ready", windows: capturableWindows(tabs.result.tabs, windows.result.windows, window.location.origin) })
     })
     return () => {
       alive = false
@@ -145,6 +143,7 @@ function SaveSessionBody({
   }
 
   const install = getExtensionInstallInfo()
+  const desktop = useIsDesktop()
 
   return (
     <form onSubmit={handleSubmit}>
@@ -158,7 +157,14 @@ function SaveSessionBody({
       </DialogHeader>
 
       <div className="mt-4 flex flex-col gap-3">
-        {read.kind === "loading" && <p className="text-body-sm text-muted-foreground">Reading your Chrome tabs…</p>}
+        {read.kind === "loading" &&
+          (desktop ? (
+            <p role="status" className="text-body-sm text-muted-foreground">
+              Waiting for Chrome. A Hubble page opened in your browser: press Send there to share the tabs you have open.
+            </p>
+          ) : (
+            <p className="text-body-sm text-muted-foreground">Reading your Chrome tabs…</p>
+          ))}
 
         {read.kind === "unavailable" &&
           (read.desktop ? (

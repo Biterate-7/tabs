@@ -45,3 +45,26 @@ CREATE TABLE IF NOT EXISTS tabdump_sessions (
 CREATE INDEX IF NOT EXISTS tabdump_sessions_user_id_idx ON tabdump_sessions (user_id);
 -- Expired-row housekeeping scans by expiry.
 CREATE INDEX IF NOT EXISTS tabdump_sessions_expires_at_idx ON tabdump_sessions (expires_at);
+
+-- Hubble Desktop's credentials (src/lib/auth/device.ts). Separate from
+-- tabdump_sessions on purpose: a desktop is revoked on its own, and signing
+-- out of the website never signs it out. A row starts as a single-use
+-- pairing (code_hash set, minutes to live, bound to the desktop's PKCE
+-- challenge) and is redeemed once into a device token (token_hash set).
+-- Only hashes are stored, as for sessions.
+CREATE TABLE IF NOT EXISTS tabdump_device_sessions (
+  id             UUID PRIMARY KEY,
+  user_id        UUID NOT NULL REFERENCES tabdump_users(id) ON DELETE CASCADE,
+  code_hash      TEXT UNIQUE,
+  code_challenge TEXT NOT NULL,
+  token_hash     TEXT UNIQUE,
+  label          TEXT NOT NULL,
+  created_at     BIGINT NOT NULL,
+  expires_at     BIGINT NOT NULL,
+  last_used_at   BIGINT,
+  -- Exactly one secret at a time: pending (code) or redeemed (token).
+  CONSTRAINT tabdump_device_sessions_one_secret CHECK ((code_hash IS NULL) <> (token_hash IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS tabdump_device_sessions_user_id_idx ON tabdump_device_sessions (user_id);
+CREATE INDEX IF NOT EXISTS tabdump_device_sessions_expires_at_idx ON tabdump_device_sessions (expires_at);

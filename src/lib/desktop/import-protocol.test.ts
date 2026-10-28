@@ -71,6 +71,13 @@ describe("the three copies of the protocol agree", () => {
     expect(rust).toContain(`pub const AI_PROVIDERS: [&str; ${AI_PROVIDER_IDS.length}] = [${list(AI_PROVIDER_IDS)}];`)
   })
 
+  it("on what Hubble Desktop may ask Chrome through its relay, and how much the answer may hold", async () => {
+    const { RELAY_ACTIONS } = await import("../../../extension/src/browser-commands.js")
+    expect(rust).toContain(`pub const RELAY_ACTIONS: [&str; ${RELAY_ACTIONS.length}] = [${RELAY_ACTIONS.map((a: string) => `"${a}"`).join(", ")}];`)
+    expect(rust).toContain("pub const MAX_RELAY_BODY_BYTES: usize = 8 * 1024 * 1024;")
+    expect(rust).toContain('pub const RELAY_DELIVERED_EVENT: &str = "hubble-relay:delivered";')
+  })
+
   it("on the event the webview listens for", () => {
     expect(rust).toContain(`pub const REQUESTED_EVENT: &str = "${DESKTOP_IMPORT_REQUESTED_EVENT}";`)
   })

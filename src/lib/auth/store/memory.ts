@@ -1,5 +1,5 @@
 import "server-only";
-import type { AuthSession, AuthStore, AuthUser } from "../types";
+import type { AuthSession, AuthStore, AuthUser, DeviceSession } from "../types";
 
 /**
  * Process-local AuthStore for local development.
@@ -24,6 +24,7 @@ export class MemoryAuthStore implements AuthStore {
   private usersByGoogleSub = new Map<string, string>();
   private sessions = new Map<string, AuthSession>();
   private sessionsByTokenHash = new Map<string, string>();
+  private devices = new Map<string, DeviceSession>();
 
   /** The synchronous form, so createUser can do its uniqueness check without an `await` in the middle of it — see the note there. */
   private lookupByGoogleSub(googleSub: string): AuthUser | null {
@@ -121,8 +122,50 @@ export class MemoryAuthStore implements AuthStore {
     }
   }
 
+  async createDevicePairing(pairing: DeviceSession): Promise<void> {
+    this.devices.set(pairing.id, { ...pairing });
+  }
+
+  async findDevicePairingByCodeHash(codeHash: string): Promise<DeviceSession | null> {
+    const device = [...this.devices.values()].find((d) => d.codeHash === codeHash);
+    return device ? { ...device } : null;
+  }
+
+  async redeemDevicePairing(id: string, codeHash: string, tokenHash: string, expiresAt: number, now: number): Promise<DeviceSession | null> {
+    // No await between the check and the write: stands in for the
+    // conditional UPDATE in the Postgres store, so two redemptions of one
+    // code can't both win.
+    const device = this.devices.get(id);
+    if (!device || device.codeHash !== codeHash) return null;
+    const redeemed: DeviceSession = { ...device, codeHash: null, tokenHash, expiresAt, lastUsedAt: now };
+    this.devices.set(id, redeemed);
+    return { ...redeemed };
+  }
+
+  async findDeviceSessionByTokenHash(tokenHash: string): Promise<DeviceSession | null> {
+    const device = [...this.devices.values()].find((d) => d.tokenHash === tokenHash);
+    return device ? { ...device } : null;
+  }
+
+  async touchDeviceSession(id: string, lastUsedAt: number, expiresAt?: number): Promise<void> {
+    const device = this.devices.get(id);
+    if (device) this.devices.set(id, { ...device, lastUsedAt, expiresAt: expiresAt ?? device.expiresAt });
+  }
+
+  async deleteDeviceSession(id: string): Promise<void> {
+    this.devices.delete(id);
+  }
+
+  async listDeviceSessions(userId: string): Promise<DeviceSession[]> {
+    return [...this.devices.values()]
+      .filter((device) => device.userId === userId && device.tokenHash !== null)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((device) => ({ ...device }));
+  }
+
   /** Test-only reset, mirroring __clearServerCacheForTests in src/lib/ai/server/cache.ts. */
   __clear(): void {
+    this.devices.clear();
     this.users.clear();
     this.usersByGoogleSub.clear();
     this.sessions.clear();

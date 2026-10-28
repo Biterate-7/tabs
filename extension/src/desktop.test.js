@@ -11,6 +11,7 @@ import {
   DesktopError,
   buildDesktopConversation,
   buildDesktopPayload,
+  deliverRelayAnswer,
   describeDesktopPhase,
   describeDesktopResult,
   describeDesktopSave,
@@ -386,5 +387,31 @@ describe("a conversation for Hubble Desktop", () => {
     expect(describeDesktopSave({ status: "cancelled" })).toEqual({ tone: "same", title: "Nothing saved", detail: "Cancelled in Hubble Desktop." });
     expect(describeDesktopSave({ status: "expired" })).toMatchObject({ tone: "error", title: "Nothing saved" });
     expect(describeDesktopSave({ reason: "something-new" })).toMatchObject({ tone: "error", title: "Hubble Desktop isn't responding" });
+  });
+});
+
+describe("deliverRelayAnswer", () => {
+  const args = { port: 41517, id: "a".repeat(32), secret: "b".repeat(64), action: "browser_tabs" };
+
+  it("posts the answer to the relay with its secret", async () => {
+    const calls = [];
+    const fetch = async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    expect(await deliverRelayAnswer({ ...args, ok: true, result: { tabs: [] }, fetch })).toEqual({ ok: true });
+    expect(calls[0].url).toBe(`http://127.0.0.1:41517/v1/relay/${"a".repeat(32)}`);
+    expect(calls[0].init.headers.Authorization).toBe(`Bearer ${"b".repeat(64)}`);
+    expect(JSON.parse(calls[0].init.body)).toEqual({ action: "browser_tabs", ok: true, result: { tabs: [] } });
+  });
+
+  it("says why an answer didn't land", async () => {
+    const answer = (status, reason) => async () => ({ ok: false, status, json: async () => ({ ok: false, reason }) });
+    expect((await deliverRelayAnswer({ ...args, ok: false, error: "declined", fetch: answer(404, "unknown-session") })).error).toMatch(/stopped waiting/);
+    expect((await deliverRelayAnswer({ ...args, ok: false, error: "declined", fetch: answer(409, "already-submitted") })).error).toMatch(/already has/);
+    const offline = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    expect(await deliverRelayAnswer({ ...args, ok: true, result: {}, fetch: offline })).toEqual({ ok: false, error: "Hubble Desktop isn't open." });
   });
 });

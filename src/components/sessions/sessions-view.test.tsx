@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event"
 
 const restoreTabs = vi.fn()
 vi.mock("@/lib/sessions/restore", () => ({ restoreTabs: (...args: unknown[]) => restoreTabs(...args) }))
+// In Hubble Desktop, reading Chrome waits on the person in their browser: here it never answers.
+vi.mock("@/lib/browser/desktop-relay", () => ({ askChromeForTabs: () => new Promise(() => {}) }))
 vi.mock("sonner", async (importOriginal) => {
   const actual = await importOriginal<typeof import("sonner")>()
   const toast = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), warning: vi.fn() })
@@ -228,5 +230,39 @@ describe("Home: pick up where you left off", () => {
     )
     expect(screen.queryByRole("region", { name: "Pick up where you left off" })).toBeNull()
     expect(screen.getByRole("button", { name: "Save your open tabs as a session" })).toBeTruthy()
+  })
+})
+
+describe("Sessions in Hubble Desktop", () => {
+  beforeEach(() => {
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+  })
+  afterEach(() => {
+    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  it("starts a saved session (its tabs go to the default browser), and offers to save one", async () => {
+    const user = userEvent.setup()
+    restoreTabs.mockResolvedValue({ kind: "opened", opened: 2, failed: [], inBrowser: true })
+    seed("Essay", ["https://essay.example/", "https://notes.example/"], NOW)
+    view()
+
+    expect(screen.getByText(/reopen them together later, in your default browser/)).toBeTruthy()
+    // Saving reads Chrome through the browser (readChromeTabs), so it is offered here too.
+    expect(screen.getByRole("button", { name: /Save current session/ })).toBeTruthy()
+
+    await user.click(row("Essay").getByRole("button", { name: "Start Essay" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText(/opens in your default browser\. Nothing is closed\./)).toBeTruthy()
+    await user.click(within(dialog).getByRole("button", { name: "Open 2 tabs" }))
+    await waitFor(() => expect(restoreTabs).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Opened 2 tabs in your browser", undefined)
+    expect(getSessionsSnapshot().sessions[0]!.lastRestoredAt).toBeTypeOf("number")
+  })
+
+  it("tells the person where to approve reading Chrome when saving", async () => {
+    render(<SessionsView projects={[]} now={NOW} openSaveOnMount />)
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText(/Waiting for Chrome\. A Hubble page opened in your browser/)).toBeTruthy()
   })
 })

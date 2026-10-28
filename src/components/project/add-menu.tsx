@@ -10,7 +10,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { Textarea } from "@/components/ui/textarea"
 import { TabFavicon } from "@/components/workspace/tab-favicon"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { sendBrowserCommand } from "@/lib/browser/bridge"
+import { readChromeTabs, readingChromeMessage } from "@/lib/browser/read-tabs"
 import { isSafeOpenUrl } from "@/lib/browser/protocol"
 import { getExtensionInstallInfo, EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { inputsFromText } from "./add-source-dialog"
@@ -170,16 +170,18 @@ function BrowserTabsDialog({
 
   useEffect(() => {
     let alive = true
-    void sendBrowserCommand<Record<string, never>, { tabs: BrowserTabInfo[] }>("list_browser_tabs", {}, { timeoutMs: 2500 }).then((result) => {
+    // Through the browser in Hubble Desktop, where the person approves it first (readChromeTabs).
+    void readChromeTabs().then((result) => {
       if (!alive) return
       if (!result.ok) {
         setLoaded({ kind: "unavailable" })
         return
       }
-      const here = typeof window !== "undefined" ? window.location.origin : ""
+      const here = result.selfOrigin
+      const privateWindows = new Set((result.windows ?? []).filter((win) => win.incognito).map((win) => win.windowId))
       const seen = new Set<string>()
-      const tabs = result.result.tabs.filter((tab) => {
-        if (!isSafeOpenUrl(tab.url) || (here && tab.url.startsWith(here)) || seen.has(tab.url)) return false
+      const tabs = result.tabs.filter((tab) => {
+        if (!isSafeOpenUrl(tab.url) || (here && tab.url.startsWith(here)) || privateWindows.has(tab.windowId) || seen.has(tab.url)) return false
         seen.add(tab.url)
         return true
       })
@@ -217,7 +219,7 @@ function BrowserTabsDialog({
 
         {loaded.kind === "loading" && (
           <p className="mt-4 flex items-center gap-2 text-body-sm text-tertiary">
-            <Loader2 aria-hidden className="size-3.5 animate-spin" /> Looking for your tabs…
+            <Loader2 aria-hidden className="size-3.5 shrink-0 animate-spin" /> {isDesktop ? readingChromeMessage(true) : "Looking for your tabs…"}
           </p>
         )}
 
@@ -274,8 +276,8 @@ function BrowserTabsDialog({
           <div className="mt-4 flex flex-col gap-3">
             {isDesktop ? (
               <p className="text-body-sm text-foreground">
-                In Chrome, right-click a tab → <span className="font-medium">Hubble → Add to Hubble Desktop</span>. It needs{" "}
-                <ExtensionLink install={install} />.
+                Chrome didn&rsquo;t send your tabs. Close this and choose Browser tabs again, or in Chrome right-click a tab →{" "}
+                <span className="font-medium">Hubble → Add to Hubble Desktop</span>. Both need <ExtensionLink install={install} />.
               </p>
             ) : quickAdd ? (
               <p className="text-body-sm text-foreground">

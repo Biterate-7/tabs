@@ -81,10 +81,14 @@ describe("the extension's page bridge on desktop", () => {
     post.mockRestore();
   });
 
-  it("reports history as not connected straight away instead of after its 15 s timeout", async () => {
+  it("asks Chrome for history through the browser relay, never the page bridge, and says why it got nothing", async () => {
     setDesktop(true);
-    vi.useFakeTimers();
-    await expect(fetchBrowserHistory(0)).resolves.toEqual({ ok: false, reason: "not-connected" });
+    const post = vi.spyOn(window, "postMessage");
+    // No Tauri runtime in jsdom: opening the relay page fails at once, and that failure is what is reported.
+    const result = await fetchBrowserHistory(0);
+    expect(result).toMatchObject({ ok: false, reason: "error" });
+    expect(post).not.toHaveBeenCalled();
+    post.mockRestore();
   });
 
   it("starts no ping loop on desktop", () => {

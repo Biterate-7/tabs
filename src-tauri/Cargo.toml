@@ -1,6 +1,6 @@
 [package]
 name = "tabdump"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hubble — turn browser-tab chaos into an organized workspace."
 edition = "2021"
 rust-version = "1.77.2"
@@ -39,6 +39,15 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # The import bridge's session ids and tokens. Already in the dependency tree.
 getrandom = "0.3"
+# Hubble account sign-in (src/account.rs). The device token lives in the OS
+# credential store (Windows Credential Manager / macOS Keychain), never in
+# the webview: page JavaScript can't read it, exactly as it can't read the
+# website's HttpOnly session cookie. Requests that carry it are made here,
+# in Rust, over the OS TLS stack (schannel on Windows).
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+# The PKCE challenge, S256. Already in the dependency tree.
+sha2 = "0.10"
 
 [features]
 # Used by `tauri build --debug` / CI to keep devtools available.

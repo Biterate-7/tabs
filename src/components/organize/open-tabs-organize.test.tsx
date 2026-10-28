@@ -9,6 +9,9 @@ const sendBrowserCommand = vi.hoisted(() => vi.fn())
 vi.mock("@/lib/browser/bridge", () => ({ sendBrowserCommand }))
 const desktop = vi.hoisted(() => ({ value: false }))
 vi.mock("@/hooks/use-is-desktop", () => ({ useIsDesktop: () => desktop.value }))
+vi.mock("@/lib/platform/detect", () => ({ isDesktop: () => desktop.value }))
+const askChromeForTabs = vi.hoisted(() => vi.fn())
+vi.mock("@/lib/browser/desktop-relay", () => ({ askChromeForTabs }))
 
 const tab = (tabId: number, url: string, title: string, windowId = 1) => ({ tabId, windowId, url, title, pinned: false, active: false, index: tabId })
 
@@ -172,15 +175,42 @@ describe("Organize open tabs", () => {
     expect(await screen.findByText(/No web pages are open in Chrome right now/)).toBeTruthy()
   })
 
-  it("on Hubble Desktop, says it cannot see Chrome's tabs instead of trying", async () => {
+  it("on Hubble Desktop, asks Chrome through the browser and organizes what was sent", async () => {
     desktop.value = true
-    renderOrganize()
-    const dialog = await screen.findByRole("dialog", { name: "Organize open tabs" })
-    expect(within(dialog).getByText("Hubble Desktop can't see your Chrome tabs")).toBeTruthy()
-    // Points at what works from Chrome — not a project menu item that sources sent from Chrome never get.
-    expect(within(dialog).getByText("Hubble → Add all tabs in this window to Hubble Desktop")).toBeTruthy()
-    expect(within(dialog).queryByText(/Organize tabs/)).toBeNull()
-    expect(sendBrowserCommand).not.toHaveBeenCalled()
+    let send!: (value: unknown) => void
+    askChromeForTabs.mockReturnValue(new Promise((resolve) => (send = resolve)))
+    try {
+      renderOrganize()
+      const dialog = await screen.findByRole("dialog", { name: "Organize open tabs" })
+      // Nothing is read until the person presses Send on the Hubble page in their browser.
+      expect(within(dialog).getByText(/Waiting for Chrome\. A Hubble page opened in your browser/)).toBeTruthy()
+      send({
+        ok: true,
+        result: {
+          tabs: [...OPEN_TABS, tab(9, "https://hubble.example/desktop/relay", "Hubble")],
+          windows: [{ windowId: 1, focused: true, incognito: false, type: "normal", tabIds: [] }],
+          origin: "https://hubble.example",
+        },
+      })
+      expect(await within(dialog).findByText("Projectile motion lab")).toBeTruthy()
+      // Hubble's own tabs (the relay page) are left out, as on the web.
+      expect(within(dialog).queryByText("https://hubble.example/desktop/relay")).toBeNull()
+      expect(sendBrowserCommand).not.toHaveBeenCalled()
+    } finally {
+      desktop.value = false
+    }
+  })
+
+  it("on Hubble Desktop, says so when nothing was sent from Chrome", async () => {
+    desktop.value = true
+    askChromeForTabs.mockResolvedValue({ ok: false, reason: "declined", error: "Not sent from Chrome." })
+    try {
+      renderOrganize()
+      const dialog = await screen.findByRole("dialog", { name: "Organize open tabs" })
+      expect(await within(dialog).findByText("Nothing was sent from Chrome.")).toBeTruthy()
+    } finally {
+      desktop.value = false
+    }
   })
 
   it("says so when everything open is already saved, and offers nothing to confirm", async () => {

@@ -6,6 +6,7 @@ import type { ProjectContextRecord, ProposalStep, ProposalStatus, WorkspaceNoteR
 import type { ConnectionTestResult, ConnectionView } from "@/lib/integrations/service"
 import type { IntegrationClient, PermissionLevel } from "@/lib/integrations/scopes"
 import type { McpTokenView } from "@/lib/mcp/tokens"
+import { accountFetch } from "@/lib/platform"
 
 /**
  * The AI Integrations pane's client for /api/integrations.
@@ -58,7 +59,8 @@ type Envelope<T> = { ok: true; value: T } | { ok: false; error?: { message?: str
 
 async function call<T>(path: string, init?: RequestInit): Promise<{ ok: true; value: T } | { ok: false; message: string; status: number }> {
   try {
-    const response = await fetch(path, {
+    // The web's session cookie, or Hubble Desktop's device token (held in Rust).
+    const response = await accountFetch(path, {
       ...init,
       headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     })

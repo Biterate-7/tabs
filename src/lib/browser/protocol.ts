@@ -80,7 +80,9 @@ export type BrowserActionName =
   | "pin_tab"
   | "unpin_tab"
   | "move_tabs_to_window"
-  | "create_browser_window";
+  | "create_browser_window"
+  /** Hubble Desktop's relay page handing Chrome's answer to the app (src/components/desktop-relay). Hubble for Chrome 0.9+. */
+  | "deliver_to_desktop";
 
 export type BrowserCommand<Args = unknown> = {
   id: string;

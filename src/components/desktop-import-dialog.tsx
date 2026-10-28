@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type FormEvent } from "react"
-import { Plus } from "lucide-react"
+import { Layers, Plus } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -13,14 +13,20 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { aiProviderName } from "@/lib/providers/registry"
+import { suggestSessionName } from "@/lib/sessions/capture"
+import { MAX_SESSION_NAME_CHARS } from "@/lib/sessions/types"
 import type { DesktopImportRequest, DesktopTabsRequest } from "@/lib/desktop/import-protocol"
 
 export type DesktopImportProject = { id: string; name: string }
 
-/** Where the person sends the batch: a project they have, or a new one by name. */
-export type DesktopImportChoice = { workspaceId: string } | { newProject: string }
+/**
+ * Where the person sends the batch: a project they have, a new one by name,
+ * or — for tabs only — a saved session to reopen together later (Sessions).
+ */
+export type DesktopImportChoice = { workspaceId: string } | { newProject: string } | { session: string }
 
 const NEW_PROJECT = "__new__"
+const NEW_SESSION = "__session__"
 
 function hostOf(url: string): string {
   try {
@@ -90,6 +96,7 @@ export function DesktopImportDialog({
 }) {
   const [selected, setSelected] = useState<string>(() => (projects.find((project) => project.id === currentProjectId) ?? projects[0])?.id ?? NEW_PROJECT)
   const [newName, setNewName] = useState("")
+  const [sessionName, setSessionName] = useState(() => suggestSessionName({ now: Date.now() }))
   const [error, setError] = useState<string | null>(null)
   // Saving a conversation takes a moment: one press, then wait for it.
   const [saving, setSaving] = useState(false)
@@ -97,15 +104,17 @@ export function DesktopImportDialog({
   const words = describeRequest(request)
   const hasContent = request.kind === "conversation" || request.tabs.length > 0
   const creating = selected === NEW_PROJECT
+  // Only a batch of tabs can be a session; a conversation always goes to a project.
+  const asSession = selected === NEW_SESSION && request.kind === "tabs"
   const chosen = projects.find((project) => project.id === selected)
-  const canAdd = !saving && hasContent && (creating ? newName.trim().length > 0 : Boolean(chosen))
+  const canAdd = !saving && hasContent && (asSession ? sessionName.trim().length > 0 : creating ? newName.trim().length > 0 : Boolean(chosen))
   const target = creating ? newName.trim() || "a new project" : chosen?.name
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!canAdd) return
     setSaving(true)
-    const ok = await onAdd(request, creating ? { newProject: newName.trim() } : { workspaceId: selected })
+    const ok = await onAdd(request, asSession ? { session: sessionName.trim() } : creating ? { newProject: newName.trim() } : { workspaceId: selected })
     // Answered: the dialog is about to close. Otherwise the person chooses again.
     if (!ok) {
       setSaving(false)
@@ -160,6 +169,24 @@ export function DesktopImportDialog({
                 <Plus aria-hidden className="size-3.5 text-muted-foreground" />
                 <span className="text-foreground">New project</span>
               </label>
+              {request.kind === "tabs" ? (
+                <label className="mt-1 flex cursor-pointer items-center gap-2.5 rounded-md border-t border-subtle px-2 py-1.5 text-body-sm hover:bg-muted has-[:checked]:bg-muted">
+                  <input
+                    type="radio"
+                    name="desktop-import-project"
+                    value={NEW_SESSION}
+                    checked={asSession}
+                    onChange={() => {
+                      setSelected(NEW_SESSION)
+                      setError(null)
+                    }}
+                    className="accent-foreground"
+                  />
+                  <Layers aria-hidden className="size-3.5 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 text-foreground">Save as a session</span>
+                  <span className="shrink-0 text-meta text-muted-foreground">Reopen them together later</span>
+                </label>
+              ) : null}
             </div>
             {creating ? (
               <Input
@@ -169,6 +196,17 @@ export function DesktopImportDialog({
                 maxLength={120}
                 placeholder="Project name"
                 aria-label="New project name"
+                className="mt-2"
+              />
+            ) : null}
+            {asSession ? (
+              <Input
+                autoFocus
+                value={sessionName}
+                onChange={(event) => setSessionName(event.target.value)}
+                maxLength={MAX_SESSION_NAME_CHARS}
+                placeholder="Session name"
+                aria-label="Session name"
                 className="mt-2"
               />
             ) : null}
@@ -186,7 +224,7 @@ export function DesktopImportDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!canAdd}>
-              {saving ? "Saving…" : target ? `${words.verb} to ${target}` : words.fallback}
+              {saving ? "Saving…" : asSession ? "Save session" : target ? `${words.verb} to ${target}` : words.fallback}
             </Button>
           </DialogFooter>
         </form>

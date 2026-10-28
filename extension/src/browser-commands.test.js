@@ -48,8 +48,40 @@ describe("validateBrowserCommand", () => {
         "unpin_tab",
         "move_tabs_to_window",
         "create_browser_window",
+        "deliver_to_desktop",
       ].sort()
     );
+  });
+
+  describe("deliver_to_desktop (Hubble Desktop's relay)", () => {
+    const base = { port: 41517, id: "a".repeat(32), secret: "b".repeat(64), action: "browser_tabs" };
+
+    it("accepts an answer or a refusal for a known question, to Hubble Desktop's ports only", () => {
+      expect(validateBrowserCommand("deliver_to_desktop", { ...base, ok: true, result: { tabs: [] } })).toEqual({ ok: true, args: { ...base, ok: true, result: { tabs: [] } } });
+      const declined = validateBrowserCommand("deliver_to_desktop", { ...base, ok: false, error: "x".repeat(500) });
+      expect(declined.ok).toBe(true);
+      expect(declined.args.error).toHaveLength(300);
+    });
+
+    it("refuses anything else", () => {
+      for (const bad of [
+        { ...base, port: 80, ok: true, result: {} },
+        { ...base, port: "41517", ok: true, result: {} },
+        { ...base, id: "../x", ok: true, result: {} },
+        { ...base, secret: "short", ok: true, result: {} },
+        { ...base, action: "open_tabs", ok: true, result: {} },
+        { ...base, ok: true, result: [] },
+        { ...base, ok: true },
+        { ...base, ok: "yes", result: {} },
+        { ...base, ok: false },
+      ]) {
+        expect(validateBrowserCommand("deliver_to_desktop", bad).ok, JSON.stringify(bad)).toBe(false);
+      }
+    });
+
+    it("refuses an answer too large for Hubble Desktop to take", () => {
+      expect(validateBrowserCommand("deliver_to_desktop", { ...base, ok: true, result: { big: "x".repeat(8 * 1024 * 1024) } }).ok).toBe(false);
+    });
   });
 
   it("validates list_browser_tabs' optional windowId", () => {

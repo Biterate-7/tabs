@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { useBrowserConnected } from "@/hooks/use-tab-sessions"
+import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { createTimestamp } from "@/lib/timestamps"
 import { describeRestore } from "@/lib/sessions/messages"
 import { markSessionRestored } from "@/lib/sessions/model"
@@ -84,6 +85,15 @@ export function useSessionLaunch() {
   return { launch, confirm, cancel: () => setConfirming(null), confirming, pending }
 }
 
+/**
+ * Where a launch's tabs go: a new Chrome window through Hubble for Chrome, or
+ * — in Hubble Desktop, which can't ask the extension — the default browser
+ * (src/lib/sessions/restore.ts).
+ */
+export function useLaunchDestination(): string {
+  return useIsDesktop() ? "in your default browser" : "in a new Chrome window"
+}
+
 /** "Open 32 tabs?" — shown by whichever surface started a large launch. */
 export function LaunchConfirmDialog({
   request,
@@ -94,12 +104,13 @@ export function LaunchConfirmDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const destination = useLaunchDestination()
   return (
     <AlertDialog open={request !== null} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Open {request?.tabs.length ?? 0} tabs?</AlertDialogTitle>
-          <AlertDialogDescription>They open in a new Chrome window. Your current tabs stay as they are.</AlertDialogDescription>
+          <AlertDialogDescription>They open {destination}. Your current tabs stay as they are.</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>

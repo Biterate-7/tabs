@@ -35,10 +35,10 @@ import { MotionSection } from "./sections/motion-section"
 import { AccentSection } from "./sections/accent-section"
 import { AiIntegrationsSection } from "./sections/ai-integrations-section"
 import { AiAppsSection, DataSection } from "./sections/knowledge-sections"
+import { DesktopSection } from "./sections/desktop-section"
 import {
   AccountSettingsSection,
   AdvancedSection,
-  DesktopSection,
   ExtensionSection,
   PrivacySection,
   ShortcutsSection,

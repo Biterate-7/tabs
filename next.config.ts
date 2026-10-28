@@ -50,6 +50,18 @@ const nextConfig: NextConfig = isDesktopBuild
       // never cached.
       async headers() {
         return [
+          // Approving Hubble Desktop for an account (src/lib/auth/device.ts):
+          // the same anti-framing and no-cache rules as the OAuth consent page,
+          // and no Referer, since the address carries the pairing state.
+          {
+            source: "/desktop/:page(connect|relay)",
+            headers: [
+              { key: "X-Frame-Options", value: "DENY" },
+              { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+              { key: "Cache-Control", value: "no-store" },
+              { key: "Referrer-Policy", value: "no-referrer" },
+            ],
+          },
           {
             source: "/oauth/:path*",
             headers: [

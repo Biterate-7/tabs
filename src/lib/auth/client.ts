@@ -1,5 +1,6 @@
 import { isDesktop } from "@/lib/platform/detect";
 import { apiUrl } from "@/lib/platform/api-base";
+import { desktopAccount } from "@/lib/platform/desktop";
 import type { PublicUser } from "./types";
 
 /**
@@ -57,19 +58,13 @@ const UNKNOWN_AUTH_STATE: AuthStateResponse = { authenticated: false, user: null
  * cancelled can tell that from a real answer.)
  */
 export async function fetchAuthState(signal?: AbortSignal): Promise<AuthStateResponse> {
-  // The desktop app is signed-out by design in v1, and this is where that
-  // is decided. It has no session cookie to present (the cookie is
-  // HttpOnly + SameSite=Lax and same-origin, and a packaged build is served
-  // from tauri://localhost), and Google Identity Services will not accept
-  // that origin either. Answering locally instead of firing a request that
-  // can only fail is what keeps the desktop build from offering a sign-in
-  // button that cannot work — `configured: false` hides the auth UI
-  // entirely, exactly as it does on a deployment with no Google client ID.
-  //
-  // Giving desktop a real account means the pairing flow in
-  // docs/auth-architecture.md, not a relaxed cookie. See
-  // docs/desktop-architecture.md.
-  if (isDesktop()) return UNKNOWN_AUTH_STATE;
+  // Hubble Desktop has no session cookie (its pages are served from
+  // tauri://localhost, and Google Identity Services won't accept that origin).
+  // It signs in through the browser instead and holds a device token in Rust
+  // (src-tauri/src/account.rs, docs/auth-architecture.md "pairing flow"), so
+  // its answer comes from there. Offline but signed in still answers with the
+  // account, so its projects open without a network.
+  if (isDesktop()) return desktopAuthState();
 
   try {
     const response = await fetch(apiUrl("/api/auth/me"), { ...FETCH_OPTIONS, signal });
@@ -80,6 +75,18 @@ export async function fetchAuthState(signal?: AbortSignal): Promise<AuthStateRes
   } catch (error) {
     if (signal?.aborted) throw error;
     return UNKNOWN_AUTH_STATE;
+  }
+}
+
+async function desktopAuthState(): Promise<AuthStateResponse> {
+  try {
+    const status = await desktopAccount.status();
+    const signedIn = (status.state === "signed-in" || status.state === "offline") && status.user !== null;
+    return { authenticated: signedIn, user: signedIn ? status.user : null, configured: true };
+  } catch {
+    // The command itself failed (an app older than sign-in, a broken
+    // credential store): signed out, with sign-in still offered.
+    return { authenticated: false, user: null, configured: true };
   }
 }
 
@@ -135,6 +142,14 @@ export async function exchangeGoogleCredential(
 /** Ends the session server-side and clears the cookie. Local state is only cleared once this succeeds — see AuthProvider. */
 export async function signOutRequest(): Promise<{ ok: true } | { ok: false; error: AuthRequestError }> {
   const failure = "Couldn't sign you out. Check your connection and try again.";
+  if (isDesktop()) {
+    try {
+      await desktopAccount.signOut();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: { message: typeof error === "string" ? error : failure, status: 0 } };
+    }
+  }
   try {
     const response = await fetch(apiUrl("/api/auth/logout"), { ...FETCH_OPTIONS, method: "POST" });
     if (!response.ok) return { ok: false, error: await readError(response, failure) };

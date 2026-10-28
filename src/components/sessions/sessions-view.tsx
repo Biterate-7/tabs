@@ -122,22 +122,20 @@ export function SessionsView({
       <main className="mx-auto w-full max-w-3xl px-4 pt-8 pb-16 animate-enter sm:px-8 sm:pt-14">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
           <h1 className="text-display text-foreground">Sessions</h1>
-          {!isDesktop && (
-            <div className="flex flex-wrap gap-2">
-              {sessions.length > 1 && (
-                <Button type="button" size="lg" variant="secondary" onClick={() => setDialog({ kind: "launch", sessionIds: [] })}>
-                  Start session
-                </Button>
-              )}
-              <Button type="button" size="lg" onClick={() => setDialog({ kind: "save" })}>
-                <Plus /> Save current session
+          <div className="flex flex-wrap gap-2">
+            {sessions.length > 1 && (
+              <Button type="button" size="lg" variant="secondary" onClick={() => setDialog({ kind: "launch", sessionIds: [] })}>
+                Start session
               </Button>
-            </div>
-          )}
+            )}
+            <Button type="button" size="lg" onClick={() => setDialog({ kind: "save" })}>
+              <Plus /> Save current session
+            </Button>
+          </div>
         </div>
         <p className="mt-2 text-body text-muted-foreground">
           {isDesktop
-            ? "Sessions save and reopen Chrome tabs, so they work in Hubble in Chrome."
+            ? "Save the tabs open in Chrome and reopen them together later, in your default browser. Hubble asks Chrome through your browser each time."
             : "Save the tabs you have open, close them, and reopen them together later. Kept in this browser."}
         </p>
 
@@ -152,8 +150,12 @@ export function SessionsView({
           <EmptyState
             icon={Layers}
             title="No saved sessions"
-            description={isDesktop ? "Save a session from Hubble in Chrome or from Hubble for Chrome." : "Save the tabs open in Chrome now to pick them up again later."}
-            {...(isDesktop ? {} : { action: { label: "Save current session", onClick: () => setDialog({ kind: "save" }) } })}
+            description={
+              isDesktop
+                ? "Save the tabs open in Chrome now, or in Chrome right-click a tab → Hubble → Add to Hubble Desktop and choose Save as a session."
+                : "Save the tabs open in Chrome now to pick them up again later."
+            }
+            action={{ label: "Save current session", onClick: () => setDialog({ kind: "save" }) }}
           />
         ) : shown.length === 0 ? (
           <p className="mt-6 text-body text-muted-foreground">No session matches “{query.trim()}”.</p>
@@ -175,7 +177,6 @@ export function SessionsView({
                   </span>
                   <button
                     type="button"
-                    disabled={isDesktop}
                     onClick={() => setDialog({ kind: "launch", sessionIds: [session.id] })}
                     className="min-w-0 flex-1 rounded-xs text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-default"
                     aria-label={`See the tabs in ${session.name}`}
@@ -189,11 +190,9 @@ export function SessionsView({
                       </span>
                     )}
                   </button>
-                  {!isDesktop && (
-                    <Button type="button" size="default" onClick={() => setDialog({ kind: "launch", sessionIds: [session.id] })} aria-label={`Start ${session.name}`}>
-                      Start
-                    </Button>
-                  )}
+                  <Button type="button" size="default" onClick={() => setDialog({ kind: "launch", sessionIds: [session.id] })} aria-label={`Start ${session.name}`}>
+                    Start
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={`More actions for ${session.name}`} />}>
                       <MoreHorizontal />
@@ -201,7 +200,7 @@ export function SessionsView({
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => setDialog({ kind: "edit", session })}>Edit tabs</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setDialog({ kind: "rename", session })}>Rename</DropdownMenuItem>
-                      {!isDesktop && <DropdownMenuItem onClick={() => setDialog({ kind: "replace", session })}>Replace with open tabs</DropdownMenuItem>}
+                      <DropdownMenuItem onClick={() => setDialog({ kind: "replace", session })}>Replace with open tabs</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => duplicate(session)}>Duplicate</DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem variant="destructive" onClick={() => setDialog({ kind: "delete", session })}>

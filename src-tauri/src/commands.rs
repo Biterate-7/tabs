@@ -1,6 +1,6 @@
 //! The complete native surface Hubble's frontend can reach.
 //!
-//! There are three commands, all deliberately shaped so the frontend cannot
+//! There are four commands, all deliberately shaped so the frontend cannot
 //! express a dangerous request in the first place:
 //!
 //! * `open_external` takes a URL and refuses anything that isn't http(s), so
@@ -15,6 +15,9 @@
 //! * `export_file` is the same for bytes — an uploaded file's original,
 //!   saved back out — with the name in a header and the bytes as the raw
 //!   request body.
+//! * `app_info` takes nothing and reads nothing from the machine beyond
+//!   constants compiled into this binary: its version, OS and architecture,
+//!   for Settings → Desktop app.
 
 use tauri::Url;
 use tauri_plugin_dialog::DialogExt;
@@ -41,6 +44,31 @@ pub fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(parsed.to_string(), None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// What Settings → Desktop app shows about this install.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    /// `version` in tauri.conf.json, compiled in: the version actually installed.
+    version: String,
+    tauri_version: &'static str,
+    os: &'static str,
+    arch: &'static str,
+    debug: bool,
+}
+
+/// The running binary's version, OS and build type. Compile-time constants
+/// only — no file, registry or network read.
+#[tauri::command]
+pub fn app_info(app: tauri::AppHandle) -> AppInfo {
+    AppInfo {
+        version: app.package_info().version.to_string(),
+        tauri_version: tauri::VERSION,
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        debug: cfg!(debug_assertions),
+    }
 }
 
 /// Shows a native "Save as…" dialog seeded with `suggested_name`, then writes

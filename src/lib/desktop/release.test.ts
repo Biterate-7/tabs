@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   DESKTOP_BUILDS,
   RELEASE_REPOSITORY,
+  RELEASES_PAGE_URL,
   anyDesktopBuildPublished,
+  compareVersions,
+  formatInstallerSize,
+  parseReleaseManifest,
+  releaseManifest,
+  releasePageUrl,
   desktopLinkLabel,
   desktopOffer,
   detectVisitorOs,
@@ -49,7 +55,8 @@ const UA = {
 
 describe("the shipped release state", () => {
   it("publishes exactly the verified Windows 0.1.0 release, and nothing for macOS or Linux", () => {
-    expect(DESKTOP_BUILDS.windows).toEqual({ status: "published", version: "0.1.0", sha256: RELEASED_SHA256 });
+    // Size as GitHub lists the asset (gh api …/releases/tags/desktop-v0.1.0).
+    expect(DESKTOP_BUILDS.windows).toEqual({ status: "published", version: "0.1.0", sha256: RELEASED_SHA256, bytes: 30_260_142 });
     expect(downloadUrl("windows")).toBe(
       `https://github.com/${RELEASE_REPOSITORY}/releases/download/desktop-v0.1.0/Hubble_0.1.0_x64-setup.exe`
     );
@@ -74,11 +81,14 @@ describe("the shipped release state", () => {
     expect(DESKTOP_BUILDS.linux.status).toBe("unsupported");
   });
 
-  it("keeps a published Windows build in step with the app's version and product name", () => {
+  it("never publishes a build newer than the app's version, and keeps the product name", () => {
     expect(tauri.productName).toBe("Hubble");
     const windows = DESKTOP_BUILDS.windows;
     if (windows.status === "published") {
-      expect(windows.version).toBe(tauri.version);
+      // Equal once a release is published and turned on here; the app is one
+      // version ahead between the version bump and that pull request
+      // (docs/desktop-release.md), never behind.
+      expect(compareVersions(windows.version, tauri.version)).toBeLessThanOrEqual(0);
       expect(downloadUrl("windows")).not.toBeNull();
     }
   });
@@ -204,5 +214,69 @@ describe("desktopOffer", () => {
     expect(statusLabel("windows", PUBLISHED)).toBe("Version 0.1.0");
     expect(statusLabel("windows", UNPUBLISHED)).toBe("Not yet available");
     expect(statusLabel("windows")).toBe("Version 0.1.0");
+  });
+});
+
+describe("release pages and versions", () => {
+  it("links one version's release page, and the list for anything that isn't a version", () => {
+    expect(RELEASES_PAGE_URL).toBe(`https://github.com/${RELEASE_REPOSITORY}/releases`);
+    expect(releasePageUrl("0.1.0")).toBe(`https://github.com/${RELEASE_REPOSITORY}/releases/tag/desktop-v0.1.0`);
+    for (const bad of ["latest", "0.1", "0.1.0/../../x", ""]) expect(releasePageUrl(bad), bad).toBe(RELEASES_PAGE_URL);
+  });
+
+  it("orders versions numerically, not as text", () => {
+    expect(compareVersions("0.1.0", "0.1.0")).toBe(0);
+    expect(compareVersions("0.1.0", "0.2.0")).toBeLessThan(0);
+    expect(compareVersions("0.10.0", "0.9.9")).toBeGreaterThan(0);
+    expect(compareVersions("1.0.0", "0.99.99")).toBeGreaterThan(0);
+    expect(compareVersions("v1.0.0", "1.0.0")).toBeNull();
+    expect(compareVersions("1.0", "1.0.0")).toBeNull();
+  });
+
+  it("formats an installer's size, and nothing for no size", () => {
+    expect(formatInstallerSize(30_260_142)).toBe("30 MB");
+    expect(formatInstallerSize(400_000)).toBe("1 MB");
+    expect(formatInstallerSize(undefined)).toBeNull();
+    expect(formatInstallerSize(0)).toBeNull();
+  });
+});
+
+describe("the public release manifest", () => {
+  it("round-trips the shipped table", () => {
+    const wire = JSON.parse(JSON.stringify(releaseManifest()));
+    expect(parseReleaseManifest(wire)).toEqual(DESKTOP_BUILDS);
+  });
+
+  it("carries no URL, so the app always builds its own links", () => {
+    expect(JSON.stringify(releaseManifest())).not.toMatch(/https?:/);
+  });
+
+  it("refuses anything malformed rather than guessing", () => {
+    const good = JSON.parse(JSON.stringify(releaseManifest(PUBLISHED)));
+    const bad: unknown[] = [
+      null,
+      "nope",
+      {},
+      { builds: null },
+      { builds: { ...good.builds, linux: undefined } },
+      { builds: { ...good.builds, windows: { status: "published", version: "latest", sha256: SHA } } },
+      { builds: { ...good.builds, windows: { status: "published", version: "0.1.0", sha256: "x" } } },
+      { builds: { ...good.builds, windows: { status: "published", version: "0.1.0", sha256: SHA, bytes: -1 } } },
+      { builds: { ...good.builds, windows: { status: "shipping" } } },
+    ];
+    for (const value of bad) expect(parseReleaseManifest(value), JSON.stringify(value)).toBeNull();
+  });
+
+  it("drops fields it does not know, such as a URL someone added", () => {
+    const wire = {
+      builds: {
+        ...JSON.parse(JSON.stringify(releaseManifest(PUBLISHED))).builds,
+        windows: { status: "published", version: "0.2.0", sha256: SHA, url: "https://evil.example/x.exe" },
+      },
+    };
+    expect(parseReleaseManifest(wire)?.windows).toEqual({ status: "published", version: "0.2.0", sha256: SHA });
+    expect(downloadUrl("windows", parseReleaseManifest(wire)!)).toBe(
+      `https://github.com/${RELEASE_REPOSITORY}/releases/download/desktop-v0.2.0/Hubble_0.2.0_x64-setup.exe`
+    );
   });
 });

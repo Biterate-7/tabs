@@ -15,8 +15,8 @@ const tabs = (count: number) => `${count} ${count === 1 ? "tab" : "tabs"}`
 export function describeRestore(outcome: RestoreOutcome, requested: number): Notice {
   switch (outcome.kind) {
     case "opened": {
-      if (outcome.failed.length === 0) return { tone: "success", title: `Opened ${tabs(outcome.opened)} in a new window` }
-      if (outcome.opened === 0) return { tone: "error", title: "Chrome didn't open any of the tabs", description: outcome.failed[0]?.error }
+      if (outcome.failed.length === 0) return { tone: "success", title: `Opened ${tabs(outcome.opened)} ${outcome.inBrowser ? "in your browser" : "in a new window"}` }
+      if (outcome.opened === 0) return { tone: "error", title: `${outcome.inBrowser ? "Your browser" : "Chrome"} didn't open any of the tabs`, description: outcome.failed[0]?.error }
       return {
         tone: "warning",
         title: `Opened ${outcome.opened} of ${tabs(outcome.opened + outcome.failed.length)}`,
@@ -27,8 +27,6 @@ export function describeRestore(outcome: RestoreOutcome, requested: number): Not
       return { tone: "error", title: "Nothing to open", description: "None of the chosen tabs is a web page Chrome can open." }
     case "busy":
       return { tone: "warning", title: "Already opening tabs", description: "Wait for the current launch to finish." }
-    case "desktop":
-      return { tone: "error", title: "Sessions open in Chrome", description: "Use Hubble in Chrome with Hubble for Chrome to open saved tabs." }
     case "no-extension":
       return { tone: "error", title: "Hubble for Chrome isn't connected", description: "Install or turn on Hubble for Chrome, then try again. Nothing was opened." }
     case "outdated":

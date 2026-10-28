@@ -33,7 +33,6 @@ describe("Settings in Hubble Desktop", () => {
   it("describes storage as this computer, not this browser", () => {
     setDesktop(true)
     render(<AccountSettingsSection />)
-    expect(screen.getByText(/Sign-in isn't in the desktop app yet/)).toBeTruthy()
     expect(screen.getByText("Everything is saved in this app on this computer.")).toBeTruthy()
     expect(screen.queryByText(/this browser/)).toBeNull()
   })

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { mostRecentSession } from "@/lib/sessions/model"
 import { lastActivityLabel } from "@/lib/sessions/messages"
-import { LaunchConfirmDialog, useSessionLaunch } from "./use-session-launch"
+import { LaunchConfirmDialog, useLaunchDestination, useSessionLaunch } from "./use-session-launch"
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
@@ -27,6 +27,7 @@ export function ResumeSessionCard({
 }) {
   const { sessions } = useTabSessions()
   const launcher = useSessionLaunch()
+  const destination = useLaunchDestination()
   const latest = mostRecentSession(sessions)
 
   if (!latest) return null
@@ -53,7 +54,7 @@ export function ResumeSessionCard({
             disabled={launcher.pending}
             onClick={() => void launcher.launch({ tabs: latest.tabs.map((tab) => ({ url: tab.url, ...(tab.pinned ? { pinned: true } : {}) })), sessionIds: [latest.id] })}
             aria-label={`Resume ${latest.name}`}
-            title="Opens its tabs in a new Chrome window"
+            title={`Opens its tabs ${destination}`}
           >
             <Play /> {launcher.pending ? "Opening…" : "Resume"}
           </Button>
