@@ -33,8 +33,9 @@
 //!   token issued with the session, compared in constant time. A session that
 //!   is never used expires; a request nobody answers expires; a result nobody
 //!   collects expires. Nothing outlives the app: all of it is in memory.
-//! * **Four routes, one job.** There is no route that touches a file, runs a
-//!   command or reaches a Tauri command. The bridge can only queue something
+//! * **Five routes, one job.** There is no route that touches a file, runs a
+//!   command or reaches a Tauri command. (The fifth, `/v1/relay/:id`, takes
+//!   Chrome's answer to a question this app asked; see "The relay".) The bridge can only queue something
 //!   for the person to accept or decline in Hubble's own window: a batch of
 //!   web addresses (`"kind": "tabs"`, the default) or one AI conversation the
 //!   extension read from ChatGPT, Claude, Gemini or Perplexity
@@ -67,6 +68,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
+
 
 /// The wire protocol version. Mirrors `DESKTOP_PROTOCOL_VERSION` in
 /// extension/src/desktop.js and src/lib/desktop/import-protocol.ts.
@@ -457,6 +459,113 @@ pub struct Bridge {
     /// Whether the webview has asked for requests at least once — reported by
     /// `/v1/hello` so the extension can say "Starting Hubble Desktop…".
     webview_ready: bool,
+    /// Questions this app asked Chrome (see "The relay" below), by id.
+    relays: HashMap<String, Relay>,
+    /// The port the listener bound, once it has — the relay page needs it.
+    port: Option<u16>,
+}
+
+/* ------------------------------------------------------------------ *
+ * The relay: Hubble Desktop asking Chrome
+ * ------------------------------------------------------------------ *
+ *
+ * Everything above carries what the extension *chose* to send. The relay is
+ * the one case where the app asks: "which tabs are open?" (to save a session,
+ * add tabs, organize them) or "what did I visit between these dates?"
+ * (History Dump). The app can't call Chrome, and the extension can't be
+ * called, so the question travels through the person's browser:
+ *
+ *   app ── desktop_relay_begin ──▶ opens {hubble}/desktop/relay#id=…&secret=…&port=…&action=…
+ *   relay page: shows what is asked; the person presses Send (or Don't send)
+ *   relay page ── existing extension commands ──▶ Chrome answers
+ *   relay page ── extension "deliver_to_desktop" ──▶ POST /v1/relay/:id  Bearer secret
+ *   app ◀── "hubble-relay:delivered" ── desktop_relay_take
+ *
+ * The id and secret live in the URL fragment, which no server ever sees, and
+ * the delivery must come from the extension (the same Origin rule as every
+ * other POST) with the secret, compared in constant time. Each relay answers
+ * once, for one named action, and expires. The answer is data the person
+ * approved sending, about their own browser; it is validated again by the
+ * webview before anything is shown, and nothing is saved without them.
+ */
+
+/// The questions the app may ask Chrome.
+pub const RELAY_ACTIONS: [&str; 2] = ["browser_tabs", "history"];
+pub const RELAY_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_RELAYS: usize = 4;
+/// 5,000 history entries with long addresses and titles fit comfortably.
+pub const MAX_RELAY_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub const RELAY_DELIVERED_EVENT: &str = "hubble-relay:delivered";
+
+struct Relay {
+    action: &'static str,
+    secret: String,
+    deadline: Instant,
+    answer: Option<Value>,
+}
+
+impl Bridge {
+    pub fn set_port(&mut self, port: u16) {
+        self.port = Some(port);
+    }
+
+    pub fn open_relay(&mut self, action: &str, now: Instant) -> Result<(String, String, u16), String> {
+        let action = RELAY_ACTIONS.iter().copied().find(|known| *known == action).ok_or("Hubble Desktop doesn't ask Chrome that.")?;
+        let port = self.port.ok_or("Hubble Desktop's connection for Hubble for Chrome isn't running.")?;
+        self.relays.retain(|_, relay| now < relay.deadline || relay.answer.is_some());
+        if self.relays.len() >= MAX_RELAYS {
+            return Err("Hubble Desktop is already waiting on Chrome. Finish or cancel that first.".into());
+        }
+        let (id, secret) = (random_hex(16), random_hex(32));
+        self.relays.insert(id.clone(), Relay { action, secret: secret.clone(), deadline: now + RELAY_TTL, answer: None });
+        Ok((id, secret, port))
+    }
+
+    /// The extension delivering Chrome's answer (or the person's "Don't send").
+    pub fn deliver_relay(&mut self, id: &str, token: Option<&str>, body: &[u8], now: Instant) -> Result<(), Refusal> {
+        let relay = self.relays.get_mut(id).ok_or(Refusal::NotFound)?;
+        if now >= relay.deadline {
+            self.relays.remove(id);
+            return Err(Refusal::NotFound);
+        }
+        if !token.is_some_and(|t| same_token(t, &relay.secret)) {
+            return Err(Refusal::Unauthorized);
+        }
+        if relay.answer.is_some() {
+            return Err(Refusal::Conflict);
+        }
+        if body.len() > MAX_RELAY_BODY_BYTES {
+            return Err(Refusal::TooLarge);
+        }
+        let value: Value = serde_json::from_slice(body).map_err(|_| Refusal::BadRequest)?;
+        let object = value.as_object().ok_or(Refusal::BadRequest)?;
+        if object.get("action").and_then(Value::as_str) != Some(relay.action) {
+            return Err(Refusal::BadRequest);
+        }
+        let answer = match object.get("ok") {
+            Some(Value::Bool(true)) => json!({ "ok": true, "result": object.get("result").filter(|r| r.is_object()).ok_or(Refusal::BadRequest)? }),
+            Some(Value::Bool(false)) => {
+                let error = object.get("error").and_then(Value::as_str).unwrap_or("Chrome didn't answer.");
+                json!({ "ok": false, "error": error.chars().take(300).collect::<String>() })
+            }
+            _ => return Err(Refusal::BadRequest),
+        };
+        relay.answer = Some(answer);
+        Ok(())
+    }
+
+    /// The answer, once; `None` while still waiting (or for an unknown id).
+    pub fn take_relay(&mut self, id: &str) -> Option<Value> {
+        let answered = self.relays.get(id).is_some_and(|relay| relay.answer.is_some());
+        if !answered {
+            return None;
+        }
+        self.relays.remove(id).and_then(|relay| relay.answer)
+    }
+
+    pub fn cancel_relay(&mut self, id: &str) {
+        self.relays.remove(id);
+    }
 }
 
 fn random_hex(bytes: usize) -> String {
@@ -784,6 +893,8 @@ pub fn write_response(stream: &mut impl Write, response: &HttpResponse) -> std::
 pub enum Effect {
     /// `items` is tabs for a batch, turns for a conversation.
     Queued { request_id: String, kind: &'static str, items: usize },
+    /// Chrome's answer to a relay arrived.
+    Relayed { id: String },
 }
 
 fn refusal(refusal: Refusal, allow_origin: Option<String>) -> HttpResponse {
@@ -872,6 +983,17 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
             Ok(body) => (HttpResponse { status: 200, body, allow_origin: allow }, None),
             Err(r) => (refusal(r, allow), None),
         },
+        ("POST", ["v1", "relay", id]) => match bridge.deliver_relay(id, bearer(request), &request.body, now) {
+            Ok(()) => {
+                log("relay-delivered", &[("relayId", id)]);
+                (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, Some(Effect::Relayed { id: id.to_string() }))
+            }
+            Err(r) => {
+                log("relay-refused", &[("reason", r.reason())]);
+                (refusal(r, allow), None)
+            }
+        },
+        (_, ["v1", "relay", _]) => (refusal(Refusal::MethodNotAllowed, allow), None),
         (_, ["v1", "hello"]) | (_, ["v1", "sessions"]) | (_, ["v1", "sessions", _]) | (_, ["v1", "sessions", _, "import"]) => {
             (refusal(Refusal::MethodNotAllowed, allow), None)
         }
@@ -917,6 +1039,7 @@ pub fn start(app: AppHandle, bridge: Arc<Mutex<Bridge>>) {
         return;
     };
     log("bridge-listening", &[("port", &port.to_string())]);
+    bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).set_port(port);
 
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
@@ -946,9 +1069,16 @@ fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u
     let _ = write_response(&mut stream, &response);
     let _ = stream.shutdown(Shutdown::Both);
 
-    if let Some(Effect::Queued { request_id, kind, items }) = effect {
-        let _ = app.emit(REQUESTED_EVENT, json!({ "requestId": request_id, "kind": kind, "items": items }));
-        focus_main_window(app);
+    match effect {
+        Some(Effect::Queued { request_id, kind, items }) => {
+            let _ = app.emit(REQUESTED_EVENT, json!({ "requestId": request_id, "kind": kind, "items": items }));
+            focus_main_window(app);
+        }
+        Some(Effect::Relayed { id }) => {
+            let _ = app.emit(RELAY_DELIVERED_EVENT, json!({ "id": id }));
+            focus_main_window(app);
+        }
+        None => {}
     }
 }
 
@@ -989,6 +1119,39 @@ pub fn desktop_import_finish(
     result
 }
 
+/// Asks Chrome something, through the person's browser (see "The relay").
+/// `args` is the action's parameters (a history range), passed to the page
+/// as base64url JSON in the fragment. Returns the relay id to wait on.
+#[tauri::command]
+pub fn desktop_relay_begin(app: AppHandle, state: tauri::State<'_, ImportBridgeState>, action: String, args: Value) -> Result<String, String> {
+    let args = args.to_string();
+    if args.len() > 1024 || !args.starts_with('{') {
+        return Err("Unexpected request.".into());
+    }
+    let (id, secret, port) = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).open_relay(&action, Instant::now())?;
+    let mut url = tauri::Url::parse(crate::account::account_origin()).map_err(|e| e.to_string())?;
+    url.set_path("/desktop/relay");
+    url.set_fragment(Some(&format!(
+        "id={id}&secret={secret}&port={port}&action={action}&args={}",
+        crate::account::base64url(args.as_bytes())
+    )));
+    log("relay-opened", &[("relayId", &id), ("action", &action)]);
+    crate::account::open_in_browser(&app, &url)?;
+    Ok(id)
+}
+
+/// Chrome's answer to a relay, once it has arrived (`null` until then).
+#[tauri::command]
+pub fn desktop_relay_take(state: tauri::State<'_, ImportBridgeState>, id: String) -> Option<Value> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take_relay(&id)
+}
+
+/// Gives up on a relay: a late answer is then refused.
+#[tauri::command]
+pub fn desktop_relay_cancel(state: tauri::State<'_, ImportBridgeState>, id: String) {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).cancel_relay(&id);
+}
+
 /* ------------------------------------------------------------------ *
  * Tests
  * ------------------------------------------------------------------ */
@@ -998,6 +1161,71 @@ mod tests {
     use super::*;
 
     const PORT: u16 = 41517;
+
+    fn relay_bridge(now: Instant) -> (Mutex<Bridge>, String, String) {
+        let mut bridge = Bridge::default();
+        bridge.set_port(PORT);
+        let (id, secret, port) = bridge.open_relay("browser_tabs", now).unwrap();
+        assert_eq!(port, PORT);
+        (Mutex::new(bridge), id, secret)
+    }
+
+    fn deliver(bridge: &Mutex<Bridge>, id: &str, secret: &str, origin: Option<&str>, body: &Value, now: Instant) -> HttpResponse {
+        let auth = format!("Bearer {secret}");
+        // The helper sends the extension Origin unless told otherwise; "" removes it.
+        let headers = [("authorization", auth.as_str()), ("origin", origin.unwrap_or(""))];
+        route(bridge, &request("POST", &format!("/v1/relay/{id}"), &headers, body.to_string().as_bytes()), PORT, now).0
+    }
+
+    #[test]
+    fn a_relay_answer_arrives_once_from_the_extension_with_the_secret() {
+        let now = Instant::now();
+        let (bridge, id, secret) = relay_bridge(now);
+        let answer = json!({ "action": "browser_tabs", "ok": true, "result": { "tabs": [], "windows": [] } });
+        // Not yet answered.
+        assert!(bridge.lock().unwrap().take_relay(&id).is_none());
+        // A web page (no extension Origin) and a wrong secret are refused.
+        assert_eq!(deliver(&bridge, &id, &secret, None, &answer, now).status, 403);
+        assert_eq!(deliver(&bridge, &id, &secret, Some("https://evil.example"), &answer, now).status, 403);
+        assert_eq!(deliver(&bridge, &id, &"0".repeat(64), Some(EXT), &answer, now).status, 401);
+        // The wrong action is refused; the right one lands, once.
+        let wrong = json!({ "action": "history", "ok": true, "result": {} });
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &wrong, now).status, 400);
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 200);
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 409);
+        let taken = bridge.lock().unwrap().take_relay(&id).unwrap();
+        assert_eq!(taken["ok"], json!(true));
+        assert!(bridge.lock().unwrap().take_relay(&id).is_none());
+    }
+
+    #[test]
+    fn a_declined_relay_carries_only_a_short_reason() {
+        let now = Instant::now();
+        let (bridge, id, secret) = relay_bridge(now);
+        let declined = json!({ "action": "browser_tabs", "ok": false, "error": "x".repeat(1000) });
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &declined, now).status, 200);
+        let taken = bridge.lock().unwrap().take_relay(&id).unwrap();
+        assert_eq!(taken["error"].as_str().unwrap().len(), 300);
+    }
+
+    #[test]
+    fn relays_expire_are_cancellable_and_only_ask_known_questions() {
+        let now = Instant::now();
+        let (bridge, id, secret) = relay_bridge(now);
+        let answer = json!({ "action": "browser_tabs", "ok": true, "result": {} });
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now + RELAY_TTL).status, 404);
+        let (bridge, id, secret) = relay_bridge(now);
+        bridge.lock().unwrap().cancel_relay(&id);
+        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 404);
+        let mut fresh = Bridge::default();
+        assert!(fresh.open_relay("browser_tabs", now).is_err(), "no port bound yet");
+        fresh.set_port(PORT);
+        assert!(fresh.open_relay("open_tabs", now).is_err());
+        for _ in 0..MAX_RELAYS {
+            fresh.open_relay("history", now).unwrap();
+        }
+        assert!(fresh.open_relay("history", now).is_err());
+    }
     const EXT: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 
     fn payload(tabs: Value) -> Vec<u8> {

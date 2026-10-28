@@ -150,18 +150,36 @@ function ScanSetup({
   )
 }
 
-function ScanLoading() {
+function ScanLoading({ desktop }: { desktop: boolean }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <Loader2 className="size-6 animate-spin text-tertiary" aria-hidden />
-      <p className="text-body font-medium text-foreground">Scanning history…</p>
+      <p className="text-body font-medium text-foreground">{desktop ? "Waiting for Chrome…" : "Scanning history…"}</p>
+      {desktop && (
+        <p className="max-w-sm text-body-sm text-muted-foreground">
+          A Hubble page opened in your browser. Press Send there to share this range of your Chrome history with Hubble Desktop.
+        </p>
+      )}
     </div>
   )
 }
 
-function ScanError({ reason, onRetry, onChangeRange }: { reason: "not-connected" | "error"; onRetry: () => void; onChangeRange: () => void }) {
-  const copy =
-    reason === "not-connected"
+function ScanError({
+  reason,
+  message,
+  desktop,
+  onRetry,
+  onChangeRange,
+}: {
+  reason: "not-connected" | "error"
+  message?: string | undefined
+  desktop: boolean
+  onRetry: () => void
+  onChangeRange: () => void
+}) {
+  const copy = desktop
+    ? { title: "Chrome didn't send your history.", description: message ?? "Try again, and press Send on the Hubble page in your browser." }
+    : reason === "not-connected"
       ? {
           title: "Hubble extension not detected.",
           description: "Install or reconnect the extension to scan browser history.",
@@ -300,17 +318,7 @@ export function HistoryDumpView({
       </div>
 
       {/* Chrome's history is read by Hubble for Chrome, which talks to the Hubble website — never to this app. */}
-      {isDesktop && (
-        <div className="flex flex-1 flex-col items-center justify-center px-6">
-          <EmptyState
-            icon={PlugZap}
-            title="Hubble Desktop can't read Chrome's history"
-            description="Import from history works in Hubble on the web, with Hubble for Chrome. To add tabs here, right-click a tab in Chrome → Hubble → Add to Hubble Desktop."
-          />
-        </div>
-      )}
-
-      {!isDesktop && stage === "idle" && (
+      {stage === "idle" && (
         <ScanSetup
           rangeId={rangeId}
           onRangeChange={setRangeId}
@@ -322,9 +330,9 @@ export function HistoryDumpView({
         />
       )}
 
-      {stage === "scanning" && <ScanLoading />}
+      {stage === "scanning" && <ScanLoading desktop={isDesktop} />}
 
-      {stage === "error" && error && <ScanError reason={error.reason} onRetry={runScan} onChangeRange={reset} />}
+      {stage === "error" && error && <ScanError reason={error.reason} message={error.message} desktop={isDesktop} onRetry={runScan} onChangeRange={reset} />}
 
       {stage === "ready" && (
         <>

@@ -222,6 +222,11 @@ runtime flag.
 
 ## What the browser extension should do later
 
+> **Hubble Desktop now does exactly this** — see `src/lib/auth/device.ts`,
+> `src-tauri/src/account.rs` and "Authentication" in
+> docs/desktop-architecture.md. The extension could reuse the same
+> `/api/auth/desktop/*` routes (with its own label) if it ever needs the API.
+
 The extension in `extension/` does **not** talk to the Hubble API today. It
 delivers a dump by `postMessage` into an open Hubble tab
 (`TABDUMP_IMPORT` → `TABDUMP_IMPORT_ACK`, see `extension/src/config.js` and

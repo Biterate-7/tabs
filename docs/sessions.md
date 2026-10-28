@@ -96,8 +96,21 @@ combination; the originals never change.
 
 ## Hubble Desktop
 
-The desktop app cannot reach Chrome's tabs this way, so it shows no Sessions
-row or Home card. Sessions saved in Chrome stay in that browser.
+The app can't call Hubble for Chrome directly, so it uses the paths it has:
+
+- **Save current session / Replace with open tabs:** the same dialog, reading
+  Chrome through the relay (docs/desktop-architecture.md, "Asking Chrome"):
+  a Hubble page opens in the browser, and nothing is read until the person
+  presses Send there. Needs Hubble for Chrome 0.9.0.
+- **Save from Chrome:** right-click a tab → Hubble → Add to Hubble Desktop,
+  and choose **Save as a session** instead of a project.
+- **Start:** `restoreTabs` gets `DESKTOP_UNREACHABLE` from the browser
+  bridge and hands each tab to the default browser through `open_external`,
+  in saved order. There is no new window: the browser decides where each tab
+  lands, and the wording says "in your default browser" throughout.
+
+Sessions saved in Chrome stay in that browser, and the desktop app's stay in
+the app (sessions are not part of account sync).
 
 ## Releasing
 

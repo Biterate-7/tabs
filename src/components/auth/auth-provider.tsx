@@ -19,6 +19,7 @@ import {
   type AuthRequestError,
 } from "@/lib/auth/client"
 import { publicGoogleClientId } from "@/lib/auth/public-config"
+import { desktopAccountApi } from "@/lib/platform"
 import type { PublicUser } from "@/lib/auth/types"
 import {
   copyAnonymousDataInto,
@@ -116,8 +117,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!publicGoogleClientId()) return
+    // Hubble Desktop signs in through the browser (src-tauri/src/account.rs),
+    // so it has accounts whether or not a Google client ID is in its bundle.
+    const desktop = desktopAccountApi()
+    if (!publicGoogleClientId() && !desktop) return
     const controller = new AbortController()
+    if (desktop) {
+      // Hold the shell back until the account is known, so a signed-in
+      // desktop never opens on the signed-out projects first. (Synchronizing
+      // with an external system on mount, as below.)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState({ status: "loading" })
+      let stop: (() => void) | undefined
+      let live = true
+      void desktop.onChanged(() => void load().catch(() => {})).then((unlisten) => (live ? (stop = unlisten) : unlisten()))
+      void load(controller.signal).catch(() => {})
+      return () => {
+        live = false
+        stop?.()
+        controller.abort()
+      }
+    }
     // A failed check resolves to signed-out inside fetchAuthState, so this
     // can never leave the app stuck on `loading`.
     // `.catch` rather than bare `void`: fetchAuthState rethrows on abort
@@ -127,7 +147,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // case effects exist for — the same reasoning (and the same directive)
     // as AppShell's own hydrate-on-mount effect. There is no way to derive
     // "is this browser signed in?" during render: it lives on the server.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(controller.signal).catch(() => {})
     return () => controller.abort()
   }, [load])

@@ -24,8 +24,6 @@ import { useOptionalAuth } from "@/components/auth/auth-provider"
 import { SignInDialog } from "@/components/auth/sign-in-dialog"
 import { useIntegrations, useProjectMemory } from "@/hooks/use-integrations"
 import { useNow } from "@/hooks/use-now"
-import { isDesktop } from "@/lib/platform/detect"
-import { CANONICAL_PRODUCTION_ORIGIN } from "@/lib/production-origin.mjs"
 import { formatRelativeTime } from "@/lib/time-format"
 import { ACTIVITY_KIND_LABEL, ACTIVITY_OUTCOME_LABEL } from "@/lib/integrations/activity-labels"
 import { CLIENT_TEST_LABEL, PLATFORM_SURFACES, VERIFICATION_LABEL, VERIFIED_ON } from "@/lib/integrations/platforms"
@@ -643,8 +641,9 @@ function Guide() {
 }
 
 export function AiIntegrationsSection() {
-  const desktop = isDesktop()
-  const integrations = useIntegrations({ enabled: !desktop })
+  // The same on the web and in Hubble Desktop: there, requests carry the
+  // app's device token from Rust (accountFetch) instead of the cookie.
+  const integrations = useIntegrations()
   const auth = useOptionalAuth()
   const now = useNow()
   const [client, setClient] = useState<Exclude<IntegrationClient, "other">>("chatgpt")
@@ -657,25 +656,6 @@ export function AiIntegrationsSection() {
       description="Let ChatGPT, Claude, Gemini and Grok read the projects you sync. Conversation text and notes stay on this device."
     />
   )
-
-  if (desktop) {
-    return (
-      <div>
-        {heading}
-        <SectionStack>
-          <GroupBlock>
-            <p className="text-body-sm text-muted-foreground">
-              Connectors are managed on the web. Open{" "}
-              <a className="text-link underline-offset-4 hover:underline" href={CANONICAL_PRODUCTION_ORIGIN} target="_blank" rel="noreferrer">
-                {CANONICAL_PRODUCTION_ORIGIN.replace(/^https:\/\//, "")}
-              </a>{" "}
-              and sign in.
-            </p>
-          </GroupBlock>
-        </SectionStack>
-      </div>
-    )
-  }
 
   const state = integrations.state
   return (

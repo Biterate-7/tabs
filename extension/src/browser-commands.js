@@ -11,7 +11,13 @@
 // TABDUMP_BROWSER_COMMAND message can never reach a chrome.* call with
 // unvalidated data, regardless of what page or script produced it.
 
+import { DESKTOP_BRIDGE_PORTS } from "./desktop.js";
+
 const MAX_URLS_PER_COMMAND = 50;
+// What Hubble Desktop may ask Chrome through its relay (RELAY_ACTIONS in
+// src-tauri/src/import_bridge.rs), and the answer's size cap (MAX_RELAY_BODY_BYTES).
+export const RELAY_ACTIONS = Object.freeze(["browser_tabs", "history"]);
+const MAX_RELAY_CHARS = 8 * 1024 * 1024;
 const MAX_TAB_IDS_PER_COMMAND = 200;
 const MAX_HISTORY_RESULTS = 5000;
 // Mirrors MAX_SESSION_TABS in src/lib/sessions/types.ts.
@@ -160,6 +166,38 @@ export const BROWSER_COMMAND_VALIDATORS = {
     }
     if (!isPositiveInteger(args?.windowId)) return fail("`windowId` must be a non-negative integer.");
     return ok({ tabIds: args.tabIds, windowId: args.windowId });
+  },
+
+  /**
+   * Hubble Desktop asked Chrome something (src-tauri/src/import_bridge.rs,
+   * "The relay"): the relay page on Hubble's site showed the person what was
+   * asked, they pressed Send, and the page read the answer with the commands
+   * above. This hands that answer to the app on loopback, with the one-time
+   * secret the app put in the page's fragment. It reads nothing from Chrome
+   * itself, and it can reach only Hubble Desktop's own ports.
+   */
+  deliver_to_desktop(args) {
+    if (!DESKTOP_BRIDGE_PORTS.includes(args?.port)) return fail("`port` must be one of Hubble Desktop's ports.");
+    if (typeof args?.id !== "string" || !/^[0-9a-f]{32}$/.test(args.id)) return fail("`id` must be a relay id.");
+    if (typeof args?.secret !== "string" || !/^[0-9a-f]{64}$/.test(args.secret)) return fail("`secret` must be a relay secret.");
+    if (!RELAY_ACTIONS.includes(args?.action)) return fail(`\`action\` must be one of ${RELAY_ACTIONS.join(", ")}.`);
+    if (args.ok === true) {
+      if (args.result === null || typeof args.result !== "object" || Array.isArray(args.result)) return fail("`result` must be an object.");
+    } else if (args.ok !== false || typeof args.error !== "string") {
+      return fail("Expected `ok: true` with `result`, or `ok: false` with `error`.");
+    }
+    let size = 0;
+    try {
+      size = JSON.stringify(args).length;
+    } catch {
+      return fail("The answer must be plain data.");
+    }
+    if (size > MAX_RELAY_CHARS) return fail("The answer is too large.");
+    return ok(
+      args.ok
+        ? { port: args.port, id: args.id, secret: args.secret, action: args.action, ok: true, result: args.result }
+        : { port: args.port, id: args.id, secret: args.secret, action: args.action, ok: false, error: args.error.slice(0, 300) }
+    );
   },
 
   create_browser_window(args) {

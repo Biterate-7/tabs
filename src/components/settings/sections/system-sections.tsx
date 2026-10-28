@@ -19,6 +19,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { SignInDialog } from "@/components/auth/sign-in-dialog"
+import { ConnectedDesktops } from "@/components/auth/connected-desktops"
 import { useOptionalAuth } from "@/components/auth/auth-provider"
 import { useAppearanceContext } from "@/components/appearance-provider"
 import { EXTENSION_INSTALL_STEPS } from "@/components/extension-install-guide"
@@ -36,9 +37,8 @@ import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui
  * The settings panes that are not appearance and not a single connector.
  *
  * Every row below reports something the product actually does or offers a
- * control it already has; none of them is a placeholder. Where a surface has
- * nothing configurable yet (Desktop), the pane says what is true of this
- * install instead of inventing a toggle. Each pane is a title and its rows; a
+ * control it already has; none of them is a placeholder. (Desktop app has a
+ * file of its own, ./desktop-section.tsx.) Each pane is a title and its rows; a
  * row's description is one short line, kept only where it says something
  * about data or permissions that the label cannot.
  */
@@ -74,9 +74,7 @@ export function AccountSettingsSection() {
             description={
               configured
                 ? "Sign in to sync projects and use AI connectors."
-                : isDesktop
-                  ? "Sign-in isn't in the desktop app yet. Projects here stay on this computer."
-                  : "Accounts aren't available here."
+                : "Accounts aren't available here."
             }
           >
             {configured && (
@@ -98,6 +96,8 @@ export function AccountSettingsSection() {
         >
           <Badge variant={user ? "success" : "default"}>{user ? "Synced" : "Local"}</Badge>
         </FieldRow>
+        {/* The web manages connected desktops; the app signs only itself out. */}
+        {user && !isDesktop && <ConnectedDesktops />}
       </SectionStack>
       <SignInDialog open={signInOpen} onOpenChange={setSignInOpen} />
     </div>
@@ -298,30 +298,6 @@ export function ShortcutsSection() {
           </SectionStack>
         </div>
       ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------- Desktop
-
-export function DesktopSection() {
-  const desktop = useIsDesktop()
-  return (
-    <div>
-      <SectionHeading title="Desktop app" />
-      <SectionStack>
-        <FieldRow
-          label="This install"
-          description={desktop ? "Hubble for Chrome adds tabs here, and saves AI conversations here while this app is open." : "You're using Hubble in the browser."}
-        >
-          <Badge variant="default">{desktop ? "Desktop" : "Web"}</Badge>
-        </FieldRow>
-        {desktop && (
-          <FieldRow label="Your data" description="Kept in the app's own profile, separate from any browser.">
-            <span />
-          </FieldRow>
-        )}
-      </SectionStack>
     </div>
   )
 }

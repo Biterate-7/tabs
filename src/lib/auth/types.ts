@@ -48,6 +48,36 @@ export type AuthSession = {
   lastUsedAt: number;
 };
 
+/**
+ * A device credential: what Hubble Desktop holds instead of a web session.
+ *
+ * Its own row and its own token type, never a web session cookie (see
+ * docs/auth-architecture.md, "pairing flow"): signing out of the website
+ * leaves Hubble Desktop signed in, and disconnecting Hubble Desktop leaves
+ * the website signed in.
+ *
+ * One row has two lives. A signed-in web session creates it *pending*
+ * (`codeHash` set, `tokenHash` null): a single-use pairing code bound to the
+ * user and to the desktop's PKCE challenge. It is redeemed exactly once into
+ * a *live* credential (`codeHash` null, `tokenHash` set). As with sessions,
+ * only hashes are stored.
+ */
+export type DeviceSession = {
+  id: string;
+  userId: string;
+  /** SHA-256 of the pairing code, until it is redeemed. */
+  codeHash: string | null;
+  /** base64url(SHA-256(verifier)) the desktop sent when it asked to pair (RFC 7636 S256). */
+  codeChallenge: string;
+  /** SHA-256 of the device token, once redeemed. */
+  tokenHash: string | null;
+  /** What the person sees in the list of connected desktops ("Hubble Desktop on LAPTOP-7"). */
+  label: string;
+  createdAt: number;
+  expiresAt: number;
+  lastUsedAt: number | null;
+};
+
 /** Everything the browser is ever told about the signed-in user. No session token, no `googleSub`, no internal timestamps. */
 export type PublicUser = {
   id: string;
@@ -110,4 +140,22 @@ export interface AuthStore {
   deleteSessionsForUser(userId: string): Promise<void>;
   /** Housekeeping for expired rows. Called opportunistically, never on the hot path. */
   deleteExpiredSessions(now: number): Promise<void>;
+
+  // ---- Device credentials (Hubble Desktop). See DeviceSession and ../device.ts.
+
+  createDevicePairing(pairing: DeviceSession): Promise<void>;
+  /** A still-pending pairing, by its code's hash. */
+  findDevicePairingByCodeHash(codeHash: string): Promise<DeviceSession | null>;
+  /**
+   * Turns a pending pairing into a live credential, atomically: it succeeds
+   * only while the row still carries `codeHash`, so of two concurrent
+   * redemptions of one code exactly one wins. Null when already redeemed or gone.
+   */
+  redeemDevicePairing(id: string, codeHash: string, tokenHash: string, expiresAt: number, now: number): Promise<DeviceSession | null>;
+  /** A live (redeemed) credential, by its token's hash. */
+  findDeviceSessionByTokenHash(tokenHash: string): Promise<DeviceSession | null>;
+  touchDeviceSession(id: string, lastUsedAt: number, expiresAt?: number): Promise<void>;
+  deleteDeviceSession(id: string): Promise<void>;
+  /** An account's live credentials, newest first. Pending pairings are not listed. */
+  listDeviceSessions(userId: string): Promise<DeviceSession[]>;
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import type { Pool, QueryResultRow } from "pg";
-import type { AuthSession, AuthStore, AuthUser } from "../types";
+import type { AuthSession, AuthStore, AuthUser, DeviceSession } from "../types";
 
 /**
  * The durable AuthStore. Talks to any Postgres — Vercel Postgres/Neon,
@@ -77,6 +77,33 @@ function toSession(row: SessionRow): AuthSession {
   };
 }
 
+type DeviceRow = {
+  id: string;
+  user_id: string;
+  code_hash: string | null;
+  code_challenge: string;
+  token_hash: string | null;
+  label: string;
+  created_at: string | number;
+  expires_at: string | number;
+  last_used_at: string | number | null;
+};
+
+function toDevice(row: DeviceRow): DeviceSession {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    codeHash: row.code_hash,
+    codeChallenge: row.code_challenge,
+    tokenHash: row.token_hash,
+    label: row.label,
+    createdAt: toMillis(row.created_at),
+    expiresAt: toMillis(row.expires_at),
+    lastUsedAt: row.last_used_at === null ? null : toMillis(row.last_used_at),
+  };
+}
+
+const DEVICE_COLUMNS = "id, user_id, code_hash, code_challenge, token_hash, label, created_at, expires_at, last_used_at";
 const USER_COLUMNS = "id, google_sub, email, name, avatar_url, created_at, updated_at";
 const SESSION_COLUMNS = "id, user_id, token_hash, created_at, expires_at, last_used_at";
 
@@ -175,6 +202,55 @@ export class PostgresAuthStore implements AuthStore {
 
   async deleteExpiredSessions(now: number): Promise<void> {
     await this.query(`DELETE FROM tabdump_sessions WHERE expires_at <= $1`, [now]);
+  }
+
+  async createDevicePairing(p: DeviceSession): Promise<void> {
+    await this.query(
+      `INSERT INTO tabdump_device_sessions (${DEVICE_COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [p.id, p.userId, p.codeHash, p.codeChallenge, p.tokenHash, p.label, p.createdAt, p.expiresAt, p.lastUsedAt]
+    );
+  }
+
+  async findDevicePairingByCodeHash(codeHash: string): Promise<DeviceSession | null> {
+    const rows = await this.query<DeviceRow>(`SELECT ${DEVICE_COLUMNS} FROM tabdump_device_sessions WHERE code_hash = $1`, [codeHash]);
+    return rows[0] ? toDevice(rows[0]) : null;
+  }
+
+  async redeemDevicePairing(id: string, codeHash: string, tokenHash: string, expiresAt: number, now: number): Promise<DeviceSession | null> {
+    // Conditional on the code still being there: the row lock makes the
+    // second of two concurrent redemptions match nothing.
+    const rows = await this.query<DeviceRow>(
+      `UPDATE tabdump_device_sessions
+          SET code_hash = NULL, token_hash = $3, expires_at = $4, last_used_at = $5
+        WHERE id = $1 AND code_hash = $2
+        RETURNING ${DEVICE_COLUMNS}`,
+      [id, codeHash, tokenHash, expiresAt, now]
+    );
+    return rows[0] ? toDevice(rows[0]) : null;
+  }
+
+  async findDeviceSessionByTokenHash(tokenHash: string): Promise<DeviceSession | null> {
+    const rows = await this.query<DeviceRow>(`SELECT ${DEVICE_COLUMNS} FROM tabdump_device_sessions WHERE token_hash = $1`, [tokenHash]);
+    return rows[0] ? toDevice(rows[0]) : null;
+  }
+
+  async touchDeviceSession(id: string, lastUsedAt: number, expiresAt?: number): Promise<void> {
+    await this.query(
+      `UPDATE tabdump_device_sessions SET last_used_at = $2, expires_at = COALESCE($3, expires_at) WHERE id = $1`,
+      [id, lastUsedAt, expiresAt ?? null]
+    );
+  }
+
+  async deleteDeviceSession(id: string): Promise<void> {
+    await this.query(`DELETE FROM tabdump_device_sessions WHERE id = $1`, [id]);
+  }
+
+  async listDeviceSessions(userId: string): Promise<DeviceSession[]> {
+    const rows = await this.query<DeviceRow>(
+      `SELECT ${DEVICE_COLUMNS} FROM tabdump_device_sessions WHERE user_id = $1 AND token_hash IS NOT NULL ORDER BY created_at DESC`,
+      [userId]
+    );
+    return rows.map(toDevice);
   }
 }
 

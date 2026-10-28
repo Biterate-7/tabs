@@ -108,6 +108,10 @@ and the frontend holds no plugin permission at all.
 | --- | --- | --- |
 | `open_external(url)` | URL in, nothing out | Safelists `http`/`https` in Rust, so `file:`, `javascript:` and OS-handler schemes (`ms-settings:`) are unreachable. The JS `opener` plugin is **not** enabled, so the frontend cannot bypass this check |
 | `export_text_file(suggested_name, contents)` | Filename + text in, `bool` out | Takes a *name*, never a path. The path comes from the native save dialog the user just used, so the only file the app can write is one the user picked by hand |
+| `account_status` / `account_sign_in_begin` / `account_sign_in_complete(code)` / `account_sign_out` | Signed-in state out (never the token) | See "Authentication" below: PKCE pairing, the token kept in the OS credential store |
+| `account_request(method, path, body)` | An allowlisted account API path and a JSON body in; status and body out | The host is fixed at build time and the token is attached in Rust; only `/api/auth/me`, `/api/sync/*`, `/api/integrations*`, `/api/mcp/tokens` |
+| `desktop_relay_begin(action, args)` / `desktop_relay_take(id)` / `desktop_relay_cancel(id)` | One of two known questions for Chrome; its answer, once | See "Asking Chrome: the relay" below |
+| `app_info()` | Nothing in; version, Tauri version, OS, arch, debug out | Compile-time constants only (`package_info().version`, `std::env::consts`). Settings → Desktop app shows them, and compares the version with `/api/desktop/release` on the deployed site to offer a newer installer |
 
 The **navigation guard** (`src-tauri/src/lib.rs`) is the backstop: any
 navigation to a non-app origin is cancelled, and an `http(s)` one is handed
@@ -164,53 +168,72 @@ Two allowances are deliberate and worth knowing about:
   `desktop-config.test.ts` pins the exact source list, and also asserts that
   no bare `*` or `https:` wildcard creeps into `img-src`.
 
-## Authentication: signed-out by design in v1
+## Authentication: signing in through the browser
 
-The desktop app does not sign in, and that is a deliberate security
-decision rather than an unfinished feature.
+Hubble Desktop signs in to the same Hubble account as the website, without
+the website's cookie and without Google ever seeing the app. It is the
+pairing flow `docs/auth-architecture.md` prescribed for a non-browser
+client, with PKCE.
 
-Two independent blockers, both verified in this codebase:
+Why not the obvious ways:
 
-1. **Google Identity Services will not accept the origin.** GSI requires an
-   authorized JavaScript origin; `tauri://localhost` is not an `https`
-   origin and `http://tauri.localhost` is not a registrable domain. Google
-   accepts neither.
-2. **The session cookie cannot travel.** It is `HttpOnly`, `SameSite=Lax`
-   and same-origin, and every auth fetch uses
-   `credentials: "same-origin"`. Making it work cross-origin would mean
-   `SameSite=None` plus CORS-with-credentials — dismantling the exact CSRF
-   posture `src/lib/auth/origin.ts` was built to provide.
+1. **Google Identity Services will not accept the app's origin.**
+   `tauri://localhost` isn't `https`, and `http://tauri.localhost` isn't a
+   registrable domain.
+2. **The session cookie must not travel.** It is `HttpOnly`,
+   `SameSite=Lax` and same-origin. Sending it cross-origin would mean
+   `SameSite=None` plus credentialed CORS — dismantling the CSRF posture
+   `src/lib/auth/origin.ts` exists for.
 
-So `fetchAuthState()` answers locally on desktop
-(`src/lib/auth/client.ts`): signed out, `configured: false`. That reuses
-the app's existing "this deployment has no Google client ID" path, which
-already hides the sign-in UI entirely — rather than rendering a Google
-button that cannot work.
+What happens instead (`src-tauri/src/account.rs`, `src/lib/auth/device.ts`):
 
-**Everything else still works**, because the product is local-first:
-workspaces, the spatial graph, search, Auto-Organize, and import/export all
-run with no account and no network.
+```
+app (Rust)   verifier = 32 random bytes, kept in memory; challenge = S256(verifier)
+   │ opens {hubble}/desktop/connect?challenge=…&state=…&label=…   in the default browser
+   ▼
+web page     signed in with the ordinary cookie (or signs in, with Google, as usual)
+   │ "Connect Hubble Desktop on LAPTOP-7?"  → Connect
+   │ POST /api/auth/desktop/authorize {challenge}      cookie, same-origin, JSON
+   │   → single-use code, 5 minutes, bound to this user and this challenge
+   ▼ hubble://auth/callback?code=…&state=…   (and the code on screen, to paste)
+app (Rust)   state must match the attempt in progress
+   │ POST /api/auth/desktop/token {code, verifier}
+   │   → device token (hbd_…), its own row, 90 days sliding
+   ▼ Windows Credential Manager (keyring), never the webview
+every account request:  Authorization: Bearer hbd_…   — sent by Rust
+```
 
-### The designed path to desktop accounts
+- **Identity only comes from a web session the server resolved.** The app
+  never asserts a user; the code is minted under `requireUser`.
+- **PKCE binds the code to the app that asked.** A code read from a URL,
+  browser history, or by another program that claimed `hubble://` is useless
+  without the verifier, which never leaves the app. A wrong verifier burns
+  the code. Codes are single-use (a conditional `UPDATE … WHERE code_hash =`)
+  and expire in five minutes.
+- **A separate credential type.** `tabdump_device_sessions` (in
+  `src/lib/auth/store/schema.sql`), not `tabdump_sessions`: signing out of
+  the website leaves the app signed in and vice versa, and each desktop is
+  revoked on its own from **Settings → Account** on the web. A bearer header
+  is never answered from the cookie, and a cookie token is not a device
+  token. Only hashes are stored.
+- **The token never enters the webview.** Page JavaScript can't read it, as
+  it can't read the website's HttpOnly cookie. The webview asks Rust
+  (`account_request`) to make account calls; Rust attaches the token and
+  allows only `/api/auth/me`, `/api/sync/*`, `/api/integrations*` and
+  `/api/mcp/tokens` — it is not a general proxy. The host is fixed at
+  build time (production; a debug build may name `http://localhost`).
+- **Expiry and revocation.** A refused token is deleted locally and the app
+  falls back to signed out, with every project on this computer intact. An
+  app that starts offline keeps the last account it knew, so its projects
+  open without a network.
 
-`docs/auth-architecture.md` already specifies the answer for this exact
-class of client, in "What the browser extension should do later". The
-desktop app is the same kind of client — a non-browser origin that cannot
-use cookies — so it takes the same route:
+Because account calls are made by Rust rather than the webview, none of
+this needed CORS on the server, and CSP `connect-src` is unchanged.
 
-1. Desktop opens the deployed Hubble site in the **system browser**, where
-   sign-in works normally with the origins Google already authorizes.
-2. That page requests a short-lived, single-use pairing code under
-   `requireUser`, so the code is bound to the session's user.
-3. Desktop exchanges the code for its **own token type** — a separate row
-   with its own expiry, revocable independently, so signing out of the site
-   does not kill the desktop app and vice versa.
-4. Desktop sends that token as `Authorization: Bearer`, never a cookie, so
-   CSRF does not apply. The desktop origin needs an explicit allowlist
-   entry alongside the same-origin check.
-
-What must **not** happen — the same rule as the web flow — is the desktop
-app asserting a `userId` or `email` and the server believing it.
+The webview's single seam is `accountFetch` (`src/lib/platform/index.ts`):
+a same-origin cookie fetch on the web, `account_request` in the app. Sync
+(`src/lib/sync/client.ts`) and AI connectors (`src/hooks/use-integrations.ts`)
+use it, which is all it took for both to work in the app.
 
 ## Talking to the backend from desktop
 
@@ -293,6 +316,34 @@ can reach, so its scan is unavailable on desktop and shows the existing
 "extension not connected" state. Its scoring and selection logic is
 untouched and shared.
 
+### Asking Chrome: the relay
+
+The import bridge only carries what the extension chose to send. Some
+features need the app to *ask*: which tabs are open (Save current session,
+Organize open tabs, Add → Browser tabs) and what was visited in a range
+(Import from history). The app can't call Chrome and the extension can't be
+called, so the question goes through the person's browser
+(`src-tauri/src/import_bridge.rs`, "The relay"):
+
+```
+app ── desktop_relay_begin ──▶ opens {hubble}/desktop/relay#id=…&secret=…&port=…&action=…
+relay page: says exactly what is asked → Send, or Don't send
+relay page ── list_browser_tabs / list_browser_windows / get_history ──▶ Hubble for Chrome
+relay page ── deliver_to_desktop ──▶ extension ── POST 127.0.0.1:port/v1/relay/:id  Bearer secret
+app ◀── "hubble-relay:delivered" ── desktop_relay_take ── webview validates and shows it
+```
+
+- The id and secret live in the URL **fragment**, which no server sees, and
+  the page clears it once read.
+- Delivery has to come from a `chrome-extension://` origin (the bridge's
+  rule for every POST) with the secret, compared in constant time. Each relay
+  answers once, for one named action, and expires after five minutes.
+- Opt-in only: each request opens a browser tab, so nothing in the app reads
+  Chrome in the background. `src/lib/browser/read-tabs.ts` is the one reader
+  both shells use.
+- Needs Hubble for Chrome 0.9.0 (`deliver_to_desktop`). An older extension
+  gets "Update Hubble for Chrome" on the relay page.
+
 ## Data compatibility
 
 Nothing about the data model changed. Desktop uses the same `localStorage`
@@ -354,7 +405,12 @@ Two Windows-specific notes for whoever ships this:
 
 macOS and Linux remain unbuilt from this repository.
 
-## Feature parity (audited 2026-10-18)
+## Feature parity
+
+The current matrix, with how each row was verified, is [desktop-parity.md](desktop-parity.md). The table below is the 2026-10-18 audit, kept for its history.
+
+### Audited 2026-10-18
+
 
 Measured in a packaged-mode debug build (`tauri build --debug --no-bundle`,
 served from `http://tauri.localhost`, driven over CDP) unless marked *unit*.

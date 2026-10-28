@@ -94,7 +94,10 @@ import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useDesktopImport } from "@/hooks/use-desktop-import"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { desktopImport } from "@/lib/platform"
-import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest } from "@/lib/desktop/import-protocol"
+import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest, type DesktopTabsRequest } from "@/lib/desktop/import-protocol"
+import { createSession } from "@/lib/sessions/model"
+import { describeWriteError } from "@/lib/sessions/messages"
+import { writeSessions } from "@/lib/sessions/persistence"
 import { DesktopImportDialog, type DesktopImportChoice } from "@/components/desktop-import-dialog"
 import { useOrganizationReadiness } from "@/hooks/use-organization-readiness"
 import { OrganizationStatusBar } from "@/components/organization-preparation"
@@ -1079,6 +1082,7 @@ export function AppShell() {
     extension's Save on the web. Nothing on the web: there is no bridge there.
   */
   function handleDesktopImport(request: DesktopImportRequest, choice: DesktopImportChoice): boolean | Promise<boolean> {
+    if ("session" in choice) return request.kind === "tabs" ? saveDesktopSession(request, choice.session) : false
     let latest = storeRef.current
     if (!latest) return false
     let workspaceId: string
@@ -1097,6 +1101,26 @@ export function AppShell() {
     const outcomes = handleAddSources(workspaceId, request.tabs, "extension")
     desktopImports.answer(request.requestId, outcomeFromIngestion(request, outcomes, workspaceNamed(workspaceId)))
     showDesktopImportProject(workspaceId)
+    return true
+  }
+
+  /**
+   * Tabs from Chrome kept as a session rather than added to a project — how
+   * Hubble Desktop saves one, since it can't read Chrome's open tabs itself.
+   * The same createSession and limits as Save current session on the web.
+   */
+  function saveDesktopSession(request: DesktopTabsRequest, name: string): boolean {
+    const tabs = request.tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}), ...(tab.favicon ? { favicon: tab.favicon } : {}) }))
+    const result = writeSessions((state) => createSession(state, { name, tabs }, { now: createTimestamp(), mintId: createId }))
+    if (!result.ok) {
+      toast.error("Couldn't save the session", { description: describeWriteError(result.error) })
+      desktopImports.answer(request.requestId, { status: "failed", added: 0, duplicates: 0, failed: request.received })
+      return true
+    }
+    const saved = result.value
+    toast.success(`Saved “${saved.name}”`, { description: `${saved.tabs.length} ${saved.tabs.length === 1 ? "tab" : "tabs"}` })
+    desktopImports.answer(request.requestId, { status: "done", project: `session “${saved.name}”`, added: saved.tabs.length, duplicates: 0, failed: request.rejected })
+    openSessions()
     return true
   }
 
@@ -1256,7 +1280,7 @@ export function AppShell() {
         allWorkspaces={store?.workspaces ?? NO_WORKSPACES}
         onOpenProject={openSubject}
         onShowInGraph={showInGraph}
-        showSessions={!isDesktopShell}
+        showSessions
         {...(focus ? { focusItem: { ref: focus.ref, nonce: focus.nonce, ...(focus.turn !== undefined ? { turn: focus.turn } : {}), ...(focus.terms ? { terms: focus.terms } : {}) } } : {})}
         {...(quickAdd ? { quickAdd } : {})}
         {...(emptyExtra ? { emptyExtra } : {})}
@@ -1799,8 +1823,7 @@ export function AppShell() {
         onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
         onOpenSearch={() => openSearch()}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
-        // Sessions reopen Chrome tabs, which Hubble Desktop can't reach.
-        {...(isDesktopShell ? {} : { onOpenSessions: openSessions })}
+        onOpenSessions={openSessions}
         onUseInAi={(workspaceId) => openReuse({ workspaceId })}
         onShowInGraph={showInGraph}
       />
@@ -1841,13 +1864,12 @@ export function AppShell() {
       <KnowledgeGraphView
         workspaces={subjects}
         now={now}
-        // Sessions reopen Chrome tabs, which Hubble Desktop can't reach.
-        showSessions={!isDesktopShell}
+        showSessions
         onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
         onOpenProject={openSubject}
         onUseInAi={(workspaceId, refs) => openReuse({ workspaceId, refs })}
         onOpenUrl={(url) => void openTab(url)}
-        {...(isDesktopShell ? {} : { onOpenSessions: () => openSessions() })}
+        onOpenSessions={() => openSessions()}
         onNewProject={() => setNewWorkspaceOpen(true)}
         allWorkspaces={store.workspaces}
         tabActions={graphTabActions}
@@ -2009,7 +2031,7 @@ export function AppShell() {
           saveFromAi: () => setSaveFromAiOpen(true),
           goAi: () => setView("ai"),
           goLibrary: () => setView("library"),
-          ...(isDesktopShell ? {} : { goSessions: () => openSessions() }),
+          goSessions: () => openSessions(),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
         },
         { workspaces: store.workspaces, currentId: store.currentId, themeId: appearance?.settings?.themeId }
@@ -2100,7 +2122,7 @@ export function AppShell() {
         onOpenSubject={openSubject}
         onCreate={handleCreateWorkspace}
         onOpenHome={() => setView("home")}
-        {...(isDesktopShell ? {} : { onOpenSessions: () => openSessions() })}
+        onOpenSessions={() => openSessions()}
         onOpenFavorites={() => setView("favorites")}
         onOpenRecents={() => setView("recents")}
         onOpenHistoryDump={() => setView("history-dump")}
@@ -2110,7 +2132,7 @@ export function AppShell() {
         onOpenCommandMenu={paletteHost.open}
         createActions={{
           ...(subjects.length > 0 ? { onWriteNote: () => openCapture(currentWorkspace.id, "note"), onImportChats: () => openCapture(currentWorkspace.id, "import") } : {}),
-          ...(isDesktopShell ? {} : { onSaveSession: () => openSessions({ save: true }) }),
+          onSaveSession: () => openSessions({ save: true }),
         }}
         status={<ShellStatus canPersist={canPersist} desktop={isDesktopShell} onOpenExtension={() => openSettings("extension")} />}
         onOpenSettings={() => openSettings()}

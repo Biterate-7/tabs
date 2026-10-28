@@ -188,6 +188,40 @@ export function buildDesktopConversation(capture, requestId = newRequestId()) {
   return { payload, turns: turns.length, truncated };
 }
 
+/**
+ * Hands Hubble Desktop Chrome's answer to a question it asked (its relay):
+ * `POST /v1/relay/:id` with the relay's one-time secret. The caller is the
+ * `deliver_to_desktop` browser command, which validated every field.
+ * Resolves `{ ok: true }`, or `{ ok: false, error }` saying why it didn't land.
+ */
+export async function deliverRelayAnswer({ port, id, secret, action, ok, result, error, fetch: fetchFn = globalThis.fetch }) {
+  try {
+    const sent = await request(
+      fetchFn,
+      bridgeUrl(port, `/v1/relay/${encodeURIComponent(id)}`),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+        body: JSON.stringify(ok ? { action, ok: true, result } : { action, ok: false, error }),
+      },
+      15000
+    );
+    if (sent.ok) return { ok: true };
+    const reason = sent.body?.reason;
+    return {
+      ok: false,
+      error:
+        reason === "unknown-session"
+          ? "Hubble Desktop stopped waiting for this. Ask again from Hubble Desktop."
+          : reason === "already-submitted"
+            ? "Hubble Desktop already has this answer."
+            : `Hubble Desktop refused the answer (${sent.status}).`,
+    };
+  } catch {
+    return { ok: false, error: "Hubble Desktop isn't open." };
+  }
+}
+
 function bridgeUrl(port, path) {
   return `http://127.0.0.1:${port}${path}`;
 }

@@ -180,7 +180,43 @@ describe("the Rust shell", () => {
     expect(commandsRs).not.toMatch(/fn\s+\w+\([^)]*path:\s*String/);
   });
 
-  it("exposes exactly five commands to the frontend", () => {
+  it("answers app_info from compile-time constants and nothing the frontend sends", () => {
+    const fn = commandsRs.match(/pub fn app_info\(([^)]*)\)/);
+    expect(fn?.[1]).toBe("app: tauri::AppHandle");
+    expect(commandsRs).toContain("std::env::consts::OS");
+    expect(commandsRs).toContain("app.package_info().version");
+  });
+
+  describe("account sign-in (src-tauri/src/account.rs)", () => {
+    const accountRs = readFileSync(path.join(TAURI_DIR, "src", "account.rs"), "utf8");
+
+    it("signs in to the production site unless a QA build names a loopback or https origin", () => {
+      expect(accountRs).toContain(`pub const DEFAULT_ACCOUNT_ORIGIN: &str = "${CANONICAL_PRODUCTION_ORIGIN}";`);
+      expect(accountRs).toContain('option_env!("HUBBLE_ACCOUNT_ORIGIN")');
+    });
+
+    it("keeps the device token in the OS credential store, and out of the webview", () => {
+      expect(cargoToml).toMatch(/keyring = \{ version = "3", features = \["windows-native", "apple-native"\] \}/);
+      // No command hands the token back: AccountStatus has no token field.
+      const status = accountRs.match(/pub struct AccountStatus \{([\s\S]*?)\}/)?.[1] ?? "";
+      const fields = status.split("\n").filter((line) => /^\s*\w+\s*:/.test(line));
+      expect(fields.length).toBeGreaterThan(0);
+      expect(fields.join("\n")).not.toMatch(/token/);
+      expect(accountRs).not.toMatch(/fn account_\w+\([^)]*\)\s*->\s*Result<String/);
+    });
+
+    it("proxies only Hubble's account APIs, never a host or header the webview chooses", () => {
+      const fn = accountRs.match(/pub async fn account_request\(([^)]*)\)/)?.[1];
+      expect(fn).toBe("app: AppHandle, method: String, path: String, body: Option<String>");
+      expect(accountRs).toContain("if !is_allowed_api_path(&path)");
+    });
+
+    it("uses the OS TLS stack, not a bundled one", () => {
+      expect(cargoToml).toContain('reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }');
+    });
+  });
+
+  it("exposes exactly fourteen commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
@@ -190,13 +226,28 @@ describe("the Rust shell", () => {
     // The two originals and saving an uploaded file's original back out (a
     // name and bytes, never a path), then the Chrome import (see
     // import_bridge.rs): take the batches waiting for the person, and record
-    // their answer. No shell, fs or process command, and no agent runtime.
+    // their answer — and the app's own version and OS for Settings (compile-time
+    // constants, no input). No shell, fs or process command, and no agent runtime.
     expect(names).toEqual([
       "commands::open_external",
       "commands::export_text_file",
       "commands::export_file",
+      "commands::app_info",
       "import_bridge::desktop_import_take",
       "import_bridge::desktop_import_finish",
+      // Asking Chrome through the browser ("The relay" in import_bridge.rs):
+      // open the approval page for one known question, take the answer, give up.
+      "import_bridge::desktop_relay_begin",
+      "import_bridge::desktop_relay_take",
+      "import_bridge::desktop_relay_cancel",
+      // Hubble account: status, sign in through the browser (or a pasted
+      // code), sign out, and account API calls with the token attached in
+      // Rust. None returns the token.
+      "account::account_status",
+      "account::account_sign_in_begin",
+      "account::account_sign_in_complete",
+      "account::account_sign_out",
+      "account::account_request",
     ]);
   });
 

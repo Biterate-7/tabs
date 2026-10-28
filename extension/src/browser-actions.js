@@ -8,6 +8,7 @@
 // no reading page content). See AGENTS.md's Chrome Browser Control spec,
 // section 2/14.
 
+import { deliverRelayAnswer } from "./desktop.js";
 import { findMatchingTab } from "./tab-matching.js";
 
 function toTabSummary(tab) {
@@ -277,6 +278,13 @@ export async function createBrowserWindow(args) {
   return { window: toWindowSummary(win) };
 }
 
+/** See `deliver_to_desktop` in browser-commands.js. No chrome.* call: a loopback POST to Hubble Desktop. */
+export async function deliverToDesktop(args) {
+  const delivered = await deliverRelayAnswer(args);
+  if (!delivered.ok) throw new Error(delivered.error);
+  return { delivered: true };
+}
+
 export const BROWSER_ACTION_HANDLERS = {
   list_browser_tabs: listBrowserTabs,
   get_active_tab: getActiveTab,
@@ -291,4 +299,5 @@ export const BROWSER_ACTION_HANDLERS = {
   unpin_tab: unpinTab,
   move_tabs_to_window: moveTabsToWindow,
   create_browser_window: createBrowserWindow,
+  deliver_to_desktop: deliverToDesktop,
 };

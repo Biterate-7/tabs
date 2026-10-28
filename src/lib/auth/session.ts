@@ -1,6 +1,7 @@
 import "server-only";
 import { SESSION_COOKIE, SESSION_TTL_MS, sessionCookieOptions } from "./config";
 import { readCookie, serializeCookie } from "./cookies";
+import { readDeviceToken, resolveDeviceToken } from "./device";
 import { getAuthStore } from "./store";
 import { createRecordId, createSessionToken, hashSessionToken } from "./tokens";
 import { toPublicUser } from "./types";
@@ -36,6 +37,12 @@ const RENEW_WHEN_REMAINING_BELOW_MS = SESSION_TTL_MS / 2;
 
 export type ResolvedSession = {
   user: PublicUser;
+  /**
+   * How the request authenticated: the web session cookie, or Hubble
+   * Desktop's device token (./device.ts). Absent means cookie. For a
+   * device, `session` describes the device credential's row.
+   */
+  via?: "cookie" | "device";
   session: AuthSession;
   /**
    * Present only when the session's expiry was just slid forward — the
@@ -110,6 +117,12 @@ export async function createSession(
  * a forged token — there is nothing to authenticate as.
  */
 export async function getSession(request: Request): Promise<AuthResult> {
+  // Hubble Desktop's device token (./device.ts). An Authorization header
+  // decides the request on its own: a malformed or unknown token is an
+  // invalid session, never a reason to try the cookie instead.
+  const bearer = readDeviceToken(request);
+  if (bearer !== undefined) return getDeviceSession(bearer);
+
   const token = readSessionToken(request);
   if (!token) return { ok: false, reason: "no-session" };
 
@@ -145,6 +158,30 @@ export async function getSession(request: Request): Promise<AuthResult> {
       user: toPublicUser(user),
       session: nextExpiry ? { ...session, lastUsedAt: now, expiresAt: nextExpiry } : { ...session, lastUsedAt: now },
       refreshedCookie: nextExpiry ? sessionCookieFor(token, nextExpiry) : undefined,
+    },
+  };
+}
+
+async function getDeviceSession(token: string | null): Promise<AuthResult> {
+  if (!token) return { ok: false, reason: "invalid-session" };
+  const storeResult = await getAuthStore();
+  if (!storeResult.ok) return { ok: false, reason: "not-configured", detail: storeResult.detail };
+  const resolved = await resolveDeviceToken(storeResult.store, token);
+  if (!resolved) return { ok: false, reason: "invalid-session" };
+  const { device, user } = resolved;
+  return {
+    ok: true,
+    auth: {
+      user,
+      via: "device",
+      session: {
+        id: device.id,
+        userId: device.userId,
+        tokenHash: device.tokenHash ?? "",
+        createdAt: device.createdAt,
+        expiresAt: device.expiresAt,
+        lastUsedAt: device.lastUsedAt ?? device.createdAt,
+      },
     },
   };
 }

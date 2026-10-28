@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const sendBrowserCommand = vi.fn()
 vi.mock("@/lib/browser/bridge", () => ({ sendBrowserCommand: (...args: unknown[]) => sendBrowserCommand(...args) }))
+const openExternal = vi.fn<(url: string) => Promise<void>>()
+vi.mock("@/lib/platform", () => ({ openExternal: (url: string) => openExternal(url) }))
 
 import { DESKTOP_UNREACHABLE } from "@/lib/browser/protocol"
 import { describeRestore } from "./messages"
@@ -63,9 +65,15 @@ describe("restoreTabs", () => {
     expect(describeRestore(outcome, 3).title).toMatch(/hasn't confirmed/)
   })
 
-  it("says so inside Hubble Desktop", async () => {
+  it("opens the tabs in the default browser inside Hubble Desktop, in order, and says which failed", async () => {
     sendBrowserCommand.mockResolvedValue({ id: "x", ok: false, error: DESKTOP_UNREACHABLE })
-    expect(await restoreTabs(tabs, { connected: false })).toEqual({ kind: "desktop" })
+    openExternal.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Refusing to open")).mockResolvedValueOnce(undefined)
+    const outcome = await restoreTabs(tabs, { connected: false })
+    expect(openExternal.mock.calls.map(([url]) => url)).toEqual(tabs.map((tab) => tab.url))
+    expect(outcome).toEqual({ kind: "opened", opened: 2, failed: [{ url: tabs[1]!.url, error: "Refusing to open" }], inBrowser: true })
+    expect(describeRestore(outcome, 3).title).toBe("Opened 2 of 3 tabs")
+    openExternal.mockResolvedValue(undefined)
+    expect(describeRestore(await restoreTabs(tabs, { connected: false }), 3).title).toBe("Opened 3 tabs in your browser")
   })
 
   it("falls back to open_tabs on an extension that predates open_session", async () => {

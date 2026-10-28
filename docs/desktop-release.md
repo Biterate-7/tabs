@@ -45,7 +45,8 @@ that has never had Hubble:
 - [ ] The SHA-256 matches the `.sha256` file.
 - [ ] The installer and the Start menu entry say **Hubble**, with the Hubble icon.
 - [ ] Hubble opens to the app (not a dev server, no devtools).
-- [ ] Settings → Desktop says "You are running Hubble Desktop".
+- [ ] Settings → Desktop app says "You're running Hubble Desktop", shows the
+      version you tagged, "Windows · 64-bit" and "Release" under Diagnostics.
 - [ ] Projects, Search, Graph and Settings open; a new project can be made
       and a note written in it.
 - [ ] Settings → AI apps lists ChatGPT, Claude, Gemini and Perplexity with
@@ -118,6 +119,52 @@ The download URL is built from the version alone. It always names this
 repository's GitHub Releases, and `isOfficialReleaseUrl` refuses anything
 else.
 
+## Releasing 0.2.0 (desktop accounts, sync, connectors, the relay)
+
+The app version is already **0.2.0** in `package.json`, `tauri.conf.json`
+and `Cargo.toml`; `release.ts` still publishes **0.1.0** until 0.2.0 is
+published (`release.test.ts` allows the app to be one version ahead,
+never behind). In this order, each step done by a person:
+
+1. **Database, before the web deploy.** Desktop sign-in needs the new
+   `tabdump_device_sessions` table. The auth schema is additive and
+   idempotent:
+
+   ```bash
+   node --env-file=<file holding the production POSTGRES_URL> scripts/migrate-auth.mjs --expect-host=<ep-… endpoint or host>
+   ```
+
+   Without it, `/api/auth/desktop/*` answer 500 and desktop sign-in fails;
+   nothing else on the website is affected (the bearer path is only taken
+   when an `Authorization` header is present).
+2. **Deploy the website** (merge to `main`). This ships
+   `/desktop/connect`, `/desktop/relay`, `/api/auth/desktop/*`,
+   `/api/desktop/release`, and the Hubble for Chrome **0.9.0** ZIP (the
+   relay's `deliver_to_desktop`). Check:
+
+   ```bash
+   curl -s https://hubble-hq.vercel.app/api/desktop/release
+   curl -s -o /dev/null -w "%{http_code}\n" https://hubble-hq.vercel.app/desktop/connect
+   ```
+
+   An installed 0.1.0 can't use any of this — it predates it — but a 0.2.0
+   build can be tested against production from here on.
+3. **Tag and draft:** `git tag desktop-v0.2.0 && git push origin desktop-v0.2.0`
+   (section 1). The workflow builds a release-profile NSIS installer.
+4. **Check the draft** (section 2), plus: Settings → Account → Sign in opens
+   the browser, Connect returns to the app signed in; Settings → Desktop
+   app shows 0.2.0; Sessions → Save current session opens the relay page;
+   Settings → Account on the web lists the desktop and Disconnect signs it
+   out.
+5. **Publish**, then change `windows` in `release.ts` to
+   `{ status: "published", version: "0.2.0", sha256, bytes }` (section 3).
+   Installed 0.2.0 apps then report "You have the latest version"; nothing
+   tells a 0.1.0 install to update, since 0.1.0 has no update check.
+
+No new Google configuration is needed: sign-in happens on the website's
+own, already-authorized origin. `hubble://` is already registered by the
+installer.
+
 ## Not done yet
 
 - **Code signing.** The installer is unsigned, so Windows SmartScreen warns
@@ -129,3 +176,10 @@ else.
   site says macOS is "Coming soon" and Linux is "Not available" until a
   build exists and is published the same way.
 - **Auto-update.** There is no updater; each version is a new download.
+  Settings → Desktop app *checks* for one: it reads
+  `GET /api/desktop/release` on the deployed site (this table, served with
+  `Access-Control-Allow-Origin: *`) and, when a newer version is published,
+  links its installer through `/api/download` and its release page. The
+  person downloads and runs it; Hubble never installs anything itself. A
+  real updater (`tauri-plugin-updater`) needs an update-signing key pair held
+  as a CI secret and a signed `latest.json` on each release — not set up.

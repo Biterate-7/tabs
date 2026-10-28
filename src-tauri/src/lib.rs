@@ -10,6 +10,7 @@
 //! (src/import_bridge.rs).
 
 mod commands;
+mod account;
 mod import_bridge;
 
 use std::sync::{Arc, Mutex};
@@ -67,8 +68,17 @@ pub fn run() {
             commands::open_external,
             commands::export_text_file,
             commands::export_file,
+            commands::app_info,
             import_bridge::desktop_import_take,
-            import_bridge::desktop_import_finish
+            import_bridge::desktop_import_finish,
+            import_bridge::desktop_relay_begin,
+            import_bridge::desktop_relay_take,
+            import_bridge::desktop_relay_cancel,
+            account::account_status,
+            account::account_sign_in_begin,
+            account::account_sign_in_complete,
+            account::account_sign_out,
+            account::account_request
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -78,6 +88,7 @@ pub fn run() {
             // starting waits here until the webview takes it.
             let bridge = Arc::new(Mutex::new(import_bridge::Bridge::default()));
             app.manage(import_bridge::ImportBridgeState(Arc::clone(&bridge)));
+            app.manage(account::AccountState::default());
             import_bridge::start(app.handle().clone(), bridge);
 
             // The installer registers `hubble://`; a development build
@@ -88,7 +99,14 @@ pub fn run() {
                 eprintln!("[hubble-import] protocol-registration-failed {err}");
             }
             let focus = app.handle().clone();
-            app.deep_link().on_open_url(move |_| import_bridge::focus_main_window(&focus));
+            // `hubble://auth/callback?…` also finishes a sign-in this app
+            // started (account.rs); every other `hubble://` URL only wakes it.
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    account::handle_deep_link(&focus, &url);
+                }
+                import_bridge::focus_main_window(&focus);
+            });
             let popup_handle = handle.clone();
 
             // Built here rather than declared in tauri.conf.json because

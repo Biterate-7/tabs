@@ -40,6 +40,8 @@ export type DesktopBuild =
       version: string;
       /** SHA-256 of the installer, as the release workflow recorded it. */
       sha256: string;
+      /** The installer's size in bytes, as GitHub lists the asset. Shown beside the download, never used to build a link. */
+      bytes?: number;
     }
   /** The app builds for this OS, but no installer has been published yet. */
   | { status: "unpublished" }
@@ -53,15 +55,17 @@ export type DesktopBuild =
  *
  * To publish Windows: run the release workflow, install the drafted
  * installer, publish the draft, then change `windows` to
- * `{ status: "published", version, sha256 }`. See docs/desktop-release.md.
+ * `{ status: "published", version, sha256, bytes }`. See docs/desktop-release.md.
  */
 export const DESKTOP_BUILDS: Readonly<Record<DesktopOs, DesktopBuild>> = {
   // https://github.com/Biterate-7/tabs/releases/tag/desktop-v0.1.0 — published
-  // 2026-10-01. The checksum is the published asset's, verified after download.
+  // 2026-10-01. The checksum is the published asset's, verified after download;
+  // the size is GitHub's listing of the same asset.
   windows: {
     status: "published",
     version: "0.1.0",
     sha256: "660326fd1312727ba4edef5cc17a2755ae437e31674ac12d4359ac67174dc9d3",
+    bytes: 30_260_142,
   },
   macos: { status: "coming_soon" },
   linux: { status: "unsupported" },
@@ -140,6 +144,88 @@ export function isOfficialReleaseUrl(url: string): boolean {
   const prefix = `/${RELEASE_REPOSITORY}/releases/download/`;
   if (!parsed.pathname.startsWith(prefix)) return false;
   return /^desktop-v\d+\.\d+\.\d+\/Hubble_\d+\.\d+\.\d+_x64-setup\.exe$/.test(parsed.pathname.slice(prefix.length));
+}
+
+/** Every Hubble Desktop release, on GitHub — the fallback whenever a download can't be started from Hubble itself. */
+export const RELEASES_PAGE_URL = `https://github.com/${RELEASE_REPOSITORY}/releases`;
+
+/** One version's release page (notes, checksum, installer), or the list of releases for a version that isn't one. */
+export function releasePageUrl(version: string): string {
+  return VERSION.test(version) ? `${RELEASES_PAGE_URL}/tag/${releaseTag(version)}` : RELEASES_PAGE_URL;
+}
+
+/** Orders two `major.minor.patch` versions: negative when `a` is older. `null` if either isn't one. */
+export function compareVersions(a: string, b: string): number | null {
+  if (!VERSION.test(a) || !VERSION.test(b)) return null;
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (left[i] !== right[i]) return left[i]! - right[i]!;
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * The public manifest
+ * ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/desktop/release` (src/app/api/desktop/release/route.ts): this
+ * table, served by the deployed site so an installed Hubble Desktop can learn
+ * whether a newer build has been published since it was built. The desktop
+ * app's own copy of `DESKTOP_BUILDS` is frozen at the version it shipped
+ * with, so it cannot answer that question itself.
+ */
+export const RELEASE_MANIFEST_PATH = "/api/desktop/release";
+
+export type ReleaseManifest = { builds: Record<DesktopOs, DesktopBuild> };
+
+export function releaseManifest(builds: Readonly<Record<DesktopOs, DesktopBuild>> = DESKTOP_BUILDS): ReleaseManifest {
+  return { builds: { ...builds } };
+}
+
+/**
+ * Reads a manifest from the network, strictly. Only a status and, for a
+ * published build, a well-formed version, checksum and size are taken: no
+ * URL is ever read from it, so every link the app shows is still built here
+ * (`downloadUrl`, `releasePageUrl`) and still checked by
+ * `isOfficialReleaseUrl`. Anything malformed is `null`, never a guess.
+ */
+export function parseReleaseManifest(value: unknown): Record<DesktopOs, DesktopBuild> | null {
+  if (!value || typeof value !== "object") return null;
+  const builds = (value as { builds?: unknown }).builds;
+  if (!builds || typeof builds !== "object") return null;
+  const parsed = {} as Record<DesktopOs, DesktopBuild>;
+  for (const os of DESKTOP_OSES) {
+    const build = parseBuild((builds as Record<string, unknown>)[os]);
+    if (!build) return null;
+    parsed[os] = build;
+  }
+  return parsed;
+}
+
+function parseBuild(value: unknown): DesktopBuild | null {
+  if (!value || typeof value !== "object") return null;
+  const { status, version, sha256, bytes } = value as Record<string, unknown>;
+  switch (status) {
+    case "unpublished":
+    case "coming_soon":
+    case "unsupported":
+      return { status };
+    case "published":
+      if (typeof version !== "string" || !VERSION.test(version)) return null;
+      if (typeof sha256 !== "string" || !SHA256.test(sha256)) return null;
+      if (bytes !== undefined && !(typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes > 0)) return null;
+      return { status, version, sha256, ...(typeof bytes === "number" ? { bytes } : {}) };
+    default:
+      return null;
+  }
+}
+
+/** "30 MB" — an installer's size, for the line beside its download. */
+export function formatInstallerSize(bytes: number | undefined): string | null {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
+  return `${Math.max(1, Math.round(bytes / 1_000_000))} MB`;
 }
 
 /** Whether any OS has a published build. */

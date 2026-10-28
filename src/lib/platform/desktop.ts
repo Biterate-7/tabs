@@ -44,6 +44,96 @@ export const desktopImportBridge = {
   },
 };
 
+/** What the running Hubble Desktop binary says about itself (`app_info` in src-tauri/src/commands.rs). */
+export type DesktopAppInfo = {
+  /** `src-tauri/tauri.conf.json` `version`, compiled into this binary. */
+  version: string;
+  tauriVersion: string;
+  /** Rust's `std::env::consts::OS`: "windows", "macos", "linux", … */
+  os: string;
+  /** Rust's `std::env::consts::ARCH`: "x86_64", "aarch64", … */
+  arch: string;
+  /** A development (`--debug`) build rather than a release one. */
+  debug: boolean;
+};
+
+/** The command's answer, checked field by field: a malformed one is an error, not a half-filled screen. */
+export function parseDesktopAppInfo(value: unknown): DesktopAppInfo {
+  const info = (value ?? {}) as Record<string, unknown>;
+  const text = (key: string) => {
+    const field = info[key];
+    if (typeof field !== "string" || !field) throw new Error(`Hubble Desktop didn't report its ${key}.`);
+    return field;
+  };
+  if (typeof info.debug !== "boolean") throw new Error("Hubble Desktop didn't report its build type.");
+  return { version: text("version"), tauriVersion: text("tauriVersion"), os: text("os"), arch: text("arch"), debug: info.debug };
+}
+
+export async function desktopAppInfo(): Promise<DesktopAppInfo> {
+  return parseDesktopAppInfo(await invokeCommand<unknown>("app_info", {}));
+}
+
+/**
+ * The Hubble account, as the desktop app holds it (src-tauri/src/account.rs).
+ * The device token never reaches this side: Rust keeps it in the OS
+ * credential store and attaches it to account requests itself.
+ */
+export type DesktopAccountStatus = {
+  state: "signed-out" | "signed-in" | "offline" | "expired";
+  user: { id: string; email: string; name: string; avatarUrl: string | null } | null;
+  /** The deployed Hubble this app signs in to. */
+  origin: string;
+};
+
+export const desktopAccount = {
+  status(): Promise<DesktopAccountStatus> {
+    return invokeCommand<DesktopAccountStatus>("account_status", {});
+  },
+  /** Opens Hubble in the default browser to approve this app. */
+  beginSignIn(): Promise<void> {
+    return invokeCommand<void>("account_sign_in_begin", {});
+  },
+  /** Finishes with a code pasted from the browser, when the hubble:// link can't. */
+  completeSignIn(code: string): Promise<DesktopAccountStatus> {
+    return invokeCommand<DesktopAccountStatus>("account_sign_in_complete", { code });
+  },
+  signOut(): Promise<void> {
+    return invokeCommand<void>("account_sign_out", {});
+  },
+  /** One account API call; rejects (like fetch offline) when the server can't be reached. */
+  async request(method: string, path: string, body?: string): Promise<{ status: number; body: string }> {
+    return invokeCommand<{ status: number; body: string }>("account_request", { method, path, body: body ?? null });
+  },
+  /** Hears when the signed-in state may have changed: a sign-in finished, or a token was refused. */
+  async onChanged(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("hubble-account:changed", () => handler());
+  },
+  /** Hears how a sign-in through the hubble:// link ended. */
+  async onSignInResult(handler: (result: { ok: boolean; error: string | null }) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ ok: boolean; error: string | null }>("hubble-account:sign-in", (event) => handler(event.payload));
+  },
+};
+
+/** Asking Chrome through the person's browser (src-tauri/src/import_bridge.rs, "The relay"). */
+export const desktopChromeRelay = {
+  /** Opens the relay page; resolves the relay id to wait on. */
+  begin(action: "browser_tabs" | "history", args: Record<string, unknown>): Promise<string> {
+    return invokeCommand<string>("desktop_relay_begin", { action, args });
+  },
+  take(id: string): Promise<{ ok: true; result: unknown } | { ok: false; error: string } | null> {
+    return invokeCommand("desktop_relay_take", { id });
+  },
+  cancel(id: string): Promise<void> {
+    return invokeCommand<void>("desktop_relay_cancel", { id });
+  },
+  async onDelivered(handler: (id: string) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ id: string }>("hubble-relay:delivered", (event) => handler(event.payload.id));
+  },
+};
+
 export const desktopPlatform: PlatformAdapter = {
   kind: "desktop",
 

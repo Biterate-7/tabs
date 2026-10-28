@@ -1,4 +1,6 @@
+import { isDesktop } from "@/lib/platform/detect"
 import { sendBrowserCommand } from "./bridge"
+import { askChromeForHistory } from "./desktop-relay"
 import { DESKTOP_UNREACHABLE } from "./protocol"
 import type { HistoryVisitItem } from "./protocol"
 
@@ -29,6 +31,13 @@ export async function fetchBrowserHistory(
   endTime?: number,
   maxResults?: number
 ): Promise<FetchHistoryResult> {
+  // Hubble Desktop can't call the extension; it asks through the browser,
+  // where the person approves sending this range (./desktop-relay.ts).
+  if (isDesktop()) {
+    const outcome = await askChromeForHistory({ startTime, ...(endTime !== undefined ? { endTime } : {}), ...(maxResults !== undefined ? { maxResults } : {}) })
+    return outcome.ok ? { ok: true, items: outcome.result.items } : { ok: false, reason: "error", error: outcome.error }
+  }
+
   const result = await sendBrowserCommand<
     { startTime: number; endTime?: number; maxResults?: number },
     { items: HistoryVisitItem[] }

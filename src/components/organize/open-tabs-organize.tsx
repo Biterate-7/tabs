@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from "react"
 import { SmartOrganizeDialog, type SmartOrganizeStatus } from "@/components/organize/smart-organize-dialog"
-import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { sendBrowserCommand } from "@/lib/browser/bridge"
+import { readChromeTabs, readingChromeMessage } from "@/lib/browser/read-tabs"
+import { isDesktop } from "@/lib/platform/detect"
 import { EXTENSION_DOWNLOAD_URL, getExtensionInstallInfo } from "@/lib/extension-config"
 import { MAX_SMART_ITEMS, itemsFromBrowserTabs, normalWindowIds } from "@/lib/organize/smart/items"
 import { proposeSmartOrganization } from "@/lib/organize/smart/group"
 import { subjectName } from "@/lib/product/subjects"
-import type { BrowserTabInfo, BrowserWindowInfo } from "@/lib/browser/protocol"
 import type { SmartProposal } from "@/lib/organize/smart/types"
 import type { Workspace } from "@/lib/workspace/types"
 
@@ -38,33 +37,8 @@ export function OpenTabsOrganize({
   subjects: readonly Workspace[]
   onApply: (proposal: SmartProposal) => void
 }) {
-  const isDesktop = useIsDesktop()
   const [attempt, setAttempt] = useState(0)
   if (!open) return null
-  if (isDesktop) {
-    return (
-      <SmartOrganizeDialog
-        open
-        onOpenChange={onOpenChange}
-        mode="open-tabs"
-        places={[]}
-        status={{
-          kind: "unavailable",
-          title: "Hubble Desktop can't see your Chrome tabs",
-          // Tabs sent this way arrive as a project's sources (see useDesktopImport), and the project page has no
-          // ⋯ → Organize tabs for those, so the only honest pointer is how to send them.
-          message: (
-            <>
-              To bring tabs here, right-click a tab in Chrome →{" "}
-              <span className="font-medium text-foreground">Hubble → Add all tabs in this window to Hubble Desktop</span>, and
-              pick a project.
-            </>
-          ),
-        }}
-        onConfirm={() => undefined}
-      />
-    )
-  }
   return (
     <OpenTabsSession
       key={attempt}
@@ -95,17 +69,19 @@ function OpenTabsSession({
   // once; later store changes (a source finishing its reading) must not reset
   // the person's edits. The apply step re-checks against the live store.
   const [snapshot] = useState(() => ({ workspaces, subjects }))
-  const [status, setStatus] = useState<SmartOrganizeStatus>({ kind: "loading", message: "Reading the tabs open in Chrome…" })
+  // In Hubble Desktop the reading goes through the browser, where the person approves it (readChromeTabs).
+  const [status, setStatus] = useState<SmartOrganizeStatus>(() => ({ kind: "loading", message: readingChromeMessage(isDesktop()) }))
 
   useEffect(() => {
     let alive = true
     // Windows too, only to leave out private (incognito) ones: Chrome hands their tabs over as well when the extension is allowed there.
-    void Promise.all([
-      sendBrowserCommand<Record<string, never>, { tabs: BrowserTabInfo[] }>("list_browser_tabs", {}, { timeoutMs: 2500 }),
-      sendBrowserCommand<Record<string, never>, { windows: BrowserWindowInfo[] }>("list_browser_windows", {}, { timeoutMs: 2500 }),
-    ]).then(([result, windows]) => {
+    void readChromeTabs().then((reading) => {
       if (!alive) return
-      if (!result.ok) {
+      if (!reading.ok && (reading.reason === "declined" || reading.reason === "failed")) {
+        setStatus({ kind: "error", message: reading.reason === "declined" ? "Nothing was sent from Chrome." : (reading.message ?? "Chrome didn't send your tabs.") })
+        return
+      }
+      if (!reading.ok && reading.reason === "unavailable") {
         const install = getExtensionInstallInfo()
         setStatus({
           kind: "unavailable",
@@ -128,15 +104,15 @@ function OpenTabsSession({
         })
         return
       }
-      if (!windows.ok) {
+      if (!reading.ok || !reading.windows) {
         // Without the window list, a private window's tabs can't be told apart. Show nothing rather than risk them.
         setStatus({ kind: "error", message: "Couldn't check which of your Chrome windows are private, so nothing was read. Try again." })
         return
       }
       try {
-        const { items, skipped, privateSkipped, truncated } = itemsFromBrowserTabs(result.result.tabs, snapshot.workspaces, {
-          selfOrigin: window.location.origin,
-          normalWindowIds: normalWindowIds(windows.result.windows),
+        const { items, skipped, privateSkipped, truncated } = itemsFromBrowserTabs(reading.tabs, snapshot.workspaces, {
+          selfOrigin: reading.selfOrigin,
+          normalWindowIds: normalWindowIds(reading.windows),
         })
         if (items.length === 0) {
           setStatus({
