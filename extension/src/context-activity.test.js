@@ -357,6 +357,16 @@ describe("the person's controls", () => {
     expect(keys).toEqual(["arxiv.org/abs/2"]);
   });
 
+  it("retention holds after a restart even if no tab event ever arrives", async () => {
+    const h = harness({ settings: { mode: "auto", retentionDays: 7 } });
+    await h.collector.observe(h.tab(1, "https://arxiv.org/abs/1", "Old"));
+    await h.advance(WRITE_DELAY_MS);
+    await h.advance(8 * 24 * 60 * 60 * 1000);
+    const restarted = h.make();
+    expect((await restarted.list()).records).toEqual([]);
+    expect(JSON.stringify(h.stored())).not.toContain("arxiv.org/abs/1\",\"url");
+  });
+
   it("settings are re-read field by field: nothing unknown survives", () => {
     expect(readContextSettings({ mode: "spy", categories: ["ai", "everything"], readConversations: ["chatgpt", "grok"], excludedHosts: ["Example.com/path", "not a host"], retentionDays: 365 })).toEqual({
       version: 1,

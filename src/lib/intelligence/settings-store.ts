@@ -1,5 +1,6 @@
 "use client"
 
+import { getStorageNamespace } from "@/lib/storage/namespace"
 import { getContextSettings, requestConversationAccess, setContextSettings } from "./bridge"
 import type { ContextAnswer, ContextBridgeError, ExtensionContextSettings } from "./bridge"
 import type { ContextSettings } from "./types"
@@ -18,12 +19,20 @@ export type SettingsView =
   | { status: "ready"; value: ExtensionContextSettings }
   | { status: "unavailable"; error: ContextBridgeError; last?: ExtensionContextSettings }
 
-let view: SettingsView = { status: "unknown" }
+const UNKNOWN: SettingsView = Object.freeze({ status: "unknown" })
+let view: SettingsView = UNKNOWN
+// The identity (storage namespace) the view was answered for: another identity always sees it as unknown.
+let viewIdentity: string | null | undefined
 const listeners = new Set<() => void>()
 let inFlight: Promise<SettingsView> | null = null
+// Saves started so far, and how many are still waiting for the extension. A refresh that overlapped a save may have
+// read the extension's settings from before it, and answer after it: the save's own answer is the newer one.
+let savesStarted = 0
+let savesPending = 0
 
 function set(next: SettingsView) {
   view = next
+  viewIdentity = getStorageNamespace()
   for (const listener of listeners) listener()
 }
 
@@ -31,7 +40,7 @@ const lastOf = (current: SettingsView): ExtensionContextSettings | undefined =>
   current.status === "ready" ? current.value : current.status === "loading" || current.status === "unavailable" ? current.last : undefined
 
 export function getSettingsView(): SettingsView {
-  return view
+  return viewIdentity === getStorageNamespace() ? view : UNKNOWN
 }
 
 export function subscribeSettingsView(listener: () => void): () => void {
@@ -42,10 +51,21 @@ export function subscribeSettingsView(listener: () => void): () => void {
 /** Asks the extension again. Concurrent calls share one request. */
 export function refreshSettings(): Promise<SettingsView> {
   if (inFlight) return inFlight
-  const last = lastOf(view)
+  const last = lastOf(getSettingsView())
+  const identity = getStorageNamespace()
+  const savedBefore = savesStarted
+  const startedDuringSave = savesPending > 0
   set({ status: "loading", ...(last ? { last } : {}) })
   inFlight = getContextSettings()
     .then((answer) => {
+      // Asked for one identity, answered after a switch to another: not shown to the new one.
+      if (getStorageNamespace() !== identity) {
+        const next: SettingsView = { status: "unknown" }
+        set(next)
+        return next
+      }
+      // Overlapped a save: possibly older than it. The save's answer sets the view (or already has).
+      if (startedDuringSave || savesPending > 0 || savesStarted !== savedBefore) return getSettingsView()
       const next: SettingsView = answer.ok ? { status: "ready", value: answer.value } : { status: "unavailable", error: answer.error, ...(last ? { last } : {}) }
       set(next)
       return next
@@ -58,10 +78,22 @@ export function refreshSettings(): Promise<SettingsView> {
 
 /** Changes the settings in the extension; the view changes only on its answer. */
 export async function saveSettings(patch: Partial<ContextSettings>): Promise<ContextAnswer<ExtensionContextSettings>> {
-  const answer = await setContextSettings(patch)
+  const identity = getStorageNamespace()
+  savesStarted += 1
+  savesPending += 1
+  let answer: ContextAnswer<ExtensionContextSettings>
+  try {
+    answer = await setContextSettings(patch)
+  } finally {
+    savesPending -= 1
+  }
+  if (getStorageNamespace() !== identity) {
+    set({ status: "unknown" })
+    return answer
+  }
   if (answer.ok) set({ status: "ready", value: answer.value })
   else {
-    const last = lastOf(view)
+    const last = lastOf(getSettingsView())
     set({ status: "unavailable", error: answer.error, ...(last ? { last } : {}) })
   }
   return answer
@@ -84,7 +116,10 @@ export async function enableConversationReading(provider: AiProviderId, current:
 
 /** Test-only. */
 export function __resetSettingsViewForTests(): void {
-  view = { status: "unknown" }
+  view = UNKNOWN
+  viewIdentity = undefined
   listeners.clear()
   inFlight = null
+  savesStarted = 0
+  savesPending = 0
 }

@@ -55,6 +55,7 @@ import { buildSessionCapture } from "../src/sessions.js";
 import { CONTEXT_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
 import { createActivityCollector, isPaused, readContextSettings } from "../src/context-activity.js";
 import { activityKeyOf, isDetectable } from "../src/context-sites.js";
+import { createIdentityVerifier } from "../src/context-identity.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 import {
   readStoredTarget,
@@ -808,6 +809,12 @@ async function handleBrowserCommand({ id, action, args }, sender) {
   if (CONTEXT_ACTIONS.includes(action) && (!fromHubblePage(sender) || sender?.tab?.incognito === true)) {
     return { id, ok: false, error: "Only Hubble can ask for this." };
   }
+  // Which account it is for is Hubble's server's answer, not the page's (context-identity.js). Writes check afresh.
+  if (CONTEXT_ACTIONS.includes(action)) {
+    const identity = await contextIdentity.verify(validated.args.account, { fresh: !CONTEXT_READS.has(action) });
+    if (!identity.ok) return { id, ok: false, error: identity.error };
+    validated.args = { ...validated.args, owner: identity.owner };
+  }
 
   const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
   if (!handler) {
@@ -1507,7 +1514,7 @@ async function captureConversation({ tabId, workspaceId, expectedKey }) {
   }
 }
 
-async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop = true } = {}) {
+async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop = true, owner } = {}) {
   let read;
   try {
     const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
@@ -1548,7 +1555,7 @@ async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop
   // down before it is delivered, so a closed popup, a stopped worker or a Hubble page that answers late loses nothing.
   if (!workspaceId) return { ok: false, error: "no-project" };
   const notes = { ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) };
-  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes });
+  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes, ...(owner ? { owner } : {}) });
   return answerFromJob(job);
 }
 
@@ -1615,7 +1622,11 @@ function scheduleCaptureRetry(at) {
 
 const captureQueue = createCaptureQueue({
   storage: captureStorage,
-  deliver: (job, { openIfMissing }) => askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing }),
+  deliver: async (job, { openIfMissing }) => {
+    // A context save is delivered only while the browser is still signed in as the account that asked for it.
+    if (job.owner && (await contextIdentity.currentOwner()) !== job.owner) return { ok: false, error: "identity-changed" };
+    return askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing });
+  },
   schedule: scheduleCaptureRetry,
   isProjectKnown: async (workspaceId) => Boolean((await projectsSnapshot())?.projects.some((project) => project.id === workspaceId)),
   newId: newRequestId,
@@ -2069,6 +2080,16 @@ async function contextSettingsAnswer() {
   return { settings, granted: await grantedContextProviders(), incognitoAllowed, version: chrome.runtime.getManifest?.().version ?? "" };
 }
 
+/** Context commands that only read; the rest change something and always verify the account afresh. */
+const CONTEXT_READS = new Set(["get_context_settings", "get_context_activity"]);
+
+const contextIdentity = createIdentityVerifier({
+  fetch: (...args) => globalThis.fetch(...args),
+  hubbleOrigin: TABDUMP_ORIGIN,
+  now: () => Date.now(),
+  subtle: globalThis.crypto?.subtle,
+});
+
 /** Every open tab, once — the one in front last, so it holds the focus. */
 async function observeOpenTabs() {
   let tabs = [];
@@ -2114,8 +2135,9 @@ const CONTEXT_HANDLERS = {
   set_context_settings: async ({ settings, owner }) => {
     const before = await contextActivity.settings();
     const patch = withoutOwner(settings);
-    // A different account choosing: the previous account's activity goes before anything is kept for this one.
-    const transfer = typeof before.owner === "string" && before.owner !== owner;
+    // A different identity choosing — or a choice whose owner isn't a confirmed one (an older build's): what was kept
+    // goes before anything is kept for this one. Only a first choice ever (nothing decided, nothing collected) skips it.
+    const transfer = before.owner !== owner && (before.owner !== undefined || before.decidedAt !== undefined);
     if (transfer) await contextActivity.clear();
     const after = transfer
       ? await contextActivity.updateSettings(readContextSettings({ ...patch, owner }), { replace: true })
@@ -2161,7 +2183,10 @@ const CONTEXT_HANDLERS = {
    * a click in Hubble, not in the AI app's tab, so activeTab doesn't apply.
    */
   capture_context_conversation: async ({ url, workspaceId, owner }) => {
-    if (!ownsActivity(await contextActivity.settings(), owner)) return { ok: false, error: "not-yours" };
+    const current = await contextActivity.settings();
+    if (!ownsActivity(current, owner)) return { ok: false, error: "not-yours" };
+    // Never a page the person excluded, or a sensitive one, whatever a suggestion still says.
+    if (!isDetectable(url, { ...current, mode: "auto", paused: false }, { hubbleOrigin: TABDUMP_ORIGIN })) return { ok: false, error: "excluded" };
     const identity = conversationIdentityOf(url);
     if (!identity) return { ok: false, error: "not-a-conversation" };
     const config = TRANSFER_PROVIDERS[identity.provider];
@@ -2177,7 +2202,9 @@ const CONTEXT_HANDLERS = {
     if (capturesInFlight.has(identity.key)) return { ok: false, error: "already-saving" };
     capturesInFlight.add(identity.key);
     try {
-      return await captureIdentified(tab.id, tab, identity, workspaceId, { viaDesktop: false });
+      // The job is bound to this owner: if the browser is signed in as someone else by the time it is delivered, it is
+      // dropped with its text instead of being handed to the next account's Hubble page.
+      return await captureIdentified(tab.id, tab, identity, workspaceId, { viaDesktop: false, owner });
     } finally {
       capturesInFlight.delete(identity.key);
     }

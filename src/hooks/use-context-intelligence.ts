@@ -11,6 +11,7 @@ import { getContextSnapshot, getServerContextSnapshot, subscribeContext, writeCo
 import { getSettingsView, refreshSettings, subscribeSettingsView } from "@/lib/intelligence/settings-store"
 import { applyPull } from "@/lib/intelligence/sync"
 import { isLegacyProjectEvent } from "@/lib/projects/activity"
+import { getStorageNamespace } from "@/lib/storage/namespace"
 import type { SettingsView } from "@/lib/intelligence/settings-store"
 import type { ContextState } from "@/lib/intelligence/types"
 import type { Workspace } from "@/lib/workspace/types"
@@ -19,6 +20,9 @@ const MSG_CONTEXT_CHANGED = "HUBBLE_CONTEXT_CHANGED"
 /** Inference waits for a quiet moment after its input changes: a burst of pulls is one run. */
 const INFERENCE_DELAY_MS = 400
 const SETTINGS_REFRESH_MS = 10_000
+const DAY_MS = 24 * 60 * 60 * 1000
+/** The longest retention a person can choose (types.ts RETENTION_CHOICES): the bound when their choice isn't known. */
+const MAX_RETENTION_DAYS = 90
 
 /** What context intelligence knows, kept current across this page and other Hubble tabs. */
 export function useContextState(): ContextState {
@@ -66,9 +70,12 @@ export function useContextSync({ workspaces, enabled }: { workspaces: readonly W
       try {
         do {
           again.current = false
+          // The identity this pull is for. AuthProvider switches the namespace before this effect is cleaned up, so
+          // an answer that arrives after a switch belongs to the previous identity and is dropped, never written.
+          const identity = getStorageNamespace()
           const cursor = getContextSnapshot().cursor
           const answer = await pullActivity(cursor ? { since: cursor.seq, epoch: cursor.epoch } : undefined)
-          if (cancelled || !answer.ok) break
+          if (cancelled || !answer.ok || getStorageNamespace() !== identity) break
           writeContext((current) => applyPull(current, answer.value))
         } while (again.current && !cancelled)
       } finally {
@@ -123,17 +130,27 @@ export function useContextSync({ workspaces, enabled }: { workspaces: readonly W
   // Manual mode, or another account's choice on this Chrome: nothing is suggested from what was kept before, and
   // anything waiting is put away. ("Hubble notices nothing" — the consent copy — includes not acting on old pages.)
   const view = useContextSettingsView()
-  const quiet = view.status === "ready" && (view.value.settings.mode === "off" || view.value.otherAccount)
+  // What this identity chose, as the extension last answered. Until it has answered, nothing is suggested: the
+  // choice may be manual mode or another account's, and a page load must not flash a suggestion before it is known.
+  const known = view.status === "ready" ? view.value : view.status === "loading" || view.status === "unavailable" ? view.last : undefined
+  const consentKnown = known !== undefined
+  const quiet = consentKnown && (known.settings.mode === "off" || known.otherAccount)
+  // Hubble's copy of activity ages out like the extension's — even when the extension is gone and nothing is pulled.
+  const retentionDays = known ? known.settings.retentionDays : MAX_RETENTION_DAYS
   const { records, associations, rejections, preference, suggestions } = state
   useEffect(() => {
     if (!enabled) return
     if (records.length === 0 && suggestions.every((suggestion) => suggestion.status !== "open")) return
     const timer = setTimeout(() => {
-      writeContext((current) => {
-        const result = runInference({ state: current, workspaces, projectLastAt, now: Date.now(), preference: quiet ? "off" : current.preference, mintId: createId })
+      writeContext((stored) => {
+        const now = Date.now()
+        const kept = stored.records.filter((record) => record.lastSeenAt >= now - retentionDays * DAY_MS)
+        const current = kept.length === stored.records.length ? stored : { ...stored, records: kept }
+        if (!consentKnown) return current
+        const result = runInference({ state: current, workspaces, projectLastAt, now, preference: quiet ? "off" : current.preference, mintId: createId })
         return result.changed ? { ...current, suggestions: result.suggestions } : current
       })
     }, INFERENCE_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [enabled, quiet, records, associations, rejections, preference, suggestions, workspaces, projectLastAt])
+  }, [enabled, consentKnown, quiet, retentionDays, records, associations, rejections, preference, suggestions, workspaces, projectLastAt])
 }

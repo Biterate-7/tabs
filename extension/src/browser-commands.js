@@ -30,8 +30,8 @@ const CONTEXT_PROVIDERS = ["chatgpt", "claude", "gemini", "perplexity"];
  * (background.js checks the sender too), and each answers about this
  * browser's own activity store — never another site's data.
  */
-/** The Hubble account a context command is for (src/lib/intelligence/owner.ts): an opaque random id. */
-export const CONTEXT_OWNER = /^[A-Za-z0-9-]{8,100}$/;
+/** The Hubble account a context command claims to be for: an account id, or null signed out. Verified by background.js. */
+const CONTEXT_ACCOUNT = /^[A-Za-z0-9_-]{1,200}$/;
 
 export const CONTEXT_ACTIONS = Object.freeze([
   "get_context_settings",
@@ -290,8 +290,10 @@ export function validateBrowserCommand(action, args) {
   const validator = BROWSER_COMMAND_VALIDATORS[action];
   if (!validator) return fail(`Unknown or disallowed browser action "${action}".`);
   if (!CONTEXT_ACTIONS.includes(action)) return validator(args ?? {});
-  // Context detection: every command names the Hubble account it is for, and is answered only for that account.
-  if (typeof args?.owner !== "string" || !CONTEXT_OWNER.test(args.owner)) return fail("`owner` must be Hubble's context id for this account.");
+  // Context detection: every command claims the Hubble account it is for. The claim is only checked for shape
+  // here; background.js acts on it only when Hubble's server says the browser is signed in as that account.
+  const account = args?.account;
+  if (!(account === null || (typeof account === "string" && CONTEXT_ACCOUNT.test(account)))) return fail("`account` must be the signed-in account's id, or null signed out.");
   const checked = validator(args ?? {});
-  return checked.ok ? ok({ ...checked.args, owner: args.owner }) : checked;
+  return checked.ok ? ok({ ...checked.args, account }) : checked;
 }

@@ -82,8 +82,8 @@ export function readContextSettings(raw) {
   settings.paused = raw.paused === true;
   if (settings.paused && Number.isFinite(raw.pausedUntil) && raw.pausedUntil > 0) settings.pausedUntil = raw.pausedUntil;
   if (Array.isArray(raw.readConversations)) settings.readConversations = AI_PROVIDERS.filter((id) => raw.readConversations.includes(id));
-  // The Hubble account that opted in (see background.js, context ownership). Only that one is answered.
-  if (typeof raw.owner === "string" && /^[A-Za-z0-9-]{8,100}$/.test(raw.owner)) settings.owner = raw.owner;
+  // The identity that opted in, as Hubble's server confirmed it (context-identity.js). Only that one is answered.
+  if (typeof raw.owner === "string" && /^(signed-out|user:[0-9a-f]{64})$/.test(raw.owner)) settings.owner = raw.owner;
   if (RETENTION.includes(raw.retentionDays)) settings.retentionDays = raw.retentionDays;
   return settings;
 }
@@ -557,6 +557,11 @@ export function createActivityCollector(deps) {
   function list({ since, epoch } = {}) {
     return serial(async () => {
       await loadStore();
+      // Retention holds on every read, not only when a tab event happens to arrive (a restart with no browsing).
+      if (prune(await settings(), deps.now())) {
+        lastPruneAt = deps.now();
+        await writeNow();
+      }
       const sameEpoch = epoch === store.epoch && Number.isInteger(since) && since >= 0 && since <= store.seq;
       const oldestTombstone = store.removed[0]?.seq ?? store.seq;
       const reset = !sameEpoch || (store.removed.length >= MAX_TOMBSTONES && since < oldestTombstone);

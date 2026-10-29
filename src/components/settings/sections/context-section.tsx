@@ -147,6 +147,8 @@ export function ContextSection() {
                 ? "Connect Hubble for Chrome to set this up."
                 : view.status === "unavailable" && view.error === "needs-update"
                   ? "Your Hubble for Chrome is older than this feature. Download the latest from Settings → Chrome extension."
+                  : view.status === "unavailable" && view.error === "identity"
+                    ? "Hubble for Chrome couldn't confirm which account you're signed in as, so it isn't showing or changing anything. Reload this page; if you just signed in or out, it catches up."
                   : value?.otherAccount
                     ? "Another Hubble account on this Chrome set this up. Nothing it kept is shown here; setting it up for you clears it first."
                     : settings?.decidedAt

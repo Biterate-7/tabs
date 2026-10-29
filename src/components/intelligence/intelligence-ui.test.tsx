@@ -12,13 +12,21 @@ const bridge = vi.hoisted(() => ({
   accessAsked: [] as string[],
   cleared: 0,
   forgotten: [] as string[][],
+  pull: undefined as undefined | (() => Promise<unknown>),
+  /** When set, the settings answer waits for it — the extension still waking or verifying the account. */
+  settingsGate: undefined as undefined | Promise<void>,
 }))
 vi.mock("@/lib/intelligence/bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/intelligence/bridge")>()
   const answer = () => (bridge.error ? { ok: false, error: bridge.error } : { ok: true, value: { settings: actual.readSettings(bridge.settings)!, granted: bridge.granted, incognitoAllowed: false, version: "0.10.0", otherAccount: bridge.otherAccount } })
   return {
     ...actual,
-    getContextSettings: vi.fn(async () => answer()),
+    getContextSettings: vi.fn(async () => {
+      // Read when asked, like the extension reading its storage; delivered when the gate opens.
+      const read = answer()
+      if (bridge.settingsGate) await bridge.settingsGate
+      return read
+    }),
     setContextSettings: vi.fn(async (patch: Record<string, unknown>) => {
       if (bridge.error) return answer()
       bridge.saved.push(patch)
@@ -37,7 +45,7 @@ vi.mock("@/lib/intelligence/bridge", async (importOriginal) => {
       bridge.forgotten.push(keys)
       return { ok: true, value: { forgotten: keys.length } }
     }),
-    pullActivity: vi.fn(async () => ({ ok: false, error: "not-connected" })),
+    pullActivity: vi.fn(async () => (bridge.pull ? bridge.pull() : { ok: false, error: "not-connected" })),
   }
 })
 const connection = vi.hoisted(() => ({ connected: true }))
@@ -59,8 +67,10 @@ import { ProjectContextStrip } from "./project-context-strip"
 import { ResumePrompt } from "./resume-prompt"
 import { SuggestionReviewDialog } from "./suggestion-review-dialog"
 import { __resetContextForTests, getContextSnapshot, writeContext } from "@/lib/intelligence/persistence"
-import { __resetSettingsViewForTests, refreshSettings } from "@/lib/intelligence/settings-store"
+import { __resetSettingsViewForTests, refreshSettings, saveSettings } from "@/lib/intelligence/settings-store"
 import { emptyContextState } from "@/lib/intelligence/state"
+import { getSettingsView } from "@/lib/intelligence/settings-store"
+import { setStorageNamespace } from "@/lib/storage/namespace"
 import { NOW, economicsArticles, economicsChat, project, source } from "@/lib/intelligence/__fixtures__/student-work"
 import type { Suggestion } from "@/lib/intelligence/types"
 
@@ -99,6 +109,9 @@ beforeEach(() => {
   bridge.accessAsked = []
   bridge.cleared = 0
   bridge.forgotten = []
+  bridge.pull = undefined
+  bridge.settingsGate = undefined
+  setStorageNamespace(null)
   connection.connected = true
 })
 afterEach(() => {
@@ -111,6 +124,44 @@ function Sync() {
   return null
 }
 
+describe("identity switches", () => {
+  it("a pull answered after switching to another identity is dropped, never written to either", async () => {
+    let answer: (value: unknown) => void = () => {}
+    bridge.pull = () => new Promise((resolve) => (answer = resolve))
+    setStorageNamespace("account-a")
+    render(<Sync />)
+    await waitFor(() => expect(bridge.pull).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // AuthProvider switches the namespace first; the old shell's effects are cleaned up after.
+    setStorageNamespace("account-b")
+    answer({ ok: true, value: { epoch: "e", seq: 1, reset: true, records: [economicsChat], removed: [], openKeys: [] } })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(getContextSnapshot().records).toEqual([])
+    setStorageNamespace("account-a")
+    expect(getContextSnapshot().records).toEqual([])
+  })
+
+  it("one identity's settings are never shown to another", async () => {
+    bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
+    setStorageNamespace("account-a")
+    await act(async () => void (await refreshSettings()))
+    expect(getSettingsView().status).toBe("ready")
+    setStorageNamespace("account-b")
+    expect(getSettingsView().status).toBe("unknown")
+  })
+})
+
+describe("retention in Hubble's copy", () => {
+  it("drops activity older than the person keeps, even with nothing pulled", async () => {
+    bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW, retentionDays: 7 }
+    const old = { ...economicsArticles[2]!, firstSeenAt: Date.now() - 20 * 86_400_000, lastSeenAt: Date.now() - 10 * 86_400_000 }
+    const fresh = { ...economicsArticles[0]!, lastSeenAt: Date.now() - 86_400_000 }
+    writeContext(() => ({ ...emptyContextState(), records: [old, fresh] }))
+    render(<Sync />)
+    await waitFor(() => expect(getContextSnapshot().records.map((record) => record.key)).toEqual([fresh.key]), { timeout: 3000 })
+  })
+})
+
 describe("manual mode", () => {
   it("suggests nothing from pages kept before, and puts away what was waiting", async () => {
     bridge.settings = { ...bridge.settings, mode: "off", decidedAt: NOW }
@@ -119,12 +170,54 @@ describe("manual mode", () => {
     await waitFor(() => expect(getContextSnapshot().suggestions[0]!.status).toBe("expired"), { timeout: 3000 })
   })
 
+  it("suggests nothing while the extension hasn't yet said what was chosen (a page load in manual mode)", async () => {
+    let answered: () => void = () => {}
+    bridge.settingsGate = new Promise((resolve) => (answered = resolve))
+    bridge.settings = { ...bridge.settings, mode: "off", decidedAt: NOW }
+    seed({ suggestions: [] })
+    render(<Sync />)
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    expect(getContextSnapshot().suggestions).toEqual([])
+    answered()
+    await waitFor(() => expect(getSettingsView().status).toBe("ready"))
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    expect(getContextSnapshot().suggestions.filter((entry) => entry.status === "open")).toEqual([])
+  })
+
+  it("suggests nothing new when the extension can't say what was chosen at all", async () => {
+    bridge.error = "not-connected"
+    seed({ suggestions: [] })
+    render(<Sync />)
+    await waitFor(() => expect(getSettingsView().status).toBe("unavailable"))
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    expect(getContextSnapshot().suggestions).toEqual([])
+  })
+
   it("keeps suggesting when detection is on", async () => {
     bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
     seed()
     render(<Sync />)
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(getContextSnapshot().suggestions.some((suggestion) => suggestion.status === "open")).toBe(true)
+  })
+})
+
+describe("settings answers out of order", () => {
+  it("a refresh that read the settings before a change was saved never undoes the change on screen", async () => {
+    let answered: () => void = () => {}
+    bridge.settings = { ...bridge.settings, mode: "off", decidedAt: NOW }
+    bridge.settingsGate = new Promise((resolve) => (answered = resolve))
+    const refreshing = refreshSettings()
+    bridge.settingsGate = undefined
+    await saveSettings({ mode: "auto" })
+    expect(getSettingsView()).toMatchObject({ status: "ready", value: { settings: { mode: "auto" } } })
+    answered()
+    await refreshing
+    expect(getSettingsView()).toMatchObject({ status: "ready", value: { settings: { mode: "auto" } } })
+    // A refresh after the save has landed is shown as usual.
+    bridge.settings = { ...bridge.settings, mode: "sites" }
+    await refreshSettings()
+    expect(getSettingsView()).toMatchObject({ status: "ready", value: { settings: { mode: "sites" } } })
   })
 })
 

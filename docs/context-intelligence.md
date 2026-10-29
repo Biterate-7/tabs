@@ -78,22 +78,62 @@ suggestion frequency (Normal · Only strong · Off), never-detect sites
 (adding one also removes what was kept from it), retention (7/30/90 days),
 the list of everything kept with per-row Remove, and Clear activity.
 
-### Accounts on a shared Chrome
+### Accounts on a shared Chrome — who context detection acts for
 
-Activity and consent live in one Chrome profile; several Hubble accounts may
-use it (a family or school computer). Each account — and signed-out Hubble —
-has its own random context id (`src/lib/intelligence/owner.ts`, stored in its
-own namespace; never the account id or an email), sent with every context
-command and required by the validator. The extension binds consent and
-activity to the id that opted in (`settings.owner`) and answers no other:
-another account sees detection as not set up, receives no records, no open
-tabs, can't forget, clear or save through it, and isn't told the first
-account's choices. When it opts in itself, the previous account's activity is
-cleared first and its settings don't carry over. A Hubble tab in a private
-window is refused every context command.
+Activity and consent live in one Chrome profile; several Hubble accounts, and
+signed-out Hubble, may use it (a family or school computer).
+
+**The identity is Hubble's server's answer, never the page's.** Every context
+command carries the account the page *claims* (its storage namespace, which
+AuthProvider sets from `/api/auth/me`; `null` signed out). The extension
+doesn't take the page's word for it: `extension/src/context-identity.js`
+asks `/api/auth/me` itself, from the service worker, with the browser's
+`tabdump_session` cookie (HttpOnly — no page script can read or set it) under
+the extension's host permission for Hubble's origin. It acts only when the
+server's account and the claim agree; the activity's owner is then
+`"user:" + sha256(account)` or `"signed-out"`.
+
+| Case | Result |
+| --- | --- |
+| Claim missing or malformed | refused by the validator |
+| Claim ≠ the signed-in session (another account, a stale page, signed in vs out) | `identity-mismatch`, nothing read or changed |
+| Hubble unreachable, an error, not JSON, a timeout (5 s) | `identity-unverified` — fail closed; Settings says so |
+| Agree | acts for that owner only |
+
+Writes (settings, forget, clear, save) always ask the server afresh; reads may
+reuse an answer for 10 s, and only when the page claims the same account. No
+key, token or secret is stored or replayable: what is checked is the live
+session, so signing out, switching account or a revoked session takes
+effect at the next check. A context save's job carries its owner and is
+delivered only while the browser is still signed in as it; otherwise it
+fails as `identity-changed` and its text is deleted.
+
+The extension binds consent and activity to the owner that opted in
+(`settings.owner`) and answers no other: another identity sees detection as
+not set up, receives no records or open tabs, can't forget, clear or save
+through it, and isn't told the first one's choices. Opting in itself clears
+the previous owner's activity first. A Hubble tab in a private window is
+refused every context command.
+
+Hubble's own copy (`tabdump:context:v1`) is **identity-bound**
+(`IDENTITY_BOUND_KEYS`): never copied into an account by the sign-in
+adoption flow. An answer that arrives after an identity switch is dropped,
+and the settings view is shown only to the identity it was answered for.
+
+**Threat model.** This stops one Hubble identity acting on or reading
+another's context *through the extension*, including a malicious script on
+Hubble's origin claiming another account: it can act only as the session the
+browser is signed in with right now. It does not protect Hubble's own local
+copy from code running on Hubble's origin in that profile, which can read
+localStorage — the same exposure every account's local projects already
+have. All signed-out use of one Chrome profile is one identity. Recommended
+for shared computers: one Chrome profile per person.
 
 **Manual mode** (or another account's choice) also stops suggestions: what
 was kept before is not acted on, and waiting suggestions are put away.
+Nothing is suggested, either, until the extension has answered what this
+identity chose: a page load in manual mode, an unconfirmed account, or an
+unreachable extension never flashes a suggestion from old pages.
 
 ## 2. Collection (extension)
 

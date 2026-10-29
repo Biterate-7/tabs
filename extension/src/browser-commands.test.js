@@ -65,25 +65,27 @@ describe("validateBrowserCommand", () => {
       expect([...CONTEXT_ACTIONS].every((action) => ALLOWED_BROWSER_ACTIONS.includes(action))).toBe(true);
     });
 
-    const owner = "owner-0123456789";
-    it("name the Hubble account they are for", () => {
+    const account = "account-0123456789";
+    it("claim the Hubble account they are for (null signed out); background.js verifies the claim with Hubble", () => {
       expect(validateBrowserCommand("get_context_activity", {}).ok).toBe(false);
-      expect(validateBrowserCommand("get_context_activity", { owner: "bad owner!" }).ok).toBe(false);
-      expect(validateBrowserCommand("clear_context_activity", { owner })).toEqual({ ok: true, args: { owner } });
+      expect(validateBrowserCommand("get_context_activity", { account: "bad account!" }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { account: 7 }).ok).toBe(false);
+      expect(validateBrowserCommand("clear_context_activity", { account })).toEqual({ ok: true, args: { account } });
+      expect(validateBrowserCommand("clear_context_activity", { account: null })).toEqual({ ok: true, args: { account: null } });
     });
 
     it("check their arguments", () => {
-      expect(validateBrowserCommand("get_context_activity", { since: 3, epoch: "e1", owner })).toEqual({ ok: true, args: { since: 3, epoch: "e1", owner } });
-      expect(validateBrowserCommand("get_context_activity", { since: -1, owner }).ok).toBe(false);
-      expect(validateBrowserCommand("get_context_activity", { epoch: "", owner }).ok).toBe(false);
-      expect(validateBrowserCommand("request_context_access", { provider: "chatgpt", owner })).toEqual({ ok: true, args: { provider: "chatgpt", owner } });
-      expect(validateBrowserCommand("request_context_access", { provider: "grok", owner }).ok).toBe(false);
-      expect(validateBrowserCommand("forget_context_activity", { keys: [], owner }).ok).toBe(false);
-      expect(validateBrowserCommand("forget_context_activity", { keys: Array(401).fill("k"), owner }).ok).toBe(false);
-      expect(validateBrowserCommand("set_context_settings", { settings: [], owner }).ok).toBe(false);
-      expect(validateBrowserCommand("set_context_settings", { settings: { mode: "auto", excludedHosts: Array(5000).fill("example.com") }, owner }).ok).toBe(false);
-      expect(validateBrowserCommand("capture_context_conversation", { url: "javascript:alert(1)", workspaceId: "p", owner }).ok).toBe(false);
-      expect(validateBrowserCommand("capture_context_conversation", { url: "https://chatgpt.com/c/abcdef12", workspaceId: "", owner }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { since: 3, epoch: "e1", account })).toEqual({ ok: true, args: { since: 3, epoch: "e1", account } });
+      expect(validateBrowserCommand("get_context_activity", { since: -1, account }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { epoch: "", account }).ok).toBe(false);
+      expect(validateBrowserCommand("request_context_access", { provider: "chatgpt", account })).toEqual({ ok: true, args: { provider: "chatgpt", account } });
+      expect(validateBrowserCommand("request_context_access", { provider: "grok", account }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: [], account }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: Array(401).fill("k"), account }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: [], account }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: { mode: "auto", excludedHosts: Array(5000).fill("example.com") }, account }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "javascript:alert(1)", workspaceId: "p", account }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "https://chatgpt.com/c/abcdef12", workspaceId: "", account }).ok).toBe(false);
     });
   });
 

@@ -263,3 +263,27 @@ describe("bounds", () => {
     ]);
   });
 });
+
+describe("a context save bound to an account", () => {
+  it("carries its owner, and is dropped with its text when the browser is signed in as someone else", async () => {
+    const storage = fakeStorage();
+    const deliver = vi.fn(async (job) => (job.owner === "user:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ? { ok: false, error: "identity-changed" } : { ok: true, result: {} }));
+    const { queue } = worker(storage, deliver);
+    const job = await submit(queue, { owner: "user:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+    expect(job.status).toBe("failed");
+    expect(job.error).toBe("identity-changed");
+    const stored = await storage.get();
+    expect(stored[0].owner).toBe("user:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    // Its text goes at once: never retried, never handed to the next account's Hubble page.
+    expect(stored[0].capture).toBeUndefined();
+    expect(JSON.stringify(stored)).not.toContain(CAPTURE.turns[0].text);
+  });
+
+  it("an ordinary Save to Hubble (no owner) is unchanged", async () => {
+    const storage = fakeStorage();
+    const { queue } = worker(storage, async () => ({ ok: true, result: {} }));
+    const job = await submit(queue);
+    expect(job.status).toBe("saved");
+    expect((await storage.get())[0].owner).toBeUndefined();
+  });
+});

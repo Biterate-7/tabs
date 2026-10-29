@@ -4,7 +4,7 @@ import { sendBrowserCommand } from "@/lib/browser/bridge"
 import { DESKTOP_UNREACHABLE } from "@/lib/browser/protocol"
 import { AI_PROVIDER_IDS, isAiProviderId } from "@/lib/providers/registry"
 import { sourceKey } from "@/lib/resources/url"
-import { contextOwnerId } from "./owner"
+import { getStorageNamespace } from "@/lib/storage/namespace"
 import { readActivityRecord } from "./records"
 import { cleanExcludedHost } from "./sites"
 import { DETECTION_MODES, RETENTION_CHOICES, SITE_CATEGORIES } from "./types"
@@ -28,6 +28,8 @@ export type ContextBridgeError =
   | "needs-update"
   /** Hubble Desktop: the extension can't reach it. */
   | "desktop"
+  /** The extension couldn't confirm with Hubble which account this browser is signed in as, so it did nothing. */
+  | "identity"
   | "failed"
 
 export type ContextAnswer<T> = { ok: true; value: T } | { ok: false; error: ContextBridgeError; detail?: string }
@@ -54,14 +56,16 @@ export type ActivityPull = {
 
 function errorOf(error: string): ContextBridgeError {
   if (error === DESKTOP_UNREACHABLE) return "desktop"
+  if (/^identity-/.test(error)) return "identity"
   if (/unknown or disallowed browser action/i.test(error)) return "needs-update"
   if (/timed out|extension-unreachable|no-response/i.test(error)) return "not-connected"
   return "failed"
 }
 
 async function call<T>(action: Parameters<typeof sendBrowserCommand>[0], args: unknown, read: (value: unknown) => T | undefined, timeoutMs?: number): Promise<ContextAnswer<T>> {
-  // Every context command says which Hubble account asks (owner.ts): the extension answers only the one that opted in.
-  const answer = await sendBrowserCommand<unknown, unknown>(action, { ...(args as Record<string, unknown>), owner: contextOwnerId() }, timeoutMs ? { timeoutMs } : undefined)
+  // Every context command claims the account this page is signed in as (null signed out). The extension doesn't take
+  // the page's word for it: it asks Hubble's /api/auth/me with the browser's session cookie and refuses a mismatch.
+  const answer = await sendBrowserCommand<unknown, unknown>(action, { ...(args as Record<string, unknown>), account: getStorageNamespace() }, timeoutMs ? { timeoutMs } : undefined)
   if (!answer.ok) return { ok: false, error: errorOf(answer.error), detail: answer.error.slice(0, 200) }
   const value = read(answer.result)
   return value === undefined ? { ok: false, error: "failed", detail: "malformed answer" } : { ok: true, value }
