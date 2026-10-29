@@ -31,7 +31,8 @@ const NONE: Match = Object.freeze({ score: 0, shared: Object.freeze([]) as unkno
 /** One shared word is thin evidence; two make a topic; three settle it. */
 export function evidenceStrength(sharedTopicWords: number): number {
   if (sharedTopicWords <= 0) return 0
-  if (sharedTopicWords === 1) return 0.5
+  // Below the strong threshold on its own: one shared word can be worth asking about, never a default.
+  if (sharedTopicWords === 1) return 0.45
   if (sharedTopicWords === 2) return 0.85
   return 1
 }

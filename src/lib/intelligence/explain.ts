@@ -52,9 +52,11 @@ export function explanationFor(suggestion: Pick<Suggestion, "kind" | "evidence">
   if (suggestion.kind === "save-to-project") {
     if (evidence.nameTerms.length > 0 && words) parts.push(`${source} ${singular ? "mentions" : "mention"} ${words}, like your project ${projectName ?? ""}`.trim())
     else if (words) parts.push(`${source} ${singular ? "shares" : "share"} ${words} with ${projectName ?? "this project"}`)
-    if (evidence.temporal >= 0.5) parts.push(count === 1 ? "You used it while working on the project" : "You used them while working on the project")
+    // Only when it was the same day as the project's own last change (temporal 1): "a week apart" isn't "while".
+    if (evidence.temporal >= 0.99) parts.push(count === 1 ? "You used it while working on the project" : "You used them while working on the project")
   } else {
-    if (words) parts.push(`${source} all mention ${words}`)
+    // "Mention", not "all mention": a group's shared words are shared by most of its pages, not always every one.
+    if (words) parts.push(`${source} mention ${words}`)
     if (evidence.days >= 2) parts.push(`across ${evidence.days} days`)
   }
   const sentence = parts.join(suggestion.kind === "create-project" ? " " : ". ")

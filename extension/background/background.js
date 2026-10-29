@@ -804,7 +804,8 @@ async function handleBrowserCommand({ id, action, args }, sender) {
     return { id, ok: false, error: validated.error };
   }
   // Context detection answers only Hubble's own page (top frame, Hubble's origin) — never a frame or another site.
-  if (CONTEXT_ACTIONS.includes(action) && !fromHubblePage(sender)) {
+  // Nor a Hubble tab in a private window: what Chrome keeps for context is the ordinary profile's, never the private one's.
+  if (CONTEXT_ACTIONS.includes(action) && (!fromHubblePage(sender) || sender?.tab?.incognito === true)) {
     return { id, ok: false, error: "Only Hubble can ask for this." };
   }
 
@@ -2007,7 +2008,8 @@ function scheduleContextRead(tab) {
 chrome.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
   if (tab?.incognito || changeInfo?.discarded) return;
   if (changeInfo?.status === "complete") {
-    void contextActivity.observe(tab).then((record) => record && scheduleContextRead(tab));
+    // A page that loads in the tab in front is where the person is now (they followed a link or typed an address).
+    void contextActivity.observe(tab, { inFront: tab?.active === true }).then((record) => record && scheduleContextRead(tab));
   } else if (typeof changeInfo?.title === "string") {
     contextActivity.observeTitleChange(tabId);
   }
@@ -2067,13 +2069,61 @@ async function contextSettingsAnswer() {
   return { settings, granted: await grantedContextProviders(), incognitoAllowed, version: chrome.runtime.getManifest?.().version ?? "" };
 }
 
+/** Every open tab, once — the one in front last, so it holds the focus. */
+async function observeOpenTabs() {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  for (const tab of tabs) if (!tab.active) await contextActivity.observe(tab);
+  for (const tab of tabs) if (tab.active) await contextActivity.observe(tab, { inFront: true });
+}
+
+/**
+ * Context ownership. Activity and consent live in this Chrome profile, which
+ * several Hubble accounts may use (a shared family or school computer). Every
+ * command carries the asking account's random context id (validated in
+ * browser-commands.js); only the account that opted in is answered. Another
+ * account sees detection as not set up and receives nothing kept; when it
+ * opts in itself, what was kept for the previous one is cleared first.
+ */
+/** Settings as an account is shown them: never which account owns them. */
+function withoutOwner(settings) {
+  const shown = { ...settings };
+  delete shown.owner;
+  return shown;
+}
+
+function ownsActivity(settings, owner) {
+  return typeof settings.owner === "string" && settings.owner === owner;
+}
+
+async function contextSettingsFor(owner) {
+  const answer = await contextSettingsAnswer();
+  if (!answer.settings.owner || answer.settings.owner === owner) return { ...answer, settings: withoutOwner(answer.settings) };
+  // Someone else's choice: this account hasn't chosen, and isn't told what the other chose.
+  return { ...answer, settings: withoutOwner(readContextSettings(undefined)), otherAccount: true };
+}
+
 /** Context detection's commands, after validateBrowserCommand and the Hubble-page check in handleBrowserCommand. */
 const CONTEXT_HANDLERS = {
-  get_context_settings: () => contextSettingsAnswer(),
+  get_context_settings: ({ owner }) => contextSettingsFor(owner),
 
-  set_context_settings: async ({ settings }) => {
-    await contextActivity.updateSettings(readContextSettings({ ...(await contextActivity.settings()), ...settings }));
-    return contextSettingsAnswer();
+  set_context_settings: async ({ settings, owner }) => {
+    const before = await contextActivity.settings();
+    const patch = withoutOwner(settings);
+    // A different account choosing: the previous account's activity goes before anything is kept for this one.
+    const transfer = typeof before.owner === "string" && before.owner !== owner;
+    if (transfer) await contextActivity.clear();
+    const after = transfer
+      ? await contextActivity.updateSettings(readContextSettings({ ...patch, owner }), { replace: true })
+      : await contextActivity.updateSettings(readContextSettings({ ...before, ...patch, owner }));
+    // Just turned on (or resumed, or a new account): the tabs already open are what the person is working on now.
+    const detecting = (value) => value.mode !== "off" && !isPaused(value, Date.now());
+    if (detecting(after) && (transfer || !detecting(before))) await observeOpenTabs();
+    return contextSettingsFor(owner);
   },
 
   /** Opens the permission window for one AI app; resolves with what Chrome actually granted. */
@@ -2086,17 +2136,23 @@ const CONTEXT_HANDLERS = {
     return { provider, granted, answer };
   },
 
-  get_context_activity: async ({ since, epoch }) => {
+  get_context_activity: async ({ since, epoch, owner }) => {
     const settings = await contextActivity.settings();
+    // Not this account's activity (or nobody's yet): nothing at all, not even what is open now.
+    if (!ownsActivity(settings, owner)) {
+      const empty = await contextActivity.list({ since: 0, epoch: "" });
+      return { epoch: empty.epoch, seq: 0, reset: true, records: [], removed: [], openUrls: [] };
+    }
     // Off or paused: what is open now is not noticed either.
     const noticing = settings.mode !== "off" && !isPaused(settings, Date.now());
     const [changes, open] = await Promise.all([contextActivity.list({ since, epoch }), noticing ? openContextKeys(settings) : { keys: new Set(), urls: [] }]);
     return { ...changes, records: changes.records.map((record) => ({ ...record, open: open.keys.has(record.key) })), openUrls: open.urls };
   },
 
-  forget_context_activity: ({ keys }) => contextActivity.forget(keys),
+  forget_context_activity: async ({ keys, owner }) => (ownsActivity(await contextActivity.settings(), owner) ? contextActivity.forget(keys) : { forgotten: 0 }),
 
-  clear_context_activity: () => contextActivity.clear(),
+  // Clearing is allowed only to the account it belongs to; another account has nothing here to clear.
+  clear_context_activity: async ({ owner }) => (ownsActivity(await contextActivity.settings(), owner) ? contextActivity.clear() : { epoch: "not-yours" }),
 
   /**
    * Saves the open conversation at `url` into `workspaceId` through the same
@@ -2104,7 +2160,8 @@ const CONTEXT_HANDLERS = {
    * saves it). Only with Chrome's permission for that AI app: this runs from
    * a click in Hubble, not in the AI app's tab, so activeTab doesn't apply.
    */
-  capture_context_conversation: async ({ url, workspaceId }) => {
+  capture_context_conversation: async ({ url, workspaceId, owner }) => {
+    if (!ownsActivity(await contextActivity.settings(), owner)) return { ok: false, error: "not-yours" };
     const identity = conversationIdentityOf(url);
     if (!identity) return { ok: false, error: "not-a-conversation" };
     const config = TRANSFER_PROVIDERS[identity.provider];

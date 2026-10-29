@@ -1813,6 +1813,7 @@ export function AppShell() {
     const byKey = new Map(context.records.map((record) => [record.key, record]))
     const conversations = edits.recordKeys.map((key) => byKey.get(key)).filter((record) => record?.kind === "conversation")
     let textSaved = 0
+    let textQueued = 0
     let linkOnly = 0
     for (const record of conversations) {
       if (!record || !willSaveText(record)) {
@@ -1820,7 +1821,9 @@ export function AppShell() {
         continue
       }
       const answer = await captureConversation(record.url, workspaceId)
-      if (answer.ok && (answer.value.status === "saved" || answer.value.status === "queued")) textSaved += 1
+      // "Saved" only on the page's answer that it is on disk; a queued job is said to be on its way, not done.
+      if (answer.ok && answer.value.status === "saved") textSaved += 1
+      else if (answer.ok && answer.value.status === "queued") textQueued += 1
       else linkOnly += 1
     }
 
@@ -1828,6 +1831,7 @@ export function AppShell() {
     const details = [
       result.alreadyThere > 0 ? `${result.alreadyThere} already there` : "",
       textSaved > 0 ? `${textSaved === 1 ? "a conversation's" : `${textSaved} conversations'`} text saved` : "",
+      textQueued > 0 ? `${textQueued === 1 ? "a conversation's text is" : `${textQueued} conversations' text is`} still being saved by Hubble for Chrome` : "",
       linkOnly > 0 ? `${linkOnly === 1 ? "1 conversation" : `${linkOnly} conversations`} saved as a link — open it and use Save to Hubble for the text` : "",
       decided.ok ? "" : "Hubble couldn't record the decision, so it may suggest these again",
     ].filter(Boolean)
@@ -2270,6 +2274,8 @@ export function AppShell() {
             }}
             canDeleteSubject={store.workspaces.length > 1}
           >
+            {/* Pages Hubble noticed that may belong here: the same stored suggestion Home shows. */}
+            {!isDesktopShell && <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
             {/* The older "paste every open tab, organize later" dump, one disclosure away. */}
             {projectHomeFor(currentWorkspace, <TabInput onDump={handleDump} />)}
           </ProjectPage>

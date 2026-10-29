@@ -1,10 +1,12 @@
-import { clusterPages } from "./cluster"
+import { clusterPages, linkedGroups } from "./cluster"
+import type { Cluster } from "./cluster"
 import { nameFromWords } from "./explain"
-import { inverseFrequencies, projectFeatures, recordFeatures } from "./features"
+import { inverseFrequencies, projectFeatures, recordFeatures, topicStem } from "./features"
 import { rankProjects } from "./match"
 import { upsertRecords } from "./records"
 import { bandOf, clamp01, DEFAULT_CONFIG } from "./scoring"
 import { createLocalSimilarity } from "./similarity"
+import { isStudySource } from "./sites"
 import { spanDays } from "./temporal"
 import { REJECT_ANY, REJECT_NEW_PROJECT } from "./types"
 import type { ProjectFeatures, RecordFeatures } from "./features"
@@ -215,9 +217,11 @@ export function runInference(input: InferenceInput): InferenceResult {
   // Second pass: a page strongly matched to a project is provisional evidence for it — an article about
   // the same thing as a conversation about to be suggested for Economics IA fits Economics IA too. One
   // pass only, from strong matches only, at reduced weight, so nothing chains.
+  // What a provisional page lends is what it is about: words it shares with the project, and words read from
+  // its text — never an incidental title word ("Quick question") that nothing else confirms.
   const provisional = new Map<string, RecordFeatures[]>()
   for (const [workspaceId, entries] of placed) {
-    const strong = entries.filter((entry) => entry.score.score >= config.strong).map((entry) => featuresOf(entry.record))
+    const strong = entries.filter((entry) => entry.score.score >= config.strong).map((entry) => topicalPart(entry.record, featuresOf(entry.record), entry.score.shared))
     if (strong.length > 0) provisional.set(workspaceId, strong)
   }
   const widened = projects.map((project) => withProvisional(project, provisional.get(project.workspaceId)))
@@ -236,13 +240,25 @@ export function runInference(input: InferenceInput): InferenceResult {
   // Step 4: what no project covers, grouped. A group that, taken together, fits an existing project goes
   // there — a new project is suggested only for a distinct body of work.
   const pageFeatures = unplaced.map(featuresOf)
-  type NewGroup = { members: ActivityRecord[]; cohesion: number; temporal: number; sharedTerms: string[]; alternatives: string[] }
+  type NewGroup = { members: ActivityRecord[]; cohesion: number; temporal: number; sharedTerms: string[]; alternatives: string[]; linked: boolean }
   const groups: NewGroup[] = []
-  for (const cluster of clusterPages(unplaced, pageFeatures, similarity, config)) {
-    const size = cluster.members.length
+  const isCoherent = (cluster: Cluster) =>
+    cluster.sharedTerms.length > 0 &&
+    (cluster.members.length >= config.minClusterSize
+      ? cluster.cohesion >= config.clusterMerge
+      : cluster.cohesion >= config.pairClusterScore && cluster.members.some((index) => featuresOf(unplaced[index]!).fromContent))
+  const averaged = clusterPages(unplaced, pageFeatures, similarity, config).filter(isCoherent)
+  // Pages no coherent average-linkage group holds get the second route (cluster.ts linkedGroups).
+  const grouped = new Set(averaged.flatMap((cluster) => cluster.members))
+  const leftover = unplaced.map((_, index) => index).filter((index) => !grouped.has(index))
+  const linked = linkedGroups(
+    leftover.map((index) => unplaced[index]!),
+    leftover.map((index) => pageFeatures[index]!),
+    similarity,
+    config
+  ).map((cluster) => ({ ...cluster, members: cluster.members.map((index) => leftover[index]!) }))
+  for (const [cluster, viaLinks] of [...averaged.map((entry) => [entry, false] as const), ...linked.map((entry) => [entry, true] as const)]) {
     const members = cluster.members.map((index) => unplaced[index]!)
-    const coherent = cluster.sharedTerms.length > 0 && (size >= config.minClusterSize ? cluster.cohesion >= config.clusterMerge : cluster.cohesion >= config.pairClusterScore && members.some((record) => featuresOf(record).fromContent))
-    if (!coherent) continue
     const together = groupFeatures(members.map(featuresOf))
     const fits = widened
       .map((project) => ({ project, match: similarity.coverage(together, project) }))
@@ -273,7 +289,7 @@ export function runInference(input: InferenceInput): InferenceResult {
       .filter(({ match }) => match.score >= 0.1 && match.shared.some((term) => lead.has(term)))
       .slice(0, 2)
       .map(({ project }) => project.workspaceId)
-    groups.push({ members, cohesion: cluster.cohesion, temporal: cluster.temporal, sharedTerms: cluster.sharedTerms, alternatives })
+    groups.push({ members, cohesion: cluster.cohesion, temporal: cluster.temporal, sharedTerms: cluster.sharedTerms, alternatives, linked: viaLinks })
   }
 
   const candidates: Candidate[] = []
@@ -310,8 +326,13 @@ export function runInference(input: InferenceInput): InferenceResult {
   }
 
   for (const group of groups) {
+    // A new project is for study: the group must hold a document or a reference or academic source. Personal
+    // browsing that shares a word (London cafés and the tube map, three headphone shops) is never suggested.
+    if (!group.members.some((record) => record.kind === "document" || record.kind === "pdf" || isStudySource(record.url))) continue
     const size = group.members.length
-    const confidence = clamp01(Math.min(1, group.cohesion * 2) * Math.min(1, 0.55 + 0.12 * size))
+    // A linked group is never a default: it is offered for review, below the strong threshold.
+    const computed = clamp01(Math.min(1, group.cohesion * 2) * Math.min(1, 0.55 + 0.12 * size))
+    const confidence = group.linked ? Math.min(computed, config.strong - 0.01) : computed
     const band = bandOf(confidence, config)
     if (band === "insufficient" || (preference === "strong" && band !== "strong")) continue
     const kept = [...group.members].sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, config.maxPagesPerSuggestion)
@@ -418,15 +439,23 @@ export function runInference(input: InferenceInput): InferenceResult {
   return { suggestions: changed ? next : (before as Suggestion[]), changed, matches }
 }
 
+/** The words of a page that say what it is about: those shared with its project and those read from its text. */
+function topicalPart(record: ActivityRecord, features: RecordFeatures, shared: readonly string[]): RecordFeatures {
+  const read = new Set((record.terms ?? []).map(topicStem))
+  const terms = new Map([...features.terms].filter(([term]) => shared.includes(term) || read.has(term)))
+  return { ...features, terms }
+}
+
 /** A project with pages provisionally matched to it as extra, weaker evidence. */
 function withProvisional(project: ProjectFeatures, pages: readonly RecordFeatures[] | undefined): ProjectFeatures {
   if (!pages || pages.length === 0) return project
   const terms = new Map(project.terms)
   const spelling = new Map(project.spelling)
   for (const page of pages) {
-    for (const [term, weight] of page.terms) {
+    for (const term of page.terms.keys()) {
       if (term.startsWith("site:")) continue
-      terms.set(term, (terms.get(term) ?? 0) + Math.min(weight, 1) * PROVISIONAL_WEIGHT)
+      // Flat: a word a strongly matched page is about counts the same whether its title or its text says it.
+      terms.set(term, (terms.get(term) ?? 0) + PROVISIONAL_WEIGHT)
     }
     for (const [word, spelled] of page.spelling) if (!spelling.has(word)) spelling.set(word, spelled)
   }

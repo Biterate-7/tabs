@@ -51,6 +51,8 @@ export const SEEN_RESOLUTION_MS = 60 * 1000;
 export const READ_INTERVAL_MS = 10 * 60 * 1000;
 export const WRITE_DELAY_MS = 800;
 export const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+/** A tab that moves to another address this soon after arriving, keeping its title, was redirected: still one page. */
+export const REDIRECT_WINDOW_MS = 10 * 1000;
 
 const AI_PROVIDERS = ["chatgpt", "claude", "gemini", "perplexity"];
 const CATEGORIES = ["ai", "docs", "research", "video"];
@@ -80,6 +82,8 @@ export function readContextSettings(raw) {
   settings.paused = raw.paused === true;
   if (settings.paused && Number.isFinite(raw.pausedUntil) && raw.pausedUntil > 0) settings.pausedUntil = raw.pausedUntil;
   if (Array.isArray(raw.readConversations)) settings.readConversations = AI_PROVIDERS.filter((id) => raw.readConversations.includes(id));
+  // The Hubble account that opted in (see background.js, context ownership). Only that one is answered.
+  if (typeof raw.owner === "string" && /^[A-Za-z0-9-]{8,100}$/.test(raw.owner)) settings.owner = raw.owner;
   if (RETENTION.includes(raw.retentionDays)) settings.retentionDays = raw.retentionDays;
   return settings;
 }
@@ -106,8 +110,16 @@ function cleanFavicon(value) {
   return typeof value === "string" && /^https?:\/\//i.test(value) && value.length <= 2000 ? value : undefined;
 }
 
+/**
+ * What Chrome or a site shows instead of the page: an interstitial (no network,
+ * a captive portal, a certificate error), a bot check, a rate limit, a 404. The
+ * address is the page's, the title is not — seen on real pages in QA
+ * (2026-10-29: "Connect to Wi-Fi", "Wikimedia Error", "Page not found").
+ */
+const NOT_THE_PAGE = /^(privacy error|your connection is not private|this site can.t be reached|site can.t be reached|connect to wi-?fi|no internet|this page isn.t working|dangerous site|security error|page not found|404( not found)?|not found|access denied|forbidden|just a moment.{0,3}|attention required!?.*|wikimedia error|error|untitled)$/i;
+
 function isUsableTitle(title, url) {
-  if (!title) return false;
+  if (!title || NOT_THE_PAGE.test(title)) return false;
   // Chrome reports the address as the title while a page loads.
   const bare = url.replace(/^https?:\/\//, "");
   return title !== url && title !== bare && !bare.startsWith(title);
@@ -219,6 +231,8 @@ export function createActivityCollector(deps) {
   let lastPruneAt = 0;
   const reads = new Set();
   const titleTimers = new Map();
+  // The page each tab last showed, to tell a redirect (Wikipedia's Pigovian_tax → Pigouvian_tax) from a new page.
+  const lastKeyByTab = new Map();
 
   // One operation at a time: every change is read-modify-write of the same document.
   function serial(task) {
@@ -321,7 +335,8 @@ export function createActivityCollector(deps) {
     let changed = false;
     if (focus && typeof focus.key === "string" && Number.isFinite(focus.since) && focus.key !== nextKey) {
       const record = store.records[focus.key];
-      const spent = Math.min(Math.max(0, now - focus.since), MAX_DWELL_PER_VISIT_MS);
+      // Never more than the page has existed for Hubble, and never from a time that hasn't happened.
+      const spent = record && focus.since <= now ? Math.min(now - focus.since, MAX_DWELL_PER_VISIT_MS, Math.max(0, now - record.firstSeenAt)) : 0;
       if (record && spent >= 1000) {
         record.dwellMs = Math.min((record.dwellMs ?? 0) + spent, 24 * 60 * 60 * 1000);
         touch(record);
@@ -341,10 +356,12 @@ export function createActivityCollector(deps) {
 
   /**
    * One tab event. `activated`: the person switched to it (a visit and a
-   * change of focus). Anything that may not be recorded is ignored without
-   * a trace — not even its address is looked at further.
+   * change of focus). `inFront`: it is the tab in front — a page that loads
+   * in the tab the person is already on (following a link, typing an address)
+   * gets the focus without any switch. Anything that may not be recorded is
+   * ignored without a trace — not even its address is looked at further.
    */
-  function observe(tab, { activated = false } = {}) {
+  function observe(tab, { activated = false, inFront = activated } = {}) {
     return serial(async () => {
       const now = deps.now();
       const current = await settings();
@@ -353,7 +370,7 @@ export function createActivityCollector(deps) {
       const eligible =
         tab && !tab.incognito && url.length > 0 && url.length <= MAX_URL_CHARS && isDetectable(url, current, { hubbleOrigin: deps.hubbleOrigin, now });
       const key = eligible ? activityKeyOf(url) : undefined;
-      let changed = activated ? await moveFocus(key, now) : false;
+      let changed = inFront ? await moveFocus(key, now) : false;
       if (!key) {
         if (changed) scheduleWrite();
         return undefined;
@@ -363,6 +380,21 @@ export function createActivityCollector(deps) {
       const favicon = cleanFavicon(tab.favIconUrl);
       const day = dayOf(now);
       const existing = store.records[key];
+      // Redirected within the tab a moment ago, still the same page: the record it started as becomes this one.
+      const previous = Number.isInteger(tab.id) ? lastKeyByTab.get(tab.id) : undefined;
+      let carried;
+      if (!existing && previous && previous.key !== key && now - previous.at <= REDIRECT_WINDOW_MS) {
+        const old = store.records[previous.key];
+        if (old && old.visits === 1 && now - old.firstSeenAt <= REDIRECT_WINDOW_MS && (old.title === "" || old.title === title)) {
+          carried = old;
+          remove(previous.key);
+          changed = true;
+        }
+      }
+      if (Number.isInteger(tab.id)) {
+        lastKeyByTab.set(tab.id, { key, at: now });
+        if (lastKeyByTab.size > 500) lastKeyByTab.delete(lastKeyByTab.keys().next().value);
+      }
       let record;
       if (!existing) {
         const provider = aiProviderOf(url);
@@ -374,11 +406,11 @@ export function createActivityCollector(deps) {
           kind: activityKindOf(url),
           ...(provider ? { provider } : {}),
           ...(favicon ? { favicon } : {}),
-          firstSeenAt: now,
+          firstSeenAt: carried?.firstSeenAt ?? now,
           lastSeenAt: now,
           visits: 1,
-          dwellMs: 0,
-          days: [day],
+          dwellMs: carried?.dwellMs ?? 0,
+          days: carried ? [...new Set([...carried.days, day])] : [day],
           capture: { status: isUsableTitle(title, url) ? "metadata" : "detected", method: "tab-metadata", ...(activityKindOf(url) === "document" ? { gap: "not-readable" } : {}) },
           seq: 0,
         };
@@ -536,11 +568,15 @@ export function createActivityCollector(deps) {
     });
   }
 
-  /** The person's new choices. Excluding a host drops what was kept for it; switching an app's reading off drops its words. */
-  function updateSettings(next) {
+  /**
+   * The person's new choices. Excluding a host drops what was kept for it;
+   * switching an app's reading off drops its words. `replace`: these are the
+   * whole settings (a different account's first choice), not a change.
+   */
+  function updateSettings(next, { replace = false } = {}) {
     return serial(async () => {
       const previous = await settings();
-      const cleaned = readContextSettings({ ...previous, ...next });
+      const cleaned = readContextSettings(replace ? next : { ...previous, ...next });
       settingsCache = cleaned;
       try {
         await deps.storage.set(CONTEXT_SETTINGS_KEY, cleaned);

@@ -22,7 +22,7 @@ import { clearActivity, forgetActivity } from "@/lib/intelligence/bridge"
 import { forgetRecords } from "@/lib/intelligence/decisions"
 import { writeContext } from "@/lib/intelligence/persistence"
 import { enableConversationReading, refreshSettings, saveSettings } from "@/lib/intelligence/settings-store"
-import { SENSITIVE_SUMMARY, SITE_CATEGORY_LABEL, cleanExcludedHost } from "@/lib/intelligence/sites"
+import { SENSITIVE_SUMMARY, SITE_CATEGORY_LABEL, cleanExcludedHost, hostMatches } from "@/lib/intelligence/sites"
 import { clearContext } from "@/lib/intelligence/sync"
 import { RETENTION_CHOICES, SITE_CATEGORIES } from "@/lib/intelligence/types"
 import { AI_PROVIDER_IDS, aiProviderName } from "@/lib/providers/registry"
@@ -147,9 +147,11 @@ export function ContextSection() {
                 ? "Connect Hubble for Chrome to set this up."
                 : view.status === "unavailable" && view.error === "needs-update"
                   ? "Your Hubble for Chrome is older than this feature. Download the latest from Settings → Chrome extension."
-                  : settings?.decidedAt
-                    ? `Chosen ${formatRelativeTime(settings.decidedAt, now)?.toLowerCase() ?? ""}.`
-                    : "Not set up yet: nothing is detected."
+                  : value?.otherAccount
+                    ? "Another Hubble account on this Chrome set this up. Nothing it kept is shown here; setting it up for you clears it first."
+                    : settings?.decidedAt
+                      ? `Chosen ${formatRelativeTime(settings.decidedAt, now)?.toLowerCase() ?? ""}.`
+                      : "Not set up yet: nothing is detected."
           }
         >
           <Badge variant={status.tone === "success" ? "success" : "default"}>{status.label}</Badge>
@@ -257,7 +259,13 @@ export function ContextSection() {
                     toast.error("That isn't a site address", { description: "Type a site like example.com." })
                     return
                   }
-                  void change({ excludedHosts: [...new Set([...settings.excludedHosts, cleaned])] }).then((ok) => ok && setHost(""))
+                  void change({ excludedHosts: [...new Set([...settings.excludedHosts, cleaned])] }).then((ok) => {
+                    if (!ok) return
+                    setHost("")
+                    // The extension dropped what it kept for the site; Hubble drops its copy and the answers that name it.
+                    const keys = state.records.filter((record) => hostMatches(record.domain, cleaned)).map((record) => record.key)
+                    if (keys.length > 0) writeContext((current) => forgetRecords(current, keys, Date.now()))
+                  })
                 }}
               >
                 <Input value={host} onChange={(event) => setHost(event.target.value)} placeholder="example.com" aria-label="Site to never detect" className="min-w-0 flex-1" />

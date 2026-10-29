@@ -120,16 +120,20 @@ export function useContextSync({ workspaces, enabled }: { workspaces: readonly W
     return map
   }, [workspaces, events])
 
+  // Manual mode, or another account's choice on this Chrome: nothing is suggested from what was kept before, and
+  // anything waiting is put away. ("Hubble notices nothing" — the consent copy — includes not acting on old pages.)
+  const view = useContextSettingsView()
+  const quiet = view.status === "ready" && (view.value.settings.mode === "off" || view.value.otherAccount)
   const { records, associations, rejections, preference, suggestions } = state
   useEffect(() => {
     if (!enabled) return
     if (records.length === 0 && suggestions.every((suggestion) => suggestion.status !== "open")) return
     const timer = setTimeout(() => {
       writeContext((current) => {
-        const result = runInference({ state: current, workspaces, projectLastAt, now: Date.now(), preference: current.preference, mintId: createId })
+        const result = runInference({ state: current, workspaces, projectLastAt, now: Date.now(), preference: quiet ? "off" : current.preference, mintId: createId })
         return result.changed ? { ...current, suggestions: result.suggestions } : current
       })
     }, INFERENCE_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [enabled, records, associations, rejections, preference, suggestions, workspaces, projectLastAt])
+  }, [enabled, quiet, records, associations, rejections, preference, suggestions, workspaces, projectLastAt])
 }

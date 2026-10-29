@@ -30,6 +30,9 @@ const CONTEXT_PROVIDERS = ["chatgpt", "claude", "gemini", "perplexity"];
  * (background.js checks the sender too), and each answers about this
  * browser's own activity store — never another site's data.
  */
+/** The Hubble account a context command is for (src/lib/intelligence/owner.ts): an opaque random id. */
+export const CONTEXT_OWNER = /^[A-Za-z0-9-]{8,100}$/;
+
 export const CONTEXT_ACTIONS = Object.freeze([
   "get_context_settings",
   "set_context_settings",
@@ -286,5 +289,9 @@ export const ALLOWED_BROWSER_ACTIONS = Object.freeze(Object.keys(BROWSER_COMMAND
 export function validateBrowserCommand(action, args) {
   const validator = BROWSER_COMMAND_VALIDATORS[action];
   if (!validator) return fail(`Unknown or disallowed browser action "${action}".`);
-  return validator(args ?? {});
+  if (!CONTEXT_ACTIONS.includes(action)) return validator(args ?? {});
+  // Context detection: every command names the Hubble account it is for, and is answered only for that account.
+  if (typeof args?.owner !== "string" || !CONTEXT_OWNER.test(args.owner)) return fail("`owner` must be Hubble's context id for this account.");
+  const checked = validator(args ?? {});
+  return checked.ok ? ok({ ...checked.args, owner: args.owner }) : checked;
 }

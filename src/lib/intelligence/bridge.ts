@@ -4,6 +4,7 @@ import { sendBrowserCommand } from "@/lib/browser/bridge"
 import { DESKTOP_UNREACHABLE } from "@/lib/browser/protocol"
 import { AI_PROVIDER_IDS, isAiProviderId } from "@/lib/providers/registry"
 import { sourceKey } from "@/lib/resources/url"
+import { contextOwnerId } from "./owner"
 import { readActivityRecord } from "./records"
 import { cleanExcludedHost } from "./sites"
 import { DETECTION_MODES, RETENTION_CHOICES, SITE_CATEGORIES } from "./types"
@@ -37,6 +38,8 @@ export type ExtensionContextSettings = {
   granted: AiProviderId[]
   incognitoAllowed: boolean
   version: string
+  /** Another Hubble account on this Chrome opted in; for this one, detection is not set up and nothing is shared. */
+  otherAccount: boolean
 }
 
 export type ActivityPull = {
@@ -57,7 +60,8 @@ function errorOf(error: string): ContextBridgeError {
 }
 
 async function call<T>(action: Parameters<typeof sendBrowserCommand>[0], args: unknown, read: (value: unknown) => T | undefined, timeoutMs?: number): Promise<ContextAnswer<T>> {
-  const answer = await sendBrowserCommand<unknown, unknown>(action, args, timeoutMs ? { timeoutMs } : undefined)
+  // Every context command says which Hubble account asks (owner.ts): the extension answers only the one that opted in.
+  const answer = await sendBrowserCommand<unknown, unknown>(action, { ...(args as Record<string, unknown>), owner: contextOwnerId() }, timeoutMs ? { timeoutMs } : undefined)
   if (!answer.ok) return { ok: false, error: errorOf(answer.error), detail: answer.error.slice(0, 200) }
   const value = read(answer.result)
   return value === undefined ? { ok: false, error: "failed", detail: "malformed answer" } : { ok: true, value }
@@ -97,6 +101,7 @@ function readSettingsAnswer(value: unknown): ExtensionContextSettings | undefine
     granted: Array.isArray(raw.granted) ? raw.granted.filter(isAiProviderId) : [],
     incognitoAllowed: raw.incognitoAllowed === true,
     version: typeof raw.version === "string" ? raw.version.slice(0, 40) : "",
+    otherAccount: raw.otherAccount === true,
   }
 }
 

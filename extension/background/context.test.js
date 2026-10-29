@@ -53,10 +53,13 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function command(action, args, sender = HUBBLE_PAGE) {
+const STUDENT_A = "student-a-0000000001";
+const STUDENT_B = "student-b-0000000002";
+
+async function command(action, args, sender = HUBBLE_PAGE, owner = STUDENT_A) {
   await import("./background.js");
   return new Promise((resolve) => {
-    const kept = listeners.map((fn) => fn({ type: MSG_BROWSER_COMMAND, payload: { id: "c1", action, args } }, sender, resolve));
+    const kept = listeners.map((fn) => fn({ type: MSG_BROWSER_COMMAND, payload: { id: "c1", action, args: { ...args, owner } } }, sender, resolve));
     if (!kept.includes(true)) resolve(undefined);
   });
 }
@@ -79,7 +82,7 @@ describe("context detection in the service worker", () => {
   });
 
   it("once on, records a completed page — and never the sensitive one beside it", async () => {
-    local[CONTEXT_SETTINGS_KEY] = { version: 1, mode: "auto", decidedAt: 1 };
+    local[CONTEXT_SETTINGS_KEY] = { version: 1, mode: "auto", decidedAt: 1, owner: STUDENT_A };
     await import("./background.js");
     for (const tab of openTabs) for (const fn of updated) fn(tab.id, { status: "complete" }, tab);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -88,6 +91,44 @@ describe("context detection in the service worker", () => {
     expect(answer.result.records.map((record) => record.title)).toEqual(["Sugar tax - Wikipedia"]);
     expect(answer.result.openUrls).toEqual(["https://en.wikipedia.org/wiki/Sugar_tax"]);
     expect(JSON.stringify(answer)).not.toContain("Private subject");
+  });
+
+  it("turning detection on notices the tabs already open, and still skips the sensitive one", async () => {
+    await command("set_context_settings", { settings: { mode: "auto", decidedAt: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const answer = await command("get_context_activity", {});
+    expect(answer.result.records.map((record) => record.title)).toEqual(["Sugar tax - Wikipedia"]);
+  });
+
+  it("a Hubble tab in a private window can't read or change context", async () => {
+    const privateTab = { ...HUBBLE_PAGE, tab: { ...HUBBLE_PAGE.tab, incognito: true } };
+    expect((await command("get_context_activity", {}, privateTab)).ok).toBe(false);
+    expect((await command("set_context_settings", { settings: { mode: "auto" } }, privateTab)).ok).toBe(false);
+  });
+
+  it("another Hubble account on the same Chrome gets nothing, and its own opt-in clears the first one's activity", async () => {
+    local[CONTEXT_SETTINGS_KEY] = { version: 1, mode: "auto", decidedAt: 1, owner: STUDENT_A, excludedHosts: ["example.org"] };
+    await import("./background.js");
+    for (const fn of updated) fn(1, { status: "complete" }, openTabs[0]);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect((await command("get_context_activity", {}, HUBBLE_PAGE, STUDENT_A)).result.records).toHaveLength(1);
+
+    const asB = await command("get_context_activity", {}, HUBBLE_PAGE, STUDENT_B);
+    expect(asB.result).toMatchObject({ records: [], openUrls: [] });
+    const settingsForB = await command("get_context_settings", {}, HUBBLE_PAGE, STUDENT_B);
+    expect(settingsForB.result).toMatchObject({ otherAccount: true, settings: { mode: "off" } });
+    expect(settingsForB.result.settings.decidedAt).toBeUndefined();
+    expect(JSON.stringify(settingsForB)).not.toContain("example.org");
+    expect((await command("forget_context_activity", { keys: ["en.wikipedia.org/wiki/Sugar_tax"] }, HUBBLE_PAGE, STUDENT_B)).result).toEqual({ forgotten: 0 });
+    expect((await command("capture_context_conversation", { url: "https://chatgpt.com/c/6720a1b2-0000-4000-8000-000000000001", workspaceId: "p" }, HUBBLE_PAGE, STUDENT_B)).result).toMatchObject({ ok: false, error: "not-yours" });
+
+    // B opts in: A's activity is gone before anything is kept for B, and A's choices don't carry over.
+    await command("set_context_settings", { settings: { mode: "auto", decidedAt: 2 } }, HUBBLE_PAGE, STUDENT_B);
+    expect(local[CONTEXT_SETTINGS_KEY]).toMatchObject({ owner: STUDENT_B, decidedAt: 2, excludedHosts: [] });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const forB = await command("get_context_activity", {}, HUBBLE_PAGE, STUDENT_B);
+    expect(forB.result.records.every((record) => record.firstSeenAt >= 0)).toBe(true);
+    expect((await command("get_context_activity", {}, HUBBLE_PAGE, STUDENT_A)).result.records).toEqual([]);
   });
 
   it("keeps a setting only through readContextSettings", async () => {

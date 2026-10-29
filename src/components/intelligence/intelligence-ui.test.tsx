@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event"
 const bridge = vi.hoisted(() => ({
   settings: { version: 1, mode: "off", categories: ["ai", "docs", "research"], excludedHosts: [] as string[], paused: false, readConversations: [] as string[], retentionDays: 30 } as Record<string, unknown>,
   granted: [] as string[],
+  otherAccount: false,
   error: undefined as undefined | "needs-update" | "not-connected",
   saved: [] as Record<string, unknown>[],
   accessAsked: [] as string[],
@@ -14,7 +15,7 @@ const bridge = vi.hoisted(() => ({
 }))
 vi.mock("@/lib/intelligence/bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/intelligence/bridge")>()
-  const answer = () => (bridge.error ? { ok: false, error: bridge.error } : { ok: true, value: { settings: actual.readSettings(bridge.settings)!, granted: bridge.granted, incognitoAllowed: false, version: "0.10.0" } })
+  const answer = () => (bridge.error ? { ok: false, error: bridge.error } : { ok: true, value: { settings: actual.readSettings(bridge.settings)!, granted: bridge.granted, incognitoAllowed: false, version: "0.10.0", otherAccount: bridge.otherAccount } })
   return {
     ...actual,
     getContextSettings: vi.fn(async () => answer()),
@@ -51,8 +52,10 @@ vi.mock("sonner", async (importOriginal) => {
 })
 
 import { HomeView } from "@/components/home/home-view"
+import { useContextSync } from "@/hooks/use-context-intelligence"
 import { ContextSection } from "@/components/settings/sections/context-section"
 import { ContextOnboardingDialog } from "./context-onboarding"
+import { ProjectContextStrip } from "./project-context-strip"
 import { ResumePrompt } from "./resume-prompt"
 import { SuggestionReviewDialog } from "./suggestion-review-dialog"
 import { __resetContextForTests, getContextSnapshot, writeContext } from "@/lib/intelligence/persistence"
@@ -90,6 +93,7 @@ beforeEach(() => {
   __resetSettingsViewForTests()
   bridge.settings = { version: 1, mode: "off", categories: ["ai", "docs", "research"], excludedHosts: [], paused: false, readConversations: [], retentionDays: 30 }
   bridge.granted = []
+  bridge.otherAccount = false
   bridge.error = undefined
   bridge.saved = []
   bridge.accessAsked = []
@@ -100,6 +104,28 @@ beforeEach(() => {
 afterEach(() => {
   __resetContextForTests()
   __resetSettingsViewForTests()
+})
+
+function Sync() {
+  useContextSync({ workspaces: [econ, history], enabled: true })
+  return null
+}
+
+describe("manual mode", () => {
+  it("suggests nothing from pages kept before, and puts away what was waiting", async () => {
+    bridge.settings = { ...bridge.settings, mode: "off", decidedAt: NOW }
+    seed()
+    render(<Sync />)
+    await waitFor(() => expect(getContextSnapshot().suggestions[0]!.status).toBe("expired"), { timeout: 3000 })
+  })
+
+  it("keeps suggesting when detection is on", async () => {
+    bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
+    seed()
+    render(<Sync />)
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    expect(getContextSnapshot().suggestions.some((suggestion) => suggestion.status === "open")).toBe(true)
+  })
 })
 
 describe("first-run choice", () => {
@@ -248,6 +274,17 @@ describe("reviewing a suggestion", () => {
   })
 })
 
+describe("inside a project", () => {
+  it("one line names the pages that may belong here and opens the same review", async () => {
+    seed()
+    render(<ProjectContextStrip workspace={econ} projects={[econ, history]} onAccept={vi.fn(async () => true)} />)
+    const strip = await screen.findByRole("status")
+    expect(strip.textContent).toMatch(/3 pages may belong here/)
+    await userEvent.click(within(strip).getByRole("button", { name: "Review" }))
+    expect(await screen.findByRole("button", { name: "Add 3 items to Economics IA" })).toBeTruthy()
+  })
+})
+
 describe("Smart Resume", () => {
   const recommendation = {
     workspaceId: "econ",
@@ -315,5 +352,23 @@ describe("Settings → Context", () => {
     await userEvent.type(await screen.findByRole("textbox", { name: "Site to never detect" }), "https://www.reddit.com/r/x")
     await userEvent.click(screen.getByRole("button", { name: "Add" }))
     await waitFor(() => expect(bridge.saved.at(-1)).toMatchObject({ excludedHosts: ["reddit.com"] }))
+  })
+
+  it("excluding a site also drops Hubble's copy and every answer that names it", async () => {
+    bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
+    const excluded = economicsArticles[0]!
+    seed({ rejections: [{ key: excluded.key, target: "any", at: NOW, terms: ["sugar"] }] })
+    render(<ContextSection />)
+    await userEvent.type(await screen.findByRole("textbox", { name: "Site to never detect" }), excluded.domain)
+    await userEvent.click(screen.getByRole("button", { name: "Add" }))
+    await waitFor(() => expect(getContextSnapshot().records.map((record) => record.key)).not.toContain(excluded.key))
+    expect(getContextSnapshot().rejections).toEqual([])
+    expect(getContextSnapshot().suggestions[0]!.recordKeys).not.toContain(excluded.key)
+  })
+
+  it("says when another Hubble account on this Chrome set detection up", async () => {
+    bridge.otherAccount = true
+    render(<ContextSection />)
+    expect(await screen.findByText(/Another Hubble account on this Chrome set this up/)).toBeTruthy()
   })
 })

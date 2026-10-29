@@ -32,6 +32,7 @@ const BRIEF_WEIGHT = 1.2
 const ITEM_WEIGHT = 1
 const NOTE_WEIGHT = 0.8
 const CONFIRMED_WEIGHT = 1
+const UNIQUE_WEIGHT = 0.5
 
 export type RecordFeatures = {
   key: string
@@ -191,6 +192,8 @@ export function inverseFrequencies(documents: readonly Terms[]): Map<string, num
   for (const terms of documents) for (const term of terms.keys()) df.set(term, (df.get(term) ?? 0) + 1)
   const n = Math.max(documents.length, 1)
   const idf = new Map<string, number>()
-  for (const [term, count] of df) idf.set(term, Math.log(1 + n / count))
+  // A word only one page or project uses can't connect it to anything; it only says how specific its title is.
+  // At half weight (Smart Organize's UNIQUE_WEIGHT), so a long specific title isn't held apart from a short one.
+  for (const [term, count] of df) idf.set(term, Math.log(1 + n / count) * (count < 2 ? UNIQUE_WEIGHT : 1))
   return idf
 }

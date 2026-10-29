@@ -71,6 +71,8 @@ export const SCOPED_STORAGE_KEYS = [
   // Context intelligence (see src/lib/intelligence/persistence.ts): pages one
   // person used in Chrome, their suggestions and their answers to them.
   "tabdump:context:v1",
+  // Which account context detection belongs to, for the extension (src/lib/intelligence/owner.ts): a random id.
+  "tabdump:context-owner:v1",
 ] as const;
 
 /**

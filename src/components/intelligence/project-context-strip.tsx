@@ -48,7 +48,7 @@ export function ProjectContextStrip({
           ))}
         </span>
         <p className="min-w-0 flex-1 truncate text-body-sm text-foreground">
-          {pages.length === 1 ? `“${pages[0]!.title || pages[0]!.domain}” may belong here` : `${pages.length} pages you used may belong here`}
+          {pages.length === 1 ? `“${pages[0]!.title || pages[0]!.domain}” may belong here` : `${pages.length} pages may belong here`}
         </p>
         <Button type="button" size="sm" variant="secondary" onClick={() => setReviewing(suggestion)}>
           Review

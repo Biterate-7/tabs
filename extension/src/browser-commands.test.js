@@ -65,18 +65,25 @@ describe("validateBrowserCommand", () => {
       expect([...CONTEXT_ACTIONS].every((action) => ALLOWED_BROWSER_ACTIONS.includes(action))).toBe(true);
     });
 
+    const owner = "owner-0123456789";
+    it("name the Hubble account they are for", () => {
+      expect(validateBrowserCommand("get_context_activity", {}).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { owner: "bad owner!" }).ok).toBe(false);
+      expect(validateBrowserCommand("clear_context_activity", { owner })).toEqual({ ok: true, args: { owner } });
+    });
+
     it("check their arguments", () => {
-      expect(validateBrowserCommand("get_context_activity", { since: 3, epoch: "e1" })).toEqual({ ok: true, args: { since: 3, epoch: "e1" } });
-      expect(validateBrowserCommand("get_context_activity", { since: -1 }).ok).toBe(false);
-      expect(validateBrowserCommand("get_context_activity", { epoch: "" }).ok).toBe(false);
-      expect(validateBrowserCommand("request_context_access", { provider: "chatgpt" })).toEqual({ ok: true, args: { provider: "chatgpt" } });
-      expect(validateBrowserCommand("request_context_access", { provider: "grok" }).ok).toBe(false);
-      expect(validateBrowserCommand("forget_context_activity", { keys: [] }).ok).toBe(false);
-      expect(validateBrowserCommand("forget_context_activity", { keys: Array(401).fill("k") }).ok).toBe(false);
-      expect(validateBrowserCommand("set_context_settings", { settings: [] }).ok).toBe(false);
-      expect(validateBrowserCommand("set_context_settings", { settings: { mode: "auto", excludedHosts: Array(5000).fill("example.com") } }).ok).toBe(false);
-      expect(validateBrowserCommand("capture_context_conversation", { url: "javascript:alert(1)", workspaceId: "p" }).ok).toBe(false);
-      expect(validateBrowserCommand("capture_context_conversation", { url: "https://chatgpt.com/c/abcdef12", workspaceId: "" }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { since: 3, epoch: "e1", owner })).toEqual({ ok: true, args: { since: 3, epoch: "e1", owner } });
+      expect(validateBrowserCommand("get_context_activity", { since: -1, owner }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { epoch: "", owner }).ok).toBe(false);
+      expect(validateBrowserCommand("request_context_access", { provider: "chatgpt", owner })).toEqual({ ok: true, args: { provider: "chatgpt", owner } });
+      expect(validateBrowserCommand("request_context_access", { provider: "grok", owner }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: [], owner }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: Array(401).fill("k"), owner }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: [], owner }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: { mode: "auto", excludedHosts: Array(5000).fill("example.com") }, owner }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "javascript:alert(1)", workspaceId: "p", owner }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "https://chatgpt.com/c/abcdef12", workspaceId: "", owner }).ok).toBe(false);
     });
   });
 

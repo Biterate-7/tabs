@@ -78,6 +78,23 @@ suggestion frequency (Normal · Only strong · Off), never-detect sites
 (adding one also removes what was kept from it), retention (7/30/90 days),
 the list of everything kept with per-row Remove, and Clear activity.
 
+### Accounts on a shared Chrome
+
+Activity and consent live in one Chrome profile; several Hubble accounts may
+use it (a family or school computer). Each account — and signed-out Hubble —
+has its own random context id (`src/lib/intelligence/owner.ts`, stored in its
+own namespace; never the account id or an email), sent with every context
+command and required by the validator. The extension binds consent and
+activity to the id that opted in (`settings.owner`) and answers no other:
+another account sees detection as not set up, receives no records, no open
+tabs, can't forget, clear or save through it, and isn't told the first
+account's choices. When it opts in itself, the previous account's activity is
+cleared first and its settings don't carry over. A Hubble tab in a private
+window is refused every context command.
+
+**Manual mode** (or another account's choice) also stops suggestions: what
+was kept before is not acted on, and waiting suggestions are put away.
+
 ## 2. Collection (extension)
 
 Event-driven, MV3-safe, no polling: `tabs.onUpdated` (status `complete`; title
@@ -86,14 +103,22 @@ changes debounced 1.5 s), `tabs.onActivated`, `windows.onFocusChanged`,
 
 - **One record per page** (`activityKeyOf`: conversation identity, YouTube
   id, else the address without fragment, tracking parameters, www/m, trailing
-  slash). Reloads, redirects, title flicker and the same page in two tabs
-  update one record; nothing is written unless something material changed
-  (new page, URL, title, icon, visit, day, or `lastSeenAt` older than a minute).
+  slash). Reloads, title flicker and the same page in two tabs update one
+  record; a tab that moves to another address within 10 s keeping its title
+  (a redirect, e.g. Wikipedia's Pigovian_tax → Pigouvian_tax) stays one
+  record. Nothing is written unless something material changed (new page,
+  URL, title, icon, visit, day, or `lastSeenAt` older than a minute).
+- **Turning detection on** (or resuming it) notices the tabs already open, once.
 - **Fields**: address, title (cleaned of hidden/bidi characters; Chrome's
-  "address as title" while loading is ignored), domain, kind, provider (from
-  the address), Chrome's icon, first/last seen, visits (activations ≥ 30 min
-  apart), approximate dwell (time in front, capped 30 min per visit; focus
-  kept in `storage.session`), local days used (≤ 14), capture status.
+  "address as title" while loading is ignored, and so are error titles —
+  Chrome interstitials such as "Connect to Wi-Fi" or "Privacy error", bot
+  checks, rate limits, "Page not found" — whose address is the page's but
+  whose title is not), domain, kind, provider (from the address), Chrome's
+  icon, first/last seen, visits (activations ≥ 30 min apart), approximate
+  dwell (time in front: a tab switched to, or a page that loads in the tab
+  already in front; capped 30 min per visit and never more than the page has
+  existed; focus kept in `storage.session`), local days used (≤ 14), capture
+  status.
 - **Bounded**: 400 records, retention-pruned every few minutes, 400
   tombstones for sync. Writes coalesced (800 ms). Survives worker restarts —
   everything is in `chrome.storage.local`.
@@ -121,11 +146,11 @@ refused, the provider is derived from the address.
 
 | Source | Detected (metadata) | Text read in the background | Text saved on accept |
 | --- | --- | --- | --- |
-| ChatGPT | yes | opt-in + host permission; existing DOM reader (`readConversationFromPage`), fixture-tested, live-verified signed in/out Oct 2026 | yes, through the Save to Hubble job, while the tab is open |
-| Claude | yes | same; long chats are virtualized → `partial` | same (partial noted) |
-| Gemini | yes | same | same |
-| Perplexity | yes | same; virtualized → `partial` | same |
-| Google Docs / Drive, Notion, Overleaf | yes (title, address) | **no** — no authorized document connector exists; `gap: not-readable` | saved as a link; Hubble's reader handles what it can (public pages only) |
+| ChatGPT | yes | opt-in + host permission, with the existing reader (`readConversationFromPage`). The background path was verified in real Chrome on the real address with fixture markup (§8); the reader itself was live-verified for Save to Hubble in Oct 2026 | yes, through the Save to Hubble job, while the tab is open — verified in real Chrome (fixture markup) |
+| Claude | yes | same code path; the reader is fixture-tested only for this path; long chats are virtualized → `partial` | same (partial noted); not exercised in real Chrome |
+| Gemini | yes | same code path; fixture-tested reader | same; not exercised in real Chrome |
+| Perplexity | yes | same code path; virtualized → `partial` | same; not exercised in real Chrome |
+| Google Docs / Drive, Notion, Overleaf | yes (title, address) — real Chrome: a signed-out private Doc ends on Google's sign-in page (never recorded); a missing Doc shows "Page not found" (kept as address only) | **no** — no authorized document connector exists; `gap: not-readable` | saved as a link; Hubble's reader handles what it can (public pages only) |
 | Web articles, PDFs, videos | yes | no (titles only for matching) | saved as sources; read by the existing pipeline (`/api/resources/extract`, transcripts) like any added page |
 
 A conversation accepted while its tab is closed, or without reading enabled,
@@ -153,13 +178,24 @@ Hubble already holds.
    names the project's subject alongside topic evidence; × (1 + 0.2 ×
    temporal) when the project was worked on at the same time (only above a
    floor — timing never creates an association); × (1 − 0.7 × similarity to
-   pages the person rejected for that project). A second pass lets a page
-   strongly matched to a project count as provisional evidence (0.6) for it.
+   pages the person rejected for that project). One shared word alone is at
+   most "review" (evidence strength 0.45), never a default. A second pass
+   lets a page strongly matched to a project count as provisional evidence
+   (0.6 per word) for it — only its words that the project confirms or that
+   were read from its text, never an incidental title word.
 4. **New bodies of work** (`cluster.ts`): average-linkage clustering of what
-   no project covers. A group that, taken together, fits a project goes there;
-   otherwise ≥ 3 coherent pages (or 2 with read text and strong cohesion)
-   become a "create project" suggestion, named from the words its titles share
-   in title order.
+   no project covers; pages it leaves out get a second route (`linkedGroups`):
+   pages each strongly linked (≥ 0.33) to another, connected, with one word
+   shared by a majority of at least three — always offered for review. A group
+   that, taken together, fits a project goes there; otherwise ≥ 3 coherent
+   pages (or 2 with read text and strong cohesion) become a "create project"
+   suggestion, named from the words its titles share in title order — **only
+   if the group holds study material**: a document, a PDF, or a reference or
+   academic source (`isStudySource`). Personal browsing that shares a word
+   (London cafés and the tube map, headphone shops plus a chat about them) is
+   never proposed as a project.
+   Words only one page or project uses count at half weight (as in Smart
+   Organize), so idiosyncratic title words don't swamp shared ones.
 5. **Scoring** (`scoring.ts`): normalized 0..1; strong ≥ 0.5, review ≥ 0.3,
    below = insufficient (nothing said). Calibrated on `engine.test.ts`
    fixtures (cases A–J below) — **not a measured accuracy**; retune from pilot
@@ -259,6 +295,8 @@ npx vitest run src/lib/intelligence extension/src/context-activity.test.js exten
   refusal, sites mode, pause, dedupe and write economy, debounce, visits and
   dwell, conversation reading (permission, terms-not-text, partial, layout,
   moved tab, revocation), exclusions, forget, clear, retention, restart.
+- `evaluation.test.ts` — the labelled hard-case set and its precision /
+  false-positive / recall numbers (`EVAL_OUT=<file>` writes them).
 - `intelligence-ui.test.tsx` — first-run choice (manual, chosen sites, app
   permission refused, later), Home cards (accept, not now, not relevant),
   review (remove item, new project, link-only note), Resume, Settings states
@@ -269,7 +307,104 @@ permission window and Chrome's prompt; background reading on live signed-in
 ChatGPT/Claude/Gemini/Perplexity pages; a real incognito window with "Allow
 in incognito"; the extension's behaviour across a real browser restart.
 
-## 8. Known limits
+## 8. Verification, 2026-10-29
+
+Three kinds of evidence, never mixed up:
+
+| Kind | What it proves | What it doesn't |
+| --- | --- | --- |
+| **Real Chrome** | System Chrome, the real unpacked extension loaded over CDP, the production build on :3000, real web pages over the network | Signed-in AI pages; Chrome's native permission prompt |
+| **Real Chrome, fixture markup** | The real extension's background read, the real reader running in the page, at the real chatgpt.com address — with the document answered from fixture HTML (request interception) | The live app's current markup |
+| **Unit / jsdom** | Logic with injected Chrome APIs and fixtures | That Chrome delivers the events |
+
+Rig: scratchpad `qa/real-ext.mjs` (phases `core`, `reading`, `restart`), a
+copy of `extension/` (for `reading`, with chatgpt.com added to
+`host_permissions` to stand in for the Allow click). Profiles on a short
+path. Results of the last run are in §8.1.
+
+### 8.1 Results
+
+Verified in real Chrome:
+manual by default; the onboarding choice reaching the extension; tabs already
+open noticed on opt-in; research pages recorded with real titles; sensitive
+pages never recorded; Google Docs behaviour above; dwell; redirects; duplicate
+events; detection while Hubble is closed; recovery after the service worker
+was stopped (`ServiceWorker.stopAllWorkers`); a browser restart (same
+extension id, settings and records kept); an off-the-record context recording
+nothing; the pull, suggestion, accept (persisted across reload, not
+re-suggested), no duplicate project; exclusion enforced by the collector and
+removing what was kept; pause and manual recording nothing; the permission
+window opening with the context wording and a refusal shown in Settings;
+clear (projects untouched); background reading keeping topic words only; the
+conversation's text saved on accept; Undo; Resume reopening only tabs not
+already open, marking the session and recording history.
+
+### 8.2 Defects found by real Chrome, and fixed
+
+1. Time in front was never measured for a page loaded in the tab already in
+   front (the ordinary way of browsing) — so the engagement filter blocked
+   every suggestion from real browsing.
+2. A redirect inside a tab made two records.
+3. Tabs open when the person opted in were not noticed.
+4. Error pages (Chrome interstitials, Wikimedia's rate-limit page, "Page not
+   found") kept their misleading titles.
+5. One run showed a page with the 30-minute per-visit cap of dwell that two
+   focused probes could not reproduce; dwell is now also bounded by the
+   time since the page was first seen.
+
+Found by the pre-pilot privacy audit (2026-10-29), and fixed:
+
+- P1 (high, shared devices): activity and consent belonged to the browser
+  profile, so a second Hubble account on the same Chrome pulled the first
+  one's activity and inherited its consent — now bound to the account that
+  opted in (above).
+- P2 (medium): Manual mode stopped collection but old pages kept producing
+  suggestions.
+- P3 (low): a Hubble tab in a private window could read and change context.
+- P4 (low): excluding a site left its addresses in Hubble's stored answers
+  (rejections, associations).
+- Explanations: "Their titles all mention" when the words were shared by most
+  pages, and "while working on the project" for pages a week apart.
+
+Found by the UI checks and the code audit, and fixed:
+
+6. The project strip never showed in the ordinary project view: a project
+   holding only sources renders through `ProjectPage`, not `WorkspaceView`.
+   It is now in both, with copy short enough for 390px.
+7. The accept toast said a conversation's text was "saved" when the
+   extension had only queued it; it now says it is still being saved.
+8. Inference (§8.3): an incidental title word could travel through the
+   provisional pass; one shared word could reach "strong"; words only one
+   page uses outweighed shared ones; groups split by average linkage were
+   lost; personal browsing could become a "project".
+
+### 8.3 Inference evaluation (fixtures, not real-world accuracy)
+
+`evaluation.test.ts`: 14 hard cases, 17 pages labelled with a destination
+and 16 labelled "never suggest". Before this pass: precision 0.92 (11
+correct, 1 false positive — an unread "Quick question about this" chat
+pulled into a project by one borrowed title word), recall 0.65. After: 16
+correct, 0 false positives, 1 missed — **precision 1.0, recall 0.94**, 9
+suggestions across 14 cases. The miss is real: "Berkeley soda levy: what
+happened next" shares only "soda levy" with a conversation and nothing with
+the project; Hubble says nothing rather than guess. Two personal cases
+(London pages, headphone shopping with a chat) produced "projects" before the
+study-material rule and none after. Thresholds were not lowered.
+
+### 8.4 Still manual
+
+Chrome's own permission prompt (Allow / Deny) and revoking access in
+chrome://extensions → Site access (`permissions.onRemoved` is unit-tested;
+in the rig the access is a required permission and can't be revoked);
+background reading on live, signed-in ChatGPT, Claude, Gemini and Perplexity
+pages (Claude shows a bot check to automated browsers and was not bypassed);
+a real Incognito window with "Allow in Incognito" turned on (the rig's
+off-the-record context has the extension disabled, which is Chrome's
+default); Google Docs signed in; a Chrome update or crash mid-write. **No
+user study has been run**: every number above is from fixtures and scripted
+browsing.
+
+## 9. Known limits
 
 - Matching reads titles (and, opted in, chat topic words). Pages on one topic
   in different words, or a thin project (one source), may not match; a group
@@ -277,6 +412,14 @@ in incognito"; the extension's behaviour across a real browser restart.
   other choice in Review.
 - Google Docs content is not readable (no authorized connector); a Doc is
   matched by its title.
+- A new project is proposed only for a group holding study material (a
+  document, PDF, or reference/academic source). Work done only on other
+  sites or only in chats is not proposed as a new project — it can still be
+  matched to a project the person made. The reference list is a fixed list
+  (`SITE_CATEGORY_HOSTS`), so a niche study site outside it counts only via
+  the other pages in its group.
+- The same topic in different words is matched only when a read
+  conversation uses both (fixture recall 0.94; see §8.3).
 - Dwell is approximate (focus changes Chrome reports; capped per visit).
 - Thresholds are fixture-calibrated, not proven.
 - Detection, suggestions and resume are web-only; sessions and context state

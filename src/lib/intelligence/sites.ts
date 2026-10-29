@@ -169,6 +169,23 @@ export function isSensitiveUrl(url: string): boolean {
   }
 }
 
+/** Academic hosts: study material wherever they are. Government and international sites are research for detection, not proof of study. */
+const ACADEMIC_SUFFIXES = [".edu", ".ac.uk", ".edu.au", ".ac.nz"]
+
+/**
+ * Whether a page looks like study material: a document, or a reference or
+ * academic source (the Research and Documents lists, and academic hosts).
+ * A new project is suggested only for a group that holds one (engine.ts):
+ * four London pages or three headphone shops are not an assignment.
+ */
+export function isStudySource(url: string): boolean {
+  const host = hostOf(url)
+  if (!host) return false
+  if ([...SITE_CATEGORY_HOSTS.research, ...SITE_CATEGORY_HOSTS.docs].some((domain) => hostMatches(host, domain))) return true
+  if (ACADEMIC_SUFFIXES.some((suffix) => host.endsWith(suffix))) return true
+  return /\.pdf$/i.test(new URL(url).pathname)
+}
+
 /** A host typed into "Don't detect", reduced to what it is matched by — undefined when it isn't one. */
 export function cleanExcludedHost(value: string): string | undefined {
   let text = value.trim().toLowerCase()

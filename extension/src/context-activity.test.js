@@ -180,6 +180,65 @@ describe("one record per page", () => {
   });
 });
 
+describe("found in real Chrome (2026-10-29)", () => {
+  it("a page that loads in the tab already in front gets its time in front", async () => {
+    const h = harness();
+    // A new tab is activated while still blank, then the page loads in it: no switch ever names the page.
+    await h.collector.observe(h.tab(1, "chrome://newtab/", "New Tab"), { activated: true });
+    await h.collector.observe(h.tab(1, "https://ourworldindata.org/obesity", "Obesity | Our World in Data"), { inFront: true });
+    await h.advance(20_000);
+    await h.collector.observe(h.tab(2, "chrome://newtab/", "New Tab"), { activated: true });
+    const [record] = (await h.collector.list()).records;
+    expect(record.dwellMs).toBe(20_000);
+  });
+
+  it("a background tab finishing loading does not take the focus", async () => {
+    const h = harness();
+    await h.collector.observe(h.tab(1, "https://arxiv.org/abs/1", "One"), { activated: true });
+    await h.collector.observe(h.tab(2, "https://arxiv.org/abs/2", "Two"));
+    await h.advance(20_000);
+    await h.collector.observe(h.tab(3, "chrome://newtab/", "New Tab"), { activated: true });
+    const byKey = Object.fromEntries((await h.collector.list()).records.map((record) => [record.key, record.dwellMs]));
+    expect(byKey).toEqual({ "arxiv.org/abs/1": 20_000, "arxiv.org/abs/2": 0 });
+  });
+
+  it("a redirect inside one tab is one page (Pigovian_tax → Pigouvian_tax)", async () => {
+    const h = harness();
+    await h.collector.observe(h.tab(1, "https://en.wikipedia.org/wiki/Pigovian_tax", "Pigouvian tax - Wikipedia"), { inFront: true });
+    await h.advance(1500);
+    await h.collector.observe(h.tab(1, "https://en.wikipedia.org/wiki/Pigouvian_tax", "Pigouvian tax - Wikipedia"), { inFront: true });
+    const { records } = await h.collector.list();
+    expect(records.map((record) => record.key)).toEqual(["en.wikipedia.org/wiki/Pigouvian_tax"]);
+  });
+
+  it("an error page's title is not the page's: Chrome interstitials, rate limits, 404s", async () => {
+    const h = harness();
+    for (const title of ["Connect to Wi-Fi", "Privacy error", "Wikimedia Error", "Page not found", "Just a moment..."]) {
+      await h.collector.observe(h.tab(1, "https://www.tutor2u.net/economics/reference/indirect-taxes", title));
+    }
+    expect((await h.collector.list()).records[0]).toMatchObject({ title: "", capture: { status: "detected" } });
+    await h.collector.observe(h.tab(1, "https://www.tutor2u.net/economics/reference/indirect-taxes", "Indirect Taxes | tutor2u"));
+    expect((await h.collector.list()).records[0].title).toBe("Indirect Taxes | tutor2u");
+  });
+
+  it("time in front is never more than the page has existed", async () => {
+    const h = harness();
+    // A focus record from long ago (a stale session value) must not credit hours to a page just seen.
+    await h.collector.observe(h.tab(1, "https://arxiv.org/abs/1", "One"), { activated: true });
+    await h.advance(5000);
+    await h.collector.observe(h.tab(2, "chrome://newtab/", "New Tab"), { activated: true });
+    expect((await h.collector.list()).records[0].dwellMs).toBe(5000);
+  });
+
+  it("following a link to another page in the same tab is a new page", async () => {
+    const h = harness();
+    await h.collector.observe(h.tab(1, "https://en.wikipedia.org/wiki/Pigouvian_tax", "Pigouvian tax - Wikipedia"), { inFront: true });
+    await h.advance(3000);
+    await h.collector.observe(h.tab(1, "https://en.wikipedia.org/wiki/Externality", "Externality - Wikipedia"), { inFront: true });
+    expect((await h.collector.list()).records).toHaveLength(2);
+  });
+});
+
 describe("reading conversations", () => {
   const turns = [
     { role: "user", text: "How effective is a sugar tax at reducing consumption? Think about externalities." },

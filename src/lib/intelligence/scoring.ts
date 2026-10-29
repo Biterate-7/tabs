@@ -21,6 +21,8 @@ export type InferenceConfig = {
   minClusterSize: number
   /** A two-page group is suggested only this strongly connected. */
   pairClusterScore: number
+  /** Pages at least this alike are linked, for groups average linkage splits (cluster.ts linkedGroups). */
+  linkScore: number
   /** Two projects this close to each other are both offered, the best one first. */
   ambiguityMargin: number
   /** How much a shared work period can add (multiplier 1 + this). Never creates an association by itself. */
@@ -47,6 +49,7 @@ export const DEFAULT_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   clusterMerge: 0.18,
   minClusterSize: 3,
   pairClusterScore: 0.45,
+  linkScore: 0.33,
   ambiguityMargin: 0.08,
   temporalBoost: 0.2,
   temporalFloor: 0.15,
