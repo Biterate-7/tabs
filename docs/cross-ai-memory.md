@@ -234,8 +234,10 @@ unconfirmed. The service worker's `[Hubble] capture-read-refused` line now
 says which it was. Fixtures: "signed in (live markup, 2026-10-16)".
 
 Deliberately absent: provider sign-in, cookies, private or undocumented
-endpoints, background reading of tabs, and any "sync". Saving again is how a
-grown conversation is brought up to date.
+endpoints, and any "sync". Saving again is how a grown conversation is
+brought up to date. Background reading exists only as context detection's
+opt-in (per AI app, with Chrome's host permission, keeping topic words, never
+the text) — see [context-intelligence.md](./context-intelligence.md).
 
 ## 6. Hubble for Chrome
 

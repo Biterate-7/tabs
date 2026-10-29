@@ -68,6 +68,9 @@ export const SCOPED_STORAGE_KEYS = [
   // src/lib/knowledge-graph/persistence.ts): ids and coordinates only, but
   // the shape of one person's work, so it partitions with the rest.
   "tabdump:knowledge-graph:v1",
+  // Context intelligence (see src/lib/intelligence/persistence.ts): pages one
+  // person used in Chrome, their suggestions and their answers to them.
+  "tabdump:context:v1",
 ] as const;
 
 /**

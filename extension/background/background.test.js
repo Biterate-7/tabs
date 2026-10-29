@@ -74,18 +74,26 @@ afterEach(() => {
 // background.js registers five onMessage listeners, in source order:
 // dumpTabs, focusHubble, checkImported, the browser-command dispatcher, then
 // quick add's project-focus listener (covered in quick-add.test.js).
-async function getBrowserCommandListener() {
+// Context detection registers its own chrome.tabs.onUpdated listener when the module loads (MV3 needs it at
+// module scope). The dump tests find waitForTabComplete's listener as "the one registered since", so the
+// import-time registration is forgotten here.
+async function importBackground() {
   await import("./background.js");
+  chrome.tabs.onUpdated.addListener.mockClear();
+}
+
+async function getBrowserCommandListener() {
+  await importBackground();
   return registeredListeners[3];
 }
 
 async function getDumpTabsListener() {
-  await import("./background.js");
+  await importBackground();
   return registeredListeners[0];
 }
 
 async function getFocusListener() {
-  await import("./background.js");
+  await importBackground();
   return registeredListeners[1];
 }
 

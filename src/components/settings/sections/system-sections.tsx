@@ -133,7 +133,7 @@ export function ExtensionSection() {
         </FieldRow>
         <FieldRow
           label="What it reads"
-          description="Only what you send: tab titles and addresses, and a conversation's visible text when you choose Save to Hubble. Never cookies or passwords."
+          description="What you send: tab titles and addresses, and a conversation's visible text when you choose Save to Hubble. With context detection on (Settings → Context), also the addresses and titles of pages you use, and — only for AI apps you allow — topic words from open chats. Never cookies, passwords or what you type."
         >
           <span />
         </FieldRow>
@@ -320,13 +320,19 @@ export function PrivacySection() {
         </FieldRow>
         <FieldRow
           label="Saving from AI apps"
-          description="Only when you choose Save to Hubble, and only that conversation. Hubble never signs in to an AI app or reads your passwords or cookies."
+          description="A conversation's text is saved only when you choose Save to Hubble or accept a suggestion. For AI apps you allow in Settings → Context, Hubble for Chrome also reads open chats to keep their topic words for matching — never the text. Hubble never signs in to an AI app or reads your passwords or cookies."
         >
           <span />
         </FieldRow>
         <FieldRow
           label="Reading web pages"
           description="A page's address is sent to Hubble's reader, which fetches the public page. Conversations and notes are never sent."
+        >
+          <span />
+        </FieldRow>
+        <FieldRow
+          label="Context detection"
+          description="Off until you choose. When on, Hubble for Chrome keeps the addresses, titles and times of pages you use — in this browser, never sent — and Hubble suggests projects from them on this device. Sensitive sites and private windows are always skipped. Change it, pause it or clear it in Settings → Context."
         >
           <span />
         </FieldRow>

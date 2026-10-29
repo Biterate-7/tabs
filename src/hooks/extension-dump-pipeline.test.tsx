@@ -139,6 +139,8 @@ afterEach(() => {
 /** Loads the service worker, then the content script, keeping their listener sets apart. */
 async function bootExtension() {
   const background = await import("../../extension/background/background.js")
+  // Context detection registers its own onUpdated listener at load; the dump waits for the one registered after.
+  onUpdatedListeners = []
   const backgroundListenerCount = allListeners.length
   // Not an ES module, deliberately: a manifest-declared content script is
   // loaded as a classic script, so content-script.js has no imports or

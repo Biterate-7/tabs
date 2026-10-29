@@ -71,6 +71,8 @@ export function describeProjectEvent(row: ActivityRow, input: { projectName: str
       return "You added a note"
     case "memory_reused":
       return `You used ${plural(event.count ?? 1, "item", "items")} in an AI chat`
+    case "project_resumed":
+      return (event.count ?? 0) > 0 ? `You picked up where you left off and reopened ${plural(event.count ?? 0, "tab", "tabs")}` : "You picked up where you left off"
     // Records left by the removed agent features are never listed (projectEventsIn drops them).
     default:
       return "Earlier activity"

@@ -22,6 +22,23 @@ const MAX_TAB_IDS_PER_COMMAND = 200;
 const MAX_HISTORY_RESULTS = 5000;
 // Mirrors MAX_SESSION_TABS in src/lib/sessions/types.ts.
 export const MAX_SESSION_TABS = 200;
+const MAX_CONTEXT_KEYS = 400;
+const CONTEXT_PROVIDERS = ["chatgpt", "claude", "gemini", "perplexity"];
+
+/**
+ * Context detection's commands: only the Hubble page may send them
+ * (background.js checks the sender too), and each answers about this
+ * browser's own activity store — never another site's data.
+ */
+export const CONTEXT_ACTIONS = Object.freeze([
+  "get_context_settings",
+  "set_context_settings",
+  "request_context_access",
+  "get_context_activity",
+  "forget_context_activity",
+  "clear_context_activity",
+  "capture_context_conversation",
+]);
 
 /**
  * Safelist, not a blocklist: only ever open http/https URLs. This is
@@ -198,6 +215,55 @@ export const BROWSER_COMMAND_VALIDATORS = {
         ? { port: args.port, id: args.id, secret: args.secret, action: args.action, ok: true, result: args.result }
         : { port: args.port, id: args.id, secret: args.secret, action: args.action, ok: false, error: args.error.slice(0, 300) }
     );
+  },
+
+  get_context_settings() {
+    return ok({});
+  },
+
+  /** The settings are re-read field by field in context-activity.js (readContextSettings); here only the envelope. */
+  set_context_settings(args) {
+    const settings = args?.settings;
+    if (settings === null || typeof settings !== "object" || Array.isArray(settings)) return fail("`settings` must be an object.");
+    let size = 0;
+    try {
+      size = JSON.stringify(settings).length;
+    } catch {
+      return fail("`settings` must be plain data.");
+    }
+    if (size > 20000) return fail("`settings` is too large.");
+    return ok({ settings });
+  },
+
+  request_context_access(args) {
+    if (!CONTEXT_PROVIDERS.includes(args?.provider)) return fail(`\`provider\` must be one of ${CONTEXT_PROVIDERS.join(", ")}.`);
+    return ok({ provider: args.provider });
+  },
+
+  get_context_activity(args) {
+    const since = args?.since;
+    const epoch = args?.epoch;
+    if (since !== undefined && !isPositiveInteger(since)) return fail("`since` must be a non-negative integer.");
+    if (epoch !== undefined && (typeof epoch !== "string" || epoch.length === 0 || epoch.length > 200)) return fail("`epoch` must be a string.");
+    return ok({ ...(since !== undefined ? { since } : {}), ...(epoch !== undefined ? { epoch } : {}) });
+  },
+
+  forget_context_activity(args) {
+    const valid = (key) => typeof key === "string" && key.length > 0 && key.length <= 2100;
+    if (!isNonEmptyArray(args?.keys, valid, MAX_CONTEXT_KEYS)) return fail(`\`keys\` must be a non-empty array of up to ${MAX_CONTEXT_KEYS} keys.`);
+    return ok({ keys: args.keys });
+  },
+
+  clear_context_activity() {
+    return ok({});
+  },
+
+  /** Saves an open AI conversation into a project through the ordinary Save to Hubble job. */
+  capture_context_conversation(args) {
+    if (!isSafeOpenUrl(args?.url)) return fail("`url` must be an http(s) URL.");
+    const workspaceId = args?.workspaceId;
+    if (typeof workspaceId !== "string" || workspaceId.length === 0 || workspaceId.length > 200) return fail("`workspaceId` must be a project id.");
+    return ok({ url: args.url, workspaceId });
   },
 
   create_browser_window(args) {

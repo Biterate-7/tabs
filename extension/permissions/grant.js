@@ -24,8 +24,29 @@ export function initGrant(doc = document, search = location.search) {
     return;
   }
   const sites = config.hosts.filter((host) => !host.startsWith("www.")).join(" and ");
-  doc.getElementById("grant-heading").textContent = `Let Hubble use ${config.name}?`;
-  doc.getElementById("grant-why").textContent = `To put what you chose in Hubble into a new ${config.name} chat, Hubble for Chrome needs access to ${sites}.`;
+  if (params.get("purpose") === "context") {
+    // Context detection: reading conversations to match them to projects. Same origins, different use — said plainly.
+    doc.getElementById("grant-heading").textContent = `Let Hubble read your ${config.name} conversations?`;
+    doc.getElementById("grant-why").textContent = `To suggest which project a ${config.name} conversation belongs to, Hubble for Chrome needs access to ${sites}.`;
+    const list = doc.getElementById("grant-list");
+    if (list) {
+      list.replaceChildren(
+        ...[
+          "It reads the conversation in a tab you have open, a few seconds after it loads.",
+          "It keeps only topic words and a message count on this computer — never the text.",
+          "Nothing is sent anywhere. The text is saved only when you accept a suggestion.",
+          "Turn it off in Hubble's Settings, or remove access in Chrome's extension settings.",
+        ].map((line) => {
+          const item = doc.createElement("li");
+          item.textContent = line;
+          return item;
+        })
+      );
+    }
+  } else {
+    doc.getElementById("grant-heading").textContent = `Let Hubble use ${config.name}?`;
+    doc.getElementById("grant-why").textContent = `To put what you chose in Hubble into a new ${config.name} chat, Hubble for Chrome needs access to ${sites}.`;
+  }
 
   let answered = false;
   async function answer(granted) {

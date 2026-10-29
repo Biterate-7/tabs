@@ -38,7 +38,9 @@ export type ProjectEventKind =
   | "conversation_saved"
   | "conversation_updated"
   | "note_added"
-  | "memory_reused";
+  | "memory_reused"
+  /** The person picked the project up again from Smart Resume (lib/intelligence/resume.ts). */
+  | "project_resumed";
 
 /** Kinds written by the removed agent features: read and kept, never created. */
 export type LegacyProjectEventKind = "context_selected" | "task" | "agent_switched";
@@ -83,6 +85,7 @@ const KINDS: readonly string[] = [
   "conversation_updated",
   "note_added",
   "memory_reused",
+  "project_resumed",
   ...LEGACY_KINDS,
 ];
 const STATES: readonly string[] = ["ready", "working", "needs_you", "done", "failed", "stopped"];

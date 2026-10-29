@@ -427,6 +427,8 @@ describe("packaged extension — Dump Tabs against the production origin", () =>
     };
     // Forward slashes: Vite resolves "C:/…" but not "C:\…".
     await import(/* @vite-ignore */ path.join(extractDir, "background", "background.js").split(path.sep).join("/"));
+    // Context detection registers its own onUpdated listener at load; the dump waits for the one registered after.
+    chrome.tabs.onUpdated.addListener.mockClear();
     return listeners[0];
   }
 
